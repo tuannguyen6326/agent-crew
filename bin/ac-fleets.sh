@@ -35,7 +35,9 @@
 #
 # Per home it reports:
 #   crew    - task ids in flight with kind/project and the LAST recorded
-#             state/<id>.status line. This is NOT a live backend probe: the
+#             state/<id>.status line; --json also carries each task's
+#             recorded delivery mode (meta mode=, null when unset/"-") so
+#             the dashboard shows the mode a task RUNS with. This is NOT a live backend probe: the
 #             command never touches the herdr backend, so it stays fast and
 #             safe across many homes (unlike ac-fleet-view.sh, which drives the
 #             backend for a single owned home).
@@ -150,7 +152,7 @@ emit_home() {
   # its short-lived exact-ref lease is verifier-owned. It is surveyed into its
   # OWN verify list and can never inflate the crew tally the digest/dashboard
   # read.
-  local crew_count=0 crew_lines="" crew_tasks_json="[]" meta id kind project stf status row
+  local crew_count=0 crew_lines="" crew_tasks_json="[]" meta id kind project dmode stf status row
   local verify_count=0 verify_lines="" verify_json="[]" row_json
   local caller family ref worktree verify_row
   if [ -d "$sd" ]; then
@@ -159,6 +161,8 @@ emit_home() {
       id="$(basename "$meta" .meta)"
       kind="$(ac_meta_get "$meta" kind)"
       project="$(ac_meta_get "$meta" project)"
+      # The task's DELIVERY mode ($mode is this function's output format).
+      dmode="$(ac_meta_get "$meta" mode)"
       stf="$sd/$id.status"
       if [ -s "$stf" ]; then status="$(tail -n1 "$stf" | cut -d' ' -f2-)"; else status='-'; fi
       if [ "${#status}" -gt 100 ]; then status="${status:0:97}..."; fi
@@ -166,9 +170,11 @@ emit_home() {
       if [ "$mode" = json ]; then
         row_json="$(jq -c -n \
           --arg id "$id" --arg kind "$kind" --arg project "$project" --arg status "$status" \
+          --arg dmode "$dmode" \
           '{id:$id,
             kind:(if $kind=="" then null else $kind end),
             project:(if $project=="" then null else $project end),
+            mode:(if $dmode=="" or $dmode=="-" then null else $dmode end),
             status:$status}')"
       fi
       if ac_meta_is_verify "$meta"; then

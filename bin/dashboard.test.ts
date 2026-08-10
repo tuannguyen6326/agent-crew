@@ -10,7 +10,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, withDomainBacklogs, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, whiteboardWrite, whiteboardShow, parseBacklogLine, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, withDomainBacklogs, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -1053,6 +1053,37 @@ test("parseBacklogLine pulls id/text/repo/pr/merged/epic from one raw line", () 
   // a non-task line yields an empty id, never throws
   expect(parseBacklogLine("notes that are not a task line").id).toBe("");
   expect(parseBacklogLine("").id).toBe("");
+});
+
+test("parseBacklogLine extracts the delivery-contract group (S1 grammar, awk-twin semantics)", () => {
+  // the full group, coexisting with everything else on a real row
+  const full = "- [ ] t1 [src:cap flow:direct mode:local-only rev:no qa:no] - do it (repo: alpha)";
+  expect(parseBacklogLine(full).contract).toBe("src:cap flow:direct mode:local-only rev:no qa:no");
+  expect(parseBacklogLine(full).repo).toBe("alpha"); // sibling fields undisturbed
+  // coexists with [EPIC...] and [@held] groups - they keep their class
+  expect(parseBacklogLine("- [ ] t2 [EPIC 3 stories] [src:cap] - x").contract).toBe("src:cap");
+  expect(parseBacklogLine("- [ ] t3 [@held] [mode:direct-pr] - x").contract).toBe("mode:direct-pr");
+  // provenance prose is not all-keyed - never the contract
+  expect(parseBacklogLine("- [ ] t4 [CAPTAIN-ORDERED 2026-07-30] - x").contract).toBe("");
+  // outside the leading run (past " - ") position denies authority
+  expect(parseBacklogLine("- [ ] t5 - text mentions [mode:local-only] later").contract).toBe("");
+  // a backtick-wrapped group is a documentation mention, never the token
+  expect(parseBacklogLine("- [ ] t6 `[src:cap]` - quoted").contract).toBe("");
+  // first all-keyed group wins
+  expect(parseBacklogLine("- [ ] t7 [src:cap] [mode:crew-ship] - x").contract).toBe("src:cap");
+  // an unknown key breaks the all-keyed discriminator for that group
+  expect(parseBacklogLine("- [ ] t8 [src:cap bogus:v] - x").contract).toBe("");
+  // a non-task line never yields a contract
+  expect(parseBacklogLine("prose with [src:cap] inside").contract).toBe("");
+});
+
+test("contractTokens splits a group into ordered {k,v} chip pairs", () => {
+  expect(contractTokens("src:cap mode:local-only")).toEqual([
+    { k: "src", v: "cap" },
+    { k: "mode", v: "local-only" },
+  ]);
+  expect(contractTokens("")).toEqual([]);
+  expect(contractTokens("rev:no")).toEqual([{ k: "rev", v: "no" }]);
 });
 
 // --- dashboard-board: five-state story derivation (board-epic-story-legibility-v2) --

@@ -200,4 +200,40 @@ out="$("$BIN/ac-spawn.sh" g-spawncheck "$AC_HOME/projects/gproj" --harness fake 
   && fail "G9: a spawn flag contradicting the brief's Mode must refuse"
 assert_contains "$out" "contradicts the brief's recorded Mode" "G9: the refusal names the record"
 
+# --- differential: the TS twin extracts byte-identically ----------------------
+# bin/dashboard.ts parseBacklogLine().contract is the browser-side twin of
+# AC_DONELINE_AWK's f["contract"] - one grammar, two hosts. Drive BOTH parsers
+# over the same fixture lines and demand byte-identical answers, so the twins
+# cannot drift apart silently. Skips cleanly when bun is absent (house style:
+# a missing tool never reads as a failure - tests/dashboard.test.sh).
+if command -v bun >/dev/null 2>&1; then
+  diff_lines="$AC_HOME/contract-diff-lines.txt"
+  cat >"$diff_lines" <<'LINES'
+- [ ] t1 [src:cap flow:direct mode:local-only rev:no qa:no] - do it (repo: alpha)
+- [ ] t2 [EPIC 3 stories] [src:cap] - x
+- [ ] t3 [@held] [mode:direct-pr] - x
+- [ ] t4 [CAPTAIN-ORDERED 2026-07-30] - x
+- [ ] t5 - text mentions [mode:local-only] later
+- [ ] t6 `[src:cap]` - quoted mention
+- [ ] t7 [src:cap] [mode:crew-ship] - first wins
+- [ ] t8 [src:cap bogus:v] - unknown key breaks the group
+- [x] t9 [flow:staged mode:crew-ship rev:yes qa:yes] - heavy row (repo: beta) (merged 2026-08-09)
+- [ ] t10 [] - empty group
+prose that is not a task line [src:cap]
+LINES
+  awk_out="$(awk "$AC_DONELINE_AWK"'
+    { ac_doneline($0, o); print o["contract"]; delete o }
+  ' "$diff_lines")"
+  ts_out="$(bun -e '
+    const { parseBacklogLine } = await import(process.argv[1]);
+    const fs = await import("fs");
+    const lines = fs.readFileSync(process.argv[2], "utf8").split("\n");
+    if (lines[lines.length - 1] === "") lines.pop();
+    for (const l of lines) console.log(parseBacklogLine(l).contract);
+  ' "$ROOT/bin/dashboard.ts" "$diff_lines")"
+  assert_eq "$ts_out" "$awk_out" "the TS twin and AC_DONELINE_AWK extract the contract byte-identically"
+else
+  printf 'SKIP: bun not available - the awk/TS contract differential skipped\n'
+fi
+
 pass

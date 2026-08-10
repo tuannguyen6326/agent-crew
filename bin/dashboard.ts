@@ -503,6 +503,7 @@ export interface BacklogLineFields {
   merged: string; // date inside "(merged <date>)", "" if none
   epic: string; // `epic:<id>` membership token (a story's parent), "" if none
   isEpic: boolean; // the line carries an [EPIC...] marker (it IS an epic)
+  contract: string; // delivery-contract group content ("src:cap mode:local-only ..."), "" if none
 }
 
 /**
@@ -519,7 +520,49 @@ export function parseBacklogLine(line: string): BacklogLineFields {
   const pr = (s.match(/https?:\/\/github\.com\/[^\s)]+\/pull\/\d+/) || [""])[0] || "";
   const merged = (s.match(/\(merged\s+([0-9]{4}-[0-9]{2}-[0-9]{2})/) || ["", ""])[1];
   const epic = (s.match(/\bepic:([a-z0-9][a-z0-9-]*)/) || ["", ""])[1];
-  return { id, text, repo, pr, merged, epic, isEpic: /\[EPIC/i.test(s) };
+  // The delivery-contract group (§9): scanned only in the LEADING RUN (the
+  // head before the first " - " - the same boundary `text` uses), because
+  // position denies authority everywhere else in the grammar. The
+  // discriminator is the awk twin's (AC_DONELINE_AWK, ac-lib.sh): EVERY
+  // whitespace-separated token is key:value from the closed key set - a
+  // group with any other content keeps its existing class ([EPIC...],
+  // [@held], provenance prose) - first such group wins, and a
+  // backtick-wrapped group is a documentation mention, never the token.
+  var contract = "";
+  if (id) {
+    var head = dash >= 0 ? s.slice(0, dash) : s;
+    var gre = /(`?)\[([^\]]*)\](`?)/g;
+    var gm;
+    while ((gm = gre.exec(head))) {
+      if (gm[1] === "`" || gm[3] === "`") continue;
+      var content = gm[2].trim();
+      if (!content) continue;
+      var toks = content.split(/\s+/);
+      var all = true;
+      for (var ti = 0; ti < toks.length; ti++)
+        if (!/^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/.test(toks[ti])) { all = false; break; }
+      if (all) { contract = content; break; }
+    }
+  }
+  return { id, text, repo, pr, merged, epic, isEpic: /\[EPIC/i.test(s), contract };
+}
+
+/**
+ * Split one contract-group string ("src:cap mode:local-only ...") into
+ * {k, v} chip pairs for render. Order preserved (the row's own order is the
+ * captain's record). ES5-plain so PAGE interpolates its toString() - the
+ * board card, the detail block, and the backlog rows all run the SAME
+ * bun-tested split.
+ */
+export function contractTokens(contract: string): { k: string; v: string }[] {
+  var out: { k: string; v: string }[] = [];
+  var toks = String(contract || "").split(/\s+/);
+  for (var i = 0; i < toks.length; i++) {
+    var c = toks[i].indexOf(":");
+    if (c <= 0) continue;
+    out.push({ k: toks[i].slice(0, c), v: toks[i].slice(c + 1) });
+  }
+  return out;
 }
 
 /**
@@ -829,6 +872,7 @@ export interface FamilyDetail {
   }[];
   rollup: { done: number; total: number } | null;
   links: { label: string; kind: string; path: string }[];
+  contract: string; // the row's delivery-contract group content, "" if none
 }
 
 /**
@@ -993,6 +1037,7 @@ export function composeFamily(input: {
     children,
     rollup,
     links,
+    contract: fields.contract,
   };
 }
 
@@ -7373,6 +7418,10 @@ ${THEME_VARS}
   .chipm{ display:inline-block; background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:10.5px; color:var(--muted); }
   .chipm.shared{ color:var(--success); border-color:var(--success); }
   .chipm.g{ background:var(--good-soft); color:var(--good); border-color:transparent; } .chipm.a{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
+  /* Delivery-contract chips: SOLID = pinned on the row (the captain's word),
+     HOLLOW (dashed outline) = chief-chosen at intake, shown for the audit. */
+  .chipm.cpin{ background:var(--accent-soft); color:var(--accent); border:1px solid var(--accent); font-weight:600; }
+  .chipm.cauto{ background:transparent; color:var(--muted); border:1px dashed var(--muted); }
   .badgeb{ display:inline-block; border-radius:20px; padding:0 7px; font-size:10px; font-weight:700; }
   .badgeb.epic{ background:var(--purple-soft); color:var(--purple); } .badgeb.pr{ background:var(--good); color:var(--bg); }
   .bprog{ height:5px; background:var(--panel); border:1px solid var(--line); border-radius:5px; overflow:hidden; margin:8px 0 4px; }
@@ -7611,6 +7660,7 @@ ${verifyProcessRows.toString()}
 // Board (dashboard-board): the card join runs the SAME bun-tested joiners the
 // server does - one source of truth, no client re-implementation.
 ${parseBacklogLine.toString()}
+${contractTokens.toString()}
 ${storyState.toString()}
 ${familyOfTaskId.toString()}
 ${boardSystemPanes.toString()}
@@ -8532,7 +8582,9 @@ function blSection(key, title, arr, keep, defOpen){
     if(!shown.length) s+='<div class="muted" style="padding:8px">'+(arr.length?'no matches':'—')+'</div>';
     for(var i=0;i<shown.length;i++){ var it=parseBl(shown[i]); var rk='row:'+key+':'+i; var rowOpen=!!ui.exp[rk];
       var longish=it.text.length>90;
+      var cchips=contractChips(parseBacklogLine(it.full).contract, '');
       s+='<div class="blrow"><span class="bid">'+esc(it.id)+'</span>';
+      if(cchips) s+=cchips;
       s+='<span class="btext'+(longish&&!rowOpen?' clip':'')+'">'+esc(it.text)+'</span>';
       if(longish) s+=' <button class="more" data-disc="'+rk+'">'+(rowOpen?'less':'more')+'</button>';
       s+='</div>';
@@ -8585,6 +8637,32 @@ function boardLive(home, known){
   for(var i=0;i<tasks.length;i++){ var fam=familyOfTaskId(tasks[i].id, known); if(!(fam in map)) map[fam]=tasks[i].status||''; }
   return map;
 }
+// family -> the live task's RECORDED mode (state/<id>.meta via the snapshot).
+// "-" and "" both mean "no mode" (roomchief/scout metas record "-").
+function boardLiveModes(home, known){
+  var map={}, tasks=(home && home.crew && home.crew.tasks)||[];
+  for(var i=0;i<tasks.length;i++){
+    var m=tasks[i].mode; if(!m||m==='-') continue;
+    var fam=familyOfTaskId(tasks[i].id, known); if(!(fam in map)) map[fam]=m;
+  }
+  return map;
+}
+// The delivery-contract chip row (dashboard shows the MODES a task runs -
+// captain order 2026-08-10). SOLID chip (.cpin) = a token pinned on the row,
+// the captain's recorded word; HOLLOW chip (.cauto) = the mode the live task
+// actually runs with when the row pins none - the chief's own choice, shown
+// so a wrong call is visible while it still runs. One builder, board card +
+// detail + backlog row all render the same vocabulary.
+function contractChips(contract, liveMode){
+  var s='', toks=contractTokens(contract||''), pinnedMode=false;
+  for(var i=0;i<toks.length;i++){
+    if(toks[i].k==='mode') pinnedMode=true;
+    s+='<span class="chipm cpin" title="pinned on the backlog row (the captain\'s record)">'+esc(toks[i].k)+':'+esc(toks[i].v)+'</span>';
+  }
+  if(!pinnedMode && liveMode)
+    s+='<span class="chipm cauto" title="chief-chosen at intake (recorded on the brief/meta, not pinned)">mode:'+esc(liveMode)+'</span>';
+  return s;
+}
 
 // A family's detail IN the page (captain: "load trong page như board"), not a
 // modal over it. It rides morph's preserved-island rule: the whole detail
@@ -8609,6 +8687,7 @@ function pageBoard(){
   var arts=(boardArt[hp]&&boardArt[hp].arts)||[];
   var bd=boardData(b);
   var live=boardLive(r.home, bd.known);
+  var liveModes=boardLiveModes(r.home, bd.known);
   var q=(ui.query||'').toLowerCase();
   var hideDone=boardHideDone();
   // Live system/paned tasks (board-live-panes): panes running with a meta but no
@@ -8629,7 +8708,7 @@ function pageBoard(){
     for(var i=0;i<lines.length;i++){ var f=parseBacklogLine(lines[i]); if(!f.id) continue;
       if(f.epic && bd.known.indexOf(f.epic)>=0) continue;    // nests inside its epic card (unless the epic has no card -> show standalone)
       if(q && lines[i].toLowerCase().indexOf(q)<0) continue;
-      shown++; cards+=boardCard(f, lines[i], key, arts, bd, live[f.id]);
+      shown++; cards+=boardCard(f, lines[i], key, arts, bd, live[f.id], liveModes[f.id]);
     }
     if(key==='in_flight'){ for(var sp=0;sp<sysPanes.length;sp++){ var pn=sysPanes[sp];
       if(q && (pn.id+' '+pn.kind+' '+pn.status).toLowerCase().indexOf(q)<0) continue;
@@ -8650,7 +8729,7 @@ function toggleHideDone(){ var v=!boardHideDone(); try{ localStorage.setItem('ac
 // state ITSELF is derived by the bun-tested storyState, not here).
 var STORY_ICON={done:'✓',in_flight:'●',queued:'○',failed:'✗',abandoned:'⊘'};
 var STORY_BADGE={done:'ok',in_flight:'accent',queued:'',failed:'err',abandoned:'stale'};
-function boardCard(f, line, sectionKey, arts, bd, liveStatus){
+function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode){
   var d=composeFamily({ family:f.id, line:line, section:sectionKey, project:'', artifacts:arts, roomEntries:[], children:(bd.childrenOf[f.id]||[]), knowledgeRepos:[], learningsCiteFamily:false });
   // A standalone (non-epic) family's own card carried no state marker at all,
   // so a [failed]/[abandoned] row was indistinguishable from a real success
@@ -8685,9 +8764,11 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus){
   }
   // A LINK, so the detail is reachable by url, middle-click and back button -
   // it was a button only because the detail used to be a modal.
+  var cchips=contractChips(d.contract, liveMode);
   return '<a class="bcard" href="/fleets/'+enc(currentFleet())+'/board/'+enc(f.id)+'" data-link>'
     +'<div class="cid">'+esc(f.id)+badges+'</div>'
     +'<div class="ct">'+esc(d.text||f.id)+'</div>'
+    +(cchips?'<div class="brow">'+cchips+'</div>':'')
     +(chips?'<div class="brow">'+chips+'</div>':'')
     +prog
     +'<div class="brow"><span class="chipm">repo: '+esc(d.repo||'—')+'</span>'+right+'</div>'
@@ -8804,9 +8885,14 @@ function boardOvList(cls, title, count, rows){
 }
 function boardOverview(d){
   var sec=sectionLabel(d);
+  // The live mode for THIS family off the snapshot the client already holds -
+  // the same join the board column runs (boardLiveModes), never a new fetch.
+  var lm=(boardLiveModes(S.route.home, [d.family])||{})[d.family]||'';
+  var cchips=contractChips(d.contract, lm);
   var rows=boardOvBlock('Description', esc(d.text||'—'))
     +boardOvBlock('Repo'+boardCount(d.repos?d.repos.length:0), boardRepoList(d))
     +boardOvBlock('Status', esc(sec)+(d.merged?' · merged '+esc(d.merged):'')+(d.rollup?' · rollup '+d.rollup.done+'/'+d.rollup.total:''))
+    +boardOvBlock('Delivery contract', cchips||'<span class="muted">— no pins (cheap-path defaults; heavy modes would have asked the captain)</span>')
     +boardOvBlock('Stages', d.stages.length?d.stages.map(function(s){return esc(s.stage);}).join(', '):'—');
   var pr='';
   if(d.prs && d.prs.length){
