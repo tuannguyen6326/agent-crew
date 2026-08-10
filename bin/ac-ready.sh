@@ -145,20 +145,35 @@ snapshot() {
     /^## Done/      { sec = "done";     next }
     /^- \[[ x]\] /  {
       ac_doneline($0, o)
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, o["id"], o["terminal"], o["epic"], o["blockers"], o["blockers_malformed"], o["hold"], o["hold_malformed"]
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, o["id"], o["terminal"], o["epic"], o["blockers"], o["blockers_malformed"], o["hold"], o["hold_malformed"], o["contract"]
     }
   ' "$backlog"
 }
 
+report_lint() {
+  # One WARN line per contract violation across the QUEUED rows, printed after
+  # the report body. A judge, never a gate: an invalid token must be VISIBLE
+  # at the scheduler while the row stays schedulable - enforcement belongs to
+  # ac-brief.sh's escalation gate, which reads the same lint.
+  snapshot | awk 'BEGIN { FS = "\t" } $1 == "queued" && $9 != "" { printf "%s\t%s\n", $2, $9 }' \
+    | while IFS="$(printf '\t')" read -r lid lcon; do
+        ac_contract_lint "$lcon" | while IFS= read -r v; do
+          [ -n "$v" ] || continue
+          printf 'WARN   %s contract: %s\n' "$lid" "$v"
+        done
+      done
+}
+
 cmd_report() {
+  report_lint
   snapshot | awk -v cap="$cap" '
     BEGIN { FS = "\t" }
     {
-      sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8
+      sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; contract = $9
       state[id] = sec
       mark[id] = marker
       if (sec == "inflight" && epic != "" && marker != "epic") flying[epic]++
-      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad }
+      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad; qcon[id] = contract }
     }
     END {
       for (i = 1; i <= n; i++) {
@@ -202,7 +217,12 @@ cmd_report() {
         if (waiting) continue
         if (qepic[id] != "" && flying[qepic[id]] + started[qepic[id]] >= cap) continue
         started[qepic[id]]++
-        if (qepic[id] != "") printf "READY  %s (epic:%s)\n", id, qepic[id]
+        # The contract rides the READY line as INFORMATION - a display, never a
+        # scheduling condition: an invalid token must not stop the row, it must
+        # be visible (the lint lines below the report are the judge).
+        if (qepic[id] != "" && qcon[id] != "") printf "READY  %s (epic:%s) [%s]\n", id, qepic[id], qcon[id]
+        else if (qepic[id] != "") printf "READY  %s (epic:%s)\n", id, qepic[id]
+        else if (qcon[id] != "") printf "READY  %s [%s]\n", id, qcon[id]
         else printf "READY  %s\n", id
       }
     }

@@ -927,6 +927,19 @@ ac_room_file() {
 # walk (section tracking, line numbers, windowing) and only the field extraction
 # is shared.
 #
+# ac_doneline(line, f) ALSO fills f["contract"] - the DELIVERY-CONTRACT token
+# group (delivery-contract-on-the-row): the FIRST leading-run, unquoted `[...]`
+# group whose EVERY whitespace-separated token is `key:value` with a key from
+# the closed set src|flow|mode|rev|qa|promote - e.g.
+# `[src:cap flow:direct mode:local-only rev:no qa:no]` - returned as the bare
+# content, else "". The all-tokens-keyed test is the discriminator that keeps
+# every EXISTING group class untouched: a provenance tag (`[CAPTAIN-ORDERED
+# 2026-08-10 ...]`) carries non-kv words, `[EPIC]`/`[failed]`/`[@held]` carry
+# none, and a backtick-quoted group is a mention exactly as it is for hold.
+# VALUE validity is deliberately NOT judged here - the parser extracts,
+# `ac_contract_lint` (after this block) judges - so a typo'd value surfaces at
+# lint instead of silently vanishing the whole group.
+#
 # ac_doneline(line, f) fills the `f` array (passed by reference; named `f` so it
 # never shadows a caller's own global `out` array - ac-curate has one) with:
 #   f["id"]       - first whitespace token after the `- [ ]`/`- [x]` checkbox.
@@ -1039,9 +1052,9 @@ ac_room_file() {
 # A site needing the failed/abandoned-OR-verb "marker" (ac-learn) composes it:
 # terminal in {failed,abandoned} ? terminal : verb.
 read -r -d '' AC_DONELINE_AWK <<'ACAWK' || true
-function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted) {
+function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv) {
   f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_malformed"] = ""; f["epic"] = ""
-  f["blockers"] = ""; f["blockers_malformed"] = ""; f["date"] = ""; f["verb"] = ""
+  f["blockers"] = ""; f["blockers_malformed"] = ""; f["date"] = ""; f["verb"] = ""; f["contract"] = ""
   rest = line
   sub(/^- \[[ x]\] /, "", rest)
   split(rest, rp, " ")
@@ -1082,7 +1095,21 @@ function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, f
     if (gstart > 1) leftch = substr(line, gstart - 1, 1)
     rightch = substr(line, gend + 1, 1)
     quoted = (leftch == "`" && rightch == "`")
-    if (quoted) {
+    # The delivery-contract group (header note above): leading-run, unquoted,
+    # EVERY token key:value from the closed key set, first one wins. No
+    # contract-shaped content can also be a hold (the key set spells neither
+    # "held" nor "hold"), so claiming the group here steals nothing.
+    hcontent = substr(hgrp, 2, length(hgrp) - 2)
+    callkv = 0
+    if (!quoted && positional && f["contract"] == "" && hcontent != "") {
+      cn = split(hcontent, ctok, /[ \t]+/)
+      callkv = (cn > 0)
+      for (ci = 1; ci <= cn; ci++)
+        if (ctok[ci] !~ /^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/) { callkv = 0; break }
+    }
+    if (callkv) {
+      f["contract"] = hcontent
+    } else if (quoted) {
       # a documentation mention - never a token, never an attempt
     } else if (positional && hgrp == "[@held]") {
       f["hold"] = "1"
@@ -1149,6 +1176,43 @@ function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, f
   }
 }
 ACAWK
+
+# --- delivery-contract lint ----------------------------------------------------
+# ac_contract_lint <contract-content> - one violation per line, empty output
+# when clean, exit 0 always (a judge, not a gate). The VALUE vocabulary lives
+# HERE, the one judge - the parser above extracts shape only. Also flags the
+# two combinations AGENTS.md section 5 already outlaws (flow:staged with
+# rev:no; mode:crew-ship with rev:no) so a contract contradicting the law is
+# loud at the scheduler instead of surprising the pipeline.
+ac_contract_lint() {
+  local c="$1" tok key val flow="" mode="" rev=""
+  [ -n "$c" ] || return 0
+  for tok in $c; do
+    key="${tok%%:*}"; val="${tok#*:}"
+    case "$key" in
+      src)
+        case "$val" in cap|chief|mon|gh|crew|learn) ;; *) printf 'src:%s invalid - want cap|chief|mon|gh|crew|learn\n' "$val" ;; esac ;;
+      flow)
+        flow="$val"
+        case "$val" in direct|staged) ;; *) printf 'flow:%s invalid - want direct|staged\n' "$val" ;; esac ;;
+      mode)
+        mode="$val"
+        case "$val" in crew-ship|direct-pr|local-only) ;; *) printf 'mode:%s invalid - want crew-ship|direct-pr|local-only\n' "$val" ;; esac ;;
+      rev)
+        rev="$val"
+        case "$val" in yes|no) ;; *) printf 'rev:%s invalid - want yes|no\n' "$val" ;; esac ;;
+      qa)
+        case "$val" in yes|no) ;; *) printf 'qa:%s invalid - want yes|no\n' "$val" ;; esac ;;
+      promote)
+        case "$val" in no) ;; *) printf 'promote:%s invalid - want no (always is the default and is never written)\n' "$val" ;; esac ;;
+    esac
+  done
+  [ "$flow" = staged ] && [ "$rev" = no ] \
+    && printf 'flow:staged with rev:no - staged review is mandatory (AGENTS.md section 5)\n'
+  [ "$mode" = crew-ship ] && [ "$rev" = no ] \
+    && printf 'mode:crew-ship with rev:no - crew-ship review is mandatory (AGENTS.md section 5)\n'
+  return 0
+}
 
 # --- task state files ---------------------------------------------------------
 
