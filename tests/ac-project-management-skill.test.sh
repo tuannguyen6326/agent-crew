@@ -45,13 +45,14 @@ assert_contains "$skill" "records/projects.md" "registry file owner"
 assert_contains "$skill" "bin/ac-project-mode.sh" "registry parser owner"
 assert_contains "$skill" "projects/<name>" "clone destination"
 assert_contains "$skill" "read-only over \`projects/\`" "prime directive preserved"
-assert_contains "$skill" "never changes the project registry default" "per-task override never mutates the registry"
+assert_contains "$skill" "The registry carries NO delivery mode" "the registry answers +yolo only - mode is per-task"
+assert_contains "$skill" "never write one into \`records/projects.md\`" "a task's mode never lands in the registry"
 assert_contains "$skill" "Visibility defaults to private" "remote-create consent default"
 
 # --- scope boundary + debrief exclusion --------------------------------------
 assert_contains "$skill" "per-task delivery-mode triage" "does not own task-level mode triage"
 assert_contains "$skill" "not this skill's lifecycle judgment" "crewdeputy home clones are out of scope"
-assert_contains "$skill" "never performs project creation, removal, or mode" "debrief never mutates the registry as cleanup"
+assert_contains "$skill" "never performs project creation, removal, or \`+yolo\` mutation" "debrief never mutates the registry as cleanup"
 
 # --- not seeded to crewmates -------------------------------------------------
 assert_not_contains "$liblines" "$pkg" "skill absent from AC_CREW_SKILLS seeding default"

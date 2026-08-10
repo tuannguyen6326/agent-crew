@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# ac-project-mode.sh - resolve a project's delivery mode from records/projects.md.
+# ac-project-mode.sh - resolve a project's YOLO flag from records/projects.md.
 #
 # Usage: ac-project-mode.sh <project-name>
-# Output: `mode=<crew-ship|direct-pr|local-only> yolo=<on|off>`
+# Output: `yolo=<on|off>`
 #
 # records/projects.md line format (one project per line):
-#   - <name> [<mode>] - <one-line description> (added <date>)
-# The [<mode>] bracket is optional and defaults to `crew-ship` (full
-# pipeline via the crew-ship skill -> PR -> captain merge). `+yolo` inside
-# the bracket lets the orchestrator self-approve routine decisions,
-# e.g. [crew-ship +yolo].
-
+#   - <name> [+yolo] - <one-line description> (added <date>)
+# `+yolo` lets the orchestrator self-approve routine decisions for that
+# project. DELIVERY MODE IS NOT ANSWERED HERE (captain order 2026-08-10:
+# mode is per-task, recorded as the backlog row's contract token `mode:<m>`
+# and resolved by ac-brief.sh - pin > --mode flag > refuse, never a registry
+# default). A legacy `[<mode>]` bracket on a registry line is tolerated and
+# IGNORED so old registries keep resolving yolo without a migration.
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 
@@ -20,11 +21,5 @@ name="${1:-}"
 bracket="$(ac_project_mode "$name")"
 yolo="off"
 case "$bracket" in *"+yolo"*) yolo="on" ;; esac
-mode="$(sed 's/+yolo//; s/^ *//; s/ *$//' <<<"$bracket")"
-[ -n "$mode" ] || mode="crew-ship"
-case "$mode" in
-  crew-ship|direct-pr|local-only) ;;
-  *) ac_die "unknown mode '$mode' for project $name (want crew-ship|direct-pr|local-only)" ;;
-esac
 
-printf 'mode=%s yolo=%s\n' "$mode" "$yolo"
+printf 'yolo=%s\n' "$yolo"

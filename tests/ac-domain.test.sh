@@ -198,6 +198,21 @@ assert_eq "$(grep -c 'assigned:crewchief' "$fleet_backlog" || true)" "0" \
   "AC-6.1: a returned row is indistinguishable from one that never left"
 assert_eq "$(dom_rows)" "0" "AC-6.1: and it is gone from the domain backlog"
 
+# AC-5.4 - a row carrying a delivery-contract group (S1 grammar: the tokens
+# sit in the leading run between id and content) is findable by id, assigns,
+# and returns with its contract byte-identical - the matcher accepts the
+# groups instead of demanding `id - ` adjacency.
+row_pinned='- [ ] pin-fix [src:cap mode:direct-pr rev:no] - a pinned row (repo: alpha)'
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n%s\n%s\n%s\n\n## Done\n' \
+  "$row_local" "$row_other" "$row_pinned" >"$fleet_backlog"
+"$dom" assign payments pin-fix >/dev/null
+assert_eq "$(grep -c 'pin-fix' "$fleet_backlog" || true)" "0" "AC-5.4: the pinned row leaves the fleet ledger"
+assert_contains "$(cat "$dom_backlog")" "[src:cap mode:direct-pr rev:no]" "AC-5.4: the contract rides the move untouched"
+assert_contains "$(cat "$dom_backlog")" "assigned:crewchief" "AC-5.4: provenance stamps a pinned row too"
+"$dom" unassign payments pin-fix >/dev/null
+assert_contains "$(cat "$fleet_backlog")" "$row_pinned" "AC-5.4: the pinned row returns byte-identical"
+assert_eq "$(dom_rows)" "0" "AC-5.4: and leaves the domain backlog"
+
 # AC-5.2 - every refusal leaves BOTH ledgers byte-unchanged, including in a
 # mixed set where some ids would have been legal.
 refuses_assign() {  # refuses_assign <needle> <why> <id>...

@@ -24,8 +24,14 @@ yourself.
    verbatim.
    Staged review is always `yes`; `--review no` is invalid and no review flag
    is needed.
-2. Run the section-5 intake exactly as law: backlog line stating
-   `flow=staged (captain via /order-staged)` + mode + `review=yes` + promote + qa, TRIAGE
+2. Run the section-5 intake exactly as law: WRITE the pinned dimensions
+   onto the backlog row as its delivery-contract token group (section 9
+   grammar) - `src:cap flow:staged rev:yes` plus a token per flag the
+   captain gave (e.g. `[src:cap flow:staged mode:crew-ship rev:yes qa:yes]`);
+   the pin IS the record that skips the escalation ask, today and on every
+   future touch of this row. Unpinned heavy dimensions your OWN triage
+   wants still go through the section-5 escalation ask before you mint
+   them. Then the TRIAGE
    receipt to the family room WITH your reasoning for mode/promote, qa (when
    unpinned), and for the design sub-stages you keep or drop, then start
    the design crewmate (`--stage design`, per-report chief review and

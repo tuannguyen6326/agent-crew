@@ -2233,14 +2233,16 @@ ac_home_resolve() {
 }
 
 ac_project_mode() {
-  # ac_project_mode <project-name> - delivery mode from the
-  # records/projects.md registry line `- <name> [<mode>] - <summary>`;
-  # crew-ship when absent.
+  # ac_project_mode <project-name> - the registry line's bracket content
+  # (`- <name> [+yolo] - <summary>`), empty when the project has no bracket
+  # or no line. Only `+yolo` means anything any more: DELIVERY MODE IS
+  # PER-TASK (captain order 2026-08-10) and a legacy `[<mode>]` here is
+  # tolerated, ignored content - ac-project-mode.sh owns the read.
   local name="$1" reg line
   reg="$(ac_records_dir)/projects.md"
-  [ -f "$reg" ] || { printf 'crew-ship\n'; return 0; }
+  [ -f "$reg" ] || { printf '\n'; return 0; }
   line="$(grep -E "^- $name \[" "$reg" 2>/dev/null | head -n1 || true)"
-  if [ -z "$line" ]; then printf 'crew-ship\n'; return 0; fi
+  if [ -z "$line" ]; then printf '\n'; return 0; fi
   printf '%s\n' "$line" | sed -n 's/^- [^[]*\[\([^]]*\)\].*/\1/p'
 }
 

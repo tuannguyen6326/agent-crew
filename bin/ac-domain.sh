@@ -441,7 +441,7 @@ Either ADOPT it (mint it in records/backlog.md, then assign it - which stamps th
   for item in "$@"; do
     found="$(awk -v id="$item" '
       /^## / { sec = substr($0, 4); next }
-      $0 ~ "^- \\[[ x]\\] " id " - " { n++; s = sec; l = $0 }
+      $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { n++; s = sec; l = $0 }
       END { if (n == 1) printf "%s\t%s\n", s, l }
     ' "$backlog")"
     [ -n "$found" ] || ac_die "no single '## Queued' line for '$item' in $backlog"
@@ -453,7 +453,7 @@ Either ADOPT it (mint it in records/backlog.md, then assign it - which stamps th
       *epic:*) ac_die "'$item' belongs to an epic - moving it would strand its dependents in a ledger the scheduler never reads" ;;
     esac
     awk -v id="$item" '
-      $0 ~ "^- \\[[ x]\\] " id " - " { next }
+      $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { next }
       /blocked-by:/ {
         bb = $0; sub(/.*blocked-by:[ ]*/, "", bb); sub(/ - .*/, "", bb)
         n = split(bb, a, ",")
@@ -519,7 +519,7 @@ cmd_unassign() {
   for item in "$@"; do
     found="$(awk -v id="$item" '
       /^## / { sec = substr($0, 4); next }
-      $0 ~ "^- \\[[ x]\\] " id " - " { n++; s = sec; l = $0 }
+      $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { n++; s = sec; l = $0 }
       END { if (n == 1) printf "%s\t%s\n", s, l }
     ' "$dom_backlog")"
     [ -n "$found" ] || ac_die "no single line for '$item' in $dom_backlog"

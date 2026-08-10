@@ -265,7 +265,7 @@ cmd_handoff() {
   for item in "$@"; do
     found="$(awk -v id="$item" '
       /^## / { sec = substr($0, 4); next }
-      $0 ~ "^- \\[[ x]\\] " id " - " { n++; s = sec; l = $0 }
+      $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { n++; s = sec; l = $0 }
       END { if (n == 1) printf "%s\t%s\n", s, l }
     ' "$backlog")"
     [ -n "$found" ] || ac_die "no line (or more than one) for '$item' in $backlog"
@@ -277,7 +277,7 @@ cmd_handoff() {
       *epic:*) ac_die "'$item' belongs to an epic - moving it would strand its dependents in a ledger that cannot see it satisfied" ;;
     esac
     awk -v id="$item" '
-      $0 ~ "^- \\[[ x]\\] " id " - " { next }
+      $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { next }
       /blocked-by:/ {
         bb = $0; sub(/.*blocked-by:[ ]*/, "", bb); sub(/ - .*/, "", bb)
         n = split(bb, a, ",")
@@ -295,9 +295,19 @@ cmd_handoff() {
     # precondition in this loop, never wave the item through.
     [ -n "$repo" ] \
       || ac_die "'$item' carries no (repo: <name>) token, so its delivery mode cannot be resolved for the AS1 check - fix the backlog line: $line"
-    mode="$("$(dirname "$0")/ac-project-mode.sh" "$repo")"
-    case "$mode" in
-      *"mode=local-only"*) ac_die "'$item' is local-only work (repo: $repo) - it stays with the parent fleet, whose clone is the one a local landing reaches" ;;
+    # Mode is PER-TASK (captain order 2026-08-10): the registry no longer
+    # answers, so the ONLY thing this guard can read is the row's own
+    # contract pin. An unpinned row is unresolvable - refuse and ask for the
+    # pin, exactly like the missing repo token above: after the handoff the
+    # deputy's chief picks the mode autonomously, and local-only is on its
+    # cheap path, so the boundary here is the last point AS1 is enforceable.
+    pin_mode="$(printf '%s\n' "$line" | awk "$AC_DONELINE_AWK"'
+      /^- \[[ x]\] / { ac_doneline($0, o); print o["contract"]; exit }
+    ' | tr " " "\n" | sed -n "s/^mode://p")"
+    [ -n "$pin_mode" ] \
+      || ac_die "'$item' pins no mode on its row, so the AS1 check cannot resolve its delivery mode (the registry no longer answers - mode is per-task). Pin it in the row's contract group (e.g. [mode:direct-pr]) before the handoff: $line"
+    case "$pin_mode" in
+      local-only) ac_die "'$item' is local-only work (repo: $repo) - it stays with the parent fleet, whose clone is the one a local landing reaches" ;;
     esac
     moving="$moving$line
 "

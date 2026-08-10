@@ -26,10 +26,16 @@ flow is PINNED to `direct`. Do not re-triage the flow; everything else
    receipts (for qa, the triage signals are user-facing/DB/financial/
    captain-critical). The REST of the arguments is the captain's order,
    verbatim.
-2. Run the section-5 intake exactly as law: backlog line stating
-   `flow=direct (captain via /order-direct)` + mode + review + promote + qa, TRIAGE
-   receipt to the family room WITH your reasoning for mode/promote and qa
-   when unpinned (flow needs none - the captain pinned it), then brief and
+2. Run the section-5 intake exactly as law: WRITE the pinned dimensions
+   onto the backlog row as its delivery-contract token group (section 9
+   grammar) - `src:cap flow:direct` plus a token per flag the captain gave
+   (e.g. `[src:cap flow:direct mode:crew-ship rev:yes qa:no]`); the pin IS
+   the record that skips the escalation ask, today and on every future
+   touch of this row. Unpinned heavy dimensions your OWN triage wants
+   still go through the section-5 escalation ask before you mint them.
+   Then the TRIAGE receipt to the family room WITH your reasoning for
+   mode/promote and qa when unpinned (flow needs none - the captain
+   pinned it), then brief and
    spawn ONE execution crewmate for implement + delivery. When review is yes,
    `crew-ship` fulfills it inside its engine and other modes call
    `ac-verify codereview` directly. When qa is on (pinned yes, or

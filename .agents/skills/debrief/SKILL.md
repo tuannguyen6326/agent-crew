@@ -40,7 +40,7 @@ Route each candidate to exactly one durable owner:
 - Every unresolved captain choice becomes a `GATE:` or `ASK:` in its family room, and the backlog line records the blocked status or dependency when that choice blocks work.
 - Durable fleet-local gotchas and lessons go to `records/learnings.md` through `bin/ac-learn.sh note`, never a hand-append: it places them under `## Pending`, the only section the next Learning transaction reads, while an append at end-of-file lands after `## Distilled`, where that transaction deletes it.
 - Captain preferences and standing decisions go to `records/captain.md`.
-- Project registration, delivery mode, and retirement changes go to `records/projects.md`.
+- Project registration, `+yolo` posture, and retirement changes go to `records/projects.md` (delivery mode is per-task - it lives on backlog rows, never in the registry).
 - Record only project changes that were already authorized and completed, because `/debrief` never creates, removes, or changes a project's mode as cleanup.
 - Project-intrinsic facts go to that project's `AGENTS.md` through normal crew delivery, never through a direct debrief edit.
 - A verified codebase fact that does not warrant an `AGENTS.md` change goes to `records/repo-knowledge/<name>.md` via `ac-know.sh add --fact` - the one-line direct write any crewmate may make, so it need not die with the session or become a whole queued task.

@@ -20,7 +20,7 @@
 #
 # Line format (one job per line):
 #   - <id> [on|off] cadence:<cadence> recreate:<exact re-create action>
-# Mirrors the records/projects.md bracket-mode grammar (ac_project_mode).
+# Mirrors the records/projects.md bracket grammar (ac_project_mode).
 #
 # Always prints its "-- standing jobs --" header, unlike the pool-health
 # ride-along which stays silent when healthy: a standing job with no

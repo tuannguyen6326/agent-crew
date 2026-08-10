@@ -578,16 +578,18 @@
 
 <section id="modes">
   <h2>Delivery modes</h2>
-  <p class="sub">Registered per project in <code>records/projects.md</code>; picked per task at intake.</p>
+  <p class="sub">Picked per task at intake and pinned on the backlog row — never a registry property.</p>
   <div class="tablewrap"><table>
     <tr><th>Mode</th><th>What the crewmate does</th><th>How it lands</th></tr>
-    <tr><td><code>crew-ship</code></td><td>Runs the built-in 8-step pipeline (default)</td><td>PR → captain approves → <code>ac-pr-merge.sh</code></td></tr>
+    <tr><td><code>crew-ship</code></td><td>Runs the built-in 8-step pipeline (time-expensive — needs the captain's word)</td><td>PR → captain approves → <code>ac-pr-merge.sh</code></td></tr>
     <tr><td><code>direct-pr</code></td><td>Pushes <code>crew/&lt;id&gt;</code> and opens a PR, no pipeline</td><td>PR → captain approves → merge</td></tr>
     <tr><td><code>local-only</code></td><td>Leaves work merge-ready on <code>crew/&lt;id&gt;</code>, never pushes</td><td><code>ac-merge-local.sh</code> fast-forward after approval</td></tr>
   </table></div>
-  <p>The registry mode is a <strong>default, not a law</strong> — the captain's words win,
-  then triage. <code>+yolo</code> lets the crewchief self-approve routine reversible calls;
-  destructive actions and merges always need the captain.</p>
+  <p>Mode is <strong>per-task, never a registry default</strong> — a backlog-row pin is the
+  captain's recorded word; unpinned, the chief picks cheap modes autonomously and must ask
+  (with the reason) before <code>crew-ship</code>, <code>staged</code>, review, or QA.
+  <code>+yolo</code> stays per-project and lets the crewchief self-approve routine reversible
+  calls; destructive actions and merges always need the captain.</p>
 </section>
 
 <section id="supervision">

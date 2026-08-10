@@ -60,10 +60,16 @@ assert_contains "$out" "unlanded work" "refusal names the unlanded work"
 assert_contains "$out" "ac-promote.sh s1" "refusal points at ac-promote.sh"
 assert_file "$AC_HOME/state/s1.meta" "meta survives the refusal"
 
-# ---- Case 2: promote in place -> kind=ship, mode from the registry ----------
-out="$("$BIN/ac-promote.sh" s1)"
+# ---- Case 2: promote in place -> kind=ship, mode EXPLICIT (per-task) --------
+# Mode is per-task (captain order 2026-08-10): a bare promote refuses - the
+# registry default is gone, and a promotion is exactly the moment the task
+# acquires a mode.
+out="$("$BIN/ac-promote.sh" s1 2>&1)" && fail "a bare promote must refuse: mode is per-task now"
+assert_contains "$out" "mode unspecified" "the refusal names the missing mode"
+assert_eq "$(meta_get s1 kind)" "scout" "a refused promote flips nothing"
+out="$("$BIN/ac-promote.sh" s1 --mode local-only)"
 assert_contains "$out" "kind scout -> ship" "promote prints the kind flip"
-assert_contains "$out" "mode=local-only" "mode resolved from the registry"
+assert_contains "$out" "mode=local-only" "the explicit mode is recorded"
 assert_contains "$out" "window not reachable" "gone window reported, not fatal"
 assert_eq "$(meta_get s1 kind)" "ship" "meta kind flipped to ship"
 assert_eq "$(meta_get s1 mode)" "local-only" "meta mode recorded"
@@ -101,11 +107,29 @@ mk_meta s6 "$repo6" scout
 assert_fails "$BIN/ac-promote.sh" s6 --mode bogus
 assert_eq "$(meta_get s6 kind)" "scout" "bad --mode leaves the meta untouched"
 
-# ---- Case 7: --mode overrides the registry default --------------------------
+# ---- Case 7: cheap modes promote on the chief's own authority ---------------
 "$BIN/ac-promote.sh" s6 --mode direct-pr >/dev/null
 assert_eq "$(meta_get s6 kind)" "ship" "--mode promote flips kind"
-assert_eq "$(meta_get s6 mode)" "direct-pr" "--mode wins over the registry"
+assert_eq "$(meta_get s6 mode)" "direct-pr" "the explicit mode is the record"
 rm -f "$AC_HOME/state/s6.meta" "$AC_HOME/state/s6.status"
+
+# ---- Case 7b: crew-ship is a time-expensive choice - captain's word only ----
+repo7="$(make_repo p7)"
+mk_meta s7 "$repo7" scout
+out="$("$BIN/ac-promote.sh" s7 --mode crew-ship 2>&1)" \
+  && fail "promoting into crew-ship without the captain's word must refuse"
+assert_contains "$out" "time-expensive" "the refusal names the escalation rule"
+assert_contains "$out" "REASON" "the refusal demands the reason ride the ask"
+assert_contains "$out" "--captain-requested" "the refusal names the remedy"
+assert_eq "$(meta_get s7 kind)" "scout" "a refused promotion flips nothing"
+out="$("$BIN/ac-promote.sh" s7 --mode direct-pr --captain-requested 'order ref' 2>&1)" \
+  && fail "declaring authority the cheap path never needed must refuse"
+assert_contains "$out" "nothing to authorize" "an idle declaration is refused"
+"$BIN/ac-promote.sh" s7 --mode crew-ship --captain-requested 'captain: run the pipeline on s7' >/dev/null
+assert_eq "$(meta_get s7 mode)" "crew-ship" "the declared promotion records the mode"
+assert_contains "$(cat "$AC_HOME/state/s7.status")" "captain-requested: captain: run the pipeline on s7" \
+  "the captain's word rides the status record"
+rm -f "$AC_HOME/state/s7.meta" "$AC_HOME/state/s7.status"
 
 # ---- Case 8: a live window gets the ship-contract notice ---------------------
 # Simulate s8's live pane: the recorded pane handle + live fake pane files
@@ -115,7 +139,7 @@ mk_meta s8 "$repo8" scout
 printf 'p80 t80\n' >"$AC_HOME/state/.pane-s8"
 printf 'p80\n' >"$FAKE_HERDR/tabs/t80"
 : >"$FAKE_HERDR/panes/p80.buf"
-out="$("$BIN/ac-promote.sh" s8)"
+out="$("$BIN/ac-promote.sh" s8 --mode local-only)"
 assert_contains "$out" "notified crewmate s8" "live window gets the notice"
 assert_contains "$(cat "$(fake_pane_buf s8)")" "crew/s8" "notice names the crew branch"
 

@@ -42,21 +42,19 @@ If it prints `WATCHER-DOWN`, arm the watcher immediately as the harness's OWN ba
 
 ## 4. Projects
 
-Register each project as one line in `records/projects.md`: `- <name> [<mode>] - <one-line description> (added <date>)`.
-Modes - pick by the project's DELIVERY TARGET and the task's RISK, not by habit:
-- `crew-ship` (default): ship pipeline -> PR -> captain merges. For a shared or production repo, a remote+team-reviewed PR, or ANY risky/substantial change (even on a `direct-pr`/`local-only` project) - the 8-step pipeline's independent review, tests, docs and guarded push are the gate the change earns.
+Register each project as one line in `records/projects.md`: `- <name> [+yolo] - <one-line description> (added <date>)`.
+MODE IS PER-TASK, never a registry property (captain order 2026-08-10):
+the delivery mode is chosen at intake per task and RECORDED as the row's
+contract token `mode:<m>` (section 9 owns the grammar); `ac-brief.sh`
+refuses an unspecified mode - row pin > `--mode` flag > refuse, never a
+default - so the choice is always explicit and on the record. A legacy
+`[<mode>]` on a registry line is tolerated, ignored content. Pick by the
+task's DELIVERY TARGET and RISK, not by habit:
+- `crew-ship`: ship pipeline -> PR -> captain merges. For a shared or production repo, a remote+team-reviewed PR, or ANY risky/substantial change (even a task on a repo that usually takes `direct-pr`/`local-only` work) - the 8-step pipeline's independent review, tests, docs and guarded push are the gate the change earns. A TIME-EXPENSIVE choice: the section 5 escalation clause applies.
 - `direct-pr`: PR without the pipeline (a ship-docs pass, then push + PR). For a change small and low-risk enough that the pipeline is overkill, or a project carrying no pipeline config (`projects/<name>.yaml`).
 - `local-only`: crew branch merged into the LOCAL default branch by you after approval, NEVER pushed. For a project with no remote, or the distro's own tooling / captain-side work the captain merges in place (AS1 keeps local-only with the parent fleet).
-The registry mode is the project DEFAULT, not a law: delivery mode is
-picked PER TASK at intake with the standard ladder - (1) the captain's
-words in the order, (2) the registry default, (3) your own triage when
-the default clearly misfits THIS task (e.g. a risky change on a
-direct-pr project deserves the pipeline). State the chosen mode in the
-backlog line next to the flow; pass it explicitly with
-`ac-brief.sh/ac-spawn.sh --mode <m>` when it differs from the registry;
-ask the captain only when you genuinely cannot decide (why + options +
-lean). `+yolo` stays per-project regardless of the task's mode.
-Resolve the default with `bin/ac-project-mode.sh <name>`; never guess.
+`+yolo` stays per-project - the ONE thing `bin/ac-project-mode.sh` still
+answers.
 Clone projects into `projects/<name>` yourself when the captain adds one.
 
 ## 5. Task lifecycle
@@ -64,8 +62,23 @@ Clone projects into `projects/<name>` yourself when the captain adds one.
 Two flows exist; pick one for EVERY captain order, AT INTAKE, before any
 brief is written. Precedence: (1) the captain's own words in the order,
 (2) `config/flow` (`direct` / `staged` pin it for the whole home),
-(3) `auto` (default) - the triage below decides. In `auto` YOU decide, by
-yourself: choosing the flow is routine judgment, not a captain decision.
+(3) `auto` (default) - the triage below decides. In `auto` YOU triage -
+and the TIME-EXPENSIVE choices ask first (captain order 2026-08-10):
+using ANY of `flow:staged`, `mode:crew-ship`, `qa:yes`, or a
+discretionary `rev:yes` requires the captain's confirmation BEFORE use,
+carried as ONE bundled ask (section 8 etiquette) whose question states
+the REASON each heavy value is warranted (the signal: financial surface,
+behavioral surface, multi-file risk, ...), unless the row's contract
+group already pins that token - a pin is pre-consent and is never
+re-asked. The cheap path (`direct`, `direct-pr`/`local-only`, `rev:no`,
+`qa:no`) stays fully autonomous. `ac-brief.sh` enforces this
+mechanically (the escalation gate): a heavy value with neither a row pin
+nor `--captain-requested '<the captain's words>'` refuses to scaffold.
+The captain's answer is written onto the row as contract tokens, so the
+ask happens at most once per task ever. A STANDING captain rule may
+pre-authorize a CLASS of rows (the captain's words, recorded in
+`records/captain.md`) - you mint the tokens from it and cite the rule;
+chief judgment alone never mints a heavy token.
 State the chosen flow in the backlog line so the decision is on record,
 AND post the reasoning to the family room the moment you triage:
 `TRIAGE: flow=<f> mode=<m> promote=<p> - why: <one line per non-obvious
@@ -81,7 +94,7 @@ independent flips, because the same signals move several at once. An
 irreversible, financial, or product-behavior change pulls `staged`
 (usually from `spec`), a `qa` gate, and the captain-required
 pre-implement gate together; a trivial, mechanical change with clear
-requirements is `direct`, no `qa`, the registry mode, unpromoted. When
+requirements is `direct`, no `qa`, a cheap mode, unpromoted. When
 one dimension lands out of step with the rest - `staged` design but no
 `qa` on a financial change, or a captain gate on a trivial one - that
 mismatch is the tell you mis-read a signal, so re-read before you
@@ -513,7 +526,7 @@ When the family is promoted at intake, steps 2-3 belong to its ROOMCHIEF, not to
 A crewmate the crewchief spawns instead carries no family scope for its whole life, so its completions push-file to the fleet spool and reach the roomchief only through a manual forward.
 
 1. Record the task in `records/backlog.md` (section 9) and pick a short id (`[a-z0-9-]`).
-2. `bin/ac-brief.sh <id> <project> [--scout | --stage <spec|architecture|plan|design|implement|qa>] [--mode <m>] [--review yes|no] [--captain-requested <ref>]` scaffolds the brief (flat `data/<id>/brief.md`, or nested `data/<family>/<stage>/brief.md` for staged flows), derives and records the review obligation, and refuses normal `code-review`/`ship` stages; edit it with the real task, constraints, acceptance criteria, and stage inputs before spawning.
+2. `bin/ac-brief.sh <id> <project> [--scout | --stage <spec|architecture|plan|design|implement|qa>] [--mode <m>] [--review yes|no] [--captain-requested <ref>]` scaffolds the brief (flat `data/<id>/brief.md`, or nested `data/<family>/<stage>/brief.md` for staged flows), resolves the mode (row pin > `--mode`; REQUIRED for non-scout work - the registry default is gone), runs the escalation gate (a heavy value needs a row pin or `--captain-requested`, section 5 clause above), derives and records the review obligation, and refuses normal `code-review`/`ship` stages; edit it with the real task, constraints, acceptance criteria, and stage inputs before spawning. `ac-spawn.sh` reads the brief's recorded `Mode:` - ONE resolver; a contradicting spawn flag refuses.
 3. `bin/ac-spawn.sh <id> <project> [--scout] [--harness <h>] [--model <m>] [--effort <e>] [--backend <b>]` leases a pooled worktree INSIDE the project repo (`<repo>/.crew/worktrees/<n>`), opens a herdr tab (the only session backend) in the task FAMILY's workspace - every pane of one family (chief, crewmates, verification panes, watch tabs) co-tenants one `<fleet> · <family>` workspace, fleet-level panes the root `<fleet>` one (`bin/ac-backend.sh` FAMILY WORKSPACE GROUPING owns the contract) - and launches the harness on the brief.
    Model and effort are fleet-wide defaults: absent `--model`/`--effort` fall back to `config/model` and `config/effort`; the `--effort` FLAG (`low|medium|high|xhigh|max|ultracode`) is claude-only, while the effort VALUE also reaches codex as its `-c model_reasoning_effort=<tier>` config override, and opencode ignores it.
    `--effort ultracode` launches claude at `xhigh` and types `/effort ultracode` into the built-in claude TUI to add the workflow-orchestration layer (claude built-in only; `AC_ULTRACODE_SETTLE` gates the pause before the kickoff prompt).
@@ -1040,6 +1053,22 @@ both directions: a bare (unquoted) token-shaped group outside the leading run
 still reads HELD hold malformed, never READY - position denies it authority,
 but a real hold mis-placed by one keystroke must not silently schedule
 either.
+The DELIVERY-CONTRACT token group: ONE leading-run `[...]` group whose
+EVERY whitespace-separated token is `key:value` from the closed key set
+`src|flow|mode|rev|qa|promote` - e.g.
+`[src:cap flow:direct mode:local-only rev:no qa:no]`. The all-tokens-keyed
+shape is the discriminator: a leading-run group with any non-`key:value`
+content keeps its existing class (provenance prose, `[EPIC]`, `[@held]`).
+`AC_DONELINE_AWK` (`f["contract"]`) is the ONE parser; `ac_contract_lint`
+(ac-lib.sh) the one value judge; `bin/ac-ready.sh` displays the group on
+READY lines and WARNs on violations - display and judgment, never a
+scheduling condition; the enforcement point is `ac-brief.sh`'s escalation
+gate (section 5). `src` values: `cap` (captain order), `chief`
+(chief-minted), `mon` (monitor), `gh` (github), `crew` (routed up),
+`learn` (Learning/Curate). A heavy token (`flow:staged`, `mode:crew-ship`,
+`rev:yes`, `qa:yes`) on a row is the captain's PIN - writing one without
+the captain's word is exactly the drift this grammar exists to stop.
+
 A row `bin/ac-domain.sh assign` moved into a crewdomain backlog carries the
 provenance token `assigned:crewchief`, in the position the grammar gives
 `epic:<id>`; `unassign` strips it, and a domain-backlog row WITHOUT it is

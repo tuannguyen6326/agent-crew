@@ -89,8 +89,9 @@ assert_no_file "$TMP/orphan/state" "a refused report creates nothing in the woul
 # invisible parent backlog is what this closes. Scope judgment stays with the
 # chief - the tool moves exactly what it is told, or nothing at all.
 
-qmove='- [ ] qmove - move me (repo: alpha)'
-qlocal='- [ ] qlocal - land it locally (repo: locrepo)'
+qmove='- [ ] qmove [mode:direct-pr] - move me (repo: alpha)'
+qlocal='- [ ] qlocal [mode:local-only] - land it locally (repo: locrepo)'
+qnopin='- [ ] qnopin - no contract pin (repo: alpha)'
 qepic='- [ ] qepic - a story (repo: alpha); epic:bigone'
 own='- [ ] own1 - the deputy own queued work (repo: alpha)'
 reset_backlog() {
@@ -102,10 +103,11 @@ reset_backlog() {
 
 ## Queued
 $qmove
-- [ ] qkeep - keep me (repo: alpha)
+- [ ] qkeep [mode:direct-pr] - keep me (repo: alpha)
 - [ ] q1 - the blocker (repo: alpha)
 - [ ] q2 - the dependent (repo: alpha) blocked-by: q1 - waits on q1
 - [ ] qnorepo - a malformed line with no repo token
+$qnopin
 $qlocal
 $qepic
 
@@ -150,6 +152,10 @@ refuses "epic" pay qepic
 refuses "blocked-by" pay q1
 # AS1: a local landing in a deputy clone never reaches the parent's clone.
 refuses "local-only" pay qlocal
+# ...and with the registry out of the mode business (mode is per-task), an
+# UNPINNED row is unresolvable: the boundary is the last point AS1 can be
+# enforced, so it refuses and asks for the pin instead of waving it through.
+refuses "pins no mode" pay qnopin
 # AS1 is the single mechanical enforcement of the assumption most likely to be
 # vetoed, so an input it cannot resolve must REFUSE, not wave the item through.
 refuses "(repo: <name>) token" pay qnorepo
