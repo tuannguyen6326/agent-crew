@@ -18,6 +18,10 @@
 # bug - all N are genuinely running concurrently.
 #
 # Usage: run-suite.sh [--jobs N] [--changed] [<tests-dir>]
+#
+# Exit: 0 all green; 1 one or more tests failed; 2 bad args / empty selection;
+# 3 REFUSED - SIGINT is ignored in this context (an async invocation) and could
+# not be repaired, so two tests would false-red. See the signal-delivery probe.
 #   --jobs N     run up to N test files concurrently (default 1, sequential).
 #                See the parallel-mode note below before raising it.
 #   --changed    narrow the run to tests mapped from the changed set (staged +
@@ -131,6 +135,59 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 default_dir="$ROOT/tests"
+
+# SIGNAL-DELIVERY probe, and a self-repair when it fails - the same "capability
+# probe, never a guess" discipline as the timeout check below, applied to the
+# one environment property this suite's own assertions depend on.
+#
+# THE DEFECT IT CLOSES, measured 2026-08-10 with everything else held constant:
+# run this runner as an ASYNC COMMAND (`run-suite.sh &`, a `nohup ... &`, a
+# cron or standing-job invocation) and it reports two FALSE FAILURES -
+# ac-watch.test.sh ("'signal:INT' not found in: heartbeat") and
+# run-suite.test.sh ("the runner must deliver SIGINT normally") - while both
+# pass standalone and the same tree is 107/107 green run in the foreground.
+#
+# WHY, and note this is NOT the TTY (a foreground run with no controlling
+# terminal delivers INT fine - measured): bash forces SIGINT/SIGQUIT to SIG_IGN
+# in an async command when job control is off, and that disposition SURVIVES
+# fork and exec into every descendant. The `set -m` around each spawn below
+# fixes the case where THIS runner is the one backgrounding - it cannot undo a
+# disposition this process INHERITED. Neither can anything else in bash:
+# measured, `set -m` alone, `trap - INT`, and `trap "" INT; trap - INT` all
+# leave the child unable to see INT (child_exit 0 where 42 is expected), which
+# is POSIX - a shell entered with a signal ignored may not re-arm it.
+#
+# So the probe RUNS the property rather than inferring it, and on failure the
+# only thing that does work is used: re-exec through a helper that resets the
+# disposition at the syscall layer. python3 is used ONLY on that already-broken
+# path, never on the healthy one, so it is not a new dependency for an ordinary
+# run - and if it is absent the runner REFUSES rather than reporting a red it
+# caused itself. A verdict that gates Learning must never be a false red.
+if [ "${AC_SUITE_INT_REPAIRED:-0}" != 1 ]; then
+  int_probe() {
+    set -m
+    ( trap 'exit 42' INT; sleep 5 ) & local c=$!
+    set +m
+    sleep 0.3
+    kill -INT "$c" 2>/dev/null || true
+    wait "$c" 2>/dev/null
+    [ "$?" = 42 ]
+  }
+  if ! int_probe; then
+    if command -v python3 >/dev/null 2>&1; then
+      printf 'run-suite: SIGINT is ignored in this context (an async/backgrounded invocation) - re-execing with the disposition reset, or two tests would false-red\n' >&2
+      export AC_SUITE_INT_REPAIRED=1
+      exec python3 -c 'import signal, os, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execv("/bin/bash", ["bash"] + sys.argv[1:])' \
+        "${BASH_SOURCE[0]}" "$@"
+    fi
+    printf 'run-suite: REFUSING to run - SIGINT is ignored in this context, so ac-watch.test.sh and\n' >&2
+    printf '  run-suite.test.sh would FALSE-RED (they assert a process dies from INT). bash cannot\n' >&2
+    printf '  re-arm a signal it inherited as ignored, and python3 (the one repair) is absent here.\n' >&2
+    printf '  Run it in the FOREGROUND: tests/run-suite.sh\n' >&2
+    printf '  A false red on this suite gates every Learning DISTILL, so refusing beats reporting it.\n' >&2
+    exit 3
+  fi
+fi
 
 jobs=1
 changed=0
