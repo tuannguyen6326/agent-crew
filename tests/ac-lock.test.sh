@@ -28,14 +28,56 @@ make_home
 state="$AC_HOME/state"
 lockf="$state/.session-lock"
 
+# fifo_hold <fifo> <ttl-secs> - background a fifo-blocked holder that is BOTH
+# bounded and stdout-detached, and print its pid.
+#
+# Two failure modes, and this file needed a shape that closes both. The one
+# that wedges a CALLER: an orphaned holder inherits the runner's stdout, so it
+# holds the caller's capture pipe open for as long as it lives - a red run then
+# hangs its caller even though the runner has exited (measured by the sibling
+# family at @b7c3dc4). The one that wedges the RUN: no bound at all, so a
+# holder whose release path never fires blocks forever.
+#
+# tests/helpers.sh hold_open closes both, and this file CANNOT use it - that is
+# measured, not assumed. hold_open bounds the wait by opening the fifo
+# READ-WRITE (`exec 3<>fifo`), which is the only form that bounds, because
+# `read -r -t N _ <fifo` bounds the READ and not the OPEN (a plain `<fifo`
+# blocks in open() until a writer arrives; a holder was measured still alive 2s
+# past a 1s TTL). But a read-write holder is also a WRITER, so the gate never
+# reaches EOF when the release path closes it - and this file's release paths
+# are built on exactly that EOF. Converting these sites to hold_open wedged the
+# suite outright (no progress past the spare-gate cases against a 22s green).
+#
+# So the bound comes from OUTSIDE the holder instead: the holder keeps its
+# plain read-only `<fifo` open, semantics untouched, and a detached watchdog
+# kills it after <ttl>. The watchdog never touches the fifo, so nothing about
+# EOF or reader-count changes; it only guarantees the holder cannot outlive the
+# run. Both processes redirect their own output, so neither can hold a caller's
+# pipe.
+#
+# TTLs are set from the measured green runtime of this file (22s), not copied
+# from the sibling's 90: a gate held for one case takes 60s (~40x the longest
+# real hold here), and the FOREIGN holder - which must survive the WHOLE file
+# by design - takes 300s, an order of magnitude over the run so a loaded box
+# cannot expire the live foreign pid every later case depends on.
+fifo_hold() {
+  local fifo="$1" ttl="$2" h
+  ( read -r _ <"$fifo" ) >/dev/null 2>&1 &
+  h=$!
+  ( sleep "$ttl"; kill -9 "$h" 2>/dev/null || true ) >/dev/null 2>&1 &
+  printf '%s\n' "$h"
+}
+
 # A live process that is not this test: the "other chief session". A
 # fifo-blocked reader (blocks in open() for want of a writer), so it stays
 # alive for the WHOLE test - never expiring like a `sleep N` whose freed pid
 # could be reused, then TERMed out-of-fixture by the EXIT-trap kill. Reaped by
-# its recorded pid below.
+# its recorded pid below. Bounded well past the run (see fifo_hold): a holder
+# that outlives a crashed runner is the leak this file is being hardened
+# against, and "it dies with the trap" is only true when the trap runs.
 FOREIGN_HOLD="$TMP/foreign.hold"
 mkfifo "$FOREIGN_HOLD"
-( read -r _ <"$FOREIGN_HOLD" ) & FOREIGN=$!
+FOREIGN="$(fifo_hold "$FOREIGN_HOLD" 300)"
 kill_foreign() { kill "$FOREIGN" 2>/dev/null || true; wait "$FOREIGN" 2>/dev/null || true; cleanup; }
 trap kill_foreign EXIT
 
@@ -210,7 +252,19 @@ cat >"$sparebin/wrapper.sh" <<EOF
 # can finish configuring the ps stub for this EXACT real pid before release,
 # then execs into ac-lock.sh acquire AS THIS SAME PID (exec never changes
 # \$\$) - self_pid()'s own identity stays 100% real.
+#
+# This one cannot use fifo_hold: it must EXEC as this same pid, so the holder
+# and the thing under test are one process. The bound is therefore a watchdog
+# this process kills ITSELF before exec'ing - fired only while we are still the
+# wrapper, so it can never reach the ac-lock.sh run (or, after it exits, a
+# recycled pid).
+( sleep 60; kill -9 \$\$ 2>/dev/null ) >/dev/null 2>&1 &
+_wd=\$!
+# The read's STATUS is deliberately ignored: the release path closes the gate
+# with no newline, so EOF must still acquire (a bare `|| exit 0` here breaks
+# the spare-A case - measured).
 read -r _ <"\$1"
+kill "\$_wd" 2>/dev/null || true
 exec "$BIN/ac-lock.sh" acquire
 EOF
 chmod +x "$sparebin/wrapper.sh"
@@ -403,12 +457,12 @@ spawn_sessions() {
   # MUST run in the caller's shell (never `$(...)`) so the RACE_PIDS append
   # persists AND each holder is a direct child this shell can `wait` on - a
   # command substitution would drop the append and reparent the holders to init.
-  local n="$1" i=0
+  local n="$1" i=0 sh_pid
   SESSIONS=""
   while [ "$i" -lt "$n" ]; do
-    ( read -r _ <"$SESS_HOLD" ) >/dev/null 2>&1 &
-    SESSIONS="$SESSIONS $!"
-    RACE_PIDS="$RACE_PIDS $!"
+    sh_pid="$(fifo_hold "$SESS_HOLD" 60)"
+    SESSIONS="$SESSIONS $sh_pid"
+    RACE_PIDS="$RACE_PIDS $sh_pid"
     i=$((i + 1))
   done
 }
