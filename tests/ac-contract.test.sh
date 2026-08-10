@@ -200,6 +200,21 @@ out="$("$BIN/ac-spawn.sh" g-spawncheck "$AC_HOME/projects/gproj" --harness fake 
   && fail "G9: a spawn flag contradicting the brief's Mode must refuse"
 assert_contains "$out" "contradicts the brief's recorded Mode" "G9: the refusal names the record"
 
+# G10: pins live on the FAMILY row - a staged call's id is <family>-<stage>,
+# and the gate must resolve the family's contract for it (the live demo
+# caught the exact-id-only lookup reading a pinned family as unpinned; the
+# G-fixture rows had masked it by pinning stage ids directly).
+printf -- '- [ ] g-fampin [src:cap flow:staged mode:crew-ship rev:yes qa:no] - family-pinned staged work (repo: gproj)\n' \
+  >>"$AC_HOME/records/backlog.md"
+"$BIN/ac-brief.sh" g-fampin-spec gproj --stage spec >/dev/null \
+  || fail "G10: the family row's pin must authorize the stage call (nothing re-asked)"
+"$BIN/ac-brief.sh" g-fampin gproj --stage implement >/dev/null \
+  || fail "G10: the family pin authorizes the implement stage too"
+assert_contains "$(cat "$AC_HOME/data/g-fampin/implement/brief.md")" "Mode: crew-ship" \
+  "G10: the recorded mode comes from the family pin"
+assert_contains "$(cat "$AC_HOME/data/g-fampin/implement/brief.md")" "Review: yes" \
+  "G10: staged review rides the pin's authority"
+
 # --- differential: the TS twin extracts byte-identically ----------------------
 # bin/dashboard.ts parseBacklogLine().contract is the browser-side twin of
 # AC_DONELINE_AWK's f["contract"] - one grammar, two hosts. Drive BOTH parsers

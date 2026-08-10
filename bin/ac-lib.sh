@@ -1184,6 +1184,30 @@ ACAWK
 # two combinations AGENTS.md section 5 already outlaws (flow:staged with
 # rev:no; mode:crew-ship with rev:no) so a contract contradicting the law is
 # loud at the scheduler instead of surprising the pipeline.
+ac_row_contract_for_id() {
+  # ac_row_contract_for_id <id> <backlog-file> - the delivery-contract group
+  # governing <id>: the exact row when one exists, else the FAMILY row (a
+  # staged task's id is <family>-<stage>[-rN], but its pins live on the
+  # family's ledger row - the escalation-gate demo caught the exact-only
+  # lookup reading a pinned family as unpinned). An exact row's NON-EMPTY
+  # contract wins over the family's (more specific consent beats broader);
+  # a contractless exact row falls through - the grammar has no "empty
+  # group revokes the family pin" concept. Prints "" when neither row
+  # carries a contract.
+  local id="$1" f="$2" fam sub out
+  [ -f "$f" ] || { printf '\n'; return 0; }
+  out="$(awk -v want="$id" "$AC_DONELINE_AWK"'
+    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
+  ' "$f")"
+  if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
+  sub="$(ac_stage_dir_for_id "$id")"
+  [ -n "$sub" ] || { printf '\n'; return 0; }
+  fam="${sub%%/*}"
+  awk -v want="$fam" "$AC_DONELINE_AWK"'
+    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
+  ' "$f"
+}
+
 ac_contract_lint() {
   local c="$1" tok key val flow="" mode="" rev=""
   [ -n "$c" ] || return 0

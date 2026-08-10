@@ -152,9 +152,8 @@ mode=""
 if [ "$stage" != scout ]; then
   _early_pin_mode=""
   if [ -f "$(ac_records_dir)/backlog.md" ]; then
-    _early_pin_mode="$(awk -v want="$id" "$AC_DONELINE_AWK"'
-      /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
-    ' "$(ac_records_dir)/backlog.md" | tr " " "\n" | sed -n "s/^mode://p")"
+    _early_pin_mode="$(ac_row_contract_for_id "$id" "$(ac_records_dir)/backlog.md" \
+      | tr " " "\n" | sed -n "s/^mode://p")"
   fi
   if [ -n "$mode_flag" ]; then
     case "$mode_flag" in
@@ -234,9 +233,7 @@ review_line="${review_line:-$review}"
 row_contract=""
 backlog_file="$(ac_records_dir)/backlog.md"
 if [ -f "$backlog_file" ]; then
-  row_contract="$(awk -v want="$id" "$AC_DONELINE_AWK"'
-    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
-  ' "$backlog_file")"
+  row_contract="$(ac_row_contract_for_id "$id" "$backlog_file")"
 fi
 pin_flow=""; pin_mode=""; pin_rev=""; pin_qa=""
 for _tok in $row_contract; do
