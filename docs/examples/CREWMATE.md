@@ -137,9 +137,14 @@ brief is the contract, skills are tools.
 ## Repo knowledge
 
 Your brief names the per-project repo-knowledge record - what earlier families
-VERIFIED about this codebase. Read it before your first change, and re-verify
-before you rely on any entry: a stale fact stated confidently is worse than no
-fact, and re-checking one is a single command.
+VERIFIED about this codebase - and bakes an `ask:` line that reads it BY YOUR
+QUESTION, ranked and capped, walking the fleet's consolidated scenes first.
+Ask before your first change, and again whenever you are about to re-derive
+something a prior family may have proved: re-deriving a proved fact burns your
+window, and a stale fact stated confidently is worse than no fact - re-checking
+one is a single command. Cite the one hit you actually rely on with the command
+the ask's output hands you: an uncited read is invisible to the fleet's
+re-verify/retire priority.
 
 Run the `ac-know.sh` lines your brief names VERBATIM. They carry the `--home`
 your pane cannot resolve, and a write without it lands in the wrong fleet's

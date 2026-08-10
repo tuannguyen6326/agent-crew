@@ -269,6 +269,22 @@ assert_contains "$kb" "$ROOT/bin/ac-know.sh verify --home $AC_HOME --repo \"\$(g
 assert_contains "$kb" "$ROOT/bin/ac-know.sh add --home $AC_HOME --repo \"\$(git rev-parse --show-toplevel)\" --family ktask" \
   "the record line is runnable, carries --home, is attributed to the family, and binds the crewmate's own tree ROOT"
 
+# (brief-recall) The PULL verb leads the block: the chief's intake recall is a
+# discipline link, so the worker gets the same tiered read baked - ranked and
+# budgeted, with --home it cannot resolve itself - and the cite hand-over that
+# closes the heat loop from the worker side. The full-record cat survives as
+# the explicitly-labelled fallback, never the first move.
+assert_contains "$kb" "$ROOT/bin/ac-know.sh recall '<your question" \
+  "the ask line bakes the tiered recall verb"
+assert_contains "$kb" "recall '<your question - subject/mechanism/terms>' --home $AC_HOME --repo \"\$(git rev-parse --show-toplevel)\"" \
+  "... carrying --home and the crewmate's own tree ROOT like every other baked line"
+assert_contains "$kb" "an uncited read is an invisible read" \
+  "the cite line states why the heat loop needs the worker's read"
+case "$kb" in
+  *"ask:"*"full:"*) : ;;
+  *) fail "the ask verb must LEAD and the full-record cat must be the labelled fallback" ;;
+esac
+
 # --- AC17 regression: a fact recorded from a POOLED WORKTREE must bind that
 # worktree's tree, not the primary clone's - the false-fresh class (door B,
 # bin/ac-know.sh's header) the old $dir bake minted on every write while

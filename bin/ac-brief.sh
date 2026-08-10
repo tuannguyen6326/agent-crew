@@ -237,6 +237,12 @@ knowledge() {
   # When the clone does not resolve, NOTHING is named: a brief that names a
   # wrong target is worse than one that names none (the qa-store precedent
   # below).
+  # `ask:` leads, and the order is the point (distribution durability): the
+  # chief's own intake recall is a DISCIPLINE link, so the worker gets the
+  # SAME pull verb baked - a hit the chief forgot to cite into this brief is
+  # still one question away from the crewmate, ranked and budgeted, instead
+  # of buried in a full-record cat. The cite line closes the heat loop from
+  # the worker side for the same reason.
   # Deliberately absent: the scope-map verbs. The closed list governing qa
   # profile resolution is chief-tier, and a brief that named its install verb
   # would re-open through documentation what the code closed.
@@ -247,12 +253,19 @@ knowledge() {
 
 ## Repo knowledge
 
-Facts earlier families verified about this codebase - READ IT before your first
-change, and RE-VERIFY before you rely on any entry: a stale fact stated
-confidently is worse than no fact. Run these VERBATIM - they carry the fleet
-home your pane cannot resolve:
+Facts earlier families verified about this codebase - and the fleet's L2 scene
+store above them. PULL by your QUESTION before your first change, and again
+whenever you are about to re-derive something a prior family may have proved:
+a stale fact stated confidently is worse than no fact, and re-deriving a
+proved one burns your window. Run these VERBATIM - they carry the fleet home
+your pane cannot resolve:
 
-    read:     cat $rec
+    ask:      $(ac_root)/bin/ac-know.sh recall '<your question - subject/mechanism/terms>' --home $(ac_home) --repo "\$(git rev-parse --show-toplevel)"
+    cite:     the ask's output hands you the exact cite/open command per hit -
+              run it for the ONE you actually rely on (heat is the fleet's
+              re-verify/retire priority; an uncited read is an invisible read)
+    full:     cat $rec   (the whole record, unranked and unbudgeted - only when
+              the ask's hits do not settle it)
     re-check: $(ac_root)/bin/ac-know.sh verify --home $(ac_home) --repo "\$(git rev-parse --show-toplevel)"
     record:   $(ac_root)/bin/ac-know.sh add --home $(ac_home) --repo "\$(git rev-parse --show-toplevel)" --family $(ac_family_of_id "$id") \\
                 --src-file <path>:<line> --fact '<what you learned>'
