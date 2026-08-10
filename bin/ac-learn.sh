@@ -425,6 +425,12 @@ cmd_run() {
   # `list` only, never the bodies: the scout proposes, the chief writes.
   "$(dirname "$0")/ac-scene.sh" list >"$rundir/sources/scenes.md" 2>/dev/null || : >"$rundir/sources/scenes.md"
 
+  # The ALWAYS-LOADED layer plus its staleness grading, so Pass 2 can propose
+  # reinforce-or-retire per STALE entry instead of leaving the one always-paid
+  # store ungraded (<=4096 bytes by construction - the cheapest source here).
+  [ -f "$(ac_home)/CREWMATE-learned.md" ] && cp "$(ac_home)/CREWMATE-learned.md" "$rundir/sources/crewmate-learned.md"
+  cmd_stale >"$rundir/sources/always-loaded-staleness.md" 2>/dev/null || : >"$rundir/sources/always-loaded-staleness.md"
+
   # The distill contract. This heredoc is the ONE source of truth for the scout's
   # instructions; `run` writes it into every run dir's brief.md verbatim.
   cat >"$rundir/brief.md" <<'SCOUT_BRIEF'
@@ -509,6 +515,16 @@ Pass 2 reads its output.
   standing rule is a RULE candidate. There is no source bullet to compact for a
   rule (the correction lived in chat), and captain.md wording is NEVER
   paraphrased - propose the rule in the captain's own words.
+- `sources/crewmate-learned.md` + `sources/always-loaded-staleness.md` - the
+  ALWAYS-LOADED lesson layer and its age grading. A STALE entry must re-prove
+  itself: search THIS window (retro, lessons, rooms) for independent evidence
+  that the lesson was exercised, confirmed, or re-derived - plausibility,
+  importance, prior knowledge, and the entry's own text are NOT evidence.
+  Propose per stale entry, in `report.md` under `## Always-loaded staleness`
+  (report-only, the chief applies - exactly like scene proposals):
+  `reinforce <slug> - evidence: <the window pointer>` when evidence exists,
+  `retire <slug> - <why>` when none does (the retire itself rides the
+  existing 4096-budget pairing rule at the next land, never a new path).
 - `sources/scenes.md` - the fleet's L2 SCENE store index (one line per scene:
   slug, heat, updated, summary), plus its count against `config/scene-max`. A
   scene is a consolidated TOPIC file a reader opens on purpose - the layer
@@ -872,6 +888,195 @@ cmd_land() {
     ac_warn "landed $kind, but a newer Learning generation exists; its cadence was preserved instead of reset"
   fi
   printf 'landed %s through maintenance transaction %s\n' "$kind" "$run"
+}
+
+# --- always-loaded staleness: the aging signal --------------------------------
+#
+# (always-loaded-layer-has-no-staleness-signal) The fleet grades every OTHER
+# knowledge store - repo-knowledge by mechanical diff (`ac-know.sh verify`),
+# the Pending ledger by volume (`rotate-pending`), usage by `heat:` - and the
+# one store that rides into EVERY crewmate context had no signal at all: a
+# CREWMATE-learned.md entry, once landed, was kept by inertia alone on a
+# 4096-byte always-loaded budget. This block ports the AGING semantics from
+# the research triage (research/firstmate-native-parity.md, Triage 2026-08-10
+# owns the comparison; re-implemented natively, never vendored):
+#
+#   - an entry's CLOCK is the last date in its `(learned <d>[, reinforced <d>])`
+#     line; older than config/learn-stale-days (default 30) grades STALE;
+#   - STALE means "must re-prove itself": the DISTILL scout proposes
+#     reinforce-or-retire per stale entry (report-only, like scene proposals),
+#     and the CHIEF applies - grading never mutates anything;
+#   - REINFORCEMENT requires independent evidence from the current window,
+#     and the bar is deliberately verbatim from the studied design:
+#     plausibility, importance, prior knowledge, and the entry's own text are
+#     NOT evidence. `reinforce` therefore REQUIRES --evidence and prints it in
+#     the receipt rather than storing it - file bytes are counted content on
+#     an always-loaded budget, so the record of WHY lives in the room/report,
+#     never in the layer itself;
+#   - decay advances only when a pass RUNS (a DISTILL, a digest render, this
+#     verb) - no cron, no daemon, matching the distro posture;
+#   - RETIRE deliberately gets NO new verb: the landing transaction's
+#     4096-budget refusal already forces "pair the new entry with a retire",
+#     and ac_crewmate_learned_no_loss already accepts declared retires - this
+#     block adds the SIGNAL for which entry, not a second removal path.
+#
+# Scenes need no twin: `ac-scene.sh` refreshes `updated=` on every write
+# INCLUDING a cited read, so a scene's clock already advances on touch; the
+# `stale` verb below still GRADES them (read-only) so one command answers
+# "what is going stale" for both stores.
+
+learn_stale_days() {
+  local d
+  d="$(ac_config_read learn-stale-days 30)"
+  case "$d" in ''|*[!0-9]*) ac_die "config/learn-stale-days must be a day count (got: '$d')" ;; esac
+  printf '%s\n' "$d"
+}
+
+learn_alw_entry_date() {
+  # learn_alw_entry_date <file> <slug> - the entry's LAST clock date:
+  # `reinforced <d>` when present, else `learned <d>`, else empty (an entry
+  # with no date line has no clock and is never graded - fail toward silence,
+  # the same direction an unmarked legacy entry deserves).
+  awk -v want="## $2" '
+    $0 == want { in_e = 1; next }
+    in_e && /^## / { exit }
+    in_e && /^\(learned / {
+      line = $0
+      if (match(line, /reinforced [0-9]{4}-[0-9]{2}-[0-9]{2}/))
+        print substr(line, RSTART + 11, 10)
+      else if (match(line, /learned [0-9]{4}-[0-9]{2}-[0-9]{2}/))
+        print substr(line, RSTART + 8, 10)
+      exit
+    }
+  ' "$1"
+}
+
+learn_age_days() {
+  # learn_age_days <YYYY-MM-DD> - whole days since that date, or empty on a
+  # malformed date. macOS date -j; no GNU dependency.
+  local then now
+  then="$(date -j -f '%Y-%m-%d' "$1" '+%s' 2>/dev/null)" || return 0
+  [ -n "$then" ] || return 0
+  now="$(ac_now)"
+  printf '%s\n' $(( (now - then) / 86400 ))
+}
+
+cmd_stale() {
+  # `stale` - grade the ALWAYS-LOADED layer (and, read-only, the scene store)
+  # by age. Report-only: prints one line per entry, a summary, and the exact
+  # remedies. Consumed by the session-start digest (counts only), by cmd_run
+  # (snapshotted into sources/), and by a chief deciding what to retire.
+  local days live slug d age verdict n=0 stale=0 sdir sf sslug supd sage
+  days="$(learn_stale_days)"
+  live="$(ac_home)/CREWMATE-learned.md"
+  printf 'always-loaded (CREWMATE-learned.md), stale past %s days:\n' "$days"
+  if [ ! -f "$live" ]; then
+    printf '  (no file yet)\n'
+  else
+    while IFS= read -r slug; do
+      [ -n "$slug" ] || continue
+      n=$((n + 1))
+      d="$(learn_alw_entry_date "$live" "$slug")"
+      if [ -z "$d" ]; then
+        printf '  %-40s NO-CLOCK\n' "$slug"
+        continue
+      fi
+      age="$(learn_age_days "$d")"
+      if [ -n "$age" ] && [ "$age" -ge "$days" ]; then
+        verdict=STALE; stale=$((stale + 1))
+      else
+        verdict=FRESH
+      fi
+      printf '  %-40s %s  age=%sd  %s\n' "$slug" "$d" "${age:-?}" "$verdict"
+    done < <(grep '^## ' "$live" | sed 's/^## //')
+    printf '  -- %s entries, %s stale --\n' "$n" "$stale"
+    if [ "$stale" -gt 0 ]; then
+      printf '  a STALE entry must re-prove itself: reinforce it on INDEPENDENT current evidence\n'
+      printf '    (ac-learn.sh reinforce <slug> --evidence '\''<what this window proved>'\'') or retire it\n'
+      printf '    at the next land (the 4096-budget pairing rule) - never keep it by inertia alone.\n'
+    fi
+  fi
+  # Scenes: grading only - their clock already advances on every write,
+  # including a cited read, so a stale scene is one genuinely untouched.
+  sdir="$(ac_records_dir)/scenes"
+  if [ -d "$sdir" ] && [ -n "$(ls "$sdir"/*.md 2>/dev/null)" ]; then
+    printf 'scenes (records/scenes/), stale past %s days:\n' "$days"
+    for sf in "$sdir"/*.md; do
+      [ -f "$sf" ] || continue
+      sslug="$(basename "$sf" .md)"
+      supd="$(sed -n '2p' "$sf" | tr ' ' '\n' | sed -n 's/^updated=//p' | cut -c1-10)"
+      sage="$(learn_age_days "$supd")"
+      if [ -n "$sage" ] && [ "$sage" -ge "$days" ]; then
+        printf '  %-40s %s  age=%sd  STALE (merge or update it - ac-scene.sh)\n' "$sslug" "$supd" "$sage"
+      else
+        printf '  %-40s %s  age=%sd  FRESH\n' "$sslug" "$supd" "${sage:-?}"
+      fi
+    done
+  fi
+}
+
+cmd_reinforce() {
+  # `reinforce <slug> --evidence '<line>'` - refresh the entry's clock, the
+  # ONE sanctioned in-place edit of the machine-owned CREWMATE-learned.md
+  # (mirroring `heat:` as ac-know.sh's one sanctioned in-place field: a clock
+  # carries no claim text, so refreshing it moves no lesson and re-orders
+  # nothing). The date line becomes `(learned <orig>, reinforced <today>)`;
+  # a repeat reinforce REPLACES the reinforced date - bytes are budget.
+  local slug="" evidence="" live lock today tmp current
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --evidence) evidence="${2:-}"; shift 2 ;;
+      -*) ac_die "unknown flag: $1" ;;
+      *) [ -z "$slug" ] || ac_die "reinforce takes ONE slug (got '$slug' and '$1')"; slug="$1"; shift ;;
+    esac
+  done
+  [ -n "$slug" ] || ac_die "usage: ac-learn.sh reinforce <slug> --evidence '<what this window proved>'"
+  [ -n "$evidence" ] || ac_die "reinforce REQUIRES --evidence: plausibility, importance, prior knowledge, and the entry's own text are not evidence - name what THIS window actually exercised, confirmed, or re-derived. The evidence rides the receipt (and your room post), never the file: bytes there are always-loaded budget."
+  case "$evidence" in
+    *$'\n'*|*$'\r'*) ac_die "--evidence must be a single line" ;;
+  esac
+  live="$(ac_home)/CREWMATE-learned.md"
+  [ -f "$live" ] || ac_die "no CREWMATE-learned.md in this home - nothing to reinforce"
+  grep -qxF "## $slug" "$live" || ac_die "no entry '## $slug' in CREWMATE-learned.md (ac-learn.sh stale lists them)"
+  today="$(ac_iso | cut -c1-10)"
+  # Three distinct outcomes, told apart BEFORE the rewrite, because two of them
+  # produce a byte-identical file and a cmp alone cannot name which: no clock
+  # line at all is a refusal (silently succeeding would fake a fresh grade),
+  # while already-at-today is a no-op RECEIPT - the clock is where the caller
+  # wants it, and refusing a same-day second confirmation would punish exactly
+  # the double-checking this verb exists to reward.
+  current="$(learn_alw_entry_date "$live" "$slug")"
+  [ -n "$current" ] || ac_die "entry '## $slug' carries no '(learned <date>)' line to refresh - nothing written"
+  if [ "$current" = "$today" ]; then
+    printf 'already reinforced today (%s) - clock unchanged; evidence noted on the receipt: %s\n' "$today" "$evidence"
+    return 0
+  fi
+  lock="$live.lock"
+  ac_lock_acquire "$lock" 30 || ac_die "CREWMATE-learned lock $lock could not be acquired within 30s - nothing written"
+  tmp="$live.tmp.$$"
+  awk -v want="## $slug" -v today="$today" '
+    $0 == want { in_e = 1; print; next }
+    in_e && /^## / { in_e = 0 }
+    in_e && /^\(learned / && !done {
+      line = $0
+      sub(/, reinforced [0-9]{4}-[0-9]{2}-[0-9]{2}/, "", line)
+      sub(/\)$/, ", reinforced " today ")", line)
+      print line; done = 1; next
+    }
+    { print }
+  ' "$live" >"$tmp"
+  # The clock must actually have moved: an entry with no date line has nothing
+  # to reinforce, and silently succeeding would fake a fresh grade.
+  # Both no-change shapes were told apart above, so an unchanged file here is
+  # a composition bug, never a caller mistake - refuse loudly.
+  if cmp -s "$live" "$tmp"; then
+    rm -f "$tmp"; ac_lock_release "$lock"
+    ac_die "reinforce composed no change for '## $slug' despite a clock at $current - report this (nothing written)"
+  fi
+  mv "$tmp" "$live"
+  ac_lock_release "$lock"
+  printf 'reinforced %s (clock -> %s) on evidence: %s\n' "$slug" "$today" "$evidence"
+  printf 'post the evidence to the owning room/report - the file deliberately does not store it\n'
 }
 
 # --- note: the one placing append onto the ledger ----------------------------
@@ -2197,5 +2402,7 @@ case "$cmd" in
   promote) shift; cmd_promote "$@" ;;
   maintenance) shift; cmd_maintenance "$@" ;;
   rotate-pending) learn_rotate_pending ;;
-  *) ac_die "usage: ac-learn.sh tick [<landing-id>]|autoroom|suite [<task-id>]|run|note <line>...|land <candidate>|promote <name>|rotate-pending|maintenance status|resume <txid>|abandon <txid>" ;;
+  stale) cmd_stale ;;
+  reinforce) shift; cmd_reinforce "$@" ;;
+  *) ac_die "usage: ac-learn.sh tick [<landing-id>]|autoroom|suite [<task-id>]|run|note <line>...|land <candidate>|promote <name>|rotate-pending|stale|reinforce <slug> --evidence <line>|maintenance status|resume <txid>|abandon <txid>" ;;
 esac

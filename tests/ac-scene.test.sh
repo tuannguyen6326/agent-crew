@@ -244,4 +244,13 @@ assert_contains "$dig2" "scenes: 2/30" "the scene store reports count against it
 assert_contains "$dig2" "hottest: hot-topic" "and names the hottest scene by heat, not by name order"
 rm -f "$AC_HOME/state/.know-verify-proj.meta" "$AC_HOME/records/repo-knowledge/proj.md"
 
+# The always-loaded layer's stale count rides the same block, string-compared
+# (BSD awk has no mktime - the cutoff is computed once by date(1)).
+printf '# H\n\n## old-e\n\nb\n\n(learned 2026-01-01)\n\n## new-e\n\nb\n\n(learned %s)\n' "$(date -u +%F)" \
+  >"$AC_HOME/CREWMATE-learned.md"
+dig3="$("$BIN/ac-session-start.sh" 2>/dev/null || true)"
+assert_contains "$dig3" "always-loaded: 2 entries, 1 stale" "the digest counts the always-loaded staleness"
+assert_contains "$dig3" "ac-learn.sh stale" "and hands over the verb that shows the detail"
+rm -f "$AC_HOME/CREWMATE-learned.md"
+
 pass

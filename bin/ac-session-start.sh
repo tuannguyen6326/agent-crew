@@ -273,6 +273,32 @@ if [ -d "$know_dir" ]; then
     fi
   done
 fi
+alw_line=""
+alw_file="$AC_HOME/CREWMATE-learned.md"
+if [ -f "$alw_file" ]; then
+  alw_days="$(ac_config_read learn-stale-days 30)"
+  case "$alw_days" in ''|*[!0-9]*) alw_days=30 ;; esac
+  # Count-only, O(1) per entry (a string compare each): YYYY-MM-DD compares
+  # correctly as text, so the stale test is `date <= cutoff` with the cutoff
+  # computed ONCE by date(1) - deliberately no awk mktime, which BSD awk (this
+  # host's) does not have. The full grading with remedies is `ac-learn.sh
+  # stale`; the digest's job is to make the rot visible, not to relist it.
+  alw_cutoff="$(date -u -v-"${alw_days}"d +%F 2>/dev/null || date -u -d "-${alw_days} days" +%F 2>/dev/null)"
+  read -r alw_n alw_stale < <(awk -v cutoff="$alw_cutoff" '
+    /^## /       { n++ }
+    /^\(learned / {
+      line = $0; d = ""
+      if (match(line, /reinforced [0-9]{4}-[0-9]{2}-[0-9]{2}/)) d = substr(line, RSTART + 11, 10)
+      else if (match(line, /learned [0-9]{4}-[0-9]{2}-[0-9]{2}/)) d = substr(line, RSTART + 8, 10)
+      if (d != "" && cutoff != "" && d <= cutoff) stale++
+    }
+    END { print n + 0, stale + 0 }
+  ' "$alw_file" 2>/dev/null || printf '0 0')
+  if [ "${alw_n:-0}" -gt 0 ]; then
+    alw_line="
+  always-loaded: $alw_n entries, ${alw_stale:-0} stale (>${alw_days}d - ac-learn.sh stale)"
+  fi
+fi
 scene_line=""
 if [ -d "$scene_dir" ]; then
   sn="$(ls "$scene_dir"/*.md 2>/dev/null | wc -l | tr -d ' ')"
@@ -287,9 +313,9 @@ if [ -d "$scene_dir" ]; then
   scenes: $sn/$smax${shot:+ (hottest: $shot)}"
   fi
 fi
-if [ -n "$know_lines" ] || [ -n "$scene_line" ]; then
+if [ -n "$know_lines" ] || [ -n "$scene_line" ] || [ -n "$alw_line" ]; then
   printf -- '-- knowledge --'
-  printf '%s%s\n' "$know_lines" "$scene_line"
+  printf '%s%s%s\n' "$know_lines" "$alw_line" "$scene_line"
 fi
 
 # Learning-loop DISTILL trigger (Slice 2): surface when the per-debrief counter has

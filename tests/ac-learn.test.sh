@@ -683,4 +683,70 @@ esac
 rm -f "$AC_HOME/config/learn-pending-budget"
 note_ledger_reset
 
+# --- the always-loaded staleness signal (aging) ------------------------------
+# (always-loaded-layer-has-no-staleness-signal) Every other store is graded -
+# repo-knowledge by diff, Pending by volume, usage by heat - while the ONE
+# store loaded into every crewmate context had no clock at all. `stale` grades
+# by the entry's last date against config/learn-stale-days; `reinforce` is the
+# one sanctioned in-place edit (a clock carries no claim text), refreshing the
+# date ONLY under a named-evidence receipt.
+
+ALW="$AC_HOME/CREWMATE-learned.md"
+alw_reset() {
+  printf '# Fleet-learned crewmate lessons\n<!-- written only by ac-learn.sh transactions -->\n\n' >"$ALW"
+  printf '## stale-one\n\nan old lesson.\n\n(learned 2026-01-01)\n\n' >>"$ALW"
+  printf '## fresh-one\n\na fresh lesson.\n\n(learned %s)\n\n' "$(date -u +%F)" >>"$ALW"
+  printf '## no-clock\n\nan unmarked legacy entry.\n' >>"$ALW"
+}
+
+# S1: grading - stale by age, fresh by age, NO-CLOCK never graded (fail toward
+# silence, the unmarked-legacy direction), and the summary counts only real
+# staleness.
+alw_reset
+out="$("$BIN/ac-learn.sh" stale)"
+assert_contains "$out" "stale-one" "S1: the old entry is listed"
+assert_contains "$(printf '%s\n' "$out" | grep 'stale-one')" "STALE" "S1: ... and graded STALE"
+assert_contains "$(printf '%s\n' "$out" | grep 'fresh-one')" "FRESH" "S1: a current entry grades FRESH"
+assert_contains "$(printf '%s\n' "$out" | grep 'no-clock')" "NO-CLOCK" "S1: a dateless entry is named, never graded"
+assert_contains "$out" "3 entries, 1 stale" "S1: the summary counts only the genuinely stale"
+assert_contains "$out" "reinforce" "S1: a stale grade hands over the remedy"
+
+# S2: the threshold is the knob, not a constant.
+printf '10000\n' >"$AC_HOME/config/learn-stale-days"
+assert_contains "$("$BIN/ac-learn.sh" stale)" "3 entries, 0 stale" "S2: a huge threshold grades everything fresh"
+rm -f "$AC_HOME/config/learn-stale-days"
+
+# S3: reinforce refreshes the clock IN PLACE - entry text untouched, the
+# original learned date preserved, the stale grade flips.
+alw_reset
+before_body="$(sed -n '/^## stale-one/,/^## /p' "$ALW" | grep 'an old lesson')"
+out="$("$BIN/ac-learn.sh" reinforce stale-one --evidence 'the famX window re-derived it at spec/report.md')"
+assert_contains "$out" "reinforced stale-one" "S3: the receipt names the entry"
+assert_contains "$out" "the famX window re-derived it" "S3: ... and carries the evidence"
+grep -q '(learned 2026-01-01, reinforced ' "$ALW" || fail "S3: the original learned date is preserved beside the new clock"
+assert_contains "$(sed -n '/^## stale-one/,/^## /p' "$ALW")" "an old lesson" "S3: the lesson text is untouched"
+assert_contains "$(printf '%s\n' "$("$BIN/ac-learn.sh" stale)" | grep 'stale-one')" "FRESH" "S3: the grade flips"
+
+# S4: a SAME-DAY second reinforce is a no-op RECEIPT, not a refusal - and a
+# repeat on a later date would REPLACE, never append (bytes are budget): the
+# file must carry exactly one 'reinforced' token for the entry either way.
+out="$("$BIN/ac-learn.sh" reinforce stale-one --evidence 'double-checked')"
+assert_contains "$out" "already reinforced today" "S4: same-day repeat is a distinct receipt"
+assert_eq "$(grep -c 'reinforced 2' "$ALW")" "1" "S4: exactly one reinforced token - replace semantics, no append"
+
+# S5: the refusals, each naming its own defect.
+refuses_learn() { local want="$1"; shift; out="$("$@" 2>&1)" && fail "expected refusal: $*"; assert_contains "$out" "$want" "refusal names '$want'"; }
+refuses_learn "REQUIRES --evidence" "$BIN/ac-learn.sh" reinforce stale-one
+refuses_learn "no entry" "$BIN/ac-learn.sh" reinforce ghost --evidence x
+refuses_learn "no '(learned <date>)' line" "$BIN/ac-learn.sh" reinforce no-clock --evidence x
+refuses_learn "single line" "$BIN/ac-learn.sh" reinforce stale-one --evidence 'two
+lines'
+
+# S6: the DISTILL run stages the layer + its grading for the scout (wiring, the
+# R5 idiom - one awk process, no early-closing pipe).
+awk '/^cmd_run\(\)/{f=1} f&&/always-loaded-staleness/{found=1} f&&/^}/{exit} END{exit !found}' "$BIN/ac-learn.sh" \
+  || fail "S6: cmd_run must snapshot the staleness grading into sources/"
+
+rm -f "$ALW"
+
 pass
