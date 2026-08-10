@@ -98,6 +98,7 @@ flows (picked per order):
 - `AGENTS.md` - the operating manual (what the crewchief actually follows); `CLAUDE.md` symlinks to it.
 - `docs/overview.html` - self-contained animated visual overview (open in a browser, or review with `/rich-review`).
 - `docs/architecture.md` - components and data flow.
+- `docs/staged-design-flow-spec.md` - the native spec/architecture/plan report contracts, stage-admission receipts, gates, and efficiency rules.
 - `docs/scripts.md` - the map of every `bin/` script; each script's own header stays its authoritative spec.
 - `docs/configuration.md` - every config file and env var.
 - `docs/worktrees.md` - the in-repo worktree pool.
