@@ -60,16 +60,37 @@
 # (bin/ac-pane-agent.sh states the contract - a homeless caller is handed a
 # fleet NAME, never a path), so the actor that HAS AC_HOME bakes the whole
 # command line into the brief and the crewmate runs it VERBATIM. The ladder is
-# ac_home_resolve's, shared byte-for-byte with ac-qa.sh: --home > $AC_HOME
-# tested directly > this checkout's own home. Rung 3 is the ONE surviving path
-# by which the distro checkout still becomes a home: ac_home itself now refuses
-# an unset AC_HOME rather than adopting it, and README/AGENTS.md no longer call
-# a bare checkout an installation. Whether rung 3 should refuse too is OPEN and
-# routed to the captain, never a side effect. It stays INVISIBLE unless said
-# aloud, which is why every write prints `recorded in <path>`: a
-# misplaced write is then one line away from being seen instead of silently
-# lost. This process EXPORTS the resolved home, so every lib call downstream is
-# right unchanged - one decision point per process, not one per call site.
+# ac_home_resolve's, shared with ac-qa.sh THROUGH RUNG 2: --home > $AC_HOME
+# tested directly > this checkout's own home. THAT THIRD RUNG IS GONE, and its
+# removal is the point: it was the LAST silent path by which the distro
+# checkout became a fleet home, it survived @bf8f656 only because it called
+# ac_root directly rather than through ac_home, and the doctrine that justified
+# it - running a harness in this directory IS the installation - is the one
+# @bf8f656 withdrew from six user-facing places. The code had outlived its own
+# justification.
+#
+# It also served no legitimate caller, which is what settled it rather than a
+# preference for symmetry: a crewmate pane carries no AC_HOME BY DESIGN, so
+# bin/ac-brief.sh already bakes a `--home`-carrying command line into every
+# brief for exactly this verb (ac-brief.sh:256-257, whose own comment says the
+# crewmate's ac-know.sh "would resolve a [wrong home]"). The rung therefore
+# caught only calls that had lost their --home - and "caught" them by writing
+# into whatever checkout owned the running bin/, which in a leased worktree is
+# discarded on return. A refusal the caller can read beats a record that
+# vanishes.
+#
+# So an unresolved ladder now REFUSES here and names both fixes. This process
+# EXPORTS the resolved home, so every lib call downstream is right unchanged -
+# one decision point per process, not one per call site.
+#
+# ac-qa.sh KEEPS ITS OWN THIRD RUNG, and the asymmetry is deliberate rather
+# than an unfinished sweep: that script has a real homeless production path
+# this one does not - a pane running `start --store <baked-absolute>`, where
+# the actor holding AC_HOME baked the store and the pane genuinely cannot
+# derive one (tests/ac-qa.test.sh pins it). Removing the rung there is a
+# DESIGN question - what a run resolves its project config against when no
+# home is named - not the mechanical deletion it is here, and it stays queued
+# rather than guessed at.
 #
 # THE FALSE-FRESH CLASS (authoritative - every other mention points HERE): an
 # entry is a false-FRESH generator whenever THE RECORDED `at` IS NOT THE STATE
@@ -317,13 +338,11 @@ settle_repo() {
 
 settle_home() {
   # settle_home <--home value> <repo> - the ladder, resolved ONCE per process
-  # and EXPORTED (header). Rung 3 is a DIRECT ac_root call, so it survives
-  # ac_home's refusal of an unset AC_HOME by design and not by accident (see
-  # the header's OPEN note); the `recorded in <path>` receipt is what keeps it
-  # visible rather than silent.
+  # and EXPORTED (header). There is NO rung 3: an unresolved ladder REFUSES,
+  # the same fail-closed direction ac_home itself took at @bf8f656.
   local home
   home="$(ac_home_resolve "${1:-}" "$2")"
-  [ -n "$home" ] || home="$(ac_root)"
+  [ -n "$home" ] || ac_die "no fleet home: pass --home <abs>, or set AC_HOME. This checkout is NOT one - a record written here lands where no fleet reads it, and in a leased worktree it is discarded on return. A crewmate pane never carries AC_HOME by design, which is exactly why bin/ac-brief.sh bakes a --home-carrying command line into every brief (ac-brief.sh:256-257) - run the line the brief gave you."
   export AC_HOME="$home"
 }
 

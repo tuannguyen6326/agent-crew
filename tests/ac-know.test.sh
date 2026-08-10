@@ -129,18 +129,24 @@ inner="$(cd "$outer/projects" && git init -q -b main inner && cd inner \
   --src-file f.txt:1 --fact 'a home containing its clone is the normal layout' >/dev/null
 assert_file "$outer/records/repo-knowledge/inner.md" "home containing the repo is accepted"
 
-# (i) rung 3: no --home, no AC_HOME. Correct for the DEFAULT fleet and merely
-# invisible, so the receipt has to name the path it used. Run from a COPY of
-# bin/ (ac_root is the checkout owning the bin/ being run), or the write would
-# land in the live agent-crew checkout.
+# (i) NO RUNG 3: no --home, no AC_HOME -> REFUSE. It was the last silent path
+# by which the distro checkout became a fleet home, and it caught only calls
+# that had lost their --home - "catching" them by writing into whatever
+# checkout owned the running bin/, which in a leased worktree is discarded on
+# return. Run from a COPY of bin/ so a regression writes into the copy rather
+# than the live checkout, and assert BOTH that it refuses and that it wrote
+# nothing.
 fake="$TMP/fakecheckout"
 mkdir -p "$fake/bin"
 cp "$BIN/ac-know.sh" "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-pipeline-lib.sh" "$fake/bin/"
 out="$(env -u AC_HOME "$fake/bin/ac-know.sh" add --repo "$repo" --family fam-one \
-  --src-file file.txt:1 --fact 'rung three is visible, not silent')"
-assert_contains "$out" "recorded in $fake/records/repo-knowledge/proj.md" \
-  "rung 3 names the path it wrote, so a misplaced write is one line from being seen"
-assert_file "$fake/records/repo-knowledge/proj.md" "rung 3 writes to this checkout's own home"
+  --src-file file.txt:1 --fact 'a homeless call must refuse, not write here' 2>&1)" \
+  && fail "a homeless add must REFUSE, never adopt the checkout"
+assert_contains "$out" "no fleet home" "the refusal names what is missing"
+assert_contains "$out" "--home" "and the first fix"
+assert_contains "$out" "AC_HOME" "and the second"
+assert_contains "$out" "brief" "and points a crewmate at the --home-carrying line its brief already baked"
+assert_no_file "$fake/records/repo-knowledge/proj.md" "a refused homeless add writes NOTHING into the checkout"
 
 # --- guard class: EVIDENCE/REF DIVERGENCE (the false-FRESH class) ------------
 bind="$(make_repo bindrepo)"
