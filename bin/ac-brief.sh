@@ -398,6 +398,45 @@ and not your cwd's subdirectory either.
 EOF
 }
 
+design_contract() {
+  # design_contract - the report contract every design-kind brief carries
+  # (spec/architecture/plan/design). The AUTHORITATIVE contract is
+  # docs/staged-design-flow-spec.md in this distro; the brief bakes its
+  # ABSOLUTE path (the crewmate's project worktree does not carry this
+  # checkout, the same reason signals() bakes bin/ac-done.sh). The operative
+  # per-report rules ride here verbatim so a valid report needs no second
+  # read to know its shape; the full per-stage required content and exit
+  # criteria stay in the spec doc, never restated here.
+  cat <<EOF
+
+## Report contract
+
+Authoritative contract - per-stage required content and exit criteria
+(read it before your first report):
+$(ac_root)/docs/staged-design-flow-spec.md
+Every report carries these sections: Inputs, Summary, Evidence,
+Needs Decisions, Risks, Self-Review. A required section with nothing
+material to report records one line, \`n/a: <reason>\` - complete, not
+missing.
+Trace IDs are stage-owned and family-stable: \`R#\` requirements, \`AC#\`
+acceptance criteria, \`D#\` architecture decisions, \`T#\` plan tasks.
+Append-only across revisions: never renumber or reuse an ID; a removed
+item's ID is retired with a one-line note, and no active content references
+a retired ID. A revision lists every added, changed, and retired Trace ID.
+Reference each accepted prior report by absolute path plus the
+\`report_sha256\` your chief's approval carries (the room's \`GATE-ROUTING:\`
+receipt); reference its content by Trace ID - never restate it.
+Before announcing a report ready, run the inline self-review yourself (no
+extra agent, no pane): placeholder scan, consistency with accepted prior
+reports, scope, ambiguity, coverage, evidence, retired-ID check. The
+Self-Review section lists only failures found and fixed, then \`pass\`. A
+failure you cannot fix alone never records \`pass\`: an unresolved product
+or policy choice becomes \`needs-decision:\`; a contradiction with an
+accepted upstream report is announced so the chief returns work to the
+earliest affected stage.
+EOF
+}
+
 standing_rules() {
   # standing_rules - the FLEET STANDING RULES block every brief carries
   # (issue #3 proposal 1): a captain STANDING rule in records/captain.md had
@@ -515,6 +554,7 @@ problem statement, requirements, ACCEPTANCE CRITERIA the captain can check,
 edge cases, and explicit out-of-scope. Read the project code as needed to
 ground every requirement in reality. Ambiguities you cannot resolve from
 the code are \`needs-decision:\` questions - never invent product behavior.
+$(design_contract)
 $(primary_accident)
 $(knowledge)
 $(standing_rules)
@@ -547,6 +587,7 @@ with tradeoffs and state which one you recommend and why; a design with no
 rejected alternative was not designed. Cover the non-functional angles that
 apply (compatibility, migration, performance, security). Decisions that
 belong to the captain are \`needs-decision:\` questions.
+$(design_contract)
 $(primary_accident)
 $(knowledge)
 $(standing_rules)
@@ -576,6 +617,7 @@ Write the implementation plan to $task_dir/report.md:
 ordered steps, exact files to touch, test strategy, risks and their
 mitigations, and what would make you abort. Ground it by reading the real
 code; a plan that names wrong files is a failed plan.
+$(design_contract)
 $(primary_accident)
 $(knowledge)
 $(standing_rules)
@@ -599,9 +641,10 @@ Captain: $captain
 ## Inputs
 
 <!-- Orchestrator: the captain's order verbatim, plus scouted pointers.
-     Cross out any sub-stage this task does not need (e.g. no architecture
-     for a single-component change); the pre-implement captain gate always
-     applies to the LAST report produced. -->
+     Record one STAGE-ADMISSION: receipt per stage (admit|skip + grounds)
+     in the family room BEFORE this spawn, then cross out the skipped
+     sub-stages below; the three-tier pre-implement gate always applies to
+     the LAST report produced. -->
 
 ## Contract - up to three reports, one session, a GATE between each
 
@@ -623,6 +666,7 @@ session, then announce it again the same way.
 Ground every claim in the real code (cite file:line). Anything you cannot
 resolve from the code is a \`needs-decision: <question>\` - never invent
 product behavior.
+$(design_contract)
 $(primary_accident)
 $(knowledge)
 $(standing_rules)

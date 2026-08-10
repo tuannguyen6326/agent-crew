@@ -334,6 +334,17 @@ material in `qa/`. Historical `review/` and `ship/` dirs are readable but are
 never created by the normal flow.
 Family-level files stay at `data/<family>/` root: `room.md` and gate artifacts.
 Direct tasks and plain scouts stay flat at `data/<id>/` (`ac-brief.sh` is the authoritative layout spec).
+Stage admission is receipted, never inferred: BEFORE the first design report,
+the owning chief posts one `STAGE-ADMISSION: stage=<spec|architecture|plan>
+decision=<admit|skip> grounds=<one line>` per stage to the family room
+(hand-posted via `ac-room.sh post` in v1). The latest valid receipt per stage
+is the canonical stage set; silence is neither admission nor a skip; a `skip`
+may later flip to `admit` on new evidence, and an admitted stage that has
+produced a report never flips back. The full design-report contract - shared
+report sections, per-stage required content and exit criteria, Trace IDs,
+inline self-review, valid-receipt semantics - is owned by
+`docs/staged-design-flow-spec.md`; the design-kind brief scaffolds carry it
+to the crewmate.
 Stage gates - who reviews before the next stage spawns:
 - YOU review every stage report, always, against the captain's original
   order. Never spawn the next stage on an unread report.
@@ -345,6 +356,10 @@ Stage gates - who reviews before the next stage spawns:
   consumes another pane. Product/behavior/scope/financial/irreversible
   authority belongs to the captain; a second chief may clarify options but
   never substitutes for that authority.
+  Every accepted report version carries a `GATE-ROUTING:` receipt whose
+  `report_sha256` matches it - a revision requires a fresh `gate-route`
+  before approval, and routing alone is never approval. Downstream reports
+  reference each accepted upstream report by path plus that receipt's sha.
   A `route=chief` report receives no second-chief pane: self-approve with
   evidence and record `SELF-APPROVED: <stage> - route=chief - grounds: <...>`.
   A `route=captain` report becomes a real pending `GATE:` with the choice,
@@ -379,6 +394,12 @@ Stage gates - who reviews before the next stage spawns:
   make reaches them with its reasoning as a vetoable receipt, never as silence.
 - Pre-implement gate, THREE-TIERED - judged on the last report before
   `implement` (`plan` when present, else `architecture`, else `spec`):
+  FIRST, mechanically: resolve the canonical stage set from valid
+  `STAGE-ADMISSION:` receipts (a stage with none blocks the gate,
+  fail-closed) and re-hash every admitted report against the `report_sha256`
+  on its latest `GATE-ROUTING:` receipt - any mismatch reopens the earliest
+  mismatched report and every later admitted stage gate before implement
+  may start. Then, by tier:
   AUTO tier (routine tasks): either a valid `route=chief` plus chief pass, or a
   valid `route=second-chief` where YOUR review concurs with `continue`, lets
   implement PROCEED without waiting. Post a `GATE-PASSED (auto):` receipt that

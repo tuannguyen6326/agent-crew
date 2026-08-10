@@ -233,6 +233,29 @@ assert_contains "$implbrief" "Do not invoke \`ac-verify codereview\` separately"
 case "$implbrief" in *"code-review runs next"*|*"ship is a later stage"*) \
   fail "staged execution must not advertise retired production stages" ;; esac
 
+# Design-report contract (docs/staged-design-flow-spec.md is authoritative):
+# every design-kind brief (spec/architecture/plan/design) carries the operative
+# report contract - shared sections, n/a convention, Trace ID rules, upstream
+# path+sha references, the inline self-review checklist - and points at the
+# spec doc by a path that actually resolves. Execution and scout briefs stay
+# free of it: the contract governs design reports only.
+assert_file "$ROOT/docs/staged-design-flow-spec.md"
+planb="$(cat "$AC_HOME/data/widget/plan/brief.md")"
+for pair in "spec|$spec" "arch|$arch" "plan|$planb" "design|$dsg"; do
+  which="${pair%%|*}"; body="${pair#*|}"
+  assert_contains "$body" "## Report contract" "$which brief carries the report contract"
+  assert_contains "$body" "docs/staged-design-flow-spec.md" "$which brief points at the authoritative spec"
+  assert_contains "$body" "report_sha256" "$which brief carries the upstream path+sha reference rule"
+  assert_contains "$body" "retired-ID check" "$which brief carries the inline self-review checklist"
+  assert_contains "$body" 'n/a: <reason>' "$which brief carries the n/a section convention"
+done
+assert_contains "$dsg" "STAGE-ADMISSION" \
+  "design brief reminds the chief the admission receipts precede the spawn"
+case "$implbrief" in *"## Report contract"*) \
+  fail "an execution brief must not carry the design report contract" ;; esac
+case "$(cat "$AC_HOME/data/scout-1/brief.md")" in *"## Report contract"*) \
+  fail "a plain scout brief must not carry the design report contract" ;; esac
+
 # Nested-layout edges: revision ids keep their suffix as the dir name; an id
 # suffix contradicting --stage dies; ac_task_dir resolves staged ids to the
 # nested dir, direct ids to the flat one, and dies on a double brief.
