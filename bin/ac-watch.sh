@@ -645,6 +645,45 @@ release_scoped_family() {
   return 1
 }
 
+release_family_is_over() {
+  # release_family_is_over <family> - 0 when the family this scoped watcher was
+  # armed for is DEMONSTRABLY finished, so the watcher is an ORPHAN with no
+  # roomchief left to protect and `--release` may take it.
+  #
+  # WHY THE OBVIOUS SIGNAL IS NOT USED, measured 2026-08-09 and recorded so it
+  # is not retried: "state/<family>-chief.meta is absent" looks like the test
+  # for a demoted roomchief, and it is NOT one this codebase treats as family
+  # liveness - the (8e) scoped-refusal fixture holds a LIVE scoped watcher with
+  # no chief meta on disk (several `rm -f "$state"/*.meta` sweeps run before
+  # it), so keying on absence would release a watcher that is doing its job.
+  #
+  # The ROOM is the signal that actually records the transition, because
+  # demotion WRITES there: ac-teardown.sh posts `DEMOTED: roomchief closed` and
+  # ac-room.sh close posts `CLOSED:`. Three conditions must hold TOGETHER, and
+  # the conjunction is what makes this fail-closed rather than clever:
+  #   1. the family has a room at all (a scoped watcher for a family with no
+  #      room - the (8e) shape - is never touched);
+  #   2. the LAST tenure marker in it is DEMOTED/CLOSED, not PROMOTED, so a
+  #      family that was demoted and later re-promoted is protected again;
+  #   3. no <family>-chief.meta exists, so a chief that is up right now wins
+  #      over any stale room line.
+  # Any one of them missing means refuse, which keeps the guard's default
+  # exactly where it was.
+  local fam="$1" room last
+  case "$fam" in ''|*[!a-zA-Z0-9_-]*) return 1 ;; esac
+  [ ! -e "$state_dir/$fam-chief.meta" ] || return 1
+  room="$(ac_room_file "$fam" 2>/dev/null || true)"
+  [ -n "$room" ] && [ -f "$room" ] || return 1
+  last="$(awk '
+    /> *PROMOTED:/  { m = "PROMOTED" }
+    /> *DEMOTED:/   { m = "DEMOTED" }
+    /> *CLOSED:/    { m = "CLOSED" }
+    END { print m }
+  ' "$room")"
+  case "$last" in DEMOTED|CLOSED) return 0 ;; esac
+  return 1
+}
+
 home_fleet_watcher_role() {
   # home_fleet_watcher_role <pid> - `watcher` or `wrapper` when <pid> is THIS
   # home's own fleet-watcher UNIT (see HOME-CROSSING TARGETS in the header):
@@ -682,20 +721,38 @@ if [ "${1:-}" = "--release" ]; then
   # on the watcher it declined to touch.
   if scoped_hit="$(release_scoped_family "$target")"; then
     scoped_role="${scoped_hit%% *}"; scoped_fam="${scoped_hit#* }"
-    case "$scoped_role" in
-      wrapper) scoped_what="the harness-tracked WRAPPER of the scoped watcher for family $scoped_fam (TERMing it leaves that watcher ALIVE under PPID=1 - an orphan that keeps polling while its exit wakes no one)" ;;
-      *)       scoped_what="the scoped watcher for family $scoped_fam" ;;
-    esac
-    watch_log "release REFUSED pid=$target - scoped $scoped_role for $scoped_fam (belongs to its roomchief)"
-    printf 'refused: pid %s is %s - it belongs to that family'"'"'s roomchief; only the fleet watcher is releasable via --release. Releasing it leaves %s with no real-time coverage until its roomchief notices and re-arms. Release the FLEET watcher instead (its pid: cat %s/.watch.lock.d/pid).\n' \
-      "$target" "$scoped_what" "$scoped_fam" "$state_dir" >&2
-    exit 2
+    # ORPHAN EXCEPTION. The refusal below protects a family's real-time
+    # coverage on behalf of its roomchief - and when that roomchief is GONE the
+    # premise it states out loud ("until its roomchief notices and re-arms") is
+    # false: nobody is left to notice, so the guard was protecting a watcher on
+    # behalf of a family that no longer exists while the operator had no
+    # sanctioned way to stop it. release_family_is_over owns the (deliberately
+    # narrow) test.
+    if release_family_is_over "$scoped_fam"; then
+      # The pid was found in THIS home's own .watch-only-<fam>.lock.d, so its
+      # home is already settled - and the home-crossing guard below only knows
+      # how to recognise a FLEET watcher, so it would refuse this orphan a
+      # second time (measured). Mark it and let it through both.
+      orphan_release=1
+      watch_log "release ALLOWED pid=$target - scoped $scoped_role for $scoped_fam, whose roomchief is demoted/closed (orphan)"
+      printf 'note: pid %s is the scoped %s for family %s, whose roomchief is DEMOTED/CLOSED - releasing the orphan (nothing is left to re-arm it).\n' \
+        "$target" "$scoped_role" "$scoped_fam" >&2
+    else
+      case "$scoped_role" in
+        wrapper) scoped_what="the harness-tracked WRAPPER of the scoped watcher for family $scoped_fam (TERMing it leaves that watcher ALIVE under PPID=1 - an orphan that keeps polling while its exit wakes no one)" ;;
+        *)       scoped_what="the scoped watcher for family $scoped_fam" ;;
+      esac
+      watch_log "release REFUSED pid=$target - scoped $scoped_role for $scoped_fam (belongs to its roomchief)"
+      printf 'refused: pid %s is %s - it belongs to that family'"'"'s roomchief; only the fleet watcher is releasable via --release. Releasing it leaves %s with no real-time coverage until its roomchief notices and re-arms. Release the FLEET watcher instead (its pid: cat %s/.watch.lock.d/pid).\n' \
+        "$target" "$scoped_what" "$scoped_fam" "$state_dir" >&2
+      exit 2
+    fi
   fi
   # HOME-CROSSING TARGETS (see the header): --release is THIS home's own
   # remedy. Refuse BEFORE the marker is stamped, same no-trace rule as the
   # scoped guard above - a refused release must leave no trace on the pid it
   # declined to touch, whatever home it turns out to belong to.
-  if ! home_fleet_watcher_role "$target" >/dev/null; then
+  if [ "${orphan_release:-0}" != 1 ] && ! home_fleet_watcher_role "$target" >/dev/null; then
     watch_log "release REFUSED pid=$target - not this home's fleet watcher (may belong to another fleet)"
     printf 'refused: pid %s is not this home'"'"'s fleet watcher - it may belong to another fleet; only this home'"'"'s own fleet watcher (or its wrapper) is releasable via --release. Its pid: cat %s/.watch.lock.d/pid.\n' \
       "$target" "$state_dir" >&2

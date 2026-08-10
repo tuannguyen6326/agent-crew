@@ -953,6 +953,63 @@ assert_no_file "$state/.watcher-release-$deadpid" "a failed release leaves no ma
 rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat* \
   "$state/.watcher-arm.log"
 
+# (8e-orphan) THE ORPHAN EXCEPTION. The (8e) refusal protects a family's
+# real-time coverage on behalf of its roomchief - and when that roomchief has
+# been DEMOTED the premise it prints out loud ("until its roomchief notices and
+# re-arms") is false: nobody is left to notice, so the guard was protecting a
+# watcher for a family that no longer exists while the operator had NO
+# sanctioned way to stop it (measured live 2026-08-09: an arm log still showing
+# `target=only:<family>` ten minutes after that family was demoted and its room
+# closed, with --release refusing on exactly that false premise).
+#
+# The signal is the ROOM, not the chief meta: absence of <family>-chief.meta is
+# NOT family liveness in this codebase - (8e) below holds a LIVE scoped watcher
+# with no chief meta on disk - so keying on it would release a working watcher.
+# Demotion WRITES to the room, and that is what is read.
+mkdir -p "$AC_HOME/data/famdead"
+printf '# Room: famdead\n\n- [2026-08-09T10:00:00Z] crewchief> PROMOTED: opened\n' \
+  >"$AC_HOME/data/famdead/room.md"
+AC_SCOPE=famdead AC_POLL=30 AC_HEARTBEAT=300 bash "$BIN/ac-watch.sh" \
+  >"$sigout" 2>/dev/null &
+opid=$!
+in_poll_wait "$opid" "$state/.last-watcher-beat.famdead" >/dev/null \
+  || fail "the orphan-candidate watcher never reached its poll wait"
+
+# While the room's last tenure marker is PROMOTED, it is NOT an orphan: the
+# guard must still refuse, or a live family loses coverage to this exception.
+rc=0; out="$(bash "$BIN/ac-watch.sh" --release "$opid" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "a scoped watcher whose room still reads PROMOTED is refused"
+assert_contains "$out" "belongs to that family" "... with the ordinary refusal"
+kill -0 "$opid" 2>/dev/null || fail "the refused watcher must survive untouched"
+
+# Demotion posts DEMOTED to the room - now the same release is ALLOWED, and it
+# must actually take the watcher down.
+printf -- '- [2026-08-09T10:20:00Z] crewchief> DEMOTED: roomchief closed\n' \
+  >>"$AC_HOME/data/famdead/room.md"
+rc=0; out="$(bash "$BIN/ac-watch.sh" --release "$opid" 2>&1)" || rc=$?
+assert_eq "$rc" "0" "once the room records DEMOTED, the orphan IS releasable"
+assert_contains "$out" "DEMOTED/CLOSED" "the note says WHY it was allowed"
+assert_contains "$out" "famdead" "... and names the family"
+dead_within "$opid" 20 || { kill -9 "$opid" 2>/dev/null; wait "$opid" 2>/dev/null; \
+  fail "the released orphan must actually die - a release that only prints is no remedy"; }
+wait "$opid" 2>/dev/null || true
+
+# A re-PROMOTED family is protected again: the LAST marker decides, so a
+# demote-then-promote cycle never leaves the exception standing open.
+printf -- '- [2026-08-09T11:00:00Z] crewchief> PROMOTED: reopened\n' \
+  >>"$AC_HOME/data/famdead/room.md"
+AC_SCOPE=famdead AC_POLL=30 AC_HEARTBEAT=300 bash "$BIN/ac-watch.sh" \
+  >"$sigout" 2>/dev/null &
+opid2=$!
+in_poll_wait "$opid2" "$state/.last-watcher-beat.famdead" >/dev/null \
+  || fail "the re-promoted family's watcher never reached its poll wait"
+rc=0; out="$(bash "$BIN/ac-watch.sh" --release "$opid2" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "a re-PROMOTED family is protected again - the LAST marker decides"
+kill "$opid2" 2>/dev/null; wait "$opid2" 2>/dev/null || true
+rm -rf "$AC_HOME/data/famdead"
+rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat* \
+  "$state/.watcher-arm.log" "$state"/.watcher-release-*
+
 # (8e) SCOPED-TARGET REFUSAL (behavior: watcher-release-scope). --release is the
 # FLEET watcher's remedy; a scoped watcher belongs to its roomchief, and the
 # crewchief's config-swap loop (read every ac-watch pid -> release each) TERM'd
