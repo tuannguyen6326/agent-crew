@@ -34,7 +34,7 @@ assert_contains "$err" "invalid effort: bogus" "invalid effort fails for the rig
 # --- a malformed AC_ULTRACODE_SETTLE fails an ultracode spawn up-front (before
 # any window/lease). A brief is required because effort validation passes for
 # ultracode and the check sits past the brief gate. ----------------------------
-"$BIN/ac-brief.sh" us proj >/dev/null
+"$BIN/ac-brief.sh" us proj --mode local-only >/dev/null
 err="$(AC_ULTRACODE_SETTLE=x "$BIN/ac-spawn.sh" us proj --effort ultracode 2>&1 1>/dev/null || true)"
 assert_contains "$err" "AC_ULTRACODE_SETTLE must be a non-negative number" "bad AC_ULTRACODE_SETTLE fails fast"
 
@@ -68,7 +68,10 @@ launch_line() { cat "$(fake_pane_buf "$1")"; }
 
 # --- absent config + absent flag => the launch line carries NEITHER opt -------
 # (run before config/model + config/effort are written).
-"$BIN/ac-brief.sh" m0 proj >/dev/null
+# m0 asserts the DERIVED review obligation rides the launch line, so it needs
+# a mode that derives review=yes - crew-ship, captain-authorized per the
+# escalation gate.
+"$BIN/ac-brief.sh" m0 proj --mode crew-ship --review yes --captain-requested 'fixture: captain ordered the pipeline'  >/dev/null
 "$BIN/ac-spawn.sh" m0 "$repo" --harness claude >/dev/null 2>&1
 line="$(launch_line m0)"
 case "$line" in *"--model "*) fail "no config/flag must emit no --model" ;; esac
@@ -112,7 +115,7 @@ assert_eq "$(awk -F= '$1=="review"{print $2}' "$AC_HOME/state/mreview.meta")" no
 # --- a ROOMCHIEF's spawn carries its family scope, so the crewmate's push
 # files for the scoped watcher that supervises it (and nudges THAT one) ------
 mkdir -p "$AC_HOME/data/fam9"
-"$BIN/ac-brief.sh" fam9-t1 proj >/dev/null
+"$BIN/ac-brief.sh" fam9-t1 proj --mode local-only >/dev/null
 AC_SCOPE=fam9 "$BIN/ac-spawn.sh" fam9-t1 "$repo" --harness claude >/dev/null 2>&1
 line="$(launch_line fam9-t1)"
 assert_contains "$line" "AC_FLEET_SCOPE=fam9" "a scoped spawn carries the family whose watcher covers the task"
@@ -127,7 +130,7 @@ assert_eq "$(awk -F= '$1=="fleet_scope"{print $2}' "$AC_HOME/state/fam9-t1.meta"
 # --- fleet-wide defaults: config/model + config/effort reach the launch line --
 printf 'sonnet\n' >"$AC_HOME/config/model"
 printf 'high\n' >"$AC_HOME/config/effort"
-"$BIN/ac-brief.sh" m1 proj >/dev/null
+"$BIN/ac-brief.sh" m1 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" m1 "$repo" --harness claude >/dev/null 2>&1
 line="$(launch_line m1)"
 assert_contains "$line" "--model sonnet" "config/model default on claude launch line"
@@ -142,7 +145,7 @@ assert_contains "$line" "AC_FLEET_EFFORT=high" "crewmate launch line carries the
 "$BIN/ac-teardown.sh" m1 --force >/dev/null 2>&1
 
 # --- per-spawn flags override the config defaults ------------------------------
-"$BIN/ac-brief.sh" m2 proj >/dev/null
+"$BIN/ac-brief.sh" m2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" m2 "$repo" --harness claude --model opus --effort max >/dev/null 2>&1
 line="$(launch_line m2)"
 assert_contains "$line" "--model opus" "--model flag overrides config/model"
@@ -157,7 +160,7 @@ assert_contains "$line" "--effort max" "--effort flag overrides config/effort"
 # The meta follows: ac_record_launch_opts (bin/ac-harness.sh) records what a
 # harness's built-in template applies, and codex's template applies the effort -
 # so the meta names the tier the process actually received. ---------------------
-"$BIN/ac-brief.sh" mc proj >/dev/null
+"$BIN/ac-brief.sh" mc proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" mc "$repo" --harness codex --model cmod >/dev/null 2>&1
 line="$(launch_line mc)"
 assert_contains "$line" "-m cmod" "codex gets -m on the launch line"
@@ -175,7 +178,7 @@ assert_eq "$(awk -F= '$1=="effort"{print $2}' "$AC_HOME/state/mc.meta")" high "c
 # claude-style name, and composing it onto codex as `codex -m sonnet` is a
 # model name codex cannot accept. No config/crew-harness is pinned, so codex
 # here is a harness OTHER than the fleet's own by construction. --------------
-"$BIN/ac-brief.sh" mx proj >/dev/null
+"$BIN/ac-brief.sh" mx proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" mx "$repo" --harness codex >/dev/null 2>&1
 line="$(launch_line mx)"
 case "$line" in *"-m sonnet"*) fail "a config-fallback model must not ride onto a mismatched harness" ;; esac
@@ -185,7 +188,7 @@ assert_eq "$(awk -F= '$1=="model"{print $2}' "$AC_HOME/state/mx.meta")" "" \
 "$BIN/ac-teardown.sh" mx --force >/dev/null 2>&1
 
 # --- the same config-fallback model still rides claude, the fleet's own harness -
-"$BIN/ac-brief.sh" my proj >/dev/null
+"$BIN/ac-brief.sh" my proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" my "$repo" --harness claude >/dev/null 2>&1
 line="$(launch_line my)"
 assert_contains "$line" "--model sonnet" "the fleet's own harness still gets the config-fallback model"
@@ -196,7 +199,7 @@ assert_contains "$line" "--model sonnet" "the fleet's own harness still gets the
 # only), so config/effort=high must still emit nothing. The meta follows the
 # launch line exactly: model recorded, effort not - ac_record_launch_opts records
 # only what the built-in template applies.
-"$BIN/ac-brief.sh" mo proj >/dev/null
+"$BIN/ac-brief.sh" mo proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" mo "$repo" --harness opencode --model omod >/dev/null 2>&1
 line="$(launch_line mo)"
 assert_contains "$line" "-m omod" "opencode gets -m on the launch line"
@@ -206,7 +209,7 @@ assert_eq "$(awk -F= '$1=="effort"{print $2}' "$AC_HOME/state/mo.meta")" "" "ope
 "$BIN/ac-teardown.sh" mo --force >/dev/null 2>&1
 
 # --- a custom-template harness (verbatim) receives no --effort either ----------
-"$BIN/ac-brief.sh" m3 proj >/dev/null
+"$BIN/ac-brief.sh" m3 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" m3 "$repo" --harness fake >/dev/null 2>&1
 line="$(launch_line m3)"
 case "$line" in *"--effort"*) fail "custom-template harness must not get --effort" ;; esac
@@ -218,7 +221,7 @@ assert_contains "$line" "AC_FLEET_MODEL=sonnet" "custom-template harness still c
 # --- effort=ultracode: built-in claude launches at --effort xhigh (NOT
 # ultracode), records effort=ultracode, and gets '/effort ultracode' typed in
 # BEFORE the kickoff prompt. --------------------------------------------------
-"$BIN/ac-brief.sh" u1 proj >/dev/null
+"$BIN/ac-brief.sh" u1 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" u1 "$repo" --harness claude --effort ultracode >/dev/null 2>&1
 line="$(launch_line u1)"
 assert_contains "$line" "--effort xhigh" "ultracode launches claude at --effort xhigh"
@@ -235,7 +238,7 @@ p_ln="$(printf '%s\n' "$line" | grep -n 'You are an agent-crew crewmate' | head 
 "$BIN/ac-teardown.sh" u1 --force >/dev/null 2>&1
 
 # --- ultracode is claude-only: codex gets no slash line, no effort in meta -----
-"$BIN/ac-brief.sh" uc proj >/dev/null
+"$BIN/ac-brief.sh" uc proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" uc "$repo" --harness codex --effort ultracode >/dev/null 2>&1
 line="$(launch_line uc)"
 assert_contains "$line" "You are an agent-crew crewmate" "codex ultracode spawn is live (kickoff delivered)"
@@ -253,7 +256,7 @@ assert_eq "$(awk -F= '$1=="effort"{print $2}' "$AC_HOME/state/uc.meta")" xhigh "
 # --- a CUSTOM launch-claude template gets no slash line (mirrors the no-effort
 # contract for custom templates). --------------------------------------------
 printf 'sleep 300\n' >"$AC_HOME/config/launch-claude"
-"$BIN/ac-brief.sh" uct proj >/dev/null
+"$BIN/ac-brief.sh" uct proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" uct "$repo" --harness claude --effort ultracode >/dev/null 2>&1
 line="$(launch_line uct)"
 assert_contains "$line" "You are an agent-crew crewmate" "custom-template ultracode spawn is live (kickoff delivered)"
@@ -267,7 +270,7 @@ rm -f "$AC_HOME/config/launch-claude"
 # "/effort" (the launch line only carries "--effort", no slash). ---------------
 n="$(cat "$FAKE_HERDR/.n")"; upane="p$((n + 1))"
 printf '99 /effort\n' >"$FAKE_HERDR/panes/$upane.drop-enters"
-"$BIN/ac-brief.sh" u2 proj >/dev/null
+"$BIN/ac-brief.sh" u2 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" u2 "$repo" --harness claude --effort ultracode 2>&1)"
 assert_contains "$out" "spawned u2" "spawn survives the stranded slash line"
 # Needle names the SLASH LINE. ac-spawn.sh:849's GENERIC "kickoff prompt NOT
@@ -293,7 +296,7 @@ case "$(cat "$FAKE_HERDR/panes/$upane.in")" in *"You are an agent-crew crewmate"
 # (review.model here) must reach the crewmate through this path, not vanish.
 mkdir -p "$AC_HOME/projects"
 printf 'review:\n  model: opus-pinned\n' >"$AC_HOME/projects/proj.yaml"
-"$BIN/ac-brief.sh" mcfg proj >/dev/null
+"$BIN/ac-brief.sh" mcfg proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" mcfg "$repo" --harness claude >/dev/null 2>&1
 line="$(launch_line mcfg)"
 assert_contains "$line" "AC_FLEET_HOME_CHECKED=1" "the home-checked signal rides every crewmate launch line"
@@ -305,7 +308,7 @@ assert_contains "$line" "AC_FLEET_PROJECT_CONFIG=$AC_HOME/projects/proj.yaml" \
 # no AC_FLEET_PROJECT_CONFIG to go with it - a VERIFIED "none" (a real AC_HOME
 # looked and found nothing), never an unresolved home reading the same way.
 rm -f "$AC_HOME/projects/proj.yaml"
-"$BIN/ac-brief.sh" mnocfg proj >/dev/null
+"$BIN/ac-brief.sh" mnocfg proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" mnocfg "$repo" --harness claude >/dev/null 2>&1
 line="$(launch_line mnocfg)"
 assert_contains "$line" "AC_FLEET_HOME_CHECKED=1" "home-checked rides even when no config resolved"

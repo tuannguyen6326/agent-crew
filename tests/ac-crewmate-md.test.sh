@@ -434,7 +434,7 @@ export AC_KICKOFF_READY_BUDGET=5
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/stubbin/codex"
 chmod +x "$TMP/stubbin/codex"
 spawn_repo="$(make_repo spawnproj)"
-"$BIN/ac-brief.sh" sx1 spawnproj >/dev/null
+"$BIN/ac-brief.sh" sx1 spawnproj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" sx1 "$spawn_repo" --harness codex --mode local-only >/dev/null 2>&1
 sx_wt="$(bash -c ". '$BIN/ac-lib.sh'; ac_meta_get '$AC_HOME/state/sx1.meta' worktree")"
 [ -n "$sx_wt" ] || fail "the codex spawn recorded no worktree"
@@ -516,7 +516,7 @@ law_repo="$(make_repo lawproj)"
 printf 'REPO SHIPPED LAW\n' >"$law_repo/AGENTS.md"
 git -C "$law_repo" add AGENTS.md
 git -C "$law_repo" commit -qm law
-"$BIN/ac-brief.sh" sx2 lawproj >/dev/null
+"$BIN/ac-brief.sh" sx2 lawproj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" sx2 "$law_repo" --harness codex --mode local-only >/dev/null 2>&1
 assert_contains "$(cat "$(fake_pane_buf sx2)")" ".claude/CREWMATE.md" \
   "a shipped-law repo's crewmate is pointed at the fleet layer"

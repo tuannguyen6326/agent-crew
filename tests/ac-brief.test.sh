@@ -9,7 +9,38 @@
 
 make_home
 
-"$BIN/ac-brief.sh" task-1 myproj >/dev/null
+# staged is a TIME-EXPENSIVE flow now, and mode is per-task: the widget family
+# rows below are PINNED on the ledger - the durable pre-consent path - so
+# these scaffolds run without a per-call declaration, which is exactly the
+# "đã define trong backlog thì không cần hỏi" half of the captain's rule.
+mkdir -p "$AC_HOME/records"
+cat >>"$AC_HOME/records/backlog.md" <<'PINEOF'
+## Queued
+- [ ] widget [src:cap flow:staged mode:crew-ship rev:yes qa:no] - the widget family, pinned by the captain (repo: myproj)
+- [ ] widget-spec [src:cap flow:staged mode:local-only rev:yes qa:no] - pinned (repo: myproj)
+- [ ] widget-arch [src:cap flow:staged mode:local-only rev:yes qa:no] - pinned (repo: myproj)
+- [ ] widget-plan [src:cap flow:staged mode:local-only rev:yes qa:no] - pinned (repo: myproj)
+- [ ] widget-qa [src:cap flow:staged mode:local-only rev:yes qa:yes] - pinned (repo: myproj)
+- [ ] widget-design [src:cap flow:staged mode:local-only rev:yes qa:no] - pinned (repo: myproj)
+- [ ] widget-implement [src:cap flow:staged mode:crew-ship rev:yes qa:no] - pinned (repo: myproj)
+- [ ] widget-pr [src:cap flow:staged mode:direct-pr rev:yes qa:no] - pinned (repo: myproj)
+- [ ] widget-spec-r2 [src:cap flow:staged mode:local-only rev:yes qa:no] - pinned (repo: myproj)
+- [ ] widget-r2 [src:cap flow:staged mode:local-only rev:yes qa:no] - pinned (repo: myproj)
+- [ ] other-plan [src:cap flow:staged mode:local-only rev:yes qa:no] - pinned (repo: myproj)
+- [ ] audit [src:cap flow:staged mode:local-only rev:yes qa:no] - pinned (repo: myproj)
+- [ ] task-1 [src:cap flow:staged mode:crew-ship rev:yes qa:no] - pinned: crew-ship content for the flat brief, staged for the layout-collision case (repo: myproj)
+- [ ] gizmo [src:cap flow:staged mode:local-only rev:yes qa:yes] - pinned (repo: QaClone)
+- [ ] gizmo-qa [src:cap flow:staged mode:local-only rev:yes qa:yes] - pinned (repo: QaClone)
+- [ ] mstaged [src:cap flow:staged mode:local-only rev:yes qa:yes] - pinned (repo: myproj)
+- [ ] ktask2-spec [src:cap flow:staged mode:local-only rev:yes qa:no] - pinned (repo: kproj)
+- [ ] ktask3-qa [src:cap flow:staged mode:local-only rev:yes qa:yes] - pinned (repo: kproj)
+- [ ] mtask1 [src:cap mode:local-only qa:yes] - pinned qa (repo: myproj)
+- [ ] mtask2 [src:cap mode:local-only qa:yes] - pinned qa (repo: myproj)
+- [ ] mbad [src:cap mode:local-only qa:yes] - pinned qa, the malformed-profile refusal stays reachable (repo: myproj)
+PINEOF
+
+
+"$BIN/ac-brief.sh" task-1 myproj >/dev/null   # mode+review ride the row pin
 brief="$AC_HOME/data/task-1/brief.md"
 assert_file "$brief"
 assert_contains "$(cat "$brief")" "crew/task-1" "ship brief names the branch"
@@ -44,7 +75,7 @@ assert_fails "$BIN/ac-brief.sh" task-1 myproj
 
 # config/captain personalizes the address everywhere briefs stamp it.
 printf 'TN\n' >"$AC_HOME/config/captain"
-"$BIN/ac-brief.sh" task-2 myproj >/dev/null
+"$BIN/ac-brief.sh" task-2 myproj --mode local-only >/dev/null
 assert_contains "$(cat "$AC_HOME/data/task-2/brief.md")" "Captain: TN" "configured captain name"
 digest="$("$BIN/ac-session-start.sh" 2>/dev/null)"
 assert_contains "$digest" "captain: TN" "session digest shows the captain"
@@ -86,7 +117,9 @@ assert_fails "$BIN/ac-brief.sh" task-3-empty myproj --mode local-only --review y
 assert_fails "$BIN/ac-brief.sh" task-3-noraise myproj --mode local-only --captain-requested "ref"
 # Where review was never optional, the guard changes nothing: crew-ship derives
 # review=yes with no declaration to make.
-"$BIN/ac-brief.sh" task-3-ship myproj --mode crew-ship --review yes >/dev/null
+# crew-ship is a TIME-EXPENSIVE mode now (the escalation gate): the call must
+# carry the captain's word or a row pin - this one declares.
+"$BIN/ac-brief.sh" task-3-ship myproj --mode crew-ship --review yes --captain-requested "captain: ship it through the pipeline" >/dev/null
 assert_contains "$(cat "$AC_HOME/data/task-3-ship/brief.md")" "Review: yes" "crew-ship review=yes needs no captain declaration"
 assert_fails "$BIN/ac-brief.sh" task-crew-no myproj --mode crew-ship --review no
 assert_fails "$BIN/ac-brief.sh" task-4 myproj --mode bogus
@@ -252,7 +285,7 @@ kproj="$AC_HOME/projects/kproj"
 git init -q -b main "$kproj"
 git -C "$kproj" config user.email t@t
 git -C "$kproj" config user.name t
-"$BIN/ac-brief.sh" ktask kproj >/dev/null
+"$BIN/ac-brief.sh" ktask kproj --mode local-only >/dev/null
 kb="$(cat "$AC_HOME/data/ktask/brief.md")"
 assert_contains "$kb" "$AC_HOME/records/repo-knowledge/kproj.md" "the brief names the resolved record path"
 # --repo names the CREWMATE'S OWN tree ROOT, resolved at the crewmate's shell
@@ -308,7 +341,7 @@ git -C "$wtree" add -A
 git -C "$wtree" commit -qm worktree-commit
 wtree_sha="$(git -C "$wtree" rev-parse HEAD)"
 
-"$BIN/ac-brief.sh" wtask wproj >/dev/null
+"$BIN/ac-brief.sh" wtask wproj --mode local-only >/dev/null
 wb="$(cat "$AC_HOME/data/wtask/brief.md")"
 # Extract the two-physical-line `record:` block verbatim and fill its
 # placeholders - the same text a crewmate would copy out of its own brief.
@@ -366,7 +399,7 @@ assert_contains "$(cat "$AC_HOME/data/ktask2/spec/brief.md")" "--family ktask2" 
 
 # No clone resolves -> NOTHING is named. A brief that names a wrong record is
 # worse than one that names none, and this one WRITES.
-"$BIN/ac-brief.sh" noclone-task nosuchproject >/dev/null
+"$BIN/ac-brief.sh" noclone-task nosuchproject --mode local-only >/dev/null
 nb="$(cat "$AC_HOME/data/noclone-task/brief.md")"
 case "$nb" in *ac-know.sh*) fail "an unresolvable clone must name no ac-know.sh command" ;; esac
 case "$nb" in *repo-knowledge*) fail "an unresolvable clone must name no record path" ;; esac
@@ -388,10 +421,10 @@ grep -q 'scope-install' "$BIN/ac-brief.sh" && fail "no brief template may name s
 # profile set into data/<family>/qa/manifest.json - the set the merge gate
 # adjudicates. Without the flag NO manifest is written (a flat/single-profile
 # task keeps the simple one-profile gate behavior).
-"$BIN/ac-brief.sh" mtask1 myproj >/dev/null
+"$BIN/ac-brief.sh" mtask1 myproj --mode local-only >/dev/null
 assert_no_file "$AC_HOME/data/mtask1/qa/manifest.json" "no --qa-required-profile -> no manifest"
 
-"$BIN/ac-brief.sh" mtask2 myproj \
+"$BIN/ac-brief.sh" mtask2 myproj --mode local-only \
   --qa-required-profile sample-platform/maple/maple-core-service \
   --qa-required-profile sample-platform/birch/birch-core-service >/dev/null
 mman2="$AC_HOME/data/mtask2/qa/manifest.json"
@@ -411,14 +444,14 @@ assert_eq "$(jq -r '.required_profiles[0].profile_key' "$AC_HOME/data/mstaged/qa
   "sample-platform/orchid/orchid-service" "staged manifest attributes to the family"
 
 # A malformed profile key is refused at intake, not written as garbage.
-assert_fails "$BIN/ac-brief.sh" mbad myproj --qa-required-profile 'has space/scope/app'
+assert_fails "$BIN/ac-brief.sh" mbad myproj --mode local-only --qa-required-profile 'has space/scope/app'
 
 # --- Fleet standing rules (issue #3 proposal 1): a captain STANDING rule in
 # records/captain.md must reach every scaffolded brief mechanically, not by a
 # chief hand-copying it. No captain.md exists in this fixture home yet - the
 # FAIL LOUD path (ac-gate.sh's own "(no standing preferences file on record)"
 # precedent), never a silent no-op.
-"$BIN/ac-brief.sh" standing-none myproj >/dev/null
+"$BIN/ac-brief.sh" standing-none myproj --mode local-only >/dev/null
 snb="$(cat "$AC_HOME/data/standing-none/brief.md")"
 assert_contains "$snb" "## Fleet standing rules" "every brief carries the standing-rules section"
 assert_contains "$snb" "(no standing preferences file on record)" \
@@ -437,7 +470,7 @@ cat >"$AC_HOME/records/captain.md" <<'CAP'
   domain-scoped, delivered to that domainchief directly, never here.
 - 2026-01-04: housekeeping note, NOT-STANDING-MARKER, not a rule at all.
 CAP
-"$BIN/ac-brief.sh" standing-yes myproj >/dev/null
+"$BIN/ac-brief.sh" standing-yes myproj --mode local-only >/dev/null
 syb="$(cat "$AC_HOME/data/standing-yes/brief.md")"
 assert_contains "$syb" "ONE-LINE-FLEET-MARKER" "a single-line STANDING bullet is selected"
 assert_contains "$syb" "MULTI-LINE-FLEET-MARKER" "a multi-line STANDING block's anchor line is selected"
@@ -460,7 +493,7 @@ cat >"$AC_HOME/records/captain.md" <<'CAP'
 ## Some heading
 STANDING (captain, via select on something): ORPHAN-STANDING-MARKER, never a bullet.
 CAP
-"$BIN/ac-brief.sh" standing-orphan myproj >/dev/null
+"$BIN/ac-brief.sh" standing-orphan myproj --mode local-only >/dev/null
 sob="$(cat "$AC_HOME/data/standing-orphan/brief.md")"
 assert_contains "$sob" "BULLETED-MARKER" "the conforming bulleted entry still selects normally"
 assert_contains "$sob" "ORPHAN-STANDING-MARKER" \

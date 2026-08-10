@@ -34,7 +34,7 @@ repo="$(make_repo proj)"
 n="$(cat "$FAKE_HERDR/.n" 2>/dev/null || echo 0)"
 p="p$((n + 1))"
 printf '2\n' >"$FAKE_HERDR/panes/$p.delay-ready-secs"
-"$BIN/ac-brief.sh" ready1 proj >/dev/null
+"$BIN/ac-brief.sh" ready1 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" ready1 "$repo" --harness claude --mode local-only 2>&1)"
 assert_contains "$out" "spawned ready1" "a delayed-ready composer still spawns once ready"
 assert_contains "$(cat "$(fake_pane_buf ready1)")" \
@@ -53,7 +53,7 @@ n="$(cat "$FAKE_HERDR/.n" 2>/dev/null || echo 0)"
 p="p$((n + 1))"
 printf '9999\n' >"$FAKE_HERDR/panes/$p.delay-ready-secs"
 : >"$FAKE_HERDR/log"
-"$BIN/ac-brief.sh" never1 proj >/dev/null
+"$BIN/ac-brief.sh" never1 proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" never1 "$repo" --harness claude --mode local-only 2>&1)" || rc=$?
 [ "$rc" != 0 ] || fail "a composer that never becomes ready must FAIL the spawn, not report success"
@@ -74,7 +74,7 @@ esac
 export AC_KICKOFF_READY_BUDGET=2
 : >"$FAKE_HERDR/.probe-unreadable"
 : >"$FAKE_HERDR/log"
-"$BIN/ac-brief.sh" blind2 proj >/dev/null
+"$BIN/ac-brief.sh" blind2 proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" blind2 "$repo" --harness claude --mode local-only 2>&1 >/dev/null)" || rc=$?
 assert_eq "$rc" "0" "an unobservable input-surface probe is not evidence of a frozen composer - the spawn stands"

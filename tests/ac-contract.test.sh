@@ -114,4 +114,90 @@ case "$out" in
   *"WARN   tokened-row"*) fail "a clean contract draws no WARN" ;;
 esac
 
+# --- THE ESCALATION GATE (ac-brief.sh) ---------------------------------------
+# The captain's rule verbatim: "confirm với captain khi sử dụng các mode take
+# time (staged, crew-ship, qa, code-reviewer)" + "đưa ra lý do khi chọn các
+# mode take time" - and the "đã define trong backlog thì không cần hỏi" half.
+# Cheap-path autonomy is the counter-invariant: direct/local-only/rev:no/qa:no
+# must scaffold with no authority at all.
+
+mkdir -p "$AC_HOME/projects/gproj" "$AC_HOME/records"
+git init -q -b main "$AC_HOME/projects/gproj" 2>/dev/null || true
+printf -- '- gproj - a gate fixture project (added 2026-08-10)\n' >"$AC_HOME/records/projects.md"
+
+cat >"$backlog" <<'EOF'
+## In flight
+
+## Queued
+- [ ] g-pinned [src:cap flow:staged mode:crew-ship rev:yes qa:yes] - fully pinned by the captain (repo: gproj)
+- [ ] g-cheap - no contract at all (repo: gproj)
+- [ ] g-bare - no contract either (repo: gproj)
+- [ ] g-pinned-mode [src:cap mode:local-only] - mode pinned local (repo: gproj)
+
+## Done
+EOF
+
+# G1: the CHEAP path stays autonomous - no pin, no declaration, scaffolds.
+"$BIN/ac-brief.sh" g-cheap gproj --mode local-only >/dev/null \
+  || fail "G1: direct+local-only+rev:no+qa:no must scaffold with no authority - cheap autonomy is the other half of the rule"
+
+# G2: unpinned crew-ship REFUSES, and the refusal carries the ask contract:
+# the reason requirement, both remedies, and that nothing was written.
+out="$("$BIN/ac-brief.sh" g-bare gproj --mode crew-ship --review yes 2>&1)" \
+  && fail "G2: unpinned crew-ship must refuse"
+assert_contains "$out" "mode:crew-ship" "G2: names WHICH mode needs confirming"
+assert_contains "$out" "REASON" "G2: the ask must carry the reason (đưa ra lý do)"
+assert_contains "$out" "PIN the answer" "G2: names the durable remedy"
+assert_contains "$out" "--captain-requested" "G2: and the per-call remedy"
+assert_no_file "$AC_HOME/data/g-bare/brief.md" "G2: a refused escalation scaffolds nothing"
+
+# G3: unpinned staged refuses the same way.
+out="$("$BIN/ac-brief.sh" g-bare-spec gproj --mode local-only --stage spec 2>&1)" \
+  && fail "G3: unpinned staged must refuse"
+assert_contains "$out" "flow:staged" "G3: names the staged escalation"
+
+# G4: the ROW PIN is pre-consent - the fully pinned row scaffolds a staged
+# crew-ship brief with no per-call declaration at all.
+"$BIN/ac-brief.sh" g-pinned gproj --stage implement >/dev/null \
+  || fail "G4: a pinned row must scaffold without asking - đã define trong backlog thì không cần hỏi"
+assert_contains "$(cat "$AC_HOME/data/g-pinned/implement/brief.md")" "Mode: crew-ship" \
+  "G4: the pinned mode reaches the brief"
+
+# G5: --captain-requested is the per-call authority for the same escalations.
+"$BIN/ac-brief.sh" g-bare gproj --mode crew-ship --review yes \
+  --captain-requested 'captain 2026-08-10: ship this one through the pipeline' >/dev/null \
+  || fail "G5: a declared captain word must authorize the escalation"
+# The ref rides the Review line only on the OPTIONAL-raise path; a crew-ship
+# review is mandatory, so the brief records the mode and the obligation - the
+# declaration's job here was passing the gate, which the scaffold existing proves.
+assert_contains "$(cat "$AC_HOME/data/g-bare/brief.md")" "Mode: crew-ship" \
+  "G5: the authorized crew-ship brief scaffolds with its mode"
+assert_contains "$(cat "$AC_HOME/data/g-bare/brief.md")" "Review: yes" \
+  "G5: ... and its mandatory review obligation"
+
+# G6: a --mode CONTRADICTING the row's pin refuses - the pin is the captain's
+# recorded word, and a chief flag may not silently override it.
+out="$("$BIN/ac-brief.sh" g-pinned-mode gproj --mode crew-ship --review yes \
+  --captain-requested 'x' 2>&1)" && fail "G6: a flag contradicting the pin must refuse"
+assert_contains "$out" "contradicts the row's pinned mode" "G6: the refusal names the contradiction"
+
+# G7: mode has NO registry default any more - unspecified refuses, naming both
+# the flag and the pin path.
+out="$("$BIN/ac-brief.sh" g-nomode gproj 2>&1)" && fail "G7: unspecified mode must refuse"
+assert_contains "$out" "mode unspecified" "G7: the refusal says what is missing"
+assert_contains "$out" "no registry default" "G7: ... and that the registry rung is gone by captain order"
+
+# G8: a SCOUT resolves no mode and passes no gate - report-only work spends
+# nothing.
+"$BIN/ac-brief.sh" g-scout gproj --scout >/dev/null \
+  || fail "G8: a scout brief needs no mode and no authority"
+
+# G9: ac-spawn READS the brief's Mode record and refuses a contradicting
+# flag - two resolvers for one decision is how the brief said local-only
+# while spawn re-derived crew-ship from the retired registry fallback.
+"$BIN/ac-brief.sh" g-spawncheck gproj --mode local-only >/dev/null
+out="$("$BIN/ac-spawn.sh" g-spawncheck "$AC_HOME/projects/gproj" --harness fake --mode direct-pr 2>&1)" \
+  && fail "G9: a spawn flag contradicting the brief's Mode must refuse"
+assert_contains "$out" "contradicts the brief's recorded Mode" "G9: the refusal names the record"
+
 pass

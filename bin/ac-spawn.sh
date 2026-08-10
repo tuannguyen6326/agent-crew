@@ -1467,18 +1467,33 @@ if [ -n "$crew_branch_sha" ] && ! ac_family_owned "$id" "$state_dir"; then
 then spawn again"
 fi
 
-# Delivery mode is a PER-TASK decision: --mode (the intake triage / the
-# captain's words) overrides the registry line, which is only the project
-# DEFAULT. +yolo stays per-project either way.
-mode_line="$("$bin_dir/ac-project-mode.sh" "$project_name")"
-mode="${mode_line#mode=}"; mode="${mode%% *}"
+# Delivery mode is PER-TASK ONLY (captain order 2026-08-10: no registry mode
+# any more), and the BRIEF is its record: ac-brief.sh resolved it through
+# pin > flag > refuse and wrote the `Mode:` line, so spawn READS that record
+# rather than re-deriving - two resolvers for one decision is how the brief
+# said local-only while spawn re-derived crew-ship from a registry fallback
+# (measured red in tests/ac-dispatch-select.test.sh the moment the fallback
+# died). --mode here remains an override for the captain's late word, refused
+# when it contradicts the brief rather than silently diverging from it.
+mode="$(sed -n 's/^Mode: //p' "$brief" 2>/dev/null | head -n 1)"
 if [ -n "$mode_flag" ]; then
   case "$mode_flag" in
-    crew-ship|direct-pr|local-only) mode="$mode_flag" ;;
+    crew-ship|direct-pr|local-only) ;;
     *) ac_die "invalid --mode: $mode_flag (want crew-ship|direct-pr|local-only)" ;;
   esac
+  if [ -n "$mode" ] && [ "$mode" != "$mode_flag" ]; then
+    ac_die "--mode $mode_flag contradicts the brief's recorded Mode: $mode - re-scaffold the brief (the mode record) rather than spawning a different contract than the crewmate was briefed on"
+  fi
+  mode="$mode_flag"
 fi
-yolo="${mode_line##*yolo=}"
+# A scout brief records no Mode - and spends none. Anything else with no
+# recorded mode predates the per-task rule: re-scaffold it.
+if [ -z "$mode" ] && [ "$scout" = 0 ]; then
+  ac_die "no 'Mode:' line in $brief - re-scaffold with ac-brief.sh (mode is per-task now; the registry default is gone)"
+fi
+# yolo stays per-project - the ONE thing the registry still answers.
+yolo_line="$("$bin_dir/ac-project-mode.sh" "$project_name" 2>/dev/null || printf 'yolo=off\n')"
+yolo="${yolo_line##*yolo=}"
 if [ "$scout" = 0 ]; then
   [ "$mode" != crew-ship ] || [ "$review" = yes ] \
     || ac_die "crew-ship execution requires review=yes in $brief"

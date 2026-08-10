@@ -35,7 +35,7 @@ export PATH="$TMP/stub:$PATH"
 # A fake harness template; its text sits unexecuted in the pane buffer.
 printf 'echo crew __ID__ reading __BRIEF__; sleep 300\n' >"$AC_HOME/config/launch-fake"
 
-"$BIN/ac-brief.sh" t1 proj >/dev/null
+"$BIN/ac-brief.sh" t1 proj --mode local-only >/dev/null
 assert_fails "$BIN/ac-spawn.sh" tX "$repo" --harness fake --mode bogus
 
 # Mint-side grammar is [a-z0-9-] - the same charset ac-brief.sh mints, tighter
@@ -76,7 +76,7 @@ assert_contains "$(cat "$TMP/spawn-thread.log")" "rid=t1" "announce addressed to
 # A spawn from a SCOPED session (a roomchief) announces into the CHIEF's
 # family thread - slice ids (<fam>-s1) are flat by the stage grammar but
 # they are that family's crewmates (captain ruling 2026-07-18).
-"$BIN/ac-brief.sh" lgrp-s1 proj >/dev/null
+"$BIN/ac-brief.sh" lgrp-s1 proj --mode local-only >/dev/null
 sout="$(AC_SCOPE=lgrp "$BIN/ac-spawn.sh" lgrp-s1 "$repo" --harness fake --mode local-only 2>/dev/null)"
 assert_contains "$sout" "spawned lgrp-s1" "scoped slice spawn succeeds"
 assert_contains "$(cat "$TMP/spawn-thread.log")" "rid=lgrp" "scoped spawn announces into the chief's family thread"
@@ -125,7 +125,7 @@ assert_contains "$("$BIN/ac-tree.sh" list --repo "$repo")" "available" "worktree
 # slot" (normal selection would hand out slot 1).
 hold="$("$BIN/ac-tree.sh" get --repo "$repo" --id hold 2>/dev/null)"
 assert_eq "$hold" "$repo/.crew/worktrees/1" "hold pins slot 1"
-"$BIN/ac-brief.sh" t2 proj >/dev/null
+"$BIN/ac-brief.sh" t2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t2 "$repo" --harness claude >/dev/null 2>&1
 assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t2.meta")" \
   "$repo/.crew/worktrees/2" "t2 leased slot 2"
@@ -138,7 +138,7 @@ grep -q -- "--session-id $sid" "$(fake_pane_buf t2)" || fail "launch line pins t
 # Resume lands in the OLD slot (claude keys sessions by cwd): slots 1 and 2
 # are both free and normal selection would pick 1, but the resume must
 # reclaim slot 2 where t2's session lives.
-"$BIN/ac-brief.sh" t2-r2 proj >/dev/null
+"$BIN/ac-brief.sh" t2-r2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t2-r2 "$repo" --resume-from t2 >/dev/null 2>&1
 sid2="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/t2-r2.meta")"
 assert_eq "$sid2" "$sid" "revision resumes the same session"
@@ -159,7 +159,7 @@ printf 'xhigh\n' >"$AC_HOME/config/codereview-effort"
 printf 'claude\n' >"$AC_HOME/config/qa-agent"
 printf 'haiku\n' >"$AC_HOME/config/qa-model"
 printf 'low\n' >"$AC_HOME/config/qa-effort"
-"$BIN/ac-brief.sh" tmr proj >/dev/null
+"$BIN/ac-brief.sh" tmr proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tmr "$repo" --harness claude >/dev/null 2>&1
 mrbuf="$(cat "$(fake_pane_buf tmr)")"
 case "$mrbuf" in *"AC_FLEET_AGENT_CODEREVIEW=codex"*) ;; *) fail "config/codereview-agent must thread as AC_FLEET_AGENT_CODEREVIEW" ;; esac
@@ -176,7 +176,7 @@ rm -f "$AC_HOME/config/codereview-agent" "$AC_HOME/config/codereview-model" \
 # A fleet pinning NONE of them leaves the launch line free of every per-role
 # rung - the byte-identical no-change property for a fleet that configures
 # nothing (both real fleets today: neither key set on drydock or lab).
-"$BIN/ac-brief.sh" tmr0 proj >/dev/null
+"$BIN/ac-brief.sh" tmr0 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tmr0 "$repo" --harness claude >/dev/null 2>&1
 case "$(cat "$(fake_pane_buf tmr0)")" in
   *AC_FLEET_AGENT_*|*AC_FLEET_MODEL_CODEREVIEW*|*AC_FLEET_MODEL_QA*|*AC_FLEET_EFFORT_CODEREVIEW*|*AC_FLEET_EFFORT_QA*)
@@ -191,7 +191,7 @@ esac
 cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 {"rules": [{"when": "anything", "use": {"harness": "claude"}}]}
 EOF
-"$BIN/ac-brief.sh" tnp proj >/dev/null
+"$BIN/ac-brief.sh" tnp proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tnp "$repo" --harness claude >/dev/null 2>&1
 case "$(cat "$(fake_pane_buf tnp)")" in
   *AC_FLEET_PROFILE_*) fail "no panes block must thread no profile at all" ;;
@@ -203,7 +203,7 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
            "qa": {"harness": "claude"},
            "learning": {"harness": "claude", "model": "haiku"}}}
 EOF
-"$BIN/ac-brief.sh" tpp proj >/dev/null
+"$BIN/ac-brief.sh" tpp proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tpp "$repo" --harness claude >/dev/null 2>&1
 ppbuf="$(cat "$(fake_pane_buf tpp)")"
 case "$ppbuf" in *"AC_FLEET_PROFILE_CODEREVIEW=harness=claude"*) ;; *) fail "panes.codereview must thread as AC_FLEET_PROFILE_CODEREVIEW" ;; esac
@@ -235,7 +235,7 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
   }
 }
 EOF
-"$BIN/ac-brief.sh" tcr1 proj >/dev/null
+"$BIN/ac-brief.sh" tcr1 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tcr1 "$repo" --harness claude --codereview-rule 1 >/dev/null 2>&1
 cr1buf="$(cat "$(fake_pane_buf tcr1)")"
 case "$cr1buf" in *"AC_FLEET_PROFILE_CODEREVIEW=harness=claude"*) ;; *) fail "--codereview-rule 1 must pin rule 1's harness onto AC_FLEET_PROFILE_CODEREVIEW" ;; esac
@@ -245,14 +245,14 @@ case "$cr1buf" in *"effort=xhigh"*) ;; *) fail "--codereview-rule 1 must pin rul
 
 # --codereview-rule default is an explicit selection, equal to the no-flag
 # fallback (the mandatory default) - proven by comparing both launch lines.
-"$BIN/ac-brief.sh" tcr2 proj >/dev/null
+"$BIN/ac-brief.sh" tcr2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tcr2 "$repo" --harness claude --codereview-rule default >/dev/null 2>&1
 cr2buf="$(cat "$(fake_pane_buf tcr2)")"
 case "$cr2buf" in *"AC_FLEET_PROFILE_CODEREVIEW=harness=claude"*) ;; *) fail "--codereview-rule default must pin the mandatory default's harness onto AC_FLEET_PROFILE_CODEREVIEW" ;; esac
 case "$cr2buf" in *"model=haiku"*) ;; *) fail "--codereview-rule default must pin the mandatory default's model" ;; esac
 "$BIN/ac-teardown.sh" tcr2 --force >/dev/null 2>&1
 
-"$BIN/ac-brief.sh" tcr3 proj >/dev/null
+"$BIN/ac-brief.sh" tcr3 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tcr3 "$repo" --harness claude >/dev/null 2>&1
 cr3buf="$(cat "$(fake_pane_buf tcr3)")"
 # Same two fields asserted on cr2buf above (--codereview-rule default) - no
@@ -263,14 +263,14 @@ case "$cr3buf" in *"model=haiku"*) ;; *) fail "no --codereview-rule must resolve
 
 # A wrong selector DIES before any window/meta is opened - never a silent
 # fall-through to the default the caller did not ask for.
-"$BIN/ac-brief.sh" tcr4 proj >/dev/null
+"$BIN/ac-brief.sh" tcr4 proj --mode local-only >/dev/null
 assert_fails "$BIN/ac-spawn.sh" tcr4 "$repo" --harness claude --codereview-rule 9
 assert_no_file "$AC_HOME/state/tcr4.meta" "an unresolvable --codereview-rule must die before any meta is written"
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
 # --codereview-rule with NO panes.codereview at all is equally a wrong
 # request, not a silent no-op: nothing to select from.
-"$BIN/ac-brief.sh" tcr5 proj >/dev/null
+"$BIN/ac-brief.sh" tcr5 proj --mode local-only >/dev/null
 assert_fails "$BIN/ac-spawn.sh" tcr5 "$repo" --harness claude --codereview-rule 1
 assert_no_file "$AC_HOME/state/tcr5.meta" "--codereview-rule against an absent panes.codereview must die, not thread nothing silently"
 
@@ -283,7 +283,7 @@ assert_no_file "$AC_HOME/state/tcr6-chief.meta" "--codereview-rule on a roomchie
 # stays with the execution crewmate, so the old model-ship spawn selector is
 # rejected instead of creating a third production role.
 printf 'sonnet\n' >"$AC_HOME/config/model-ship"
-"$BIN/ac-brief.sh" tship proj >/dev/null
+"$BIN/ac-brief.sh" tship proj --mode local-only >/dev/null
 assert_fails "$BIN/ac-spawn.sh" tship "$repo" --harness claude --stage ship
 rm -f "$AC_HOME/config/model-ship"
 
@@ -291,7 +291,7 @@ rm -f "$AC_HOME/config/model-ship"
 # back to another slot and warns loudly that the session cwd changed.
 hold2="$("$BIN/ac-tree.sh" get --repo "$repo" --id hold2 --prefer 2 2>/dev/null)"
 assert_eq "$hold2" "$repo/.crew/worktrees/2" "hold2 pins the old slot"
-"$BIN/ac-brief.sh" t2-r3 proj >/dev/null
+"$BIN/ac-brief.sh" t2-r3 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" t2-r3 "$repo" --resume-from t2 2>&1)"
 assert_contains "$out" \
   "resume may not find the old session (cwd changed: $repo/.crew/worktrees/2 -> $repo/.crew/worktrees/1)" \
@@ -309,7 +309,7 @@ assert_fails "$BIN/ac-spawn.sh" t3 "$repo" --resume-from t1
 printf 'p90 t90\n' >"$AC_HOME/state/.pane-t4"
 printf 'p90\n' >"$FAKE_HERDR/tabs/t90"
 : >"$FAKE_HERDR/panes/p90.buf"
-"$BIN/ac-brief.sh" t4 proj >/dev/null
+"$BIN/ac-brief.sh" t4 proj --mode local-only >/dev/null
 assert_fails "$BIN/ac-spawn.sh" t4 "$repo" --harness fake
 assert_no_file "$AC_HOME/state/t4.meta" "no half-written meta"
 "$BIN/ac-tree.sh" list --repo "$repo" | grep -q 'leased.*t4' && fail "leaked leased slot for t4"
@@ -318,7 +318,7 @@ rm -f "$AC_HOME/state/.pane-t4" "$FAKE_HERDR/tabs/t90" "$FAKE_HERDR/panes/p90.bu
 # Staged-flow layout: a --stage brief nests under the family; spawn resolves
 # it, hands the crewmate the NESTED path, and the scout teardown fail-closed
 # check looks for the report next to that brief.
-"$BIN/ac-brief.sh" t5-spec proj --stage spec >/dev/null
+"$BIN/ac-brief.sh" t5-spec proj --mode local-only --stage spec --captain-requested 'test fixture: staged pinned by the captain' >/dev/null
 assert_file "$AC_HOME/data/t5/spec/brief.md"
 "$BIN/ac-spawn.sh" t5-spec "$repo" --scout --harness fake >/dev/null 2>&1
 assert_contains "$(cat "$(fake_pane_buf t5-spec)")" \
@@ -333,7 +333,7 @@ assert_file "$AC_HOME/state/archive/t5-spec/meta"
 # <family>/{spec,arch,plan}/report.md - never design/report.md. The scout proof
 # must accept those sub-stage reports; checking only design/report.md
 # mis-detected the layout and refused a fully-delivered design (backlog flag).
-"$BIN/ac-brief.sh" md-design proj --stage design >/dev/null
+"$BIN/ac-brief.sh" md-design proj --mode local-only --stage design --captain-requested 'test fixture: staged pinned by the captain' >/dev/null
 assert_file "$AC_HOME/data/md/design/brief.md"
 "$BIN/ac-spawn.sh" md-design "$repo" --scout --harness fake >/dev/null 2>&1
 assert_fails "$BIN/ac-teardown.sh" md-design        # no sub-stage report yet
@@ -388,7 +388,7 @@ n="$(cat "$FAKE_HERDR/.n")"; kpane="p$((n + 1))"
 # 3 drops: send_line burns its two verified submits (plain + focused), the
 # kickoff's first resubmit still strands, its second lands.
 printf '3 crewmate\n' >"$FAKE_HERDR/panes/$kpane.drop-enters"
-"$BIN/ac-brief.sh" t7 proj >/dev/null
+"$BIN/ac-brief.sh" t7 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" t7 "$repo" --harness claude 2>&1)"
 assert_contains "$out" "spawned t7" "spawn survives dropped kickoff Enters"
 case "$out" in *"NOT acknowledged"*) fail "a recovered kickoff must not warn" ;; esac
@@ -400,7 +400,7 @@ assert_eq "$(grep -c "You are an agent-crew crewmate" "$(fake_pane_buf t7)")" "1
 # fallback - and the prompt honestly sits in the composer, not in the transcript.
 n="$(cat "$FAKE_HERDR/.n")"; kpane="p$((n + 1))"
 printf '99 crewmate\n' >"$FAKE_HERDR/panes/$kpane.drop-enters"
-"$BIN/ac-brief.sh" t8 proj >/dev/null
+"$BIN/ac-brief.sh" t8 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" t8 "$repo" --harness claude 2>&1)"
 assert_contains "$out" "spawned t8" "spawn must not die on an unacknowledged kickoff"
 assert_contains "$out" "kickoff prompt NOT acknowledged" "unacknowledged kickoff warns loudly"
@@ -413,7 +413,7 @@ case "$(cat "$(fake_pane_buf t8)")" in *"You are an agent-crew crewmate"*) \
 
 # The UNSUFFIXED staged implement id resolves through the existence probe:
 # spawn must hand the crewmate data/t5/implement/brief.md, not data/t5/brief.md.
-"$BIN/ac-brief.sh" t5 proj --stage implement >/dev/null
+"$BIN/ac-brief.sh" t5 proj --mode local-only --stage implement --captain-requested 'test fixture: staged pinned by the captain' >/dev/null
 assert_file "$AC_HOME/data/t5/implement/brief.md"
 "$BIN/ac-spawn.sh" t5 "$repo" --harness fake >/dev/null 2>&1
 assert_contains "$(cat "$(fake_pane_buf t5)")" \
@@ -432,7 +432,7 @@ git -C "$repo9" push -q origin main
 git -C "$repo9" fetch -q origin
 
 # t9: local-only - local main is AHEAD of origin/main and contains the head.
-"$BIN/ac-brief.sh" t9 proj9 >/dev/null
+"$BIN/ac-brief.sh" t9 proj9 --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t9 "$repo9" --harness fake --mode local-only >/dev/null 2>&1
 wt9="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9.meta")"
 git -C "$wt9" checkout -q -b crew/t9
@@ -446,7 +446,10 @@ git -C "$repo9" merge-base --is-ancestor crew/t9 origin/main 2>/dev/null \
 assert_file "$AC_HOME/state/archive/t9/meta"
 
 # t10: push mode - only ORIGIN contains the head; local main stays behind.
-"$BIN/ac-brief.sh" t10 proj9 >/dev/null
+# The brief IS the mode record now: spawn refuses a flag that contradicts it
+# (delivery-contract-on-the-row), so the brief carries direct-pr from the
+# start and spawn simply agrees.
+"$BIN/ac-brief.sh" t10 proj9 --mode direct-pr >/dev/null
 "$BIN/ac-spawn.sh" t10 "$repo9" --harness fake --mode direct-pr >/dev/null 2>&1
 wt10="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t10.meta")"
 git -C "$wt10" checkout -q -b crew/t10
@@ -479,7 +482,7 @@ assert_contains "$err10" "merged" "git's own reason for keeping it travels with 
 # crew/t12-r2 alias. Before the fix, ac-teardown.sh built the raw "crew/$id"
 # name, found no such branch, and never targeted crew/t12 for deletion - so a
 # fully landed family branch survived teardown, orphaned.
-"$BIN/ac-brief.sh" t12-r2 proj9 >/dev/null
+"$BIN/ac-brief.sh" t12-r2 proj9 --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t12-r2 "$repo9" --harness fake --mode local-only >/dev/null 2>&1
 wt12="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t12-r2.meta")"
 git -C "$wt12" checkout -q -b crew/t12
@@ -627,7 +630,7 @@ assert_file "$AC_HOME/state/.pane-dep1" "the blind recovery left the deputy's wi
 # duplicate-meta refusal above dies on one), so the orphan handle a SIGKILLed
 # spawn leaves behind is exactly what it must still resolve - and a blind backend
 # is no licence to open a second window beside it.
-"$BIN/ac-brief.sh" bw1 proj >/dev/null
+"$BIN/ac-brief.sh" bw1 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 rm -f "$AC_HOME/state/bw1.meta"   # the SIGKILL-mid-spawn orphan: handle, no meta
 touch "$FAKE_HERDR/.pane-api-down"
@@ -658,7 +661,7 @@ assert_fails "$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover
 # listing a phantom crewmate and the monitor raised crew-signal-stale. The
 # archive is now the FIRST durable act of the teardown proper, so the fleet
 # index is already correct when the kill step ends the run.
-"$BIN/ac-brief.sh" t12 proj >/dev/null
+"$BIN/ac-brief.sh" t12 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t12 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 wt12="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t12.meta")"
 # The recorded scenario: the crewmate's pane is ALREADY gone, teardown still
@@ -692,7 +695,7 @@ grep -q "leased.*t12" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
 # so they outlived teardown (captain-caught twice). Teardown owns that sweep,
 # and it must run BEFORE the lease goes back: ac-tree.sh return rm -rf's
 # .crew/qa, so a sweep placed after it could never see the qa records at all.
-"$BIN/ac-brief.sh" t13 proj >/dev/null
+"$BIN/ac-brief.sh" t13 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t13 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 wt13="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t13.meta")"
 assert_eq "$(awk -F= '$1=="leases"{print $2}' "$AC_HOME/state/t13.meta")" "$wt13" \
@@ -798,7 +801,7 @@ grep -q "leased.*t13" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
 # exists to REFUSE - about a verifier that keeps running - and its own ac_die
 # sites could end teardown with a preservation error instead of the refusal the
 # captain must see. The gate's promise is that a refusal writes nothing durable.
-"$BIN/ac-brief.sh" t23 proj >/dev/null
+"$BIN/ac-brief.sh" t23 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t23 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 wt23="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t23.meta")"
 git -C "$wt23" checkout -q -b crew/t23
@@ -884,7 +887,7 @@ grep -q "leased.*duale2e" <<<"$("$BIN/ac-tree.sh" list --repo "$dual_e2e_repo")"
 
 # Back-compat: a meta written before leases= existed carries only worktree=, and
 # teardown must still return that one tree (no migration script).
-"$BIN/ac-brief.sh" t14 proj >/dev/null
+"$BIN/ac-brief.sh" t14 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t14 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 grep -v '^leases=' "$AC_HOME/state/t14.meta" >"$TMP/t14.meta"
 mv "$TMP/t14.meta" "$AC_HOME/state/t14.meta"
@@ -898,7 +901,7 @@ grep -q "leased.*t14" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
 # under the pool, and the old predicate (`[ -n "$lease" ] && [ -d "$lease" ] ||
 # continue`) swallowed it with no warning at all - the sweep, the return,
 # everything the loop iteration owed for that lease simply never ran.
-"$BIN/ac-brief.sh" t16 proj >/dev/null
+"$BIN/ac-brief.sh" t16 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t16 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 wt16="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t16.meta")"
 rm -rf "$wt16"
@@ -939,7 +942,7 @@ case "$out17" in *"WARN: skipping vanished lease"*|*"WARN: could not return work
 # absent under advice.forceDeleteBranch=false (CASE B) and WRONG when the
 # branch is checked out in a worktree (CASE C, where -D refuses IDENTICALLY -
 # verified empirically on git 2.55.0: same "used by worktree" message, exit 1).
-"$BIN/ac-brief.sh" t18 proj >/dev/null
+"$BIN/ac-brief.sh" t18 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t18 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 wt18="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t18.meta")"
 git -C "$wt18" checkout -q -b crew/t18
@@ -958,7 +961,7 @@ case "$err18" in *hint:*) fail "CASE B: git emits no hint under advice.forceDele
 assert_contains "$err18" "git branch -D crew/t18" \
   "CASE B: git's hint is absent, so the warning must supply its own reclaim command"
 
-"$BIN/ac-brief.sh" t19 proj >/dev/null
+"$BIN/ac-brief.sh" t19 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t19 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 stray19="$TMP/stray-t19"
 git -C "$repo" worktree add -q -b crew/t19 "$stray19"
@@ -1010,7 +1013,7 @@ case "$out21" in *"WARN: skipping vanished lease"*|*"WARN: could not return work
 # state/<id>.meta (contract: ORPHAN-WINDOW SAFETY in bin/ac-spawn.sh). The launch
 # line strands the way a real one does; the drop pattern targets it only
 # (AC_FLEET_STATE never appears in the kickoff prompt).
-"$BIN/ac-brief.sh" t15 proj >/dev/null
+"$BIN/ac-brief.sh" t15 proj --mode local-only >/dev/null
 n="$(cat "$FAKE_HERDR/.n")"; otab="t$((n + 1))"
 printf '9 AC_FLEET_STATE\n' >"$FAKE_HERDR/panes/p$((n + 1)).drop-enters"
 : >"$FAKE_HERDR/log"
@@ -1401,7 +1404,7 @@ printf 'x\n' >"$vproj/f.txt"; git -C "$vproj" add -A; git -C "$vproj" commit -qm
 mkdir -p "$(dom_pkg bare)/projects"            # a domain whose view is EMPTY
 lease_count() { find "$vproj/.crew/worktrees" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d ' ' || true; }
 
-"$BIN/ac-brief.sh" outsider vproj >/dev/null 2>&1 || true
+"$BIN/ac-brief.sh" outsider vproj --mode local-only >/dev/null 2>&1 || true
 slots_before="$(lease_count)"
 err="$(AC_DOMAIN=bare "$BIN/ac-spawn.sh" outsider "$vproj" --harness fake 2>&1 || true)"
 assert_contains "$err" "project view" "AC-12.2: the refusal names the view"
@@ -1434,7 +1437,7 @@ rm -f "$(dom_pkg bare)/projects/vproj"
 # And a spawn with NO AC_DOMAIN never meets the guard at all: every domain
 # effect is gated on the binding, so an ordinary crew spawn is unchanged.
 rm -f "$(dom_pkg bare)/projects/$(basename "$repo")"
-"$BIN/ac-brief.sh" outsider2 vproj >/dev/null 2>&1 || true
+"$BIN/ac-brief.sh" outsider2 vproj --mode local-only >/dev/null 2>&1 || true
 err="$("$BIN/ac-spawn.sh" outsider2 "$vproj" --harness fake 2>&1 || true)"
 case "$err" in *"project view"*) fail "AC-12.2: a spawn with no AC_DOMAIN must not meet the view guard" ;; esac
 

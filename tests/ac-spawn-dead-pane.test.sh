@@ -40,7 +40,7 @@ printf 'echo crew __ID__ reading __BRIEF__; sleep 300\n' >"$AC_HOME/config/launc
 
 # --- a harness that came up: unchanged ----------------------------------------
 
-"$BIN/ac-brief.sh" up1 proj >/dev/null
+"$BIN/ac-brief.sh" up1 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" up1 "$repo" --harness fake --mode local-only 2>/dev/null)"
 assert_contains "$out" "spawned up1" "a live harness still spawns"
 assert_contains "$(cat "$(fake_pane_buf up1)")" \
@@ -50,7 +50,7 @@ assert_contains "$(cat "$(fake_pane_buf up1)")" \
 
 : >"$FAKE_HERDR/.spawn-dead"   # every pane created from here on is a bare shell
 : >"$FAKE_HERDR/log"           # so the send-text count below is this spawn's alone
-"$BIN/ac-brief.sh" dead1 proj >/dev/null
+"$BIN/ac-brief.sh" dead1 proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" dead1 "$repo" --harness fake --mode local-only 2>&1)" || rc=$?
 [ "$rc" != 0 ] || fail "a dead pane must FAIL the spawn, not sit silent on it"
@@ -69,7 +69,7 @@ esac
 
 rm -f "$FAKE_HERDR/.spawn-dead"
 : >"$FAKE_HERDR/.probe-unreadable"
-"$BIN/ac-brief.sh" blind1 proj >/dev/null
+"$BIN/ac-brief.sh" blind1 proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" blind1 "$repo" --harness fake --mode local-only 2>&1 >/dev/null)" || rc=$?
 assert_eq "$rc" "0" "an unreadable probe is not evidence of a dead harness - the spawn stands"
@@ -87,7 +87,7 @@ rm -f "$FAKE_HERDR/.probe-unreadable"
 # launch line - the death has to land after the gate to be this case at all.
 
 printf 'agent-crew crewmate. Read and follow' >"$FAKE_HERDR/.die-on-text"
-"$BIN/ac-brief.sh" died1 proj >/dev/null
+"$BIN/ac-brief.sh" died1 proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" died1 "$repo" --harness fake --mode local-only 2>&1)" || rc=$?
 [ "$rc" != 0 ] || fail "a harness that died ON the kickoff must FAIL the spawn, not report success"
@@ -115,7 +115,7 @@ enters_before_kickoff() {
 }
 
 : >"$FAKE_HERDR/log"
-"$BIN/ac-brief.sh" cx1 proj >/dev/null
+"$BIN/ac-brief.sh" cx1 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" cx1 "$repo" --harness codex --mode local-only >/dev/null 2>&1
 assert_eq "$(enters_before_kickoff)" "2" \
   "codex gets a bare Enter (the dialog answer) on top of the launch-line submit"
@@ -124,7 +124,7 @@ assert_contains "$(cat "$(fake_pane_buf cx1)")" \
 "$BIN/ac-teardown.sh" cx1 --force >/dev/null 2>&1
 
 : >"$FAKE_HERDR/log"
-"$BIN/ac-brief.sh" cl1 proj >/dev/null
+"$BIN/ac-brief.sh" cl1 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" cl1 "$repo" --harness claude --mode local-only >/dev/null 2>&1
 assert_eq "$(enters_before_kickoff)" "1" \
   "no other harness gets the codex dialog answer - only the launch-line submit precedes its kickoff"
@@ -138,7 +138,7 @@ assert_eq "$(enters_before_kickoff)" "1" \
 
 : >"$FAKE_HERDR/log"
 : >"$FAKE_HERDR/.die-on-bare-enter"
-"$BIN/ac-brief.sh" cxdead proj >/dev/null
+"$BIN/ac-brief.sh" cxdead proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" cxdead "$repo" --harness codex --mode local-only 2>&1)" || rc=$?
 [ "$rc" != 0 ] || fail "a codex pane whose harness died on the dialog answer must FAIL the spawn"
@@ -156,7 +156,7 @@ rm -f "$FAKE_HERDR/.die-on-bare-enter"
 
 : >"$FAKE_HERDR/log"
 printf 'echo crew __ID__ reading __BRIEF__; sleep 300\n' >"$AC_HOME/config/launch-codex"
-"$BIN/ac-brief.sh" cx2 proj >/dev/null
+"$BIN/ac-brief.sh" cx2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" cx2 "$repo" --harness codex --mode local-only >/dev/null 2>&1
 assert_eq "$(enters_before_kickoff)" "1" \
   "a custom launch-codex template gets no dialog answer - only its own launch-line submit"
@@ -178,7 +178,7 @@ printf '#!/usr/bin/env bash\nsleep 300\n' >"$TMP/stub/claude"
 chmod +x "$TMP/stub/claude"
 export PATH="$TMP/stub:$PATH"
 
-"$BIN/ac-brief.sh" rs1 proj >/dev/null
+"$BIN/ac-brief.sh" rs1 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" rs1 "$repo" --harness claude --mode local-only >/dev/null 2>&1
 old_sid="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/rs1.meta")"
 [ -n "$old_sid" ] || fail "setup: claude spawn must record session_id"
@@ -186,7 +186,7 @@ old_sid="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/rs1.meta")"
 
 : >"$FAKE_HERDR/.spawn-dead"   # every pane created from here on is a bare shell
 : >"$FAKE_HERDR/log"
-"$BIN/ac-brief.sh" rs1-r2 proj >/dev/null
+"$BIN/ac-brief.sh" rs1-r2 proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" rs1-r2 "$repo" --resume-from rs1 --mode local-only 2>&1)" || rc=$?
 [ "$rc" != 0 ] || fail "a resume whose session id claude no longer knows must FAIL the spawn"

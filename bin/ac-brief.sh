@@ -88,8 +88,10 @@ case "$review_flag" in ''|yes|no) ;; *) ac_die "invalid --review: $review_flag (
 # --review yes there is nothing to authorize, and silently ignoring it would hide
 # a caller mistake - the same reason ac-spawn.sh refuses its cap-gate flags on a
 # non-roomchief spawn instead of no-op'ing them.
-[ "$captain_requested_set" = 0 ] || [ "$review_flag" = yes ] \
-  || ac_die "--captain-requested requires --review yes: it declares WHO asked for the OPTIONAL independent review, and without --review yes there is nothing to authorize"
+# --captain-requested declares the captain's word for THIS call's time-expensive
+# choices. With none present there is nothing to authorize - checked after the
+# escalation set is computed below (it used to couple to --review yes alone;
+# the escalation gate generalized it to all four take-time modes).
 
 data_dir="$(ac_data_dir)"
 
@@ -139,13 +141,35 @@ if [ -n "$other" ] && [ -f "$other" ]; then
   ac_die "a brief for '$id' already exists in the other layout: $other"
 fi
 
-mode_line="$("$(dirname "$0")/ac-project-mode.sh" "$project" 2>/dev/null || printf 'mode=crew-ship yolo=off\n')"
-mode="${mode_line#mode=}"; mode="${mode%% *}"
-if [ -n "$mode_flag" ]; then
-  case "$mode_flag" in
-    crew-ship|direct-pr|local-only) mode="$mode_flag" ;;
-    *) ac_die "invalid --mode: $mode_flag (want crew-ship|direct-pr|local-only)" ;;
-  esac
+# MODE IS PER-TASK ONLY (captain order 2026-08-10: "mode k fix cứng trên
+# projects nữa") - the registry rung and its silent crew-ship fallback are
+# GONE. Resolution: the row's pinned token wins (the captain's recorded word);
+# else the chief's explicit --mode (its own triage - cheap modes are free, the
+# escalation gate below prices crew-ship); else REFUSE - an unspecified mode
+# was exactly how the old default spent the heaviest pipeline without anyone
+# choosing it. Scouts deliver only report.md, so they resolve no mode at all.
+mode=""
+if [ "$stage" != scout ]; then
+  _early_pin_mode=""
+  if [ -f "$(ac_records_dir)/backlog.md" ]; then
+    _early_pin_mode="$(awk -v want="$id" "$AC_DONELINE_AWK"'
+      /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
+    ' "$(ac_records_dir)/backlog.md" | tr " " "\n" | sed -n "s/^mode://p")"
+  fi
+  if [ -n "$mode_flag" ]; then
+    case "$mode_flag" in
+      crew-ship|direct-pr|local-only) ;; 
+      *) ac_die "invalid --mode: $mode_flag (want crew-ship|direct-pr|local-only)" ;;
+    esac
+    if [ -n "$_early_pin_mode" ] && [ "$_early_pin_mode" != "$mode_flag" ]; then
+      ac_die "--mode $mode_flag contradicts the row's pinned mode:$_early_pin_mode - the pin is the captain's recorded word; change the row (a captain act) or drop the flag (nothing scaffolded)"
+    fi
+    mode="$mode_flag"
+  elif [ -n "$_early_pin_mode" ]; then
+    mode="$_early_pin_mode"
+  else
+    ac_die "mode unspecified for '$id': pass --mode <crew-ship|direct-pr|local-only> (your triage - the time-expensive crew-ship will still ask the captain), or pin it on the backlog row's contract group. There is no registry default any more (captain order: mode is per-task)"
+  fi
 fi
 
 # Review is an intake obligation, not a stage or delivery profile. Staged work
@@ -174,15 +198,87 @@ else
   # worse than the gap. The ref is RECORDED on the brief's Review line: the two
   # self-raises were caught only because their chiefs volunteered it.
   if [ "$review_flag" = yes ]; then
-    [ "$captain_requested_set" = 1 ] \
-      || ac_die "review=yes on direct + $mode is the CAPTAIN's call, not a chief's (AGENTS.md: 'no by default, optional yes when the captain requests independent review'); if they asked for it, re-run with --captain-requested '<their words, or the order ref>' - if they did not, drop --review yes"
-    [ -n "$captain_requested" ] \
-      || ac_die "--captain-requested needs a non-empty ref: name the captain words or order this review carries out"
-    review_line="yes (captain-requested: $captain_requested)"
+    # Row pin first: it is the durable pre-consent. The declared flag stays the
+    # per-call authority, its ref recorded exactly as before.
+    _pin_rev="$(
+      [ -f "$(ac_records_dir)/backlog.md" ] && awk -v want="$id" "$AC_DONELINE_AWK"'
+        /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
+      ' "$(ac_records_dir)/backlog.md" | tr " " "\n" | sed -n "s/^rev://p" || true
+    )"
+    if [ "$_pin_rev" = yes ]; then
+      review_line="yes (pinned on the backlog row)"
+    else
+      [ "$captain_requested_set" = 1 ] \
+        || ac_die "review=yes on direct + $mode is the CAPTAIN's call, not a chief's (AGENTS.md: 'no by default, optional yes when the captain requests independent review'); if they asked for it, PIN rev:yes on the backlog row's contract group or re-run with --captain-requested '<their words, or the order ref>' - if they did not, drop --review yes"
+      [ -n "$captain_requested" ] \
+        || ac_die "--captain-requested needs a non-empty ref: name the captain words or order this review carries out"
+      review_line="yes (captain-requested: $captain_requested)"
+    fi
   fi
   review="${review_flag:-no}"
 fi
 review_line="${review_line:-$review}"
+
+# --- THE ESCALATION GATE (delivery-contract-on-the-row) -----------------------
+# The captain's rule, verbatim from the order: "confirm với captain khi sử dụng
+# các mode take time (staged, crew-ship, qa, code-reviewer)" - and the ask must
+# carry the REASON ("đưa ra lý do khi chọn các mode take time"). The chief keeps
+# auto-triage; SPENDING is what asks. Two authorities satisfy it, either one:
+#   - the ledger row PINS the token ([flow:staged], [mode:crew-ship], [rev:yes],
+#     [qa:yes] in the row's contract group) - pre-consent, never re-asked;
+#   - --captain-requested '<the captain's words, or the order ref>' declares it
+#     for this call (the existing review-raise guard, generalized).
+# Same accident-guard grade as the review raise it grew from: a chief that
+# means to lie still can - this catches the drift, not the liar.
+# Scouts are exempt: a scout delivers only report.md - nothing here to spend.
+row_contract=""
+backlog_file="$(ac_records_dir)/backlog.md"
+if [ -f "$backlog_file" ]; then
+  row_contract="$(awk -v want="$id" "$AC_DONELINE_AWK"'
+    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
+  ' "$backlog_file")"
+fi
+pin_flow=""; pin_mode=""; pin_rev=""; pin_qa=""
+for _tok in $row_contract; do
+  case "$_tok" in
+    flow:*) pin_flow="${_tok#flow:}" ;;
+    mode:*) pin_mode="${_tok#mode:}" ;;
+    rev:*)  pin_rev="${_tok#rev:}" ;;
+    qa:*)   pin_qa="${_tok#qa:}" ;;
+  esac
+done
+unauthorized=""
+wants_any=0
+if [ "$stage" != scout ]; then
+  if [ "$staged" = 1 ]; then
+    wants_any=1
+    [ "$pin_flow" = staged ] || [ "$captain_requested_set" = 1 ] \
+      || unauthorized="$unauthorized flow:staged"
+  fi
+  if [ "$mode" = crew-ship ]; then
+    wants_any=1
+    [ "$pin_mode" = crew-ship ] || [ "$captain_requested_set" = 1 ] \
+      || unauthorized="$unauthorized mode:crew-ship"
+  fi
+  if [ "${#qa_profiles[@]}" -gt 0 ]; then
+    wants_any=1
+    [ "$pin_qa" = yes ] || [ "$captain_requested_set" = 1 ] \
+      || unauthorized="$unauthorized qa:yes"
+  fi
+  # review=yes counts as spent whenever it is DISCRETIONARY (the optional
+  # raise); a review mandated by staged/crew-ship rides THOSE tokens' own
+  # authority rather than asking twice for one decision.
+  if [ "$review" = yes ] && [ "$staged" != 1 ] && [ "$mode" != crew-ship ]; then
+    wants_any=1
+    # already authorized above by the raise guard (captain-requested) - a row
+    # pin is the second, durable authority the raise guard now also accepts.
+  fi
+fi
+if [ -n "$unauthorized" ]; then
+  ac_die "time-expensive mode(s) not confirmed:$unauthorized - the captain's rule: confirm BEFORE using staged/crew-ship/qa/independent review. Put ONE ask to the captain carrying (1) the REASON each is warranted for THIS task (the signal: financial surface, behavioral surface, multi-file risk, ...), (2) the options, (3) your lean - then either PIN the answer on the backlog row's contract group (e.g. [src:cap flow:staged mode:crew-ship rev:yes qa:no]) so it is never re-asked, or re-run with --captain-requested '<the captain's words, or the order ref>' (nothing scaffolded)"
+fi
+[ "$captain_requested_set" = 0 ] || [ "$wants_any" = 1 ] || [ "$review_flag" = yes ] \
+  || ac_die "--captain-requested with nothing to authorize: this call uses no time-expensive mode (staged/crew-ship/qa/review) - drop the flag"
 
 mkdir -p "$task_dir"
 # Computed AFTER the mkdir above, not before: ac_family_of_id trusts a plain

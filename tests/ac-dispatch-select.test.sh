@@ -259,7 +259,7 @@ assert_eq "$("$BIN/ac-dispatch-select.sh" --pane roomchief --rule 1)" "harness=c
 
 # ac-spawn refuses to guess the harness while dispatch rules exist.
 repo="$(make_repo alpha)"
-"$BIN/ac-brief.sh" t1 alpha >/dev/null
+"$BIN/ac-brief.sh" t1 alpha --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" t1 "$repo" 2>&1)" && fail "spawn must refuse without --harness under dispatch"
 assert_contains "$out" "ac-dispatch-select" "refusal points at the resolver"
 

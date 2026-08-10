@@ -36,7 +36,7 @@ chmod +x "$TMP/stub/claude"
 export PATH="$TMP/stub:$PATH"
 
 # --- control: no crew/<id> ref => the spawn proceeds ---------------------------
-"$BIN/ac-brief.sh" c0 proj >/dev/null
+"$BIN/ac-brief.sh" c0 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" c0 "$repo" --harness claude >/dev/null 2>&1
 assert_file "$AC_HOME/state/c0.meta" "an id with no crew branch spawns as before"
 "$BIN/ac-teardown.sh" c0 --force >/dev/null 2>&1
@@ -47,7 +47,7 @@ assert_file "$AC_HOME/state/c0.meta" "an id with no crew branch spawns as before
 # would have committed onto a foreign history.
 git -C "$repo" branch crew/c1 main
 sha="$(git -C "$repo" rev-parse --verify crew/c1)"
-"$BIN/ac-brief.sh" c1 proj >/dev/null
+"$BIN/ac-brief.sh" c1 proj --mode local-only >/dev/null
 err="$("$BIN/ac-spawn.sh" c1 "$repo" --harness claude 2>&1 1>/dev/null || true)"
 assert_contains "$err" "crew/c1" "the refusal names the colliding ref"
 assert_contains "$err" "branch -m crew/c1" "the refusal states the rename command"
@@ -64,10 +64,10 @@ esac
 # c2 is in flight and commits on crew/c2; c2-r2 is the fresh execution crewmate
 # that continues that same branch (AGENTS.md section 5 recovery). Refusing it
 # would tell the operator to delete a branch holding live unlanded work.
-"$BIN/ac-brief.sh" c2 proj >/dev/null
+"$BIN/ac-brief.sh" c2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" c2 "$repo" --harness claude >/dev/null 2>&1
 git -C "$repo" branch crew/c2 main
-"$BIN/ac-brief.sh" c2-r2 proj --stage implement >/dev/null
+"$BIN/ac-brief.sh" c2-r2 proj --mode local-only --stage implement --captain-requested 'test fixture: staged pinned by the captain' >/dev/null
 "$BIN/ac-spawn.sh" c2-r2 "$repo" --harness claude >/dev/null 2>&1
 assert_file "$AC_HOME/state/c2-r2.meta" \
   "a branch a live family sibling owns is continued, not refused"
