@@ -318,7 +318,7 @@ rm -f "$AC_HOME/state/.pane-t4" "$FAKE_HERDR/tabs/t90" "$FAKE_HERDR/panes/p90.bu
 # Staged-flow layout: a --stage brief nests under the family; spawn resolves
 # it, hands the crewmate the NESTED path, and the scout teardown fail-closed
 # check looks for the report next to that brief.
-"$BIN/ac-brief.sh" t5-spec proj --mode local-only --stage spec --captain-requested 'test fixture: staged pinned by the captain' >/dev/null
+"$BIN/ac-brief.sh" t5-spec proj --mode local-only --stage spec --captain-requested 'test fixture: staged pinned by the captain' --reason 'fixture: exercising the staged path' >/dev/null
 assert_file "$AC_HOME/data/t5/spec/brief.md"
 "$BIN/ac-spawn.sh" t5-spec "$repo" --scout --harness fake >/dev/null 2>&1
 assert_contains "$(cat "$(fake_pane_buf t5-spec)")" \
@@ -333,7 +333,7 @@ assert_file "$AC_HOME/state/archive/t5-spec/meta"
 # <family>/{spec,arch,plan}/report.md - never design/report.md. The scout proof
 # must accept those sub-stage reports; checking only design/report.md
 # mis-detected the layout and refused a fully-delivered design (backlog flag).
-"$BIN/ac-brief.sh" md-design proj --mode local-only --stage design --captain-requested 'test fixture: staged pinned by the captain' >/dev/null
+"$BIN/ac-brief.sh" md-design proj --mode local-only --stage design --captain-requested 'test fixture: staged pinned by the captain' --reason 'fixture: exercising the staged path' >/dev/null
 assert_file "$AC_HOME/data/md/design/brief.md"
 "$BIN/ac-spawn.sh" md-design "$repo" --scout --harness fake >/dev/null 2>&1
 assert_fails "$BIN/ac-teardown.sh" md-design        # no sub-stage report yet
@@ -413,7 +413,7 @@ case "$(cat "$(fake_pane_buf t8)")" in *"You are an agent-crew crewmate"*) \
 
 # The UNSUFFIXED staged implement id resolves through the existence probe:
 # spawn must hand the crewmate data/t5/implement/brief.md, not data/t5/brief.md.
-"$BIN/ac-brief.sh" t5 proj --mode local-only --stage implement --captain-requested 'test fixture: staged pinned by the captain' >/dev/null
+"$BIN/ac-brief.sh" t5 proj --mode local-only --stage implement --captain-requested 'test fixture: staged pinned by the captain' --reason 'fixture: exercising the staged path' >/dev/null
 assert_file "$AC_HOME/data/t5/implement/brief.md"
 "$BIN/ac-spawn.sh" t5 "$repo" --harness fake >/dev/null 2>&1
 assert_contains "$(cat "$(fake_pane_buf t5)")" \

@@ -165,7 +165,8 @@ assert_contains "$(cat "$AC_HOME/data/g-pinned/implement/brief.md")" "Mode: crew
 
 # G5: --captain-requested is the per-call authority for the same escalations.
 "$BIN/ac-brief.sh" g-bare gproj --mode crew-ship --review yes \
-  --captain-requested 'captain 2026-08-10: ship this one through the pipeline' >/dev/null \
+  --captain-requested 'captain 2026-08-10: ship this one through the pipeline' \
+  --reason 'behavioral surface: the change rewrites the merge gate' >/dev/null \
   || fail "G5: a declared captain word must authorize the escalation"
 # The ref rides the Review line only on the OPTIONAL-raise path; a crew-ship
 # review is mandatory, so the brief records the mode and the obligation - the
@@ -200,6 +201,27 @@ out="$("$BIN/ac-spawn.sh" g-spawncheck "$AC_HOME/projects/gproj" --harness fake 
   && fail "G9: a spawn flag contradicting the brief's Mode must refuse"
 assert_contains "$out" "contradicts the brief's recorded Mode" "G9: the refusal names the record"
 
+# G11: the declared path must carry the chief's STATED REASON (captain's
+# rule: 'đưa ra lý do khi chọn các mode take time') - required WITH
+# --captain-requested, recorded on the brief's Escalation: line; a row pin
+# needs none (no ask happened - the pin is the captain's own act), and an
+# idle --reason documents an ask that never happened.
+out="$("$BIN/ac-brief.sh" g-noreason gproj --mode crew-ship \
+  --captain-requested 'captain: pipeline please' 2>&1)" \
+  && fail "G11: a declared escalation without --reason must refuse"
+assert_contains "$out" "--reason" "G11: the refusal names the missing reason"
+[ ! -e "$AC_HOME/data/g-noreason" ] || fail "G11: nothing scaffolded on the refusal"
+"$BIN/ac-brief.sh" g-reason gproj --mode crew-ship \
+  --captain-requested 'captain: pipeline please' \
+  --reason 'financial surface: the change moves settlement math' >/dev/null \
+  || fail "G11: authority + reason together must pass"
+assert_contains "$(cat "$AC_HOME/data/g-reason/brief.md")" \
+  "Escalation: mode:crew-ship rev:yes - captain-requested: captain: pipeline please - reason: financial surface: the change moves settlement math" \
+  "G11: the brief records what was spent, on whose word, and why"
+out="$("$BIN/ac-brief.sh" g-idlereason gproj --mode local-only \
+  --reason 'no ask happened' 2>&1)" \
+  && fail "G11: --reason without --captain-requested must refuse"
+assert_contains "$out" "ask that never happened" "G11: the idle-reason refusal names its ground"
 # G10: pins live on the FAMILY row - a staged call's id is <family>-<stage>,
 # and the gate must resolve the family's contract for it (the live demo
 # caught the exact-id-only lookup reading a pinned family as unpinned; the
@@ -214,6 +236,11 @@ assert_contains "$(cat "$AC_HOME/data/g-fampin/implement/brief.md")" "Mode: crew
   "G10: the recorded mode comes from the family pin"
 assert_contains "$(cat "$AC_HOME/data/g-fampin/implement/brief.md")" "Review: yes" \
   "G10: staged review rides the pin's authority"
+
+# ...and the pin needs NO --reason either (G11's counterpart): no ask
+# happened - the pin is the captain's own act, the row is its record.
+"$BIN/ac-brief.sh" g-fampin-arch gproj --stage architecture >/dev/null \
+  || fail "G10: a pinned row scaffolds with neither declaration nor reason"
 
 # --- differential: the TS twin extracts byte-identically ----------------------
 # bin/dashboard.ts parseBacklogLine().contract is the browser-side twin of

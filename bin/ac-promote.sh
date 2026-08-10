@@ -2,7 +2,7 @@
 # ac-promote.sh - promote a scout task to a ship task IN PLACE.
 #
 # Usage: ac-promote.sh <id> --mode <crew-ship|direct-pr|local-only>
-#                       [--captain-requested '<ref>']
+#                       [--captain-requested '<ref>' --reason '<one line>']
 #
 # A scout steered mid-flight into writing code on crew/<id> stops being a
 # report-only task. Promoting rewrites state/<id>.meta (each key via the
@@ -38,6 +38,7 @@ shift
 
 mode_flag=""
 captain_ref=""
+esc_reason=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --mode)
@@ -47,6 +48,10 @@ while [ $# -gt 0 ]; do
     --captain-requested)
       captain_ref="${2:-}"
       [ -n "$captain_ref" ] || ac_die "missing value for --captain-requested"
+      shift 2 ;;
+    --reason)
+      esc_reason="${2:-}"
+      [ -n "$esc_reason" ] || ac_die "missing value for --reason"
       shift 2 ;;
     *) ac_die "unknown argument: $1" ;;
   esac
@@ -70,7 +75,15 @@ case "$mode_flag" in
   *) ac_die "invalid --mode: $mode_flag (want crew-ship|direct-pr|local-only)" ;;
 esac
 if [ "$mode" = crew-ship ] && [ -z "$captain_ref" ]; then
-  ac_die "promoting '$id' into crew-ship is a time-expensive choice: it needs the captain's confirmation, with your REASON stated in the ask - then declare it with --captain-requested '<the captain's words, or the order ref>'. Nothing promoted"
+  ac_die "promoting '$id' into crew-ship is a time-expensive choice: it needs the captain's confirmation, with your REASON stated in the ask - then declare it with --captain-requested '<the captain's words, or the order ref>' --reason '<the justification you gave>'. Nothing promoted"
+fi
+# The reason must ride the record, not just the ask (captain's rule) - and an
+# idle reason on the cheap path documents an ask that never happened.
+if [ "$mode" = crew-ship ] && [ -n "$captain_ref" ] && [ -z "$esc_reason" ]; then
+  ac_die "promoting '$id' into crew-ship carries the captain's word but no --reason '<the justification you gave the captain>': the reason must ride the record. Nothing promoted"
+fi
+if [ -n "$esc_reason" ] && [ "$mode" != crew-ship ]; then
+  ac_die "--reason has nothing to justify here: promoting into $mode is the cheap path. Drop the flag"
 fi
 if [ -n "$captain_ref" ] && [ "$mode" != crew-ship ]; then
   ac_die "--captain-requested has nothing to authorize here: promoting into $mode is the cheap path. Drop the flag - declaring authority that was never needed muddies the record"
@@ -78,7 +91,7 @@ fi
 
 ac_meta_set "$meta" kind ship
 ac_meta_set "$meta" mode "$mode"
-ac_status_append "$id" "promoted: scout -> ship (mode=$mode)${captain_ref:+ captain-requested: $captain_ref}"
+ac_status_append "$id" "promoted: scout -> ship (mode=$mode)${captain_ref:+ captain-requested: $captain_ref}${esc_reason:+ reason: $esc_reason}"
 
 printf 'promoted %s: kind scout -> ship, mode=%s (ship teardown protection now applies)\n' \
   "$id" "$mode"

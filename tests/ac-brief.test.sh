@@ -107,7 +107,7 @@ assert_contains "$out" "--captain-requested" "direct-pr names the same fix"
 # it carries out - ac-spawn.sh's --captain-initiated shape for the same claim.
 # The brief RECORDS the authority, so a later reader sees who asked.
 "$BIN/ac-brief.sh" task-3-reviewed myproj --mode local-only --review yes \
-  --captain-requested "captain TN 2026-07-30: review this one" >/dev/null
+  --captain-requested "captain TN 2026-07-30: review this one" --reason "captain asked for independent eyes" >/dev/null
 assert_contains "$(cat "$AC_HOME/data/task-3-reviewed/brief.md")" "Review: yes" "direct local-only can opt into review when the captain asks"
 assert_contains "$(cat "$AC_HOME/data/task-3-reviewed/brief.md")" "captain TN 2026-07-30: review this one" "the brief records WHO asked for the review"
 assert_contains "$(cat "$AC_HOME/data/task-3-reviewed/brief.md")" "ac-verify.sh codereview" "optional direct review uses the verifier facade"
@@ -119,7 +119,7 @@ assert_fails "$BIN/ac-brief.sh" task-3-noraise myproj --mode local-only --captai
 # review=yes with no declaration to make.
 # crew-ship is a TIME-EXPENSIVE mode now (the escalation gate): the call must
 # carry the captain's word or a row pin - this one declares.
-"$BIN/ac-brief.sh" task-3-ship myproj --mode crew-ship --review yes --captain-requested "captain: ship it through the pipeline" >/dev/null
+"$BIN/ac-brief.sh" task-3-ship myproj --mode crew-ship --review yes --captain-requested "captain: ship it through the pipeline" --reason "multi-file risk: the slice spans three subsystems" >/dev/null
 assert_contains "$(cat "$AC_HOME/data/task-3-ship/brief.md")" "Review: yes" "crew-ship review=yes needs no captain declaration"
 assert_fails "$BIN/ac-brief.sh" task-crew-no myproj --mode crew-ship --review no
 assert_fails "$BIN/ac-brief.sh" task-4 myproj --mode bogus

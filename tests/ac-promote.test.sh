@@ -125,10 +125,15 @@ assert_eq "$(meta_get s7 kind)" "scout" "a refused promotion flips nothing"
 out="$("$BIN/ac-promote.sh" s7 --mode direct-pr --captain-requested 'order ref' 2>&1)" \
   && fail "declaring authority the cheap path never needed must refuse"
 assert_contains "$out" "nothing to authorize" "an idle declaration is refused"
-"$BIN/ac-promote.sh" s7 --mode crew-ship --captain-requested 'captain: run the pipeline on s7' >/dev/null
+out="$("$BIN/ac-promote.sh" s7 --mode crew-ship --captain-requested 'captain: run the pipeline on s7' 2>&1)" \
+  && fail "the captain's word without the chief's --reason must refuse: the reason rides the record"
+assert_contains "$out" "--reason" "the refusal names the missing reason"
+"$BIN/ac-promote.sh" s7 --mode crew-ship --captain-requested 'captain: run the pipeline on s7' --reason 'financial surface: the change touches the ledger math' >/dev/null
 assert_eq "$(meta_get s7 mode)" "crew-ship" "the declared promotion records the mode"
 assert_contains "$(cat "$AC_HOME/state/s7.status")" "captain-requested: captain: run the pipeline on s7" \
   "the captain's word rides the status record"
+assert_contains "$(cat "$AC_HOME/state/s7.status")" "reason: financial surface" \
+  "the chief's reason rides the status record too"
 rm -f "$AC_HOME/state/s7.meta" "$AC_HOME/state/s7.status"
 
 # ---- Case 8: a live window gets the ship-contract notice ---------------------

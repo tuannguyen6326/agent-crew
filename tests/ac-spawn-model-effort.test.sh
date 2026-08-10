@@ -71,7 +71,7 @@ launch_line() { cat "$(fake_pane_buf "$1")"; }
 # m0 asserts the DERIVED review obligation rides the launch line, so it needs
 # a mode that derives review=yes - crew-ship, captain-authorized per the
 # escalation gate.
-"$BIN/ac-brief.sh" m0 proj --mode crew-ship --review yes --captain-requested 'fixture: captain ordered the pipeline'  >/dev/null
+"$BIN/ac-brief.sh" m0 proj --mode crew-ship --review yes --captain-requested 'fixture: captain ordered the pipeline' --reason 'fixture: pipeline path under test'  >/dev/null
 "$BIN/ac-spawn.sh" m0 "$repo" --harness claude >/dev/null 2>&1
 line="$(launch_line m0)"
 case "$line" in *"--model "*) fail "no config/flag must emit no --model" ;; esac

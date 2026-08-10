@@ -73,7 +73,11 @@ group already pins that token - a pin is pre-consent and is never
 re-asked. The cheap path (`direct`, `direct-pr`/`local-only`, `rev:no`,
 `qa:no`) stays fully autonomous. `ac-brief.sh` enforces this
 mechanically (the escalation gate): a heavy value with neither a row pin
-nor `--captain-requested '<the captain's words>'` refuses to scaffold.
+nor `--captain-requested '<the captain's words>'` refuses to scaffold -
+and the declared path also REQUIRES `--reason '<the justification you
+gave the captain>'`, recorded on the brief's `Escalation:` line, so the
+why survives the conversation it was asked in (a pin needs no reason: no
+ask happened - the pin is the captain's own act).
 The captain's answer is written onto the row as contract tokens, so the
 ask happens at most once per task ever. A STANDING captain rule may
 pre-authorize a CLASS of rows (the captain's words, recorded in
@@ -526,7 +530,7 @@ When the family is promoted at intake, steps 2-3 belong to its ROOMCHIEF, not to
 A crewmate the crewchief spawns instead carries no family scope for its whole life, so its completions push-file to the fleet spool and reach the roomchief only through a manual forward.
 
 1. Record the task in `records/backlog.md` (section 9) and pick a short id (`[a-z0-9-]`).
-2. `bin/ac-brief.sh <id> <project> [--scout | --stage <spec|architecture|plan|design|implement|qa>] [--mode <m>] [--review yes|no] [--captain-requested <ref>]` scaffolds the brief (flat `data/<id>/brief.md`, or nested `data/<family>/<stage>/brief.md` for staged flows), resolves the mode (row pin > `--mode`; REQUIRED for non-scout work - the registry default is gone), runs the escalation gate (a heavy value needs a row pin or `--captain-requested`, section 5 clause above), derives and records the review obligation, and refuses normal `code-review`/`ship` stages; edit it with the real task, constraints, acceptance criteria, and stage inputs before spawning. `ac-spawn.sh` reads the brief's recorded `Mode:` - ONE resolver; a contradicting spawn flag refuses.
+2. `bin/ac-brief.sh <id> <project> [--scout | --stage <spec|architecture|plan|design|implement|qa>] [--mode <m>] [--review yes|no] [--captain-requested <ref>]` scaffolds the brief (flat `data/<id>/brief.md`, or nested `data/<family>/<stage>/brief.md` for staged flows), resolves the mode (row pin > `--mode`; REQUIRED for non-scout work - the registry default is gone), runs the escalation gate (a heavy value needs a row pin, or `--captain-requested` + `--reason`, section 5 clause above), derives and records the review obligation, and refuses normal `code-review`/`ship` stages; edit it with the real task, constraints, acceptance criteria, and stage inputs before spawning. `ac-spawn.sh` reads the brief's recorded `Mode:` - ONE resolver; a contradicting spawn flag refuses.
 3. `bin/ac-spawn.sh <id> <project> [--scout] [--harness <h>] [--model <m>] [--effort <e>] [--backend <b>]` leases a pooled worktree INSIDE the project repo (`<repo>/.crew/worktrees/<n>`), opens a herdr tab (the only session backend) in the task FAMILY's workspace - every pane of one family (chief, crewmates, verification panes, watch tabs) co-tenants one `<fleet> · <family>` workspace, fleet-level panes the root `<fleet>` one (`bin/ac-backend.sh` FAMILY WORKSPACE GROUPING owns the contract) - and launches the harness on the brief.
    Model and effort are fleet-wide defaults: absent `--model`/`--effort` fall back to `config/model` and `config/effort`; the `--effort` FLAG (`low|medium|high|xhigh|max|ultracode`) is claude-only, while the effort VALUE also reaches codex as its `-c model_reasoning_effort=<tier>` config override, and opencode ignores it.
    `--effort ultracode` launches claude at `xhigh` and types `/effort ultracode` into the built-in claude TUI to add the workflow-orchestration layer (claude built-in only; `AC_ULTRACODE_SETTLE` gates the pause before the kickoff prompt).

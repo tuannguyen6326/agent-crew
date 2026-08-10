@@ -3,9 +3,13 @@
 #
 # Usage: ac-brief.sh <id> <project-name> [--scout | --stage <spec|architecture|plan|implement|design|qa>]
 #                    [--mode <crew-ship|direct-pr|local-only>] [--review <yes|no>]
-#                    [--captain-requested <ref>]
+#                    [--captain-requested <ref>] [--reason <one line>]
 #                    [--qa-required-profile <project/scope/app>]...
 #
+# --reason <one line> is REQUIRED whenever --captain-requested authorizes a
+# time-expensive mode: the chief's justification as given to the captain in
+# the ask, recorded on the brief's Escalation: line (a row pin needs none -
+# the pin is the captain's own act).
 # --captain-requested <ref> DECLARES the authority for the one review raise that
 # is optional: direct flow + direct-pr/local-only, where AGENTS.md's
 # review-obligation block allows review=yes only "when the captain requests
@@ -64,7 +68,7 @@ set -euo pipefail
 id="${1:-}"; project="${2:-}"
 shift 2 2>/dev/null || ac_die "usage: ac-brief.sh <id> <project-name> [--scout | --stage <s>]"
 stage="implement"; staged=0; mode_flag=""; review_flag=""; qa_profiles=()
-captain_requested=""; captain_requested_set=0
+captain_requested=""; captain_requested_set=0; esc_reason=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --scout) stage="scout"; staged=0; shift ;;
@@ -72,6 +76,7 @@ while [ $# -gt 0 ]; do
     --mode) mode_flag="${2:-}"; shift 2 ;;
     --review) review_flag="${2:-}"; shift 2 ;;
     --captain-requested) captain_requested="${2:-}"; captain_requested_set=1; shift 2 ;;
+    --reason) esc_reason="${2:-}"; shift 2 ;;
     --qa-required-profile) qa_profiles+=("${2:-}"); shift 2 ;;
     *) ac_die "unknown flag: $1" ;;
   esac
@@ -276,6 +281,30 @@ if [ -n "$unauthorized" ]; then
 fi
 [ "$captain_requested_set" = 0 ] || [ "$wants_any" = 1 ] || [ "$review_flag" = yes ] \
   || ac_die "--captain-requested with nothing to authorize: this call uses no time-expensive mode (staged/crew-ship/qa/review) - drop the flag"
+# The declared path must carry the chief's STATED REASON - the justification
+# given to the captain in the ask (captain's rule: 'đưa ra lý do khi chọn các
+# mode take time'). Required WITH the declaration, recorded on the brief, so
+# the why survives the conversation it was asked in. A row pin needs none:
+# no ask happened - the pin is the captain's own act, and the row is its record.
+if [ "$captain_requested_set" = 1 ] && [ "$wants_any" = 1 ]; then
+  [ -n "$esc_reason" ] \
+    || ac_die "--captain-requested authorizes time-expensive mode(s) but carries no --reason '<the justification you gave the captain>': the reason must ride the record, not just the ask (nothing scaffolded)"
+  case "$esc_reason" in
+    *$'\n'*|*$'\r'*) ac_die "--reason must be a single line" ;;
+  esac
+fi
+[ -n "$esc_reason" ] && [ "$captain_requested_set" = 0 ] \
+  && ac_die "--reason without --captain-requested documents an ask that never happened: a pinned row needs no reason (the pin is the captain's own act) and the cheap path spends nothing - drop the flag"
+# What the brief records for a declared escalation (empty when pinned/cheap).
+escalation_line=""
+if [ "$captain_requested_set" = 1 ] && [ "$wants_any" = 1 ]; then
+  _spent=""
+  [ "$staged" = 1 ] && _spent="$_spent flow:staged"
+  [ "$mode" = crew-ship ] && _spent="$_spent mode:crew-ship"
+  [ "${#qa_profiles[@]}" -gt 0 ] && _spent="$_spent qa:yes"
+  [ "$review" = yes ] && _spent="$_spent rev:yes"
+  escalation_line="Escalation:${_spent} - captain-requested: $captain_requested - reason: $esc_reason"
+fi
 
 mkdir -p "$task_dir"
 # Computed AFTER the mkdir above, not before: ac_family_of_id trusts a plain
@@ -471,7 +500,8 @@ EOF
 # Spec brief: $id
 
 Project: $project
-Kind: scout stage: spec (report only - NEVER open a PR, push, or change code)
+Kind: scout stage: spec (report only - NEVER open a PR, push, or change code)${escalation_line:+
+$escalation_line}
 Captain: $captain
 
 ## Task
@@ -497,7 +527,8 @@ EOF
 # Architecture brief: $id
 
 Project: $project
-Kind: scout stage: architecture (report only - NEVER open a PR, push, or change code)
+Kind: scout stage: architecture (report only - NEVER open a PR, push, or change code)${escalation_line:+
+$escalation_line}
 Captain: $captain
 
 ## Inputs
@@ -528,7 +559,8 @@ EOF
 # Plan brief: $id
 
 Project: $project
-Kind: scout stage: plan (report only - NEVER open a PR, push, or change code)
+Kind: scout stage: plan (report only - NEVER open a PR, push, or change code)${escalation_line:+
+$escalation_line}
 Captain: $captain
 
 ## Inputs
@@ -560,7 +592,8 @@ EOF
 Project: $project
 Kind: scout stage: design - spec + architecture + plan in ONE session, gated per report (report only - NEVER change code, push, or open a PR)
 Mode: $mode
-Review: $review_line
+Review: $review_line${escalation_line:+
+$escalation_line}
 Captain: $captain
 
 ## Inputs
@@ -629,7 +662,8 @@ EOF
 Project: $project
 Kind: execution (IMPLEMENT + DELIVERY)
 Mode: $mode
-Review: $review_line
+Review: $review_line${escalation_line:+
+$escalation_line}
 Captain: $captain
 
 ## Inputs

@@ -67,7 +67,7 @@ esac
 "$BIN/ac-brief.sh" c2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" c2 "$repo" --harness claude >/dev/null 2>&1
 git -C "$repo" branch crew/c2 main
-"$BIN/ac-brief.sh" c2-r2 proj --mode local-only --stage implement --captain-requested 'test fixture: staged pinned by the captain' >/dev/null
+"$BIN/ac-brief.sh" c2-r2 proj --mode local-only --stage implement --captain-requested 'test fixture: staged pinned by the captain' --reason 'fixture: exercising the staged path' >/dev/null
 "$BIN/ac-spawn.sh" c2-r2 "$repo" --harness claude >/dev/null 2>&1
 assert_file "$AC_HOME/state/c2-r2.meta" \
   "a branch a live family sibling owns is continued, not refused"
