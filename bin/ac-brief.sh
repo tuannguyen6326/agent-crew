@@ -427,8 +427,12 @@ Reference each accepted prior report by absolute path plus the
 \`report_sha256\` your chief's approval carries (the room's \`GATE-ROUTING:\`
 receipt); reference its content by Trace ID - never restate it.
 Before announcing a report ready, run the inline self-review yourself (no
-extra agent, no pane): placeholder scan, consistency with accepted prior
-reports, scope, ambiguity, coverage, evidence, retired-ID check. The
+extra agent, no pane), all nine checks: placeholder scan, consistency
+with accepted prior reports, scope, ambiguity, coverage, evidence,
+retired-ID check, the architecture Diagram Rule (an accurate diagram when
+a trigger applies, else a reasoned \`n/a\`), and the plan TDD check (a
+genuine expected RED failure and its verification per behavior-changing
+task; each permitted exception carries replacement evidence). The
 Self-Review section lists only failures found and fixed, then \`pass\`. A
 failure you cannot fix alone never records \`pass\`: an unresolved product
 or policy choice becomes \`needs-decision:\`; a contradiction with an
@@ -585,7 +589,9 @@ data flow, and how it fits the EXISTING architecture (read the real code -
 name real modules, not imagined ones). Present the viable alternatives
 with tradeoffs and state which one you recommend and why; a design with no
 rejected alternative was not designed. Cover the non-functional angles that
-apply (compatibility, migration, performance, security). Decisions that
+apply (compatibility, migration, performance, security). Include the
+smallest useful diagram when the Diagram Rule applies, else a reasoned
+\`n/a\`. Decisions that
 belong to the captain are \`needs-decision:\` questions.
 $(design_contract)
 $(primary_accident)
@@ -614,9 +620,11 @@ Captain: $captain
 ## Deliverable
 
 Write the implementation plan to $task_dir/report.md:
-ordered steps, exact files to touch, test strategy, risks and their
-mitigations, and what would make you abort. Ground it by reading the real
-code; a plan that names wrong files is a failed plan.
+ordered steps, exact files to touch, test strategy, a
+RED -> GREEN -> VERIFY -> REFACTOR TDD sequence per behavior-changing
+task, risks and their mitigations, and what would make you abort. Ground
+it by reading the real code; a plan that names wrong files is a failed
+plan.
 $(design_contract)
 $(primary_accident)
 $(knowledge)
@@ -654,9 +662,11 @@ Work the needed sub-stages IN ORDER; one report per sub-stage:
    edge cases, assumptions, out-of-scope.
 2. architecture -> $data_dir/$fam/arch/report.md: components, interfaces,
    the viable alternatives WITH tradeoffs, why the chosen one fits the
-   existing system.
+   existing system, and the smallest useful diagram when the Diagram Rule
+   applies (else a reasoned n/a).
 3. plan -> $data_dir/$fam/plan/report.md: ordered steps, exact files,
-   test strategy per step.
+   test strategy per step, and a RED -> GREEN -> VERIFY -> REFACTOR TDD
+   sequence per behavior-changing task.
 
 After EACH report print \`done: <sub-stage> report ready (awaiting gate)\`
 and STOP - the orchestrator reviews EVERY report before releasing the

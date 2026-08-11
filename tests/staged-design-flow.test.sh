@@ -20,6 +20,10 @@ assert_contains "$spec" "STAGE-ADMISSION: stage=<spec|architecture|plan>" \
   "the spec owns the stage-admission receipt grammar"
 assert_contains "$spec" "Valid room receipt" \
   "the spec owns the valid-receipt semantics"
+assert_contains "$spec" "Diagram Rule" \
+  "the spec owns the conditional architecture-diagram rule"
+assert_contains "$spec" "TDD Shape" \
+  "the spec owns the plan TDD shape"
 
 agents="$(cat "$ROOT/AGENTS.md")"
 assert_contains "$agents" "STAGE-ADMISSION: stage=<spec|architecture|plan>" \

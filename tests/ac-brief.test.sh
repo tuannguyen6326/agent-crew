@@ -247,6 +247,9 @@ for pair in "spec|$spec" "arch|$arch" "plan|$planb" "design|$dsg"; do
   assert_contains "$body" "docs/staged-design-flow-spec.md" "$which brief points at the authoritative spec"
   assert_contains "$body" "report_sha256" "$which brief carries the upstream path+sha reference rule"
   assert_contains "$body" "retired-ID check" "$which brief carries the inline self-review checklist"
+  assert_contains "$body" "all nine checks" "$which brief carries the full nine-check self-review"
+  assert_contains "$body" "Diagram Rule" "$which brief carries the diagram self-review check"
+  assert_contains "$body" "TDD check" "$which brief carries the TDD self-review check"
   assert_contains "$body" 'n/a: <reason>' "$which brief carries the n/a section convention"
 done
 assert_contains "$dsg" "STAGE-ADMISSION" \
