@@ -640,7 +640,7 @@ EOF
 # Design brief: $id
 
 Project: $project
-Kind: scout stage: design - spec + architecture + plan in ONE session, gated per report (report only - NEVER change code, push, or open a PR)
+Kind: scout stage: design - the admitted spec/architecture/plan stages in ONE session, gated per report (report only - NEVER change code, push, or open a PR)
 Mode: $mode
 Review: $review_line${escalation_line:+
 $escalation_line}

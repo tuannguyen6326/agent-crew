@@ -254,6 +254,8 @@ for pair in "spec|$spec" "arch|$arch" "plan|$planb" "design|$dsg"; do
 done
 assert_contains "$dsg" "STAGE-ADMISSION" \
   "design brief reminds the chief the admission receipts precede the spawn"
+assert_contains "$dsg" "the admitted spec/architecture/plan stages" \
+  "design brief scopes the session to the admitted stages, not always all three"
 case "$implbrief" in *"## Report contract"*) \
   fail "an execution brief must not carry the design report contract" ;; esac
 case "$(cat "$AC_HOME/data/scout-1/brief.md")" in *"## Report contract"*) \
