@@ -513,37 +513,42 @@ export interface BacklogLineFields {
  */
 export function parseBacklogLine(line: string): BacklogLineFields {
   const s = String(line || "");
-  const id = (s.match(/^-\s*\[[ xX]\]\s+([a-z0-9][a-z0-9-]*)/) || ["", ""])[1];
-  const dash = s.indexOf(" - ");
-  const text = dash >= 0 ? s.slice(dash + 3).trim() : "";
-  const repo = (s.match(/\brepo:\s*([a-z0-9][a-z0-9._-]*)/i) || ["", ""])[1];
-  const pr = (s.match(/https?:\/\/github\.com\/[^\s)]+\/pull\/\d+/) || [""])[0] || "";
-  const merged = (s.match(/\(merged\s+([0-9]{4}-[0-9]{2}-[0-9]{2})/) || ["", ""])[1];
-  const epic = (s.match(/\bepic:([a-z0-9][a-z0-9-]*)/) || ["", ""])[1];
-  // The delivery-contract group (§9): scanned only in the LEADING RUN (the
-  // head before the first " - " - the same boundary `text` uses), because
-  // position denies authority everywhere else in the grammar. The
-  // discriminator is the awk twin's (AC_DONELINE_AWK, ac-lib.sh): EVERY
-  // whitespace-separated token is key:value from the closed key set - a
-  // group with any other content keeps its existing class ([EPIC...],
-  // [@held], provenance prose) - first such group wins, and a
-  // backtick-wrapped group is a documentation mention, never the token.
+  var idm = s.match(/^-\s*\[[ xX]\]\s+([a-z0-9][a-z0-9-]*)/);
+  var id = idm ? idm[1] : "";
+  // Walk the LEADING RUN of bracket groups after the id (backtick-quoted
+  // documentation mentions included). Two derivations hang off this walk:
+  //   - the TEXT boundary is the first " - " AFTER the run - a prose group
+  //     whose content contains " - " (a verbatim captain quote, a dated
+  //     provenance note) used to cut the text mid-bracket;
+  //   - the delivery-contract group (§9) is readable only INSIDE the run
+  //     (position denies authority everywhere else). Discriminator per the
+  //     awk twin (AC_DONELINE_AWK, ac-lib.sh): EVERY whitespace-separated
+  //     token is key:value from the closed key set - any other content
+  //     keeps the group's existing class ([EPIC...], [@held], prose) -
+  //     first such group wins, a backtick-wrapped group never counts.
   var contract = "";
+  var pos = idm ? idm[0].length : 0;
   if (id) {
-    var head = dash >= 0 ? s.slice(0, dash) : s;
-    var gre = /(`?)\[([^\]]*)\](`?)/g;
-    var gm;
-    while ((gm = gre.exec(head))) {
-      if (gm[1] === "`" || gm[3] === "`") continue;
-      var content = gm[2].trim();
+    for (;;) {
+      var g = /^\s+(`?)\[([^\]]*)\](`?)/.exec(s.slice(pos));
+      if (!g) break;
+      pos += g[0].length;
+      if (contract || g[1] === "`" || g[3] === "`") continue;
+      var content = g[2].trim();
       if (!content) continue;
       var toks = content.split(/\s+/);
       var all = true;
       for (var ti = 0; ti < toks.length; ti++)
         if (!/^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/.test(toks[ti])) { all = false; break; }
-      if (all) { contract = content; break; }
+      if (all) contract = content;
     }
   }
+  const dash = s.indexOf(" - ", id ? pos : 0);
+  const text = dash >= 0 ? s.slice(dash + 3).trim() : "";
+  const repo = (s.match(/\brepo:\s*([a-z0-9][a-z0-9._-]*)/i) || ["", ""])[1];
+  const pr = (s.match(/https?:\/\/github\.com\/[^\s)]+\/pull\/\d+/) || [""])[0] || "";
+  const merged = (s.match(/\(merged\s+([0-9]{4}-[0-9]{2}-[0-9]{2})/) || ["", ""])[1];
+  const epic = (s.match(/\bepic:([a-z0-9][a-z0-9-]*)/) || ["", ""])[1];
   return { id, text, repo, pr, merged, epic, isEpic: /\[EPIC/i.test(s), contract };
 }
 
@@ -7328,10 +7333,13 @@ ${THEME_VARS}
   .disc .caret{ color:var(--fg2); width:10px; }
   .disc .dh .cnt{ color:var(--fg2); font-size:12px; margin-left:2px; }
   .disc .dbody{ padding:2px 8px 8px; }
-  .blrow{ padding:7px 10px; border-top:1px solid var(--border); font-size:13px; display:flex; gap:8px; align-items:flex-start; }
-  .blrow .bid{ font-family:var(--mono); color:var(--accent); flex:0 0 auto; }
-  .blrow .btext{ color:var(--fg); }
-  .blrow .btext.clip{ display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; }
+  .blrow{ padding:9px 12px 10px; border-top:1px solid var(--border); font-size:13px; }
+  .blrow:hover{ background:var(--elev); }
+  .blrow .blhead{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .blrow .bid{ font-family:var(--mono); color:var(--accent); }
+  .blrow .rmeta{ margin-left:auto; display:flex; align-items:center; gap:6px; }
+  .blrow .btext{ display:block; margin-top:4px; color:var(--fg); line-height:1.5; }
+  .blrow .btext.clip{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .blrow .more{ font-size:12px; }
 
   /* ---- Search ---- */
@@ -7415,7 +7423,7 @@ ${THEME_VARS}
   .bcard .cid{ font-family:var(--mono); font-size:12px; font-weight:700; color:var(--accent); word-break:break-all; }
   .bcard .ct{ font-size:12.5px; color:var(--ink); margin:3px 0 7px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .bcard .brow{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px; color:var(--muted); }
-  .chipm{ display:inline-block; background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:10.5px; color:var(--muted); }
+  .chipm{ display:inline-block; background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:10.5px; color:var(--muted); white-space:nowrap; }
   .chipm.shared{ color:var(--success); border-color:var(--success); }
   .chipm.g{ background:var(--good-soft); color:var(--good); border-color:transparent; } .chipm.a{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
   /* Delivery-contract chips: SOLID = pinned on the row (the captain's word),
@@ -8580,14 +8588,23 @@ function blSection(key, title, arr, keep, defOpen){
   s+='<button class="dh" data-disc="'+ek+'" aria-expanded="'+(open?'true':'false')+'"><span class="caret">'+(open?'&#9662;':'&#9656;')+'</span>'+title+'<span class="cnt">'+shown.length+(shown.length!==arr.length?(' / '+arr.length):'')+'</span></button>';
   if(open){ s+='<div class="dbody">';
     if(!shown.length) s+='<div class="muted" style="padding:8px">'+(arr.length?'no matches':'—')+'</div>';
-    for(var i=0;i<shown.length;i++){ var it=parseBl(shown[i]); var rk='row:'+key+':'+i; var rowOpen=!!ui.exp[rk];
-      var longish=it.text.length>90;
-      var cchips=contractChips(parseBacklogLine(it.full).contract, '');
-      s+='<div class="blrow"><span class="bid">'+esc(it.id)+'</span>';
-      if(cchips) s+=cchips;
-      s+='<span class="btext'+(longish&&!rowOpen?' clip':'')+'">'+esc(it.text)+'</span>';
-      if(longish) s+=' <button class="more" data-disc="'+rk+'">'+(rowOpen?'less':'more')+'</button>';
-      s+='</div>';
+    for(var i=0;i<shown.length;i++){ var raw=shown[i]; var rk='row:'+key+':'+i; var rowOpen=!!ui.exp[rk];
+      // The board card's own vocabulary (parseBacklogLine + storyState +
+      // badgeb/chipm), so a row reads the same on both pages; parseBl stays
+      // the fallback for a malformed line the strict parser rejects.
+      var f=parseBacklogLine(raw); var it=f.id?f:parseBl(raw);
+      var longish=it.text.length>160;
+      var st=(key==='done')?storyState(raw,'done'):null;
+      var badges=(f.isEpic?' <span class="badgeb epic">EPIC</span>':'')
+        +(f.pr?' <span class="badgeb pr">PR</span>':'')
+        +((st==='failed'||st==='abandoned')?' <span class="badge '+STORY_BADGE[st]+'" title="'+st+'">'+STORY_ICON[st]+' '+st.toUpperCase()+'</span>':'');
+      var cchips=contractChips(f.contract, '');
+      var repoChip=f.repo?'<span class="chipm">repo: '+esc(f.repo)+'</span>':'';
+      s+='<div class="blrow"><div class="blhead"><span class="bid">'+esc(it.id)+'</span>'+badges+cchips
+        +'<span class="rmeta">'+repoChip
+        +(longish?'<button class="more" data-disc="'+rk+'">'+(rowOpen?'less':'more')+'</button>':'')
+        +'</span></div>';
+      s+='<span class="btext'+(longish&&!rowOpen?' clip':'')+'">'+esc(it.text)+'</span></div>';
     }
     s+='</div>';
   }

@@ -261,6 +261,7 @@ if command -v bun >/dev/null 2>&1; then
 - [ ] t8 [src:cap bogus:v] - unknown key breaks the group
 - [x] t9 [flow:staged mode:crew-ship rev:yes qa:yes] - heavy row (repo: beta) (merged 2026-08-09)
 - [ ] t10 [] - empty group
+- [ ] t11 [PROSE 2026-08-08, verbatim "a -> b - c"] [src:cap rev:no] - text after a dash-carrying prose group
 prose that is not a task line [src:cap]
 LINES
   awk_out="$(awk "$AC_DONELINE_AWK"'

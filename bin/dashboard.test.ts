@@ -1053,6 +1053,13 @@ test("parseBacklogLine pulls id/text/repo/pr/merged/epic from one raw line", () 
   // a non-task line yields an empty id, never throws
   expect(parseBacklogLine("notes that are not a task line").id).toBe("");
   expect(parseBacklogLine("").id).toBe("");
+
+  // the TEXT boundary is the first " - " AFTER the leading run: a prose
+  // group carrying " - " inside (verbatim quote, dated provenance) used to
+  // cut the text mid-bracket ("...append]" on the backlog page)
+  const prose = '- [ ] t [NOTE 2026-08-08, verbatim "x -> y - z"] [src:cap rev:no] - the real text (repo: alpha)';
+  expect(parseBacklogLine(prose).text).toBe("the real text (repo: alpha)");
+  expect(parseBacklogLine(prose).contract).toBe("src:cap rev:no");
 });
 
 test("parseBacklogLine extracts the delivery-contract group (S1 grammar, awk-twin semantics)", () => {
