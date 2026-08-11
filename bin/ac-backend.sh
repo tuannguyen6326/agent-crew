@@ -680,7 +680,8 @@ ac_herdr_agents_workspace() {
   # config/herdr-workspace-agents knob).
   # The family arrives ONLY through AC_WINDOW_FAMILY - a verifier pane opener
   # (ac-verify.sh, ac-gate.sh, the ship/qa watch tabs) exports it; absent or
-  # empty resolves to the fleet ROOT workspace (the learning scout's case).
+  # empty resolves to the fleet ROOT workspace (the ac-self-task case;
+  # the learning scout now rides its stable `learning` family workspace).
   # Twins are swept only on PROOF of emptiness (herdr_resolve_workspace): the
   # old blind sweep was safe for a verifier-only group, but a family
   # workspace holds crew tabs. Returns 1 rather than dying - every caller

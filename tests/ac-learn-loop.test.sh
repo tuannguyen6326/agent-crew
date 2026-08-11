@@ -392,6 +392,11 @@ fi
 # run path: write a report INTO its cwd (the run dir) and emit the NDJSON done
 # event ac-learn.sh run consumes. No real claude is spawned. Also writes
 # retro.md (Pass 1's output), the way a real scout would before proposing.
+# The caller must hand the pane its FAMILY workspace (FAMILY WORKSPACE
+# GROUPING): the scout sits beside crew:learning-chief, never orphaned in
+# the fleet root group.
+printf '%s
+' "${AC_WINDOW_FAMILY:-}" >>"${AC_LEARN_WSFAM_LOG:-/dev/null}"
 cwd=""; deliverable=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -426,7 +431,10 @@ STUB
   before_s="$(cat "$AC_HOME/skills/pre/SKILL.md")"
 
   export AC_LEARN_REAP_LOG="$TMP/learn-reap.log"; : >"$AC_LEARN_REAP_LOG"
+  export AC_LEARN_WSFAM_LOG="$TMP/wsfam.log"
   runout="$(AC_PANE_AGENT="$TMP/stub-pane.sh" "$BIN/ac-learn.sh" run)"
+  assert_eq "$(head -1 "$AC_LEARN_WSFAM_LOG")" "learning" \
+    "the scout pane is spawned INTO the stable learning family workspace (beside its roomchief)"
 
   # cmd_run best-effort REAPS the scout's pane (id from the done event's "pane")
   # via ac-pane-agent.sh reap-pane, armed as an EXIT trap. Pure cleanup: the

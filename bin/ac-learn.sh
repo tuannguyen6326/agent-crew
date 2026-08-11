@@ -713,6 +713,14 @@ EOF
   # pass (ac-pane-agent.sh, IDLE FALLBACK): report.md is the ONE artifact the
   # kickoff above demands unconditionally, so a scout that stopped mid-pass -
   # out of budget, self-blocked - now ends non-ok instead of status ok.
+  # The scout pane lands in the LEARNING family workspace, beside the
+  # crew:learning-chief tab its DUE checkpoints promote (FAMILY WORKSPACE
+  # GROUPING; captain order 2026-08-11 - the chief and its pane agent share
+  # one group). `learning` is the STABLE family (the room, the roomchief);
+  # the per-run data dir learning-<ts> is not a family. Before this the
+  # scout was the documented absent-family case and sat in the fleet ROOT
+  # workspace - orphaned once the roomchief existed.
+  AC_WINDOW_FAMILY=learning \
   "$helper" run --cwd "$rundir" --prompt-file "$kickoff" \
     --kind learning --label "$verify_id" --timeout "${AC_LEARN_TIMEOUT:-7200}" \
     --deliverable "$rundir/report.md" \

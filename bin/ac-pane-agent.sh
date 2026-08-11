@@ -377,7 +377,7 @@
 # WORKSPACE GROUPING; captain order 2026-08-06) - the caller (ac-verify.sh,
 # ac-gate.sh) exports AC_WINDOW_FAMILY, and ac_herdr_agents_workspace resolves
 # the "<fleet> · <family>" workspace from it; absent/empty = the fleet ROOT
-# workspace (the learning scout's case). The former separate per-role
+# workspace (the ac-self-task case). The former separate per-role
 # '<fleet> (pane-agent)' group and its config/herdr-workspace-agents knob are
 # retired. Session:
 # AC_HERDR_SESSION > config/herdr-session > default.
