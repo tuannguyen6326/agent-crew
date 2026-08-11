@@ -430,9 +430,9 @@ contains a captain-owned `needs-decision:` entry instead of an invented default.
 ### FLOW-AC-05: Inline self-review
 
 Given any completed design report, its self-review receipt shows that
-placeholder, consistency, scope, ambiguity, coverage, evidence, and retired-ID
-checks passed, and no `verify-*` meta or extra pane was created in `state/` for
-the stage.
+placeholder, consistency, scope, ambiguity, coverage, evidence, retired-ID,
+diagram, and TDD checks passed, and no `verify-*` meta or extra pane was
+created in `state/` for the stage.
 
 ### FLOW-AC-06: Conditional second chief
 
