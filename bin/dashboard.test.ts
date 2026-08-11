@@ -1933,6 +1933,30 @@ test("HOME_PATHS_TTL_MS exceeds the client's 5000ms poll interval, so a steady-s
   expect(HOME_PATHS_TTL_MS).toBeGreaterThan(5000);
 });
 
+// The PAGE template literal EATS one escape level: a client-side string
+// written `'...\\'...'` in source reaches the browser as `'...'...'` - a
+// syntax error that blanks every route (the contract-chips title did exactly
+// this; the server still answered 200, so nothing else caught it). bun test
+// cannot import PAGE, but it can lint the SOURCE: inside the literal, a
+// backslash-quote must always be doubled (`\\\\'` in the file), never single.
+test("PAGE literal carries no single-escaped quote (the template eats one level and blanks the client)", () => {
+  const src = require("fs").readFileSync(new URL("./dashboard.ts", import.meta.url), "utf8");
+  const start = src.indexOf("const PAGE = `");
+  expect(start).toBeGreaterThan(0);
+  const page = src.slice(start);
+  const bad: string[] = [];
+  for (let i = 0; i < page.length - 1; i++) {
+    if (page[i] !== "\\") continue;
+    let j = i; // walk the backslash run
+    while (j < page.length && page[j] === "\\") j++;
+    const runLen = j - i;
+    if (page[j] === "'" && runLen % 2 === 1)
+      bad.push(page.slice(Math.max(0, i - 60), j + 1));
+    i = j;
+  }
+  expect(bad).toEqual([]);
+});
+
 // --- whiteboard (dash-whiteboard slice 1) -----------------------------------
 // isSceneName is the ONE gate between a query param and a filename under the
 // whiteboards dir; normalizeScene is the ONE gate between a POST body and the

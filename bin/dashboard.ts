@@ -8657,7 +8657,7 @@ function contractChips(contract, liveMode){
   var s='', toks=contractTokens(contract||''), pinnedMode=false;
   for(var i=0;i<toks.length;i++){
     if(toks[i].k==='mode') pinnedMode=true;
-    s+='<span class="chipm cpin" title="pinned on the backlog row (the captain\'s record)">'+esc(toks[i].k)+':'+esc(toks[i].v)+'</span>';
+    s+='<span class="chipm cpin" title="pinned on the backlog row (captain-recorded)">'+esc(toks[i].k)+':'+esc(toks[i].v)+'</span>';
   }
   if(!pinnedMode && liveMode)
     s+='<span class="chipm cauto" title="chief-chosen at intake (recorded on the brief/meta, not pinned)">mode:'+esc(liveMode)+'</span>';
