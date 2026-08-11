@@ -179,11 +179,16 @@ cmd_post() {
   # answers NOT LIVE, whether truly not live or merely uncertain - the same
   # fail-safe direction its other callers use, and the right one here:
   # refusing a real write is worse than missing a rare duplicate.
+  # STAGE-ADMISSION (AGENTS.md section 5, the staged-design-flow spec's
+  # canonical stage set) is guarded like the verbs it rides with: a promoted
+  # family's admission receipts belong to its live roomchief; the crewchief's
+  # own pre-promote receipts pass because the guard fails open with no live
+  # roomchief yet.
   case "$text" in
-    GATE*|ASK*|TRIAGE*|SELF-APPROVED*|LANDED*|HANDBACK:*|R1-DISPOSITION*|DECIDED*)
+    GATE*|ASK*|TRIAGE*|SELF-APPROVED*|LANDED*|HANDBACK:*|R1-DISPOSITION*|DECIDED*|STAGE-ADMISSION*)
       if [ "${AC_SCOPE:-}" != "$family" ] && [ "${AC_ROOM_PROMOTE_RECEIPT:-}" != "1" ] \
         && ac_roomchief_live "$(ac_state_dir)" "$family"; then
-        ac_die "post: $family has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED receipts belong to it, never to an unscoped caller (AGENTS.md: 'Two chiefs on one family is a role violation, not extra help')"
+        ac_die "post: $family has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (AGENTS.md: 'Two chiefs on one family is a role violation, not extra help')"
       fi
       ;;
   esac
@@ -226,10 +231,11 @@ cmd_post() {
   # must become visible, not whether the prose LOOKS like an escalation. The
   # verb set is section 8's closed grammar list plus this file's own
   # receipt-only additions (GATE-PASSED/GATE-LOOPED/GATE-VERIFY covered by the
-  # GATE prefix).
+  # GATE prefix) plus section 5's STAGE-ADMISSION (the staged-design-flow
+  # spec's stage-set receipt - a real marker, so warning on it is noise).
   if [ "$actor" = "$chief" ] && [ "$pending" = "0" ]; then
     case "$text" in
-      GATE*|ASK*|DECIDED*|TRIAGE*|SELF-APPROVED*|LANDED*|HANDBACK*|PROMOTED*|DEMOTED*|CLOSED*|CORRECTION*|R1-DISPOSITION*) : ;;
+      GATE*|ASK*|DECIDED*|TRIAGE*|SELF-APPROVED*|LANDED*|HANDBACK*|PROMOTED*|DEMOTED*|CLOSED*|CORRECTION*|R1-DISPOSITION*|STAGE-ADMISSION*) : ;;
       *) ac_warn "post: $chief posted with no marker while $family has 0 pending - if you are actually waiting on the captain, post an ASK:/GATE: instead" ;;
     esac
   fi

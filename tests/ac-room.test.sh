@@ -736,6 +736,11 @@ assert_fails "$BIN/ac-room.sh" handback ownfam "landed, please close"
 # a real captain-answer DECIDED posted unscoped, with NO
 # AC_ROOM_PROMOTE_RECEIPT declaration, must be refused exactly like TRIAGE.
 assert_fails "$BIN/ac-room.sh" post ownfam crewchief "DECIDED: approve, duplicate captain answer"
+# STAGE-ADMISSION (section 5's stage-set receipt) is family-owned like TRIAGE:
+# an unscoped post into a promoted family would let a second chief rewrite the
+# canonical stage set under the live roomchief.
+assert_fails "$BIN/ac-room.sh" post ownfam crewchief \
+  "STAGE-ADMISSION: stage=spec decision=admit grounds=duplicate crewchief admission"
 
 # HANDBACK-REFUSED: stays allowed unscoped through the SAME live roomchief -
 # it is the CREWCHIEF refusing its roomchief's hand-back (AGENTS.md section
@@ -763,6 +768,15 @@ AC_SCOPE=ownfam "$BIN/ac-room.sh" post ownfam ownfam-chief \
   "TRIAGE: flow=direct mode=local-only promote=yes - why: the live roomchief itself" >/dev/null
 assert_contains "$(cat "$AC_HOME/data/ownfam/room.md")" "the live roomchief itself" \
   "AC_SCOPE matching the family is the roomchief's own post - never refused"
+# The roomchief's own STAGE-ADMISSION posts fine AND is a recognized marker:
+# the markerless-post warn (0 pending, chief actor) must not fire on it -
+# the staged-design-flow spec's receipt is a real receipt, not narrative.
+sa_err="$(AC_SCOPE=ownfam "$BIN/ac-room.sh" post ownfam ownfam-chief \
+  "STAGE-ADMISSION: stage=architecture decision=skip grounds=single-component change" 2>&1 >/dev/null)"
+case "$sa_err" in *"no marker"*) \
+  fail "STAGE-ADMISSION is a recognized receipt - the markerless warn must not fire on it" ;; esac
+assert_contains "$(cat "$AC_HOME/data/ownfam/room.md")" "decision=skip grounds=single-component change" \
+  "the live roomchief's own STAGE-ADMISSION receipt is never refused"
 
 # GREEN 3: every landing-path verb this guard deliberately exempts still posts
 # unscoped while the roomchief is live - bin/ac-spawn.sh:1055 (PROMOTED, never
