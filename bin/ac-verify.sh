@@ -1082,8 +1082,13 @@ fi
 export AC_FLEET_STATE="$state_dir"
 # The verifier pane lands in its FAMILY's herdr workspace, beside the crew
 # tabs it verifies (ac-backend.sh FAMILY WORKSPACE GROUPING) - the pane agent
-# reads this env var when resolving its workspace.
-export AC_WINDOW_FAMILY="$family"
+# reads this env var when resolving its workspace. THROUGH THE SAME LADDER
+# the crew tab took at spawn (ac_window_family: AC_SCOPE > AC_FLEET_SCOPE >
+# family-of-id), never the raw --family: a scoped session's crewmate tab
+# sits in the SCOPE's workspace (an epic/parent family), and exporting the
+# bare task id here put its reviewer in a sibling workspace of its own -
+# chief and codereview pane in different groups (captain report 2026-08-11).
+export AC_WINDOW_FAMILY="$(ac_window_family "$family")"
 pane_early="$round_dir/pane.handle"
 pane_args=(run --cwd "$lease" --prompt-file "$prompt" --kind "$kind"
   --label "$id" --timeout "${AC_VERIFY_TIMEOUT:-7200}" --pane-file "$pane_early")

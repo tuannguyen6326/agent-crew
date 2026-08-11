@@ -121,6 +121,11 @@ cat >"$fake_pane" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$VERIFY_PANE_LOG"
+# Placement record (FAMILY WORKSPACE GROUPING): the workspace family the
+# caller resolved for this pane - through ac_window_family's ladder, so a
+# scoped session's reviewer sits beside its crew tab, never in a sibling
+# workspace of the raw task id.
+printf 'wsfam=%s\n' "${AC_WINDOW_FAMILY:-}" >>"$VERIFY_PANE_LOG"
 if [ "${1:-}" = reap-pane ]; then
   printf '{"event":"reap-pane-done","pane":"%s","closed":%s}\n' "${3:-}" "${VERIFY_REAP_CLOSED:-true}"
   exit 0
@@ -443,6 +448,9 @@ assert_no_file "$tree_log" "unsupported verifier kind acquires no lease"
 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
   --family "$family" --caller "$caller" --intent "$intent" --output "$output" >/dev/null
 
+assert_contains "$(cat "$VERIFY_PANE_LOG")" "wsfam=$family" \
+  "unscoped: the pane's workspace family is the task's own (ladder floor)"
+
 assert_eq "$(git -C "$lease" rev-parse HEAD)" "$target" "verifier worktree checks out the exact ref"
 assert_eq "$(git -C "$lease" symbolic-ref -q HEAD || true)" "" "exact-ref checkout is detached"
 assert_eq "$(cat "$VERIFY_CWD_CAPTURE")" "$lease" "pane agent runs in the verifier lease"
@@ -579,6 +587,17 @@ assert_contains "$(cat "$pane_log")" "reap-pane --pane pVerify" "normal completi
 # pane_log hold exactly this round's calls - assert counts, not mere presence.
 assert_eq "$(grep -c '^return ' "$tree_log")" "1" "successful completion returns the lease exactly once"
 assert_eq "$(grep -c '^reap-pane ' "$pane_log")" "1" "successful completion reaps the pane exactly once"
+
+# A SCOPED caller (a roomchief's crewmate carrying AC_FLEET_SCOPE) reviews
+# into the SCOPE's workspace - beside its own crew tab - never a sibling
+# workspace minted from the raw task id (chief vs reviewer split groups).
+: >"$VERIFY_PANE_LOG"
+AC_FLEET_SCOPE=parent-fam \
+  "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$family" --caller "$caller" --intent "$intent" --output "$output.scoped" >/dev/null
+assert_contains "$(cat "$VERIFY_PANE_LOG")" "wsfam=parent-fam" \
+  "scoped: the reviewer pane resolves the scope's workspace, not the raw task id"
+
 
 # CONTRADICTION CHECK surfacing (bin/ac-pane-agent.sh CONTRADICTION CHECK
 # emits a "warning" event, this caller reads it): must reach a human on BOTH

@@ -1034,7 +1034,7 @@ watch_open() {
     [ -n "$stale" ] || return 0
     herdr --session "$ses" pane close "$stale" >/dev/null 2>&1 || true
   fi
-  ws="$(AC_WINDOW_FAMILY="$family" ac_herdr_agents_workspace 2>/dev/null || true)"
+  ws="$(AC_WINDOW_FAMILY="$(ac_window_family "$family")" ac_herdr_agents_workspace 2>/dev/null || true)"
   out="$(ac_herdr_tab_open "$ses" "$watch_label" "$home" "$ws")" || return 0
   p="${out%% *}"
   herdr --session "$ses" pane rename "$p" "$watch_label" >/dev/null 2>&1 || true
@@ -1077,7 +1077,7 @@ watch_open || true
 rc=0
 # The judge pane joins the judged FAMILY's workspace (ac-backend.sh FAMILY
 # WORKSPACE GROUPING) - the pane agent reads AC_WINDOW_FAMILY on resolve.
-export AC_WINDOW_FAMILY="$family"
+export AC_WINDOW_FAMILY="$(ac_window_family "$family")"
 # shellcheck disable=SC2086
 out="$("$helper" run --exec --harness "$engine" --kind gate --cwd "$(ac_home)" \
   --prompt-file "$promptf" --label "$family-$stage" --observe "$obsdesc" \
