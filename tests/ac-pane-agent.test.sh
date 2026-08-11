@@ -82,6 +82,20 @@ PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --
 assert_contains "$(cat "$HDLOG")" "--label ac-qa-agent" "kind=qa tab label"
 assert_contains "$(cat "$HDLOG")" "ac-qa-agent:q1" "kind=qa pane label"
 assert_contains "$log" "AC_HOME=" "the caller's fleet home is pinned onto the pane shell"
+
+# FAMILY-SCOPED tab label: a verifier lease is a DETACHED exact-ref checkout
+# (BRANCH empty), and the reuse step adopts tabs by label SESSION-WIDE -
+# without the family in the label, every codereview pane in the session
+# shared the bare 'ac-codereview-agent' tab: the second family's verifier
+# split into the first family's tab, in the wrong workspace, bypassing
+# AC_WINDOW_FAMILY (FAMILY WORKSPACE GROUPING, captain order 2026-08-06).
+: >"$HDLOG"
+git -C "$repo" checkout -q --detach
+PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
+  "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c1 >/dev/null
+assert_contains "$(cat "$HDLOG")" "--label ac-codereview-agent-famx" \
+  "detached lease: the FAMILY scopes the tab label, so cross-family adoption is impossible by name"
+git -C "$repo" checkout -q main
 assert_contains "$log" "claude --permission-mode auto" "claude launched in the pane"
 assert_file "$repo/.claude/settings.local.json" "stop hook installed"
 case "$log" in *"--model"*) fail "no model anywhere must pass no --model" ;; esac

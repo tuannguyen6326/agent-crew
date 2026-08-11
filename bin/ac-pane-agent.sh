@@ -995,14 +995,24 @@ fi
 # shellcheck disable=SC2010  # transcript names are uuid.jsonl - glob-safe
 BEFORE=$(ls "$PROJ" 2>/dev/null | grep '\.jsonl$' || true)
 
-# 3b. tab label = ac-<kind>-agent-<branch>; the kind names the CALLER (ship
-# reviewer, qa, learning, ...) so the herdr sidebar says what the pane IS;
-# branch comes straight from the worktree (no external state needed).
+# 3b. tab label = ac-<kind>-agent[-<family>][-<branch>]; the kind names the
+# CALLER (ship reviewer, qa, learning, ...) so the herdr sidebar says what
+# the pane IS; branch comes straight from the worktree (no external state
+# needed). The FAMILY rides the label because the reuse step below adopts
+# by label SESSION-WIDE: a verifier lease sits on a detached exact-ref
+# checkout, so BRANCH is empty and every codereview pane in the session
+# used to share the bare label - the second family's verifier adopted the
+# first family's tab and split into it, landing in the WRONG family
+# workspace and bypassing AC_WINDOW_FAMILY entirely (FAMILY WORKSPACE
+# GROUPING, captain order 2026-08-06). Family-scoping the label makes the
+# session-wide adopt safe again: rounds of ONE task still stack (same
+# family, same branch), cross-family adoption is impossible by name.
 BRANCH=$(git -C "$CWD" symbolic-ref --short HEAD 2>/dev/null || true)
 TABLABEL="ac-$KIND-agent"
-[ -n "$BRANCH" ] && TABLABEL="ac-$KIND-agent-$(printf '%s' "$BRANCH" | tr '/' '-')"
+[ -n "${AC_WINDOW_FAMILY:-}" ] && TABLABEL="$TABLABEL-$AC_WINDOW_FAMILY"
+[ -n "$BRANCH" ] && TABLABEL="$TABLABEL-$(printf '%s' "$BRANCH" | tr '/' '-')"
 
-# 4. pane: reuse this branch's ship-agent tab when it exists, else create it
+# 4. pane: reuse this family+branch's agent tab when it exists, else create it
 TAB=$(herdr --session "$SES" tab list 2>/dev/null | TL="$TABLABEL" python3 -c "
 import sys, json, os
 try:
