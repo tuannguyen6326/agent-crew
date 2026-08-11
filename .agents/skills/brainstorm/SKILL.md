@@ -1,15 +1,17 @@
 ---
 name: brainstorm
-description: Captain-invocable ideation flow - the captain thinks a topic through with a DEDICATED brainstorm roomchief (clean context, its own room journal, chat right in the dashboard Board detail), not in the crewchief's own loaded session; the crewchief only opens it and, at the end, mints the rows the captain confirms - the roomchief is machine-barred from the ledger. No code, no crewmate, no ledger write while thinking. Use when the captain invokes /brainstorm <topic> (or --direct <topic> for a quick riff in the chief session), or opens a "should we / how might we" conversation that is not yet an order.
+description: Captain-invocable ideation flow - the captain thinks a topic through with a DEDICATED brainstorm roomchief (clean context, its own room journal, chat right in the dashboard Board detail), not in the crewchief's own loaded session; the crewchief only opens it and, at the end, mints what the captain confirms - backlog rows, and optionally a SPEC the session authored (the captain's live acceptance is the gate). The roomchief is machine-barred from the ledger. No code, no crewmate, no ledger write while thinking. Use when the captain invokes /brainstorm <topic> (or --direct <topic> for a quick riff in the chief session), or opens a "should we / how might we" conversation that is not yet an order.
 ---
 
 # brainstorm
 
 The captain invoked `/brainstorm <topic>` - an IDEATION session, upstream of
 every execution flow. Nothing here is an order yet: the deliverable is queued
-backlog rows the captain has confirmed, or the explicit outcome "no rows".
-Rows this flow mints are the INPUT a later `/order-direct`, `/order-staged`,
-or `epic-intake` runs on - this skill never starts execution itself.
+backlog rows the captain has confirmed - plus, when a thread went deep
+enough, a SPEC the session authored with the captain (below) - or the
+explicit outcome "no rows". What this flow mints is the INPUT a later
+`/order-direct`, `/order-staged`, or `epic-intake` runs on - this skill
+never starts execution itself.
 
 ## The venue: a brainstorm ROOMCHIEF, not the crewchief's session
 
@@ -114,6 +116,32 @@ the crewchief then:
    "no", "later", or "needs a scout first") - the not-minted list is part
    of the outcome. In `--direct` mode the crewchief runs the same steps
    off its own conversation notes.
+
+## Spec: the session may author it - the captain's live acceptance IS the gate
+
+A thread that went deep enough - requirements settled, boundaries drawn,
+acceptance criteria named - may end as a SPEC, not just a row pointing at
+one. The staged flow's gates exist to bring the captain INTO design
+decisions; in a brainstorm the captain is already in the loop, so a spec
+accepted here live outranks a stage report waiting for its gate. The shape:
+
+1. The roomchief DRAFTS the spec in its room (`DRAFT-SPEC` entries beside
+   `DRAFT-ROWS`) - never as a file; its output surface is the room.
+2. At minting, the crewchief reads the draft back for the captain's yes
+   like any row - then, and only then, MATERIALIZES it as
+   `data/<family>/spec/report.md` for the row's new family, byte-faithful
+   to what was accepted, with a provenance header naming the brainstorm
+   room and the acceptance date ("authored in brainstorm-<slug> with the
+   captain; captain accepted <date>"). The captain's yes journaled in the
+   brainstorm room is the gate receipt - this report enters no gate-route.
+3. The row mints pinned `[src:cap flow:staged ...]`; the staged family
+   starts PAST spec - its next stage (plan or implement, per triage)
+   links the seeded `spec/report.md` exactly as it would an accepted
+   stage report (the layout grammar already resolves it by path).
+4. When the captain instead wants the draft CHECKED before it binds
+   ("needs a scout on this"), mint the row with the spec stage still to
+   run and the room as its input - the draft is then a head start, not
+   the record.
 
 "No rows" is a fully valid ending. Grammar, gate, and triage law stay where
 they live (sections 5, 8, 9) - this skill cites them and duplicates nothing.

@@ -69,6 +69,16 @@ assert_contains "$skill" "records/scenes/" "grounding checks the scene store"
 assert_contains "$skill" "records/learnings.md" "grounding checks the learnings ledger"
 assert_contains "$skill" "ac-ready.sh overlap" "grounding checks live-task overlap"
 
+# --- spec path: authored in the room, captain's live acceptance is the gate ---
+assert_contains "$skill" "DRAFT-SPEC" "the spec is drafted in the room beside the rows"
+assert_contains "$skill" "never as a file; its output surface is the room" "the roomchief materializes nothing"
+assert_contains "$skill" "MATERIALIZES it as" "only the crewchief writes the spec artifact"
+assert_contains "$skill" "captain accepted" "the provenance header records the acceptance"
+assert_contains "$skill" "enters no gate-route" "live acceptance replaces the stage gate"
+assert_contains "$skill" "starts PAST spec" "the staged family begins after the seeded spec"
+assert_contains "$skill" "a head start, not
+   the record" "the captain may still demand a real spec stage"
+
 # --- ending: verbatim confirm, settled-dims-only pins, no-rows valid ----------
 assert_contains "$skill" "VERBATIM" "rows are read back verbatim before minting"
 assert_contains "$skill" "carrying ONLY the dimensions the captain" "pins carry settled dimensions only"
