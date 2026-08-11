@@ -47,8 +47,12 @@ promote, nothing new (mechanics: `bin/ac-spawn.sh` header):
    grammar) for the crewchief to confirm and mint."` - the room IS the
    brief, so the charter is the contract.
 2. `bin/ac-spawn.sh --roomchief brainstorm-<slug> --captain-initiated
-   "/brainstorm <topic>"` (counts toward the room-parallel cap like any
-   roomchief).
+   "/brainstorm <topic>" [--harness <h>]` (counts toward the room-parallel
+   cap like any roomchief). Harness: pass `--harness` ONLY when the
+   captain named one in the invocation; otherwise the standard roomchief
+   ladder resolves it (crew-dispatch `panes.roomchief`, else
+   `config/crew-harness` - `bin/ac-spawn.sh` header owns the contract),
+   so a fleet's tuned roomchief profile covers brainstorming too.
 3. Tell the captain where it lives: Board -> brainstorm-<slug> -> chat, or
    the pane itself.
 
