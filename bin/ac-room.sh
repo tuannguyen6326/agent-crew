@@ -90,9 +90,14 @@
 # SHA-256 and the current chief-verified report SHA-256, and states whether
 # disputes are chief-owned, captain-owned, mixed, or none. ac-gate.sh reads the
 # latest valid matching receipt before opening R2.
+# `STAGE-ADMISSION:` is the owning chief's per-stage admission receipt for the
+# staged design flow - the latest valid receipt per stage is the canonical
+# stage set (grammar and semantics: docs/staged-design-flow-spec.md).
+# Informational, no pending effect; hand-posted via `post` in v1 (a write-side
+# verb is the spec's intended follow-up hardening).
 # `post` ALSO REFUSES an unscoped write of a family-owned receipt
 # (GATE:/ASK:/TRIAGE:/SELF-APPROVED:/LANDED:/HANDBACK:/GATE-ROUTING:/R1-DISPOSITION:/
-# DECIDED:) into a family whose roomchief is LIVE (ac_roomchief_live,
+# DECIDED:/STAGE-ADMISSION:) into a family whose roomchief is LIVE (ac_roomchief_live,
 # bin/ac-wake-lib.sh) - "unscoped" means AC_SCOPE does not equal that family,
 # never the actor STRING (a live roomchief posts under more than one actor
 # string across a session, measured 2026-07-30). Two chiefs writing the same
@@ -183,9 +188,14 @@ cmd_post() {
   # canonical stage set) is guarded like the verbs it rides with: a promoted
   # family's admission receipts belong to its live roomchief; the crewchief's
   # own pre-promote receipts pass because the guard fails open with no live
-  # roomchief yet.
+  # roomchief yet. Colon-precise (`STAGE-ADMISSION:*`, the HANDBACK:*
+  # precedent) so narrative prose MENTIONING the token ("STAGE-ADMISSION
+  # receipts recorded") is never refused - the receipt grammar always opens
+  # with the colon, and a colon-less receipt attempt is invalid anyway (never
+  # the canonical set), so letting it through this accident guard loses
+  # nothing.
   case "$text" in
-    GATE*|ASK*|TRIAGE*|SELF-APPROVED*|LANDED*|HANDBACK:*|R1-DISPOSITION*|DECIDED*|STAGE-ADMISSION*)
+    GATE*|ASK*|TRIAGE*|SELF-APPROVED*|LANDED*|HANDBACK:*|R1-DISPOSITION*|DECIDED*|STAGE-ADMISSION:*)
       if [ "${AC_SCOPE:-}" != "$family" ] && [ "${AC_ROOM_PROMOTE_RECEIPT:-}" != "1" ] \
         && ac_roomchief_live "$(ac_state_dir)" "$family"; then
         ac_die "post: $family has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (AGENTS.md: 'Two chiefs on one family is a role violation, not extra help')"

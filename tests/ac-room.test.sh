@@ -741,6 +741,12 @@ assert_fails "$BIN/ac-room.sh" post ownfam crewchief "DECIDED: approve, duplicat
 # canonical stage set under the live roomchief.
 assert_fails "$BIN/ac-room.sh" post ownfam crewchief \
   "STAGE-ADMISSION: stage=spec decision=admit grounds=duplicate crewchief admission"
+# Colon-precise (the HANDBACK:* precedent): narrative prose MENTIONING the
+# token without the colon is not a receipt and must never be refused.
+"$BIN/ac-room.sh" post ownfam crewchief \
+  "STAGE-ADMISSION receipts recorded upstream for this family, see backlog" >/dev/null
+assert_contains "$(cat "$AC_HOME/data/ownfam/room.md")" "recorded upstream for this family" \
+  "prose mentioning STAGE-ADMISSION without the colon posts fine under a live roomchief"
 
 # HANDBACK-REFUSED: stays allowed unscoped through the SAME live roomchief -
 # it is the CREWCHIEF refusing its roomchief's hand-back (AGENTS.md section
