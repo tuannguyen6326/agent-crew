@@ -23,7 +23,9 @@ cat >"$stub/herdr" <<'EOF'
 echo "herdr $*" >>"$HDLOG"
 [ "${1:-}" = --session ] && shift 2
 case "${1:-} ${2:-}" in
-  "tab list") echo '{"result":{"tabs":[]}}' ;;
+  "tab list") if [ -n "${HD_TABS:-}" ]; then cat "$HD_TABS"; else echo '{"result":{"tabs":[]}}'; fi ;;
+  "pane list") if [ -n "${HD_PANES:-}" ]; then cat "$HD_PANES"; else echo '{"result":{"panes":[]}}'; fi ;;
+  "pane split") echo '{"result":{"pane":{"pane_id":"pS1"}}}' ;;
   "workspace get") case "${3:-}" in wP) exit 0 ;; *) echo '{"error":"gone"}'; exit 1 ;; esac ;;
   "workspace list") cat "${WSLIST:-/dev/null}" 2>/dev/null || echo '{"result":{"workspaces":[]}}' ;;
   "workspace create") echo '{"result":{"workspace":{"workspace_id":"wP"}}}' ;;
@@ -95,6 +97,29 @@ PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
   "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c1 >/dev/null
 assert_contains "$(cat "$HDLOG")" "--label ac-codereview-agent-famx" \
   "detached lease: the FAMILY scopes the tab label, so cross-family adoption is impossible by name"
+
+# ...and adoption is scoped to the FAMILY WORKSPACE structurally: a tab with
+# the RIGHT label in the WRONG workspace (pre-family-label leftover, label
+# collision) is never adopted - the pane creates its own tab in the family
+# workspace instead of splitting into the stranger.
+: >"$HDLOG"
+export HD_TABS="$TMP/tabs.json"
+printf '{"result":{"tabs":[{"tab_id":"tWRONG","label":"ac-codereview-agent-famx","workspace_id":"wOTHER"}]}}\n' >"$HD_TABS"
+PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
+  "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c2 >/dev/null
+wlog="$(cat "$HDLOG")"
+assert_contains "$wlog" "tab create --workspace wP" "wrong-workspace tab skipped: a fresh tab is created in the family workspace"
+case "$wlog" in *"pane split"*) fail "a tab outside the family workspace must never be adopted" ;; esac
+
+# ...while a same-label tab IN the family workspace still stacks rounds.
+: >"$HDLOG"
+printf '{"result":{"tabs":[{"tab_id":"tP","label":"ac-codereview-agent-famx","workspace_id":"wP"}]}}\n' >"$HD_TABS"
+export HD_PANES="$TMP/panes.json"
+printf '{"result":{"panes":[{"pane_id":"pP1","tab_id":"tP"}]}}\n' >"$HD_PANES"
+PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
+  "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c3 >/dev/null
+assert_contains "$(cat "$HDLOG")" "pane split pP1" "same family workspace: round N splits into the existing tab"
+unset HD_TABS HD_PANES
 git -C "$repo" checkout -q main
 assert_contains "$log" "claude --permission-mode auto" "claude launched in the pane"
 assert_file "$repo/.claude/settings.local.json" "stop hook installed"

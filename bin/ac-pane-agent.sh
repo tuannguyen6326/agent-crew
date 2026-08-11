@@ -1012,16 +1012,6 @@ TABLABEL="ac-$KIND-agent"
 [ -n "${AC_WINDOW_FAMILY:-}" ] && TABLABEL="$TABLABEL-$AC_WINDOW_FAMILY"
 [ -n "$BRANCH" ] && TABLABEL="$TABLABEL-$(printf '%s' "$BRANCH" | tr '/' '-')"
 
-# 4. pane: reuse this family+branch's agent tab when it exists, else create it
-TAB=$(herdr --session "$SES" tab list 2>/dev/null | TL="$TABLABEL" python3 -c "
-import sys, json, os
-try:
-    for t in json.load(sys.stdin)['result']['tabs']:
-        if t.get('label') == os.environ['TL']:
-            print(t['tab_id']); break
-except Exception:
-    pass
-" 2>/dev/null)
 agents_ws_create() {
   # Re-resolve THE pane-agent group (adopt-by-label before create; ac-lib).
   WS="$(ac_herdr_agents_workspace 2>/dev/null || true)"
@@ -1037,6 +1027,27 @@ tab_create_in_ws() {
   TAB="${created#* }"
   [ -n "$TAB" ] && [ -n "$P" ]
 }
+
+# 4. pane: adopt this family+branch's agent tab IN THE FAMILY WORKSPACE, else
+# create it there. The workspace is resolved FIRST and scopes the adoption:
+# a tab carrying the right label in the WRONG workspace (a pre-family-label
+# leftover, a label collision) is never adopted, so the pane PROVABLY lands
+# in its family's group (captain order 2026-08-11: the codereview pane must
+# sit with its family - the label fix alone only made collisions unlikely,
+# this makes placement structural). WS unresolvable (herdr degraded) falls
+# back to label-only adoption - the same degrade direction the create path
+# already takes.
+agents_ws_create
+TAB=$(herdr --session "$SES" tab list 2>/dev/null | TL="$TABLABEL" WSID="${WS:-}" python3 -c "
+import sys, json, os
+try:
+    for t in json.load(sys.stdin)['result']['tabs']:
+        if t.get('label') != os.environ['TL']: continue
+        if os.environ['WSID'] and t.get('workspace_id') != os.environ['WSID']: continue
+        print(t['tab_id']); break
+except Exception:
+    pass
+" 2>/dev/null)
 if [ -n "$TAB" ]; then
   OUT=$(herdr --session "$SES" pane list 2>/dev/null | TB="$TAB" python3 -c "
 import sys, json, os
@@ -1050,7 +1061,6 @@ except Exception:
   P=$(herdr --session "$SES" pane split "${OUT:-}" --direction right --no-focus 2>/dev/null \
       | sed -n 's/.*"pane_id":"\([^"]*\)".*/\1/p' | head -1)
 else
-  [ -n "$WS" ] || agents_ws_create
   P=""
   [ -z "$WS" ] || tab_create_in_ws || true
   if [ -z "$P" ]; then
