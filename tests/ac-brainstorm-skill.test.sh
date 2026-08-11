@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # ac-brainstorm-skill.test.sh - contract checks for the captain-invocable
-# brainstorm skill: Agent Skills frontmatter, the no-side-effect rule (thinking
-# spawns and writes nothing - a cheap scout included), grounding duty
-# (recall/scenes/learnings + overlap BEFORE proposing), the verbatim-confirm
-# row minting with settled-dimensions-only pins, "no rows" as a valid outcome,
-# the upstream boundary (never starts execution), and the split rule (cite
-# sections 5/8/9, never duplicate their grammar).
+# brainstorm skill: Agent Skills frontmatter, the ROOMCHIEF venue (ideation
+# runs in a clean-context brainstorm roomchief with its room as the durable
+# journal, never the chief's loaded session; --direct stays the quick-riff
+# escape hatch), the no-side-effect rule while thinking (no spawns, no
+# writes outside the room; ledger-guard machine-bars the roomchief - the
+# CREWCHIEF alone mints), grounding duty (recall/scenes/learnings + overlap
+# first), the verbatim-confirm row minting with settled-dimensions-only
+# pins, "no rows" as a valid outcome, the upstream boundary (never starts
+# execution), and the split rule (cite sections 5/8/9, never duplicate
+# their grammar).
 
 set -euo pipefail
 # Fail-closed sourcing: unsourced (suite run outside tests/), errexit is never
@@ -32,14 +36,28 @@ case "$name" in *[!a-z0-9-]*|-*|*-) fail "name not a portable slug: $name" ;; es
 # --- description states capability AND activation triggers --------------------
 assert_contains "$desc" "/brainstorm" "description names the slash trigger"
 assert_contains "$desc" "not yet an order" "description names the exploratory-conversation trigger"
-assert_contains "$desc" "no crewmate" "description states the no-spawn posture"
+assert_contains "$desc" "DEDICATED brainstorm roomchief" "description names the clean-context venue"
+assert_contains "$desc" "machine-barred from the ledger" "description states the mint boundary is enforced"
+assert_contains "$desc" "--direct" "description names the quick-riff escape hatch"
+
+# --- venue: roomchief, the crewchief opens and mints only ---------------------
+assert_contains "$skill" "DEFAULT venue is a dedicated roomchief" "roomchief is the default venue"
+assert_contains "$skill" "open it, and mint at close" "the crewchief's two touches are named"
+assert_contains "$skill" "IS the adoption of this one promote" \
+  "the promote is the captain's act, not chief drift"
+assert_contains "$skill" "--roomchief brainstorm-" "the venue rides standard roomchief machinery"
+assert_contains "$skill" "--captain-initiated" "the promote records its captain origin"
+assert_contains "$skill" "the room IS the
+   brief" "the charter posts before the promote (the order gate)"
+assert_contains "$skill" "ac-ledger-guard.sh" "the ledger bar is machinery, not discipline"
 
 # --- the one hard rule: thinking has no side effects --------------------------
-assert_contains "$skill" "spawn NOTHING and write NOTHING" "the no-side-effect rule is stated as law"
-assert_contains "$skill" "no scout" "a cheap scout is explicitly inside the ban"
-assert_contains "$skill" "conversation
-and READS" "instruments are conversation and reads only"
-assert_contains "$skill" "needs a scout to answer" "an investigation need becomes a row, not a spawn"
+assert_contains "$skill" "spawns
+NOTHING and writes NOTHING outside the room journal" "the no-side-effect rule is stated as law"
+assert_contains "$skill" "no crewmate" "a crewmate spawn is explicitly inside the ban"
+assert_contains "$skill" "conversation and READS" "instruments are conversation and reads only"
+assert_contains "$skill" 'scout to answer" becomes a' "an investigation need becomes a row, not a spawn"
+assert_contains "$skill" "cannot touch the ledger" "minting is the crewchief's act alone"
 
 # --- grounding duty before proposing ------------------------------------------
 assert_contains "$skill" "ac-know.sh recall" "grounding reads repo knowledge first"
@@ -49,7 +67,7 @@ assert_contains "$skill" "ac-ready.sh overlap" "grounding checks live-task overl
 
 # --- ending: verbatim confirm, settled-dims-only pins, no-rows valid ----------
 assert_contains "$skill" "VERBATIM" "rows are read back verbatim before minting"
-assert_contains "$skill" "ONLY the dimensions the captain actually settled" "pins carry settled dimensions only"
+assert_contains "$skill" "carrying ONLY the dimensions the captain" "pins carry settled dimensions only"
 assert_contains "$skill" "src:cap" "the captain's confirmation is the order-source token"
 assert_contains "$skill" "escalation gate never re-asks" "a pin minted here is pre-consent"
 assert_contains "$skill" '"No rows" is a fully valid ending' "an empty outcome is legitimate"
