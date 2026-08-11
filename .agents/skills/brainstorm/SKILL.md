@@ -47,12 +47,18 @@ promote, nothing new (mechanics: `bin/ac-spawn.sh` header):
    grammar) for the crewchief to confirm and mint."` - the room IS the
    brief, so the charter is the contract.
 2. `bin/ac-spawn.sh --roomchief brainstorm-<slug> --captain-initiated
-   "/brainstorm <topic>" [--harness <h>]` (counts toward the room-parallel
-   cap like any roomchief). Harness: pass `--harness` ONLY when the
-   captain named one in the invocation; otherwise the standard roomchief
-   ladder resolves it (crew-dispatch `panes.roomchief`, else
-   `config/crew-harness` - `bin/ac-spawn.sh` header owns the contract),
-   so a fleet's tuned roomchief profile covers brainstorming too.
+   "/brainstorm <topic>" [--harness <h> --model <m> --effort <e>]`
+   (counts toward the room-parallel cap like any roomchief).
+   Profile, in order: (a) the captain named a harness in the invocation -
+   pass it; (b) the fleet's `panes.roomchief` is ROUTED and a rule's
+   `when` matches this brainstorm promote - you are the agent in the loop
+   the routed-pane contract expects, so judge `bin/ac-dispatch-select.sh
+   --pane roomchief --list`, resolve the match with `--rule <n>`, and
+   pass its full profile as spawn flags (a fleet may pin brainstorms to a
+   different harness this way - the rule is the captain's durable word);
+   (c) neither - pass nothing and the promote resolves the ladder itself
+   (routed default, else `config/crew-harness`; `bin/ac-spawn.sh` header
+   owns the contract).
 3. Tell the captain where it lives: Board -> brainstorm-<slug> -> chat, or
    the pane itself.
 

@@ -47,9 +47,10 @@ assert_contains "$skill" "IS the adoption of this one promote" \
   "the promote is the captain's act, not chief drift"
 assert_contains "$skill" "--roomchief brainstorm-" "the venue rides standard roomchief machinery"
 assert_contains "$skill" "--captain-initiated" "the promote records its captain origin"
-assert_contains "$skill" "panes.roomchief" "harness rides the standard roomchief dispatch ladder"
-assert_contains "$skill" "ONLY when the
-   captain named one" "an explicit harness is the captain's choice, not the chief's"
+assert_contains "$skill" "panes.roomchief" "the profile rides the roomchief dispatch ladder"
+assert_contains "$skill" "the captain named a harness in the invocation" "an explicit harness is the captain's choice"
+assert_contains "$skill" "--pane roomchief --list" "a routed pane rule is judged by the chief in the loop"
+assert_contains "$skill" "the rule is the captain's durable word" "a matching rule carries captain authority, not chief taste"
 assert_contains "$skill" "the room IS the
    brief" "the charter posts before the promote (the order gate)"
 assert_contains "$skill" "ac-ledger-guard.sh" "the ledger bar is machinery, not discipline"
