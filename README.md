@@ -78,7 +78,7 @@ PRs / local merges / reports
 
 flows (picked per order):
   direct:  chief -> execution (IMPLEMENT + DELIVERY)
-  staged:  chief -> design (spec + architecture + plan, gated) -> execution
+  staged:  chief -> design (admitted spec/architecture/plan stages, gated) -> execution
   epic:    order -> story map (gated) -> stories, push-scheduled
   review:  required for staged and crew-ship; optional for direct-pr/local-only
   qa:      optional behavioral proof after delivery; gates merge, not push

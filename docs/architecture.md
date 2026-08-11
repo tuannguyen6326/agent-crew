@@ -17,13 +17,13 @@ This doc is the map; the law is `AGENTS.md`, and each `bin/*.sh` header is its o
 
 ```
 direct:  crewchief ─► execution (IMPLEMENT + DELIVERY)
-staged:  crewchief ─► design (spec+arch+plan, per-report review + risk routing)
-                   ─► execution (IMPLEMENT + DELIVERY)
+staged:  crewchief ─► design (admitted spec/arch/plan stages, per-report
+                     review + risk routing) ─► execution (IMPLEMENT + DELIVERY)
 epic:    story map (gated artifact) ─► stories, each intaken as its own
          direct/staged task, push-scheduled by bin/ac-ready.sh
 ```
 
-- design merges spec/architecture/plan into one crewmate (`--stage design`); gates stay per report.
+- design merges the admitted spec/architecture/plan stages into one crewmate (`--stage design`); admission is receipted per stage (`STAGE-ADMISSION:`, AGENTS.md section 5) and gates stay per report.
 - execution owns TDD, code, self-review, commits, review fixes, checks, docs, and delivery on one branch/session. Self-review gives the full diff to an applicable code-review plugin first (project-provided first); only when none exists does the implementer manually review the full diff, and it never runs both passes.
 - there is no normal code-review or ship crewmate. Review is a derived `yes|no` obligation: staged and crew-ship always yes; direct direct-pr/local-only default no and may opt in.
 - `crew-ship` is an 8-step engine inside execution and fulfills review once. Required review outside that engine calls `ac-verify codereview` directly. Every review round is a fresh exact-ref pane with structured history only.
