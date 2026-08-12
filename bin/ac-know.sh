@@ -83,14 +83,11 @@
 # EXPORTS the resolved home, so every lib call downstream is right unchanged -
 # one decision point per process, not one per call site.
 #
-# ac-qa.sh KEEPS ITS OWN THIRD RUNG, and the asymmetry is deliberate rather
-# than an unfinished sweep: that script has a real homeless production path
-# this one does not - a pane running `start --store <baked-absolute>`, where
-# the actor holding AC_HOME baked the store and the pane genuinely cannot
-# derive one (tests/ac-qa.test.sh pins it). Removing the rung there is a
-# DESIGN question - what a run resolves its project config against when no
-# home is named - not the mechanical deletion it is here, and it stays queued
-# rather than guessed at.
+# ac-qa.sh HAS NO RUNG 3 EITHER (@ebe03e7). It answers a homeless run PER
+# VERB rather than refusing outright like this file: `start` keeps running
+# on an empty frozen config behind a notice, `agent` returns needs-profile.
+# The deciding factor, either script: whether every durable source the verb
+# needs descends from the home with no per-source escape.
 #
 # THE FALSE-FRESH CLASS (authoritative - every other mention points HERE): an
 # entry is a false-FRESH generator whenever THE RECORDED `at` IS NOT THE STATE
