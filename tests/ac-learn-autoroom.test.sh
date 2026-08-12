@@ -784,6 +784,26 @@ assert_contains "$out" "started the full-suite run" "and a fresh run starts, wit
 assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "1" "exactly one suite task - the fresh one"
 assert_no_file "$meta" "and still no promote until that run comes back green"
 
+# -- a run that DIED leaves no snapshot behind either --------------------------
+# The concrete leak the brief calls out: a SIGKILLed pane must not leave a git
+# worktree registration behind. Simulate the run having reached the checkout
+# step before it died by creating the exact worktree cmd_suite would have
+# (learn_suite_snapshot_dir <id> = .crew/learn-suite-snapshots/<id>), then
+# kill the pane the same way the case above does and confirm the reclaim path
+# retires the worktree the same way it retires the meta/status/pane handle.
+suite_task_clear
+dead2=verify-suite-2
+snap_dir="$ROOT/.crew/learn-suite-snapshots/$dead2"
+git -C "$ROOT" worktree add --detach --quiet "$snap_dir" "$suite_head"
+printf 'kind=verify-suite\nbackend=herdr\nwindow=x\n' >"$AC_HOME/state/$dead2.meta"
+printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-$dead2"
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+[ ! -e "$snap_dir" ] || fail "the killed-pane reclaim must remove the snapshot worktree it left behind"
+git -C "$ROOT" worktree list | grep -q "learn-suite-snapshots/$dead2" \
+  && fail "the killed-pane reclaim must also retire the worktree's git registration" || true
+assert_contains "$out" "started the full-suite run" "and a fresh run starts"
+suite_task_clear
+
 # -- UNOBSERVABLE is not a death: HOLD, never reclaim -------------------------
 # ac-backend.sh WINDOW LIVENESS: a backend that could not be READ is not a dead
 # pane. Reclaiming there would start a second suite on top of a live one, and
@@ -819,11 +839,52 @@ assert_contains "$out" "RED" "the red is VISIBLE to the chief reading the drain"
 assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "0" \
   "a red does not busy-loop a fresh 6-minute suite run on every drain - the same tree gives the same answer"
 
+# -- RED SELF-HEAL PRESERVED: a red whose live HEAD has since moved re-pins
+# and launches a fresh attempt - the header's pre-existing promise ("the fix
+# lands, HEAD moves, and the next checkpoint starts a fresh run by itself"),
+# which the pinned-head fix above must not silently drop just because GREEN
+# is now sticky. Simulated the same way as the regression above: seed the pin
+# AND the red record with a fake, since-superseded sha so live HEAD
+# ($suite_head) reads as "moved" without touching the real repo.
+reset_family
+suite_task_clear
+stale_sha="0000000000000000000000000000000000000002"
+printf 'generation=0\nhead=%s\n' "$stale_sha" >"$AC_HOME/state/.learn-suite-pin.meta"
+printf 'generation=0\nhead=%s\nstatus=red\nexit=1\n' "$stale_sha" >"$suite_rec"
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+assert_contains "$out" "started the full-suite run" \
+  "a red whose tree live HEAD has since moved re-pins and self-heals, same as before the fix"
+assert_eq "$(awk -F= '$1=="head"{print $2}' "$AC_HOME/state/.learn-suite-pin.meta")" "$suite_head" \
+  "the re-pin advances to the NEW live tree, not the stale red one"
+suite_task_clear
+rm -f "$AC_HOME/state/.learn-suite-pin.meta"
+
 # -- GREEN for this cycle and this tree: the promote proceeds ------------------
 green_suite
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a released autoroom must exit 0: $out"
 assert_file "$meta" "a green suite for THIS cycle and tree releases the DISTILL"
 assert_contains "$out" "learning DUE (9/8)" "and the release still names what it created"
+
+# -- REGRESSION (measured 2026-08-11): a green earned against the tree THIS
+# CYCLE PINNED must still release even though the LIVE checkout has since
+# moved past it - the exact shape that discarded three consecutive green runs
+# (1786430358, 1786432315, 1786436214) before agent-crew happened to sit still
+# long enough for one to survive. Simulated without touching the real repo's
+# HEAD, the same technique the mismatch case above already uses: the PIN is
+# seeded directly with an arbitrary sha, standing in for "the tree the cycle
+# already pinned before a commit landed underneath it." Against the CURRENT
+# code (learn_suite_gate re-reads live HEAD at every consult) this fails: live
+# HEAD is the real $suite_head, never the fake pinned sha, so the record's
+# head can never match and the green is discarded exactly like the incident.
+reset_family
+suite_task_clear
+rm -f "$suite_rec"
+pinned_sha="0000000000000000000000000000000000000001"
+printf 'generation=0\nhead=%s\n' "$pinned_sha" >"$AC_HOME/state/.learn-suite-pin.meta"
+printf 'generation=0\nhead=%s\nstatus=green\nexit=0\n' "$pinned_sha" >"$suite_rec"
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a released autoroom must exit 0: $out"
+assert_file "$meta" "a green earned against the PINNED tree releases the DISTILL even though live HEAD ($suite_head) has since moved past it"
+rm -f "$AC_HOME/state/.learn-suite-pin.meta"
 
 # -- a send that never lands leaves NOTHING behind ----------------------------
 # The fail direction that matters: a task meta with no run behind it would hold

@@ -2094,9 +2094,68 @@ EOF
 # BOTH keys must match the CURRENT cycle or the record releases nothing. The
 # generation is the captain's "stale green from a previous cycle does not release
 # this one"; the head is that same rule on the other axis - a green taken before
-# the fix landed describes a tree the retro will not be reasoning about. Binding
-# the head is also what ENDS a red with no knob and no timer: the fix lands, HEAD
-# moves, and the next checkpoint starts a fresh run by itself.
+# the fix landed describes a tree the retro will not be reasoning about.
+#
+# `head` is a PINNED tree, not live HEAD re-read at every consult (captain
+# order 2026-08-11, distro-checkout-mutates-under-running-fleets): a bare
+# `git rev-parse HEAD` at gate/drain time made the record's own generation+head
+# match unrecoverable against commit cadence - measured 2026-08-11, three
+# consecutive green runs (1786430358, 1786432315, 1786436214) discarded because
+# live HEAD had moved to 3b82249 then 3a4da0e while each one was still running.
+# That was a livelock, not a correctness gap the invariant ever meant to
+# tolerate: an immutable snapshot on its own only fixes the RUN reading a
+# moving tree, it does nothing about the GATE discarding an already-earned
+# verdict, so the two now share ONE pinned value instead of two independent
+# live reads. learn_suite_pinned_head(gen) is that value: the FIRST caller to
+# ask for a generation with no live pin (state/.learn-suite-pin.meta) records
+# live HEAD as that generation's answer; every later caller in the SAME
+# generation - the gate on every subsequent drain, and the suite task itself -
+# gets the SAME sha back, however many commits land on the live checkout in
+# between, UNTIL learn_suite_gate's own red-and-moved branch explicitly
+# advances it (next paragraph). The suite itself runs from an immutable git
+# worktree checked out at the pinned sha (learn_suite_snapshot_create/_remove
+# below), so the tree the verdict is bound to is not merely a cached string:
+# it is the literal tree the runner read, and nothing else can rewrite it out
+# from under a run in flight.
+#
+# THE PIN IS ASYMMETRIC ON PURPOSE, matching what a GREEN and a RED each mean.
+# A GREEN is a proof already earned - it is STICKY for the rest of the
+# generation with no further live comparison, which is exactly the crux fix:
+# once matched it releases unconditionally, so a commit landing during or
+# after the run can never discard it. A RED is not a proof of anything except
+# "this exact tree failed" - it is a WAITING state, and the header's own
+# long-standing promise ("the fix lands, HEAD moves, and the next checkpoint
+# starts a fresh run by itself") is an invariant this change must not drop.
+# So a red whose live HEAD still equals its pinned tree HOLDS with no re-run
+# (the pre-existing busy-loop guard: the same tree gives the same answer), but
+# a red whose live HEAD has since MOVED re-pins to the new tree
+# (learn_suite_pin_write) and falls through to launch a fresh attempt against
+# it - the self-heal, preserved. The two pins can never collide: a re-pin only
+# fires when learn_suite_gate's own record-match finds a RED, which by
+# construction means no task is currently in flight for this generation (a
+# live task has not written its record yet, so it can never BE that matching
+# record) - an attempt already running is therefore never re-pinned out from
+# under itself, and "being outrun" - a live run whose eventual verdict gets
+# discarded by a since-moved comparison - is structurally impossible for the
+# same reason: nothing can re-pin while a task owns the pin.
+#
+# WHY THE HEAD-MATCH IS NOT WEAKER: the invariant was never "the record's head
+# equals `git rev-parse HEAD` at the instant someone asks" - it was "a green
+# verdict is bound to the exact tree it was earned on, and the gate never
+# releases a verdict earned against a tree that is not THIS cycle's tree." A
+# green still requires record.generation==this cycle AND record.head==this
+# cycle's PINNED tree; a green from a previous generation, or a green whose
+# head names a DIFFERENT sha than the one THIS cycle currently pins, still
+# releases nothing (both directions stay covered by tests). What changed is
+# only WHEN "this cycle's tree" is captured for a GREEN comparison: once, at
+# the first evaluation of a DUE cycle (or the last self-healing re-pin after a
+# red), instead of freshly at every drain. The concrete mismatch a reader
+# might fear - "the pin could go stale and let a verdict for an OLD tree
+# through" - is ruled out because a GREEN never re-pins (only a RED, and only
+# when nothing is in flight to protect), so there is no tree a GREEN accepts
+# that the old rule would have rejected - only a tree the OLD rule rejected by
+# accident, because it re-measured "the tree" against a checkout that had
+# moved for reasons having nothing to do with the run it was judging.
 
 learn_suite_record() { printf '%s/.learn-suite.meta\n' "$(ac_state_dir)"; }
 
@@ -2109,6 +2168,82 @@ learn_suite_root() {
 
 learn_suite_head() {
   git -C "$(learn_suite_root)" rev-parse HEAD 2>/dev/null || printf 'no-head\n'
+}
+
+learn_suite_pin_record() { printf '%s/.learn-suite-pin.meta\n' "$(ac_state_dir)"; }
+
+learn_suite_pin_write() {
+  # learn_suite_pin_write <generation> <head> - the ONE place that mutates the
+  # pin record; print <head> back so a caller can chain it straight into a
+  # local. Two callers: learn_suite_pinned_head's first-pin-of-the-generation
+  # path below, and learn_suite_gate's red-and-moved self-heal re-pin - never
+  # called while a task is in flight or a green sits matched (learn_suite_gate
+  # owns why that collision cannot happen).
+  local gen="$1" head="$2" pin
+  pin="$(learn_suite_pin_record)"
+  printf 'generation=%s\nhead=%s\n' "$gen" "$head" >"$pin.tmp.$$"
+  mv "$pin.tmp.$$" "$pin"
+  printf '%s\n' "$head"
+}
+
+learn_suite_pinned_head() {
+  # learn_suite_pinned_head <generation> - the tree THIS generation currently
+  # proves, pinned instead of re-read live at every call (contract: the header
+  # above learn_suite_record). The first caller for a generation with no live
+  # pin records live HEAD as that generation's answer and returns it; every
+  # later caller reads the same answer back - UNTIL learn_suite_gate's
+  # red-and-moved branch explicitly advances it - however far live HEAD has
+  # moved since. Both ordinary callers - the gate and the suite task it
+  # launches - go through this, so they always agree on which tree they are
+  # judging without either one re-reading git on its own.
+  local gen="$1" pin pinned_gen
+  pin="$(learn_suite_pin_record)"
+  pinned_gen="$(ac_meta_get "$pin" generation)"
+  if [ "$pinned_gen" = "$gen" ]; then
+    ac_meta_get "$pin" head
+    return 0
+  fi
+  learn_suite_pin_write "$gen" "$(learn_suite_head)"
+}
+
+learn_suite_snapshot_dir() {
+  # learn_suite_snapshot_dir <id> - where the immutable tree <id> proves lives:
+  # inside the checkout's own already-gitignored .crew/ (the same convention
+  # the crew worktree pool uses at .crew/worktrees/), in a DIFFERENT subdir -
+  # never through bin/ac-tree.sh's pool, which is the crew worktree lease and
+  # this is not a crew task. Purely derived from <id>, never read back from a
+  # stored field, so cleanup never depends on state a kill could also lose.
+  printf '%s/.crew/learn-suite-snapshots/%s\n' "$(learn_suite_root)" "$1"
+}
+
+learn_suite_snapshot_create() {
+  # learn_suite_snapshot_create <id> <head> - check out a DETACHED, immutable
+  # worktree at <head> and print its path. This is the RUN half of the fix
+  # (the GATE half is learn_suite_pinned_head above): the suite executes out
+  # of a tree nothing else can rewrite, instead of the live checkout a
+  # concurrent commit is still free to move under it.
+  local id="$1" head="$2" root dir
+  root="$(learn_suite_root)"
+  dir="$(learn_suite_snapshot_dir "$id")"
+  git -C "$root" worktree add --detach --quiet "$dir" "$head" >/dev/null
+  printf '%s\n' "$dir"
+}
+
+learn_suite_snapshot_remove() {
+  # learn_suite_snapshot_remove <id> - best-effort retire the snapshot <id>
+  # ran against. IDEMPOTENT and safe to call whether or not a snapshot was
+  # ever created (a pane killed before it reached the checkout step): the path
+  # is DERIVED from <id> alone. Armed as cmd_suite's own EXIT trap for the
+  # normal finish, and called again from the killed-pane reclaim in
+  # learn_suite_inflight, so BOTH exit shapes retire the same registration the
+  # same way - a snapshot never survives a SIGKILLed run.
+  local id="$1" root dir
+  root="$(learn_suite_root)"
+  dir="$(learn_suite_snapshot_dir "$id")"
+  if [ -e "$dir" ]; then
+    git -C "$root" worktree remove --force "$dir" 2>/dev/null || rm -rf "$dir"
+  fi
+  git -C "$root" worktree prune >/dev/null 2>&1 || true
 }
 
 learn_suite_inflight() {
@@ -2140,6 +2275,7 @@ learn_suite_inflight() {
       backend_window_alive "$id" ) 2>/dev/null || rc=$?
     if [ "$rc" = 1 ]; then
       ac_warn "the full-suite run $id died before recording a verdict (the backend says its pane is gone) - reclaiming it, so the next checkpoint starts a fresh run"
+      learn_suite_snapshot_remove "$id"
       rm -f "$m" "$(ac_task_status "$id")" "$(ac_state_dir)/.pane-$id"
       continue
     fi
@@ -2166,6 +2302,11 @@ learn_suite_launch() {
   # group: that group belongs to ac-pane-agent.sh's own tab path, for AGENT
   # sessions launched by its two arms, and this run is a plain command that needs
   # the crew:<id> tab label every backend verb below addresses it by.
+  #
+  # spawned_epoch, alongside the existing human-readable spawned_at, is what
+  # lets the in-flight drain line report how long the run has been going
+  # (learn_suite_gate below) - a plain EPOCHSECONDS subtraction with no
+  # portability-fragile ISO parsing.
   local id root meta window
   root="$(learn_suite_root)"
   id="verify-suite-$(ac_now)"
@@ -2174,8 +2315,8 @@ learn_suite_launch() {
   window="$(backend_target "$id")"
   {
     printf 'kind=verify-suite\n'
-    printf 'project=%s\nbackend=%s\nwindow=%s\ncwd=%s\nspawned_at=%s\n' \
-      "$(basename "$root")" "$(ac_backend)" "$window" "$root" "$(ac_iso)"
+    printf 'project=%s\nbackend=%s\nwindow=%s\ncwd=%s\nspawned_at=%s\nspawned_epoch=%s\n' \
+      "$(basename "$root")" "$(ac_backend)" "$window" "$root" "$(ac_iso)" "$(ac_now)"
   } >"$meta.tmp.$$"
   ac_status_append "$id" "started the full-suite gate run"
   mv "$meta.tmp.$$" "$meta"
@@ -2196,32 +2337,58 @@ learn_suite_launch() {
 
 learn_suite_gate() {
   # learn_suite_gate <n> <every> - 0 when a GREEN full-suite verdict for THIS
-  # cycle and THIS tree is on record, so the promote may proceed. Otherwise
-  # print the ONE line the drain shows the chief and return non-zero.
+  # cycle and THIS PINNED tree is on record, so the promote may proceed.
+  # Otherwise print the ONE line the drain shows the chief and return non-zero.
   #
   # LEVEL-triggered like its caller: every answer comes from two file reads plus
   # a glob, so a lost wake, a restart between the run and the promote, or a
   # counter already carried past its threshold all reach the same decision.
-  local n="$1" every="$2" rec gen head id
+  #
+  # ASYMMETRIC on purpose. GREEN is STICKY for the whole generation - the crux
+  # fix (learn_suite_pinned_head above): once matched, it releases with no
+  # further comparison against a possibly-moved live HEAD, so a commit landing
+  # during or after the run can never discard it. RED is STICKY only while
+  # nothing has changed: a red whose live HEAD still equals its pinned tree
+  # HOLDS with no re-run (the existing busy-loop guard), but a red whose live
+  # HEAD has since MOVED re-pins to the new tree and falls through to launch a
+  # fresh attempt - preserving the self-heal this gate has always promised
+  # ("the fix lands, HEAD moves, and the next checkpoint starts a fresh run by
+  # itself"). The two cannot collide: a re-pin only ever happens when NO task
+  # is in flight (a live task's own record has not been written yet, so it can
+  # never be the red branch's MATCHING record - the outer `if` simply misses
+  # and falls straight to the in-flight check below), so an attempt already
+  # running is never re-pinned out from under itself.
+  local n="$1" every="$2" rec gen head live id since elapsed
   rec="$(learn_suite_record)"
   gen="$(ac_learn_generation)"
-  head="$(learn_suite_head)"
+  head="$(learn_suite_pinned_head "$gen")"
   if [ "$(ac_meta_get "$rec" generation)" = "$gen" ] \
     && [ "$(ac_meta_get "$rec" head)" = "$head" ]; then
     case "$(ac_meta_get "$rec" status)" in
       green) return 0 ;;
       red)
-        # HOLD, and do NOT re-run: the same tree gives the same answer, and a
-        # fresh 6-minute suite on every drain would burn the box instead of
-        # fixing anything. The fix lands, HEAD moves, and the run below starts.
-        printf 'learning DUE (%s/%s) HELD: the full suite is RED for this cycle (run-suite exit %s, %s) - fix it first; Learning waits, and the fix landing starts a fresh run by itself\n' \
-          "$n" "$every" "$(ac_meta_get "$rec" exit)" "$rec"
-        return 1 ;;
+        live="$(learn_suite_head)"
+        if [ "$live" = "$head" ]; then
+          # HOLD, and do NOT re-run: the same tree gives the same answer, and a
+          # fresh 6-minute suite on every drain would burn the box instead of
+          # fixing anything. The fix lands, HEAD moves, and the branch below
+          # re-pins and starts a fresh run by itself.
+          printf 'learning DUE (%s/%s) HELD: the full suite is RED for this cycle (run-suite exit %s, %s) - fix it first; Learning waits, and the fix landing starts a fresh run by itself\n' \
+            "$n" "$every" "$(ac_meta_get "$rec" exit)" "$rec"
+          return 1
+        fi
+        head="$(learn_suite_pin_write "$gen" "$live")"
+        ;;
     esac
   fi
   if id="$(learn_suite_inflight)"; then
-    printf 'learning DUE (%s/%s) HELD: the full-suite run %s is still in flight\n' \
-      "$n" "$every" "$id"
+    since="$(ac_meta_get "$(ac_task_meta "$id")" spawned_epoch)"
+    case "$since" in
+      '' | *[!0-9]*) elapsed='an unknown time' ;;
+      *) elapsed="$(($(ac_now) - since))s" ;;
+    esac
+    printf 'learning DUE (%s/%s) HELD: the full-suite run %s is still in flight (running %s against %s, the tree this cycle pinned - a concurrent commit cannot invalidate it)\n' \
+      "$n" "$every" "$id" "$elapsed" "${head:0:7}"
     return 1
   fi
   if ! id="$(learn_suite_launch)"; then
@@ -2229,8 +2396,8 @@ learn_suite_gate() {
       "$n" "$every"
     return 1
   fi
-  printf 'learning DUE (%s/%s) HELD: started the full-suite run %s - only a GREEN suite releases the DISTILL (records/captain.md 2026-07-27)\n' \
-    "$n" "$every" "$id"
+  printf 'learning DUE (%s/%s) HELD: started the full-suite run %s against %s - only a GREEN suite releases the DISTILL (records/captain.md 2026-07-27)\n' \
+    "$n" "$every" "$id" "${head:0:7}"
   return 1
 }
 
@@ -2238,23 +2405,36 @@ cmd_suite() {
   # `suite [<task-id>]` - the periodic full-suite run the gate above starts,
   # executing INSIDE its own pane. It records exactly one verdict for the cycle
   # and tree it began on, then retires its own identity.
-  local id="${1:-}" root rec gen head runner rc status
+  local id="${1:-}" rec gen head snap_id snapshot runner rc status
   case "$id" in
     '' | verify-suite-*) ;;
     *) ac_die "suite takes its own task id (verify-suite-*), never another task's (got: '$id')" ;;
   esac
-  root="$(learn_suite_root)"
   rec="$(learn_suite_record)"
-  # Read the cycle and the tree BEFORE the run, never after: the verdict belongs
-  # to the tree the suite actually ran against, so a landing mid-run leaves the
-  # record stale (the next checkpoint re-runs) instead of claiming a green for a
-  # tree nothing tested.
+  # Read the cycle and the PINNED tree BEFORE the run, never a fresh live read:
+  # learn_suite_pinned_head returns the SAME sha the gate already pinned to
+  # launch this task (a matching generation is already on record, so this call
+  # only ever reads it back) - the run and the eventual verdict comparison
+  # must agree on exactly one tree, and this is the single source of it.
   gen="$(ac_learn_generation)"
-  head="$(learn_suite_head)"
+  head="$(learn_suite_pinned_head "$gen")"
+  # THE SNAPSHOT: an immutable, detached-HEAD worktree checked out at the
+  # pinned sha - the RUN half of the fix, so a commit landing on the live
+  # checkout mid-run cannot rewrite the tree the suite is reading. Retired on
+  # every exit path via the trap; a SIGKILLed pane is retired instead by the
+  # killed-pane reclaim in learn_suite_inflight, keyed on the same <id>-derived
+  # path (learn_suite_snapshot_dir), so a snapshot never outlives either exit
+  # shape. AC_HOME is NOT inside the snapshot - it stays on the live fleet
+  # home the caller already exported; only the CODE this suite runs is pinned.
+  snap_id="${id:-adhoc-$$}"
+  trap "learn_suite_snapshot_remove '$snap_id'" EXIT
+  snapshot="$(learn_suite_snapshot_create "$snap_id" "$head")"
   # The bare invocation - the one place it is still correct (captain 2026-07-27,
   # TDD IS THE EVIDENCE retired it from every landing and verify path).
-  # AC_LEARN_SUITE_BIN overrides the runner for tests, like AC_PANE_AGENT.
-  runner="${AC_LEARN_SUITE_BIN:-$root/tests/run-suite.sh}"
+  # AC_LEARN_SUITE_BIN overrides the runner for tests, like AC_PANE_AGENT - kept
+  # working: an override names an exact binary and bypasses the snapshot path,
+  # same as it always bypassed the live root.
+  runner="${AC_LEARN_SUITE_BIN:-$snapshot/tests/run-suite.sh}"
   rc=0
   "$runner" || rc=$?
   if [ "$rc" -eq 0 ]; then status=green; else status=red; fi
