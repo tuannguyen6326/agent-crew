@@ -426,6 +426,11 @@ STUB
   printf -- '---\nname: fleet-learned\ndescription: x\nmetadata:\n  origin: learned\n---\n# fleet-learned\n' >"$AC_HOME/skills/fleet-learned/SKILL.md"
   printf -- '---\nname: cont-learned\ndescription: x\nmetadata:\n  origin: learned\n---\n# cont-learned\n' >"$cont/cont-learned/SKILL.md"
   printf -- '---\nname: cont-builtin\ndescription: x\n---\n# cont-builtin\n' >"$cont/cont-builtin/SKILL.md"
+  # The retired-skill archive is a reserved subdir, not a skill. A stray
+  # SKILL.md at its root must not be lifted as a phantom "skills-archive".
+  mkdir -p "$AC_HOME/skills/$AC_SKILLS_ARCHIVE_BASENAME"
+  printf -- '---\nname: stray\ndescription: x\n---\n# stray at the archive root\n' \
+    >"$AC_HOME/skills/$AC_SKILLS_ARCHIVE_BASENAME/SKILL.md"
   before_l="$(cat "$AC_HOME/records/learnings.md")"
   before_c="$(cat "$AC_HOME/records/captain.md")"
   before_s="$(cat "$AC_HOME/skills/pre/SKILL.md")"
@@ -482,6 +487,8 @@ STUB
   assert_file "$rundir/sources/skills/fleet-learned/SKILL.md" "run snapshotted the fleet-learned skill"
   assert_no_file "$rundir/sources/skills/cont-learned/SKILL.md" "run excluded the legacy container learned skill"
   assert_no_file "$rundir/sources/skills/cont-builtin/SKILL.md" "run did NOT snapshot the container non-learned skill"
+  assert_no_file "$rundir/sources/skills/$AC_SKILLS_ARCHIVE_BASENAME/SKILL.md" \
+    "run did NOT lift the archive root as a phantom skills-archive skill"
 
   # Learning is NOT a staged design gate: ac-gate.sh judges spec|architecture|
   # plan|design ONLY and REJECTS `learning` (before any profile resolution), so

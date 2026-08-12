@@ -406,6 +406,8 @@ cmd_run() {
   # a lesson cluster against skills that ALREADY cover its territory (patch-
   # before-new). The fleet-local store is the only active learned-skill source;
   # legacy container skills are never read (the migration command is retired).
+  # The skills-consolidate archive is a reserved subdir, not a skill - skip it,
+  # or a stray SKILL.md at its root is lifted as a phantom "skills-archive".
   # Copies, not symlinks: the cwd-scoped
   # scout can only read in-tree. Empty stores => sources/skills/ has no entries;
   # the missing-dir globs stay literal and the -f guard skips them (no error).
@@ -413,6 +415,7 @@ cmd_run() {
   for sksrc in "$(ac_skills_dir)"/*; do
     [ -f "$sksrc/SKILL.md" ] || continue
     skname="$(basename "$sksrc")"
+    [ "$skname" = "$AC_SKILLS_ARCHIVE_BASENAME" ] && continue
     skdst="$rundir/sources/skills/$skname"
     [ -e "$skdst" ] && continue
     mkdir -p "$skdst"
