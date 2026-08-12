@@ -1838,14 +1838,20 @@ mkdir -p "$fake/bin"
 cp "$BIN/ac-qa.sh" "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-pipeline-lib.sh" "$BIN/ac-qa-lib.sh" "$BIN/ac-backend.sh" "$fake/bin/"
 fake_qa="$fake/bin/ac-qa.sh"
 
-# Zero-writes proof (ac-fleets.test.sh style), scoped to the three dirs this
-# defect class can mint rather than all of $ROOT: the suite runs on dev boxes
-# with a dirty tree and a churning .git, so a whole-root snapshot would be
-# noisy, not stricter - config/, state/ and data/ ARE the complete surface
-# ac_{config,state,data}_dir creates under ac_home().
+# Zero-writes proof (ac-fleets.test.sh style), scoped to the dirs this defect
+# class can mint rather than all of $ROOT: the suite runs on dev boxes with a
+# dirty tree and a churning .git, so a whole-root snapshot would be noisy, not
+# stricter. RECORDS IS IN THE LIST, and its absence was not a judgement call
+# that aged badly - the old comment asserted config/, state/ and data/ "ARE the
+# complete surface", which was false the day it was written: ac_records_dir
+# (ac-lib.sh) mkdir -p's records/ under ac_home() exactly like its three
+# siblings, and a homeless `start` reached it through ac_knowledge_scopes. That
+# blind spot is why this guard stayed green over a records/ mint for the whole
+# life of rung 3. Name the complete helper family, not the dirs the last defect
+# happened to use.
 snap_fleet_dirs() {
   local d
-  for d in config state data; do
+  for d in config state data records; do
     printf -- '--- %s ---\n' "$d"
     if [ -e "$ROOT/$d" ]; then
       ( cd "$ROOT/$d" && find . | LC_ALL=C sort
@@ -1894,26 +1900,46 @@ assert_eq "$(snap_fleet_dirs)" "$root_before" \
 # asserts the stray-config mint the resolver used to leave is gone, so a
 # reintroduced ac_config_dir mkdir reds here.
 assert_no_file "$fake/config" "no AC_HOME: the resolver mints no stray config/ in the fixture (ac_home, not ac_config_dir)"
+# ...nor a stray records/. THIS is the harm de-homing rung 3 exists to remove
+# (captain 2026-08-12, option C): while the rung adopted the checkout as a home,
+# `start`'s scope-map read walked ac_knowledge_scopes -> ac_knowledge_file ->
+# ac_records_dir, whose mkdir -p minted records/ into whatever checkout owned
+# the running bin/ - measured, on a plain `start --store`. With no home the
+# resolver returns before that mkdir, so nothing is created. The $ROOT snapshot
+# above cannot catch this one: the fixture runs $fake/bin, so the mint lands in
+# $fake. Both assertions are needed, and neither replaces the other.
+assert_no_file "$fake/records" "no AC_HOME: the scope-map read mints no stray records/ in the fixture (rung 3 is de-homed)"
 
 # --- the --home ladder: the SAME five doors ac-know.sh closes ----------------
 # Same flag, same ladder, same guards, one shared resolver - two copies is how
 # one site gets fixed and the other stays broken.
-# Rung 3 is KEPT rather than refused, and it is now the ONE surviving path by
-# which the distro checkout still becomes a home: ac_home itself refuses an
-# unset AC_HOME rather than adopting it (ac-lib.sh, ac_home). Whether rung 3
-# should refuse too is OPEN and routed to the captain, so this case pins what
-# the code does TODAY, not a doctrine. What made rung 3 dangerous was
-# invisibility, so the run PRINTS the home it used - ac-know.sh's answer.
+# Rung 3 is GONE - the checkout that owns bin/ is no longer adopted as a fleet
+# home (captain 2026-08-12, option C: "de-home rung 3, keep the run"). These
+# assertions are the INVERSION of the ones that pinned the rung live, not their
+# deletion: a test asserting a withdrawn doctrine is itself part of the defect,
+# which is the lesson @42803c6 recorded when the ac-know half came out.
+# WHAT DE-HOMING IS NOT: it is not option A (refuse). The run still STARTS. Its
+# two only home-derived inputs simply take the no-home answers already written
+# for them - cmd_start's `: >"$rd/config.yaml"` else-branch and an empty scope
+# map - behind the notice that was already printed. So the fixture below is
+# deliberately hostile: the checkout DOES carry a projects/<name>.yaml, and the
+# run must still refuse to read it, because a non-home is not a config source
+# (AGENTS.md section 10: the pipeline config is HOME-ONLY and captain-owned).
 mkdir -p "$fake/projects"
 printf 'qa:
   serve: "echo default-fleet-serve"
 ' >"$fake/projects/qa-store-probe.yaml"
 cd "$probe"
 out="$(env -u AC_HOME "$fake_qa" start --target HEAD --task rung3 2>&1)"
-assert_contains "$out" "notice: no fleet home named" "rung 3 announces the home it fell back to"
-assert_contains "$out" "$fake" "the notice names the home it used"
-assert_eq "$(env -u AC_HOME "$fake_qa" config qa.serve)" "echo default-fleet-serve" \
-  "rung 3 still resolves the checkout's own config - its own ac_root call, untouched by ac_home's refusal"
+assert_contains "$out" "notice: no fleet home named" "a homeless run still announces that it resolved no home"
+assert_contains "$out" "started qa run" "de-homing keeps the run (option C, not option A - it does not refuse)"
+case "$out" in
+  *"$fake"*) fail "the notice must not name the checkout as the home it 'used' - there is no home" ;;
+esac
+assert_eq "$(env -u AC_HOME "$fake_qa" config qa.serve 2>/dev/null || true)" "" \
+  "the checkout's own projects/<name>.yaml is NOT read - a non-home is never a config source"
+assert_eq "$(sed -n 's/^config_source=//p' "$probe/.crew/qa/current/run.meta")" none \
+  "run.meta records config_source=none, not a path into the checkout"
 
 # Rung 1 wins over rung 2, and the two guards fire before any run dir exists.
 homed="$TMP/baked-home"

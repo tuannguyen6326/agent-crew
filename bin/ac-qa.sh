@@ -501,15 +501,33 @@
 # straddle two homes; every later step reads only the frozen copies and the
 # home is never consulted again.
 # Ladder (ac_home_resolve, ac-lib.sh, shared with ac-know.sh): `--home` >
-# $AC_HOME tested DIRECTLY > this checkout's own home. Rung 2 is tested
-# directly rather than through ac_home(), which REFUSES when the variable is
-# unset and would kill this ladder before rung 3. Rung 3 is KEPT rather than
-# refused, for the reason ac-know.sh keeps it, and it is now the ONE surviving
-# path by which the distro checkout can still become a home: ac_home itself no
-# longer adopts it. OPEN (routed, not decided here): whether rung 3 should
-# refuse too is a captain call, not a side effect of that change. What made
-# rung 3 dangerous was INVISIBILITY, so a run that lands on it PRINTS the home
-# it used - the same answer as ac-know.sh's `recorded in <path>` receipt.
+# $AC_HOME tested DIRECTLY > NOTHING. Rung 2 is tested directly rather than
+# through ac_home(), which REFUSES when the variable is unset and would kill
+# the ladder before it can answer empty.
+# THERE IS NO RUNG 3. The checkout that owns bin/ is not a fleet home and is no
+# longer adopted as one (captain 2026-08-12, closing what this block carried as
+# OPEN). The two verbs answer a homeless run differently, because each already
+# had its own no-home answer written before the rung was questioned:
+#   start  KEEPS RUNNING. Its only home-derived inputs are the project config
+#          and the scope map; the no-home answer is an empty frozen config with
+#          config_source=none, plus an empty scope map, behind a notice. Both
+#          reads are SKIPPED rather than left to miss - ac_home's refusal is an
+#          ac_die, so running them homeless would end the process on a message
+#          about AC_HOME, and ac_records_dir would mkdir records/ into the
+#          checkout on the way past.
+#   agent  RETURNS needs-profile. Every durable source it freezes descends from
+#          the home and it has no per-source flag, so nothing can compile.
+# WHY NOT PLAIN SYMMETRY WITH ac-know.sh, which REFUSES outright (@42803c6):
+# the premise that kept the rung here was that ac-qa has a real homeless
+# production path ac-know lacks - a pane running `start --store <baked-abs>`.
+# That premise was false; ac-brief.sh bakes `--home` into every qa charter
+# beside `--store`, and has since the initial release, so the rung caught only
+# calls that had LOST their --home and answered them from a phantom tree.
+# MEASURED before the removal: on a real checkout (no projects/<name>.yaml)
+# rung 3 froze those same empty artifacts anyway, so nothing that worked
+# stopped working - what it additionally did was mint records/ into the
+# checkout. `start` not refusing is therefore a kept behaviour, not an
+# oversight.
 # Guards on `--home`: ABSOLUTE, and not inside $repo - the invariant
 # ac_project_config_file states in code ("the project repo is never a config
 # source... so a branch under test cannot alter commands or merge policy").
@@ -1495,7 +1513,7 @@ cmd_start() {
   # THE single home resolution of this run (header). Guards fire here, before
   # the run dir is minted, so a refusal leaves nothing on disk.
   qa_home="$(ac_home_resolve "$home" "$repo")"
-  [ -n "$qa_home" ] || { qa_home="$(ac_root)"; home_named=0; }
+  [ -n "$qa_home" ] || home_named=0
   id="$(date +%Y%m%d-%H%M%S)-$$"
   rd="$qdir/$id"
   mkdir -p "$rd/logs" "$rd/findings"
@@ -1528,7 +1546,7 @@ cmd_start() {
     cp "$rd/profile/scopes.tsv" "$rd/scopes.tsv"
     home_cfg="profile/config.yaml"
     profiled=1
-  else
+  elif [ "$home_named" = 1 ]; then
     # Unprofiled direct diagnostics retain the live snapshot path.
     if home_cfg="$(AC_HOME="$qa_home" ac_project_config_file "$repo")"; then
       cp "$home_cfg" "$rd/config.yaml"
@@ -1537,7 +1555,14 @@ cmd_start() {
     fi
     AC_HOME="$qa_home" ac_knowledge_scopes "$repo" >"$rd/scopes.tsv" \
       || { rm -rf "$rd"; ac_die "qa refuses to start: the scope map is ambiguous (see above)"; }
-    [ "$home_named" = 1 ] || printf 'notice: no fleet home named (--home) and none in the environment - using %s\n' "$qa_home" >&2
+  else
+    # HOMELESS: the no-home answer, taken deliberately rather than by a miss
+    # (header, THE FLEET HOME). home_cfg stays unset, so run.meta records
+    # config_source=none - the honest receipt that no config was resolved,
+    # never a path into a tree that is not a fleet home.
+    : >"$rd/config.yaml"
+    : >"$rd/scopes.tsv"
+    printf 'notice: no fleet home named (--home) and none in the environment - freezing an EMPTY project config and an EMPTY scope map; the checkout that owns bin/ is not a fleet home. Pass --home <abs> (your qa brief bakes it) to resolve them.\n' >&2
   fi
   config_sha="$(ac_config_sha256 "$rd/config.yaml")"
 
@@ -3353,11 +3378,24 @@ cmd_agent() {
   local e2e_repo="" e2e_repo_path="" e2e_ref="" e2e_ref_policy="" e2e_workdir="" e2e_command="" e2e_fixture=""
   local e2e_endpoint_json="{}" e2e_prefix ep_prefix ek
   qa_home="$(ac_home_resolve "$home" "$repo")"
-  if [ -z "$qa_home" ]; then
-    qa_home="$(ac_root)"
-    printf 'notice: no fleet home named (--home) and none in the environment - resolving the profile against %s\n' "$qa_home" >&2
-  fi
   qa_project="$(ac_project_config_name "$repo")" || ac_die "cannot resolve the project config name for $repo"
+  # No home, no profile. Every durable source frozen below - project config,
+  # scope map, repo-knowledge, the store snapshot, the dispatch routing -
+  # descends from this ONE value, and unlike `start` (which bakes --store)
+  # cmd_agent has no flag that supplies any of them separately. The already
+  # modelled needs-profile status is therefore the whole answer, and it is
+  # returned BEFORE those reads: homeless they would not merely miss, the bare
+  # ac_project_config_file guard call would take ac_home's ac_die and end the
+  # process on a message about AC_HOME instead of a profile status.
+  # THE MESSAGE NAMES THE CALLER GAP RATHER THAN A REMEDY THAT DOES NOT EXIST
+  # HERE: ac-brief.sh:809-810 bakes --home into the qa charter's `start` line,
+  # and this verb never reads the brief, so nothing threads a home to `agent`
+  # today. Saying "your brief bakes it" (true for `start`) would send an
+  # operator looking for a flag no caller passes. Same status as before this
+  # rung came out - a homeless `agent` already reached needs-profile at the
+  # config read - only earlier, and now for the stated reason.
+  [ -n "$qa_home" ] \
+    || qa_profile_return needs-profile "no fleet home named (--home) and none in the environment - the project config, scope map, repo-knowledge, store snapshot and pane routing all descend from it, so no profile can compile. Pass --home <abs>. Caller note: ac-brief.sh bakes --home into the qa charter's 'start' line only, and this verb never reads the brief - so no caller threads one here yet, and a homeless crewmate reaches this status by design until one does"
   bundle="$qdir/agent-$task_slug-r$round.profile"
   dispatch_cfg="$qa_home/config/crew-dispatch.json"
   dispatch_select="$bin_dir/ac-dispatch-select.sh"
