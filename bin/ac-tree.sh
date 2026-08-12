@@ -626,7 +626,11 @@ cmd_list() {
 }
 
 list_slots() {
-  local repo="$1" meta n wt state task dirty found=0
+  # Wire: n \t state[ dirty] \t task \t worktree \t leased_at \t owner_pid -
+  # the last two are meaningful only when state is "leased" (empty
+  # otherwise); a leased row with no owner_pid is a durable lease (comment
+  # at lease_reclaimable), which is what makes its age worth reporting.
+  local repo="$1" meta n wt state task dirty leased_at owner found=0
   heal_slots "$repo"
   for meta in "$(pool_dir "$repo")"/slots/*.meta; do
     [ -f "$meta" ] || continue
@@ -634,8 +638,12 @@ list_slots() {
     n="$(basename "$meta" .meta)"
     wt="$(slot_path "$repo" "$n")"
     task="$(ac_meta_get "$meta" task)"
+    leased_at=""
+    owner=""
     if [ "$(ac_meta_get "$meta" leased)" = "1" ]; then
       state="leased"
+      leased_at="$(ac_meta_get "$meta" leased_at)"
+      owner="$(ac_meta_get "$meta" owner_pid)"
     elif ! git -C "$wt" rev-parse --git-dir >/dev/null 2>&1; then
       state="broken"
     else
@@ -643,7 +651,7 @@ list_slots() {
     fi
     dirty=""
     is_dirty "$wt" && dirty=" dirty"
-    printf '%s\t%s%s\t%s\t%s\n' "$n" "$state" "$dirty" "${task:-'-'}" "$wt"
+    printf '%s\t%s%s\t%s\t%s\t%s\t%s\n' "$n" "$state" "$dirty" "${task:-'-'}" "$wt" "$leased_at" "$owner"
   done
   [ "$found" = 1 ] || ac_warn "no worktrees in pool"
   return 0

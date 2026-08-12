@@ -76,4 +76,43 @@ assert_contains "$outM" "1 stuck-dirty" "mixed pool: exactly one dirty slot"
 assert_contains "$outM" "1 broken" "mixed pool: exactly one broken slot"
 assert_contains "$outM" "3 total" "mixed pool: all three slots counted"
 
+# AGED-LEASED, own bucket: a durable lease (empty owner_pid - "no owner =
+# durable", ac-tree.sh:417-424) held past the threshold has no other reporting
+# path (acquire/prune/remove all skip a leased slot by design), so it must be
+# named here with the reclaim command - and a FRESH lease must not be flagged.
+repoA="$(make_repo aged)"
+wtA1="$("$BIN/ac-tree.sh" get --repo "$repoA" --id a1 2>/dev/null)"
+wtA2="$("$BIN/ac-tree.sh" get --repo "$repoA" --id a2 2>/dev/null)"
+metaA1="$repoA/.crew/slots/1.meta"
+old_ts="$(date -u -v-2d +%Y-%m-%dT%H:%M:%SZ)"
+sed "s/^leased_at=.*/leased_at=$old_ts/" "$metaA1" >"$metaA1.tmp" && mv "$metaA1.tmp" "$metaA1"
+
+outA="$("$BIN/ac-pool-health.sh" --repo "$repoA")"
+assert_contains "$outA" "-- pool (worktree health) --" "header prints for an aged-leased pool"
+assert_contains "$outA" "1 aged-leased" "aged-leased count printed"
+assert_contains "$outA" "bin/ac-tree.sh remove --force --include-leased <worktree-path>" "verbatim aged-lease reclaim command"
+assert_contains "$outA" "$wtA1" "aged slot's worktree path printed"
+case "$outA" in
+  *"$wtA2"*) fail "a fresh lease must never be flagged as aged" ;;
+  *"1 stuck-dirty"*) fail "an aged lease is not a dirty slot" ;;
+esac
+
+# A lease with a recorded --owner pid is NOT durable (it self-heals via
+# lease_reclaimable on a dead pid) - age reporting is scoped to durable
+# (empty owner_pid) leases only, so an owned lease stays unflagged however old.
+metaA2="$repoA/.crew/slots/2.meta"
+sed -e "s/^leased_at=.*/leased_at=$old_ts/" -e 's/^owner_pid=.*/owner_pid=99999999/' "$metaA2" \
+  >"$metaA2.tmp" && mv "$metaA2.tmp" "$metaA2"
+outA2="$("$BIN/ac-pool-health.sh" --repo "$repoA")"
+case "$outA2" in
+  *"$wtA2"*) fail "an owner-pid lease is not durable and must not be reported as aged" ;;
+esac
+assert_contains "$outA2" "1 aged-leased" "the durable lease is still the only one reported"
+
+# QUIET: an aged pool with the aged slot returned has nothing left to report
+# (the other slot's owner-pid lease was never reportable to begin with).
+"$BIN/ac-tree.sh" return "$wtA1" --force 2>/dev/null
+outA3="$("$BIN/ac-pool-health.sh" --repo "$repoA")"
+assert_eq "$outA3" "" "quiet once the aged lease is returned"
+
 pass
