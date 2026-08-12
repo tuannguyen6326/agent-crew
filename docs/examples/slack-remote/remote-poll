@@ -1,0 +1,356 @@
+#!/usr/bin/env bash
+# remote-poll - Slack transport hook for ac-remote.sh: emit new captain
+# messages from the control channel as one JSON object per line.
+#
+# Install: cp into $AC_HOME/config/remote-poll and chmod +x (see README.md).
+# Runtime contract: invoked with AC_HOME set; cwd may be ANYTHING (ac-lib.sh
+# resolution below does not depend on it); stdout is consumed by
+# `ac-remote.sh poll`, stderr is the warn channel.
+#
+# Config, all read from the fleet home - ANY piece missing means unconfigured
+# and the hook exits 0 silently (inert):
+#   $AC_HOME/.env                     SLACK_BOT_TOKEN=xoxb-... (raw value, no quotes)
+#   $AC_HOME/config/slack-channel     control channel id (C...)
+#   $AC_HOME/config/slack-captain-id  captain Slack member id(s) (U...),
+#                                      one per line - every id is a co-captain
+# The token never appears in argv or on stdout/stderr: curl reads the
+# Authorization header from a 0600 temp file (-H @file).
+#
+# What it polls:
+#   - conversations.history on the control channel; the newest seen ts is
+#     persisted at $AC_HOME/state/.slack-cursor and sent as oldest= on the
+#     next call, so each top-level message is seen at least once: a cursor
+#     write is held until this whole run reaches exit 0, so a run that dies
+#     partway (a curl failure, a non-transient Slack error) re-sends the
+#     same messages next poll instead of losing them - the harmless
+#     duplicate is absorbed by ac-remote.sh's rid dedupe.
+#   - conversations.replies for every thread registered at
+#     $AC_HOME/state/remote-threads/<rid>.thread (files are created by
+#     remote-reply; this hook only advances the cursor= key inside them,
+#     reading the thread root from the thread_ts= key). Two limits keep the
+#     per-poll replies count bounded: a FAMILY thread is INACTIVE (skipped,
+#     file left in place for a possible reopen) once its room is CLOSED or its
+#     backlog line is TERMINAL, and an inactive family's file is GC'd once its
+#     mtime is older than AC_REMOTE_POLL_MAX_AGE - same rule the roomless sl-*
+#     order threads already have, which are additionally capped to the newest
+#     AC_REMOTE_POLL_CAP by mtime. A reopen (a fresh room post, or the backlog
+#     line going back to In flight) re-registers on the family's next outbound
+#     thread-post - a family reopened more than AC_REMOTE_POLL_MAX_AGE after
+#     going inactive starts a NEW Slack thread instead of threading under the
+#     old one; this is an accepted tradeoff, not a bug. See the
+#     registered-threads loop.
+#   - Rate limits: an HTTP 429 records state/.slack-backoff = now + Retry-After
+#     (capped) and ENDS the poll (exit 0, never fatal); while that epoch is in
+#     the future the poll is a no-op, so it backs off across the ~60s watcher
+#     cadence without ever sleeping (a sleep would stall the watcher).
+#
+# What it emits - ONLY plain messages authored by a listed captain id (bot and
+# third-party messages are dropped; any subtyped message - joins, edits,
+# thread broadcasts - is skipped), oldest first, one compact JSON object
+# per line:
+#   {"rid":"sl-<channel>-<ts with . -> ->","text":...,"author":...,
+#    "thread":<thread_ts, or the message's own ts for a top-level message>}
+# Message text is handled by jq end to end and never passes through shell
+# expansion or argv.
+#
+# Failure: any curl or non-429 Slack API error exits non-zero with one stderr
+# line (the core treats hook failure as a warning). An HTTP 429 is NOT a
+# failure - it records a backoff marker and exits 0 (see What it polls).
+
+set -euo pipefail
+
+# CWD-independent first: state/.ac-root is self-healed by bin/ac-remote.sh on
+# every invocation (poll/reply/thread-post/ack all run through it), so a home
+# with a live watcher already carries it - no manual bootstrap. The rest are
+# best-effort fallbacks for a home that has never run ac-remote.sh yet.
+for _lib in "${AC_HOME:-}/bin/ac-lib.sh" \
+  "$(cat "${AC_HOME:-}/state/.ac-root" 2>/dev/null)/bin/ac-lib.sh" \
+  "$PWD/bin/ac-lib.sh" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd -P)/bin/ac-lib.sh"; do
+  # shellcheck disable=SC1090
+  if [ -f "$_lib" ]; then . "$_lib"; break; fi
+done
+declare -F ac_die >/dev/null 2>&1 \
+  || { printf 'ERROR: remote-poll: ac-lib.sh not found\n' >&2; exit 1; }
+
+# Tunables (env-overridable so the tests can set them small): bound the per-poll
+# conversations.replies calls for the roomless sl-* order threads, and the age
+# after which a skipped one is GC'd. See the registered-threads loop below.
+AC_REMOTE_POLL_CAP="${AC_REMOTE_POLL_CAP:-10}"              # newest-N roomless threads polled
+AC_REMOTE_POLL_MAX_AGE="${AC_REMOTE_POLL_MAX_AGE:-172800}"  # 48h; older skipped ones are deleted
+backoff_cap=300                                            # max 429 backoff seconds (poisoned-header ceiling)
+
+home="$(ac_home)"
+token=""
+if [ -f "$home/.env" ]; then
+  token="$(grep -E '^SLACK_BOT_TOKEN=' "$home/.env" | tail -n1 | cut -d= -f2- | tr -d '\r')"
+fi
+channel="$(ac_config_read slack-channel)"
+# One or more captain member ids: one per line (or whitespace-separated).
+# EVERY listed id is a full co-captain - its messages become tier-1 orders.
+captain=""
+cid_file="$(ac_config_dir)/slack-captain-id"
+if [ -f "$cid_file" ]; then
+  captain="$(tr -s ' \t\r\n' '    ' <"$cid_file" | sed 's/^ *//; s/ *$//')"
+fi
+if [ -z "$token" ] || [ -z "$channel" ] || [ -z "$captain" ]; then
+  exit 0
+fi
+
+ac_require curl jq
+
+state="$(ac_state_dir)"
+now="$(ac_now)"
+backoff_marker="$state/.slack-backoff"
+
+# --- 429 backoff gate: stay silent while a prior ratelimit's window is open ----
+# A previous poll that hit HTTP 429 recorded the epoch until which we must not
+# call the API. If that time is still ahead, exit 0 before ANY request - the
+# marker (not a sleep, which would stall the ~60s watcher) carries the wait
+# across cycles. A past or absent marker polls normally.
+if [ -f "$backoff_marker" ]; then
+  deadline="$(head -n1 "$backoff_marker" | tr -cd '0-9')"
+  if [ -n "$deadline" ] && [ "$deadline" -gt "$now" ]; then
+    exit 0
+  fi
+fi
+
+hdr="$(mktemp "${TMPDIR:-/tmp}/ac-slack-hdr.XXXXXX")"
+trap 'rm -f "$hdr"' EXIT
+printf 'Authorization: Bearer %s\n' "$token" >"$hdr"
+
+slack_get() {
+  # slack_get <method> <query> - GET a Slack Web API method; body -> $SLACK_BODY.
+  # Status and response headers are captured (-w/-D) so a 429 can BACK OFF
+  # (record the marker, END THE POLL with exit 0) instead of ac_die taking the
+  # whole poll - and the fleet watcher's poll slot - down with it. slack_get
+  # runs in the MAIN shell (never a $()-subshell) precisely so this exit ends
+  # the poll rather than a lost subshell.
+  local rhdr rbody code retry
+  rhdr="$(mktemp "${TMPDIR:-/tmp}/ac-slack-rh.XXXXXX")"
+  rbody="$(mktemp "${TMPDIR:-/tmp}/ac-slack-rb.XXXXXX")"
+  code="$(curl -sS --max-time 15 -H "@$hdr" -D "$rhdr" -o "$rbody" -w '%{http_code}' \
+    "https://slack.com/api/$1?$2")" \
+    || { rm -f "$rhdr" "$rbody"; ac_die "remote-poll: curl failed for $1"; }
+  if [ "$code" = "429" ]; then
+    # Honor Retry-After but CAP it (a poisoned header can't wedge polling
+    # forever); a missing/garbage value falls back to a small default. We never
+    # sleep - the marker carries the wait across the ~60s watcher cycles.
+    retry="$(grep -i '^retry-after:' "$rhdr" | tail -n1 | tr -cd '0-9')"
+    case "$retry" in '') retry=30 ;; esac
+    retry=$((10#$retry))
+    [ "$retry" -lt 1 ] && retry=30
+    [ "$retry" -gt "$backoff_cap" ] && retry="$backoff_cap"
+    printf '%s\n' "$((now + retry))" >"$backoff_marker.tmp.$$" \
+      && mv "$backoff_marker.tmp.$$" "$backoff_marker"
+    ac_warn "remote-poll: Slack ratelimited (429) - backing off ${retry}s"
+    rm -f "$rhdr" "$rbody"
+    commit_pending
+    exit 0
+  fi
+  SLACK_BODY="$(cat "$rbody")"
+  rm -f "$rhdr" "$rbody"
+}
+
+ok_or_die() {
+  # ok_or_die <response-json> <what> - die with the API error unless ok:true.
+  printf '%s' "$1" | jq -e '.ok == true' >/dev/null 2>&1 \
+    || ac_die "remote-poll: $2: $(printf '%s' "$1" | jq -r '.error // "bad response"' 2>/dev/null)"
+}
+
+emit() {
+  # emit <response-json> [<skip-ts>] - print captain-authored plain messages
+  # as JSON lines, oldest first; <skip-ts> drops any message with that exact
+  # ts (the thread root, already seen via history) from the emitted set.
+  # Whether a conversations.replies response includes the root at all is not
+  # settled here (see remote-reply's registration comment) - skip-ts and the
+  # registered-threads loop's monotonic cursor (F50) make emit's output and
+  # the persisted cursor correct either way.
+  printf '%s' "$1" | jq -c \
+    --arg captain "$captain" --arg channel "$channel" --arg skip "${2:-}" '
+    ($captain | split(" ") | map(select(length > 0))) as $captains
+    | [.messages[]?
+      | select(.type == "message" and (has("subtype") | not))
+      | select(.user as $u | $captains | index($u))
+      | select(.ts != $skip)]
+    | sort_by(.ts) | .[]
+    | {rid: ("sl-" + $channel + "-" + (.ts | gsub("\\."; "-"))),
+       text: .text,
+       author: .user,
+       thread: (.thread_ts // .ts)}'
+}
+
+newest_ts() {
+  # newest_ts <response-json> - highest ts in the response, empty when none.
+  printf '%s' "$1" | jq -r '[.messages[]?.ts] | max // empty'
+}
+
+# --- pending cursor writes (F49) ----------------------------------------------
+# cmd_poll discards this run's whole stdout on any non-zero exit, so a cursor
+# write made visible before that point can advance past an order this run
+# emitted but the caller never ingested - permanent, silent loss. Every
+# cursor advance below is collected here instead of written immediately, and
+# committed only right before an exit-0 (the 429 backoff exit and the final
+# exit 0): a re-emitted order is a harmless rid-deduped duplicate, a
+# committed-then-lost one is not.
+pending_hist_ts=""
+pending_cursors="$(mktemp "${TMPDIR:-/tmp}/ac-slack-pending.XXXXXX")"
+trap 'rm -f "$hdr" "$pending_cursors"' EXIT
+
+commit_pending() {
+  if [ -n "$pending_hist_ts" ]; then
+    printf '%s\n' "$pending_hist_ts" >"$cursor_file.tmp.$$" \
+      && mv "$cursor_file.tmp.$$" "$cursor_file"
+  fi
+  if [ -s "$pending_cursors" ]; then
+    while IFS= read -r _pc; do
+      [ -n "$_pc" ] || continue
+      ac_meta_set "$(printf '%s' "$_pc" | cut -f1)" cursor "$(printf '%s' "$_pc" | cut -f2-)"
+    done <"$pending_cursors"
+  fi
+}
+
+# --- top-level channel history -----------------------------------------------
+cursor_file="$state/.slack-cursor"
+q="channel=$channel&limit=200"
+cursor=""
+if [ -f "$cursor_file" ]; then
+  cursor="$(head -n1 "$cursor_file" | tr -d '[:space:]')"
+fi
+if [ -n "$cursor" ]; then
+  q="$q&oldest=$cursor"
+fi
+slack_get conversations.history "$q"
+resp="$SLACK_BODY"
+ok_or_die "$resp" conversations.history
+emit "$resp"
+latest="$(newest_ts "$resp")"
+[ -n "$latest" ] && pending_hist_ts="$latest"
+
+# --- registered threads --------------------------------------------------------
+# Two thread classes live here. FAMILY threads (basename has data/<rid>/room.md)
+# poll while ACTIVE and skip while INACTIVE (below); an inactive family's file
+# is GC'd once aged past AC_REMOTE_POLL_MAX_AGE, same as the roomless rule.
+# ROOMLESS sl-<channel>-<ts> ORDER threads (no room.md) have no lifecycle
+# signal, but a .thread is born ONLY from an outbound reply (poll/ingest write
+# only the inbox stash), so its existence already means "we replied at least
+# once" and its mtime (ac_meta_set rewrites it on every cursor advance) tracks
+# the last captain activity - existence + age is the whole predicate. Rank the
+# roomless threads by mtime, poll only the newest AC_REMOTE_POLL_CAP, and
+# delete the aged tail. This ONE cap IS the bound on roomless replies calls:
+# new top-level orders still arrive via conversations.history, so a dropped
+# old thread only loses late in-thread replies, which the history path
+# backstops.
+LF="$(printf '\nx')"; LF="${LF%x}"   # a bare newline (command-sub strips a trailing one)
+roomless_keep="$(
+  for f in "$state/remote-threads"/*.thread; do
+    [ -e "$f" ] || continue
+    [ -f "$(ac_data_dir)/$(basename "$f" .thread)/room.md" ] && continue
+    printf '%s\t%s\n' "$(ac_file_mtime "$f" 2>/dev/null || printf 0)" "$f"
+  done | sort -rn | head -n "$AC_REMOTE_POLL_CAP" | cut -f2-
+)"
+roomless_kept() { # roomless_kept <thread-file> - true if in the newest-N set
+  case "$LF$roomless_keep$LF" in *"$LF$1$LF"*) return 0 ;; esac
+  return 1
+}
+
+# TERMINAL backlog ids, read ONCE for the whole poll (not per-file): a family
+# whose backlog line is Done (including [failed]/[abandoned]) is inactive even
+# if nobody closed its room. Both the live ledger and ac-curate.sh's archive
+# must be checked - older Done lines migrate out of backlog.md, and those are
+# exactly the ones most overdue for GC. Each Done line is `- [x] <id> ...`
+# (optionally `- [x] <id> [failed] ...`), so the id is always field 3.
+terminal_ids="$(
+  { cat "$(ac_records_dir)/backlog.md" 2>/dev/null || true
+    cat "$(ac_records_dir)/backlog-archive.md" 2>/dev/null || true
+  } | awk '/^- \[x\] /{print $3}'
+)"
+# OPEN backlog ids (In flight / Queued), read from backlog.md ONLY - this is
+# what a real reopen produces (AGENTS.md section 9: spawn moves an item to In
+# flight) and it must win over a stale Done line: a family closed, landed,
+# and later reopened still has its old Done line, possibly already migrated
+# to backlog-archive.md, which a chief can never move back out of. Without
+# this, a reopened family whose Done line reached the archive would stay
+# terminal (unpolled) forever. `- [ ] <id> ...` has a SPACE inside the
+# checkbox, so the id is field 4, not field 3.
+open_ids="$(awk '/^- \[ \] /{print $4}' "$(ac_records_dir)/backlog.md" 2>/dev/null || true)"
+family_terminal() { # family_terminal <rid> - true if backlog/-archive has a Done line for exactly this rid AND no OPEN backlog.md line supersedes it
+  case "$LF$open_ids$LF" in *"$LF$1$LF"*) return 1 ;; esac
+  case "$LF$terminal_ids$LF" in *"$LF$1$LF"*) return 0 ;; esac
+  return 1
+}
+
+for f in "$state/remote-threads"/*.thread; do
+  [ -e "$f" ] || continue
+  # A .thread keyed by a FAMILY rid (basename -> data/<rid>/room.md) is
+  # INACTIVE - skipped, file left in place for a possible reopen - once
+  # either: its room's LAST entry is a CLOSED: line (ac-room.sh close appends
+  # `- [<iso>] crewchief> CLOSED: <outcome>`; no reopen verb, so a fresh post
+  # AFTER it re-enters the family), or its backlog line is TERMINAL (landed but
+  # never closed). An inactive family is GC'd exactly like a beyond-cap
+  # roomless thread: kept while its mtime is within AC_REMOTE_POLL_MAX_AGE,
+  # deleted once older (no late reply will bind, and a reopen re-registers via
+  # thread-post regardless).
+  rid="$(basename "$f" .thread)"
+  room="$(ac_data_dir)/$rid/room.md"
+  if [ -f "$room" ]; then
+    last="$(grep '^- \[' "$room" | tail -n1)" || true
+    inactive=0
+    case "$last" in *'> CLOSED:'*) inactive=1 ;; esac
+    [ "$inactive" -eq 0 ] && family_terminal "$rid" && inactive=1
+    if [ "$inactive" -eq 1 ]; then
+      if [ "$((now - $(ac_file_mtime "$f" 2>/dev/null || printf 0)))" -gt "$AC_REMOTE_POLL_MAX_AGE" ]; then
+        rm -f "$f"
+      fi
+      continue
+    fi
+  elif ! roomless_kept "$f"; then
+    # Roomless thread beyond the newest-N cap: GC once older than the age window
+    # (no late reply will bind), else keep the file but skip the replies call.
+    if [ "$((now - $(ac_file_mtime "$f" 2>/dev/null || printf 0)))" -gt "$AC_REMOTE_POLL_MAX_AGE" ]; then
+      rm -f "$f"
+    fi
+    continue
+  fi
+  thread_ts="$(ac_meta_get "$f" thread_ts)"
+  if [ -z "$thread_ts" ]; then
+    ac_warn "remote-poll: no thread_ts in $f"
+    continue
+  fi
+  q="channel=$channel&ts=$thread_ts&limit=200"
+  tcur="$(ac_meta_get "$f" cursor)"
+  if [ -n "$tcur" ]; then
+    q="$q&oldest=$tcur"
+  fi
+  slack_get conversations.replies "$q"
+  resp="$SLACK_BODY"
+  # A registration whose thread no longer exists in THIS channel (deleted
+  # message, or a channel switch left it behind) must not wedge the whole
+  # poll forever: drop it loudly and keep polling - the family re-registers
+  # itself on its next push-pending post. Every other error stays fatal.
+  if ! printf '%s' "$resp" | jq -e '.ok == true' >/dev/null 2>&1; then
+    err="$(printf '%s' "$resp" | jq -r '.error // "bad response"' 2>/dev/null)"
+    if [ "$err" = "thread_not_found" ]; then
+      ac_warn "remote-poll: thread $thread_ts gone - dropping stale registration $(basename "$f")"
+      rm -f "$f"
+      continue
+    fi
+    ac_die "remote-poll: conversations.replies $thread_ts: $err"
+  fi
+  emit "$resp" "$thread_ts"
+  tlatest="$(newest_ts "$resp")"
+  # F50: newest_ts is a max over EVERY message in the response, including the
+  # thread root, so a quiet thread's response can carry only the root and
+  # regress the cursor back to it. Advance only on a strictly newer ts (ts
+  # strings are already lexicographically ordered elsewhere in this file -
+  # newest_ts's own jq max, emit's sort_by) - a quiet thread then writes
+  # nothing at all, which is what keeps ac_meta_set from touching the file's
+  # mtime, restoring the roomless-GC predicate above ("mtime ... tracks the
+  # last captain activity").
+  if [ -n "$tlatest" ] && { [ -z "$tcur" ] || [[ "$tlatest" > "$tcur" ]]; }; then
+    printf '%s\t%s\n' "$f" "$tlatest" >>"$pending_cursors"
+  fi
+done
+
+commit_pending
+exit 0

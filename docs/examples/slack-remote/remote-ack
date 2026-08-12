@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# remote-ack - Slack transport hook for ac-remote.sh: walk a reaction
+# LIFECYCLE on the captain's own message so they SEE where the order stands -
+# :eyes: read -> :gear: a task is on it -> :white_check_mark: answered.
+#
+# Install: cp into $AC_HOME/config/remote-ack and chmod +x (see README.md).
+# Needs the `reactions:write` bot scope IN ADDITION to the poll/reply scopes -
+# grant it and reinstall the app, or every ack warns `missing_scope`.
+#
+# Runtime contract (ac-remote.sh LIFECYCLE-ACK): invoked at each lifecycle
+# edge with AC_REMOTE_RID, AC_REMOTE_THREAD and AC_REMOTE_ACK_STATE in env
+# (ingested|working|done; absent = ingested for older cores), stdin and
+# stdout /dev/null; a non-zero exit is warned by the core and never blocks.
+# Each edge ADDS its emoji and nothing is ever removed (captain rule
+# 2026-07-18): the three icons are the three milestones, so a fully handled
+# message carries all three - :eyes: :gear: :white_check_mark:. An unknown
+# future state exits 0 untouched.
+#
+# The message timestamp is decoded from the rid the poll hook minted
+# (`sl-<channel>-<ts with . -> ->`): a rid not shaped like this transport's
+# is another transport's order - exit 0 silently, nothing to ack. The emoji
+# names live in the case below; this hook is user-owned config - edit to
+# taste.
+#
+# Config mirrors remote-poll (ANY piece missing = unconfigured = inert exit
+# 0): $AC_HOME/.env SLACK_BOT_TOKEN, $AC_HOME/config/slack-channel. The token
+# never appears in argv or output: curl reads the Authorization header from a
+# 0600 temp file. `already_reacted` counts as success (idempotent).
+
+set -euo pipefail
+
+# CWD-independent first: state/.ac-root is self-healed by bin/ac-remote.sh on
+# every invocation (poll/reply/thread-post/ack all run through it), so a home
+# with a live watcher already carries it - no manual bootstrap. The rest are
+# best-effort fallbacks for a home that has never run ac-remote.sh yet.
+for _lib in "${AC_HOME:-}/bin/ac-lib.sh" \
+  "$(cat "${AC_HOME:-}/state/.ac-root" 2>/dev/null)/bin/ac-lib.sh" \
+  "$PWD/bin/ac-lib.sh" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd -P)/bin/ac-lib.sh"; do
+  # shellcheck disable=SC1090
+  if [ -f "$_lib" ]; then . "$_lib"; break; fi
+done
+declare -F ac_die >/dev/null 2>&1 \
+  || { printf 'ERROR: remote-ack: ac-lib.sh not found\n' >&2; exit 1; }
+
+home="$(ac_home)"
+token=""
+if [ -f "$home/.env" ]; then
+  token="$(grep -E '^SLACK_BOT_TOKEN=' "$home/.env" | tail -n1 | cut -d= -f2- | tr -d '\r')"
+fi
+channel="$(ac_config_read slack-channel)"
+if [ -z "$token" ] || [ -z "$channel" ]; then
+  exit 0
+fi
+
+rid="${AC_REMOTE_RID:-}"
+rest="${rid#sl-"$channel"-}"
+if [ -z "$rid" ] || [ "$rest" = "$rid" ]; then
+  exit 0    # not this transport's rid - nothing to ack
+fi
+ts="${rest/-/.}"
+
+case "${AC_REMOTE_ACK_STATE:-ingested}" in
+  ingested) add="eyes" ;;
+  working)  add="gear" ;;
+  done)     add="white_check_mark" ;;
+  *) exit 0 ;;    # unknown future state: touch nothing, break nothing
+esac
+
+ac_require curl jq
+
+hdr="$(mktemp "${TMPDIR:-/tmp}/ac-slack-hdr.XXXXXX")"
+trap 'rm -f "$hdr"' EXIT
+printf 'Authorization: Bearer %s\n' "$token" >"$hdr"
+
+react() {
+  # react <method> <emoji> - POST reactions.<method>; body on stdout.
+  local body
+  body="$(jq -nc --arg c "$channel" --arg t "$ts" --arg n "$2" \
+    '{channel: $c, timestamp: $t, name: $n}')"
+  curl -sS --max-time 15 -H "@$hdr" -H 'Content-type: application/json; charset=utf-8' \
+    -d "$body" "https://slack.com/api/reactions.$1"
+}
+
+resp="$(react add "$add")" || ac_die "remote-ack: curl failed for reactions.add"
+printf '%s' "$resp" | jq -e '.ok == true or .error == "already_reacted"' >/dev/null 2>&1 \
+  || ac_die "remote-ack: reactions.add $add: $(printf '%s' "$resp" | jq -r '.error // "bad response"' 2>/dev/null)"
+
+exit 0

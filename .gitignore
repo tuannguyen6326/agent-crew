@@ -1,0 +1,22 @@
+projects/
+state/
+data/
+records/
+# Crewdomain packages: durable fleet state (AGENTS.md section 2), root-scoped
+# like /.crew/ below so a docs/ path of the same name is unaffected.
+/crewdomains/
+.gitmodules
+.crew/
+.lavish/
+.ac-crewdeputy-home
+.DS_Store
+__pycache__/
+*.pyc
+.env
+config/
+.claude/settings.local.json
+/.crew/
+research/
+
+.omo
+.omx

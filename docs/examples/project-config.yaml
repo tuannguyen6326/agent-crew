@@ -1,0 +1,101 @@
+# Fleet-home per-project crew-ship and qa config. Install as
+# $AC_HOME/projects/<project-name>.yaml. Never place this config in the
+# product repo. The bin/ac-ship.sh and bin/ac-qa.sh headers are the authoritative
+# key contracts.
+
+commands:
+  test: "npm test"
+  lint: "npm run lint"
+  format: "npm run format"
+
+ignore_patterns:
+  - "*.generated.*"
+  - "vendor/**"
+
+auto_fix:
+  rebase: 3
+  review: 3
+  test: 3
+  document: 3
+  lint: 3
+
+test:
+  attestation: accept   # accept (default) | ignore; unknown values fail closed (suite runs) - honor `ac-ship.sh attest-test`
+                        # TDD attestations in the test step (skip only while the
+                        # attested branch/HEAD/tree/test command still match)
+  evidence:
+    store_in_repo: false
+
+# qa pipeline (bin/ac-qa.sh) - frozen from the fleet-home config at run start.
+qa:
+  require_for_ship: true                  # block merge until crew-qa passes on the head sha
+  serve: "make dev"                      # boots the service; MUST honor $QA_PORT
+  health: "curl -fsS $QA_BASE_URL/healthz"
+  health_timeout: 60
+  seed: "make db-seed"                   # after health, before cases
+  infra: [postgres, redis]               # profiles: postgres redis temporal wiremock
+  mocks_compose: docker/mocks.qa.yml     # optional additions; safety-linted
+  fixtures:
+    profile: local-safe                  # approved reference name, never a raw secret
+    resolver: fleet-secret-profile       # reference name; resolved before the pane
+  e2e:
+    # Installing this block is project-level approval to execute these stable
+    # mechanics in task-scoped QA. The QA pane performs only task-level case
+    # selection with `ac-qa.sh cmd e2e --cases <ids>`; it does not self-approve
+    # a new command or create a per-run human approval step.
+    command: "npx playwright test"       # $QA_BASE_URL is injected (single-repo)
+    # SEPARATE E2E repository (dual-ref): when the E2E suite lives in its OWN
+    # repository, QA leases a SECOND worktree for it at an exact frozen SHA and
+    # releases both on every exit path. The pass marker then binds BOTH repo
+    # SHAs and the profile hash.
+    #   repo:        a LOCAL clone - a project name under $AC_HOME/projects, or
+    #                an absolute path - that must already exist (an absent clone
+    #                is `needs-profile`, never a silent skip). REPO level.
+    #   ref_policy:  how the exact E2E SHA is chosen; frozen before the verifier
+    #                starts. Only `configured-default-branch-head` today. REPO level.
+    #   workdir:     the product workdir the E2E command runs from inside the E2E
+    #                worktree (default `.`). REPO-level default; scope may override.
+    #   endpoint_env: explicit map from the suite's OWN env var to the runtime
+    #                service URL, so the suite never assumes QA_BASE_URL is its
+    #                interface. REPO-level default; scope may override.
+    # repo: sample-e2e-suite
+    # ref_policy: configured-default-branch-head
+    # workdir: .
+    # endpoint_env:
+    #   BASE_URL: "$QA_BASE_URL"
+
+  # MONOREPO (optional): key serve/health/seed by SCOPE - a group of apps
+  # sharing a DB schema and infra - and by APP below it. Only the keys whose
+  # wrong value produces a FALSE GREEN move down: `serve` boots a different
+  # binary, `health` probes another app's route, `seed` migrates another
+  # schema. The E2E TARGET (repo, ref_policy, and the default command) stays
+  # repo-level with infra/health_timeout/mocks_compose; the E2E PRODUCT mapping
+  # (e2e.workdir, e2e.endpoint_env, e2e.fixture_profile) is SCOPE-level, since a
+  # separate/product suite differs per scope.
+  #
+  # WHICH scopes exist is NOT declared here. The closed list lives in the
+  # repo-knowledge record (records/repo-knowledge/<name>.md, bin/ac-know.sh);
+  # this block only says how to RUN one, and a block for a scope the record
+  # does not declare refuses every run on the project. Every invocation then
+  # names BOTH --scope and --app - there is no one-member inference.
+  # Knowledge-store guides, cases, fixture packs, and assets are not configured
+  # here. `ac-qa.sh agent` freezes the selected files from
+  # $AC_HOME/data/qa-store/<project>/ into the profile bundle; execution reads
+  # only that hash-bound snapshot.
+  # Delete this block for a single-app repo: the flat keys above are the
+  # whole configuration, and nothing below is consulted.
+  # scopes:
+  #   orchid:
+  #     seed: "yarn migration-run orchid-service"
+  #     e2e:                               # product E2E mapping for this scope
+  #       workdir: orchid
+  #       endpoint_env:
+  #         BASE_URL: "$QA_BASE_URL"
+  #       fixture_profile: orchid-local-safe  # reference name only; never a raw secret
+  #     apps:
+  #       orchid-service:
+  #         serve: "node dist/apps/orchid-service/main.js"
+  #         health: "curl -fsS $QA_BASE_URL/api/v2/health"
+  #       orchid-worker:
+  #         serve: "node dist/apps/orchid-worker/main.js"
+  #         health: "curl -fsS $QA_BASE_URL/api/health"

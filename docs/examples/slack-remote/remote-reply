@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# remote-reply - Slack transport hook for ac-remote.sh: post one message
+# (read from stdin) to the control channel via chat.postMessage.
+#
+# Install: cp into $AC_HOME/config/remote-reply and chmod +x (see README.md).
+# Runtime contract: invoked with AC_HOME set; cwd may be ANYTHING (ac-lib.sh
+# resolution below does not depend on it).
+#
+# Env from the caller:
+#   AC_REMOTE_THREAD  thread_ts to reply into; empty/unset posts top-level
+#                     and prints the new message ts on stdout so the caller
+#                     can record the thread it just started.
+#   AC_REMOTE_RID     remote order id; when set, the registration file
+#                     $AC_HOME/state/remote-threads/<rid>.thread is created
+#                     if absent (thread_ts= root plus a cursor= starting
+#                     point) so remote-poll follows the thread from now on.
+#                     When UNSET on a fresh top-level post (AC_REMOTE_THREAD
+#                     also empty - records/captain.md's control-channel
+#                     invocation is the only such caller; every ac-remote.sh
+#                     path always sets AC_REMOTE_RID), the hook assigns the
+#                     same sl-<channel>-<ts> id remote-poll gives a channel
+#                     order and registers under THAT, so the post's own
+#                     thread is still followed - see the fallback below.
+#   AC_REMOTE_MENTION `captain` makes the post PING the captain: every id in
+#                     config/slack-captain-id is prepended as <@id> (the
+#                     core sets this on pending verbs - GATE/ASK/blocked -
+#                     so approval-needed posts notify, receipts stay quiet).
+#
+# Config (same files as remote-poll): SLACK_BOT_TOKEN in $AC_HOME/.env and
+# the channel id in $AC_HOME/config/slack-channel. Unlike remote-poll this
+# hook only ever runs on purpose, so missing config is a LOUD error (stderr
+# line, exit 1), never silence - a reply must not vanish quietly.
+# The token never appears in argv or on stdout/stderr: curl reads the
+# Authorization header from a 0600 temp file (-H @file). Message text flows
+# stdin -> jq -> request body and never passes through shell expansion or
+# argv.
+#
+# Failure: any curl or Slack API error exits non-zero with one stderr line
+# (the core treats hook failure as a warning).
+
+set -euo pipefail
+
+# CWD-independent first: state/.ac-root is self-healed by bin/ac-remote.sh on
+# every invocation (poll/reply/thread-post/ack all run through it), so a home
+# with a live watcher already carries it - no manual bootstrap. The rest are
+# best-effort fallbacks for a home that has never run ac-remote.sh yet.
+for _lib in "${AC_HOME:-}/bin/ac-lib.sh" \
+  "$(cat "${AC_HOME:-}/state/.ac-root" 2>/dev/null)/bin/ac-lib.sh" \
+  "$PWD/bin/ac-lib.sh" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd -P)/bin/ac-lib.sh"; do
+  # shellcheck disable=SC1090
+  if [ -f "$_lib" ]; then . "$_lib"; break; fi
+done
+declare -F ac_die >/dev/null 2>&1 \
+  || { printf 'ERROR: remote-reply: ac-lib.sh not found\n' >&2; exit 1; }
+
+home="$(ac_home)"
+text="$(cat)"
+[ -n "$text" ] || ac_die "remote-reply: empty text on stdin"
+
+if [ "${AC_REMOTE_MENTION:-}" = "captain" ]; then
+  mention="$(awk '{ for (i = 1; i <= NF; i++) printf "<@%s> ", $i }' \
+    "$(ac_config_dir)/slack-captain-id" 2>/dev/null || true)"
+  [ -n "$mention" ] && text="${mention}${text}"
+fi
+
+token=""
+if [ -f "$home/.env" ]; then
+  token="$(grep -E '^SLACK_BOT_TOKEN=' "$home/.env" | tail -n1 | cut -d= -f2- | tr -d '\r')"
+fi
+channel="$(ac_config_read slack-channel)"
+[ -n "$token" ] || ac_die "remote-reply: SLACK_BOT_TOKEN missing from $home/.env"
+[ -n "$channel" ] || ac_die "remote-reply: config/slack-channel missing"
+
+ac_require curl jq
+
+thread="${AC_REMOTE_THREAD:-}"
+rid="${AC_REMOTE_RID:-}"
+case "$rid" in
+  */* | *..*) ac_die "remote-reply: unsafe AC_REMOTE_RID: $rid" ;;
+esac
+
+hdr="$(mktemp "${TMPDIR:-/tmp}/ac-slack-hdr.XXXXXX")"
+trap 'rm -f "$hdr"' EXIT
+printf 'Authorization: Bearer %s\n' "$token" >"$hdr"
+
+resp="$(printf '%s' "$text" \
+  | jq -Rs --arg channel "$channel" --arg thread "$thread" \
+      '{channel: $channel, text: .}
+       + (if $thread != "" then {thread_ts: $thread} else {} end)' \
+  | curl -sS --max-time 15 -H "@$hdr" \
+      -H 'Content-Type: application/json; charset=utf-8' \
+      --data-binary @- "https://slack.com/api/chat.postMessage")" \
+  || ac_die "remote-reply: chat.postMessage transport failed"
+printf '%s' "$resp" | jq -e '.ok == true' >/dev/null 2>&1 \
+  || ac_die "remote-reply: chat.postMessage: $(printf '%s' "$resp" | jq -r '.error // "bad response"' 2>/dev/null)"
+ts="$(printf '%s' "$resp" | jq -r '.ts // empty')"
+[ -n "$ts" ] || ac_die "remote-reply: no ts in chat.postMessage response"
+
+if [ -z "$rid" ] && [ -z "$thread" ]; then
+  # A bare top-level post with no rid AND no thread is a control-channel post
+  # (records/captain.md) - nobody else registers a thread for it, so without
+  # this it stays write-only forever (remote-poll's conversations.history
+  # never sees a reply, only top-level messages). Give it the SAME roomless
+  # sl-<channel>-<ts> id remote-poll already assigns a fresh channel order,
+  # so the registration below folds it into the existing roomless cap/GC
+  # path with no new registry shape, and (no data/<rid>/room.md can ever
+  # exist for an "sl-" id) it can never be mistaken for a family thread.
+  rid="sl-$channel-$(printf '%s' "$ts" | tr '.' '-')"
+fi
+
+if [ -n "$rid" ]; then
+  tdir="$(ac_state_dir)/remote-threads"
+  mkdir -p "$tdir"
+  f="$tdir/$rid.thread"
+  if [ ! -e "$f" ]; then
+    # New thread registration. The poll cursor starts at the thread root
+    # when replying into a captain thread (so captain replies posted before
+    # this registration are still picked up), or at our own first message
+    # for a fresh top-level post (nothing exists before it). Whether the
+    # replies API also returns the root itself once oldest= is past it is not
+    # relied on either way: remote-poll's cursor only advances on a strictly
+    # newer ts (F50), so the root can never regress or duplicate it.
+    ac_meta_set "$f" thread_ts "${thread:-$ts}"
+    ac_meta_set "$f" cursor "${thread:-$ts}"
+  fi
+fi
+
+if [ -z "$thread" ]; then
+  printf '%s\n' "$ts"
+fi
+exit 0

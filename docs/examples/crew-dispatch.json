@@ -1,0 +1,61 @@
+{
+  "rules": [
+    {
+      "when": "The task is a trivial mechanical edit such as a rote rename, formatting sweep, or targeted typo fix.",
+      "use": { "harness": "claude", "model": "haiku" },
+      "why": "Cheapest fast profile for narrow, low-ambiguity work."
+    },
+    {
+      "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work holding many moving parts.",
+      "use": { "harness": "claude", "model": "claude-sonnet-5" },
+      "why": "Strong coding profile for broad design and implementation work."
+    }
+  ],
+  "default": { "harness": "claude" },
+  "panes": {
+    "codereview": { "harness": "claude", "model": "opus" },
+    "qa": {
+      "rules": [
+        {
+          "when": "The QA round requires browser interaction, screenshot analysis, or visual evidence.",
+          "use": {
+            "harness": "opencode",
+            "model": "openrouter/qwen/qwen3.7-plus"
+          },
+          "why": "Image-capable long-context QA for browser interaction and visual evidence."
+        },
+        {
+          "when": "The QA round spans multiple repositories, stateful backend dependencies, a durable workflow engine, external services, high-risk behavior, or a prior context/tool/capability limit.",
+          "use": {
+            "harness": "opencode",
+            "model": "openrouter/z-ai/glm-5.2"
+          },
+          "why": "Long-horizon backend QA for stateful, multi-repository, durable-workflow, or capability-escalated rounds."
+        },
+        {
+          "when": "The QA round is a bounded single-repository static or unit-only check with no E2E or live-service requirement.",
+          "use": {
+            "harness": "opencode",
+            "model": "openrouter/qwen/qwen3-coder-next"
+          },
+          "why": "Use the cheaper coding profile only for bounded code-only verification."
+        }
+      ],
+      "default": {
+        "harness": "opencode",
+        "model": "openrouter/qwen/qwen3.7-plus"
+      }
+    },
+    "gate": {
+      "rules": [
+        {
+          "when": "The gate is judging financial or irreversible risk.",
+          "use": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+          "why": "Maximum reasoning where the proof rule binds."
+        }
+      ],
+      "default": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" }
+    },
+    "roomchief": { "harness": "claude" }
+  }
+}

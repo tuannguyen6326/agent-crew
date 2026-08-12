@@ -1,0 +1,80 @@
+# qa infra template - shipped with the qa skill, driven by bin/ac-qa.sh.
+# One profile per service; task-scoped via `docker compose -p crew-qa-<repo>-<task>`.
+# NO container_name (breaks task scoping), NO fixed host ports (ephemeral only,
+# read back via `docker compose port` into the run's ports.env).
+# Projects ADD services via the linted qa.mocks_compose override, never edit this.
+# Image/healthcheck choices are research-grounded (see the crew-qa skill's references/gotchas.md):
+# - postgres: tmpfs data + fsync=off class flags are TEST-ONLY (crash = data loss).
+#   PG18 moved PGDATA to /var/lib/postgresql/18/docker - the tmpfs target below
+#   matches the pinned major; bump BOTH together.
+# - temporal: single-container dev server (in-memory SQLite, UI included).
+#   Health = namespace registered, NEVER a port probe (~15s warmup).
+# - wiremock: per-case stubbing via the admin API (POST /__admin/mappings,
+#   reset between cases).
+services:
+  postgres:
+    image: postgres:18-alpine
+    profiles: ["postgres"]
+    labels: { crew.qa: "1" }
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: test
+    tmpfs:
+      - /var/lib/postgresql/18/docker
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
+    ports:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    labels: { crew.qa: "1" }
+    ports:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  temporal:
+    image: temporalio/temporal:latest
+    profiles: ["temporal"]
+    labels: { crew.qa: "1" }
+    command: ["server", "start-dev", "--ip", "0.0.0.0", "--ui-port", "8233"]
+    ports:
+      - "7233"
+      - "8233"
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "namespace", "describe",
+             "--address", "127.0.0.1:7233", "default"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  wiremock:
+    image: wiremock/wiremock:latest
+    profiles: ["wiremock"]
+    labels: { crew.qa: "1" }
+    ports:
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/__admin/mappings >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
