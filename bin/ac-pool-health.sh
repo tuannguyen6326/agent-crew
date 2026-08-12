@@ -19,8 +19,12 @@
 # for the holder proves nothing while the holder may simply not have
 # published it yet (ship-review-receipt-deadlocks, bin/ac-verify.sh:299 leases
 # at :299, publishes meta only at :957). This script never reclaims, resets
-# or expires anything - it only names the slot and the exact command a chief
-# may choose to run after confirming the holder is actually gone.
+# or expires anything - it only names the slot and the exact `remove
+# --include-leased` a chief may choose to run: that command's own
+# broken/dirty/unmerged gates (remove_slot, bin/ac-tree.sh:829-855) stay
+# armed without --force, so it REFUSES instead of discarding if the slot
+# still holds real content - the confirmation the hint asks for, enforced
+# rather than merely requested.
 #
 # Renders NOTHING when every scanned pool is healthy (0 stuck-dirty, 0 broken
 # and 0 aged-leased slots total) - same "quiet unless there is a signal" shape
@@ -109,7 +113,7 @@ for repo in "${repos[@]:-}"; do
 "
   [ "$broken" -ge 1 ] && hints="${hints}  reclaim each broken slot: bin/ac-tree.sh remove --force <worktree-path>
 "
-  [ "$aged" -ge 1 ] && hints="${hints}  CONFIRM the holder is actually gone (it may be a live long-running task), then reclaim: bin/ac-tree.sh remove --force --include-leased <worktree-path>
+  [ "$aged" -ge 1 ] && hints="${hints}  reclaim each aged lease (the broken/dirty/unmerged gates stay armed - it refuses instead of discarding if the slot still holds real content): bin/ac-tree.sh remove --include-leased <worktree-path>
 "
   block="${block}$(basename "$repo"): $leasable leasable / $total total, $stuck stuck-dirty (unleasable), $broken broken (unleasable), $aged aged-leased (>=$((AGED_LEASE_THRESHOLD_SECS / 3600))h, unconfirmed)
 ${hints}${slot_lines}${broken_lines}${aged_lines}"

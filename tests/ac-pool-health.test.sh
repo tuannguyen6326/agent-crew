@@ -90,7 +90,7 @@ sed "s/^leased_at=.*/leased_at=$old_ts/" "$metaA1" >"$metaA1.tmp" && mv "$metaA1
 outA="$("$BIN/ac-pool-health.sh" --repo "$repoA")"
 assert_contains "$outA" "-- pool (worktree health) --" "header prints for an aged-leased pool"
 assert_contains "$outA" "1 aged-leased" "aged-leased count printed"
-assert_contains "$outA" "bin/ac-tree.sh remove --force --include-leased <worktree-path>" "verbatim aged-lease reclaim command"
+assert_contains "$outA" "bin/ac-tree.sh remove --include-leased <worktree-path>" "verbatim aged-lease reclaim command (no --force: the gates stay armed)"
 assert_contains "$outA" "$wtA1" "aged slot's worktree path printed"
 case "$outA" in
   *"$wtA2"*) fail "a fresh lease must never be flagged as aged" ;;
