@@ -1172,3 +1172,5 @@ One sentence per line for a new document or section, and for a block already wri
 A block already hard-wrapped keeps its shape - edit it in the shape it is in.
 Never reflow a block as a side effect of an unrelated change, and never mix the two shapes inside one block.
 Never add an agent co-author line to commits in project repos.
+Every push out of this repo goes through the pre-push privacy gate: `bin/ac-push-gate.sh` (its header is the authoritative contract) scans the outgoing range - diffs, messages, author/committer idents - against an operator-owned pattern file that lives OUTSIDE the repo, and refuses on any hit.
+A scan is a floor, never proof of absence - the operator still reads the outgoing diff, and a force-push or visibility change is a captain act on its own order, never routine.
