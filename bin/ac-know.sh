@@ -1099,7 +1099,7 @@ cmd_scope_install() {
 # --- verify --------------------------------------------------------------------
 
 cmd_verify() {
-  local home_flag="" repo="" home rec name line rest src at tag value path rc
+  local home_flag="" repo="" rec name line rest src at tag value path rc
   while [ $# -gt 0 ]; do
     case "$1" in
       --home) home_flag="${2:-}"; shift 2 ;;
@@ -1107,12 +1107,12 @@ cmd_verify() {
       *) ac_die "unknown flag: $1" ;;
     esac
   done
-  [ -n "$repo" ] || usage
-  [ -d "$repo" ] || ac_die "--repo is not a directory: $repo"
-  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || ac_die "--repo is not a git repo: $repo"
-  home="$(ac_home_resolve "$home_flag" "$repo")"
-  [ -n "$home" ] || home="$(ac_root)"
-  export AC_HOME="$home"
+  settle_repo "$repo"
+  # No rung 3, like every other verb here (settle_home): both the record this
+  # reads AND the stamp it writes descend from the home, so a homeless run
+  # cannot do anything honest - the record miss reads as false-FRESH-adjacent
+  # "nothing to verify" and the stamp lands where no real digest ever looks.
+  settle_home "$home_flag" "$repo"
   rec="$(ac_knowledge_file "$repo")" || ac_die "cannot resolve the project name for $repo"
   name="$(ac_project_config_name "$repo")"
   [ -f "$rec" ] || { printf 'no repo-knowledge record yet: %s\n' "$rec"; return 0; }

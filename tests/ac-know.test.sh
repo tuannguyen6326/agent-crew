@@ -148,6 +148,16 @@ assert_contains "$out" "AC_HOME" "and the second"
 assert_contains "$out" "brief" "and points a crewmate at the --home-carrying line its brief already baked"
 assert_no_file "$fake/records/repo-knowledge/proj.md" "a refused homeless add writes NOTHING into the checkout"
 
+# `verify` was the LAST rung-3 holdout (it inlined its own ladder instead of
+# calling settle_home like every other verb here) - the same refusal, same
+# fake checkout, and it must neither read a phantom record nor write a
+# phantom stamp.
+vout_homeless="$(env -u AC_HOME "$fake/bin/ac-know.sh" verify --repo "$repo" 2>&1)" \
+  && fail "a homeless verify must REFUSE, never adopt the checkout as home"
+assert_contains "$vout_homeless" "no fleet home" "the refusal names what is missing"
+assert_no_file "$fake/records/repo-knowledge/proj.md" "a refused homeless verify reads/writes NOTHING in the checkout"
+assert_no_file "$fake/state/.know-verify-proj.meta" "a refused homeless verify leaves no stamp in the checkout"
+
 # --- guard class: EVIDENCE/REF DIVERGENCE (the false-FRESH class) ------------
 bind="$(make_repo bindrepo)"
 printf 'v-A\n' >"$bind/code.txt"

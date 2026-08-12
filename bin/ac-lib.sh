@@ -2237,9 +2237,13 @@ ac_home_resolve() {
   #      phantom home). This ladder must FALL THROUGH to rung 3, not die, so it
   #      tests the variable itself;
   #   3. neither - prints NOTHING and returns 0. What "no home" means is the
-  #      caller's to decide (ac-know.sh falls to its own checkout and prints
-  #      the path it used; ac-qa.sh freezes an empty config, or refuses when a
-  #      selector was given).
+  #      caller's to decide: ac-know.sh REFUSES outright, every verb alike
+  #      (settle_home, ac-know.sh:339-347 - cmd_verify was the last holdout
+  #      and lost its own rung 3 too); ac-qa.sh's two verbs answer a homeless
+  #      run DIFFERENTLY ON PURPOSE - `start` KEEPS RUNNING, freezing an empty
+  #      config (or refusing when a selector was given), while `agent`
+  #      RETURNS needs-profile, since every durable source it freezes
+  #      descends from the home.
   # The two guards on --home: ABSOLUTE, and not INSIDE the project repo - a
   # branch under test must not become a config source or a knowledge sink.
   # Both sides are canonicalized with `pwd -P` FIRST, so `--home /tmp/x` where
