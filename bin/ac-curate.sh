@@ -57,11 +57,16 @@
 # subject settles; an unresolved `ask-captain` keeps the run open and cadence
 # due. `run --dry-run` creates no backup, receipt, mutation, or cadence reset.
 #
-# `learnings` validates canonical `[distilled -> <name>]` pointers against the
-# fleet-local skill and archive. Any remaining @fleet/@container pointer is a
-# compatibility defect the chief resolves by hand (the one-time `ac-learn.sh
-# migrate` ran on every home and is retired); Curate never reads the legacy
-# container skill store.
+# `learnings` validates each canonical `- [distilled -> <name>]` row against the
+# body its OWN first link names, resolved relative to the ledger's directory -
+# `[skill](../skills/<name>/SKILL.md)` for a skill, `[lesson](../CREWMATE-learned.md)`
+# for a crewmate-landed lesson - mirroring the writer at learn_ledger_stage
+# (bin/ac-learn.sh). It does NOT derive the target from the slug: that made a
+# correctly-retired skill package read BROKEN and so required the lesson to stay
+# live in both seeded layers. A row with no link is BROKEN (fail-closed).
+# Any remaining @fleet/@container pointer is a compatibility defect the chief
+# resolves by hand (the one-time `ac-learn.sh migrate` ran on every home and is
+# retired); Curate never reads the legacy container skill store.
 #
 # Individual `captain --apply` and `backlog --apply` remain compatibility
 # surfaces and take their own backup. `skills-consolidate --apply` is
@@ -75,22 +80,37 @@ set -euo pipefail
 # --- learnings: pointer-integrity check (PROPOSE ONLY) -----------------------
 
 curate_learnings() {
-  local learnings name target broken=0 compatibility=0
+  local learnings row name rest link target broken=0 compatibility=0
   learnings="$(ac_records_dir)/learnings.md"
   printf '== learnings: pointer-integrity check (propose-only; CURATE never compacts) ==\n'
   if [ ! -f "$learnings" ]; then
     printf '  (no learnings.md - nothing to check)\n'
     return 0
   fi
-  while IFS= read -r name; do
-    [ -n "$name" ] || continue
-    target="$(ac_skills_dir)/$name/SKILL.md"
+  # A pointer's FIRST link names where its distilled body lives, and only the
+  # row itself knows which layer that is: learn_ledger_stage (bin/ac-learn.sh)
+  # writes [lesson](../CREWMATE-learned.md) for a crewmate-landed lesson and
+  # [skill](../skills/<name>/SKILL.md) for a skill. Deriving the target from the
+  # SLUG instead reported every correctly-retired skill package as BROKEN, which
+  # is why nine slugs were kept live in both layers to keep this check green.
+  # Links are relative to the ledger's own directory, as the writer emits them.
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    name="${row#*"[distilled -> "}"; name="${name%%"]"*}"
+    rest="${row#*"]("}"
+    if [ "$rest" = "$row" ]; then
+      printf '  BROKEN: [distilled -> %s] - pointer carries no link to its distilled body\n' "$name"
+      broken=$((broken + 1))
+      continue
+    fi
+    link="${rest%%")"*}"
+    target="$(dirname "$learnings")/$link"
     if [ ! -f "$target" ]; then
-      printf '  BROKEN: [distilled -> %s] - fleet-local skill store vanished (missing %s)\n' "$name" "$target"
+      printf '  BROKEN: [distilled -> %s] - distilled body vanished (link %s, missing %s)\n' \
+        "$name" "$link" "$target"
       broken=$((broken + 1))
     fi
-  done < <(grep -oE '\[distilled -> [a-z0-9-]+\]' "$learnings" \
-    | sed -E 's/\[distilled -> ([a-z0-9-]+)\]/\1/' | sort -u)
+  done < <(grep -E '^- \[distilled -> [a-z0-9-]+\]' "$learnings")
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     printf '  COMPATIBILITY DEFECT: %s - rung-qualified pointer remains; the migrate command is retired, so rewrite the pointer to the canonical fleet-local form by hand\n' "$name"

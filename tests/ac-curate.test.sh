@@ -115,6 +115,45 @@ assert_eq "$compat" "3" "every remaining rung-qualified pointer is a compatibili
 "$BIN/ac-curate.sh" learnings --apply >/dev/null
 assert_eq "$(cat "$records/learnings.md")" "$learn_before" "learnings.md unchanged (propose-only, never compacts)"
 
+# --- canonical pointers resolve by their OWN link, not by the slug name -------
+# learn_ledger_stage (ac-learn.sh) writes a crewmate-landed lesson's pointer as
+# [lesson](../CREWMATE-learned.md) and a skill's as [skill](../skills/<n>/SKILL.md).
+# The checker must honour that link: a retired skill package whose lesson lives
+# in the always-loaded layer is RESOLVED, while a link naming a file that is
+# really gone still BREAKS - a checker that goes green on everything is worse
+# than one that reads the wrong path.
+
+mkdir -p "$AC_HOME/skills/liveskill"
+printf 'a live skill\n' >"$AC_HOME/skills/liveskill/SKILL.md"
+printf '# Fleet-learned crewmate lessons\n\n## lessononly\n\nthe lesson.\n' \
+  >"$AC_HOME/CREWMATE-learned.md"
+{
+  printf '## Distilled\n\n'
+  printf -- '- [distilled -> lessononly] sources=2 updated=2026-08-05 ([lesson](../CREWMATE-learned.md))\n'
+  printf -- '- [distilled -> liveskill] sources=2 updated=2026-08-05 ([skill](../skills/liveskill/SKILL.md))\n'
+} >"$records/learnings.md"
+out="$("$BIN/ac-curate.sh" learnings)"
+assert_contains "$out" "ok: all distilled pointers resolve" \
+  "a crewmate-owned pointer resolves with no skill package on disk"
+
+# It still bites, in BOTH directions: a link to a file that is genuinely gone.
+printf -- '- [distilled -> deadskill] sources=1 updated=2026-08-05 ([skill](../skills/deadskill/SKILL.md))\n' \
+  >>"$records/learnings.md"
+printf -- '- [distilled -> deadlesson] sources=1 updated=2026-08-05 ([lesson](../gone/CREWMATE-learned.md))\n' \
+  >>"$records/learnings.md"
+out="$("$BIN/ac-curate.sh" learnings)"
+assert_contains "$out" "BROKEN: [distilled -> deadskill]" "a dangling skill link still breaks"
+assert_contains "$out" "BROKEN: [distilled -> deadlesson]" "a dangling lesson link still breaks"
+assert_contains "$out" "2 broken canonical pointer(s)" "only the two dangling links break"
+
+# A canonical row carrying no link at all is a defect, not a pass (fail-closed).
+printf -- '- [distilled -> linkless] sources=1 updated=2026-08-05\n' >>"$records/learnings.md"
+out="$("$BIN/ac-curate.sh" learnings)"
+assert_contains "$out" "BROKEN: [distilled -> linkless]" "a canonical row with no link is broken"
+
+rm -f "$AC_HOME/CREWMATE-learned.md"
+rm -rf "$AC_HOME/skills/liveskill"
+
 # --- captain: verbatim-preservation, move-only, conservative detection --------
 
 cat >"$records/captain.md" <<'CAP'
