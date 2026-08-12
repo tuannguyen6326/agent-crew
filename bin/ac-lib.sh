@@ -1960,6 +1960,19 @@ ac_seed_crew_skills() {
       case "$sk" in "$root"/*) pfx="/${sk#"$root"/}" ;; esac
     fi
   fi
+  # Repair pass: heal any DANGLING symlink already at a name this function
+  # owns, before either seed loop runs. A retired skill's name drops OUT of
+  # both loops below (moved into skills-archive, or removed from
+  # AC_CREW_SKILLS) - they are driven by SOURCE names, so only a scan of the
+  # destination itself finds a link whose source is gone. Runs first so a
+  # name still sourced gets relinked fresh by its own loop instead of being
+  # skipped by the `-L` add-guard, which otherwise reads "already a link" as
+  # "already seeded" even when that link is broken.
+  if [ -d "$wt/$skrel" ]; then
+    for dst in "$wt/$skrel"/*; do
+      [ -L "$dst" ] && [ ! -e "$dst" ] && rm -f "$dst"
+    done
+  fi
   for name in $AC_CREW_SKILLS; do
     src="$(dirname "$(ac_home)")/.claude/skills/$name"
     [ -d "$src" ] || src="$(ac_root)/.agents/skills/$name"

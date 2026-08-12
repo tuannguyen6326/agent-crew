@@ -270,6 +270,26 @@ printf 'NEW\n' >"$ship_wt/.agents/skills/crew-ship/references.md"
 assert_eq "$(git -C "$ship_wt" status --porcelain)" "?? .agents/skills/crew-ship/references.md" \
   "a file added to a repo-shipped skill stays visible to git"
 
+# --- dangling-link repair: a retired fleet-learned skill's symlink must not
+# outlive its source ------------------------------------------------------
+# Pool slots are REUSED, not deleted (AGENTS.md section 6), so a symlink to a
+# skill later retired from $AC_HOME/skills survives every return/get cycle
+# forever unless the seed itself repairs it on the next call. `-e` alone
+# cannot prove the repair: it already reports false for a dangling symlink,
+# so the assertion checks `-L` directly - the whole bug is a link that looks
+# absent to `-e` and is not.
+dangle_wt="$TMP/wt-dangle"; git init -q "$dangle_wt"
+mkdir -p "$AC_HOME/skills/retiring"
+printf -- '---\norigin: learned\n---\nRETIRING\n' >"$AC_HOME/skills/retiring/SKILL.md"
+seed_skills "$dangle_wt"
+[ -L "$dangle_wt/.claude/skills/retiring" ] || fail "setup: retiring skill must be linked before retirement"
+rm -rf "$AC_HOME/skills/retiring"
+[ -L "$dangle_wt/.claude/skills/retiring" ] || fail "setup: link must survive the source removal"
+[ -e "$dangle_wt/.claude/skills/retiring" ] && fail "setup: link must be dangling, not resolving"
+seed_skills "$dangle_wt"
+[ -L "$dangle_wt/.claude/skills/retiring" ] && fail "re-seed must repair the dangling retired-skill link"
+assert_eq "$(git -C "$dangle_wt" status --porcelain)" "" "repaired dangling link leaves no git dirt"
+
 # --- per-harness DESTINATION: codex scans .agents/skills, never .claude/skills -
 # Verified 2026-07-31 with two local renderers, no API call (repo-knowledge
 # multica-research): codex-cli sees .agents/skills ONLY; claude sees
