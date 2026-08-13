@@ -3527,6 +3527,70 @@ connect();
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
+/** Standalone terminal page (GET /term?path=<home>) - the captain opens the
+ * fleet terminal in its OWN browser tab, the same shape /review gives an
+ * artifact: no SPA shell, a minimal bar, a full-viewport /term-frame iframe.
+ * The frame calls parent.termTheme() when ready, so this page carries its own
+ * copy of the SPA's theme push (same --term-bg/--term-fg + --ansi-N pipeline
+ * into acSetTheme); /api/term/status still gates the home path, and an
+ * unavailable terminal retries rather than dying on a blank frame. */
+async function termStandalonePage(): Promise<Response> {
+  // The terminal does not FOLLOW a home (captain 2026-08-13): herdr is one
+  // session machine-wide, so ?path is only the API gate's ticket - absent it,
+  // any known home is embedded as the fallback and the URL stays a bare /term.
+  const fallbackHome: string = (await allowedHomePaths()).values().next().value ?? "";
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><title>agent-crew terminal</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${THEME_INIT}
+<style>
+${THEME_VARS}
+${UX_BASE}
+  :root{ --ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  html,body{margin:0;height:100%}
+  body{background:var(--canvas);color:var(--fg);font:14px/1.5 var(--ui);display:flex;flex-direction:column;height:100dvh;overflow:hidden}
+  #bar{display:flex;gap:10px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--surface)}
+  #bar .name{font-weight:600;font-size:14px}
+  #bar #status{color:var(--fg2);font-size:12px}
+  #frame{flex:1;min-height:0}
+  #frame iframe{width:100%;height:100%;border:0;background:var(--term-bg, var(--canvas))}
+  .cdead{padding:16px;color:var(--fg2)}
+</style></head><body>
+<div id="bar"><span class="name">terminal</span><span id="status"></span></div>
+<div id="frame"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const home = q.get("path") || ${JSON.stringify(fallbackHome)};
+const XTERM_ANSI=["black","red","green","yellow","blue","magenta","cyan","white",
+  "brightBlack","brightRed","brightGreen","brightYellow","brightBlue","brightMagenta","brightCyan","brightWhite"];
+let lastSig = "";
+window.termTheme = () => {
+  const f = document.querySelector("#frame iframe"); if (!f) return;
+  const cs = getComputedStyle(document.documentElement);
+  const t = { background:((cs.getPropertyValue("--term-bg")||cs.getPropertyValue("--canvas"))||"").trim(),
+              foreground:((cs.getPropertyValue("--term-fg")||cs.getPropertyValue("--fg"))||"").trim() };
+  if (!t.background) return;
+  t.cursor=t.foreground; t.cursorAccent=t.background;
+  let sig=t.background+"|"+t.foreground;
+  for (let i=0;i<16;i++){ const c=(cs.getPropertyValue("--ansi-"+i)||"").trim(); if(c){ t[XTERM_ANSI[i]]=c; sig+="|"+c; } }
+  if (sig===lastSig) return;
+  const w=f.contentWindow;
+  if (w && typeof w.acSetTheme==="function"){ w.acSetTheme(t); lastSig=sig; }
+};
+function boot(){
+  const fr=document.getElementById("frame"), st=document.getElementById("status");
+  if(!home){ fr.innerHTML="<div class=cdead>no fleet home is registered - the API gate has no ticket</div>"; return; }
+  st.textContent = "";
+  fetch("/api/term/status?path="+encodeURIComponent(home)).then((r)=>r.json()).then((j)=>{
+    if(j && j.running && j.url){ const f=document.createElement("iframe"); f.src=j.url; f.title="herdr terminal"; fr.replaceChildren(f); }
+    else { fr.innerHTML="<div class=cdead>terminal unavailable - retrying</div>"; setTimeout(boot, 3000); }
+  }).catch(()=>{ st.textContent="retrying"; setTimeout(boot, 3000); });
+}
+boot();
+</script></body></html>`;
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
 /** The CREWCHIEF pane for a home (chief panel, slice C): the fleet session is
  * not a spawned task (no meta), so it is found the way the fleet's own tooling
  * proves liveness - state/.session-lock names the harness pid, and the pane
@@ -7007,6 +7071,7 @@ if (import.meta.main) {
         }
         return scene ? whiteboardShow(p, scene) : whiteboardList(p);
       }
+      if (url.pathname === "/term") return termStandalonePage();
       if (url.pathname === "/whiteboard") return whiteboardPage();
       if (url.pathname === "/whiteboard-frame") return whiteboardFramePage();
       if (url.pathname.startsWith("/api/review/")) {
@@ -7639,6 +7704,9 @@ ${UX_BASE}
   .chatpage .chiefp{ height:100%; border:0; border-radius:0; overflow:hidden; }
   .chatpage .cterm{ font-size:13px; }
   .termpage iframe{ width:100%; height:100%; border:0; border-radius:0; background:#000; }
+  .termpage{ position:relative; }
+  .termpage .termopen{ position:absolute; top:8px; right:14px; z-index:2; font-size:13px; line-height:1; padding:5px 8px; border-radius:6px; background:var(--surface); border:1px solid var(--border); color:var(--fg2); opacity:.55; }
+  .termpage .termopen:hover{ opacity:1; color:var(--accent); border-color:var(--border-strong); text-decoration:none; }
   .termpage .cdead{ padding:16px; color:var(--muted); }
   .cgrip{ cursor:col-resize; background:var(--line); width:6px; }
   .cgrip:hover, .cgrip:active{ background:var(--accent); }
@@ -9224,7 +9292,10 @@ function chiefPanelHtml(title, backHref){
 // iframe's websocket connect and dies with it when the page is left.
 var termUrl=null, termWhy='checking…', termT=null;
 function pageTerm(){
-  if(termUrl) return '<div class="termpage"><iframe src="'+esc(termUrl)+'" title="herdr terminal"></iframe></div>';
+  if(termUrl){
+    var open='<a class="termopen" href="/term" target="_blank" rel="noopener" title="open in its own page">&#8599;</a>';
+    return '<div class="termpage">'+open+'<iframe src="'+esc(termUrl)+'" title="herdr terminal"></iframe></div>';
+  }
   return '<div class="termpage"><div class="cdead">'+esc(termWhy)+'</div></div>';
 }
 function termFit(){
