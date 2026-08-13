@@ -48,7 +48,8 @@
 //   POST /api/dispatch?path=<home> (body: full JSON) -> validate + atomic-write config/crew-dispatch.json + receipt (dash-crew-dispatch)
 //   GET  /api/whiteboard?path=<home>[&scene=<name>] -> scene JSON, or the scene list (dash-whiteboard)
 //   POST /api/whiteboard?path=<home>&scene=<name> (body: scene) -> normalize + atomic-write ONE scene file, guarded by an If-Match precondition: send the version you read (from the GET's ETag), or 428/412 with {error,version,scene} (whiteboard-agent-write-clobbers-captain-edits). If-Match: * force-overwrites - captain-only, never for an agent. A scene that does not exist yet needs no precondition.
-//   POST /api/whiteboard?path=<home>&scene=<name>&notify=1 (body: message) -> publish ONE deduped kind=whiteboard fleet wake carrying the scene path + message (dash-wb-notify)
+//   POST /api/whiteboard?path=<home>&scene=<name>&notify=1 (body: message) -> publish ONE deduped kind=whiteboard fleet wake carrying the scene path + message (dash-wb-notify). The Make-presentable button rides this same endpoint with the fixed redrawMessage() REDRAW: message - no separate API.
+//   GET  /api/whiteboard?path=<home>&scene=<name>&redraw=1 -> the scene's redraw RECEIPT ({artifact,at}, or {} while none) written by the chief at <home>/whiteboards/<scene>.redraw.json; the page polls it and shows an open-in-review link, closing the click -> artifact loop for the captain.
 //   GET  /whiteboard?path=<home>&scene=<name>[&seed=<mermaid>] -> standalone Excalidraw editor page; seed imports onto an EMPTY scene only (dash-whiteboard)
 //   GET  /api/review/diagrams?path=<home>&file=<f> -> the artifact's mermaid sources + their hand-off scene names (dash-whiteboard phase 2)
 //   GET  /api/reviews?path=<home> -> every review session of the home {reviews:[{id,path,family,state,endedBy,pins,messages,mtime,listening}]} (Reviews route)
@@ -4239,6 +4240,28 @@ export function whiteboardShow(homePath: string, scene: string): Response {
   }
 }
 
+/** The Make-presentable RESULT receipt: `<home>/whiteboards/<scene>.redraw.json`,
+ * written by the CHIEF when a REDRAW wake's artifact lands (AGENTS.md section
+ * 11 owns the obligation) - `{"artifact":"<home-relative path>","at":"<iso>"}`.
+ * The whiteboard page polls GET ?redraw=1 and shows the artifact as an
+ * open-in-review link, so the captain who clicked LEARNS where the result is
+ * without asking. The sibling file is invisible to the scene lister (which
+ * filters .excalidraw.json), and it is metadata, not a scene - the If-Match
+ * contract does not govern it. `artifact` must be home-relative and
+ * traversal-free or the receipt reads as absent (a garbage receipt must not
+ * mint a link). */
+export function redrawReceipt(homePath: string, scene: string): { artifact: string; at: string } | null {
+  if (!isSceneName(scene)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(`${whiteboardDir(homePath)}/${scene}.redraw.json`, "utf8"));
+    const artifact = typeof raw?.artifact === "string" ? raw.artifact : "";
+    if (!artifact || artifact.startsWith("/") || artifact.split("/").includes("..")) return null;
+    return { artifact, at: typeof raw?.at === "string" ? raw.at : "" };
+  } catch {
+    return null;
+  }
+}
+
 /** Atomic-writes ONE normalized scene file, guarded by an If-Match
  * precondition (requirement 1: the writer sends the version it read, the
  * server refuses a stale write and says why). `ifMatch`:
@@ -4429,6 +4452,19 @@ export function whiteboardWakeKey(scenePath: string, message: string, mtime: num
   return JSON.stringify([scenePath, message, mtime]);
 }
 
+/** The Make-presentable button's wake message. Same transport as Notify crew
+ * (POST ?notify=1 -> ONE deduped kind=whiteboard wake); only the message is
+ * fixed, so the chief recognizes the order mechanically and routes it to the
+ * diagram-design skill (references/import-excalidraw.md names this REDRAW:
+ * prefix as a trigger). The optional note carries the captain's destination
+ * or sizing hint; it rides after a dash, folded by whiteboardWakeParts like
+ * any other message. Pure. */
+export function redrawMessage(note: string): string {
+  const base = "REDRAW: make this scene presentable (diagram-design import-excalidraw)";
+  const n = note.trim();
+  return n ? base + " - " + n : base;
+}
+
 const wbWaked = new Set<string>();
 
 function publishWhiteboardWake(homePath: string, scenePath: string, message: string): void {
@@ -4511,6 +4547,8 @@ ${THEME_VARS}
   <button id="save">Save</button>
   <button id="mermaid-toggle">Import mermaid</button>
   <button id="notify-toggle">Notify crew</button>
+  <button id="redraw-toggle">Make presentable</button>
+  <a id="redraw-open" target="_blank" rel="noopener" style="display:none;font:600 12px system-ui;color:var(--fg);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px;text-decoration:none">Open redraw</a>
   <span id="status"></span>
   <button id="embed-close" style="margin-left:auto;display:none">Close</button>
 </div>
@@ -4662,6 +4700,33 @@ document.getElementById("mermaid-import").addEventListener("click", async () => 
 document.getElementById("notify-toggle").addEventListener("click", () => {
   const p = document.getElementById("notify-panel");
   p.style.display = p.style.display === "block" ? "none" : "block";
+});
+${redrawMessage.toString()}
+let redrawSeenAt = null;
+async function pollRedraw() {
+  try {
+    const r = await fetch("/api/whiteboard?path=" + encodeURIComponent(home) + "&scene=" + encodeURIComponent(scene) + "&redraw=1");
+    if (!r.ok) return;
+    const rec = await r.json();
+    if (!rec || !rec.artifact) return;
+    const a = document.getElementById("redraw-open");
+    a.href = "/review?path=" + encodeURIComponent(home) + "&file=" + encodeURIComponent(home + "/" + rec.artifact);
+    a.style.display = "inline-block";
+    if (redrawSeenAt !== null && rec.at !== redrawSeenAt) status("redraw ready");
+    redrawSeenAt = rec.at;
+  } catch { /* transient - next poll retries */ }
+}
+pollRedraw();
+setInterval(pollRedraw, 8000);
+document.getElementById("redraw-toggle").addEventListener("click", async () => {
+  const res = await fetch(
+    "/api/whiteboard?path=" + encodeURIComponent(home) + "&scene=" + encodeURIComponent(scene) + "&notify=1",
+    { method: "POST", body: redrawMessage("") },
+  );
+  if (!res.ok) { status("redraw request failed"); return; }
+  const data = await res.json();
+  status(data.deduped ? "already requested (no new save)" : "redraw requested");
+  if (redrawSeenAt === null) redrawSeenAt = "";
 });
 document.getElementById("notify-send").addEventListener("click", async () => {
   const err = document.getElementById("notify-err");
@@ -6904,6 +6969,10 @@ if (import.meta.main) {
         }
         if (req.method === "DELETE") {
           return scene ? whiteboardDelete(p, scene) : json({ error: "scene required" }, 400);
+        }
+        if (url.searchParams.get("redraw") != null) {
+          if (!scene) return json({ error: "scene required" }, 400);
+          return json(redrawReceipt(p, scene) ?? {});
         }
         return scene ? whiteboardShow(p, scene) : whiteboardList(p);
       }

@@ -10,7 +10,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, withDomainBacklogs, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, withDomainBacklogs, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -2588,6 +2588,33 @@ test("whiteboardWakeParts folds the scene path + message onto one line and deriv
   expect(w.payload.includes("\t")).toBe(false);
   expect(w.payload).toContain("/home/whiteboards/batch-drain.excalidraw.json");
   expect(w.payload.length).toBeLessThanOrEqual(200);
+});
+
+test("redrawMessage: the Make-presentable button speaks the fixed REDRAW: prefix, note optional", () => {
+  const bare = redrawMessage("");
+  expect(bare.startsWith("REDRAW:")).toBe(true);
+  expect(bare).toContain("import-excalidraw");
+  expect(redrawMessage("   ")).toBe(bare);
+  const noted = redrawMessage("  for the seam-contract gate page, doc-inline  ");
+  expect(noted).toBe(bare + " - for the seam-contract gate page, doc-inline");
+});
+
+test("redrawReceipt: a valid chief-written receipt reads back; garbage, traversal, and absolute paths read as absent", async () => {
+  const home = mkdtempSync(`${tmpdir()}/wb-redraw-`);
+  try {
+    mkdirSync(`${home}/whiteboards`, { recursive: true });
+    expect(redrawReceipt(home, "scene-a")).toBe(null);
+    writeFileSync(`${home}/whiteboards/scene-a.redraw.json`,
+      JSON.stringify({ artifact: "data/redraw-scene-a/diagram.html", at: "2026-08-13T01:00:00Z" }));
+    expect(redrawReceipt(home, "scene-a")).toEqual({ artifact: "data/redraw-scene-a/diagram.html", at: "2026-08-13T01:00:00Z" });
+    writeFileSync(`${home}/whiteboards/scene-a.redraw.json`, JSON.stringify({ artifact: "/etc/passwd", at: "x" }));
+    expect(redrawReceipt(home, "scene-a")).toBe(null);
+    writeFileSync(`${home}/whiteboards/scene-a.redraw.json`, JSON.stringify({ artifact: "data/../../../etc/passwd", at: "x" }));
+    expect(redrawReceipt(home, "scene-a")).toBe(null);
+    writeFileSync(`${home}/whiteboards/scene-a.redraw.json`, "not json at all");
+    expect(redrawReceipt(home, "scene-a")).toBe(null);
+    expect(redrawReceipt(home, "../scene-a")).toBe(null);
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
 test("whiteboardWakeKey: same scene+message+mtime -> same key (dedupe hit)", () => {
