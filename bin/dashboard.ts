@@ -400,8 +400,8 @@ export function clampBgDim(stored: string | null): number {
 // snapshot pane emits var(--ansi-N), and the web terminal is handed the
 // resolved values for xterm's own theme object.
 const ANSI_DARK =
-  "--ansi-0:#0b0f14; --ansi-1:#ef4444; --ansi-2:#3ddc97; --ansi-3:#f5b942; --ansi-4:#3b82f6; --ansi-5:#a78bfa; --ansi-6:#22d3ee; --ansi-7:#c9d1d9;\n" +
-  "    --ansi-8:#6b7280; --ansi-9:#f87171; --ansi-10:#6ee7b7; --ansi-11:#fbbf24; --ansi-12:#60a5fa; --ansi-13:#c4b5fd; --ansi-14:#67e8f9; --ansi-15:#ffffff;";
+  "--ansi-0:#616161; --ansi-1:#ff8272; --ansi-2:#b4fa72; --ansi-3:#fefdc2; --ansi-4:#a5d5fe; --ansi-5:#ff8ffd; --ansi-6:#d0d1fe; --ansi-7:#f1f1f1;\n" +
+  "    --ansi-8:#8e8e8e; --ansi-9:#ffc4bd; --ansi-10:#d6fcb9; --ansi-11:#fefdd5; --ansi-12:#c1e3fe; --ansi-13:#ffb1fe; --ansi-14:#e5e6fe; --ansi-15:#feffff;";
 const ANSI_LIGHT =
   "--ansi-0:#24292f; --ansi-1:#cf222e; --ansi-2:#116329; --ansi-3:#9a6700; --ansi-4:#0969da; --ansi-5:#8250df; --ansi-6:#1b7c83; --ansi-7:#4b5563;\n" +
   "    --ansi-8:#57606a; --ansi-9:#a40e26; --ansi-10:#1a7f37; --ansi-11:#7d4e00; --ansi-12:#0550ae; --ansi-13:#6639ba; --ansi-14:#1b6f78; --ansi-15:#1d2530;";
@@ -410,6 +410,7 @@ const THEME_VARS = `
     --canvas:#0e1116; --surface:#161b22; --elev:#1c232c; --border:#2a333f; --border-strong:#465061;
     --fg:#e6edf3; --fg2:#8b98a5;
     ${ANSI_DARK}
+    --term-bg:#0c252d; --term-fg:#ffffff;
     --accent:#22d3ee; --accent-ink:#083344; --accent-soft:#122f33; --accent-hover:#10bad4;
     --success:#3fb950; --warning:#d29922; --error:#f85149; --stale:#a78bfa;
     --good-soft:#122820; --warn-soft:#2a2415; --err-soft:#2b1817;
@@ -420,6 +421,7 @@ const THEME_VARS = `
     --canvas:#f3f5f7; --surface:#ffffff; --elev:#ffffff; --border:#e2e8f0; --border-strong:#cbd5e1;
     --fg:#1d2530; --fg2:#5c6673;
     ${ANSI_LIGHT}
+    --term-bg:#f3f5f7; --term-fg:#1d2530;
     --accent:#0e7490; --accent-ink:#ffffff; --accent-soft:#eaf6f8; --accent-hover:#155e75;
     --success:#15803d; --warning:#a15c00; --error:#b42318; --stale:#6941c6;
     --good-soft:#e7f6ec; --warn-soft:#fbf0dc; --err-soft:#fbe9e7;
@@ -431,6 +433,7 @@ const THEME_VARS = `
       --canvas:#f3f5f7; --surface:#ffffff; --elev:#ffffff; --border:#e2e8f0; --border-strong:#cbd5e1;
       --fg:#1d2530; --fg2:#5c6673;
       ${ANSI_LIGHT}
+      --term-bg:#f3f5f7; --term-fg:#1d2530;
       --accent:#0e7490; --accent-ink:#ffffff; --accent-soft:#eaf6f8; --accent-hover:#155e75;
       --success:#15803d; --warning:#a15c00; --error:#b42318; --stale:#6941c6;
       --good-soft:#e7f6ec; --warn-soft:#fbf0dc; --err-soft:#fbe9e7;
@@ -438,6 +441,30 @@ const THEME_VARS = `
     :root:not([data-theme])[data-palette="teal"]{ --accent:#0f766e; --accent-ink:#ffffff; --accent-soft:#eaf8f6; --accent-hover:#115e59; }
     :root:not([data-theme])[data-palette="navy"]{ --accent:#1e3a8a; --accent-ink:#ffffff; --accent-soft:#eaeef8; --accent-hover:#15306e; }
   }`;
+
+// UX baseline (ui-ux-pro-max audit, captain-ordered refactor 2026-08-13),
+// injected into every captain-facing page's <style> right after THEME_VARS -
+// deliberately NOT into IFRAME_STYLE, whose artifact internals stay put.
+// One rule per finding, additive so page-local CSS stays authoritative:
+// - focus-states: keyboard focus was invisible on buttons/links across the
+//   app (11 :focus rules total, all inputs); :focus-visible only, so mouse
+//   clicks stay ringless and input :focus styling is untouched.
+// - cursor/touch: pointer affordance + touch-action on every interactive
+//   element (34 scattered cursor:pointer rules did not cover buttons).
+// - state-transition: hover/active snapped (8 transitions app-wide); one
+//   shared 150ms ease-out rhythm (motion-consistency), colors/opacity only.
+// - disabled-states: reduced opacity + not-allowed cursor.
+// - number-tabular: data columns (counts, timers) stop shifting in --ui
+//   contexts; the mono font is already tabular.
+// - reduced-motion: honored globally instead of per-page.
+const UX_BASE = `
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button,a,summary,[role="button"]{cursor:pointer;touch-action:manipulation}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button,a{transition:background-color .15s ease-out,color .15s ease-out,border-color .15s ease-out,opacity .15s ease-out}
+  body{font-variant-numeric:tabular-nums}
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+`;
 
 // Pre-paint theme + palette application: apply an explicit stored choice for
 // BOTH axes before first render so there is no dark->light (or palette) flash.
@@ -3404,7 +3431,7 @@ function termFramePage(): Response {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>agent-crew terminal</title>
 <link rel="stylesheet" href="/assets/xterm/xterm.css">
-<style>html,body{margin:0;height:100%;background:#0b0f14}#t{height:100%;padding:4px 0 0 6px;box-sizing:border-box}
+<style>html,body{margin:0;height:100%;background:#0c252d}#t{height:100%;padding:4px 0 0 6px;box-sizing:border-box}
 /* Kill xterm's viewport scrollbar: the UA paints it a light track that reads as
    a white stripe down the right edge of a dark terminal. Scrollback is reached
    by wheel and by the pane's own keys, so the bar carries no function here. */
@@ -3426,8 +3453,8 @@ const path = q.get("path") ?? "";
 // widths - on glyphs like the TUI's status arrows the two disagree, so
 // redraw-in-place left misaligned residue (the captain's "lỗi font" report).
 const term = new Terminal({
-  fontSize: 13, scrollback: 5000, theme: { background: "#0b0f14" },
-  fontFamily: "Menlo, Monaco, 'SF Mono', 'DejaVu Sans Mono', monospace",
+  fontSize: 12, scrollback: 5000, theme: { background: "#0c252d" },
+  fontFamily: "'JetBrains Mono', Menlo, Monaco, 'SF Mono', 'DejaVu Sans Mono', monospace",
   allowProposedApi: true,  // the unicode-version switch is behind this flag
 });
 const fit = new FitAddon.FitAddon();
@@ -4523,6 +4550,7 @@ function whiteboardPage(): Response {
 ${THEME_INIT}
 <style>
 ${THEME_VARS}
+${UX_BASE}
   html,body{margin:0;height:100%;font-family:system-ui,sans-serif}
   body{background:var(--canvas);color:var(--fg)}
   /* Chrome themes with the shared tokens (theme-revamp); the Excalidraw canvas
@@ -4530,8 +4558,9 @@ ${THEME_VARS}
   #bar{display:flex;gap:8px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--surface);color:var(--fg)}
   #bar .name{font-weight:600;font-size:14px;margin-right:4px}
   #bar button{font:600 12px system-ui;padding:5px 14px;border-radius:6px;border:none;cursor:pointer;background:var(--elev);color:var(--fg);box-shadow:inset 0 0 0 1px var(--border)}
-  #bar button:hover{filter:brightness(1.12)}
+  #bar button:hover{box-shadow:inset 0 0 0 1px var(--border-strong)}
   #bar #save{background:var(--accent);color:var(--accent-ink);box-shadow:none}
+  #bar #save:hover{filter:brightness(1.08);box-shadow:none}
   #bar #save:hover{filter:brightness(1.08)}
   #bar #status{color:var(--fg2);font-size:12px}
   #board{height:calc(100% - 45px)}
@@ -4797,6 +4826,7 @@ function whiteboardFramePage(): Response {
 ${THEME_INIT}
 <style>
 ${THEME_VARS}
+${UX_BASE}
   html,body{margin:0;height:100%;background:var(--canvas);font-family:system-ui,sans-serif}
   #bar{display:flex;gap:8px;align-items:center;padding:5px 10px;background:var(--surface);border-bottom:1px solid var(--border)}
   #bar .nm{color:var(--fg);font:600 12px system-ui}
@@ -5787,6 +5817,7 @@ function reviewPage(guest = false): Response {
 ${THEME_INIT}
 <style>
 ${THEME_VARS}
+${UX_BASE}
   :root{ --ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   html{height:100%;background:var(--canvas)}
@@ -7162,6 +7193,7 @@ const PAGE = `<!doctype html>
 ${THEME_INIT}
 <style>
 ${THEME_VARS}
+${UX_BASE}
   :root{
     --focus:var(--accent);
     /* Layout + derived aliases (theme-neutral): the palette itself lives in
@@ -7233,7 +7265,7 @@ ${THEME_VARS}
 
   /* ---- main ---- */
   .main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
-  .pagehead{ position:sticky; top:0; z-index:5; background:var(--surface); border-bottom:1px solid var(--border);
+  .pagehead{ position:sticky; top:0; z-index:5; background:color-mix(in srgb, var(--surface) 86%, transparent); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); border-bottom:1px solid var(--border);
     padding:12px 20px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
   .headline{ display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; min-width:0; }
   .pagehead h1{ font-size:22px; font-weight:600; }
@@ -7487,8 +7519,19 @@ ${THEME_VARS}
   .bcol .bch .bar{ width:11px; height:11px; border-radius:3px; }
   .bcol.flight .bch .bar{ background:var(--accent); } .bcol.queued .bch .bar{ background:var(--warn); } .bcol.done .bch .bar{ background:var(--good); }
   .bcol .bch .cnt{ margin-left:auto; background:var(--panel-2); border:1px solid var(--line); border-radius:20px; font-size:11px; padding:0 8px; color:var(--muted); font-weight:600; }
-  .bcard{ display:block; width:100%; text-align:left; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:10px 11px; margin:8px 0 0; cursor:pointer; transition:border-color .12s, box-shadow .12s, transform .12s; }
+  .bcard{ display:block; width:100%; text-align:left; background:var(--panel-2); border:1px solid var(--line); border-left:3px solid var(--line); border-radius:8px; padding:10px 11px; margin:8px 0 0; cursor:pointer; transition:border-color .12s, box-shadow .12s, transform .12s; }
   .bcard:hover, .bcard:focus-visible{ border-color:var(--accent); box-shadow:var(--shadow-card); transform:translateY(-1px); text-decoration:none; }
+  /* Status spine (ui-ux-pro-max: state readable at a scan, color+position not
+     color alone - the badge/chips still carry the words). Same d.state
+     vocabulary as STORY_BADGE, never re-derived. Hover keeps the spine hue. */
+  .bcard.st-in_flight{ border-left-color:var(--success); }
+  .bcard.st-done{ border-left-color:var(--accent); }
+  .bcard.st-failed{ border-left-color:var(--error); }
+  .bcard.st-abandoned{ border-left-color:var(--stale); }
+  .bcard.st-in_flight:hover{ border-left-color:var(--success); }
+  .bcard.st-done:hover{ border-left-color:var(--accent); }
+  .bcard.st-failed:hover{ border-left-color:var(--error); }
+  .bcard.st-abandoned:hover{ border-left-color:var(--stale); }
   .bcard .cid{ font-family:var(--mono); font-size:12px; font-weight:700; color:var(--accent); word-break:break-all; }
   .bcard .ct{ font-size:12.5px; color:var(--ink); margin:3px 0 7px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .bcard .brow{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px; color:var(--muted); }
@@ -7513,7 +7556,14 @@ ${THEME_VARS}
   .bsubs{ display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
   .bsubs .badge{ max-width:100%; overflow:hidden; text-overflow:ellipsis; }
   .bcard .live{ margin-left:auto; }
-  .bempty{ color:var(--muted); font-size:12px; padding:8px 4px; }
+  .bempty{ color:var(--muted); font-size:12px; padding:16px 10px; text-align:center; border:1px dashed var(--line); border-radius:8px; margin-top:8px; }
+  .kpis{ display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:14px; }
+  .kpi{ background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 14px; display:flex; align-items:baseline; gap:10px; }
+  .kpi b{ font-family:var(--mono); font-size:22px; font-weight:700; color:var(--ink); }
+  .kpi span{ font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .kpi.ok b{ color:var(--success); }
+  .kpi.warn{ border-color:var(--warning); background:var(--warn-soft); }
+  .kpi.warn b{ color:var(--warning); }
   /* Live system/paned task (board-live-panes): muted + dashed so background machinery reads distinct from backlog work, in both themes (design tokens only). */
   .bcard.sys{ background:var(--panel); border-style:dashed; cursor:default; }
   .bcard.sys:hover, .bcard.sys:focus-visible{ border-color:var(--line); box-shadow:none; transform:none; }
@@ -7544,12 +7594,12 @@ ${THEME_VARS}
   .chiefp .cbar .cbtn{ margin-left:auto; font:600 11px var(--mono); padding:3px 10px; border:1px solid var(--line); border-radius:4px; background:var(--elev); color:var(--muted); cursor:pointer; }
   .chiefp .cbar .cbtn[aria-pressed="true"]{ color:var(--accent); border-color:var(--accent); }
   .chiefp .cbar .cbtn:hover{ border-color:var(--border-strong); color:var(--ink); }
-  /* Page tokens, not a hardcoded slab: #0b0f14/#c9d1d9 sat beside a --canvas of
-     #0e1116 in dark (close but never equal) and inverted the page outright in
-     light. The web terminal already takes --canvas/--fg through acSetTheme, so
-     the snapshot pane reads the SAME pair - one terminal look, both surfaces. */
-  .chiefp .cterm{ flex:1 1 auto; overflow-y:auto; overflow-x:hidden; margin:0; padding:10px 12px; background:var(--canvas); color:var(--fg);
-    font:12px/1.45 var(--mono); white-space:pre-wrap; word-break:break-word;
+  /* Page tokens, not a hardcoded slab: the web terminal takes --term-bg/--term-fg
+     (the captain's Warp dark_city surface in dark, the page canvas in light)
+     through acSetTheme, so the snapshot pane reads the SAME pair - one terminal
+     look, both surfaces - and the same JetBrains Mono the captain's Warp runs. */
+  .chiefp .cterm{ flex:1 1 auto; overflow-y:auto; overflow-x:hidden; margin:0; padding:10px 12px; background:var(--term-bg, var(--canvas)); color:var(--term-fg, var(--fg));
+    font:12px/1.45 'JetBrains Mono', var(--mono); white-space:pre-wrap; word-break:break-word;
     /* Same white stripe the web terminal had: the UA's light scrollbar track
        against a dark pane. Wheel still scrolls; only the bar is gone. */
     scrollbar-width:none; -ms-overflow-style:none; }
@@ -8703,6 +8753,39 @@ function loadBoardReports(hp){
   }).catch(function(){ boardArt[hp]={ ts:Date.now(), arts:(c&&c.arts)||[], loading:false }; });
 }
 
+// KPI strip data (ui-ux-pro-max #3): the one number the columns cannot show -
+// rooms awaiting the captain - fetched from the processes route's own payload
+// (rooms accounting stays ac-room.sh's, never re-derived), same 12s-TTL
+// fetch-then-rerender shape as loadBoardReports above.
+var boardKpiC={};
+function loadBoardKpi(hp){
+  var c=boardKpiC[hp];
+  if(c && c.loading) return;
+  if(c && c.ts && (Date.now()-c.ts)<12000) return;
+  boardKpiC[hp]={ ts:(c&&c.ts)||0, pending:(c&&c.pending), loading:true };
+  fetch('/api/processes?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
+    var rooms=(j&&j.rooms)||[], n=0;
+    for(var i=0;i<rooms.length;i++){ if(rooms[i].pending||rooms[i].handback) n++; }
+    boardKpiC[hp]={ ts:Date.now(), pending:n, loading:false };
+    if(S.route && S.route.name==='board') renderPage();
+  }).catch(function(){ boardKpiC[hp]={ ts:Date.now(), pending:(c&&c.pending), loading:false }; });
+}
+function boardKpis(hp, b, home){
+  loadBoardKpi(hp);
+  var flying=(home&&home.crew&&home.crew.tasks||[]).length;
+  var pend=boardKpiC[hp]&&boardKpiC[hp].pending;
+  var tiles=[
+    ['flying', String(flying), flying>0?'ok':''],
+    ['queued', String((b.queued||[]).length), ''],
+    ['awaiting captain', pend==null?'…':String(pend), (pend>0)?'warn':''],
+    ['done', String((b.done||[]).length), ''],
+  ];
+  var s='<div class="kpis">';
+  for(var i=0;i<tiles.length;i++)
+    s+='<div class="kpi '+tiles[i][2]+'"><b>'+tiles[i][1]+'</b><span>'+tiles[i][0]+'</span></div>';
+  return s+'</div>';
+}
+
 // Index the backlog once: known family ids (for the id normalizer), each family's
 // raw line + section, and its epic children (lines carrying epic:<id>).
 function boardData(b){
@@ -8783,7 +8866,8 @@ function pageBoard(){
   var sysPanes=boardSystemPanes(r.home, bd.known, inflightIds);
   // Column order (dashboard-board-v2): Queued -> In flight -> Done.
   var cols=[['queued','queued','Queued'],['in_flight','flight','In flight'],['done','done','Done']];
-  var s='<div class="filters" style="margin-bottom:14px">'
+  var s=boardKpis(hp, b, r.home);
+  s+='<div class="filters" style="margin-bottom:14px">'
     +'<input class="search-in" type="search" data-list-search placeholder="Filter tasks…" aria-label="Filter tasks" autocomplete="off" spellcheck="false">'
     +'<button class="btoggle" type="button" data-board-hidedone aria-pressed="'+(hideDone?'true':'false')+'"><span class="sw" aria-hidden="true"></span>Hide Done</button>'
     +'</div>';
@@ -8802,7 +8886,11 @@ function pageBoard(){
     // Eye on the Done header hides the column (same toggle as the toolbar switch).
     var eye=key==='done'?' <button class="eye" type="button" data-board-hidedone title="Hide Done column" aria-label="Hide Done column">👁</button>':'';
     s+='<div class="bcol '+cls+'"><div class="bch"><span class="bar"></span>'+esc(label)+'<span class="cnt">'+shown+'</span>'+eye+'</div>';
-    s+=(cards||'<div class="bempty">— empty —</div>')+'</div>';
+    var bempty=q?'No tasks match the filter'
+      :(key==='queued'?'Nothing queued — mint work with /brainstorm or an order'
+      :key==='in_flight'?'Nothing in flight — spawn a READY queued row to start'
+      :'Nothing landed yet');
+    s+=(cards||'<div class="bempty">'+bempty+'</div>')+'</div>';
   }
   return s+'</div>';
 }
@@ -8851,7 +8939,7 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode){
   // A LINK, so the detail is reachable by url, middle-click and back button -
   // it was a button only because the detail used to be a modal.
   var cchips=contractChips(d.contract, liveMode);
-  return '<a class="bcard" href="/fleets/'+enc(currentFleet())+'/board/'+enc(f.id)+'" data-link>'
+  return '<a class="bcard st-'+d.state+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(f.id)+'" data-link>'
     +'<div class="cid">'+esc(f.id)+badges+'</div>'
     +'<div class="ct">'+esc(d.text||f.id)+'</div>'
     +(cchips?'<div class="brow">'+cchips+'</div>':'')
@@ -9160,7 +9248,7 @@ var termBg='';
 function termTheme(){
   var f=document.querySelector('.termpage iframe'); if(!f) return;
   var cs=getComputedStyle(document.documentElement);
-  var t={ background:(cs.getPropertyValue('--canvas')||'').trim(), foreground:(cs.getPropertyValue('--fg')||'').trim() };
+  var t={ background:((cs.getPropertyValue('--term-bg')||cs.getPropertyValue('--canvas'))||'').trim(), foreground:((cs.getPropertyValue('--term-fg')||cs.getPropertyValue('--fg'))||'').trim() };
   if(!t.background) return;
   t.cursor=t.foreground; t.cursorAccent=t.background;
   var sig=t.background+'|'+t.foreground;
