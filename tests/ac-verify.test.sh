@@ -652,17 +652,17 @@ case "$(cat "$VERIFY_PROMPT_CAPTURE")" in *"fix delta since the prior verdict"*)
   fail "a legacy history shape must not fabricate an interdiff scope" ;; esac
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $base $target --" \
   "a legacy history shape keeps the full-diff obligation"
-# 510 = the 435 canonical budget + the history handling contract (last-entry
+# 510 = the 435 canonical budget + the history handling contract (previous-round
 # disposition rules, resolved_ids, and the no-renumber clause the measured
 # rejections needed); the ledger payload itself stays excluded like INTENT.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
 [ "$scaffold_words" -le 510 ] \
   || fail "history review prompt exceeds its 510-word scaffold budget: $scaffold_words"
 
-# A CUMULATIVE ledger (the ac-ship review-agent shape) NARROWS round 2+ to
-# the interdiff scope (captain 2026-08-05): the last entry's reviewed_ref
+# A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
+# the interdiff scope (captain 2026-08-05): the previous entry's reviewed_ref
 # becomes the round's review obligation (fix delta), the full diff demotes to
-# context, and every prior open fix/ask-user id must be dispositioned -
+# context, and every previous-round open fix/ask-user id must be dispositioned -
 # re-reported or listed in resolved_ids - before the verdict is accepted.
 ledger_input="$TMP/review-ledger.json"
 jq -n --arg ref "$base" '[{round:1, reviewed_ref:$ref, verdict:"fix", risk_level:"high",
@@ -709,13 +709,13 @@ VERIFY_RESOLVED_IDS=CR-1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$t
   --family "$ledger_family" --caller "$caller" --intent "$intent" \
   --history "$ledger_input" --output "$ledger_output" >/dev/null
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $base $target --   (the fix delta since the prior verdict)" \
-  "the ledger's last reviewed_ref becomes round 2+'s review obligation"
+  "the previous reviewed_ref becomes round 2+'s review obligation"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Full-PR context: git diff" \
   "the full diff stays available as context"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "re-reviewing it is NOT this round" \
   "the full-diff re-read is explicitly relieved on round 2+"
-assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "disposition every" \
-  "the history contract demands disposition of prior open ids"
+assert_contains "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" "disposition every" \
+  "the history contract demands disposition of previous-round open ids"
 assert_eq "$(jq -c '.resolved_ids' "$ledger_output")" '["CR-1"]' \
   "resolved_ids survives into the durable result"
 assert_eq "$(jq -r '.verdict' "$ledger_output")" "pass" "a fully dispositioned clean round derives pass"
@@ -768,7 +768,7 @@ assert_contains "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" \
 # checklist would demand a disposition the validator does not want.
 case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: CR-1 CR-2"*|*"CR-2 CR-1"*) \
   fail "the checklist must carry only the ids prior_open actually holds" ;; esac
-# The cumulative-ledger prompt is the shape PRODUCTION uses, and until now it had
+# The previous-round ledger prompt is the shape PRODUCTION uses, and until now it had
 # no budget at all: the 510 assertion above measures the LEGACY bare-array shape,
 # which takes neither the interdiff scope nor the checklist, so it is ~75 words
 # lighter and never covered the shape ac-ship actually sends (a real stored
@@ -778,17 +778,11 @@ case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: C
 # this bounds the PROSE, which is the part that drifts.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
 [ "$scaffold_words" -le 590 ] \
-  || fail "cumulative-ledger review prompt exceeds its 590-word scaffold budget: $scaffold_words"
+  || fail "previous-round ledger review prompt exceeds its 590-word scaffold budget: $scaffold_words"
 
-# CUMULATIVE, DELIBERATELY: the obligation spans EVERY ledger entry, not just the
-# last. Narrowing it to the last entry was designed, implemented and then backed
-# out on this task, because two classes measured in stored runs are only caught
-# by the union: a finding a round CLOSED that a later rebase REGRESSED, and one
-# downgraded to no-op whose own description states a residual is still open
-# (a stored run's F-1: "PARTIALLY RESOLVED - the blocking half is closed, a
-# residual is not"). Both cases below use a ledger whose LAST entry is clean and
-# whose FIRST entry holds the open id, so a last-entry-only derivation passes the
-# reject case and fails nothing else - these are what catch it.
+# PREVIOUS ROUND ONLY: resolved findings from older rounds do not require
+# re-attestation later. A round-3 history whose r1 had an open id but whose r2
+# was clean must accept a clean r3 verdict without listing the older id again.
 carry_ledger="$TMP/review-ledger-carry.json"
 jq -n --arg ref "$base" '[
   {round:1, reviewed_ref:$ref, verdict:"fix", risk_level:"high",
@@ -796,41 +790,23 @@ jq -n --arg ref "$base" '[
   {round:2, reviewed_ref:$ref, verdict:"pass", risk_level:"low", findings:[]}]' \
   >"$carry_ledger"
 
-# (a) dropped -> still REJECTED, by name.
 carry_family=flow-v2-ledger-carry
+carry_output="$TMP/ledger-carry-review.json"
 export VERIFY_EXPECT_ID="$carry_family-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-carry-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-carry-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-carry-cwd.capture"
 export VERIFY_TRANSCRIPT="$TMP/ledger-carry-transcript.jsonl"
-assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
-  --family "$carry_family" --caller "$caller" --intent "$intent" \
-  --history "$carry_ledger" --output "$TMP/ledger-carry-review.json"
-rej="$(rejection_log "$carry_family")"
-[ -n "$rej" ] || fail "a dropped carried-forward id must leave its rejection reason"
-assert_contains "$(cat "$rej")" "undispositioned-prior-finding-ids: CR-7" \
-  "an id open in an EARLIER entry is still owed once the last entry is clean"
-
-# (b) re-attested at this ref -> ACCEPTED. This is the answer to "does the
-# obligation survive round 3+": it is a re-attestation, not an impossibility, and
-# a real 9-round run met it at r3-r9 with resolved_ids growing 2,4,6,7,9,11,12.
-reattest_family=flow-v2-ledger-reattest
-reattest_output="$TMP/ledger-reattest-review.json"
-export VERIFY_EXPECT_ID="$reattest_family-verify-codereview"
-export VERIFY_META_CAPTURE="$TMP/ledger-reattest-meta.capture"
-export VERIFY_PROMPT_CAPTURE="$TMP/ledger-reattest-prompt.capture"
-export VERIFY_CWD_CAPTURE="$TMP/ledger-reattest-cwd.capture"
-export VERIFY_TRANSCRIPT="$TMP/ledger-reattest-transcript.jsonl"
 # `|| fail` on purpose: a bare call that dies here aborts the suite with only
 # ac-verify's own ERROR on stderr and no named assertion.
-VERIFY_RESOLVED_IDS=CR-7 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
-  --family "$reattest_family" --caller "$caller" --intent "$intent" \
-  --history "$carry_ledger" --output "$reattest_output" >/dev/null \
-  || fail "a carried-forward id re-attested at this ref must be accepted"
-assert_eq "$(jq -r '.verdict' "$reattest_output")" "pass" \
-  "re-attesting a carried-forward id in resolved_ids clears the obligation"
-assert_contains "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" "REJECTS this verdict: CR-7" \
-  "the checklist names the carried-forward id the round has to answer for"
+"$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$carry_family" --caller "$caller" --intent "$intent" \
+  --history "$carry_ledger" --output "$carry_output" >/dev/null \
+  || fail "an older resolved id must not require re-attestation in round 3"
+assert_eq "$(jq -r '.verdict' "$carry_output")" "pass" \
+  "a clean previous round leaves no carried-forward disposition obligation"
+case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: CR-7"*) \
+  fail "the checklist must not demand re-attestation of older resolved ids" ;; esac
 
 # --- A PRIOR REF THAT NO LONGER SITS ON THE REVIEWED REF'S HISTORY ------------
 # The interdiff narrowing is sound only while the prior reviewed_ref is still an

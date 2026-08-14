@@ -173,8 +173,12 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    not-yet-created delivery (no PR, unpushed, no CI) as a finding - later
    steps create those; a pre-existing/external PR stays reviewable.
    Default `auto_fix.review` is 0. After ANY fix round, commit the repair and
-   launch a fresh verifier over the ENTIRE current diff/ref. Structured prior
-   findings may carry forward; old context and PASS authority never do.
+   launch a fresh verifier bound to the new exact ref. Round 1 reviews the full
+   base-to-ref diff; round N+1 verifies round N's open findings and reviews
+   only `roundN.reviewed_ref..HEAD`, with the full diff retained as context.
+   Resolved findings from older rounds do not carry forward. Calling the
+   verifier again before HEAD changes is refused; pane/schema retries create
+   no durable round or reviewed ref.
    A round returning ZERO `fix` findings FREEZES the tree: its advisory
    `no-op` findings are notes for the PR body and the backlog, never a
    licence to commit - proceed to the remaining delivery steps and land, and

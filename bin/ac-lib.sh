@@ -231,11 +231,22 @@ ac_skill_usage_bump() {
 # which is a bigger change than this one.
 
 ac_pid_alive() {
-  # ac_pid_alive <pid> - 0 when the process EXISTS. `ps`, never `kill -0`:
-  # kill reports EPERM (a process this user may not signal) as DEAD, which
-  # would hand a LIVE holder's lock straight to a second acquirer.
-  [ -n "${1:-}" ] || return 1
-  ps -p "$1" >/dev/null 2>&1
+  # ac_pid_alive <pid> - 0 when the process EXISTS. Prefer `ps`: a bare
+  # `kill -0` reports EPERM (a process this user may not signal) as failure,
+  # which would hand a LIVE holder's lock straight to a second acquirer. Some
+  # sandboxes deny `ps` itself, so fall back to kill -0 and distinguish its
+  # C-locale permission denial (still live) from ESRCH (dead).
+  local pid="${1:-}" err
+  # Lock owners are canonical positive process ids. In particular, never pass
+  # zero to kill: `kill -0 0` targets the current process group and would make
+  # a corrupt pid file look permanently live.
+  case "$pid" in ''|*[!0-9]*|0*) return 1 ;; esac
+  ps -p "$pid" >/dev/null 2>&1 && return 0
+  err="$(LC_ALL=C kill -0 "$pid" 2>&1)" && return 0
+  case "$err" in
+    *[Oo]peration*not*permitted*|*[Pp]ermission*denied*) return 0 ;;
+  esac
+  return 1
 }
 
 ac_file_mtime() {

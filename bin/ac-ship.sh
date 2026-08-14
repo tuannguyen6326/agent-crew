@@ -73,11 +73,11 @@
 # INDEPENDENT REVIEW: the review step is never self-review. `review-agent` is a
 # policy adapter over `ac-verify codereview`; the facade owns one fresh pane,
 # one exact-ref isolated lease, the canonical prompt, verdict validation, and
-# durable capture-before-reap. review-agent assembles the cumulative prior-round
-# ledger itself (`logs/review-history-rN.json` - every prior validated round
-# result in round order, machine-built so the fixer never authors what steers
-# its reviewer) and passes it as --history; ac-verify turns it into an interdiff
-# attention map plus fail-closed disposition of prior open ids. crew-ship never
+# durable capture-before-reap. review-agent passes only the immediately previous
+# validated round (`logs/review-history-rN.json`, machine-built so the fixer
+# never authors what steers its reviewer) as --history; ac-verify turns it into
+# an interdiff attention map plus fail-closed disposition of that round's open
+# ids. crew-ship never
 # resumes a reviewer session, replaces a pane, or invokes a headless fallback.
 # `<run>/review.agent` binds the receipt to `reviewed_ref`; `step review
 # completed` refuses when HEAD differs, and `push` and `finish
@@ -154,8 +154,11 @@
 #   kind of line on ITS side (bin/ac-verify.sh). Before this, a rejected round
 #   left no trace of why, so the caller's only move was to re-run the same ref.
 # - FLOOR METADATA: round 2+ passes AC_FINDINGS_ROUND + AC_FINDINGS_DELTA
-#   (files changed since ROUND 1's reviewed ref) into ac_findings_normalize,
-#   whose late-finding floor and fail directions bin/ac-pipeline-lib.sh owns.
+#   (files changed since the IMMEDIATELY PREVIOUS round's reviewed ref) plus
+#   AC_FINDINGS_PRIOR_OPEN (that round's blocking ids) into
+#   ac_findings_normalize. Only NEW out-of-delta findings floor; an unresolved
+#   previous finding never becomes advisory merely because its file was not in
+#   the latest fix delta. bin/ac-pipeline-lib.sh owns the floor directions.
 #
 # Findings JSON (per step):
 #   [{"id","severity","action","file","line","description",
@@ -169,7 +172,7 @@
 # closed to ask-user - it reaches the captain instead of a fixer.
 # `fix` is RESERVED for delivery-blocking findings - correctness, security,
 # regression, data loss, accepted-requirement/ruling violation (captain order
-# 2026-07-30): every fix finding forces a full fix-and-rereview round, so
+# 2026-07-30): every fix finding forces a fresh fix-and-rereview round, so
 # advisory improvements ride as no-op with suggested_fix - recorded in the
 # findings and the PR, never looping the pipeline. The reviewer prompt
 # (ac-verify.sh) carries the same rule; action stays the ONE loop lever.
@@ -1305,11 +1308,11 @@ cmd_review_agent() {
   # once-only --final-round grant, and the round/fix-delta metadata that arms
   # the shared normalizer's late-finding floor.
   require_run
-  local rd round base head intent intent_file result verify caller family
+  local rd round base head intent intent_file result result_tmp verify caller family
   local json reviewed findings_json risk_meta risk
-  local i prior ledger history_file
-  local final_round=0 max_rounds marker test_state af tc cf why r1_ref delta
-  local prev prev_n prev_verdict prev_ref invocation attempts reject_why
+  local prior ledger history_file
+  local final_round=0 max_rounds marker test_state af tc cf why floor_ref delta
+  local prev prev_n prev_verdict prev_ref prior_open_ids invocation attempts reject_why remedy
   local -a args
   [ "${1:-}" != --final-round ] || final_round=1
   rd="$(run_dir)"
@@ -1361,6 +1364,20 @@ cmd_review_agent() {
     prev="$rd/logs/review-agent-r$prev_n.json"
     prev_verdict="$(jq -r '.verdict // ""' "$prev" 2>/dev/null)" || prev_verdict=""
     prev_ref="$(jq -r '.reviewed_ref // ""' "$prev" 2>/dev/null)" || prev_ref=""
+    # One exact ref receives one validated review round. Re-running the same
+    # SHA cannot prove a fix that was never committed, cannot settle an
+    # ask-user finding better than its captain decision, and cannot improve a
+    # pass. Infrastructure/schema retries have no durable result and therefore
+    # still reach the same-ref attempt brake below.
+    if [ -n "$prev_ref" ] && [ "$prev_ref" = "$head" ]; then
+      case "$prev_verdict" in
+        pass) remedy="complete delivery at this ref; advisory findings belong in the PR/backlog" ;;
+        fix) remedy="apply the blocking fix and commit it before requesting the next round" ;;
+        ask-user) remedy="record the captain decision; commit only if that decision requires a code change" ;;
+        *) remedy="change the reviewed ref before requesting another round" ;;
+      esac
+      ac_die "review-agent refuses to re-open: round $prev_n already reviewed current HEAD ${head:0:12} with verdict ${prev_verdict:-unknown} - $remedy"
+    fi
     if [ "$prev_verdict" = pass ] && review_delta_is_caller_polish "$prev_ref" "$head" "$base"; then
       ac_die "review-agent refuses to re-open: round $prev_n returned a PASS verdict (zero fix findings) at ${prev_ref:0:12}, and every commit since is this run's own - a 0-fix verdict FREEZES the tree, so advisory (no-op) findings are notes for the PR body and the backlog, never a licence to commit. Reset the crew branch back to ${prev_ref:0:12} and land, or ask your chief to mint a follow-up task for the advisory. A genuine rebase re-opens the round by itself."
     fi
@@ -1407,19 +1424,17 @@ cmd_review_agent() {
   args=(codereview --repo "$repo" --ref "$head" --base "$base"
         --family "$family" --caller "$caller" --intent "$intent_file"
         --output "$result")
-  # Cumulative machine-assembled ledger: EVERY prior validated round result,
-  # in round order, never freeform text - the fixer must not be able to author
-  # what steers its own reviewer. ac-verify derives its interdiff attention map
-  # and disposition enforcement from this shape.
-  ledger='[]'
-  for ((i = 1; i < round; i++)); do
-    prior="$rd/logs/review-agent-r$i.json"
-    [ -s "$prior" ] || continue
-    ledger="$(jq -c --argjson round "$i" --slurpfile prior "$prior" \
-      '. + [$prior[0] | {round: $round, reviewed_ref, verdict, risk_level, findings}]' <<<"$ledger")" \
-      || ac_die "review-agent: prior round result is unreadable: $prior"
-  done
-  if [ "$ledger" != '[]' ]; then
+  # Previous-round handoff only: round N verifies the findings emitted by round
+  # N-1 and reviews exactly N-1.reviewed_ref..HEAD. Findings resolved in N-1 do
+  # not become permanent re-attestation obligations in N+1. Every complete
+  # round remains durable in its own review-agent-rN.json for audit.
+  if [ "$prev_n" -gt 0 ]; then
+    prior="$rd/logs/review-agent-r$prev_n.json"
+    [ -s "$prior" ] || ac_die "review-agent: previous round result is missing: $prior"
+    ledger="$(jq -c --argjson round "$prev_n" \
+      '[. | {round: $round, reviewed_ref, verdict, risk_level, findings,
+             resolved_ids: (.resolved_ids // [])}]' "$prior")" \
+      || ac_die "review-agent: previous round result is unreadable: $prior"
     history_file="$rd/logs/review-history-r$round.json"
     printf '%s\n' "$ledger" >"$history_file"
     args+=(--history "$history_file")
@@ -1454,25 +1469,55 @@ cmd_review_agent() {
 
   review_invocation_outcome "$rd" ok
   findings_json="$(jq -c '.findings' <<<"$json")"
-  # LATE-FINDING FLOOR METADATA (S1): round + the fix-delta since ROUND 1's
-  # reviewed ref ride env into ac_findings_normalize, which floors an r2+
-  # `fix` on untouched code to advisory (carve-out and fail directions live
-  # in bin/ac-pipeline-lib.sh). An unreadable r1 receipt arms nothing - the
-  # floor fails toward reviewing too much.
-  r1_ref=""
+  # LATE-FINDING FLOOR METADATA (S1): use the SAME immediately previous
+  # reviewed ref that ac-verify used for this round's interdiff. From round 3
+  # onward, using round 1 here would keep files touched by an older fix inside
+  # the delta forever and let late findings on them buy unnecessary rounds.
+  # An unreadable or non-ancestor previous ref arms nothing - the floor fails
+  # toward reviewing too much, matching ac-verify's scope fallback.
+  floor_ref=""
   delta=""
-  if [ "$round" -ge 2 ] && [ -s "$rd/logs/review-agent-r1.json" ]; then
-    r1_ref="$(jq -r '.reviewed_ref // ""' "$rd/logs/review-agent-r1.json" 2>/dev/null)" || r1_ref=""
+  prior_open_ids='[]'
+  if [ "$round" -ge 2 ] && [ -n "${prev_ref:-}" ]; then
+    prior_open_ids="$(jq -c '[.findings[]?
+      | select(.action == "fix" or .action == "ask-user")
+      | .id | select(type == "string")] | unique' "$prev" 2>/dev/null)" \
+      || prior_open_ids=""
+    floor_ref="$(git -C "$repo" rev-parse --verify "${prev_ref}^{commit}" 2>/dev/null || true)"
+    if [ -n "$floor_ref" ] \
+      && ! git -C "$repo" merge-base --is-ancestor "$floor_ref" "$head" 2>/dev/null; then
+      floor_ref=""
+    fi
   fi
   # A fresh independent review round IS the resolution a `fix` finding is
   # waiting for (F9): trust this one internal call to replace review findings
   # wholesale, including dropping resolved `fix` ids.
-  if [ -n "$r1_ref" ] && delta="$(git -C "$repo" diff --name-only "$r1_ref" "$head" 2>/dev/null)"; then
+  if [ -n "$floor_ref" ] && [ -n "$prior_open_ids" ] \
+    && delta="$(git -C "$repo" diff --name-only "$floor_ref" "$head" -- 2>/dev/null)"; then
     AC_FINDINGS_ROUND="$round" AC_FINDINGS_DELTA="$delta" \
+      AC_FINDINGS_PRIOR_OPEN="$prior_open_ids" \
       _ac_findings_trusted=1 cmd_findings review <<<"$findings_json" >/dev/null
   else
     _ac_findings_trusted=1 cmd_findings review <<<"$findings_json" >/dev/null
   fi
+  # The per-round artifact is the handoff to the NEXT round, so persist the
+  # policy-normalized findings (including severity/authority/late-round floors)
+  # and re-derive its verdict. The facade's raw pane result remains available in
+  # the verifier evidence dir; carrying its pre-floor `fix` forward would revive
+  # a finding this round already classified as advisory.
+  result_tmp="$(mktemp "$rd/logs/.review-agent-r$round.XXXXXX")" \
+    || ac_die "review-agent: could not stage normalized round result"
+  if jq --slurpfile findings "$rd/findings/review.json" '
+      .findings = $findings[0]
+      | .verdict = (if ([.findings[].action] | index("ask-user")) != null then "ask-user"
+                    elif ([.findings[].action] | index("fix")) != null then "fix"
+                    else "pass" end)' <<<"$json" >"$result_tmp"; then
+    mv "$result_tmp" "$result"
+  else
+    rm -f "$result_tmp"
+    ac_die "review-agent: could not persist normalized round result"
+  fi
+  json="$(cat "$result")"
   risk_meta="$(jq -c '{risk_level, risk_rationale, reviewed_ref}
                         + (if (.summary // "") != "" then {summary: .summary} else {} end)' <<<"$json")"
   cmd_meta review <<<"$risk_meta" >/dev/null

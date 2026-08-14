@@ -282,13 +282,16 @@ rm -f "$sd/famL-chief.meta" "$sd/.mock-win-famL-chief"
 
 # --- lock primitives: liveness, staleness, owner-checked release -----------
 
-# ac_pid_alive: `ps`, not `kill -0` - which reports EPERM (a process this user
-# may not signal) as DEAD and would hand a LIVE holder's lock to a second one.
+# ac_pid_alive prefers `ps` because bare `kill -0` reports EPERM (a process this
+# user may not signal) as DEAD; restricted runtimes exercise the guarded
+# fallback below.
 lib "ac_pid_alive $$" || fail "ac_pid_alive: a live pid reads alive"
 sleep 0 & gone=$!
 wait "$gone" 2>/dev/null || true
 assert_fails lib "ac_pid_alive $gone"
 assert_fails lib 'ac_pid_alive ""'
+assert_fails lib 'ac_pid_alive 0'
+assert_fails lib 'ac_pid_alive 00'
 # The EPERM shape - the ONLY reason this helper exists. A pid that is alive but
 # NOT ours to signal answers rc=1 to `kill -0` (permission denied reads as
 # dead) and rc=0 to `ps`. Without this case, `kill -0` and `ps` are
@@ -301,6 +304,20 @@ if ps -p 1 >/dev/null 2>&1 && ! kill -0 1 2>/dev/null; then
 else
   printf 'SKIP: no EPERM shape on this platform (pid 1 is signalable here)\n' >&2
 fi
+# The verifier lock near-miss: in restricted harnesses, `ps -p <live pid>` can
+# itself be denied. A denied ps must not turn a LIVE owner into a stale lock,
+# but dead pids still have to self-heal through kill -0's ESRCH.
+ps_deny_bin="$TMP/ps-deny-bin"
+mkdir -p "$ps_deny_bin"
+cat >"$ps_deny_bin/ps" <<'EOF'
+#!/usr/bin/env bash
+printf 'ps: Operation not permitted\n' >&2
+exit 126
+EOF
+chmod +x "$ps_deny_bin/ps"
+PATH="$ps_deny_bin:$PATH" lib "ac_pid_alive $$" \
+  || fail "ac_pid_alive: ps denial for a live pid must fail closed as alive"
+assert_fails env PATH="$ps_deny_bin:$PATH" "$BASH" -c ". '$BIN/ac-lib.sh'; ac_pid_alive '$gone'"
 
 # ac_file_mtime: epoch seconds, and portable - BSD `stat -f` and GNU `stat -c`
 # disagree, and the losing form must not leak its output into the winner's.

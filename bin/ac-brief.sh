@@ -763,8 +763,9 @@ Follow this order:
 2. Independent review when \`Review: yes\`.
    $review_block
    A \`fix\` finding returns here: repair, test, repeat the same plugin-first
-   self-review rule, commit, then run a
-   fresh verifier over the current full diff/ref. An \`ask-user\` finding holds
+   self-review rule, commit, then run a fresh verifier: round 1 reviews the full
+   base-to-ref diff; later rounds verify the immediately previous round's open
+   findings and review \`previous reviewed_ref..current ref\`. An \`ask-user\` finding holds
    delivery: print \`needs-decision:\` so chief/roomchief relays it to the captain;
    continue only after the recorded decision. Advisory \`suggested_fix\` text is
    input to the implementer, never permission for the verifier to edit.

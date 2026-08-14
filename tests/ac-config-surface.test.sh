@@ -38,6 +38,7 @@ AC_AUTOARM          intra-run wire: ac-watch-autoarm.sh exports it (=1) so the w
                     starts records the arm as BOUNDED; never set by a human
 AC_FINDINGS_ROUND   intra-run wire: ac-ship.sh -> ac_findings_normalize (review round)
 AC_FINDINGS_DELTA   intra-run wire: ac-ship.sh -> ac_findings_normalize (fix delta)
+AC_FINDINGS_PRIOR_OPEN  intra-run wire: ac-ship.sh -> ac_findings_normalize (previous open ids)
 AC_QA_RUN_ID        intra-run wire to spawned qa subprocesses
 AC_QA_EVIDENCE      intra-run wire to spawned qa subprocesses
 AC_QA_STEP_NOTE     env->awk ENVIRON wire (tab-safe note transport)

@@ -312,34 +312,44 @@ assert_eq "$(lib "ac_verdict_json <'$vj'")" '' "no JSON object yields empty outp
 # severity=error WITH class correctness|security|data-loss keeps fix anywhere,
 # any round. Fail directions: absent round metadata => NO floor (reviews too
 # much); unclassifiable (error severity, no class) => NOT floored (fixes).
-# Round + delta ride env (AC_FINDINGS_ROUND, AC_FINDINGS_DELTA) so the QA
-# pipeline's calls - which set neither - are byte-identical to before.
+# Round, delta, and previous-open ids ride env (AC_FINDINGS_ROUND,
+# AC_FINDINGS_DELTA, AC_FINDINGS_PRIOR_OPEN) so the QA pipeline's calls - which
+# set none - are byte-identical to before.
 rf="$TMP/roundfloor.json"
-rf_in='[{"id":"late-warning","severity":"warning","action":"fix","file":"src/other.ts","class":"regression","authority_class":"internal","authority":"docs/x.md:1","description":"d","suggested_fix":"s"},
+rf_in='[{"id":"late-carried","severity":"warning","action":"fix","file":"src/other.ts","class":"regression","authority_class":"internal","authority":"docs/x.md:1","description":"d"},
+        {"id":"late-warning","severity":"warning","action":"fix","file":"src/other.ts","class":"regression","authority_class":"internal","authority":"docs/x.md:1","description":"d","suggested_fix":"s"},
         {"id":"late-in-delta","severity":"warning","action":"fix","file":"src/fixed.ts","authority_class":"internal","authority":"docs/x.md:1","description":"d"},
         {"id":"late-bomb","severity":"error","action":"fix","file":"src/other.ts","class":"security","authority_class":"internal","authority":"docs/x.md:1","description":"d"},
         {"id":"late-error-regression","severity":"error","action":"fix","file":"src/other.ts","class":"regression","authority_class":"internal","authority":"docs/x.md:1","description":"d"},
         {"id":"late-error-unclassified","severity":"error","action":"fix","file":"src/other.ts","authority_class":"internal","authority":"docs/x.md:1","description":"d"},
         {"id":"late-no-file","severity":"warning","action":"fix","class":"regression","authority_class":"internal","authority":"docs/x.md:1","description":"d"},
         {"id":"late-noop","severity":"warning","action":"no-op","file":"src/other.ts","description":"d"}]'
-printf '%s' "$rf_in" | lib "AC_FINDINGS_ROUND=2 AC_FINDINGS_DELTA='src/fixed.ts
+printf '%s' "$rf_in" | lib "AC_FINDINGS_ROUND=2 AC_FINDINGS_PRIOR_OPEN='[\"late-carried\"]' AC_FINDINGS_DELTA='src/fixed.ts
 lib/helper.ts' ac_findings_normalize '$rf'"
-assert_eq "$(jq -r '.[0].action' "$rf")" "no-op" "r2 warning fix outside the delta floors to no-op"
-assert_eq "$(jq -r '.[0].round_floored' "$rf")" "true" "the round floor is marked"
-assert_eq "$(jq -r '.[0].suggested_fix' "$rf")" "s" "the floored finding keeps its advisory"
-assert_eq "$(jq -r '.[1].action' "$rf")" "fix" "r2 fix INSIDE the delta keeps fix"
-assert_eq "$(jq -r '.[2].action' "$rf")" "fix" "carve-out: error+security keeps fix outside the delta"
-assert_eq "$(jq -r '.[2] | has("round_floored")' "$rf")" "false" "the carve-out carries no floor flag"
-assert_eq "$(jq -r '.[3].action' "$rf")" "no-op" "error+regression outside the delta floors (not in the bomb set)"
-assert_eq "$(jq -r '.[4].action' "$rf")" "fix" "error with NO class is unclassifiable - fails toward fixing"
-assert_eq "$(jq -r '.[5].action' "$rf")" "fix" "a fix with NO file cannot be located - fails toward fixing"
-assert_eq "$(jq -r '.[6].action' "$rf")" "no-op" "an already-no-op finding is untouched"
-assert_eq "$(jq -r '.[6] | has("round_floored")' "$rf")" "false" "...and carries no floor flag"
+assert_eq "$(jq -r '.[0].action' "$rf")" "fix" "r2 prior-open fix outside the delta stays fix"
+assert_eq "$(jq -r '.[0] | has("round_floored")' "$rf")" "false" "a prior-open id carries no round floor flag"
+assert_eq "$(jq -r '.[1].action' "$rf")" "no-op" "r2 new warning fix outside the delta floors to no-op"
+assert_eq "$(jq -r '.[1].round_floored' "$rf")" "true" "the round floor is marked"
+assert_eq "$(jq -r '.[1].suggested_fix' "$rf")" "s" "the floored finding keeps its advisory"
+assert_eq "$(jq -r '.[2].action' "$rf")" "fix" "r2 fix INSIDE the delta keeps fix"
+assert_eq "$(jq -r '.[3].action' "$rf")" "fix" "carve-out: error+security keeps fix outside the delta"
+assert_eq "$(jq -r '.[3] | has("round_floored")' "$rf")" "false" "the carve-out carries no floor flag"
+assert_eq "$(jq -r '.[4].action' "$rf")" "no-op" "error+regression outside the delta floors (not in the bomb set)"
+assert_eq "$(jq -r '.[5].action' "$rf")" "fix" "error with NO class is unclassifiable - fails toward fixing"
+assert_eq "$(jq -r '.[6].action' "$rf")" "fix" "a fix with NO file cannot be located - fails toward fixing"
+assert_eq "$(jq -r '.[7].action' "$rf")" "no-op" "an already-no-op finding is untouched"
+assert_eq "$(jq -r '.[7] | has("round_floored")' "$rf")" "false" "...and carries no floor flag"
 
 # Round 1 (or absent metadata) floors nothing - byte-identical prior behavior.
 rf1="$TMP/roundfloor-r1.json"
 printf '%s' "$rf_in" | lib "AC_FINDINGS_ROUND=1 AC_FINDINGS_DELTA='src/fixed.ts' ac_findings_normalize '$rf1'"
 assert_eq "$(jq -r '[.[] | select(has("round_floored"))] | length' "$rf1")" "0" "round 1 floors nothing"
+rf_missing_prior="$TMP/roundfloor-missing-prior.json"
+printf '%s' "$rf_in" | lib "AC_FINDINGS_ROUND=2 AC_FINDINGS_DELTA='src/fixed.ts' ac_findings_normalize '$rf_missing_prior'"
+assert_eq "$(jq -r '[.[] | select(has("round_floored"))] | length' "$rf_missing_prior")" "0" \
+  "round 2 without a trustworthy previous-open set floors nothing"
+assert_eq "$(jq -r '.[1].action' "$rf_missing_prior")" "fix" \
+  "missing previous-open metadata fails toward keeping a new blocker"
 rf0="$TMP/roundfloor-r0.json"
 printf '%s' "$rf_in" | lib "ac_findings_normalize '$rf0'"
 assert_eq "$(jq -r '[.[] | select(has("round_floored"))] | length' "$rf0")" "0" "absent round metadata floors nothing"

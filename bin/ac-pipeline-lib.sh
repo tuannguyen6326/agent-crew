@@ -151,14 +151,18 @@ ac_findings_normalize() {
   # floor exists to remove.
   # LATE-FINDING (ROUND) FLOOR (review-round-convergence, captain 2026-08-05 -
   # the authority for relaxing the fresh-full-diff rule's action here): a
-  # round>=2 `fix` finding whose file lies OUTSIDE the fix-delta since round 1
-  # is churn on code this task never touched - by construction a PRE-EXISTING
-  # concern, routed as advisory (no-op, `round_floored: true`, suggested_fix
+  # round>=2 NEW `fix` finding whose file lies OUTSIDE the immediately previous
+  # round's fix delta is churn on code this round never touched - by
+  # construction a PRE-EXISTING concern, routed as advisory (no-op,
+  # `round_floored: true`, suggested_fix
   # kept) instead of buying another fix-and-rereview loop. Round + delta ride
   # env (AC_FINDINGS_ROUND, a positive integer; AC_FINDINGS_DELTA, a newline
-  # file list) set ONLY by ac-ship's review-agent - absent or malformed
-  # metadata floors NOTHING, so the QA pipeline and every legacy caller are
-  # byte-identical (the floor fails toward reviewing too much). CARVE-OUT,
+  # file list; AC_FINDINGS_PRIOR_OPEN, a JSON string-id array) set ONLY by
+  # ac-ship's review-agent. The previous-open set prevents an unresolved
+  # finding from being mistaken for a new out-of-delta finding and floored.
+  # Absent or malformed metadata floors NOTHING, so the QA pipeline and every
+  # legacy caller are byte-identical (the floor fails toward reviewing too
+  # much). CARVE-OUT,
   # non-overridable and failing toward FIXING: severity=error WITH class
   # correctness|security|data-loss keeps `fix` at any round on any surface -
   # and a finding the floor cannot AFFIRMATIVELY clear (error severity with
@@ -176,9 +180,23 @@ ac_findings_normalize() {
   # the rule wants and `no-op` asserts no defect, which is why a legacy clean
   # run still finishes exactly as before.
   local outfile="$1" tmp round="${AC_FINDINGS_ROUND:-1}" delta="${AC_FINDINGS_DELTA:-}"
+  local prior_open="${AC_FINDINGS_PRIOR_OPEN:-}"
   case "$round" in '' | *[!0-9]*) round=1 ;; esac
+  if [ "$round" -ge 2 ]; then
+    if [ -z "$prior_open" ] \
+      || ! jq -e 'type == "array" and all(.[]; type == "string")' \
+           <<<"$prior_open" >/dev/null 2>&1; then
+      # Without a trustworthy previous-open set, the normalizer cannot tell a
+      # new late finding from an unresolved one. Disable the round floor rather
+      # than risk clearing a blocker.
+      round=1
+      prior_open='[]'
+    fi
+  else
+    prior_open='[]'
+  fi
   tmp="$(mktemp "$outfile.XXXXXX")" || return 1
-  if jq --argjson round "$round" --arg delta "$delta" '
+  if jq --argjson round "$round" --arg delta "$delta" --argjson prior_open "$prior_open" '
     ($delta | split("\n") | map(select(. != ""))) as $dfiles
     | [.[]
        | .action = (if ((.action // "") | tostring) == "" then "ask-user"
@@ -199,7 +217,9 @@ ac_findings_normalize() {
          else . end
        | ((.file // "") | tostring) as $ffile
        | ((.class // "") | tostring) as $fclass
+       | ((.id // "") | tostring) as $fid
        | if $round >= 2 and .action == "fix"
+            and (($prior_open | index($fid)) == null)
             and ($ffile != "")
             and (($dfiles | index($ffile)) == null)
             and ((((.severity // "") | tostring) != "error")

@@ -53,7 +53,9 @@ local-only (review optional; staged makes it required)
 ```
 
 `?` means intake/policy-controlled. A ref-changing fix always returns to a fresh
-full-diff review round when review is required. The verifier reports to the
+review round when review is required: round 1 covers the full diff, while later
+rounds verify the immediately previous findings and review only that round's
+fix delta. The verifier reports to the
 calling execution crewmate synchronously; `ask-user` is relayed by the supervising
 chief or roomchief to the captain.
 
@@ -64,7 +66,7 @@ chief or roomchief to the captain.
 - each ship run freezes the fleet-home project config into `<run>/config.yaml` and records its SHA-256; an install during the run affects only future runs.
 - findings carry an action `fix` | `ask-user` | `no-op` (legacy `auto-fix` normalizes to `fix`); the reviewer classifies, a crewmate fixes. Every `ask-user` carries question/options/tradeoffs/recommendation for captain relay.
 - hold-and-fix: a failing step HOLDS the run and re-runs on the fix diff, never restarting from intent; `ac-ship.sh fix-report <step>` renders the fixer's markdown contract when the fix goes to a different crewmate.
-- independent review: `ac-ship.sh review-agent` is a thin adapter to `ac-verify codereview`, the facade that owns the isolated exact-ref lease, the one review pass, and the safe reap (`bin/ac-verify.sh` header). Its final object binds `reviewed_ref`; advisory risk reaches the PR body. The reviewer never fixes: a `fix` finding returns to execution and launches a fresh full-diff round. What the verifier may and may not do is `AGENTS.md` section 5.
+- independent review: `ac-ship.sh review-agent` is a thin adapter to `ac-verify codereview`, the facade that owns the isolated exact-ref lease, the one review pass, and the safe reap (`bin/ac-verify.sh` header). Its final object binds `reviewed_ref`; advisory risk reaches the PR body. The reviewer never fixes: a `fix` finding returns to execution, then the next round verifies the previous findings and reviews `previous reviewed_ref..current ref`. What the verifier may and may not do is `AGENTS.md` section 5.
 - live dashboard: `bin/ac-ship-watch.sh` (colored step table, findings summary, log tail, flicker-free repaint) is auto-opened at start and on every active step, self-closes when the run truly finishes or idles, and `finish` retires it via `<run>/watch.pane`.
 - delivery mode is per-task: the registry line is only the project default, overridden with `ac-brief.sh`/`ac-spawn.sh --mode` (modes: `crew-ship`, `direct-pr`, `local-only`).
 

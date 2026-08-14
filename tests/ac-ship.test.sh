@@ -257,9 +257,9 @@ assert_eq "$(jq '[.[] | select(.id == "RF1")] | length' "$run_dir2/findings/revi
 assert_eq "$(jq -r '.risk_level' "$run_dir2/findings/review.meta.json")" "low" "facade risk routed to review metadata"
 assert_eq "$(sed -n 's/^reviewed_ref=//p' "$run_dir2/review.agent")" "$reviewed_ref" "review marker binds the exact ref"
 
-# A source-changing fix opens a fresh verifier round and supplies the cumulative
-# machine-assembled ledger of every prior validated round as history; old PASS
-# authority and context are not reused.
+# A source-changing fix opens a fresh verifier round and supplies only the
+# immediately previous durable round result as history; old PASS authority and
+# context are not reused.
 printf 'y\n' >>"$repo/f.txt" && git -C "$repo" commit -qam "fix review"
 assert_fails "$BIN/ac-ship.sh" step review completed
 "$BIN/ac-ship.sh" step review fixing >/dev/null
@@ -268,23 +268,23 @@ out="$(RA_VERDICT=fix AC_CREW_ID=ra-implement AC_VERIFY_BIN="$stub/ac-verify" "$
 assert_contains "$out" "review-agent round 2" "fix launches the next sequential review round"
 last_call="$(tail -n 1 "$VERIFY_LOG")"
 assert_contains "$last_call" "--ref $fixed_ref" "fresh round binds the fixed ref"
-assert_contains "$last_call" "--history $run_dir2/logs/review-history-r2.json" "fresh round carries the cumulative ledger"
+assert_contains "$last_call" "--history $run_dir2/logs/review-history-r2.json" "fresh round carries previous-round history"
 case "$last_call" in *--resume*|*--replace-pane*) fail "fresh review rounds never resume or replace context" ;; esac
 assert_eq "$(jq -r 'length' "$run_dir2/logs/review-history-r2.json")" "1" "round-2 ledger holds exactly the r1 entry"
 assert_eq "$(jq -r '.[0].round' "$run_dir2/logs/review-history-r2.json")" "1" "ledger entry names its round"
 assert_eq "$(jq -r '.[0].reviewed_ref' "$run_dir2/logs/review-history-r2.json")" "$reviewed_ref" "ledger entry binds r1's exact reviewed ref"
 assert_eq "$(jq -r '.[0].findings[0].id' "$run_dir2/logs/review-history-r2.json")" "ra1" "ledger entry carries r1's structured findings"
 
-# The ledger is CUMULATIVE, not just the previous round: round 3 carries r1 AND
-# r2, in round order - the leverage ac-verify's interdiff/disposition rides on.
+# Round 3 carries only the immediately previous durable round result. Older
+# findings resolved before r2 are history, not obligations to re-attest.
 printf 'z\n' >>"$repo/f.txt" && git -C "$repo" commit -qam "fix review again"
 "$BIN/ac-ship.sh" step review fixing >/dev/null
 out="$(RA_VERDICT=fix AC_CREW_ID=ra-implement AC_VERIFY_BIN="$stub/ac-verify" "$BIN/ac-ship.sh" review-agent)"
 assert_contains "$out" "review-agent round 3" "second fix launches round 3"
 assert_contains "$(tail -n 1 "$VERIFY_LOG")" "--history $run_dir2/logs/review-history-r3.json" "round 3 carries its own ledger file"
-assert_eq "$(jq -r 'length' "$run_dir2/logs/review-history-r3.json")" "2" "round-3 ledger accumulates both prior rounds"
-assert_eq "$(jq -c '[.[].round]' "$run_dir2/logs/review-history-r3.json")" "[1,2]" "ledger stays in round order"
-assert_eq "$(jq -r '.[1].reviewed_ref' "$run_dir2/logs/review-history-r3.json")" "$fixed_ref" "ledger r2 entry binds r2's exact reviewed ref"
+assert_eq "$(jq -r 'length' "$run_dir2/logs/review-history-r3.json")" "1" "round-3 history holds only the r2 entry"
+assert_eq "$(jq -r '.[0].round' "$run_dir2/logs/review-history-r3.json")" "2" "round-3 history names the previous round"
+assert_eq "$(jq -r '.[0].reviewed_ref' "$run_dir2/logs/review-history-r3.json")" "$fixed_ref" "round-3 history binds r2's exact reviewed ref"
 
 # A REJECTED round must leave the run exactly where it was, and a RETRY must be
 # able to break out of it. This is the anti-regression half of the reviewed_ref
@@ -323,6 +323,66 @@ assert_eq "$(sed -n 's/^reviewed_ref=//p' "$run_dir2/review.agent" | tail -n 1)"
 
 "$BIN/ac-ship.sh" step review completed >/dev/null
 git -C "$repo" checkout -q "$defbranch"
+
+# Calling review-agent again on the exact latest durable reviewed_ref is always
+# refused before verifier spend, regardless of whether the held verdict was
+# pass, fix, or ask-user.
+sameheadstub="$TMP/sameheadstub"; mkdir -p "$sameheadstub"
+export SAMEHEAD_LOG="$TMP/samehead-verify.log"
+cat >"$sameheadstub/ac-verify" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$SAMEHEAD_LOG"
+[ "${1:-}" = codereview ] || exit 2
+shift
+output=""; ref=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift ;;
+    --ref) ref="$2"; shift ;;
+    --repo|--base|--family|--caller|--intent|--history|--owner) shift ;;
+    *) exit 2 ;;
+  esac
+  shift
+done
+case "${SAMEHEAD_VERDICT:-pass}" in
+  pass)
+    jq -n --arg ref "$ref" '{findings:[{id:"same-pass",severity:"info",action:"no-op",description:"note"}],summary:"s",risk_level:"low",risk_rationale:"r",reviewed_ref:$ref,verdict:"pass"}' >"$output" ;;
+  fix)
+    jq -n --arg ref "$ref" '{findings:[{id:"same-fix",severity:"warning",action:"fix",file:"file.txt",class:"regression",description:"bug",authority_class:"internal",authority:"tests/ac-ship.test.sh:1"}],summary:"s",risk_level:"low",risk_rationale:"r",reviewed_ref:$ref,verdict:"fix"}' >"$output" ;;
+  ask-user)
+    jq -n --arg ref "$ref" '{findings:[{id:"same-ask",severity:"warning",action:"ask-user",description:"choose",question:"Which path?",options:["a","b"],tradeoffs:["A","B"],recommendation:"a"}],summary:"s",risk_level:"medium",risk_rationale:"r",reviewed_ref:$ref,verdict:"ask-user"}' >"$output" ;;
+  *) exit 2 ;;
+esac
+cat "$output"
+EOF
+chmod +x "$sameheadstub/ac-verify"
+samehead_calls() { [ -f "$SAMEHEAD_LOG" ] && wc -l <"$SAMEHEAD_LOG" || printf '0\n'; }
+for verdict in pass fix ask-user; do
+  shrepo="$(make_repo "samehead-$verdict")"
+  cd "$shrepo" || fail "cd samehead $verdict"
+  cat >"$AC_HOME/projects/samehead-$verdict.yaml" <<'EOF'
+commands:
+  test: "echo test-ok"
+
+review:
+  max_rounds: 9
+EOF
+  "$BIN/ac-ship.sh" start --intent "same-head $verdict" --skip pr >/dev/null
+  git -C "$shrepo" checkout -qb "crew/samehead-$verdict"
+  printf 'work\n' >>"$shrepo/file.txt" && git -C "$shrepo" commit -qam work
+  "$BIN/ac-ship.sh" step test completed --note "suite green" >/dev/null
+  SAMEHEAD_VERDICT="$verdict" AC_CREW_ID="samehead-$verdict-implement" \
+    AC_VERIFY_BIN="$sameheadstub/ac-verify" "$BIN/ac-ship.sh" review-agent >/dev/null
+  calls_before="$(samehead_calls)"
+  rc=0
+  out="$(SAMEHEAD_VERDICT="$verdict" AC_CREW_ID="samehead-$verdict-implement" \
+    AC_VERIFY_BIN="$sameheadstub/ac-verify" "$BIN/ac-ship.sh" review-agent 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] || fail "same-HEAD review-agent retry after $verdict must refuse"
+  assert_contains "$out" "already reviewed" "same-HEAD refusal after $verdict names the no-op retry"
+  assert_eq "$(samehead_calls)" "$calls_before" "same-HEAD refusal after $verdict spends no verifier"
+done
+cd "$repo" || fail "cd back from samehead"
 
 # fix-report renders the hold-and-fix handoff contract: to-fix = fix +
 # captain-DECIDED ask-user; undecided ask-user parks; no-op omitted; round
@@ -1670,9 +1730,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# Every round reports the same warning-severity fix on an untouched file plus
-# verdict fix - the churn shape the cap exists to stop.
-jq -n --arg ref "$ref" '{findings:[{id:"resid",severity:"warning",action:"fix",file:"untouched.txt",class:"regression",description:"late nit",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"}],summary:"nit",risk_level:"low",risk_rationale:"r",reviewed_ref:$ref,verdict:"fix"}' >"$output"
+# Every round reports a genuine in-current-delta fix so this cap fixture stays
+# in the fix loop even after durable round results are round-normalized.
+jq -n --arg ref "$ref" '{findings:[{id:"resid",severity:"warning",action:"fix",file:"f.txt",class:"regression",description:"late nit",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"}],summary:"nit",risk_level:"low",risk_rationale:"r",reviewed_ref:$ref,verdict:"fix"}' >"$output"
 cat "$output"
 EOF
 chmod +x "$capstub/ac-verify"
@@ -1689,13 +1749,12 @@ assert_fails "$BIN/ac-ship.sh" review-residual accept --grounds "too early"
 # Rounds 2 and 3 run inside the default cap (each after a fixing tick).
 for r in 2 3; do
   "$BIN/ac-ship.sh" step review fixing >/dev/null
-  printf 'r%s\n' "$r" >>"$caprepo/f.txt" && git -C "$caprepo" commit -qam "fix r$r"
+  printf 'r%s\n' "$r" >>"$caprepo/f.txt"
+  git -C "$caprepo" commit -qam "fix r$r"
   out="$(AC_CREW_ID=cap-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship.sh" review-agent)"
   assert_contains "$out" "review-agent round $r" "round $r runs inside the cap"
 done
-# S1 metadata rode the r2+ rounds: the untouched-file warning finding floored.
-assert_eq "$(jq -r '.[0].action' "$caprun/findings/review.json")" "no-op" "r3 untouched-file warning fix floors to no-op"
-assert_eq "$(jq -r '.[0].round_floored' "$caprun/findings/review.json")" "true" "the floor is marked on the wire"
+assert_eq "$(jq -r '.[0].action' "$caprun/findings/review.json")" "fix" "cap rounds keep a genuine in-delta fix finding"
 
 # Round 4 exceeds the default cap: HOLD naming both chief options, no verifier run.
 "$BIN/ac-ship.sh" step review fixing >/dev/null
@@ -1736,6 +1795,75 @@ out="$(AC_CREW_ID=cap-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship
 [ "$rc" -ne 0 ] || fail "a second --final-round must refuse"
 assert_contains "$out" "already spent" "the refusal names the spent grant"
 cd "$repo" || fail "cd back from caprepo"
+
+# --- review-round floor: round 3 uses round 2's reviewed_ref ------------------
+# A warning fix on a file changed in round 2 but untouched in round 3 floors only
+# when it is a NEW id. The same previous-round open id must stay fix even though
+# it is outside the r2..r3 delta.
+floorrepo="$(make_repo floorrepo)"
+cd "$floorrepo" || fail "cd $floorrepo"
+cat >"$AC_HOME/projects/floorrepo.yaml" <<'EOF'
+commands:
+  test: "echo test-ok"
+
+review:
+  max_rounds: 9
+EOF
+floorstub="$TMP/floorstub"; mkdir -p "$floorstub"
+cat >"$floorstub/ac-verify" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = codereview ] || exit 2
+shift
+output=""; ref=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift ;;
+    --ref) ref="$2"; shift ;;
+    --repo|--base|--family|--caller|--intent|--history|--owner) shift ;;
+    *) exit 2 ;;
+  esac
+  shift
+done
+case "${FLOOR_STAGE:-carried}" in
+  r3)
+    jq -n --arg ref "$ref" '{findings:[
+      {id:"floor-carried",severity:"warning",action:"fix",file:"r2-only.txt",class:"regression",description:"carried blocker",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"},
+      {id:"floor-new",severity:"warning",action:"fix",file:"r2-only.txt",class:"regression",description:"new late nit",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"}],
+      summary:"nit",risk_level:"low",risk_rationale:"r",reviewed_ref:$ref,verdict:"fix"}' >"$output" ;;
+  *)
+    jq -n --arg ref "$ref" '{findings:[
+      {id:"floor-carried",severity:"warning",action:"fix",file:"r2-only.txt",class:"regression",description:"carried blocker",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"}],
+      summary:"nit",risk_level:"low",risk_rationale:"r",reviewed_ref:$ref,verdict:"fix"}' >"$output" ;;
+esac
+cat "$output"
+EOF
+chmod +x "$floorstub/ac-verify"
+"$BIN/ac-ship.sh" start --intent "floor exercise" --skip pr >/dev/null
+git -C "$floorrepo" checkout -qb crew/floor
+printf 'work\n' >>"$floorrepo/f.txt" && git -C "$floorrepo" add f.txt && git -C "$floorrepo" commit -qm work
+"$BIN/ac-ship.sh" step test completed --note "suite green" >/dev/null
+floorrun="$floorrepo/.crew/ship/$(readlink "$floorrepo/.crew/ship/current")"
+FLOOR_STAGE=carried AC_CREW_ID=floor-implement AC_VERIFY_BIN="$floorstub/ac-verify" "$BIN/ac-ship.sh" review-agent >/dev/null
+"$BIN/ac-ship.sh" step review fixing >/dev/null
+printf 'r2\n' >>"$floorrepo/r2-only.txt" && git -C "$floorrepo" add r2-only.txt && git -C "$floorrepo" commit -qm "fix r2"
+FLOOR_STAGE=carried AC_CREW_ID=floor-implement AC_VERIFY_BIN="$floorstub/ac-verify" "$BIN/ac-ship.sh" review-agent >/dev/null
+"$BIN/ac-ship.sh" step review fixing >/dev/null
+printf 'r3\n' >>"$floorrepo/f.txt" && git -C "$floorrepo" commit -qam "fix r3"
+out="$(FLOOR_STAGE=r3 AC_CREW_ID=floor-implement AC_VERIFY_BIN="$floorstub/ac-verify" "$BIN/ac-ship.sh" review-agent)"
+assert_contains "$out" "review-agent round 3" "floor fixture reaches round 3"
+assert_eq "$(jq -r '.[] | select(.id == "floor-new") | .action' "$floorrun/findings/review.json")" "no-op" \
+  "r3 new previous-round-untouched warning fix floors to no-op"
+assert_eq "$(jq -r '.[] | select(.id == "floor-new") | .round_floored' "$floorrun/findings/review.json")" "true" \
+  "the new-id previous-round floor is marked on the wire"
+assert_eq "$(jq -r '.[] | select(.id == "floor-carried") | .action' "$floorrun/findings/review.json")" "fix" \
+  "r3 prior-open id remains fix even outside the delta"
+assert_eq "$(jq -r '.[] | select(.id == "floor-carried") | has("round_floored")' "$floorrun/findings/review.json")" "false" \
+  "the prior-open id carries no round floor flag"
+assert_eq "$(jq -r '.verdict' "$floorrun/logs/review-agent-r3.json")" "fix" \
+  "durable r3 verdict remains fix because the previous open id persists"
+cd "$repo" || fail "cd back from floorrepo"
+
 # --- advisory-polish-loop A: a 0-fix verdict FREEZES the tree ------------------
 # Captain 2026-08-06. A round returning ZERO `fix` findings makes the run
 # landable; polishing one of its advisories afterwards kills the receipt (the

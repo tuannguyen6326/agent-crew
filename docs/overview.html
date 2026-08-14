@@ -540,7 +540,7 @@
   A failing step <strong>holds</strong> the run — it never restarts from intent — and a
   code-changing fix re-opens completed <code>test</code>/<code>lint</code>.
   <strong>Review</strong> is one fresh pane agent on the exact immutable ref
-  (<code>ac-verify codereview</code>); a ref-changing fix starts a fresh full-diff round.
+  (<code>ac-verify codereview</code>); a ref-changing fix starts a fresh round over the previous reviewed ref-to-current ref delta while rechecking the previous round's open findings.
   <code>push</code> is force-with-lease anchored to the exact inspected remote SHA.
   The agent stops at <code>checks-passed</code> — merging stays with the captain.</p>
 </section>

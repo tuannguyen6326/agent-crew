@@ -59,9 +59,10 @@
 # last entry's reviewed_ref becomes the round's review obligation (the fix
 # delta, reviewed as rigorously as a first pass, following each fix's blast
 # radius into unchanged code), the full base..ref diff demotes to context and
-# line anchoring, and every prior open fix/ask-user id must be dispositioned
-# by the new verdict - re-reported under the same id or listed in top-level
-# resolved_ids - or the verdict is rejected fail-closed. Sound because round
+# line anchoring, and every open fix/ask-user id from the immediately previous
+# round must be dispositioned by the new verdict - re-reported under the same
+# id or listed in top-level resolved_ids - or the verdict is rejected
+# fail-closed. Sound because round
 # 1 covered the full diff at its own ref; the shared normalizer's late-
 # finding floor and critical carve-out own what an out-of-delta finding may
 # still do.
@@ -84,12 +85,11 @@
 # them having RENUMBERED (R2-01-..., CR-006...) while addressing the very
 # finding they renumbered. NOTHING here changes what the validator accepts - the
 # predicate is untouched, so a genuinely abandoned finding is rejected exactly
-# as before. The disposition set stays the CUMULATIVE union over every ledger
-# entry; the derivation's own comment owns why narrowing it was rejected, and
-# the verdict predicate's own comment owns why resolved_ids stays an unverified
-# self-report - a subset rule against prior_open rejects most real rounds that
-# USE the channel and catches none of the abuse it looks like it prevents, both
-# measured.
+# as before. The disposition set is deliberately bounded to the immediately
+# previous durable round: round N verifies round N-1's open findings plus the
+# N-1.reviewed_ref..N.reviewed_ref fix delta. Resolved findings remain durable
+# in their original round artifacts for audit, but do not become permanent
+# re-attestation obligations in later rounds.
 # Legacy history shapes (single round object, bare findings array) degrade soft
 # to hints-only, and so does a prior ref the round cannot narrow on: one that
 # does not resolve, and one that RESOLVES but is no longer an ANCESTOR of the
@@ -300,7 +300,7 @@ if [ -n "$history" ]; then
   # pane - because a CONSUMED key present with the WRONG type is worse than a
   # missing guard: `findings` as a string is swallowed by the `.findings[]?`
   # derivation below, so prior_open empties SILENTLY while the prompt still
-  # demands every prior id be dispositioned, and an entry that is not an object
+  # demands every previous-round id be dispositioned, and a non-object entry
   # kills that same jq outright (exit 5 under `set -euo pipefail`, a raw death
   # with no named cause). Only a PRESENT wrong-typed key is refused, never an
   # absent one - that is what keeps both legacy shapes soft, since a single
@@ -751,13 +751,13 @@ case "$kind" in
       : >"$room_snapshot"
     fi
     ac_room_review_rulings "$room_snapshot" >"$room_rulings"
-    # Prior-round leverage: the ledger's last reviewed_ref NARROWS round 2+'s
+    # Previous-round leverage: the ledger's last reviewed_ref NARROWS round 2+'s
     # review obligation to the fix delta (interdiff scope, captain 2026-08-05
     # - sound because round 1 covered the full base..ref diff at its own ref
     # and everything since lives inside prior..ref by construction; the
     # normalizer's late-finding floor + critical carve-out own what an
-    # out-of-delta finding may still do), and its open fix/ask-user ids must
-    # be dispositioned by the new verdict (enforced at verdict validation
+    # out-of-delta finding may still do), and that round's open fix/ask-user ids
+    # must be dispositioned by the new verdict (enforced at verdict validation
     # below). Both degrade SOFT on legacy history shapes (single round
     # object, bare findings array) or an unresolvable prior ref: the round
     # falls back to the full base..ref obligation - toward reviewing too
@@ -792,20 +792,12 @@ rounds verify rather than rediscover."
         && ! git -C "$repo" merge-base --is-ancestor "$prior_sha" "$sha" 2>/dev/null; then
         prior_sha=""
       fi
-      # CUMULATIVE across every entry, deliberately, and NOT narrowed to the
-      # last one. The caller's ledger projection carries findings without
-      # resolved_ids, so the union does re-ask for an id an earlier round
-      # already closed - but that is a RE-ATTESTATION at this ref, which the
-      # prompt asks for by name and which real rounds meet: one 9-round run
-      # satisfied it at r3-r9 with zero undispositioned ids while its
-      # resolved_ids grew 2,4,6,7,9,11,12. Narrowing to the last entry would
-      # release two classes this keeps: a finding a round CLOSED that a later
-      # rebase REGRESSED, and one downgraded to no-op while its own description
-      # states a residual is still open (both observed in stored runs). The
-      # burden is real; the answer is to SHOW the obligation (below), not to
-      # shrink it, because shrinking it is the only version that accepts more
-      # than this check accepts today.
-      prior_open="$(jq -c '[(if type == "array" then .[].findings[]? else .findings[]? end)
+      # The last durable round is the complete handoff state for this round.
+      # Persisting defects must be re-reported there; resolved ids disappear
+      # from the next obligation instead of being re-attested forever. Legacy
+      # bare-findings arrays have no entry.findings and therefore keep their
+      # historical hints-only behavior.
+      prior_open="$(jq -c '[((if type == "array" then last else . end).findings[]?)
           | select(.action == "fix" or .action == "ask-user") | .id]
           | map(select(type == "string")) | unique' "$history" 2>/dev/null)" \
         || prior_open="[]"
@@ -857,7 +849,7 @@ Each finding needs evidence and expected-behavior authority. Reserve action=fix
 for findings that must BLOCK delivery: correctness, security, regression, data
 loss, or violation of an accepted requirement or ruling. Advisory improvements,
 style, and polish are no-op findings (suggested_fix still welcome) - every fix
-finding forces a full fix-and-rereview round. A fix finding declares class
+finding forces a fresh fix-and-rereview round. A fix finding declares class
 (correctness|security|regression|data-loss|requirement) and file. Round 2+: a
 NEW fix on code the fix delta never touched is pre-existing - floored to
 advisory unless a critical correctness/security/data-loss bomb; report such
@@ -875,8 +867,8 @@ EOF
     if [ -n "$history" ]; then
       cat >>"$prompt" <<EOF
 
-HISTORY (machine-assembled hints, never exemptions): disposition every prior
-fix/ask-user id - re-report it under that SAME id string while unresolved, or
+HISTORY (machine-assembled previous-round state, never exemptions): disposition
+every fix/ask-user id from that round - re-report it under that SAME id string while unresolved, or
 list it in top-level resolved_ids once verified fixed at this ref, settled by a
 ruling, or defensibly obsolete (reason in summary). Never renumber: a new id for
 a persisting defect reads as one dropped plus one invented, and the verdict is
@@ -1264,8 +1256,8 @@ fi
 output_tmp="$(mktemp "$output.XXXXXX")"
 case "$kind" in
   codereview)
-    # Disposition enforcement: every prior open fix/ask-user id from the
-    # supplied history must be re-reported in findings or listed in
+    # Disposition enforcement: every open fix/ask-user id from the immediately
+    # previous durable round must be re-reported in findings or listed in
     # resolved_ids - a silent drop is a schema violation, same fate as any
     # invalid verdict. prior_open is [] with no history or a legacy shape,
     # which makes the check vacuous there.
