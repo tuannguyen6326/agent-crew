@@ -105,6 +105,46 @@ mismatch is the tell you mis-read a signal, so re-read before you
 receipt. Per-dimension criteria stay authoritative in their own
 sections (flow/qa here, mode section 4, promote section 8); this is
 only how their signals move together.
+REQUIREMENTS CHECK (captain order 2026-08-14) - at intake, BEFORE any
+brief, FLOW-AGNOSTIC (it judges the ORDER, not the flow) and binding
+crewchief and roomchief alike: the brief-without-guessing test. Draft
+the brief's four load-bearing lines - the DELIVERABLE (one sentence:
+what exists after landing that does not now), the ACCEPTANCE checks
+(how the captain verifies, each traceable to the order or a standing
+rule), the BOUNDARY (what is in, plus the nearest thing explicitly
+OUT), and the AUTHORITY of every product/behavior decision the work
+will force (answered by the order, by a recorded ruling, or genuinely
+technical) - and every line must CITE its source: the captain's words
+verbatim, captain.md, the room, ac-know, or an accepted report. A line
+with no citable source is a GUESS, and each guess is a question for
+the captain, never a silent invention. Route by the guess count:
+0 -> proceed to brief/spawn; 1-4 -> ONE bundled clarify exchange with
+the captain FIRST (section 8 select etiquette; answers recorded
+`DECIDED:` in the room and quoted verbatim into the brief); >=5, or
+the DELIVERABLE line itself a guess -> the order is not
+underspecified but unthought - propose `/brainstorm` and stop.
+For flows that RUN A DESIGN STAGE (staged, and design-first via
+/order-design), the check grows into the PO STEP and the answers
+become an ARTIFACT (captain order 2026-08-14, "PO -> get requirement
+from captain -> da create moi di lam spec"): the OWNING chief - the
+roomchief IN ITS OWN THREAD when the family is promoted, the
+crewchief in the fleet chat otherwise - interviews the captain as
+product owner and writes `data/<family>/requirements.md`, every line
+cite-carrying (the order verbatim, clarify answers already recorded
+`DECIDED:` in the room, standing rules). The captain's LIVE
+acceptance of that file is its whole gate - the brainstorm-spec
+precedent: the captain was in the loop the stage-gates exist to
+reach, so it enters no gate-route. NO SPEC WORK STARTS before the
+accepted requirements.md exists; the spec report's Trace IDs then
+trace to requirements.md lines rather than the raw order, and the
+design brief links it under `## Inputs`. A clear order still gets the
+file - drafted straight from the order with one-word acceptance -
+cheap, and the spec anchor keeps one shape for every family.
+Tells that force the test on a re-read: asking words in the order,
+two readings surviving a second read, taste-based acceptance with no
+reference, a solution named with no problem stated. Mid-flight the
+same valve re-runs on every `needs-decision:` a crewmate raises -
+same test, same bundled exchange.
 At intake, run `bin/ac-ready.sh overlap` on the order's expected file
 surface and link any hit's room into the brief as required reading; at
 landing the merge helpers warn on <24h overlaps (the ac-lib.sh
@@ -177,15 +217,19 @@ captain redirects a task whose crewmate is already in flight -
   (`bin/ac-ship.sh` owns the contract). There is no docs-only exemption: the
   re-check is a bare SHA equality, so ANY commit after review - documentation
   included - invalidates the receipt and loops to a fresh round. Round 1
-  reviews the full base..ref diff; round 2+ narrows to the INTERDIFF scope -
-  the fix delta reviewed as rigorously as a first pass, prior findings
-  dispositioned, the full diff demoted to context (`bin/ac-verify.sh` owns
-  the prompt contract; sound because round 1 covered the full diff at its
-  own ref, and the normalizer floor owns out-of-delta findings).
+  reviews the full base..ref diff. Round N+1 stores round N's exact
+  `reviewed_ref`, verifies only round N's still-open findings, and reviews the
+  INTERDIFF `roundN.reviewed_ref..HEAD` as rigorously as a first pass; resolved
+  findings from older rounds remain audit history, never permanent
+  re-attestation obligations. The full diff is context (`bin/ac-verify.sh` owns
+  the prompt contract; sound because round 1 covered it at its own ref, and the
+  normalizer floor owns out-of-delta findings). A validated ref is reviewed
+  once: another round requires HEAD to move; pane/schema retries create no
+  durable round or `reviewed_ref`.
   The review LOOP converges by machine, not by hope, and it settles INSIDE
-  the crew - receipts to the captain, never questions: (1) a round>=2 fix
-  finding on code the fix delta
-  never touched floors to advisory in the shared normalizer, with a
+  the crew - receipts to the captain, never questions: (1) a round>=2 NEW fix
+  finding on code the fix delta never touched floors to advisory in the shared
+  normalizer; a re-reported open id from the previous round stays blocking, with a
   non-overridable critical correctness/security/data-loss carve-out
   (`bin/ac-pipeline-lib.sh` owns floor + fail directions); (2) past
   `review.max_rounds` VERIFIER INVOCATIONS (per-project, default 3) the loop
@@ -1143,7 +1187,8 @@ Prefer a review artifact over a wall of markdown whenever the captain must visua
 - `document` - the doc-authoring method for a delivered change: judge whether docs are warranted at all (skippable, reason in the done line), create missing docs in the project's own conventions (BMAD shapes into `/docs` when the project has none; staged-flow stage reports are first-class inputs), and sync every existing doc the change makes stale. Runs crewmate-side at direct-flow delivery, the direct-pr PR step, and inside crew-ship's document step (pipeline mechanics stay with the `bin/ac-ship.sh` header).
 - `diagram-design` - vendored editorial diagram system (MIT, upstream `cathrynlavery/diagram-design`; LICENSE + THIRD_PARTY_LICENSES.md ride in the package): 27+ diagram types as self-contained HTML + inline SVG under one shared design system, complexity budget, and pre-output taste gate - reach for it whenever a captain-facing artifact (stage report, gate-review page, rich-review HTML) needs an architecture/flow/sequence/ER/timeline/quadrant/... diagram instead of Mermaid; per-type conventions live in its `references/`, gallery examples in `assets/`, and it also imports existing draw.io/Mermaid sources and dashboard whiteboard (Excalidraw) scenes - the captain sketches or edits on `/whiteboard` (the editable source of truth), the skill redraws the presentable artifact (section 11 owns the round-trip rule).
 - `brainstorm` - captain-invocable ideation (`/brainstorm <topic>`, `--direct` for a quick riff in the chief session): the captain thinks a topic through with a DEDICATED brainstorm roomchief (charter posted to `data/brainstorm-<slug>/room.md` then `ac-spawn.sh --roomchief --captain-initiated` - clean context, the room as durable journal, dashboard Board-detail chat; the chief's own session is the fleet's most loaded and ideation both burns and gets anchored by it), grounded from disk (`ac-know.sh recall`/scenes/learnings + `ac-ready.sh overlap` first, hits cited). While thinking, no spawns and no writes outside the room journal; the roomchief is machine-barred from the ledgers (`ac-ledger-guard.sh`) and ends by posting DRAFT-ROWS - and, when a thread went deep enough, DRAFT-SPEC - to its room; the CHIEF alone mints, reading each back VERBATIM for the captain's yes (contract tokens only for dimensions actually settled; a pin minted here is pre-consent the escalation gate never re-asks) or recording the outcome "no rows". An accepted spec is materialized by the chief as `data/<family>/spec/report.md` with a provenance header naming the brainstorm room and acceptance date - the captain's LIVE acceptance is the gate (the captain was in the loop the stage-gates exist to reach), so it enters no gate-route and the pinned-staged family starts past spec. Upstream of `order-direct`/`order-staged`/`epic-intake`: its rows are their input, it never starts execution.
-- `order-direct` / `order-staged` - captain-invocable pins: `/order-direct [--mode <m>] [--review yes|no] [--promote yes|no] [--qa yes|no] <order>` (same for `/order-staged`, except staged review is always yes) starts an intake with the flow and flagged dimensions pinned at the top of the precedence ladder; every unpinned dimension is still triaged with receipts. `--qa` pins an independent crew-qa gate after delivery.
+- `order-direct` / `order-staged` - captain-invocable pins: `/order-direct [--mode <m>] [--review yes|no] [--promote yes|no] [--qa yes|no] <order>` (same for `/order-staged`, except staged review is always yes) starts an intake with the flow and flagged dimensions pinned at the top of the precedence ladder; every unpinned dimension is still triaged with receipts. `--qa` pins an independent crew-qa gate after delivery. Both open with the section-5 REQUIREMENTS CHECK; staged additionally runs its PO STEP - the captain-accepted `data/<family>/requirements.md` exists before any spec work.
+- `order-design` - captain-invocable design-first flow (`/order-design <order>`, same flags as `/order-staged`): the PO step and the staged flow's design stages (spec/architecture/plan, gated as law) run NOW, execution does NOT - after the pre-implement gate the design crewmate is torn down and the row parks in Queued as `design-complete` with its pins kept, room receipted `DESIGN-COMPLETE:` (never a pending gate); a later captain order naming the row restarts at `--stage implement` with the accepted reports as Inputs, re-hashed against their gate receipts. Rides the staged machinery verbatim - the only new behavior is where the flow stops.
 - `crew-qa` - standalone behavioral verification driving the `bin/ac-qa.sh` pipeline: accepted-authority and reuse-first test planning, a frozen AC-to-UT/IT/E2E coverage manifest, conditional exact-SHA ship-receipt reuse for UT, four-tier client-boundary execution, an effective-receipt-ordered final full-flow case/group, frozen config/scope/store/routing inputs, task-scoped infra, durable per-case evidence, oracle amendments, non-gating curation, run-derived verdict, canonical stage report, and atomic v2 merge attestation. It is separate from code review and never fixes or lands its own test proposal. Execution calls the `ac-qa.sh agent` adapter over `ac-verify qa`; exactly one fresh exact-ref pane owns each complete profile round, never the execution crewmate's context or per-step subagents. Dispatch selects only the pane harness/model profile; the manifest and QA gates own behavior.
 - `rich-review` - the native HTML artifact review loop (dashboard `/review` + `bin/ac-review.sh`).
 - `epic-intake` - decompose a multi-deliverable order into a gated story map + push-scheduled stories (the section-5 epic mechanics).

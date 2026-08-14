@@ -24,7 +24,17 @@ yourself.
    verbatim.
    Staged review is always `yes`; `--review no` is invalid and no review flag
    is needed.
-2. Run the section-5 intake exactly as law: WRITE the pinned dimensions
+2. PO STEP first (the section-5 REQUIREMENTS CHECK clause is the
+   authoritative contract): run the brief-without-guessing test on the
+   order and route by guess count (0 -> draft; 1-4 -> ONE bundled clarify
+   exchange with the captain; >=5 -> propose `/brainstorm` and stop). When
+   the family is promoted the ROOMCHIEF owns the interview in its own
+   thread. Write `data/<family>/requirements.md` (every line
+   cite-carrying) and get the captain's LIVE acceptance - NO SPEC WORK
+   STARTS before that file exists; the design brief links it under
+   `## Inputs` and the spec report's Trace IDs trace to its lines.
+
+3. Run the section-5 intake exactly as law: WRITE the pinned dimensions
    onto the backlog row as its delivery-contract token group (section 9
    grammar) - `src:cap flow:staged rev:yes` plus a token per flag the
    captain gave (e.g. `[src:cap flow:staged mode:crew-ship rev:yes qa:yes]`);
@@ -40,7 +50,7 @@ yourself.
    while captain-owned authority goes directly to a pending captain gate.
    Any ASK this intake puts to the captain follows the select rule -
    AGENTS.md section 8 (`AskUserQuestion`).
-3. After the pre-implement gate, spawn one execution crewmate. It owns TDD,
+4. After the pre-implement gate, spawn one execution crewmate. It owns TDD,
    code, self-review, commit, independent review, checks, docs, and delivery.
    Its self-review is plugin-first over the full diff (project-provided plugins
    first) and falls back to a manual full-diff pass only when no applicable
