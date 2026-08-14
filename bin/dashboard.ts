@@ -3527,6 +3527,26 @@ connect();
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
+/** The terminal theme push, shared VERBATIM by the SPA terminal tab and the
+ * standalone /term page (both interpolate this function into their scripts -
+ * the redrawMessage precedent): resolve --term-bg/--term-fg (falling back to
+ * the page canvas pair) plus the 16 --ansi-N slots from computed styles into
+ * an xterm theme object and a dedupe signature. Pure. */
+export function termThemeCore(cs: { getPropertyValue(p: string): string }): { theme: Record<string, string>; sig: string } | null {
+  var XT = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+    "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"];
+  var bg = ((cs.getPropertyValue("--term-bg") || cs.getPropertyValue("--canvas")) || "").trim();
+  var fg = ((cs.getPropertyValue("--term-fg") || cs.getPropertyValue("--fg")) || "").trim();
+  if (!bg) return null;
+  var t: Record<string, string> = { background: bg, foreground: fg, cursor: fg, cursorAccent: bg };
+  var sig = bg + "|" + fg;
+  for (var i = 0; i < 16; i++) {
+    var c = (cs.getPropertyValue("--ansi-" + i) || "").trim();
+    if (c) { t[XT[i]] = c; sig += "|" + c; }
+  }
+  return { theme: t, sig: sig };
+}
+
 /** Standalone terminal page (GET /term?path=<home>) - the captain opens the
  * fleet terminal in its OWN browser tab, the same shape /review gives an
  * artifact: no SPA shell, a minimal bar, a full-viewport /term-frame iframe.
@@ -3561,21 +3581,14 @@ ${UX_BASE}
 <script>
 const q = new URLSearchParams(location.search);
 const home = q.get("path") || ${JSON.stringify(fallbackHome)};
-const XTERM_ANSI=["black","red","green","yellow","blue","magenta","cyan","white",
-  "brightBlack","brightRed","brightGreen","brightYellow","brightBlue","brightMagenta","brightCyan","brightWhite"];
+${termThemeCore.toString()}
 let lastSig = "";
 window.termTheme = () => {
   const f = document.querySelector("#frame iframe"); if (!f) return;
-  const cs = getComputedStyle(document.documentElement);
-  const t = { background:((cs.getPropertyValue("--term-bg")||cs.getPropertyValue("--canvas"))||"").trim(),
-              foreground:((cs.getPropertyValue("--term-fg")||cs.getPropertyValue("--fg"))||"").trim() };
-  if (!t.background) return;
-  t.cursor=t.foreground; t.cursorAccent=t.background;
-  let sig=t.background+"|"+t.foreground;
-  for (let i=0;i<16;i++){ const c=(cs.getPropertyValue("--ansi-"+i)||"").trim(); if(c){ t[XTERM_ANSI[i]]=c; sig+="|"+c; } }
-  if (sig===lastSig) return;
-  const w=f.contentWindow;
-  if (w && typeof w.acSetTheme==="function"){ w.acSetTheme(t); lastSig=sig; }
+  const r = termThemeCore(getComputedStyle(document.documentElement));
+  if (!r || r.sig === lastSig) return;
+  const w = f.contentWindow;
+  if (w && typeof w.acSetTheme === "function") { w.acSetTheme(r.theme); lastSig = r.sig; }
 };
 function boot(){
   const fr=document.getElementById("frame"), st=document.getElementById("status");
@@ -4795,7 +4808,7 @@ document.getElementById("notify-toggle").addEventListener("click", () => {
   p.style.display = p.style.display === "block" ? "none" : "block";
 });
 ${redrawMessage.toString()}
-let redrawSeenAt = null;
+let redrawSeenAt = null, redrawTimer = null;
 async function pollRedraw() {
   try {
     const r = await fetch("/api/whiteboard?path=" + encodeURIComponent(home) + "&scene=" + encodeURIComponent(scene) + "&redraw=1");
@@ -4805,12 +4818,14 @@ async function pollRedraw() {
     const a = document.getElementById("redraw-open");
     a.href = "/review?path=" + encodeURIComponent(home) + "&file=" + encodeURIComponent(home + "/" + rec.artifact);
     a.style.display = "inline-block";
-    if (redrawSeenAt !== null && rec.at !== redrawSeenAt) status("redraw ready");
+    if (redrawSeenAt !== null && rec.at !== redrawSeenAt) {
+      status("redraw ready");
+      if (redrawTimer) { clearInterval(redrawTimer); redrawTimer = null; }
+    }
     redrawSeenAt = rec.at;
   } catch { /* transient - next poll retries */ }
 }
 pollRedraw();
-setInterval(pollRedraw, 8000);
 document.getElementById("redraw-toggle").addEventListener("click", async () => {
   const res = await fetch(
     "/api/whiteboard?path=" + encodeURIComponent(home) + "&scene=" + encodeURIComponent(scene) + "&notify=1",
@@ -4819,7 +4834,7 @@ document.getElementById("redraw-toggle").addEventListener("click", async () => {
   if (!res.ok) { status("redraw request failed"); return; }
   const data = await res.json();
   status(data.deduped ? "already requested (no new save)" : "redraw requested");
-  if (redrawSeenAt === null) redrawSeenAt = "";
+  if (!redrawTimer) redrawTimer = setInterval(pollRedraw, 8000);
 });
 document.getElementById("notify-send").addEventListener("click", async () => {
   const err = document.getElementById("notify-err");
@@ -8838,15 +8853,27 @@ function loadBoardKpi(hp){
     if(S.route && S.route.name==='board') renderPage();
   }).catch(function(){ boardKpiC[hp]={ ts:Date.now(), pending:(c&&c.pending), loading:false }; });
 }
-function boardKpis(hp, b, home){
+function boardKpis(hp, b, bd, sysCount){
   loadBoardKpi(hp);
-  var flying=(home&&home.crew&&home.crew.tasks||[]).length;
+  // Tiles and the columns beneath them must agree: count CARDS, not raw
+  // backlog lines - id-less lines skipped, epic children nested inside their
+  // epic's card, sys panes joined into In-flight - the same rules pageBoard's
+  // column loop applies (minus the view-narrowing search query).
+  function cardCount(key){
+    var lines=b[key]||[], n=0;
+    for(var i=0;i<lines.length;i++){ var f=parseBacklogLine(lines[i]);
+      if(!f.id) continue;
+      if(f.epic && bd.known.indexOf(f.epic)>=0) continue;
+      n++; }
+    return n;
+  }
+  var flying=cardCount('in_flight')+sysCount;
   var pend=boardKpiC[hp]&&boardKpiC[hp].pending;
   var tiles=[
-    ['flying', String(flying), flying>0?'ok':''],
-    ['queued', String((b.queued||[]).length), ''],
+    ['in flight', String(flying), flying>0?'ok':''],
+    ['queued', String(cardCount('queued')), ''],
     ['awaiting captain', pend==null?'…':String(pend), (pend>0)?'warn':''],
-    ['done', String((b.done||[]).length), ''],
+    ['done', String(cardCount('done')), ''],
   ];
   var s='<div class="kpis">';
   for(var i=0;i<tiles.length;i++)
@@ -8934,7 +8961,7 @@ function pageBoard(){
   var sysPanes=boardSystemPanes(r.home, bd.known, inflightIds);
   // Column order (dashboard-board-v2): Queued -> In flight -> Done.
   var cols=[['queued','queued','Queued'],['in_flight','flight','In flight'],['done','done','Done']];
-  var s=boardKpis(hp, b, r.home);
+  var s=boardKpis(hp, b, bd, sysPanes.length);
   s+='<div class="filters" style="margin-bottom:14px">'
     +'<input class="search-in" type="search" data-list-search placeholder="Filter tasks…" aria-label="Filter tasks" autocomplete="off" spellcheck="false">'
     +'<button class="btoggle" type="button" data-board-hidedone aria-pressed="'+(hideDone?'true':'false')+'"><span class="sw" aria-hidden="true"></span>Hide Done</button>'
@@ -9312,21 +9339,16 @@ function termFit(){
 // khớp nền theme). The frame is same-origin, so this is a direct call into the
 // function it exposes - never a remount, which would kill the herdr client.
 // Deduped on the pair, so the per-poll renderPage never repaints for nothing.
-// xterm's own slot names, in ANSI order - the ONE place --ansi-N maps onto them.
-var XTERM_ANSI=['black','red','green','yellow','blue','magenta','cyan','white',
-  'brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'];
+// The mapping itself lives in the shared termThemeCore (interpolated below) -
+// one implementation for this tab AND the standalone /term page.
+${termThemeCore.toString()}
 var termBg='';
 function termTheme(){
   var f=document.querySelector('.termpage iframe'); if(!f) return;
-  var cs=getComputedStyle(document.documentElement);
-  var t={ background:((cs.getPropertyValue('--term-bg')||cs.getPropertyValue('--canvas'))||'').trim(), foreground:((cs.getPropertyValue('--term-fg')||cs.getPropertyValue('--fg'))||'').trim() };
-  if(!t.background) return;
-  t.cursor=t.foreground; t.cursorAccent=t.background;
-  var sig=t.background+'|'+t.foreground;
-  for(var i=0;i<16;i++){ var c=(cs.getPropertyValue('--ansi-'+i)||'').trim(); if(c){ t[XTERM_ANSI[i]]=c; sig+='|'+c; } }
-  if(sig===termBg) return;
+  var r=termThemeCore(getComputedStyle(document.documentElement));
+  if(!r || r.sig===termBg) return;
   var w=f.contentWindow;
-  if(w && typeof w.acSetTheme==='function'){ w.acSetTheme(t); termBg=sig; }
+  if(w && typeof w.acSetTheme==='function'){ w.acSetTheme(r.theme); termBg=r.sig; }
 }
 function termPoll(){
   // Top-level /terminal has no fleet in the route: herdr is one session

@@ -1742,18 +1742,23 @@ printf 'work\n' >>"$caprepo/f.txt" && git -C "$caprepo" add f.txt && git -C "$ca
 "$BIN/ac-ship.sh" step test completed --note "suite green" >/dev/null
 caprun="$caprepo/.crew/ship/$(readlink "$caprepo/.crew/ship/current")"
 
-# Residual acceptance is REFUSED below the cap - the normal loop is not skippable.
+# Residual acceptance below the cap: refused while HEAD has MOVED past the
+# last reviewed ref (the normal fix loop is not skippable) - the same-ref
+# STUCK state is tested as the sanctioned roundless release further down.
 AC_CREW_ID=cap-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship.sh" review-agent >/dev/null
+"$BIN/ac-ship.sh" step review fixing >/dev/null
+printf 'r2\n' >>"$caprepo/f.txt"
+git -C "$caprepo" commit -qam "fix r2"
 assert_fails "$BIN/ac-ship.sh" review-residual accept --grounds "too early"
 
-# Rounds 2 and 3 run inside the default cap (each after a fixing tick).
-for r in 2 3; do
-  "$BIN/ac-ship.sh" step review fixing >/dev/null
-  printf 'r%s\n' "$r" >>"$caprepo/f.txt"
-  git -C "$caprepo" commit -qam "fix r$r"
-  out="$(AC_CREW_ID=cap-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship.sh" review-agent)"
-  assert_contains "$out" "review-agent round $r" "round $r runs inside the cap"
-done
+# Rounds 2 and 3 run inside the default cap (round 2 on the tick above).
+out="$(AC_CREW_ID=cap-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship.sh" review-agent)"
+assert_contains "$out" "review-agent round 2" "round 2 runs inside the cap"
+"$BIN/ac-ship.sh" step review fixing >/dev/null
+printf 'r3\n' >>"$caprepo/f.txt"
+git -C "$caprepo" commit -qam "fix r3"
+out="$(AC_CREW_ID=cap-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship.sh" review-agent)"
+assert_contains "$out" "review-agent round 3" "round 3 runs inside the cap"
 assert_eq "$(jq -r '.[0].action' "$caprun/findings/review.json")" "fix" "cap rounds keep a genuine in-delta fix finding"
 
 # Round 4 exceeds the default cap: HOLD naming both chief options, no verifier run.
@@ -1796,6 +1801,28 @@ out="$(AC_CREW_ID=cap-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship
 assert_contains "$out" "already spent" "the refusal names the spent grant"
 cd "$repo" || fail "cd back from caprepo"
 
+# --- roundless release: same-ref STUCK below the cap (captain rule 6) --------
+# Round 1 returns a fix finding the chief judges WRONG: nothing to commit, and
+# one-ref-one-round forbids another round at this HEAD - review-residual accept
+# must be reachable HERE (below the cap), with the critical carve-out intact.
+stkrepo="$(make_repo stkrepo)"
+cd "$stkrepo" || fail "cd $stkrepo"
+cat >"$AC_HOME/projects/stkrepo.yaml" <<'YEOF'
+commands:
+  test: "echo test-ok"
+YEOF
+"$BIN/ac-ship.sh" start --intent "stuck exercise" --skip pr >/dev/null
+git -C "$stkrepo" checkout -qb crew/stk
+printf 'work\n' >>"$stkrepo/f.txt" && git -C "$stkrepo" add f.txt && git -C "$stkrepo" commit -qm work
+"$BIN/ac-ship.sh" step test completed --note "suite green" >/dev/null
+stkrun="$stkrepo/.crew/ship/$(readlink "$stkrepo/.crew/ship/current")"
+AC_CREW_ID=stk-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship.sh" review-agent >/dev/null
+# Same HEAD as round 1's reviewed_ref, rounds=1 < cap: acceptance goes through.
+out="$("$BIN/ac-ship.sh" review-residual accept --grounds "finding disputes a rule the code cites - chief judges it wrong")"
+assert_contains "$out" "SELF-APPROVED: review-residual" "same-ref-stuck acceptance prints the receipt"
+assert_eq "$(jq -r '.[0].action' "$stkrun/findings/review.json")" "no-op" "the disputed finding is now advisory"
+cd "$repo" || fail "cd back from stkrepo"
+
 # --- review-round floor: round 3 uses round 2's reviewed_ref ------------------
 # A warning fix on a file changed in round 2 but untouched in round 3 floors only
 # when it is a NEW id. The same previous-round open id must stay fix even though
@@ -1829,7 +1856,8 @@ case "${FLOOR_STAGE:-carried}" in
   r3)
     jq -n --arg ref "$ref" '{findings:[
       {id:"floor-carried",severity:"warning",action:"fix",file:"r2-only.txt",class:"regression",description:"carried blocker",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"},
-      {id:"floor-new",severity:"warning",action:"fix",file:"r2-only.txt",class:"regression",description:"new late nit",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"}],
+      {id:"floor-new",severity:"warning",action:"fix",file:"r2-only.txt",class:"regression",description:"new late nit",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"},
+      {id:"floor-utf8",severity:"warning",action:"fix",file:"đo-utf8.txt",class:"regression",description:"in-delta blocker on a UTF-8 path",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"}],
       summary:"nit",risk_level:"low",risk_rationale:"r",reviewed_ref:$ref,verdict:"fix"}' >"$output" ;;
   *)
     jq -n --arg ref "$ref" '{findings:[
@@ -1849,7 +1877,8 @@ FLOOR_STAGE=carried AC_CREW_ID=floor-implement AC_VERIFY_BIN="$floorstub/ac-veri
 printf 'r2\n' >>"$floorrepo/r2-only.txt" && git -C "$floorrepo" add r2-only.txt && git -C "$floorrepo" commit -qm "fix r2"
 FLOOR_STAGE=carried AC_CREW_ID=floor-implement AC_VERIFY_BIN="$floorstub/ac-verify" "$BIN/ac-ship.sh" review-agent >/dev/null
 "$BIN/ac-ship.sh" step review fixing >/dev/null
-printf 'r3\n' >>"$floorrepo/f.txt" && git -C "$floorrepo" commit -qam "fix r3"
+printf 'r3\n' >>"$floorrepo/f.txt"
+printf 'r3\n' >"$floorrepo/đo-utf8.txt" && git -C "$floorrepo" add "đo-utf8.txt" f.txt && git -C "$floorrepo" commit -qm "fix r3"
 out="$(FLOOR_STAGE=r3 AC_CREW_ID=floor-implement AC_VERIFY_BIN="$floorstub/ac-verify" "$BIN/ac-ship.sh" review-agent)"
 assert_contains "$out" "review-agent round 3" "floor fixture reaches round 3"
 assert_eq "$(jq -r '.[] | select(.id == "floor-new") | .action' "$floorrun/findings/review.json")" "no-op" \
@@ -1860,6 +1889,8 @@ assert_eq "$(jq -r '.[] | select(.id == "floor-carried") | .action' "$floorrun/f
   "r3 prior-open id remains fix even outside the delta"
 assert_eq "$(jq -r '.[] | select(.id == "floor-carried") | has("round_floored")' "$floorrun/findings/review.json")" "false" \
   "the prior-open id carries no round floor flag"
+assert_eq "$(jq -r '.[] | select(.id == "floor-utf8") | .action' "$floorrun/findings/review.json")" "fix" \
+  "a NEW in-delta blocker on a UTF-8 path stays fix (core.quotepath=false - C-quoted paths must not read as out-of-delta)"
 assert_eq "$(jq -r '.verdict' "$floorrun/logs/review-agent-r3.json")" "fix" \
   "durable r3 verdict remains fix because the previous open id persists"
 cd "$repo" || fail "cd back from floorrepo"

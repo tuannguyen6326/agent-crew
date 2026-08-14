@@ -975,7 +975,7 @@ cmd_cmd() {
     tc="$(ac_yaml_get "$cf" commands.test-changed)"
     if [ -n "$tc" ]; then
       case "$tc" in *"{files}"*) ;; *) ac_die "commands.test-changed must carry a {files} placeholder" ;; esac
-      changed="$(git -C "$repo" diff --name-only --diff-filter=d "$(fresh_base)" HEAD)"
+      changed="$(git -C "$repo" -c core.quotepath=false diff --name-only --diff-filter=d "$(fresh_base)" HEAD)"
       if [ -n "$changed" ]; then
         quoted=""
         while IFS= read -r cfile; do
@@ -1372,7 +1372,7 @@ cmd_review_agent() {
     if [ -n "$prev_ref" ] && [ "$prev_ref" = "$head" ]; then
       case "$prev_verdict" in
         pass) remedy="complete delivery at this ref; advisory findings belong in the PR/backlog" ;;
-        fix) remedy="apply the blocking fix and commit it before requesting the next round" ;;
+        fix) remedy="apply the blocking fix and commit it before requesting the next round - or, when the owning chief judges the finding WRONG (no code change warranted), release the loop roundless: ac-ship.sh review-residual accept --grounds '<why>' (critical correctness/security/data-loss still refuses)" ;;
         ask-user) remedy="record the captain decision; commit only if that decision requires a code change" ;;
         *) remedy="change the reviewed ref before requesting another round" ;;
       esac
@@ -1493,7 +1493,7 @@ cmd_review_agent() {
   # waiting for (F9): trust this one internal call to replace review findings
   # wholesale, including dropping resolved `fix` ids.
   if [ -n "$floor_ref" ] && [ -n "$prior_open_ids" ] \
-    && delta="$(git -C "$repo" diff --name-only "$floor_ref" "$head" -- 2>/dev/null)"; then
+    && delta="$(git -C "$repo" -c core.quotepath=false diff --name-only "$floor_ref" "$head" -- 2>/dev/null)"; then
     AC_FINDINGS_ROUND="$round" AC_FINDINGS_DELTA="$delta" \
       AC_FINDINGS_PRIOR_OPEN="$prior_open_ids" \
       _ac_findings_trusted=1 cmd_findings review <<<"$findings_json" >/dev/null
@@ -1539,12 +1539,15 @@ cmd_review_residual() {
   # findings become advisory no-ops (residual_accepted, grounds recorded) so
   # the run can complete, and the command PRINTS the SELF-APPROVED receipt
   # the chief posts to the family room - the captain's veto surface, never a
-  # question. Refused below the cap (the normal fix loop is not skippable),
+  # question. Reachable AT the cap, and BELOW it only when the loop is STUCK
+  # same-ref (the last validated round reviewed current HEAD - captain rule 6
+  # forbids another round and no commit is coming); otherwise refused below
+  # the cap (the normal fix loop is not skippable),
   # and refused OUTRIGHT while the residual holds a critical
   # correctness/security/data-loss finding - that carve-out is
   # non-overridable; only --final-round or a captain re-route remains.
   require_run
-  local action="${1:-}" grounds="" rd f rounds max_rounds carve nfix tmp
+  local action="${1:-}" grounds="" rd f rounds max_rounds carve nfix tmp last_ref cur_head
   [ "$action" = accept ] || ac_die "usage: ac-ship.sh review-residual accept --grounds '<text>'"
   shift
   while [ $# -gt 0 ]; do
@@ -1562,7 +1565,18 @@ cmd_review_residual() {
   rounds="$(review_invocations_recorded "$rd")"
   max_rounds="$(cmd_config review.max_rounds 2>/dev/null || true)"
   case "$max_rounds" in '' | *[!0-9]* | 0) max_rounds=3 ;; esac
-  [ "$rounds" -ge "$max_rounds" ] || ac_die "review-residual: acceptance is only for a loop AT the cap (rounds=$rounds, review.max_rounds=$max_rounds) - run the normal fix loop"
+  # Reachability (captain requirement 2026-08-14, rule 6 "one ref, one round"):
+  # chief-decide releases a loop in exactly TWO states - AT the cap, or STUCK
+  # below it because the last validated round already reviewed current HEAD
+  # and the chief judges the remaining fix finding wrong, so no commit is
+  # coming and rule 6 forbids the next round. Below the cap with a MOVING
+  # head the normal fix loop is not skippable.
+  if [ "$rounds" -lt "$max_rounds" ]; then
+    last_ref="$(ls "$rd"/logs/review-agent-r*.json 2>/dev/null | sort -V | tail -n 1 | xargs -r cat 2>/dev/null | jq -r '.reviewed_ref // ""' 2>/dev/null)" || last_ref=""
+    cur_head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
+    { [ -n "$last_ref" ] && [ "$last_ref" = "$cur_head" ]; } \
+      || ac_die "review-residual: acceptance is only for a loop AT the cap (rounds=$rounds, review.max_rounds=$max_rounds) or STUCK at an already-reviewed HEAD (one ref, one round) - run the normal fix loop"
+  fi
   carve="$(jq '[.[] | ((.class // "") | tostring) as $c
     | select(.action == "fix" and ((.severity // "") | tostring) == "error"
              and ((["correctness","security","data-loss"] | index($c)) != null))] | length' "$f")"
