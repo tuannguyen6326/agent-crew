@@ -28,9 +28,12 @@
 
 # The known built-in set, and the same set as an ERE alternation for process
 # matching (ac-lock.sh's holder-identity check).
-AC_HARNESS_RE='claude|codex|opencode'
+# cursor's PROCESS name is cursor-agent (the bare `cursor` binary is the IDE
+# launcher, a different program) - the RE matches command lines, so it
+# carries the real process name while the harness ID stays `cursor`.
+AC_HARNESS_RE='claude|codex|opencode|pi|cursor-agent'
 ac_harness_known() {
-  case "$1" in claude | codex | opencode) return 0 ;; *) return 1 ;; esac
+  case "$1" in claude | codex | opencode | pi | cursor) return 0 ;; *) return 1 ;; esac
 }
 
 # TUI busy idioms: ONE alternation over every built-in harness's "working"
@@ -54,7 +57,18 @@ ac_harness_instruction_file() {
   # that is neither built-in nor custom dies here, at seed time.
   local h="${1:-claude}"
   case "$h" in
-    codex | opencode) printf 'AGENTS.md\n' ;;
+    # pi joins the AGENTS.md group on its own CLI's word: pi 0.84.2 --help
+    # (verified live on this host, 2026-08-14) names the discovery switch
+    # "--no-context-files  Disable AGENTS.md and CLAUDE.md discovery and
+    # loading" - so a bare pi launch discovers the worktree AGENTS.md itself;
+    # the repo-shipped-wins rule is unchanged.
+    codex | opencode | pi) printf 'AGENTS.md\n' ;;
+    # cursor: LIVE-PROBED 2026-08-14 on cursor-agent 2026.05.05 (headless
+    # -p --trust, all-tokens probe + swapped-marker control leg -
+    # harness-facts.md cursor section owns the evidence): loads the worktree
+    # AGENTS.md AND root CLAUDE.md, does NOT load .claude/CLAUDE.md, and the
+    # control leg proved the loader follows the PATH, not the token.
+    cursor) printf 'AGENTS.md\n' ;;
     claude) printf '.claude/CLAUDE.md\n' ;;
     *)
       if [ -f "$(ac_home)/config/launch-$h" ]; then
@@ -77,9 +91,15 @@ ac_harness_pane_arm() {
   # the caller its whole timeout and then reads like a slow reviewer
   # (HARNESS ARMS, bin/ac-pane-agent.sh header - the arm SEQUENCING and both
   # launch-command tables stay with that file).
+  # pi and cursor ride the crewmate arm on the captain's own order
+  # (captain 2026-08-14: "fix de codereview-agent / qa-agent / gate-agent
+  # apply pi vs cursor") - their completion contract has NO live run yet, so
+  # the FIRST real round is the verification: a pane that never writes its
+  # verdict file surfaces as the caller's harvest timeout, visibly, and
+  # harness-facts.md owns the UNPROVEN boundary until that round lands.
   case "$1" in
     claude) printf 'session\n' ;;
-    codex | opencode) printf 'crewmate\n' ;;
+    codex | opencode | pi | cursor) printf 'crewmate\n' ;;
     *) return 1 ;;
   esac
 }
@@ -125,6 +145,16 @@ ac_record_launch_opts() {
       [ -n "$model" ] && ac_meta_set "$meta" model "$model"
       [ -n "$applied" ] && ac_meta_set "$meta" effort "$applied" ;;
     opencode)
+      [ -n "$model" ] && ac_meta_set "$meta" model "$model" ;;
+    pi)
+      # pi's built-in line genuinely applies both flags (--model / --thinking),
+      # and like codex it has no TUI '/effort' half - so ultracode records the
+      # APPLIED tier, never the preset name.
+      [ -n "$model" ] && ac_meta_set "$meta" model "$model"
+      [ -n "$applied" ] && ac_meta_set "$meta" effort "$applied" ;;
+    cursor)
+      # cursor-agent has no effort flag at all (thinking rides model NAMES,
+      # e.g. a -thinking suffix) - model only, the opencode shape.
       [ -n "$model" ] && ac_meta_set "$meta" model "$model" ;;
   esac
   return 0

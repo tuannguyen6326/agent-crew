@@ -2628,7 +2628,11 @@ export function isEditableConfig(name: string): boolean {
 }
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultracode"] as const;
-const HARNESSES = ["claude", "codex", "opencode"] as const;
+// One set again (captain 2026-08-14 "codereview-agent / qa-agent / gate-agent
+// apply pi vs cursor"): every registry harness is offerable on every knob;
+// the pane arm and one-shot forms carry the per-harness boundaries.
+const CREW_HARNESSES = ["claude", "codex", "opencode", "pi", "cursor"] as const;
+const PANE_HARNESSES = CREW_HARNESSES;
 
 export interface KnobMeta {
   desc: string; // one line: what the knob does (distilled from docs/configuration.md)
@@ -2643,12 +2647,12 @@ export interface KnobMeta {
 export const CONFIG_KNOB_META: Record<(typeof EDITABLE_CONFIG)[number], KnobMeta> = {
   flow: { desc: "Task flow default: auto = the crewchief triages each order; direct = one execution crewmate; staged = design then execution.", options: ["auto", "direct", "staged"] },
   effort: { desc: "Fleet-wide default reasoning effort for crewmates when --effort is absent.", options: EFFORTS },
-  "crew-harness": { desc: "Default crewmate harness when a spawn names none.", options: HARNESSES },
+  "crew-harness": { desc: "Default crewmate harness when a spawn names none.", options: CREW_HARNESSES },
   model: { desc: "Fleet-wide default model for crewmates when --model is absent (alias or full name); empty = the harness default." },
-  "codereview-agent": { desc: "Harness for the independent code-review pane; a dispatched panes.codereview profile supersedes it.", options: HARNESSES },
+  "codereview-agent": { desc: "Harness for the independent code-review pane; a dispatched panes.codereview profile supersedes it.", options: PANE_HARNESSES },
   "codereview-model": { desc: "Model for the code-review pane (default opus) - decoupled from config/model." },
   "codereview-effort": { desc: "Reasoning effort for the code-review pane; unset falls through to the fleet effort ladder.", options: EFFORTS },
-  "qa-agent": { desc: "Harness for the qa pane; a routed panes.qa profile supersedes it.", options: HARNESSES },
+  "qa-agent": { desc: "Harness for the qa pane; a routed panes.qa profile supersedes it.", options: PANE_HARNESSES },
   "qa-model": { desc: "Static fallback model for an unrouted qa pane (default opus)." },
   "qa-effort": { desc: "Reasoning effort for the qa pane; unset falls through to the fleet effort ladder.", options: EFFORTS },
   promote: { desc: "Room promotion policy. Default always: a thread per task - every family gets a roomchief at intake up to room-parallel. auto = per-family triage; never = rooms stay records.", options: ["always", "auto", "never"] },
@@ -2656,7 +2660,7 @@ export const CONFIG_KNOB_META: Record<(typeof EDITABLE_CONFIG)[number], KnobMeta
   "learn-every": { desc: "Learning distill cadence: debriefs-with-lessons before the distill room auto-opens (default 8).", numeric: true },
   "curate-every": { desc: "Curate cadence: settled Learning runs before the records-wide curate fires (default 5).", numeric: true },
   "remote-mirror": { desc: "Task-thread narrative on the remote channel: off (default); chief = the owning chief composes its thread posts; on = machine auto-mirror of every room post.", options: ["off", "chief", "on"] },
-  "gate-agent": { desc: "Second-chief engine for design gates - one engine, no fallback; off = the chief self-judges (receipted).", options: ["codex", "claude", "opencode", "off"] },
+  "gate-agent": { desc: "Second-chief engine for design gates - one engine, no fallback; off = the chief self-judges (receipted).", options: ["codex", "claude", "opencode", "pi", "cursor", "off"] },
   "gate-effort": { desc: "Reasoning effort for the gate judge; empty = the engine's own default.", options: EFFORTS },
   "gate-model": { desc: "Model for the gate judge; empty = the engine's own default." },
   backend: { desc: "Session backend for new crewmates; herdr is the only supported value.", options: ["herdr"] },

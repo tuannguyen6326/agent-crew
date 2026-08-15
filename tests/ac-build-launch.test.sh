@@ -68,6 +68,20 @@ assert_eq "$(lib 'ac_build_launch opencode omod high')" "opencode -m omod" \
   "opencode gets -m, and the effort is dropped for want of a TUI flag to ride"
 assert_eq "$(lib 'ac_build_launch opencode "" ""')" "opencode" "bare opencode"
 
+# pi (0.84.2, verified via its own --help): regular-TUI pin always, --model and
+# --thinking ride when set - the fleet effort vocabulary passes through as the
+# thinking tier unchanged.
+assert_eq "$(lib 'ac_build_launch pi pmod xhigh')" "pi --tui-mode regular --model pmod --thinking xhigh" \
+  "pi gets --model and --thinking with the regular-TUI pin"
+assert_eq "$(lib 'ac_build_launch pi "" ""')" "pi --tui-mode regular" "bare pi keeps the TUI pin alone"
+
+# cursor (cursor-agent 2026.05.05, verified via its own --help): the agent CLI
+# is cursor-agent (bare `cursor` is the IDE launcher); --yolo always, --model
+# when set, and effort is DROPPED - no flag exists (thinking rides model names).
+assert_eq "$(lib 'ac_build_launch cursor cmod high')" "cursor-agent --yolo --model cmod" \
+  "cursor gets --model on cursor-agent --yolo, and the effort is dropped"
+assert_eq "$(lib 'ac_build_launch cursor "" ""')" "cursor-agent --yolo" "bare cursor launch"
+
 # An unknown harness is refused, and the refusal names the way out.
 err="$(lib 'ac_build_launch nope "" ""' 2>&1 || true)"
 assert_contains "$err" "no launch template for harness 'nope'" "unknown harness refused"

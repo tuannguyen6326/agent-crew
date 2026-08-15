@@ -5,7 +5,7 @@
 # that run in their own seeded home instead of a project worktree.
 #
 # Usage: ac-spawn.sh <id> <project-name-or-dir> [--scout] [--mode <m>]
-#                    [--harness <claude|codex|opencode|custom>] [--model <name>]
+#                    [--harness <claude|codex|opencode|pi|cursor|custom>] [--model <name>]
 #                    [--effort <low|medium|high|xhigh|max|ultracode>]
 #                    [--backend <herdr>]
 #                    [--resume-from <old-task-id>]
@@ -162,9 +162,9 @@
 # pass --harness/--model/--effort explicitly.
 # Model and effort are fleet-wide defaults: absent --model/--effort fall back
 # to config/model and config/effort (like config/crew-harness). --model maps to
-# claude --model / codex -m; the --effort FLAG is claude-only, but the effort
-# VALUE also reaches codex, as its config override -c model_reasoning_effort=<e>
-# (codex has no effort flag); opencode ignores it. Effort is validated against
+# claude --model / codex -m / pi --model; the --effort FLAG is claude-only, but
+# the effort VALUE also reaches codex (-c model_reasoning_effort=<e>) and pi
+# (--thinking <e>, verified pi 0.84.2); opencode ignores it. Effort is validated against
 # low|medium|high|xhigh|max|ultracode before anything is spawned.
 # effort=ultracode is the claude preset: the launch line gets --effort xhigh and,
 # once the built-in claude TUI is up, '/effort ultracode' is typed in to add the

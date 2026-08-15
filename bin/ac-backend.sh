@@ -439,6 +439,27 @@ ac_build_launch() {
     opencode)
       launch="opencode"
       [ -n "$m" ] && launch="$launch -m $m" ;;
+    pi)
+      # pi 0.84.2 (verified on this host via --help): bare regular-TUI launch,
+      # kickoff typed after the came-up gate like every built-in. --tui-mode
+      # regular pins the pane-capturable TUI; --thinking takes the fleet effort
+      # vocabulary directly (pi's extra off/minimal tiers sit below it and stay
+      # unreachable). No permission flag exists or is needed - pi ships no
+      # approval gate on its own tools.
+      launch="pi --tui-mode regular"
+      [ -n "$m" ] && launch="$launch --model $m"
+      [ -n "$e" ] && launch="$launch --thinking $e" ;;
+    cursor)
+      # cursor-agent 2026.05.05 (verified on this host via --help): the agent
+      # CLI is cursor-agent - bare `cursor` is the IDE launcher, a different
+      # program. --yolo (alias of --force) is the autonomy an unattended
+      # crewmate needs; --model rides when set; there is NO effort flag
+      # (thinking rides model names), so effort is dropped - the opencode
+      # shape. The pane opens in the worktree, which is cursor-agent's
+      # default workspace; a possible first-launch trust dialog is UNPROVEN
+      # (harness-facts.md owns the boundary).
+      launch="cursor-agent --yolo"
+      [ -n "$m" ] && launch="$launch --model $m" ;;
     *) ac_die "no launch template for harness '$h'; create $(ac_config_dir)/launch-$h" ;;
   esac
   printf '%s\n' "$launch"

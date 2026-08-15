@@ -813,6 +813,17 @@ oneshot_launch() {
     codex)    printf 'codex exec -s read-only --skip-git-repo-check%s%s -c model_reasoning_summary=auto\n' "${2:+ -m $2}" "${3:+ -c model_reasoning_effort=$3}" ;;
     claude)   printf 'claude -p%s%s\n' "${2:+ --model $2}" "${3:+ --effort $3}" ;;
     opencode) printf 'opencode run%s%s\n' "${2:+ -m $2}" "${3:+ --variant $3}" ;;
+    # pi and cursor one-shots exist on captain order (2026-08-14, "gate-agent
+    # apply pi vs cursor") with their safety boundary NAMED rather than
+    # pretended: neither CLI has codex's kernel-level read-only sandbox.
+    #   pi -p: tools stay on (the judge must READ context paths; --no-tools
+    #   would blind it) - write-restraint is the judge prompt's law, enforced
+    #   by engine compliance alone.
+    #   cursor-agent -p --trust: trust unlocks headless reads, and --yolo is
+    #   deliberately ABSENT from the judge form - unapproved mutations deny
+    #   by default, the closest to read-only this CLI documents.
+    pi)       printf 'pi -p%s%s\n' "${2:+ --model $2}" "${3:+ --thinking $3}" ;;
+    cursor)   printf 'cursor-agent -p --trust%s\n' "${2:+ --model $2}" ;;
     *) return 1 ;;
   esac
 }

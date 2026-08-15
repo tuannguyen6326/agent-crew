@@ -1,6 +1,6 @@
 ---
 name: harness-operations
-description: Verified operational facts for the harnesses Agent Crew supports through bin/ac-spawn.sh - claude, codex, opencode, and an unverified captain custom launch command - over the herdr backend. Load before a harness-specific spawn, trust-dialog response, skill invocation, interrupt, exit, resume, recovery, or adapter verification. Read the target harness from the task meta; never guess from your own harness. An unknown or custom harness fails closed to natural-language steering, not borrowed keystrokes.
+description: Verified operational facts for the harnesses Agent Crew supports through bin/ac-spawn.sh - claude, codex, opencode, pi and cursor (both registered, partially verified), and an unverified captain custom launch command - over the herdr backend. Load before a harness-specific spawn, trust-dialog response, skill invocation, interrupt, exit, resume, recovery, or adapter verification. Read the target harness from the task meta; never guess from your own harness. An unknown or custom harness fails closed to natural-language steering, not borrowed keystrokes.
 ---
 
 # harness-operations
@@ -15,6 +15,8 @@ Covers only the harnesses Agent Crew currently supports through `bin/ac-spawn.sh
 - `claude`;
 - `codex`;
 - `opencode`;
+- `pi` (registered 2026-08-14, launch/effort/instruction facts verified from its own CLI; behavioural contract unproven - the references file owns the boundary);
+- `cursor` (registered 2026-08-14; the agent CLI is `cursor-agent`, never bare `cursor`; instruction file LIVE-PROBED: AGENTS.md + root CLAUDE.md, never .claude/CLAUDE.md - the references file owns the boundary);
 - a captain-provided custom launch command (`config/launch-<harness>`), which stays unverified unless separately validated.
 
 The herdr session backend remains the only supported backend.
