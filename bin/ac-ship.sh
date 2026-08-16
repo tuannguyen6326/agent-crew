@@ -8,7 +8,7 @@
 # Usage:
 #   ac-ship.sh start --intent <text> [--skip <a,b,...>] [--target <branch>] [--lint] [--tdd]
 #
-# LEAN PIPELINE (captain.md 2026-07-21) - two steps are conditional, both
+# LEAN PIPELINE - two steps are conditional, both
 # FAILING TOWARD RUNNING:
 #   - `lint` is OPT-IN: skip-by-default, and RUNS only when `--lint` is passed
 #     (the captain/brief requests it).
@@ -100,7 +100,7 @@
 # remain cleanup inputs only. The validated object routes `.findings` to
 # `findings review` and advisory risk fields to `meta review`.
 #
-# REVIEW-ROUND CONVERGENCE (captain 2026-08-05; AGENTS.md section 5 carries
+# REVIEW-ROUND CONVERGENCE (AGENTS.md section 5 carries
 # the policy, this header the mechanics). Three gates on review-agent:
 # - ENTRY: a round opens only with the test step completed this run or a
 #   FRESH attestation (attest_conditions; a bare --tdd declaration does not
@@ -238,7 +238,7 @@
 #
 # SHIP TEST RECEIPT (authoritative - every other mention points HERE by name):
 # unit-suite health is the ship pipeline's business EXCLUSIVELY, and a QA round
-# may only READ it (QA boundary policy, captain 2026-07-25: QA never executes or
+# may only READ it (QA boundary policy: QA never executes or
 # re-runs unit tests). `cmd test` therefore publishes ONE run-scoped receipt at
 # <repo>/.crew/ship/<run>/test/receipt.env, schema
 # agentcrew.ship-test-receipt/v1, atomically:
@@ -346,7 +346,7 @@
 # silently dropping any key the captain pinned (ship-config-and-know-citation-
 # blind-spots).
 #
-# SCOPED TEST (captain order 2026-07-30 - prefer changed-file tests over the
+# SCOPED TEST (prefer changed-file tests over the
 # full suite): commands.test-changed is an OPT-IN per-project command template
 # that MUST carry a {files} placeholder (refused loud otherwise); `cmd test`
 # replaces it with the shell-quoted base-to-HEAD changed set (same recomputed
@@ -541,12 +541,12 @@ cmd_start() {
   } >"$rd/run.meta"
   for s in $STEPS; do
     status=pending
-    # lint is OPT-IN (captain.md 2026-07-21, crew-ship-lean-pipeline): skip-by-
+    # lint is OPT-IN: skip-by-
     # default, runs ONLY when --lint is requested. An explicit --skip below still
     # wins, so a requested lint can also be skipped and the two never contradict.
     [ "$s" = lint ] && [ "$want_lint" = 0 ] && status=skipped
     # test SKIPS on --tdd - the implement DECLARES its TDD run is the evidence
-    # (captain.md 2026-07-21). FAIL CLOSED: absent --tdd, test stays pending and
+    #. FAIL CLOSED: absent --tdd, test stays pending and
     # RUNS. It is a claim, not attestation-by-execution; a fix that changes code
     # re-runs test regardless (the skill's fix-reopen rule), because the
     # implement's TDD never covers a later fix diff.
@@ -964,7 +964,7 @@ cmd_cmd() {
       test_receipt_from_attestation "$rd" "$c"
       exit 0
     fi
-    # SCOPED TEST (captain order 2026-07-30, header: SCOPED TEST): with
+    # SCOPED TEST: with
     # commands.test-changed configured, the test step prefers the changed-file
     # run over the full suite. {files} is replaced by the shell-quoted
     # base-to-HEAD changed set (deletions excluded); an empty changed set
@@ -1303,7 +1303,7 @@ review_delta_is_caller_polish() {
 cmd_review_agent() {
   # Compatibility/policy adapter only. ac-verify owns exact-ref isolation,
   # fresh pane rounds, prompts, verdict validation, and pane/lease cleanup.
-  # review-round-convergence (captain 2026-08-05) adds three gates here:
+  # review-round-convergence adds three gates here:
   # the test-evidence entry precondition, the review.max_rounds cap with the
   # once-only --final-round grant, and the round/fix-delta metadata that arms
   # the shared normalizer's late-finding floor.
@@ -1535,7 +1535,7 @@ cmd_review_agent() {
 cmd_review_residual() {
   # review-residual accept --grounds '<text>' - the OWNING CHIEF's
   # chief-decide on a review loop that hit review.max_rounds
-  # (review-round-convergence, captain 2026-08-05): the remaining fix
+  # (review-round-convergence): the remaining fix
   # findings become advisory no-ops (residual_accepted, grounds recorded) so
   # the run can complete, and the command PRINTS the SELF-APPROVED receipt
   # the chief posts to the family room - the captain's veto surface, never a

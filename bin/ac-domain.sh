@@ -712,7 +712,7 @@ domain_validate_projects() {
 
   # The DETAIL file is prose and is never a guard, but ONE part of it is
   # machine-readable: a `## <project-name>` heading per in-scope project
-  # (captain ruling 2026-08-02). Comparing that heading set against the view
+  #. Comparing that heading set against the view
   # gives BOTH divergence directions, which a substring search over free prose
   # could never do - it can neither find a project named ONLY in the detail
   # file, nor tell a real mention from the name appearing inside a sentence.

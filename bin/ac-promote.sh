@@ -63,7 +63,7 @@ meta="$(ac_task_meta "$id")"
 kind="$(ac_meta_get "$meta" kind)"
 [ "$kind" = scout ] || ac_die "task $id is kind=${kind:-unset}, not scout (only scouts promote)"
 
-# Delivery mode is PER-TASK (captain order 2026-08-10): --mode is REQUIRED -
+# Delivery mode is PER-TASK: --mode is REQUIRED -
 # there is no registry default to fall back on, and a promotion is exactly
 # the moment this task acquires a mode. crew-ship is a time-expensive choice,
 # so it needs the captain's declared word here (the row-pin remedy lives on

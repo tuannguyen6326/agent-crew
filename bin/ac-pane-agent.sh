@@ -290,7 +290,7 @@
 # agent-<task>.pane stay their own business.
 #
 # GATE INDEPENDENCE GUARD, stated with its RESIDUAL in the same breath because
-# the two are one contract (captain ruling 2026-07-22): a steer into an
+# the two are one contract: a steer into an
 # ac-gate-agent:<family>-<stage> pane is REFUSED unless the caller declares
 # --captain. The gate judge is the one pane agent whose whole value is that the
 # chief whose stage it judges did not shape its turn, and what this refuses is
@@ -374,7 +374,7 @@
 # Trust: the worktree is
 # pre-seeded as trusted in ~/.claude.json so the session starts undialoged.
 # Placement: the pane lands in its FAMILY's workspace (ac-backend.sh FAMILY
-# WORKSPACE GROUPING; captain order 2026-08-06) - the caller (ac-verify.sh,
+# WORKSPACE GROUPING) - the caller (ac-verify.sh,
 # ac-gate.sh) exports AC_WINDOW_FAMILY, and ac_herdr_agents_workspace resolves
 # the "<fleet> · <family>" workspace from it; absent/empty = the fleet ROOT
 # workspace (the ac-self-task case). The former separate per-role
@@ -1015,7 +1015,7 @@ BEFORE=$(ls "$PROJ" 2>/dev/null | grep '\.jsonl$' || true)
 # used to share the bare label - the second family's verifier adopted the
 # first family's tab and split into it, landing in the WRONG family
 # workspace and bypassing AC_WINDOW_FAMILY entirely (FAMILY WORKSPACE
-# GROUPING, captain order 2026-08-06). Family-scoping the label makes the
+# GROUPING). Family-scoping the label makes the
 # session-wide adopt safe again: rounds of ONE task still stack (same
 # family, same branch), cross-family adoption is impossible by name.
 BRANCH=$(git -C "$CWD" symbolic-ref --short HEAD 2>/dev/null || true)
@@ -1043,7 +1043,7 @@ tab_create_in_ws() {
 # create it there. The workspace is resolved FIRST and scopes the adoption:
 # a tab carrying the right label in the WRONG workspace (a pre-family-label
 # leftover, a label collision) is never adopted, so the pane PROVABLY lands
-# in its family's group (captain order 2026-08-11: the codereview pane must
+# in its family's group (the codereview pane must
 # sit with its family - the label fix alone only made collisions unlikely,
 # this makes placement structural). WS unresolvable (herdr degraded) falls
 # back to label-only adoption - the same degrade direction the create path

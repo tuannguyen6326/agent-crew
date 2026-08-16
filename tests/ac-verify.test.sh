@@ -510,7 +510,7 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "question, options, matching t
 # 435 = the pre-leverage 330 budget + the exhaustive-first-pass line
 # (prior-round leverage) + the fix-is-blocking action policy (captain order
 # 2026-07-30) + the class key and round-2+ churn rule (review-round
-# convergence, captain order 2026-08-05) + the stable-id formation rule (this
+# convergence, captain ruling) + the stable-id formation rule (this
 # is what a later round's disposition binds to); each raise is deliberate, not
 # drift.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
@@ -660,7 +660,7 @@ scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
   || fail "history review prompt exceeds its 510-word scaffold budget: $scaffold_words"
 
 # A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
-# the interdiff scope (captain 2026-08-05): the previous entry's reviewed_ref
+# the interdiff scope: the previous entry's reviewed_ref
 # becomes the round's review obligation (fix delta), the full diff demotes to
 # context, and every previous-round open fix/ask-user id must be dispositioned -
 # re-reported or listed in resolved_ids - before the verdict is accepted.
@@ -1377,7 +1377,7 @@ assert_contains "$(cat "$mismatch_report")" \
 # --- QA boundary policy: reconciliation validates the RECEIPTS, not the prose ----
 # The facade is the last reader before the caller's verdict, so a passing run
 # whose receipts do not reconcile must never be exported (QA boundary policy,
-# captain 2026-07-25).
+# captain ruling).
 bp_family=flow-v2-qa-boundary
 bp_brief="$TMP/bp-brief.md"
 bp_profile="$TMP/bp-qa-profile/profile.json"

@@ -146,8 +146,7 @@ if [ -n "$other" ] && [ -f "$other" ]; then
   ac_die "a brief for '$id' already exists in the other layout: $other"
 fi
 
-# MODE IS PER-TASK ONLY (captain order 2026-08-10: "mode k fix cứng trên
-# projects nữa") - the registry rung and its silent crew-ship fallback are
+# MODE IS PER-TASK ONLY (mode is never fixed on the project registry) - the registry rung and its silent crew-ship fallback are
 # GONE. Resolution: the row's pinned token wins (the captain's recorded word);
 # else the chief's explicit --mode (its own triage - cheap modes are free, the
 # escalation gate below prices crew-ship); else REFUSE - an unspecified mode
@@ -586,7 +585,10 @@ Captain: $captain
 Design the change at system level in $task_dir/report.md:
 components/modules touched or introduced, their interfaces and contracts,
 data flow, and how it fits the EXISTING architecture (read the real code -
-name real modules, not imagined ones). Present the viable alternatives
+name real modules, not imagined ones). For every affected component, verify
+that readers can understand the component without reading its internals and
+that its internals can change without breaking consumers that honor that contract.
+Present the viable alternatives
 with tradeoffs and state which one you recommend and why; a design with no
 rejected alternative was not designed. Cover the non-functional angles that
 apply (compatibility, migration, performance, security). Include the
@@ -663,7 +665,9 @@ Work the needed sub-stages IN ORDER; one report per sub-stage:
 2. architecture -> $data_dir/$fam/arch/report.md: components, interfaces,
    the viable alternatives WITH tradeoffs, why the chosen one fits the
    existing system, and the smallest useful diagram when the Diagram Rule
-   applies (else a reasoned n/a).
+   applies (else a reasoned n/a). For every affected component, verify that
+   readers can understand the component without reading its internals and
+   that its internals can change without breaking consumers that honor that contract.
 3. plan -> $data_dir/$fam/plan/report.md: ordered steps, exact files,
    test strategy per step, and a RED -> GREEN -> VERIFY -> REFACTOR TDD
    sequence per behavior-changing task.
@@ -781,6 +785,13 @@ Follow this order:
 
 Optional QA runs after delivery through \`ac-qa.sh agent\`; a QA defect returns
 to IMPLEMENT and invalidates delivery/review evidence affected by the fix.
+The FLEET HOME is baked below and passed VERBATIM: your pane carries no
+AC_HOME, and every durable source the QA profile freezes descends from that
+ONE value, with no per-source flag to supply any of them separately. The qa
+charter bakes \`--home\` for its own \`start\` line, but \`agent\` never reads that
+charter, so without this line the call can only answer
+\`QA_PROFILE_STATUS=needs-profile\`. Fill the placeholders; copy the flag as-is:
+\`$(ac_root)/bin/ac-qa.sh agent --home $(ac_home) --target <delivered-sha> --task $fam-qa --brief <qa-charter> --evidence <dir> [--scope <name> --app <name>] [--ship-run <ship run id>] [--qa-rule <number|default>]\`
 
 $(knowledge)
 $(standing_rules)

@@ -1626,7 +1626,7 @@ rd_skip="$repo/.crew/ship/$(readlink "$repo/.crew/ship/current")"
 assert_eq "$(awk -F'\t' '$1=="lint"{print $2}' "$rd_skip/steps.tsv")" "skipped" "--skip lint overrides --lint"
 
 # --- SHIP TEST RECEIPT: the run-scoped exact-SHA record QA may only READ ---------
-# The QA boundary policy (captain 2026-07-25) forbids QA from running a unit
+# The QA boundary policy forbids QA from running a unit
 # suite, so unit-suite health reaches a QA round ONLY through this receipt. It
 # is written by execution and never by a claim.
 rcp_repo="$(make_repo shiprcp)"
@@ -1706,7 +1706,7 @@ assert_no_file "$rcp_run5/test/receipt.env" "a --tdd declaration mints no execut
 cd "$repo" || fail "cd back from shiprcp"
 
 # --- review-round-convergence: cap, chief-decide residual, --final-round ------
-# Captain 2026-08-05. A fresh repo so the round counter starts at zero and the
+# A captain ruling. A fresh repo so the round counter starts at zero and the
 # DEFAULT cap (3, no review.max_rounds key) is what is under test.
 caprepo="$(make_repo caprepo)"
 cd "$caprepo" || fail "cd $caprepo"
@@ -1896,7 +1896,7 @@ assert_eq "$(jq -r '.verdict' "$floorrun/logs/review-agent-r3.json")" "fix" \
 cd "$repo" || fail "cd back from floorrepo"
 
 # --- advisory-polish-loop A: a 0-fix verdict FREEZES the tree ------------------
-# Captain 2026-08-06. A round returning ZERO `fix` findings makes the run
+# A captain ruling. A round returning ZERO `fix` findings makes the run
 # landable; polishing one of its advisories afterwards kills the receipt (the
 # bare-SHA re-check, no docs-only exemption) and buys a whole fresh verifier
 # round - four such rounds ran in one hour on one live family, every verdict a
@@ -2006,7 +2006,7 @@ frz_opens "an unresolvable passed ref opens the round"
 [ "$(frz_calls)" -gt "$calls_before" ] || fail "the undecidable case must actually spend a round"
 cd "$repo" || fail "cd back from frzrepo"
 # --- advisory-polish-loop B: the cap counts verifier SPEND, not fixing ticks ---
-# Captain 2026-08-06. `round` used to be the steps.tsv `fixing` column + 1, and
+# A captain ruling. `round` used to be the steps.tsv `fixing` column + 1, and
 # nothing but an explicit `step review fixing` ever ticks that column - so a run
 # whose rounds never tick it read round 1 forever while the invocations piled up
 # (measured live: 4 invocations at counter 1, 11 at counter ~2). The cap was
@@ -2115,7 +2115,7 @@ assert_contains "$out" "SELF-APPROVED: review-residual r3" \
   "residual acceptance counts invocations too, or the cap and its release disagree"
 cd "$repo" || fail "cd back from capbrepo"
 # --- advisory-polish-loop C: the same-ref retry brake --------------------------
-# Captain 2026-08-06. One live family retried the SAME ref three and four times:
+# A captain ruling. One live family retried the SAME ref three and four times:
 # one pane died mid-write, the rest were completed verdicts the caller rejected,
 # and every retry was silent. A repeated failure on ONE ref is an infrastructure
 # or validator signal - more model spend never fixes it - so the third
@@ -2172,7 +2172,7 @@ rc=0; brk invalid >/dev/null 2>&1 || rc=$?
 [ "$rc" -ne 0 ] || fail "the rejected-verdict attempt must fail"
 
 # --- advisory-polish-loop D: a rejected verdict says WHICH check failed --------
-# Captain 2026-08-06, the slice they value most despite being the smallest.
+# A captain ruling, the slice they value most despite being the smallest.
 # Three completed same-ref verdicts were rejected and silently re-run, and to
 # this day nobody knows why: the refusal covers "invalid or does not bind
 # current HEAD" alike and leaves no trace. One line per rejection, in the run

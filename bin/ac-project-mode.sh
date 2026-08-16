@@ -7,8 +7,8 @@
 # records/projects.md line format (one project per line):
 #   - <name> [+yolo] - <one-line description> (added <date>)
 # `+yolo` lets the orchestrator self-approve routine decisions for that
-# project. DELIVERY MODE IS NOT ANSWERED HERE (captain order 2026-08-10:
-# mode is per-task, recorded as the backlog row's contract token `mode:<m>`
+# project. DELIVERY MODE IS NOT ANSWERED HERE (mode is per-task,
+# fixed policy: recorded as the backlog row's contract token `mode:<m>`
 # and resolved by ac-brief.sh - pin > --mode flag > refuse, never a registry
 # default). A legacy `[<mode>]` bracket on a registry line is tolerated and
 # IGNORED so old registries keep resolving yolo without a migration.

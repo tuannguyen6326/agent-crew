@@ -158,7 +158,7 @@ ensure_commit_guard() {
   # It lives in the DEFAULT shared git-common-dir/hooks, so ONE install at lease
   # time covers the primary checkout plus every existing and future linked
   # worktree (AC7). A custom core.hooksPath is SKIPPED fail-open (option A,
-  # captain 2026-07-24): a relative value resolves per-worktree (not shared,
+  # accepted): a relative value resolves per-worktree (not shared,
   # breaks AC7), a tracked dir would dirty the primary checkout, and /dev/null
   # (hooks disabled) would abort the lease - none worth handling for the observed
   # self-hosted failure. Provenance is BYTE-EXACT (the ensure_gitignore rule): an

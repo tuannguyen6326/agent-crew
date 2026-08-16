@@ -1216,7 +1216,7 @@ assert_no_file "$state/.wake-spool" "no record was published by the failed pass"
 # A DECISION marker (needs-decision:/blocked:) stamps the pane BLOCKED in the
 # herdr UI until answered; any later non-decision marker clears the stamp,
 # and the stamp itself never re-wakes the watcher as an ask: (contract:
-# ac-backend.sh CAPTAIN-WAIT STAMP; captain order 2026-07-17).
+# ac-backend.sh CAPTAIN-WAIT STAMP; captain ruling).
 rm -rf "$state/.wake-spool"
 printf 'window=crew:w4\nbackend=herdr\n' >"$state/w4.meta"
 seed_pane w4 pW4 tW4
@@ -2685,7 +2685,7 @@ rm -f "$state"/*.status
 
 # --- queue_wake never notifies - the notify moved to the blocked-by-captain
 # --- edge in bin/ac-room.sh's cmd_post -------------------------------------
-# CAPTAIN 2026-07-28 first cut this to ask/gone/unobservable+handback (a
+# The captain rule first cut this to ask/gone/unobservable+handback (a
 # notification on every durable wake was noise on a busy fleet). CAPTAIN
 # 2026-07-30 ("k co gi thi dung co chay ac-notify" / "block boi captain")
 # went further: ask/gone/unobservable are chief-owned events too - the chief
@@ -2772,7 +2772,7 @@ assert_contains "$(fleet_spool)" "ended its turn" "ended wake still publishes du
 assert_eq "$(notified ended)" "0" "ended no longer notifies"
 rm -rf "$state"/.wake-spool*
 
-# unobservable - the backend-unreadable state. Captain 2026-07-28 had added
+# unobservable - the backend-unreadable state. A captain ruling had added
 # it to the (now-removed) keep-list; 2026-07-30 removes it along with
 # ask/gone - it is chief-owned (the chief checks the backend), not
 # captain-approval.

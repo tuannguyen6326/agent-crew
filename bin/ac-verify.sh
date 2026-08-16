@@ -752,7 +752,7 @@ case "$kind" in
     fi
     ac_room_review_rulings "$room_snapshot" >"$room_rulings"
     # Previous-round leverage: the ledger's last reviewed_ref NARROWS round 2+'s
-    # review obligation to the fix delta (interdiff scope, captain 2026-08-05
+    # review obligation to the fix delta (interdiff scope
     # - sound because round 1 covered the full base..ref diff at its own ref
     # and everything since lives inside prior..ref by construction; the
     # normalizer's late-finding floor + critical carve-out own what an

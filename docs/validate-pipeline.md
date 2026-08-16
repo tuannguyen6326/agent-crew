@@ -17,7 +17,7 @@ This doc is the map, not the law.
 | 7 | push | `push` (lease + patch-id guarded, fail closed) | stage evidence, commit leftovers | - |
 | 8 | pr | - | PR with Intent/What Changed/Risk/Testing/Pipeline body, ~63KB cap, feat/fix typing, signature | - |
 
-Two steps are CONDITIONAL (captain.md 2026-07-21) - the ORDER is fixed, the RUN is not:
+Two steps are CONDITIONAL - the ORDER is fixed, the RUN is not:
 `lint` is skip-by-default and runs only when `start --lint` is passed (the captain/brief requested it); `test` is SKIPPED by `start --tdd` - the implement DECLARES its TDD run is the evidence (a claim, not the attestation-by-execution below). Both fail toward RUNNING: no `--lint` skips lint (the captain's chosen default), and no `--tdd` runs test. A fix that changes code re-runs test even in a `--tdd` run - the implement's TDD never covers a later fix diff. Every step stays runnable on request.
 
 There is no ci step: `finish checks-passed` means validated + PR raised, unmerged - the agent's stop point.
@@ -48,7 +48,7 @@ A fix that changes code re-opens completed `test` and `lint`.
 
 ## test skip-if-TDD
 
-The captain chose a DECLARATION (captain.md 2026-07-21): `ac-ship.sh start --tdd` starts the `test` step `skipped` - the implement's TDD run stands as the evidence. FAIL CLOSED: absent `--tdd`, test runs. It is a CLAIM, not proof; a fix that changes code re-runs test regardless.
+The captain chose a DECLARATION: `ac-ship.sh start --tdd` starts the `test` step `skipped` - the implement's TDD run stands as the evidence. FAIL CLOSED: absent `--tdd`, test runs. It is a CLAIM, not proof; a fix that changes code re-runs test regardless.
 
 ### TDD attestation (the evidence-backed variant)
 
@@ -106,7 +106,7 @@ The `base` recorded at start is informational; `ac-ship.sh base` always recomput
 ## Behavioral proof (crew-qa) - after delivery, never a step
 
 qa is NOT a pipeline step: the step list ends at `pr`, and `finish checks-passed` is the pipeline's stop point.
-When QA was triaged in, the SAME execution session that completed delivery calls `bin/ac-qa.sh agent --target <delivered-sha> --brief <qa-brief>`. The execution caller first selects any routed `panes.qa` rule, then the adapter atomically freezes trusted config, scope membership, selected store files, exact refs, the routing receipt, and the exact-SHA ship test receipt named by `--ship-run` (a QA round only READS unit-suite health from that receipt; it never runs a suite). `ac-verify qa` validates that bundle and runs one fresh exact-ref QA pane for the whole profile round; subprocesses do not become per-step agents.
+When QA was triaged in, the SAME execution session that completed delivery calls `bin/ac-qa.sh agent --home <fleet-home> --target <delivered-sha> --task <family>-qa --brief <qa-brief>` - copying `--home` from the runnable line its own execution brief bakes, since a crewmate pane carries no AC_HOME and this verb never reads the qa brief. The execution caller first selects any routed `panes.qa` rule, then the adapter atomically freezes trusted config, scope membership, selected store files, exact refs, the routing receipt, and the exact-SHA ship test receipt named by `--ship-run` (a QA round only READS unit-suite health from that receipt; it never runs a suite). `ac-verify qa` validates that bundle and runs one fresh exact-ref QA pane for the whole profile round; subprocesses do not become per-step agents.
 The pane drives the durable state machine. `finish passed` is refused unless every fixed step is completed or explicitly skipped with a note, findings are resolved, every case is a graded pass with durable in-root evidence, every web case has a linked visual, and a completed E2E step has a zero-exit receipt bound to the frozen command/cases/refs. Completing the test plan freezes its hash; an oracle change requires an accepted authority and `testplan-amend`.
 `run.meta outcome`, not pane prose, owns the exported verdict. The facade reconciles exact refs, profile identity, ledgers, evidence, and the passing marker; a pane verdict claim is optional and must match. It atomically publishes the canonical stage `report.md`, then exports run state, artifacts, caller `verdict.json`, and the distinct transport `relay-report.md`. Errors publish `verdict: error`, no caller verdict, and preserve recovery state.
 qa gates the MERGE, not the push: with `qa.require_for_ship: true` in the fleet-home project config (`projects/<name>.yaml`), `bin/ac-pr-merge.sh` and `bin/ac-merge-local.sh` require a complete parser-valid atomic `agentcrew.qa-attestation/v2` marker for the exact head. Flat and scoped gates validate marker bodies; empty, legacy, partial, malformed, off-head, or scope-renamed markers fail closed.

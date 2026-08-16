@@ -129,7 +129,8 @@ self_pid() {
         # never reaches another session's harness (the daemon breaks it).
         match="$pid"
       else
-        base="$(basename "${cmd%% *}")"
+        base="${cmd%% *}"
+        base="${base##*/}"
         case "$base" in
           bash|sh|zsh|dash|fish|-bash|-sh|-zsh|login|script) : ;;
           *) if [ -z "$stable" ] && [ "$pid" != "$$" ]; then stable="$pid"; fi ;;

@@ -45,7 +45,7 @@ assert_eq "$(cat "$AC_HOME/config/gate-effort")" "xhigh" "the judge's effort pin
 
 # -- the two VERIFICATION roles travel as full triples too, same shape as gate --
 # codereview/qa gained agent+effort knobs beside their model one and the pair was
-# renamed to the gate-* shape (captain 2026-07-28, routed-pane-rules-for-gate-
+# renamed to the gate-* shape (captain ruling, routed-pane-rules-for-gate-
 # codereview-roomchief TASK 2). All three of each role must converge for the same
 # reason gate-effort had to: a crewdeputy reviewing on its OWN harness or effort
 # while inheriting the parent's model is a half-inherited judge, silently.

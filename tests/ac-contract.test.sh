@@ -165,7 +165,7 @@ assert_contains "$(cat "$AC_HOME/data/g-pinned/implement/brief.md")" "Mode: crew
 
 # G5: --captain-requested is the per-call authority for the same escalations.
 "$BIN/ac-brief.sh" g-bare gproj --mode crew-ship --review yes \
-  --captain-requested 'captain 2026-08-10: ship this one through the pipeline' \
+  --captain-requested 'captain: ship this one through the pipeline' \
   --reason 'behavioral surface: the change rewrites the merge gate' >/dev/null \
   || fail "G5: a declared captain word must authorize the escalation"
 # The ref rides the Review line only on the OPTIONAL-raise path; a crew-ship

@@ -1901,7 +1901,7 @@ assert_eq "$(snap_fleet_dirs)" "$root_before" \
 # reintroduced ac_config_dir mkdir reds here.
 assert_no_file "$fake/config" "no AC_HOME: the resolver mints no stray config/ in the fixture (ac_home, not ac_config_dir)"
 # ...nor a stray records/. THIS is the harm de-homing rung 3 exists to remove
-# (captain 2026-08-12, option C): while the rung adopted the checkout as a home,
+#: while the rung adopted the checkout as a home,
 # `start`'s scope-map read walked ac_knowledge_scopes -> ac_knowledge_file ->
 # ac_records_dir, whose mkdir -p minted records/ into whatever checkout owned
 # the running bin/ - measured, on a plain `start --store`. With no home the
@@ -1914,7 +1914,7 @@ assert_no_file "$fake/records" "no AC_HOME: the scope-map read mints no stray re
 # Same flag, same ladder, same guards, one shared resolver - two copies is how
 # one site gets fixed and the other stays broken.
 # Rung 3 is GONE - the checkout that owns bin/ is no longer adopted as a fleet
-# home (captain 2026-08-12, option C: "de-home rung 3, keep the run"). These
+# home. These
 # assertions are the INVERSION of the ones that pinned the rung live, not their
 # deletion: a test asserting a withdrawn doctrine is itself part of the defect,
 # which is the lesson @42803c6 recorded when the ac-know half came out.
@@ -2508,7 +2508,7 @@ assert_contains "$(awk -F'\t' '$1=="serve"{print $4}' "$rdne/steps.tsv")" 'C:\te
 "$QA" finish cancelled >/dev/null
 
 # =================================================================================
-# QA BOUNDARY POLICY (captain 2026-07-25): QA evidence comes only from the client
+# QA BOUNDARY POLICY: QA evidence comes only from the client
 # boundaries of the BOOTED deliverable; QA never runs or re-runs a unit suite.
 # =================================================================================
 bp_repo="$(make_repo bpolicy)"

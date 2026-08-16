@@ -31,7 +31,7 @@ Mark each step `running` -> `completed|skipped|failed` as you go
 transitions: `baseline` and `serve` are recorded by their own commands,
 which publish the proof the pass gate reads, and a direct completion of
 either refuses.
-THE POLICY THIS RUN OBEYS (captain 2026-07-25, `bin/ac-qa.sh`'s BOUNDARY
+THE POLICY THIS RUN OBEYS (`bin/ac-qa.sh`'s BOUNDARY
 POLICY block is the spec): QA evidence comes only from the client-facing,
 API, integration, E2E, and database boundaries of the BOOTED deliverable;
 QA never executes, re-runs, or counts unit tests for this round; a passing
@@ -166,7 +166,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
    into the profile bundle and records `qualifies:<reason>` or
    `not-qualifies:<reason>`. You NEVER run, re-run, or count a unit suite:
    unit-suite health is the ship pipeline's business and reaches this round
-   only through that receipt (captain 2026-07-25). The recorded state is
+   only through that receipt. The recorded state is
    informational when the frozen manifest has no `ut` row. When a `ut` row
    exists, its cited exact-tree test reference plus a qualifying exact-SHA
    receipt is the row's required evidence; an unqualified receipt refuses

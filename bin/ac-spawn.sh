@@ -1306,11 +1306,11 @@ HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there i
   [ -z "$receipt" ] \
     || AC_ROOM_PROMOTE_RECEIPT=1 "$bin_dir/ac-room.sh" post "$fam" crewchief "$receipt" >/dev/null \
     || ac_warn "roomchief $id is promoted, but its DECIDED: receipt could not be posted to room $fam - the captain has no record of which exemption it rode: $receipt"
-  # Code-owned START announce (captain order 2026-07-18, missed twice under
+  # Code-owned START announce (a hand announce was missed twice under
   # mirror=chief). The mirror=on auto-announce below never fires for chief and
   # the --roomchief path posts nothing, so NOBODY owned the family's Slack
   # BIRTH stamp. Under mirror=chief post ONE code-owned START that OPENS the
-  # thread with the TASK CONTENT (captain order 2026-07-19) - the mechanical
+  # thread with the TASK CONTENT - the mechanical
   # skeleton is code-owned, the ongoing narrative stays chief-authored.
   # Idempotent on the thread file: family_send
   # self-registers state/remote-threads/<fam>.thread on the first post, so its
@@ -1318,7 +1318,7 @@ HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there i
   # Best-effort like the mirror=on block: a spawn must NEVER fail on the mirror.
   if [ "$(ac_config_read remote-mirror off)" = "chief" ] \
      && [ ! -e "$state_dir/remote-threads/$fam.thread" ]; then
-    # Open the thread with the TASK CONTENT (captain order 2026-07-19), not a
+    # Open the thread with the TASK CONTENT, not a
     # bare placeholder. Snippet source, newest-first: the newest ORDER entry in
     # the family room, else the family's backlog line (the reliably-present
     # source at spawn time), else nothing (a minimal header-only body). VN
@@ -1467,7 +1467,7 @@ if [ -n "$crew_branch_sha" ] && ! ac_family_owned "$id" "$state_dir"; then
 then spawn again"
 fi
 
-# Delivery mode is PER-TASK ONLY (captain order 2026-08-10: no registry mode
+# Delivery mode is PER-TASK ONLY (no registry mode
 # any more), and the BRIEF is its record: ac-brief.sh resolved it through
 # pin > flag > refuse and wrote the `Mode:` line, so spawn READS that record
 # rather than re-deriving - two resolvers for one decision is how the brief
@@ -1701,7 +1701,7 @@ sid="$(launch_session_id "$launch")"
 [ -n "$sid" ] && ac_meta_set "$meta" session_id "$sid"
 ac_meta_set "$meta" spawned_at "$(ac_iso)"
 ac_status_append "$id" "working: spawned"
-# Slack task thread (captain order 2026-07-18): a starting task opens (or
+# Slack task thread: a starting task opens (or
 # reuses) its family's remote thread with one announce line; every room post
 # for the family lands in the same thread. THREAD FAMILY: a spawn from a
 # SCOPED session (a roomchief - AC_SCOPE set) belongs to the chief's family

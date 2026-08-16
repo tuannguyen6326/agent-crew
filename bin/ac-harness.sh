@@ -92,8 +92,8 @@ ac_harness_pane_arm() {
   # (HARNESS ARMS, bin/ac-pane-agent.sh header - the arm SEQUENCING and both
   # launch-command tables stay with that file).
   # pi and cursor ride the crewmate arm on the captain's own order
-  # (captain 2026-08-14: "fix de codereview-agent / qa-agent / gate-agent
-  # apply pi vs cursor") - their completion contract has NO live run yet, so
+  # (pi and cursor opened for the codereview/qa/gate pane-agent roles) -
+  # their completion contract has NO live run yet, so
   # the FIRST real round is the verification: a pane that never writes its
   # verdict file surfaces as the caller's harvest timeout, visibly, and
   # harness-facts.md owns the UNPROVEN boundary until that round lands.

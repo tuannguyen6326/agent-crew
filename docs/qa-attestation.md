@@ -365,6 +365,7 @@ repository, run one opt-in smoke:
 ```text
 AC_QA_LIVE_SMOKE=1 \
 bin/ac-qa.sh agent \
+  --home <absolute-fleet-home> \
   --target <fixture-exact-sha> \
   --task qa-attestation-live-smoke \
   --brief <absolute-fixture-qa-brief> \

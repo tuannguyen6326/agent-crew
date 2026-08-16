@@ -43,7 +43,7 @@ assert_not_contains "$config_doc" 'The crew-qa and crew-ship skills own the disc
 assert_contains "$config_doc" 'a chief-owned repair path, never normal verifier execution' \
   "config doc reconciles discovery ownership to the chief-owned onboarding path"
 
-# --- QA coverage ladder (captain 2026-07-25): guidance carries the four-tier
+# --- QA coverage ladder: guidance carries the four-tier
 # execution set, conditional UT receipt reuse, frozen manifest grammar, and
 # final full-flow requirement without turning dispatch into behavior policy.
 qa_doc="$(<"$ROOT/docs/qa-attestation.md")"

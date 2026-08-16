@@ -40,11 +40,16 @@ due() { printf 'debriefs=%s\n' "$1" >"$AC_HOME/state/.learn.meta"; }
 promotes() { grep -c 'PROMOTED:' "$room" 2>/dev/null || true; }
 reset_family() { rm -f "$AC_HOME/state"/*-chief.meta; rm -rf "${AC_HOME:?}/data/learning"; }
 
-# THE FULL-SUITE GATE (captain 2026-07-27): a promote also needs a GREEN
+# THE FULL-SUITE GATE: a promote also needs a GREEN
 # tests/run-suite.sh verdict recorded for THIS cadence generation and THIS tree,
 # so every case that expects a promote seeds one. Its own section near the
 # bottom takes the record away again. generation=0 because `due` writes a
 # counter file with no generation key, which ac_learn_generation reads as 0.
+# The gate is FLEET-OPT-IN: config/learn-suite-gate=on.
+# This suite exercises the gated behavior, so the fixture pins it on; the
+# default-off contract has its own case below.
+mkdir -p "$AC_HOME/config"
+printf 'on\n' >"$AC_HOME/config/learn-suite-gate"
 suite_rec="$AC_HOME/state/.learn-suite.meta"
 suite_head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'no-head')"
 suite_tasks() {
@@ -60,6 +65,18 @@ green_suite() {
   printf 'generation=0\nhead=%s\nstatus=green\nexit=0\nat=%s\n' \
     "$suite_head" "$(date +%s)" >"$suite_rec"
 }
+
+# -- FLEET OPT-IN: knob absent => the gate never holds -------------------------
+# No config/learn-suite-gate and NO suite verdict at all: a DUE autoroom fires
+# anyway - another fleet's DISTILL must never wait on this repo's suite.
+rm -f "$AC_HOME/config/learn-suite-gate" "$suite_rec"
+due 9
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "default-off: a due autoroom must exit 0: $out"
+assert_file "$meta" "default-off: the roomchief meta exists despite no suite verdict"
+assert_file "$room" "default-off: the room exists despite no suite verdict"
+suite_task_clear
+reset_family
+printf 'on\n' >"$AC_HOME/config/learn-suite-gate"
 green_suite
 
 # -- not DUE: a silent no-op ---------------------------------------------------
@@ -81,7 +98,7 @@ r="$(cat "$room")"
 assert_contains "$r" "PROMOTED:" "AC-1: the room carries the PROMOTED post"
 assert_contains "$r" "DECIDED:" "AC-7: the room carries the promote receipt"
 assert_contains "$r" "standing order:" "AC-7: the receipt names a STANDING order, not a request made now"
-assert_contains "$r" "CAP-EXEMPT (2026-07-21)" "AC-7: the receipt cites the captain rule it carries out"
+assert_contains "$r" "CAP-EXEMPT" "AC-7: the receipt cites the captain rule it carries out"
 assert_contains "$r" "does NOT count toward room-parallel" "AC-7: the receipt states it consumes no slot"
 # `--roomchief` takes no brief - the room IS the brief - and the roomchief prompt
 # is generic, so the charter is the ONLY thing telling an auto-created chief what
@@ -728,7 +745,7 @@ rm -f "$ledger"
 green_suite
 
 # ==== the full-suite gate in front of the promote =============================
-# captain.md 2026-07-27 STANDING "THE FULL SUITE MOVES TO A PERIODIC TASK RUN
+# The standing rule "THE FULL SUITE MOVES TO A PERIODIC TASK RUN
 # BEFORE LEARNING": the suite runs as its own periodic task immediately before
 # each DISTILL, and "only a green suite releases the DISTILL run" - a retro
 # reasoning about a fleet whose suite is red inherits the defect. The gate lives

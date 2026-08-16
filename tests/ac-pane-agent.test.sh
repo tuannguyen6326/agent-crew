@@ -90,7 +90,7 @@ assert_contains "$log" "AC_HOME=" "the caller's fleet home is pinned onto the pa
 # without the family in the label, every codereview pane in the session
 # shared the bare 'ac-codereview-agent' tab: the second family's verifier
 # split into the first family's tab, in the wrong workspace, bypassing
-# AC_WINDOW_FAMILY (FAMILY WORKSPACE GROUPING, captain order 2026-08-06).
+# AC_WINDOW_FAMILY (FAMILY WORKSPACE GROUPING, captain ruling).
 : >"$HDLOG"
 git -C "$repo" checkout -q --detach
 PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
@@ -331,7 +331,7 @@ case "$(cat "$HDLOG")" in *"--model haiku"*) fail "config/codereview-model must 
 rm -f "$AC_HOME/config/codereview-model"
 
 # A ROUTED panes.codereview resolves its MANDATORY default when the caller
-# (this pane agent) passes no selector - captain ruling 2026-07-28,
+# (this pane agent) passes no selector - captain ruling,
 # routed-pane-rules-for-gate-codereview-roomchief. Before this fix a routed
 # panes.codereview died at emit ("dispatch profile has no harness") because
 # the routed form was gated behind `[ "$k" = qa ]`. Restores the previous

@@ -287,7 +287,7 @@ if [ "$(id -u)" != 0 ]; then
   [ -d "$r14/.crew/worktrees/2" ] || fail "UPG-4: the lease still proceeded despite the upgrade being skipped"
 fi
 
-# --- Option A (captain 2026-07-24): a custom core.hooksPath is SKIPPED --------
+# --- Option A: a custom core.hooksPath is SKIPPED --------
 #     fail-open. The guard covers only the DEFAULT shared common-dir hooks; a
 #     custom hooksPath is not shared (relative), could dirty the primary
 #     (tracked), or would break the lease (/dev/null), so the install is skipped

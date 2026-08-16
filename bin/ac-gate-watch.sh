@@ -41,8 +41,8 @@
 # `auto` chose not to summarize, never a harness or board defect.
 #
 # Auto-open: ac-gate.sh opens a board pane PER RUN, ac-ship-watch style
-# (captain 2026-08-06 "gate-watch theo family, nhu ac-ship-watch", superseding
-# the 2026-07-26 always-open fleet board): label ac-gate-watch:<family>, in the
+# (gate-watch is per-family, like ac-ship-watch - superseding the earlier
+# always-open fleet board): label ac-gate-watch:<family>, in the
 # FAMILY's workspace, IN --tail MODE pinned --family - the exact prompt plus
 # the live emitted output, not the row dashboard. The board is retired WITH the
 # run by ac-gate.sh's own EXIT trap; the tail loop itself still never

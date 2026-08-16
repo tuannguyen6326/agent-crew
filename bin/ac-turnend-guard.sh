@@ -166,7 +166,7 @@ beat_note="${beat#* }"; beat="${beat%% *}"
 age=$(( $(date +%s) - beat ))
 
 landing_receipt_check() {
-  # LANDING-RECEIPT reminder (captain order 2026-07-18, missed twice): under
+  # LANDING-RECEIPT reminder: under
   # remote-mirror chief/on, a NEW backlog Done line (a `- [x]` line) whose
   # family has no landing-receipt stamp means a task landed but its Slack
   # done-report may be unposted. Remind (exit 2) and record every current Done

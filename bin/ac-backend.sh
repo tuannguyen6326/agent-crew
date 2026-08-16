@@ -694,8 +694,8 @@ backend_window_alive() {
 ac_herdr_agents_workspace() {
   # Resolve the workspace a VERIFICATION pane (or a ship/qa watch tab) lands
   # in - its FAMILY's workspace, the same grouping as crew tabs (FAMILY
-  # WORKSPACE GROUPING, header; captain order 2026-08-06, superseding the
-  # 2026-07-22 "the label stays pane-agent" ruling: one workspace now shows a
+  # WORKSPACE GROUPING, header; superseding the earlier
+  # "the label stays pane-agent" ruling: one workspace now shows a
   # family's whole crew, verification panes included, so the separate
   # per-role group this function used to own is retired along with the
   # config/herdr-workspace-agents knob).

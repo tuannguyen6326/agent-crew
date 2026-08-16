@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-review-auto-open.test.sh - `ac-review.sh open --auto-open`, the
 # gate-review-only flag that pops the captain's viewer instead of leaving
-# them to copy a link out of a pane (captain order 2026-08-04). Covers:
+# them to copy a link out of a pane. Covers:
 #   1. an opener present on PATH gets launched with the exact printed URL;
 #   2. SILENT DEGRADATION - no opener anywhere on PATH (a faithful headless/
 #      cron stand-in): the link still prints and the command still exits 0

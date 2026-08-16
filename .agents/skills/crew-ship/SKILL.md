@@ -58,7 +58,7 @@ Report findings as a JSON array via `ac-ship.sh findings <step>`:
   (`severity_floored: true`, authority named or not) - info means no action
   required, so it never reopens a review round; the finding and its advisory
   `suggested_fix` still land in the findings JSON. Reserve `fix` for
-  delivery-blocking findings (captain order 2026-07-30).
+  delivery-blocking findings.
 - Auto-fix rounds are durable: mark `step <name> fixing` before each fix
   round - it increments the step's counter (see `status`). At
   `auto_fix.<step>` rounds, STOP fixing and park the rest as `ask-user`.
@@ -188,8 +188,8 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
 4. **test** - `bin/ac-ship.sh cmd test` runs the configured baseline
    (exit 4 = not configured). Non-zero exit = `error` findings; fix (limit
    `auto_fix.test`, default 3) and re-run.
-   test SKIP when the implement used TDD (captain.md 2026-07-21,
-   crew-ship-lean-pipeline) - the captain chose a DECLARATION: pass
+   test SKIP when the implement used TDD (the lean-pipeline
+   ruling) - the captain chose a DECLARATION: pass
    `ac-ship.sh start --tdd` and this step starts `skipped`, the implement's
    TDD run standing as the evidence. FAIL CLOSED: absent `--tdd` the test
    step RUNS. It is a CLAIM, not proof - so a fix that changes code re-runs
@@ -211,7 +211,7 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    always re-runs the suite. The attestation replaces ONLY the baseline
    command; the intent-evidence pass below is never skipped.
    THIS STEP IS THE ONLY PLACE THE UNIT SUITE RUNS in the whole crew: QA is
-   forbidden from running or re-running it (captain 2026-07-25) and reads
+   forbidden from running or re-running it and reads
    your result through the run-scoped receipt `cmd test` publishes at
    `<repo>/.crew/ship/<run>/test/receipt.env` (`bin/ac-ship.sh`'s SHIP TEST
    RECEIPT block is the spec). A declaration writes NO receipt: if this
@@ -243,7 +243,7 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    When the diff warrants NEW docs (not just syncing existing ones), author
    them per the `document` skill - it owns the judge/create/sync method;
    this step's sync behavior and hold-and-fix mechanics are unchanged.
-6. **lint** - OPT-IN (captain.md 2026-07-21): SKIP-by-default, and runs ONLY
+6. **lint** - OPT-IN: SKIP-by-default, and runs ONLY
    when the captain/brief requested it - then `start` is passed `--lint` and
    this step is `pending`. Without `--lint` the step starts `skipped` and the
    finish gate accepts it; an opted-out lint STAYS skipped across fix rounds
@@ -307,9 +307,13 @@ Behavioral proof runs AFTER ship (gates the MERGE, not the push), and the
 SAME implementer session that reached `checks-passed` closes the loop -
 exactly like you call the independent `review-agent`:
 
-1. **Call qa - independent, fresh-eyes.** `bin/ac-qa.sh agent --target
-   <PR-head-sha> --task <family>-qa --evidence <dir> --brief <qa-brief>
-   --ship-run <this run id>`. Name the run EXPLICITLY: the adapter freezes
+1. **Call qa - independent, fresh-eyes.** `bin/ac-qa.sh agent --home <fleet
+   home> --target <PR-head-sha> --task <family>-qa --evidence <dir> --brief
+   <qa-brief> --ship-run <this run id>`. Copy `--home` from the runnable line
+   your own execution brief bakes: your pane carries no AC_HOME, every durable
+   source the profile freezes descends from that one value, and this verb
+   never reads the qa brief - so without it the call only answers
+   `QA_PROFILE_STATUS=needs-profile`. Name the run EXPLICITLY: the adapter freezes
    that run's exact-SHA test receipt into the QA profile and never infers
    one from the mutable ship `current` symlink; an omitted or wrong id
    freezes `not-qualifies`, which the QA reports surface for the merge

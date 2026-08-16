@@ -14,7 +14,7 @@ Load before adding, cloning, creating, initializing, changing the `+yolo` postur
 
 Out of scope - keep these with their owners:
 
-- delivery-mode choice entirely: mode is PER-TASK (captain order 2026-08-10) - the row's contract pin / `--mode` at intake, `AGENTS.md` sections 4-5; the registry answers `+yolo` only;
+- delivery-mode choice entirely: mode is PER-TASK - the row's contract pin / `--mode` at intake, `AGENTS.md` sections 4-5; the registry answers `+yolo` only;
 - CrewDeputy home clones stay part of CrewDeputy provisioning and convergence (`bin/ac-home-seed.sh`, `bin/ac-spawn.sh --crewdeputy`), not this skill's lifecycle judgment.
 
 ## Prime directive still binds

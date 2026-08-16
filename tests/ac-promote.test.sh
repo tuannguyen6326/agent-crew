@@ -61,7 +61,7 @@ assert_contains "$out" "ac-promote.sh s1" "refusal points at ac-promote.sh"
 assert_file "$AC_HOME/state/s1.meta" "meta survives the refusal"
 
 # ---- Case 2: promote in place -> kind=ship, mode EXPLICIT (per-task) --------
-# Mode is per-task (captain order 2026-08-10): a bare promote refuses - the
+# Mode is per-task: a bare promote refuses - the
 # registry default is gone, and a promotion is exactly the moment the task
 # acquires a mode.
 out="$("$BIN/ac-promote.sh" s1 2>&1)" && fail "a bare promote must refuse: mode is per-task now"

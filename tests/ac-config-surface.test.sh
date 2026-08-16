@@ -6,7 +6,7 @@
 # SEAM - and every non-templated documented row must exist in code. Before
 # this, the surface had drifted 46 undocumented vars and 3 phantom rows deep,
 # because nothing diffed the two. (The check lives here and not in
-# bin/ac-lint.sh on purpose: lint is opt-in by captain ruling 2026-07-21, and
+# bin/ac-lint.sh on purpose: lint is opt-in by captain ruling, and
 # an invariant enforced by a skipped-by-default tool is decorative.)
 #
 # Adding a knob: give it a table row in docs/configuration.md.

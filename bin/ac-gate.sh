@@ -160,7 +160,7 @@
 # plus the pane-agent's own transient stdout/stderr paths) so ac-gate-watch can
 # tail the ACTIVE run; only the DESCRIPTOR is deleted on exit, never the prompt
 # file it names, so --tail can still point back to it once the gate settles.
-# ac-gate.sh opens the board PER RUN, ac-ship-watch style (captain 2026-08-06):
+# ac-gate.sh opens the board PER RUN, ac-ship-watch style:
 # labelled ac-gate-watch:<family>, in the family's workspace, family-pinned
 # --tail, closed by the run's EXIT trap (watch_open owns the contract;
 # AC_GATE_WATCH=off disables).
@@ -757,9 +757,8 @@ ac_harness_known "$engine" \
   || ac_die "gate engine must be one of the registry harnesses ($AC_HARNESS_RE; config/gate-agent also takes off; got: $engine)"
 
 # --- PROMPT: rubric + immutable decision context + (design) criteria ---------
-# Chief-parity context (captain 2026-07-23 "chief duoc gi thi second-chief duoc
-# do", sharpened 2026-07-26 to FULL parity: "read duoc data nhu roomchief, k
-# thieu"): all file inputs are fed as PATHS - see CONTEXT PARITY in the
+# Chief-parity context (FULL parity: whatever the owning chief may read, the
+# second chief may read - nothing withheld): all file inputs are fed as PATHS - see CONTEXT PARITY in the
 # header for why nothing here is inlined and why no selector belongs on the room.
 # Two things that judgment rests on, recorded where the paths are built:
 # - The paths are ABSOLUTE: ac_data_dir/ac_records_dir both resolve through
@@ -1009,8 +1008,8 @@ watch_stale_pane() {
 
 watch_open() {
   # Auto-open THIS run's gate board in a herdr tab, ac-ship-watch style
-  # (captain 2026-08-06 "gate-watch theo family, nhu ac-ship-watch",
-  # SUPERSEDING the 2026-07-26 always-open fleet board): the tab is labelled
+  # (gate-watch is per-family, like ac-ship-watch - superseding the earlier
+  # always-open fleet board): the tab is labelled
   # ac-gate-watch:<family>, lands in the FAMILY's workspace beside the family's
   # crew tabs (ac-backend.sh FAMILY WORKSPACE GROUPING), tails THIS family's
   # gates only, and is RETIRED with the run - the EXIT trap closes the pane
@@ -1038,7 +1037,7 @@ watch_open() {
   out="$(ac_herdr_tab_open "$ses" "$watch_label" "$home" "$ws")" || return 0
   p="${out%% *}"
   herdr --session "$ses" pane rename "$p" "$watch_label" >/dev/null 2>&1 || true
-  # --tail (captain 2026-07-26): the board an operator wants open is the live
+  # --tail: the board an operator wants open is the live
   # one - the exact prompt plus the bytes the engine emits - not the row
   # dashboard. --family pins it to THIS family so a concurrent other-family
   # gate never steals the tail. Still NO --self-pane: the close belongs to the

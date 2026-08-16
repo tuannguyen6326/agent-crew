@@ -238,6 +238,8 @@ expand product scope or turn into a step-by-step implementation plan.
   was skipped - has architectural support.
 - Component responsibilities do not overlap ambiguously.
 - Every changed boundary has a defined interface and failure behavior.
+- Each affected component is understandable through its contract without reading its internals.
+- Each affected component's internals can change without breaking consumers that honor that contract.
 - The recommendation follows from the stated drivers and trade-offs.
 - Consequences and irreversible actions are explicit.
 - No architecture decision silently resolves captain-owned product behavior.

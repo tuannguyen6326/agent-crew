@@ -41,7 +41,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   cd "$(git rev-parse --show-toplevel)"
 
   # Two entries formerly on this list matched the project's own public
-  # repository location - not private data - captain 2026-08-03.
+  # repository location - not private data - captain ruling.
   for encoded in \
     '\x69\x6e\x66\x69\x6e\x61' \
     '\x7a\x6c\x70' \

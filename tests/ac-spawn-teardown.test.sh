@@ -75,7 +75,7 @@ assert_contains "$(cat "$TMP/spawn-thread.log")" "bắt đầu task t1 (ship)" "
 assert_contains "$(cat "$TMP/spawn-thread.log")" "rid=t1" "announce addressed to the family"
 # A spawn from a SCOPED session (a roomchief) announces into the CHIEF's
 # family thread - slice ids (<fam>-s1) are flat by the stage grammar but
-# they are that family's crewmates (captain ruling 2026-07-18).
+# they are that family's crewmates.
 "$BIN/ac-brief.sh" lgrp-s1 proj --mode local-only >/dev/null
 sout="$(AC_SCOPE=lgrp "$BIN/ac-spawn.sh" lgrp-s1 "$repo" --harness fake --mode local-only 2>/dev/null)"
 assert_contains "$sout" "spawned lgrp-s1" "scoped slice spawn succeeds"
@@ -150,7 +150,7 @@ grep -q -- "--resume $sid" "$(fake_pane_buf t2-r2)" || fail "resume launch line"
 # Per-role pane-agent knobs thread onto the crewmate launch line so its homeless
 # codereview/qa panes can read config/<role>-<knob> (which config/ cannot resolve
 # in a crewmate). Only emitted when the fleet pins them. All THREE knobs per role
-# ride together (captain 2026-07-28, routed-pane-rules-for-gate-codereview-
+# ride together (captain ruling, routed-pane-rules-for-gate-codereview-
 # roomchief TASK 2): an agent pin whose model/effort stayed behind would let the
 # pane compose a model onto a harness the knob did not choose.
 printf 'codex\n' >"$AC_HOME/config/codereview-agent"

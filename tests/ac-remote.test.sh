@@ -58,7 +58,7 @@ fleet_wakes | grep -qE "^[0-9]+	remote	captain	remote-order r1$" \
   || fail "wake record must be queue_wake TSV shape: now<TAB>remote<TAB>captain<TAB>remote-order r1"
 
 # A remote order is the captain SPEAKING, not waiting - they already get the
-# ac-remote reply as confirmation. Captain 2026-07-30 ("block boi captain")
+# ac-remote reply as confirmation. A captain ruling ("block boi captain")
 # moved the notification off this arrival entirely: only a room GATE:/ASK:
 # pending on the captain (bin/ac-room.sh's cmd_post) rings ac-notify.sh now.
 notify_log="$TMP/notify-remote.log"

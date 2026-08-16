@@ -15,7 +15,7 @@ markdown - and plain `.md` reviews too, no conversion needed.
 PRECONDITION: the dashboard must be RUNNING (`bin/ac-dashboard.sh`; port from
 `config/dash-port`, default 8787). The shim refuses loudly when it is down -
 starting the dashboard is the remedy; there is no external fallback loop
-(retired, captain 2026-08-01).
+(fully retired).
 
 ## Core loop
 

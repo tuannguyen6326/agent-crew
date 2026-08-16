@@ -718,7 +718,7 @@ EOF
   # out of budget, self-blocked - now ends non-ok instead of status ok.
   # The scout pane lands in the LEARNING family workspace, beside the
   # crew:learning-chief tab its DUE checkpoints promote (FAMILY WORKSPACE
-  # GROUPING; captain order 2026-08-11 - the chief and its pane agent share
+  # GROUPING - the chief and its pane agent share
   # one group). `learning` is the STABLE family (the room, the roomchief);
   # the per-run data dir learning-<ts> is not a family. Before this the
   # scout was the documented absent-family case and sat in the fleet ROOT
@@ -2075,8 +2075,10 @@ EOF
 }
 
 # --- the full-suite gate in front of the DISTILL ------------------------------
-# records/captain.md 2026-07-27 STANDING "THE FULL SUITE MOVES TO A PERIODIC TASK
-# RUN BEFORE LEARNING": no landing path runs tests/run-suite.sh any more, so it
+# SCOPE: a FLEET rule, not repo law - the gate fires only in a fleet that pins
+# config/learn-suite-gate=on. Everything below describes the mechanism a fleet
+# opts into.
+# The full suite moved to a periodic task run before Learning: no landing path runs tests/run-suite.sh any more, so it
 # runs as its OWN periodic task immediately before each DISTILL, hung off the
 # cadence Learning already fires on. "A RED SUITE IS A GATE, NOT A NOTE" - only a
 # green suite releases the run, because a retro reasoning about a fleet whose
@@ -2359,6 +2361,11 @@ learn_suite_gate() {
   # and falls straight to the in-flight check below), so an attempt already
   # running is never re-pinned out from under itself.
   local n="$1" every="$2" rec gen head live id since elapsed
+  # FLEET RULE, not repo law: the repo ships only the mechanism, and a fleet
+  # is gated ONLY when it pins config/learn-suite-gate=on. Default off - a
+  # fleet's DISTILL never waits on this repo's test suite unless that fleet
+  # chose to.
+  [ "$(ac_config_read learn-suite-gate off)" = on ] || return 0
   rec="$(learn_suite_record)"
   gen="$(ac_learn_generation)"
   head="$(learn_suite_pinned_head "$gen")"
@@ -2396,7 +2403,7 @@ learn_suite_gate() {
       "$n" "$every"
     return 1
   fi
-  printf 'learning DUE (%s/%s) HELD: started the full-suite run %s against %s - only a GREEN suite releases the DISTILL (records/captain.md 2026-07-27)\n' \
+  printf 'learning DUE (%s/%s) HELD: started the full-suite run %s against %s - only a GREEN suite releases the DISTILL (config/learn-suite-gate=on - the fleet pinned this gate)\n' \
     "$n" "$every" "$id" "${head:0:7}"
   return 1
 }
@@ -2429,8 +2436,8 @@ cmd_suite() {
   snap_id="${id:-adhoc-$$}"
   trap "learn_suite_snapshot_remove '$snap_id'" EXIT
   snapshot="$(learn_suite_snapshot_create "$snap_id" "$head")"
-  # The bare invocation - the one place it is still correct (captain 2026-07-27,
-  # TDD IS THE EVIDENCE retired it from every landing and verify path).
+  # The bare invocation - the one place it is still correct (the TDD-is-the-evidence
+  # policy retired it from every landing and verify path).
   # AC_LEARN_SUITE_BIN overrides the runner for tests, like AC_PANE_AGENT - kept
   # working: an override names an exact binary and bypasses the snapshot path,
   # same as it always bypassed the live root.
@@ -2467,7 +2474,7 @@ cmd_autoroom() {
   # with reality - and the counter reset at the end of a `run` ends the cycle.
   #
   # WITHIN one crossing there IS a lock, and the accepted architecture §9 said
-  # there would not be (captain 2026-07-21 chose this over keeping "no lock").
+  # there would not be.
   # §9 justified "no lock" on the premise that ac-spawn.sh's duplicate-meta
   # refusal kills the loser of a race; that premise is false. That refusal is a
   # plain [ -e ] test, and the whole backend half of a spawn - including
@@ -2543,11 +2550,11 @@ cmd_autoroom() {
   # decisive. `ref` names the standing rule the promote carries out.
   read -r n every < <(ac_learn_due)
   meta="$(ac_state_dir)/learning-chief.meta"
-  ref='records/captain.md "Learning room is chief-created and CAP-EXEMPT (2026-07-21)"'
+  ref='records/captain.md "Learning room is chief-created and CAP-EXEMPT"'
   outcome=""
   if [ "$n" -ge "$every" ] && [ ! -e "$meta" ]; then
     # THE FULL-SUITE GATE, in FRONT of the charter post: only a GREEN suite for
-    # this cycle releases the DISTILL (captain 2026-07-27). Its line is captured
+    # this cycle releases the DISTILL. Its line is captured
     # rather than printed here so it obeys the same print-after-release rule as
     # `outcome` below, and so an ac_die inside the launch (a backend that cannot
     # be reached) ends the substitution instead of this function - which would

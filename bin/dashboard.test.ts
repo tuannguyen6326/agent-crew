@@ -886,7 +886,7 @@ test("isEditableConfig passes exactly the editable knobs and rejects everything 
   // every allowlisted knob passes
   for (const name of EDITABLE_CONFIG) expect(isEditableConfig(name)).toBe(true);
   // per-role verification knobs, renamed to the gate-* shape and completed with
-  // agent+effort (captain 2026-07-28, routed-pane-rules-for-gate-codereview-
+  // agent+effort (captain ruling, routed-pane-rules-for-gate-codereview-
   // roomchief TASK 2): <role>-{agent,model,effort} for codereview and qa.
   for (const role of ["codereview", "qa"])
     for (const knob of ["agent", "model", "effort"])

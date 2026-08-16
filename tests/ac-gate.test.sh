@@ -31,7 +31,7 @@ for s in spec arch plan design; do
   printf '# %s report\nAll criteria grounded for %s.\n' "$s" "$s" >"$AC_HOME/data/widget/$s/report.md"
 done
 # The family room carries the captain-facing record the OWNING CHIEF reads at the
-# gate; the second chief gets the SAME (captain ruling 2026-07-23). The DECIDED
+# gate; the second chief gets the SAME. The DECIDED
 # forms exercise the whole attribution grammar the selection admits (bare,
 # attributed over the full [A-Za-z0-9_-] charset, and paren-attribution).
 {
@@ -565,7 +565,7 @@ assert_contains "$prompt" "records/captain.md" "the captain.md PATH reaches the 
 # the brief/report/captain CONTENT is NOT inlined - the engine reads it from disk.
 case "$prompt" in *"ACCEPTANCE CRITERIA for widget spec"*) fail "brief content must NOT be inlined (fed as a path)" ;; esac
 case "$prompt" in *"prefer local-only for tooling"*) fail "captain.md content must NOT be inlined (fed as a path)" ;; esac
-# FULL PARITY (captain 2026-07-26 "read duoc data nhu roomchief, k thieu"): the
+# FULL PARITY: the
 # room is the FOURTH path, read from disk like the other three. There is no
 # selector, no verb allowlist, no size cap and no multi-line truncation left to
 # get wrong - the judge reads the WHOLE room the roomchief reads.
@@ -1315,7 +1315,7 @@ case "$wcmd" in *--tail*) ;; *) fail "the auto-opened board must launch --tail, 
 case "$wcmd" in *--self-pane*) fail "the tail board must not be handed --self-pane: $wcmd" ;; esac
 # The board is family-pinned: a concurrent other-family gate must not steal it.
 case "$wcmd" in *"--family widget"*) ;; *) fail "the board must tail its own family only, got: $wcmd" ;; esac
-# The board identity is family-specific (captain 2026-08-06, ac-ship-watch
+# The board identity is family-specific (captain ruling, ac-ship-watch
 # style). Another family's board in the same session must not be reused.
 assert_contains "$(cat "$HDLOG")" "--label ac-gate-watch:widget" \
   "the auto-opened gate board label includes the family"

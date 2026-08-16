@@ -19,7 +19,7 @@
 # A SECOND LAYER, NOT A REPLACEMENT. The prose stays and remains the ONLY layer
 # covering codex and opencode: a PreToolUse hook is claude-only, which is why
 # this direction was rejected on COVERAGE grounds 2026-07-25 and re-ordered by
-# the captain 2026-07-27 (direction B) with that residual EYES OPEN - it stops
+# accepted (direction B) with that residual EYES OPEN - it stops
 # the harness that actually failed, and claude is this fleet's default crewmate
 # harness. RESIDUAL, unchanged by this file: codex/opencode crewmates, and
 # crewmates in a project whose repo ships no .claude/settings.json, are covered

@@ -121,14 +121,14 @@ ac_warn() { printf 'WARN: %s\n' "$*" >&2; }
 # (bash < 5 - this host's own /bin/bash is 3.2.57 and hits this path).
 ac_now() { printf '%s\n' "${EPOCHSECONDS:-$(date +%s)}"; }
 ac_vn_ts() {
-  # Captain-display timestamp (captain order 2026-07-18): UTC+7, YYYY-MM-DD
+  # Captain-display timestamp: UTC+7, YYYY-MM-DD
   # HH:mm - for Slack-facing renderings only; records keep ac_iso (UTC).
   TZ=Asia/Ho_Chi_Minh date '+%Y-%m-%d %H:%M'
 }
 
 ac_verb_emoji() {
   # ac_verb_emoji <verb> - the glanceable emoji leading a Slack header
-  # (captain order 2026-07-18): one look tells the entry class. Unknown
+  #: one look tells the entry class. Unknown
   # verbs get the neutral note - never empty, the header shape stays fixed.
   case "${1:-}" in
     ORDER*) printf '📌' ;;
@@ -1334,7 +1334,7 @@ ac_meta_is_verify() {
 # AUTHORITATIVE for what makes a `state/<id>.meta` a chief SELF TASK. It is the
 # meta bin/ac-self-task.sh writes (kind=self, exact match) so a small edit the
 # CHIEF makes itself is still visible on herdr and in every fleet view - the
-# "no invisible tasks" rule (records/captain.md 2026-07-21). Its pane holds a
+# "no invisible tasks" rule. Its pane holds a
 # `tail -f` on the task's progress log and NOTHING ELSE.
 #
 # EXCLUDED FROM SUPERVISION, NEVER FROM ACCOUNTING - the exact mirror image of
@@ -1790,7 +1790,7 @@ ac_seed_crewmate_md() {
   # so the caller can point the crewmate at it (see FALLBACK below).
   # A copy the seed itself wrote is REFRESHED when the sources have moved on
   # (ownership and its limits: ac_seed_install).
-  # Otherwise the seed MERGES the two sources (captain order 2026-07-17):
+  # Otherwise the seed MERGES the two sources:
   # <container>/.claude/CLAUDE.md (the baseline shared by every fleet
   # under the homes container) first, then
   # $AC_HOME/CREWMATE.md (the fleet-specific layer) - fleet rules read as
@@ -2288,7 +2288,7 @@ ac_project_mode() {
   # ac_project_mode <project-name> - the registry line's bracket content
   # (`- <name> [+yolo] - <summary>`), empty when the project has no bracket
   # or no line. Only `+yolo` means anything any more: DELIVERY MODE IS
-  # PER-TASK (captain order 2026-08-10) and a legacy `[<mode>]` here is
+  # PER-TASK and a legacy `[<mode>]` here is
   # tolerated, ignored content - ac-project-mode.sh owns the read.
   local name="$1" reg line
   reg="$(ac_records_dir)/projects.md"

@@ -2628,7 +2628,7 @@ export function isEditableConfig(name: string): boolean {
 }
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultracode"] as const;
-// One set again (captain 2026-08-14 "codereview-agent / qa-agent / gate-agent
+// One set again (captain ruling "codereview-agent / qa-agent / gate-agent
 // apply pi vs cursor"): every registry harness is offerable on every knob;
 // the pane arm and one-shot forms carry the per-harness boundaries.
 const CREW_HARNESSES = ["claude", "codex", "opencode", "pi", "cursor"] as const;
@@ -3514,6 +3514,14 @@ function syncSize() {
 }
 addEventListener("resize", syncSize);
 new ResizeObserver(syncSize).observe(document.getElementById("t"));
+// Font-metrics refit: cols were measured at mount, possibly against the
+// fallback font (JetBrains Mono is local but canvas measurement can run
+// before it is applied). A glyph-width change re-fits NOTHING by itself -
+// the box never changed - so re-fit when the font set settles.
+if (document.fonts && document.fonts.ready) {
+  document.fonts.load("12px 'JetBrains Mono'").catch(() => {});
+  document.fonts.ready.then(() => { fit.fit(); syncSize(); });
+}
 // Theme, pushed IN by the parent (same-origin, so a plain function call - no
 // postMessage handshake to get wrong). Called on mount and on every theme or
 // palette change; it repaints the live terminal in place, because remounting
@@ -3559,7 +3567,7 @@ export function termThemeCore(cs: { getPropertyValue(p: string): string }): { th
  * into acSetTheme); /api/term/status still gates the home path, and an
  * unavailable terminal retries rather than dying on a blank frame. */
 async function termStandalonePage(): Promise<Response> {
-  // The terminal does not FOLLOW a home (captain 2026-08-13): herdr is one
+  // The terminal does not FOLLOW a home: herdr is one
   // session machine-wide, so ?path is only the API gate's ticket - absent it,
   // any known home is embedded as the fallback and the URL stays a bare /term.
   const fallbackHome: string = (await allowedHomePaths()).values().next().value ?? "";
@@ -4430,7 +4438,7 @@ export function whiteboardWrite(homePath: string, scene: string, body: string, i
 // detail. Read-only in this slice - the pane is CAPTURED (herdr pane read
 // --format ansi), never driven. Only chief panes are ever resolved: the
 // crewchief and each family's roomchief; crewmate panes are deliberately not
-// reachable from the browser (captain order 2026-08-04: chat is chief-only).
+// reachable from the browser.
 // ---------------------------------------------------------------------------
 
 /** The roomchief pane id for a family, from state/<family>-chief.meta text:
@@ -5157,8 +5165,8 @@ export interface ReviewAnnotation {
    * record is. Absent = the captain (every pre-share record, and everything
    * from the local page). */
   by?: string;
-  /** MODERATION (captain order 2026-08-06 "agent k read, khi captain duyet
-   * ... moi day xuong"): a by-carrying record is born PENDING - pollSlice
+  /** MODERATION (guest feedback reaches the crew only after the captain
+   * approves it): a by-carrying record is born PENDING - pollSlice
    * never delivers it, so the crew structurally cannot read unapproved
    * guest feedback. The captain's Approve re-seqs it into the stream
    * (approved: true + a fresh n so the agent's cursor cannot have passed
@@ -5611,7 +5619,7 @@ function publishReviewWake(homePath: string, file: string, text: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// REVIEW SHARE (the authoritative contract; captain order 2026-08-06): the
+// REVIEW SHARE (the authoritative contract; captain ruling): the
 // captain shares ONE review page to a teammate on the same VPN. Click Share
 // on the review page -> a capability token is minted into that session file
 // and a SECOND listener starts on port+1, bound 0.0.0.0 so the captain can
@@ -5641,7 +5649,7 @@ const shareIndex = new Map<string, { home: string; file: string }>();
 let shareServer: { stop: (closeActive?: boolean) => void; requestIP?: (req: Request) => { address: string } | null } | null = null;
 let mainPort = 8787;
 
-// PRESENCE (captain order 2026-08-06 "có track được ai đang xem"): every
+// PRESENCE: every
 // guest request stamps token -> viewer (keyed by VPN IP, carrying the name
 // the guest chose to give). In-memory only - presence is a live signal, not
 // a log - and read through shareViewersView, which prunes anything older
@@ -6228,7 +6236,7 @@ const OVERLAY = \`<script data-acrv>
     document.querySelectorAll("pre.mermaid, div.mermaid").forEach((el, i) => attach(el, "block", i, ++n));
     document.querySelectorAll("code[class*=language-mermaid]").forEach((el, i) => attach(el, "fence", i, ++n));
   }
-  // Mermaid pass for md artifacts (captain 2026-08-01): the rendered
+  // Mermaid pass for md artifacts: the rendered
   // markdown ships fences as escaped code with no script of its own, so the
   // Diagram view read as source text. Render the SVG INSIDE the existing
   // element - the one the card wrapped, the switch toggles, the pin
@@ -6330,7 +6338,7 @@ const OVERLAY = \`<script data-acrv>
         lock.appendChild(lbl);
         lock.addEventListener("click", (ev) => { ev.stopPropagation(); lock.style.display = "none"; lock.setAttribute("data-unlocked", "1"); });
         // DEFAULT = the ORIGINAL render, exactly as before the editor existed
-        // (captain 2026-08-01): it is the artifact's own DOM, so notes pin on
+        //: it is the artifact's own DOM, so notes pin on
         // diagram nodes and md fences keep their source-line anchors. The
         // editor PRELOADS hidden so the header Switch shows it instantly;
         // switching back never unmounts it (edits in progress survive).
@@ -6420,7 +6428,7 @@ async function loadArtifact(){
   const dres = await api("/api/review/diagrams");
   const d = await dres.json();
   DIAGRAMS = d.diagrams ?? [];
-  // Auto-embed (captain 2026-08-01): every diagram card hosts its live editor
+  // Auto-embed: every diagram card hosts its live editor
   // from the start, LOCKED under a click-to-edit layer - no first-click load
   // wait. This is the second of maybeEmbedRound()'s two arrivals; the frame's
   // own "ready" ping is the other.
@@ -6909,7 +6917,7 @@ if (import.meta.main) {
         return json({ error: "websocket required" }, 400);
       }
       if (url.pathname === "/api/room/stream") {
-        // Chat-panel pane stream (captain 2026-08-04: native, ONE task pane,
+        // Chat-panel pane stream (captain ruling: native, ONE task pane,
         // never a full herdr client): the server reads the pane every 250ms
         // and pushes a frame only when it changed; input rides the same
         // socket and is executed by roomInput - so every membership gate,
@@ -7711,7 +7719,7 @@ ${UX_BASE}
   .chiefp .ctabs .ct.on .k{ border-color:var(--accent-ink, #04252c); color:var(--accent-ink, #04252c); opacity:.85; }
   .chiefp .ctabs .ct.on .dot{ background:var(--accent-ink, #04252c); }
   .chiefp .ctabs .ct:hover{ border-color:var(--border-strong); color:var(--ink); }
-  /* FULL-BLEED terminal surfaces (captain 2026-08-07, "làm full"): a terminal
+  /* FULL-BLEED terminal surfaces: a terminal
      is the one page whose content is measured in COLUMNS, so every pixel the
      chrome keeps costs readable text - the pane snapshot wrapped mid-word and
      the herdr frame cut its own lines off at the right edge. Both cancel the
@@ -7722,7 +7730,7 @@ ${UX_BASE}
     margin:calc(-1 * var(--pagepad-y)) calc(-1 * var(--pagepad-x)); }
   .chatpage .chiefp{ height:100%; border:0; border-radius:0; overflow:hidden; }
   .chatpage .cterm{ font-size:13px; }
-  .termpage iframe{ width:100%; height:100%; border:0; border-radius:0; background:#000; }
+  .termpage iframe{ width:100%; height:100%; border:0; border-radius:0; background:var(--term-bg, var(--canvas)); }
   .termpage{ position:relative; }
   .termpage .termopen{ position:absolute; top:8px; right:14px; z-index:2; font-size:13px; line-height:1; padding:5px 8px; border-radius:6px; background:var(--surface); border:1px solid var(--border); color:var(--fg2); opacity:.55; }
   .termpage .termopen:hover{ opacity:1; color:var(--accent); border-color:var(--border-strong); text-decoration:none; }
@@ -8013,13 +8021,13 @@ var S = {
 var UI = {};
 function uiFor(key){ if(!UI[key]) UI[key] = { filter:'all', query:'', exp:{}, sort:null, sortDir:1, sec:{}, pageScroll:0, listScroll:0, viewerScroll:0 }; return UI[key]; }
 function routeKey(r){ return r ? (r.name + ':' + (r.fleet||'')) : 'x'; }
-// Embedded tool panel (captain 2026-08-01): review/whiteboard open INSIDE the
+// Embedded tool panel: review/whiteboard open INSIDE the
 // SPA content area - an iframe kept OUTSIDE the diffed render root so polling
 // re-renders never wipe it; every opener also offers a new-tab escape, and a
 // route change closes the panel so it can never orphan across fleets.
 function toolOpen(url, title){
   var tv=document.getElementById('toolview');
-  // Sit BELOW the page header (captain 2026-08-01): route title, fleet and
+  // Sit BELOW the page header: route title, fleet and
   // Live/Refresh stay visible while a tool is open. Measured per open, since
   // the header height is per-route.
   var ph=document.querySelector('.pagehead');
@@ -8916,7 +8924,7 @@ function boardLiveModes(home, known){
   return map;
 }
 // The delivery-contract chip row (dashboard shows the MODES a task runs -
-// captain order 2026-08-10). SOLID chip (.cpin) = a token pinned on the row,
+// captain ruling). SOLID chip (.cpin) = a token pinned on the row,
 // the captain's recorded word; HOLLOW chip (.cauto) = the mode the live task
 // actually runs with when the row pins none - the chief's own choice, shown
 // so a wrong call is visible while it still runs. One builder, board card +
@@ -10304,7 +10312,7 @@ function dlgKeydown(e){
 // ===========================================================================
 // Post-render passes: iframe identity, input value/caret, scroll restore.
 // ===========================================================================
-// Mermaid pass for the md reader (captain 2026-08-01): our renderer emits
+// Mermaid pass for the md reader: our renderer emits
 // language-mermaid fences as escaped code; this pass lazy-loads mermaid from
 // the CDN ONCE and swaps each fence for its rendered SVG. Safe because the
 // source text ran through the escaping renderer - the only script here is

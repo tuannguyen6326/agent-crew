@@ -93,7 +93,7 @@
 #   caller must never read "posted" when nothing went out. A FAILING hook
 #   is still a hard error (the text did NOT go out), with no confirmation
 #   printed either. This is the CHIEF'S OWN posting verb
-#   (captain order 2026-07-18): chiefs COMPOSE their family's Slack
+#: chiefs COMPOSE their family's Slack
 #   narrative themselves - task start, progress, gates/asks (with
 #   --mention-captain), landings - in the captain's recorded style; a
 #   captain reply INSIDE the thread comes back through poll as a tier-1
@@ -254,8 +254,8 @@ ingest_stream() {
       rm -f "$tmp"
       ac_wake_publish "$state_dir" '' remote captain "remote-order $rid"
       # A remote order is the captain SPEAKING, not waiting - they already
-      # get the ac-remote reply as confirmation, and captain 2026-07-30
-      # ("block boi captain") confined the one captain notification to the
+      # get the ac-remote reply as confirmation, and the notification rule
+      # confined the one captain notification to the
       # blocked-by-captain edge (bin/ac-room.sh's cmd_post). No ac-notify.sh
       # call here anymore.
       # LIFECYCLE-ACK `ingested` (header contract): once per newly stashed

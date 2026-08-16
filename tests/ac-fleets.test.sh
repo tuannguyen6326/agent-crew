@@ -166,7 +166,7 @@ assert_eq "$(jq -r '.crew.tasks[] | select(.id=="greet2-spec") | .kind' <<<"$aj"
 assert_eq "$(jq -r '.crew.tasks[] | select(.id=="ac-fleets") | .project' <<<"$aj")" "agent-crew" "--json crew project"
 assert_eq "$(jq -r '.crew.tasks[] | select(.id=="ac-fleets") | .status' <<<"$aj")" "running" "--json crew last status"
 # delivery mode rides the task row (dashboard shows the mode a task RUNS
-# with - captain order 2026-08-10); a meta without one carries null.
+# with - captain ruling); a meta without one carries null.
 assert_eq "$(jq -r '.crew.tasks[] | select(.id=="ac-fleets") | .mode' <<<"$aj")" "local-only" "--json crew delivery mode"
 assert_eq "$(jq -r '.crew.tasks[] | select(.id=="greet2-spec") | .mode' <<<"$aj")" "null" "--json a modeless meta carries null"
 # inbox: the SAME accounting as text (1 pending, 1 handback; rcpt receipts add 0)

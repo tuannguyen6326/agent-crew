@@ -295,7 +295,7 @@ cmd_handoff() {
     # precondition in this loop, never wave the item through.
     [ -n "$repo" ] \
       || ac_die "'$item' carries no (repo: <name>) token, so its delivery mode cannot be resolved for the AS1 check - fix the backlog line: $line"
-    # Mode is PER-TASK (captain order 2026-08-10): the registry no longer
+    # Mode is PER-TASK: the registry no longer
     # answers, so the ONLY thing this guard can read is the row's own
     # contract pin. An unpinned row is unresolvable - refuse and ask for the
     # pin, exactly like the missing repo token above: after the handoff the

@@ -505,7 +505,7 @@
 # through ac_home(), which REFUSES when the variable is unset and would kill
 # the ladder before it can answer empty.
 # THERE IS NO RUNG 3. The checkout that owns bin/ is not a fleet home and is no
-# longer adopted as one (captain 2026-08-12, closing what this block carried as
+# longer adopted as one (closing what this block carried as
 # OPEN). The two verbs answer a homeless run differently, because each already
 # had its own no-home answer written before the rung was questioned:
 #   start  KEEPS RUNNING. Its only home-derived inputs are the project config
@@ -531,12 +531,17 @@
 # Guards on `--home`: ABSOLUTE, and not inside $repo - the invariant
 # ac_project_config_file states in code ("the project repo is never a config
 # source... so a branch under test cannot alter commands or merge policy").
-# HOW THE PATH TRAVELS: exactly as --store does. qa panes carry no AC_HOME, so
-# the actor that HAS it bakes --home into the qa brief and the agent passes it
-# at `start`. It is a trust IMPROVEMENT over what it replaces: an
-# unauthenticated ac_root fallback becomes a value baked by the actor that
-# holds the authority. What it does NOT prove: --home is taken on trust beyond
-# its two guards, exactly like --store.
+# HOW THE PATH TRAVELS: exactly as --store does, on BOTH verbs, and each verb
+# has its own baked line because each has its own caller. qa panes and crewmate
+# panes alike carry no AC_HOME, so the actor that HAS it bakes the path into a
+# brief: ac-brief.sh's qa charter carries it for the pane's `start` line, and
+# ac-brief.sh's EXECUTION brief carries a whole runnable `agent` line for the
+# crewmate that calls the adapter. Two bakes, not one, because `agent` never
+# reads the charter - a single bake left `agent` with no caller able to comply
+# and every crewmate QA call answering needs-profile. It is a trust IMPROVEMENT
+# over what it replaces: an unauthenticated ac_root fallback becomes a value
+# baked by the actor that holds the authority. What it does NOT prove: --home
+# is taken on trust beyond its two guards, exactly like --store.
 #
 # KNOWLEDGE STORE (qa-knowledge-reuse): per-project, durable, OUTSIDE the
 # repo clone - $AC_HOME/data/qa-store/<project>/ (project = the repo scope,
@@ -1656,7 +1661,7 @@ cmd_step() {
   # receipt behind it - the two states the pass gate reads.
   if [ "$name" = baseline ] && [ "$step_owner" != baseline ]; then
     case "$status" in completed|skipped)
-      ac_die "step baseline $status is refused: 'ac-qa.sh baseline' owns this transition - it validates the frozen exact-SHA ship test receipt and records the result. QA never re-runs the unit suite (captain 2026-07-25)." ;;
+      ac_die "step baseline $status is refused: 'ac-qa.sh baseline' owns this transition - it validates the frozen exact-SHA ship test receipt and records the result. QA never re-runs the unit suite - fixed policy." ;;
     esac
   fi
   if [ "$name" = serve ] && [ "$status" = completed ] && [ "$step_owner" != serve ]; then
@@ -2453,7 +2458,7 @@ cmd_baseline() {
   # BASELINE IS A RECEIPT CHECK (header-owned): validate the caller-frozen
   # exact-SHA ship test receipt and record the answer. It NEVER executes a
   # suite, in either outcome - unit-suite health belongs to the ship pipeline
-  # exclusively (captain 2026-07-25).
+  # exclusively.
   require_run
   local rd receipt status qual reason
   rd="$(run_dir)"
@@ -3045,7 +3050,7 @@ cmd_config_proposal() {
 
 cmd_config_install() {
   # cmd_config_install - the CHIEF-TIER install of a config-proposal draft
-  # (captain order 2026-07-20: the captain touches nothing; the auto-tier
+  # (the captain touches nothing; the auto-tier
   # pattern applies - chief reviews + applies + receipts, captain vetoes).
   # LAW, not mechanics, keeps the roles apart: the DRAFTING agent (crewmate/
   # ship/qa pane) never runs this verb - a chief with fresh eyes does, after
@@ -3387,15 +3392,16 @@ cmd_agent() {
   # returned BEFORE those reads: homeless they would not merely miss, the bare
   # ac_project_config_file guard call would take ac_home's ac_die and end the
   # process on a message about AC_HOME instead of a profile status.
-  # THE MESSAGE NAMES THE CALLER GAP RATHER THAN A REMEDY THAT DOES NOT EXIST
-  # HERE: ac-brief.sh:809-810 bakes --home into the qa charter's `start` line,
-  # and this verb never reads the brief, so nothing threads a home to `agent`
-  # today. Saying "your brief bakes it" (true for `start`) would send an
-  # operator looking for a flag no caller passes. Same status as before this
-  # rung came out - a homeless `agent` already reached needs-profile at the
-  # config read - only earlier, and now for the stated reason.
+  # THE MESSAGE NAMES A REMEDY THAT NOW EXISTS. The caller gap it used to
+  # report is CLOSED: ac-brief.sh bakes a runnable `agent` line carrying
+  # --home into every EXECUTION brief, beside the charter bake that serves
+  # `start`. This verb still never reads the qa charter, so the charter
+  # is still not the thread - the execution brief is. Point the operator at
+  # the line its own brief already carries; before that bake existed this
+  # message deliberately said the opposite, because naming a flag no caller
+  # passed would have sent it hunting for one.
   [ -n "$qa_home" ] \
-    || qa_profile_return needs-profile "no fleet home named (--home) and none in the environment - the project config, scope map, repo-knowledge, store snapshot and pane routing all descend from it, so no profile can compile. Pass --home <abs>. Caller note: ac-brief.sh bakes --home into the qa charter's 'start' line only, and this verb never reads the brief - so no caller threads one here yet, and a homeless crewmate reaches this status by design until one does"
+    || qa_profile_return needs-profile "no fleet home named (--home) and none in the environment - the project config, scope map, repo-knowledge, store snapshot and pane routing all descend from it, so no profile can compile. Pass --home <abs>: your EXECUTION brief bakes the whole runnable line, fleet home included, beside the sentence that sends you here. This verb never reads the qa charter, so the charter's own --home (baked for its 'start' line) does not reach it"
   bundle="$qdir/agent-$task_slug-r$round.profile"
   dispatch_cfg="$qa_home/config/crew-dispatch.json"
   dispatch_select="$bin_dir/ac-dispatch-select.sh"

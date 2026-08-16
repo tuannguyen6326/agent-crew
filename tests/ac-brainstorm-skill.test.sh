@@ -69,6 +69,22 @@ assert_contains "$skill" "records/scenes/" "grounding checks the scene store"
 assert_contains "$skill" "records/learnings.md" "grounding checks the learnings ledger"
 assert_contains "$skill" "ac-ready.sh overlap" "grounding checks live-task overlap"
 
+# --- collaborative cadence scales with decision risk --------------------------
+assert_contains "$skill" "architectural or captain-required topics" \
+  "material design topics use the collaborative cadence"
+assert_contains "$skill" "one decision question at a time" \
+  "material design discussion converges one decision at a time"
+assert_contains "$skill" "2-3 viable approaches" \
+  "each material decision gets a bounded option set"
+assert_contains "$skill" "trade-offs and a recommendation" \
+  "the option set carries decision support"
+assert_contains "$skill" "Validate design sections incrementally" \
+  "accepted design is validated section by section before materialization"
+assert_contains "$skill" "Quick riffs, routine topics, and already-settled decisions" \
+  "the cheap path stays explicit"
+assert_contains "$skill" "no universal approval rounds" \
+  "the collaborative cadence does not become routine ceremony"
+
 # --- spec path: authored in the room, captain's live acceptance is the gate ---
 assert_contains "$skill" "DRAFT-SPEC" "the spec is drafted in the room beside the rows"
 assert_contains "$skill" "never as a file; its output surface is the room" "the roomchief materializes nothing"
@@ -97,5 +113,9 @@ assert_not_contains "$skill" "src|flow|mode|rev|qa|promote" "no duplicated token
 # --- catalog registration ------------------------------------------------------
 assert_contains "$(<"$ROOT/AGENTS.md")" '`brainstorm` - captain-invocable ideation' "AGENTS.md section 12 lists the skill"
 assert_contains "$(<"$ROOT/docs/architecture.md")" '`brainstorm` (captain ideation' "architecture.md lists the skill"
+assert_contains "$(<"$ROOT/AGENTS.md")" "one decision question at a time" \
+  "AGENTS.md keeps the brainstorm cadence synchronized"
+assert_contains "$(<"$ROOT/docs/architecture.md")" "risk-scaled design cadence" \
+  "architecture overview keeps the brainstorm cadence synchronized"
 
 pass

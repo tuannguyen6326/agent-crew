@@ -161,7 +161,7 @@ assert_contains "$("$BIN/ac-room.sh" list)" "HANDBACK            gizmo" "list su
 case "$("$BIN/ac-room.sh" list)" in *"HANDBACK            gizmo"*) fail "DEMOTED must settle the hand-back" ;; esac
 rm -rf "$AC_HOME/state"/.wake-spool*
 
-# A hand-back is chief-owned, not captain-approval - captain 2026-07-30
+# A hand-back is chief-owned, not captain-approval - captain ruling
 # ("block boi captain") moved the one captain notification off it: it still
 # posts and nudges (both asserted above), it just no longer rings ac-notify.sh.
 notify_log="$TMP/notify-handback.log"
@@ -638,7 +638,7 @@ rm -f "$AC_HOME/state/.ask-stuck-chief"
 "$BIN/ac-room.sh" post stuck captain "DECIDED: go" >/dev/null
 
 # --- notify fires only on the blocked-by-captain TRANSITION -----------------
-# Captain 2026-07-30 ("k co gi thi dung co chay ac-notify" / "block boi
+# A captain ruling ("k co gi thi dung co chay ac-notify" / "block boi
 # captain"): the fleet is blocked BY THE CAPTAIN exactly when a room GATE:/
 # ASK: is pending on them - ac_room_pending's own count, unchanged (FENCE:
 # never re-derive or widen that predicate). `cmd_post` is where this now

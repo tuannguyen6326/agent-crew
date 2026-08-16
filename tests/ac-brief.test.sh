@@ -161,6 +161,10 @@ assert_contains "$spec" "NEVER open a PR" "spec is report-only"
 "$BIN/ac-brief.sh" widget-arch myproj --stage architecture >/dev/null
 arch="$(cat "$AC_HOME/data/widget/arch/brief.md")"
 assert_contains "$arch" "viable alternatives" "architecture demands alternatives"
+assert_contains "$arch" "understand the component without reading its internals" \
+  "architecture brief carries contract-level understandability"
+assert_contains "$arch" "internals can change without breaking consumers that honor that contract" \
+  "architecture brief carries consumer-safe internal change"
 assert_contains "$arch" "NEVER open a PR" "architecture is report-only"
 "$BIN/ac-brief.sh" widget-plan myproj --stage plan >/dev/null
 assert_contains "$(cat "$AC_HOME/data/widget/plan/brief.md")" "implementation plan" "plan stage"
@@ -196,6 +200,10 @@ dsg="$(cat "$AC_HOME/data/widget/design/brief.md")"
 assert_contains "$dsg" "spec/report.md" "design covers spec"
 assert_contains "$dsg" "arch/report.md" "design covers architecture"
 assert_contains "$dsg" "plan/report.md" "design covers plan"
+assert_contains "$dsg" "understand the component without reading its internals" \
+  "merged design brief carries architecture contract-level understandability"
+assert_contains "$dsg" "internals can change without breaking consumers that honor that contract" \
+  "merged design brief carries architecture consumer-safe internal change"
 assert_contains "$dsg" "awaiting gate" "design pauses at each gate"
 assert_contains "$dsg" "reviews EVERY report" "per-report gate, not one review at the end"
 assert_contains "$dsg" "NEVER change code" "design is report-only"
@@ -260,6 +268,8 @@ case "$implbrief" in *"## Report contract"*) \
   fail "an execution brief must not carry the design report contract" ;; esac
 case "$(cat "$AC_HOME/data/scout-1/brief.md")" in *"## Report contract"*) \
   fail "a plain scout brief must not carry the design report contract" ;; esac
+case "$spec$planb" in *"understand the component without reading its internals"*) \
+  fail "spec and plan briefs must not carry architecture-only isolation checks" ;; esac
 
 # Nested-layout edges: revision ids keep their suffix as the dir name; an id
 # suffix contradicting --stage dies; ac_task_dir resolves staged ids to the
@@ -345,6 +355,18 @@ case "$kb" in
   *"ask:"*"full:"*) : ;;
   *) fail "the ask verb must LEAD and the full-record cat must be the labelled fallback" ;;
 esac
+
+# (brief-qa-home) The execution brief bakes the FLEET HOME onto the `ac-qa.sh
+# agent` line, for exactly the reason knowledge() bakes it onto the ac-know
+# lines: the crewmate's pane carries no AC_HOME by design (bin/ac-spawn.sh),
+# every durable source the QA profile freezes descends from that ONE value, and
+# cmd_agent never reads the qa charter that already bakes --home for `start`.
+# Without this bake the crewmate is the caller that cannot comply, and its QA
+# call answers QA_PROFILE_STATUS=needs-profile on every project.
+assert_contains "$kb" "$ROOT/bin/ac-qa.sh agent --home $AC_HOME" \
+  "the execution brief bakes a runnable ac-qa.sh agent line carrying --home"
+assert_contains "$kb" "--task ktask-qa" \
+  "... naming the family's qa task id, so the baked line runs as written"
 
 # --- AC17 regression: a fact recorded from a POOLED WORKTREE must bind that
 # worktree's tree, not the primary clone's - the false-fresh class (door B,

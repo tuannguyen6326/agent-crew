@@ -380,7 +380,7 @@ fb_before="$(shasum -a 256 <"$fleet_backlog")"
 assert_fails_with "duplicate" -- "$dom" assign payments pay-fix pay-fix
 assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$fb_before" "CR-008: a duplicate id writes nothing"
 
-# CR-009 (captain ruling 2026-08-02) - the detail file carries one
+# CR-009 - the detail file carries one
 # `## <project-name>` heading per in-scope project, and validate compares that
 # set against the view in BOTH directions. Advisory in both: prose may lag, the
 # guard may not.
@@ -461,7 +461,7 @@ for tok in '[mode]' '[crew-ship]' '[local-only]'; do
   assert_contains "$out" "delivery-mode token" "R2-CR-005: $tok is caught as a delivery-mode token"
 done
 
-# R2-CR-006, REVISED by captain ruling 2026-08-03 (select at the lab session,
+# R2-CR-006, REVISED by captain ruling (select at the lab session,
 # recorded in ac-homes/drydock/data/domain-view-symlinked-clones/room.md):
 # resolution now STOPS at the fleet-clone level. A view link into
 # $AC_HOME/projects/<p> is trusted the instant it lands there, even when <p>

@@ -246,7 +246,7 @@ esac
 rm -f "$lockf"
 sparebin="$TMP/sparebin"
 mkdir -p "$sparebin"
-cat >"$sparebin/wrapper.sh" <<EOF
+cat >"$sparebin/wrapper.sh" 2>"$TMP/wrapper-heredoc.stderr" <<EOF
 #!/usr/bin/env bash
 # Blocks on its gate (real, live, fifo-blocked - never a sleep) so the test
 # can finish configuring the ps stub for this EXACT real pid before release,
@@ -261,13 +261,15 @@ cat >"$sparebin/wrapper.sh" <<EOF
 ( sleep 60; kill -9 \$\$ 2>/dev/null ) >/dev/null 2>&1 &
 _wd=\$!
 # The read's STATUS is deliberately ignored: the release path closes the gate
-# with no newline, so EOF must still acquire (a bare `|| exit 0` here breaks
+# with no newline, so EOF must still acquire (a bare \`|| exit 0\` here breaks
 # the spare-A case - measured).
 read -r _ <"\$1"
 kill "\$_wd" 2>/dev/null || true
 exec "$BIN/ac-lock.sh" acquire
 EOF
 chmod +x "$sparebin/wrapper.sh"
+assert_eq "$(cat "$TMP/wrapper-heredoc.stderr")" "" "wrapper.sh heredoc write emits no stderr (comment backticks neutralised, not parsed as command substitution)"
+assert_contains "$(cat "$sparebin/wrapper.sh")" 'a bare `|| exit 0` here breaks' "wrapper.sh comment lands byte-identical - backticked phrase intact, not deleted by command substitution"
 
 psbin="$TMP/psbin"
 mkdir -p "$psbin"
@@ -416,6 +418,62 @@ rm -f "$gateD"
 
 assert_contains "$res4" "lock: acquired (pid $outercl)" \
   "self_pid() skips the bg-pty-host worker and answers the OUTERMOST harness ancestor, not the inner same-session claude"
+rm -f "$lockf"
+
+# --- LOGIN SHELL ANCESTOR: `ps` reports a login shell's argv0 with a LEADING
+# DASH (`-zsh`), which macOS basename(1) parses as the FLAGS `-z -s -h` and
+# rejects with `illegal option -- z` - yielding an EMPTY base, which falls
+# through every named arm of the shell-skip case (including the `-zsh` arm
+# already listed there) to its `*)` arm and adopts the login shell itself as
+# the stable fallback pid. self_pid() must instead skip the login shell, the
+# same as any other shell ancestor, and keep walking to the next real
+# candidate above it.
+# DISPUTED: whether self_pid() adopts a leading-dash login shell ancestor as
+# the stable fallback pid instead of skipping past it. HELD-CONSTANT: a real
+# acquiring process (real $$, real own command line), the default
+# AC_LOCK_HARNESS_RE (no ancestor here matches it, so the walk must reach the
+# stable-ancestor fallback), a real unlocked lock file, the same
+# ps-stub/exec-wrapper technique the legs above declare.
+rm -f "$lockf"
+oldpath="$PATH"
+PATH="$psbin:$PATH"
+gateE="$TMP/spare-gate-e"
+mkfifo "$gateE"
+outE="$TMP/spare-out-e"
+"$sparebin/wrapper.sh" "$gateE" >"$outE" 2>&1 & realE=$!
+ls_cleanup() {
+  kill "$realE" 2>/dev/null || true
+  wait "$realE" 2>/dev/null || true
+  kill_foreign
+}
+trap ls_cleanup EXIT
+
+loginsh=$(( $$ + 600401 ))
+grandparent=$(( $$ + 600402 ))
+cat >"$psbin/ps" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  "-o ppid= -p $realE") printf ' %s\n' "$loginsh" ;;
+  "-o command= -p $loginsh") printf -- '-zsh\n' ;;
+  "-o ppid= -p $loginsh") printf ' %s\n' "$grandparent" ;;
+  "-o command= -p $grandparent") printf 'faketruestable --keep-alive\n' ;;
+  "-o ppid= -p $grandparent") printf ' 1\n' ;;
+  *) exec /bin/ps "\$@" ;;
+esac
+EOF
+chmod +x "$psbin/ps"
+
+printf x >"$gateE"
+wait "$realE" 2>/dev/null || true
+res5="$(cat "$outE")"
+PATH="$oldpath"
+rm -f "$gateE"
+
+assert_contains "$res5" "lock: acquired (pid $grandparent)" \
+  "login shell ancestor (leading-dash argv0) is skipped; self_pid() walks past it to the next real stable candidate"
+case "$res5" in
+  *"pid $loginsh"*) fail "login shell ancestor adopted as the stable fallback pid instead of being skipped" ;;
+esac
 rm -f "$lockf"
 
 # --- Concurrent races -------------------------------------------------------

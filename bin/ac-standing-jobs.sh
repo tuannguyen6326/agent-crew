@@ -4,8 +4,7 @@
 # records/standing-jobs.md, with the exact re-create action.
 #
 # CronCreate is SESSION-ONLY: the job lives in harness session memory, is
-# never written to disk, and dies with the session (captain.md 2026-07-21
-# monitor entry; the CronCreate tool's own session-only contract). There is
+# never written to disk, and dies with the session (the CronCreate tool's own session-only contract). There is
 # therefore no on-disk signal this script can read to tell whether a
 # declared job is actually alive THIS session - so it never claims
 # PRESENT/MISSING. It reports the DECLARED state (on/off) plus the exact

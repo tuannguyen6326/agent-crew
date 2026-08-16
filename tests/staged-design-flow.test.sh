@@ -22,6 +22,10 @@ assert_contains "$spec" "Valid room receipt" \
   "the spec owns the valid-receipt semantics"
 assert_contains "$spec" "Diagram Rule" \
   "the spec owns the conditional architecture-diagram rule"
+assert_contains "$spec" "understandable through its contract without reading its internals" \
+  "the architecture exit criteria require contract-level understandability"
+assert_contains "$spec" "internals can change without breaking consumers that honor that contract" \
+  "the architecture exit criteria require consumer-safe internal change"
 assert_contains "$spec" "TDD Shape" \
   "the spec owns the plan TDD shape"
 

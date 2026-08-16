@@ -149,7 +149,7 @@ ac_findings_normalize() {
   # that purpose no longer applies, and holding delivery to ask the captain
   # about an unfounded no-op nit would cost more than the review loop this
   # floor exists to remove.
-  # LATE-FINDING (ROUND) FLOOR (review-round-convergence, captain 2026-08-05 -
+  # LATE-FINDING (ROUND) FLOOR (review-round-convergence -
   # the authority for relaxing the fresh-full-diff rule's action here): a
   # round>=2 NEW `fix` finding whose file lies OUTSIDE the immediately previous
   # round's fix delta is churn on code this round never touched - by

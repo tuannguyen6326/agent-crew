@@ -93,6 +93,17 @@ learned - cite the learning, not taste. Journal as you go: when a thread
 settles or dies, one room entry says which and why - the room outlives the
 session and IS the brainstorm's record.
 
+Scale the cadence to the decision:
+
+- For architectural or captain-required topics, ask one decision question at a time.
+  For that decision, present 2-3 viable approaches with trade-offs and a recommendation.
+  Journal the captain's answer before advancing to the next unresolved decision.
+- Validate design sections incrementally before materializing a spec when the
+  thread is becoming one. Preserve the final verbatim confirmation at minting,
+  but do not make a monolithic draft the captain's first review.
+- Quick riffs, routine topics, and already-settled decisions stay lightweight.
+  Do not manufacture questions or checkpoints: there are no universal approval rounds.
+
 ## Ending: rows only on the captain's word, minted only by the crewchief
 
 The roomchief cannot touch the ledger (ledger-guard) - it ends by posting

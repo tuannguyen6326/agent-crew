@@ -1225,10 +1225,10 @@ check_remote() {
 queue_wake() {
   # queue_wake <kind> <id> <payload> - durable actionable wake, the record
   # every consumer (the crewchief's drain, a roomchief's scoped drain, the
-  # inbox) reads. CAPTAIN 2026-07-28 first cut a captain notification
+  # inbox) reads. captain ruling first cut a captain notification
   # (config/wedge-alarm) down to ask/gone/unobservable+handback (a
-  # notification on every wake was noise on a busy fleet). CAPTAIN 2026-07-30
-  # ("k co gi thi dung co chay ac-notify" / "block boi captain") went
+  # notification on every wake was noise on a busy fleet). The captain rule
+  # (notify only when something needs the captain / blocked-by-captain only) went
   # further: ask/gone/unobservable are chief-owned events, not captain
   # approval - the chief answers or steers them - so this watcher no longer
   # calls ac-notify.sh for ANY kind. The one thing that genuinely waits on

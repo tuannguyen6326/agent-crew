@@ -306,7 +306,7 @@ printf 'just prose, no verdict here\n' >"$vj"
 assert_eq "$(lib "ac_verdict_json <'$vj'")" '' "no JSON object yields empty output"
 
 # --- ac_findings_normalize: the LATE-FINDING (round) floor -------------------
-# review-round-convergence (captain 2026-08-05): a round>=2 `fix` finding whose
+# review-round-convergence: a round>=2 `fix` finding whose
 # file lies OUTSIDE the fix-delta is churn on code this task never touched -
 # floored to no-op (round_floored), advisory kept. Carve-out, non-overridable:
 # severity=error WITH class correctness|security|data-loss keeps fix anywhere,

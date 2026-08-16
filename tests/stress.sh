@@ -15,7 +15,7 @@
 #   AC_HOG_TTL=<secs>    hog lifetime (default 300) - raise it for long runs.
 #   AC_STRESS_LOAD1=<n>  override the measured 1-min load (tests inject it).
 #
-# HOST BUDGET (captain.md 2026-07-16). Reaping bounds the aftermath; it never
+# HOST BUDGET. Reaping bounds the aftermath; it never
 # bounded the BLAST. This box carries other families, so the harness:
 #   - REFUSES to start when the 1-min load already exceeds cores/2;
 #   - never runs more than cores/2 hogs, whatever the caller asked for;

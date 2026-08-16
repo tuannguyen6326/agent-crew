@@ -216,8 +216,8 @@ cmd_post() {
   printf -- '- %s\n' "$entry" >>"$f"
   pending="$(ac_room_pending "$f" 2>/dev/null || printf 0)"
   case "$pending" in ''|*[!0-9]*) pending=0 ;; esac
-  # The ONE captain notification (captain 2026-07-30: "can t duyet moi call
-  # ac-notify" + "block boi captain" + "apply cho ca repo") - the fleet is
+  # The ONE captain notification (ac-notify fires only when captain approval
+  # is what blocks; the rule is repo-wide) - the fleet is
   # blocked BY THE CAPTAIN exactly when ac_room_pending is >0 (unchanged,
   # never re-derived: FENCE, see bin/ac-wake-lib.sh's ac_room_pending). Fire
   # on the TRANSITION into blocked (pending_before 0 -> pending >0), never on
@@ -249,7 +249,7 @@ cmd_post() {
       *) ac_warn "post: $chief posted with no marker while $family has 0 pending - if you are actually waiting on the captain, post an ASK:/GATE: instead" ;;
     esac
   fi
-  # AUTO-mirror, OPT-IN (config/remote-mirror=on; captain order 2026-07-18:
+  # AUTO-mirror, OPT-IN (config/remote-mirror=on; fixed policy:
   # chiefs COMPOSE their family's Slack narrative themselves via
   # `ac-remote.sh thread-post` - the machine mirror is the opt-in
   # alternative, never the default). When on: every room entry rides along
