@@ -477,6 +477,12 @@ STUB
   [ "$pass1_line" -lt "$pass2_line" ] || fail "Pass 1 - RETRO must appear ahead of Pass 2 - DISTILL in brief.md"
   assert_contains "$(cat "$rundir/brief.md")" './retro.md` BEFORE you propose any candidate' \
     "brief.md instructs the scout to write retro.md before proposing candidates"
+  # CONTENT overlap between candidates is detectable by the scout and by nobody
+  # else: the gate judges one candidate at a time and the land only ever checks
+  # CITATIONS, so the rule has to reach the one reader holding every candidate
+  # at once (2026-08-16: one bullet, two candidates, both revised).
+  assert_contains "$(cat "$rundir/brief.md")" 'ONE BULLET BACKS ONE CANDIDATE - by CONTENT, not just by citation' \
+    "brief.md makes the scout check candidate bodies for uncited use of another candidate's source"
 
   # AC9 (part 1): with the stub writing retro.md, the run summary prints its path.
   assert_file "$rundir/retro.md" "the (stubbed) scout wrote retro.md (Pass 1's output)"
@@ -1243,13 +1249,16 @@ rm -f "$AC_HOME/records/learnings.md"
 grep -qx '## Pending' "$AC_HOME/records/learnings.md" || fail "note mints '## Pending' on an absent ledger"
 grep -qxF -- "$note_lesson" "$AC_HOME/records/learnings.md" || fail "note writes the lesson into a minted ledger"
 
-# --- a pointer can never claim more sources than its archive declares -------
+# --- a pointer and its archive must agree about what THIS land adds ---------
 
 # `learn_ledger_split` aggregates `counts[name] += count` over every pointer row
 # sharing a name, so a duplicated row silently inflates a count and nothing ever
-# reconciled it against the evidence the row links. When the archive EXISTS its
-# `source-count:` lines are that evidence, and the transaction must refuse
-# rather than publish a pointer that contradicts them.
+# reconciled it against the evidence the row links. What the transaction can
+# honestly assert is the DELTA, not the total: `sources=` is a lifetime
+# aggregate over legacy rows that predate the archive frame, while the archive
+# only ever holds what post-frame transactions appended, so the two totals are
+# allowed to differ by that inherited offset - and each land must add the SAME
+# number to both.
 mkdir -p "$AC_HOME/skills/evi-skill" "$AC_HOME/records/learnings-archive"
 printf -- '---\nname: evi-skill\ndescription: an existing learned skill.\nmetadata:\n  origin: learned\n  landed: "1"\n---\n# evi-skill\n\nOriginal body.\n' \
   >"$AC_HOME/skills/evi-skill/SKILL.md"
@@ -1271,17 +1280,96 @@ evi_candidate() {
 }
 evi_candidate >"$TMP/cand-evi.md"
 
-# CONTRADICTION: the archive declares 2 sources, the pointer claims 5.
+# INHERITED OFFSET: the archive declares 2 sources while the pointer claims 5 -
+# the shape every pointer with pre-frame history is in (drydock 2026-08-17: 10
+# of its 11 archived pointers). The transaction adds one source to each, so the
+# offset is untouched and the land is honest - it must PUBLISH. Asserting the
+# TOTALS instead refused this, which is what made those ten unpatchable.
 printf '# Learning Evidence: evi-skill\n\n## 2026-07-18T00:00:00Z - tx0\n\nsource-count: 2\n' \
   >"$AC_HOME/records/learnings-archive/evi-skill.md"
 evi_ledger 5 >"$AC_HOME/records/learnings.md"
+"$BIN/ac-learn.sh" land "$TMP/cand-evi.md"
+grep -qF -- '- [distilled -> evi-skill] sources=6 updated=2026-07-19' "$AC_HOME/records/learnings.md" \
+  || fail "a pointer carrying an inherited archive offset still takes its next patch"
+assert_eq "$(awk '/^source-count: [0-9]+$/ { n += $2 } END { print n + 0 }' \
+  "$AC_HOME/records/learnings-archive/evi-skill.md")" 3 \
+  "the archive gained exactly the one source the pointer did"
+
+# FAIL DIRECTION - the check refuses a per-transaction DISAGREEMENT, which is
+# the direction that must never pass: a published contradiction is permanent
+# (it is what the next patch then dies on), while a false refusal writes
+# nothing and is repaired by hand. A DUPLICATED canonical row is that
+# disagreement: learn_ledger_split folds both rows into the staged claim, so
+# the pointer gains more than the archive does.
+printf '# Learning Evidence: evi-skill\n\n## 2026-07-18T00:00:00Z - tx0\n\nsource-count: 2\n' \
+  >"$AC_HOME/records/learnings-archive/evi-skill.md"
+{
+  evi_ledger 2
+  printf -- '- [distilled -> evi-skill] sources=3 updated=2026-07-18 ([skill](../skills/evi-skill/SKILL.md); [evidence](learnings-archive/evi-skill.md))\n'
+} >"$AC_HOME/records/learnings.md"
 evi_before="$(cat "$AC_HOME/records/learnings.md")"
 evi_arch_before="$(cat "$AC_HOME/records/learnings-archive/evi-skill.md")"
 assert_fails "$BIN/ac-learn.sh" land "$TMP/cand-evi.md"
 assert_eq "$(cat "$AC_HOME/records/learnings.md")" "$evi_before" \
-  "a contradictory pointer refuses the transaction and leaves the ledger untouched"
+  "a duplicated pointer row refuses the transaction and leaves the ledger untouched"
 assert_eq "$(cat "$AC_HOME/records/learnings-archive/evi-skill.md")" "$evi_arch_before" \
   "a refused transaction writes nothing to the archive either"
+
+# FIRST LAND: the same disagreement with NO archive yet. This is the land the
+# check used to be guarded off - and the first land is exactly where a
+# permanent mismatch gets minted, because there is no archive to reconcile
+# against ONLY under the total-equality reading. The delta reading has one (an
+# absent archive declares 0), so the check runs and refuses here too.
+rm -f "$AC_HOME/records/learnings-archive/evi-skill.md"
+first_before="$(cat "$AC_HOME/records/learnings.md")"
+assert_fails "$BIN/ac-learn.sh" land "$TMP/cand-evi.md"
+assert_eq "$(cat "$AC_HOME/records/learnings.md")" "$first_before" \
+  "a skill's FIRST land can no longer mint a mismatch its next patch would die on"
+assert_no_file "$AC_HOME/records/learnings-archive/evi-skill.md" \
+  "a refused first land creates no archive"
+printf '# Learning Evidence: evi-skill\n\n## 2026-07-18T00:00:00Z - tx0\n\nsource-count: 2\n' \
+  >"$AC_HOME/records/learnings-archive/evi-skill.md"
+
+# ABSENT LIVE LEDGER: reading the live side means the check now touches a file
+# the very first transaction on a fleet has not created yet. Under this
+# script's `set -euo pipefail` an unguarded read there aborts the land outright
+# instead of refusing it - so the transaction must still complete.
+rm -f "$AC_HOME/records/learnings.md" "$AC_HOME/records/learnings-archive/firstever.md"
+{
+  printf 'kind: skill\nname: firstever\n'
+  printf 'description: the first skill a fleet ever lands.\n'
+  printf 'approved: 1700000000\n===sources===\n'
+  printf '===skill===\n# firstever\n\nbody.\n'
+} >"$TMP/cand-firstever.md"
+"$BIN/ac-learn.sh" land "$TMP/cand-firstever.md"
+grep -qF -- '- [distilled -> firstever] sources=0 updated=' "$AC_HOME/records/learnings.md" \
+  || fail "the first land on a fleet with no learnings.md yet still publishes its pointer"
+
+# LEGACY ROW: the staged claim is learn_ledger_split's aggregate over BOTH
+# pointer shapes, so the live side must read both too. A skill whose ledger
+# still carries only a legacy rung-qualified row (the pre-frame shape, which
+# this very land canonicalizes) would otherwise have its whole inherited count
+# charged to this transaction's delta and be refused for landing honestly.
+rm -f "$AC_HOME/records/learnings-archive/legacy-skill.md"
+mkdir -p "$AC_HOME/skills/legacy-skill"
+printf -- '---\nname: legacy-skill\ndescription: an existing learned skill.\nmetadata:\n  origin: learned\n  landed: "1"\n---\n# legacy-skill\n\nOriginal body.\n' \
+  >"$AC_HOME/skills/legacy-skill/SKILL.md"
+{
+  printf '# Learning Ledger\n\n## Pending\n\n'
+  printf '### 2026-07-19 - fam (chief)\n'
+  printf -- '- LESSON: legacy-row bullet, compact me.\n'
+  printf '\n## Distilled\n\n'
+  printf -- '- 2026-07-18 [distilled -> legacy-skill @fleet] sources=3 legacy-skill (see skills/legacy-skill/SKILL.md)\n'
+} >"$AC_HOME/records/learnings.md"
+{
+  printf 'kind: patch\nname: legacy-skill\napproved: 1700000000\n'
+  printf '===sources===\n'
+  printf '2026-07-19\tlegacy\t- LESSON: legacy-row bullet, compact me.\n'
+  printf '===patch===\n## Legacy row\n\nbody.\n'
+} >"$TMP/cand-legacy.md"
+"$BIN/ac-learn.sh" land "$TMP/cand-legacy.md"
+grep -qF -- '- [distilled -> legacy-skill] sources=4 updated=2026-07-19' "$AC_HOME/records/learnings.md" \
+  || fail "a skill whose ledger still carries only a legacy rung-qualified row lands its patch"
 
 # AGREEMENT: the same shape with a pointer the archive backs still lands, so
 # the guard discriminates on the count and not merely on having an archive.
@@ -1290,9 +1378,11 @@ evi_ledger 2 >"$AC_HOME/records/learnings.md"
 grep -qF -- '- [distilled -> evi-skill] sources=3 updated=2026-07-19' "$AC_HOME/records/learnings.md" \
   || fail "a pointer its archive backs still publishes"
 
-# NO ARCHIVE: nothing to reconcile against, so the pre-existing count is carried
-# forward untouched and the transaction proceeds (the row is written without an
-# [evidence] link, which is already the honest behaviour).
+# NO ARCHIVE: an archive that does not exist yet declares 0, so the FIRST land
+# reconciles against it like any other - the inherited count is carried forward
+# untouched and the transaction proceeds. This is the shape six of drydock's
+# pointers are in (2026-08-17: no archive, a claim inherited from pre-frame
+# rows), and the second land below is the trap they must not walk into.
 rm -f "$AC_HOME/records/learnings-archive/noarch-skill.md"
 mkdir -p "$AC_HOME/skills/noarch-skill"
 printf -- '---\nname: noarch-skill\ndescription: an existing learned skill.\nmetadata:\n  origin: learned\n  landed: "1"\n---\n# noarch-skill\n\nOriginal body.\n' \
@@ -1316,5 +1406,30 @@ printf -- '---\nname: noarch-skill\ndescription: an existing learned skill.\nmet
 "$BIN/ac-learn.sh" land "$TMP/cand-noarch.md"
 grep -qF -- '- [distilled -> noarch-skill] sources=6 updated=2026-07-19' "$AC_HOME/records/learnings.md" \
   || fail "a skill with no archive on disk reconciles against nothing and still lands"
+
+# ...and its NEXT patch lands too. The first land above minted a pointer at 6
+# against an archive declaring 1 - permanent, since nothing ever reconciles the
+# inherited offset away. Under total-equality that mismatch was the trap: the
+# first land skipped the check and every later one died on what it minted.
+{
+  printf '# Learning Ledger\n\n## Pending\n\n'
+  printf '### 2026-07-20 - fam (chief)\n'
+  printf -- '- LESSON: a second no-archive bullet, compact me.\n'
+  printf '\n## Distilled\n\n'
+  grep -F -- '- [distilled -> noarch-skill]' "$AC_HOME/records/learnings.md"
+} >"$TMP/ledger-noarch2"
+cp "$TMP/ledger-noarch2" "$AC_HOME/records/learnings.md"
+{
+  printf 'kind: patch\n'
+  printf 'name: noarch-skill\n'
+  printf 'approved: 1700000000\n'
+  printf '===sources===\n'
+  printf '2026-07-20\tnoarch\t- LESSON: a second no-archive bullet, compact me.\n'
+  printf '===patch===\n'
+  printf '## No archive, second pass\n\nbody.\n'
+} >"$TMP/cand-noarch2.md"
+"$BIN/ac-learn.sh" land "$TMP/cand-noarch2.md"
+grep -qF -- '- [distilled -> noarch-skill] sources=7 updated=2026-07-20' "$AC_HOME/records/learnings.md" \
+  || fail "a pointer whose first land minted an inherited offset still takes its next patch"
 
 pass

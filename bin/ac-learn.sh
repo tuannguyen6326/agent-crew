@@ -67,14 +67,19 @@
 # transaction canonicalizes it. The `[evidence]` link is emitted only for a pointer
 # whose records/learnings-archive/<name>.md already exists or is staged by this
 # same transaction, so the index never links a file that does not exist.
-# A pointer can never contradict the evidence it links either: once a skill HAS
-# an archive, the transaction refuses unless the `sources=` it is about to
-# publish equals the total that archive's `source-count:` lines declare. That is
-# what closes `counts[name] += count` - learn_ledger_split aggregates every
-# pointer row sharing a name, so a duplicated row inflates a claim nothing else
-# reconciles. It is a code invariant, not a data repair: a skill with no archive
-# has no evidence to reconcile against, keeps its pre-existing count, and is
-# already written without an `[evidence]` link.
+# A pointer can never contradict the evidence it links either - but the
+# invariant is the DELTA, not the total: on EVERY land, including a skill's
+# first, the transaction refuses unless the `sources=` it is about to publish
+# grows by exactly what it appends to that archive's `source-count:` lines. The
+# TOTALS are allowed to differ, because they measure different things -
+# `sources=` is a lifetime aggregate (learn_ledger_split folds every pointer row
+# sharing a name, legacy rows that predate the archive frame included) while the
+# archive only holds what post-frame transactions appended, so total-equality is
+# an invariant only for a skill born after the frame. That is what still closes
+# `counts[name] += count`: a duplicated row inflates the ledger side of the
+# delta and nothing else reconciles it. It is a code invariant, not a data
+# repair - an archive that does not exist yet simply declares 0, and a pointer
+# with no archive is still written without an `[evidence]` link.
 # The transaction resets only the generation it captured. It then ticks Curate
 # and runs automatic Curate when its own cadence is due.
 #
@@ -574,6 +579,25 @@ For every lesson cluster, decide between three tiers BEFORE writing a candidate:
   sources cite that task's lesson, and whose `description:` names the concrete
   trigger (project, operation, or failure mode) a crewmate would search for.
   The routing test above rejects; this names what passes.
+
+ONE BULLET BACKS ONE CANDIDATE - by CONTENT, not just by citation. Decide
+which candidate each source bullet BELONGS to BEFORE you write any body, and
+let only that one use it. Citing a bullet twice is already impossible (the land
+consumes each one once); USING ITS CONTENT in a second candidate's body without
+citing it is not, and that is the shape that killed a whole pair on 2026-08-16.
+One candidate cited the "a modelled non-zero status is already a refusal"
+bullet and was refused as OVER-BROAD (it consumed a source its own lesson does
+not need); a second restated that same bullet's content inside `===patch===`
+without citing it and was refused as REDUNDANT with incomplete provenance. Both
+revise, from opposite ends, over one bullet. NOTHING DOWNSTREAM CAN SEE THIS:
+the maintenance gate judges ONE candidate at a time, and the land only ever
+checks CITATIONS - you are the only reader holding every candidate at once, so
+it is YOUR check and nobody else's. Run it explicitly before you write
+`report.md`: re-read each candidate's body against the bullets the OTHER
+candidates cite, and where it uses one, either drop that content or move the
+whole lesson to the candidate that owns the bullet. Then report that you ran
+the CONTENT check in those words - "no bullet is cited by two candidates" is a
+true sentence about citations and says nothing about this.
 
 A candidate supported ONLY by `./retro.md` (no `sources/learnings.md` bullet
 backs it) still gets an EMPTY `===sources===` section - do not invent a
@@ -1495,21 +1519,75 @@ learn_ledger_shape_gate() {
   return 0
 }
 
+learn_pointer_claimed() {
+  # learn_pointer_claimed <ledger> <skill> - what this ledger already claims for
+  # <skill>. Nothing when it carries no row for the name, or does not exist yet
+  # (the LIVE ledger before a fleet's first transaction).
+  # It reads BOTH pointer shapes, because the side this is compared against is
+  # learn_ledger_split's aggregate over both (consume_pointer, :1287): reading
+  # only the canonical row would charge a skill's whole inherited LEGACY count
+  # to this one transaction's delta and refuse an honest land - the very land
+  # that canonicalizes the legacy row. Every legacy rung-qualified row counts
+  # (that is how they aggregate), each worth its own `sources=` or 1 without
+  # one; but only the FIRST canonical row does, because a SECOND canonical row
+  # is the duplicate this check exists to catch.
+  [ -f "$1" ] || return 0
+  awk -v n="$2" '
+    function amount(line,   c) {
+      c = 1
+      if (line ~ /sources=[0-9]+/) {
+        c = line; sub(/^.*sources=/, "", c); sub(/[^0-9].*$/, "", c)
+      }
+      return c
+    }
+    $0 ~ "^- \\[distilled -> " n "\\] sources=" {
+      if (!canonical++) { total += amount($0); found = 1 }
+      next
+    }
+    $0 ~ "^- [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] \\[distilled -> " n " @(fleet|container)\\]" {
+      total += amount($0); found = 1
+    }
+    END { if (found) print total + 0 }
+  ' "$1"
+}
+
+learn_archive_declared() {
+  # learn_archive_declared <archive> - the sum of its `source-count:` lines; 0
+  # when the archive does not exist yet, which is what an archive declares
+  # before its first transaction appends to it.
+  [ -f "$1" ] || { printf '0\n'; return 0; }
+  awk '/^source-count: [0-9]+$/ { n += $2 } END { print n + 0 }' "$1"
+}
+
 learn_pointer_evidence_check() {
-  # learn_pointer_evidence_check <staged-ledger> <staged-archive> <skill>
-  # The pointer this transaction is about to publish must not claim more (or
-  # fewer) sources than the archive it links declares. learn_ledger_split
-  # aggregates `counts[name] += count` over every pointer row sharing a name,
-  # so a duplicated row inflates a count that nothing else ever reconciles.
-  # Only meaningful once the skill HAS an archive - the caller owns that
-  # condition, because without one there is no evidence to reconcile against.
-  local ledger="$1" archive="$2" name="$3" claimed declared
-  claimed="$(sed -n "s/^- \[distilled -> $name\] sources=\([0-9][0-9]*\) .*/\1/p" "$ledger" | head -1)"
+  # learn_pointer_evidence_check <live-ledger> <staged-ledger> <live-archive>
+  #                              <staged-archive> <skill>
+  # The pointer and the archive must agree about what THIS transaction adds -
+  # NOT about their totals. The totals measure different things: `sources=` is
+  # a LIFETIME aggregate (learn_ledger_split does `counts[name] += count` over
+  # every pointer row sharing the name, legacy rung-qualified rows that predate
+  # the archive frame included), while the archive only ever holds what
+  # post-frame transactions appended. Their equality therefore holds only for a
+  # skill BORN after the archive frame existed - measured on drydock
+  # 2026-08-17, 10 of 11 archived pointers fail it on inherited history alone,
+  # and every one of them refused its own next patch.
+  # The DELTA holds for every skill and at every land, INCLUDING the first: an
+  # absent archive declares 0, so there is always something to reconcile
+  # against and the caller no longer guards this call. That guard is what let a
+  # first land mint the permanent mismatch its next patch then died on.
+  # FAIL DIRECTION: refuse. A published contradiction is permanent and blocks
+  # the pointer forever; a false refusal writes nothing and is repaired by
+  # hand. So a disagreement always dies here, with nothing written.
+  local live_ledger="$1" ledger="$2" live_archive="$3" archive="$4" name="$5"
+  local was claimed had declared
+  was="$(learn_pointer_claimed "$live_ledger" "$name")"
+  claimed="$(learn_pointer_claimed "$ledger" "$name")"
   [ -n "$claimed" ] \
     || ac_die "refusing the transaction: no canonical pointer for '$name' in the staged ledger to reconcile against its archive (nothing written)"
-  declared="$(awk '/^source-count: [0-9]+$/ { n += $2 } END { print n + 0 }' "$archive")"
-  [ "$claimed" = "$declared" ] && return 0
-  ac_die "refusing to publish a pointer that contradicts its own evidence: '[distilled -> $name]' would claim sources=$claimed while records/learnings-archive/$name.md declares $declared (sum of its 'source-count:' lines). Nothing written. Reconcile the two - a duplicated pointer row in records/learnings.md inflates the claim, and a pointer predating its archive claims sources the archive never received."
+  had="$(learn_archive_declared "$live_archive")"
+  declared="$(learn_archive_declared "$archive")"
+  [ "$((claimed - ${was:-0}))" = "$((declared - had))" ] && return 0
+  ac_die "refusing to publish a pointer that contradicts its own evidence: this transaction would add $((claimed - ${was:-0})) source(s) to '[distilled -> $name]' (sources=${was:-0} -> $claimed) while records/learnings-archive/$name.md gains $((declared - had)) (source-count sum $had -> $declared). Nothing written. The two totals may legitimately differ - the pointer aggregates rows that predate the archive - but each land must add the SAME number to both; a duplicated pointer row in records/learnings.md is what inflates the ledger side."
 }
 
 learn_archive_stage() {
@@ -1765,11 +1843,12 @@ learn_prepare_candidate_plan() {
       "$staged/records/learnings.md" "$run/work" \
       "$([ "$kind" = crewmate ] && printf '%s' '[lesson](../CREWMATE-learned.md)')"
     # Reconcile the two staged artifacts BEFORE either is planned, so a
-    # contradiction refuses with nothing committed. Only when the skill already
-    # had an archive: absent one there is no evidence to reconcile against, and
-    # learn_ledger_stage already declines to link evidence that does not exist.
-    [ ! -f "$archive" ] || learn_pointer_evidence_check \
-      "$staged/records/learnings.md" "$staged/records/learnings-archive/$name.md" "$name"
+    # contradiction refuses with nothing committed. On EVERY land, including a
+    # skill's FIRST: the check reconciles what this transaction ADDS to each
+    # side, and an absent archive simply declares 0 - so there is no land left
+    # where a mismatch can be minted unchecked.
+    learn_pointer_evidence_check "$learnings" "$staged/records/learnings.md" \
+      "$archive" "$staged/records/learnings-archive/$name.md" "$name"
     learn_plan_action "$actions" append-archive \
       "records/learnings-archive/$name.md" \
       "$staged_prefix/records/learnings-archive/$name.md" "$run"
