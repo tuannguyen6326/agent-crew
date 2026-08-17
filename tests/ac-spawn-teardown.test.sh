@@ -89,7 +89,7 @@ rm -f "$AC_HOME/config/remote-reply" "$AC_HOME/config/remote-mirror"
 # Custom launch template (config/launch-fake exists) keeps AC_PROMPT on the
 # launch line; the tty-1024 guard only strips it for BUILT-IN templates.
 assert_contains "$(cat "$(fake_pane_buf t1)")" "AC_PROMPT=" "custom template keeps AC_PROMPT"
-assert_contains "$out" "worktree=$repo/.crew/worktrees/1" "in-repo worktree"
+assert_contains "$out" "worktree=$repo/.crew/worktrees/1-proj" "in-repo worktree"
 
 meta="$AC_HOME/state/t1.meta"
 assert_file "$meta"
@@ -124,11 +124,11 @@ assert_contains "$("$BIN/ac-tree.sh" list --repo "$repo")" "available" "worktree
 # the resume assertions below must distinguish "old slot" from "first free
 # slot" (normal selection would hand out slot 1).
 hold="$("$BIN/ac-tree.sh" get --repo "$repo" --id hold 2>/dev/null)"
-assert_eq "$hold" "$repo/.crew/worktrees/1" "hold pins slot 1"
+assert_eq "$hold" "$repo/.crew/worktrees/1-proj" "hold pins slot 1"
 "$BIN/ac-brief.sh" t2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t2 "$repo" --harness claude >/dev/null 2>&1
 assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t2.meta")" \
-  "$repo/.crew/worktrees/2" "t2 leased slot 2"
+  "$repo/.crew/worktrees/2-proj" "t2 leased slot 2"
 sid="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/t2.meta")"
 [ -n "$sid" ] || fail "claude spawn must record session_id"
 grep -q -- "--session-id $sid" "$(fake_pane_buf t2)" || fail "launch line pins the session id"
@@ -143,7 +143,7 @@ grep -q -- "--session-id $sid" "$(fake_pane_buf t2)" || fail "launch line pins t
 sid2="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/t2-r2.meta")"
 assert_eq "$sid2" "$sid" "revision resumes the same session"
 assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t2-r2.meta")" \
-  "$repo/.crew/worktrees/2" "resume lands in the old slot (cwd affinity)"
+  "$repo/.crew/worktrees/2-proj" "resume lands in the old slot (cwd affinity)"
 grep -q -- "--resume $sid" "$(fake_pane_buf t2-r2)" || fail "resume launch line"
 "$BIN/ac-teardown.sh" t2-r2 --force >/dev/null 2>&1
 
@@ -290,14 +290,14 @@ rm -f "$AC_HOME/config/model-ship"
 # Affinity miss: the old slot is leased by someone else, so the resume falls
 # back to another slot and warns loudly that the session cwd changed.
 hold2="$("$BIN/ac-tree.sh" get --repo "$repo" --id hold2 --prefer 2 2>/dev/null)"
-assert_eq "$hold2" "$repo/.crew/worktrees/2" "hold2 pins the old slot"
+assert_eq "$hold2" "$repo/.crew/worktrees/2-proj" "hold2 pins the old slot"
 "$BIN/ac-brief.sh" t2-r3 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" t2-r3 "$repo" --resume-from t2 2>&1)"
 assert_contains "$out" \
-  "resume may not find the old session (cwd changed: $repo/.crew/worktrees/2 -> $repo/.crew/worktrees/1)" \
+  "resume may not find the old session (cwd changed: $repo/.crew/worktrees/2-proj -> $repo/.crew/worktrees/1-proj)" \
   "affinity miss warns loudly"
 assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t2-r3.meta")" \
-  "$repo/.crew/worktrees/1" "affinity miss fell back to a free slot"
+  "$repo/.crew/worktrees/1-proj" "affinity miss fell back to a free slot"
 "$BIN/ac-teardown.sh" t2-r3 --force >/dev/null 2>&1
 "$BIN/ac-tree.sh" return "$hold2" 2>/dev/null
 

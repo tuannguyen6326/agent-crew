@@ -43,7 +43,7 @@ assert_eq "$out2" "" "quiet when every slot is available or leased"
 repoB="$(make_repo broken)"
 wtB="$("$BIN/ac-tree.sh" get --repo "$repoB" --id b1 2>/dev/null)"
 "$BIN/ac-tree.sh" return "$wtB" 2>/dev/null
-rm -rf "$repoB/.git/worktrees/1"
+rm -rf "$repoB/.git/worktrees/1-broken"
 git -C "$wtB" rev-parse --git-dir >/dev/null 2>&1 && fail "fixture: the worktree must be broken"
 
 outB="$("$BIN/ac-pool-health.sh" --repo "$repoB")"
@@ -68,7 +68,7 @@ wtM2="$("$BIN/ac-tree.sh" get --repo "$repoM" --id m2 2>/dev/null)"
 "$BIN/ac-tree.sh" return "$wtM1" 2>/dev/null
 printf 'unlanded\n' >>"$wtM1/file.txt"
 "$BIN/ac-tree.sh" return "$wtM2" 2>/dev/null
-rm -rf "$repoM/.git/worktrees/2"
+rm -rf "$repoM/.git/worktrees/2-mixed"
 
 outM="$("$BIN/ac-pool-health.sh" --repo "$repoM")"
 assert_contains "$outM" "0 leasable" "mixed pool: no genuinely clean available slot"
@@ -83,7 +83,7 @@ assert_contains "$outM" "3 total" "mixed pool: all three slots counted"
 repoA="$(make_repo aged)"
 wtA1="$("$BIN/ac-tree.sh" get --repo "$repoA" --id a1 2>/dev/null)"
 wtA2="$("$BIN/ac-tree.sh" get --repo "$repoA" --id a2 2>/dev/null)"
-metaA1="$repoA/.crew/slots/1.meta"
+metaA1="$repoA/.crew/slots/1-aged.meta"
 old_ts="$(date -u -v-2d +%Y-%m-%dT%H:%M:%SZ)"
 sed "s/^leased_at=.*/leased_at=$old_ts/" "$metaA1" >"$metaA1.tmp" && mv "$metaA1.tmp" "$metaA1"
 
@@ -100,7 +100,7 @@ esac
 # A lease with a recorded --owner pid is NOT durable (it self-heals via
 # lease_reclaimable on a dead pid) - age reporting is scoped to durable
 # (empty owner_pid) leases only, so an owned lease stays unflagged however old.
-metaA2="$repoA/.crew/slots/2.meta"
+metaA2="$repoA/.crew/slots/2-aged.meta"
 sed -e "s/^leased_at=.*/leased_at=$old_ts/" -e 's/^owner_pid=.*/owner_pid=99999999/' "$metaA2" \
   >"$metaA2.tmp" && mv "$metaA2.tmp" "$metaA2"
 outA2="$("$BIN/ac-pool-health.sh" --repo "$repoA")"

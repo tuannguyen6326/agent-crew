@@ -1550,6 +1550,7 @@ if [ -n "$resume_wt" ]; then
 else
   worktree="$("$bin_dir/ac-tree.sh" get --repo "$project_dir" --id "$id" --holder "crew:$id")"
 fi
+ac_codegraph_worktree "$project_dir" "$worktree"
 spawn_failed_cleanup() {
   "$bin_dir/ac-tree.sh" return "$worktree" --force >/dev/null 2>&1 || true
   rm -f "$meta"
@@ -1664,6 +1665,13 @@ fleet_env="${fleet_env}AC_FLEET_STATE=$(printf '%q' "$(ac_state_dir)") "
 fleet_env="${fleet_env}AC_FLEET_NAME=$(printf '%q' "$(ac_fleet_name)") "
 ac_wake_scope_ok "${AC_SCOPE:-}" \
   && fleet_env="${fleet_env}AC_FLEET_SCOPE=$(printf '%q' "$AC_SCOPE") "
+# Memory-plugin project identity: inside a git WORKTREE, `git rev-parse
+# --show-toplevel` answers the worktree dir itself, so cwd-derived project
+# names collapse to the slot basename and one repo's memories file under
+# another's (measured: crewmate sessions filed under "1"). The explicit env
+# is the plugin's own documented override; the resolved PROJECT name is the
+# truth whatever the slot is called.
+fleet_env="${fleet_env}AGENTMEMORY_PROJECT_NAME=$(printf '%q' "$(basename "$project_dir")") "
 backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)$codegraph_env$fleet_env$launch"
 deliver_kickoff "$id" "$harness" "$prompt"
 

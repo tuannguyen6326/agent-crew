@@ -168,7 +168,7 @@ rcr="$(make_repo racerepo)"
 # must stay HEALTHY under the concurrency scenario, not merely avoid a sidecar.
 wait "$p1" || fail "CR-006: concurrent lease rc1 failed (lease path regressed)"
 wait "$p2" || fail "CR-006: concurrent lease rc2 failed (lease path regressed)"
-[ -d "$rcr/.crew/worktrees/1" ] && [ -d "$rcr/.crew/worktrees/2" ] \
+[ -d "$rcr/.crew/worktrees/1-racerepo" ] && [ -d "$rcr/.crew/worktrees/2-racerepo" ] \
   || fail "CR-006: both concurrent leases must produce a worktree"
 assert_contains "$(cat "$(hook_dir "$rcr")/pre-commit")" "ac-crew-primary-commit-guard" \
   "CR-006: the installed hook is our guard after concurrent leases"
@@ -192,7 +192,7 @@ if [ "$(id -u)" != 0 ]; then
   chmod u+w "$hd"
   assert_eq "$(cksum <"$hd/pre-commit")" "$foreign_sum" "CR-009: a failed guard write left the foreign hook byte-identical"
   assert_no_file "$hd/pre-commit.ac-crew-prev" "CR-009: nothing was moved aside on a failed stage"
-  [ -d "$r10/.crew/worktrees/1" ] || fail "CR-009: the lease still proceeded despite the guard install being skipped"
+  [ -d "$r10/.crew/worktrees/1-atomicrepo" ] || fail "CR-009: the lease still proceeded despite the guard install being skipped"
 fi
 
 # --- CR-012: a symlink-managed pre-commit is left untouched (skip fail-open) --
@@ -284,7 +284,7 @@ if [ "$(id -u)" != 0 ]; then
   assert_eq "$(cksum <"$hd14/pre-commit")" "$stale_sum" \
     "UPG-4: a failed upgrade left the outdated guard byte-identical (fail-open)"
   assert_no_file "$hd14/pre-commit.ac-crew-prev" "UPG-4: nothing was moved aside on a failed upgrade"
-  [ -d "$r14/.crew/worktrees/2" ] || fail "UPG-4: the lease still proceeded despite the upgrade being skipped"
+  [ -d "$r14/.crew/worktrees/2-staleguard3" ] || fail "UPG-4: the lease still proceeded despite the upgrade being skipped"
 fi
 
 # --- Option A: a custom core.hooksPath is SKIPPED --------
@@ -298,14 +298,14 @@ out="$("$BIN/ac-tree.sh" get --repo "$r8" --id hp1 2>&1)"
 assert_contains "$out" "core.hooksPath is set; skipping commit-guard install" "A: a custom hooksPath skips the install"
 assert_no_file "$r8/.git/hooks/pre-commit" "A: no guard written to the default hooks under a custom hooksPath"
 assert_no_file "$r8/.githooks/pre-commit" "A: nothing written into the custom hooksPath dir"
-[ -d "$r8/.crew/worktrees/1" ] || fail "A: the lease still proceeded under a custom hooksPath"
+[ -d "$r8/.crew/worktrees/1-hookspath-rel" ] || fail "A: the lease still proceeded under a custom hooksPath"
 
 # /dev/null (hooks disabled) must not abort the lease.
 r9="$(make_repo hookspath-devnull)"
 git -C "$r9" config core.hooksPath /dev/null
 "$BIN/ac-tree.sh" get --repo "$r9" --id hp2 >/dev/null 2>&1 \
   || fail "A: core.hooksPath=/dev/null must not break ac-tree.sh get"
-[ -d "$r9/.crew/worktrees/1" ] || fail "A: the lease proceeded with hooks disabled via /dev/null"
+[ -d "$r9/.crew/worktrees/1-hookspath-devnull" ] || fail "A: the lease proceeded with hooks disabled via /dev/null"
 
 # --- E2: the hook fails OPEN when a rev-parse call errors (never onto captain)
 #     Invoke the installed hook directly with a `git` that errors, under crew

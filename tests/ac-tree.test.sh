@@ -14,7 +14,7 @@ repo="$(make_repo)"
 # Acquire: worktree lands inside the repo, detached HEAD, ignored via
 # .git/info/exclude - the tracked .gitignore is never created or touched.
 wt1="$("$BIN/ac-tree.sh" get --repo "$repo" --id t1 --holder crew:t1 2>/dev/null)"
-assert_eq "$wt1" "$repo/.crew/worktrees/1" "slot 1 path"
+assert_eq "$wt1" "$repo/.crew/worktrees/1-repo" "slot 1 path"
 [ -d "$wt1" ] || fail "worktree dir missing"
 git -C "$wt1" symbolic-ref -q HEAD >/dev/null && fail "worktree should be detached HEAD"
 grep -qxF '/.crew/' "$repo/.git/info/exclude" || fail "info/exclude entry missing"
@@ -28,7 +28,7 @@ out="$("$BIN/ac-tree.sh" list --repo "$repo")"
 assert_contains "$out" "leased" "list shows lease"
 assert_contains "$out" "t1" "list shows task"
 wt2="$("$BIN/ac-tree.sh" get --repo "$repo" --id t2 2>/dev/null)"
-assert_eq "$wt2" "$repo/.crew/worktrees/2" "slot 2 path"
+assert_eq "$wt2" "$repo/.crew/worktrees/2-repo" "slot 2 path"
 
 # The generated editor workspace: repo + one folder per ACTIVE lease so
 # VSCode/Cursor shows active task trees as repositories without idle pool
@@ -37,8 +37,8 @@ ws="$repo/.crew/repo.code-workspace"
 assert_file "$ws" "workspace file generated on acquire"
 jq empty "$ws" >/dev/null 2>&1 || fail "workspace file must be valid JSON"
 assert_contains "$(cat "$ws")" '"path": ".."' "main repo folder present"
-assert_contains "$(cat "$ws")" '"path": "worktrees/1", "name": "wt1 - t1"' "leased slot named with its task"
-assert_contains "$(cat "$ws")" '"path": "worktrees/2", "name": "wt2 - t2"' "every active slot listed"
+assert_contains "$(cat "$ws")" '"path": "worktrees/1-repo", "name": "wt1-repo - t1"' "leased slot named with its task"
+assert_contains "$(cat "$ws")" '"path": "worktrees/2-repo", "name": "wt2-repo - t2"' "every active slot listed"
 
 # Return refuses to discard dirty work without --force, then resets.
 printf 'junk\n' >"$wt1/junk.txt"
@@ -47,18 +47,18 @@ assert_fails "$BIN/ac-tree.sh" return "$wt1"
 assert_no_file "$wt1/junk.txt" "forced return reset the tree"
 assert_contains "$("$BIN/ac-tree.sh" list --repo "$repo")" "available" "slot released"
 case "$(cat "$ws")" in
-  *'"path": "worktrees/1"'*) fail "returned slot must leave the active editor workspace" ;;
+  *'"path": "worktrees/1-repo"'*) fail "returned slot must leave the active editor workspace" ;;
 esac
-assert_contains "$(cat "$ws")" '"path": "worktrees/2", "name": "wt2 - t2"' "other active slot remains"
+assert_contains "$(cat "$ws")" '"path": "worktrees/2-repo", "name": "wt2-repo - t2"' "other active slot remains"
 wt3="$("$BIN/ac-tree.sh" get --repo "$repo" --id t3 2>/dev/null)"
 assert_eq "$wt3" "$wt1" "released slot reused"
-assert_contains "$(cat "$ws")" '"path": "worktrees/1", "name": "wt1 - t3"' "re-leased slot returns with its new task"
+assert_contains "$(cat "$ws")" '"path": "worktrees/1-repo", "name": "wt1-repo - t3"' "re-leased slot returns with its new task"
 
 # An available-but-dirty slot is never silently reset: acquire skips it.
 "$BIN/ac-tree.sh" return "$wt3" 2>/dev/null
 printf 'unlanded\n' >>"$wt1/file.txt"
 wt4="$("$BIN/ac-tree.sh" get --repo "$repo" --id t4 2>/dev/null)"
-assert_eq "$wt4" "$repo/.crew/worktrees/3" "dirty slot skipped, pool grew"
+assert_eq "$wt4" "$repo/.crew/worktrees/3-repo" "dirty slot skipped, pool grew"
 
 # Remove: refuses a leased slot without --include-leased.
 assert_fails "$BIN/ac-tree.sh" remove "$wt2"
@@ -66,14 +66,14 @@ assert_fails "$BIN/ac-tree.sh" remove "$wt2"
 # Prune: dry-run by default; skips leased and dirty; removes merged idle.
 "$BIN/ac-tree.sh" return "$wt4" 2>/dev/null
 out="$("$BIN/ac-tree.sh" prune --repo "$repo" 2>&1)"
-assert_contains "$out" "would prune slot 3" "dry-run"
+assert_contains "$out" "would prune slot 3-repo" "dry-run"
 [ -d "$wt4" ] || fail "dry-run must not remove"
 out="$("$BIN/ac-tree.sh" prune --repo "$repo" --yes 2>&1)"
-assert_contains "$out" "skip slot 1: dirty" "dirty skipped"
-assert_contains "$out" "skip slot 2: leased" "leased skipped"
-assert_contains "$out" "pruned slot 3" "idle merged pruned"
+assert_contains "$out" "skip slot 1-repo: dirty" "dirty skipped"
+assert_contains "$out" "skip slot 2-repo: leased" "leased skipped"
+assert_contains "$out" "pruned slot 3-repo" "idle merged pruned"
 assert_no_file "$wt4" "pruned dir gone"
-case "$(cat "$ws")" in *worktrees/3*) fail "a pruned slot must leave the workspace file" ;; esac
+case "$(cat "$ws")" in *worktrees/3-repo*) fail "a pruned slot must leave the workspace file" ;; esac
 
 # Remove: refuses a dirty tree without --force.
 assert_fails "$BIN/ac-tree.sh" remove "$wt1"
@@ -81,6 +81,19 @@ assert_fails "$BIN/ac-tree.sh" remove "$wt1"
 assert_no_file "$wt1" "forced remove"
 
 # Pool cap: AC_MAX_TREES bounds growth.
+# A legacy numeric slot migrates to <n>-<repo> on its next reuse.
+repoG="$(make_repo legacy)"
+lg1="$("$BIN/ac-tree.sh" get --repo "$repoG" --id g1 2>/dev/null)"
+"$BIN/ac-tree.sh" return "$lg1" >/dev/null 2>&1
+git -C "$repoG" worktree move "$lg1" "$repoG/.crew/worktrees/1" >/dev/null 2>&1
+mv "$repoG/.crew/slots/1-legacy.meta" "$repoG/.crew/slots/1.meta"
+lg2="$("$BIN/ac-tree.sh" get --repo "$repoG" --id g2 2>/dev/null)"
+assert_eq "$lg2" "$repoG/.crew/worktrees/1-legacy" "legacy slot renamed on reuse"
+assert_file "$repoG/.crew/slots/1-legacy.meta" "meta followed the rename"
+assert_no_file "$repoG/.crew/slots/1.meta" "old meta gone"
+git -C "$lg2" rev-parse HEAD >/dev/null 2>&1 || fail "moved worktree still a valid checkout"
+"$BIN/ac-tree.sh" return "$lg2" >/dev/null 2>&1
+
 repo2="$(make_repo capped)"
 AC_MAX_TREES=1 "$BIN/ac-tree.sh" get --repo "$repo2" --id a >/dev/null 2>&1
 AC_MAX_TREES=1 assert_fails "$BIN/ac-tree.sh" get --repo "$repo2" --id b
@@ -96,7 +109,7 @@ assert_eq "$wtb" "$wta" "dead-owner lease reclaimed"
 
 # Clean-but-unmerged work is refused by remove without --force.
 git -C "$wtb" commit --allow-empty -qm "unmerged detached commit"
-python3 - "$repo3/.crew/slots/1.meta" <<'EOF'
+python3 - "$repo3/.crew/slots/1-owned.meta" <<'EOF'
 import sys
 p = sys.argv[1]
 lines = [l for l in open(p) if not l.startswith("leased=")]
@@ -110,10 +123,10 @@ assert_no_file "$wtb" "forced remove of unmerged"
 repo4="$(make_repo halfmeta)"
 wtc="$("$BIN/ac-tree.sh" get --repo "$repo4" --id h1 2>/dev/null)"
 "$BIN/ac-tree.sh" return "$wtc" 2>/dev/null
-grep -v '^leased=' "$repo4/.crew/slots/1.meta" >"$repo4/.crew/slots/1.meta.t" \
-  && mv "$repo4/.crew/slots/1.meta.t" "$repo4/.crew/slots/1.meta"
+grep -v '^leased=' "$repo4/.crew/slots/1-halfmeta.meta" >"$repo4/.crew/slots/1-halfmeta.meta.t" \
+  && mv "$repo4/.crew/slots/1-halfmeta.meta.t" "$repo4/.crew/slots/1-halfmeta.meta"
 wtd="$("$BIN/ac-tree.sh" get --repo "$repo4" --id h2 2>/dev/null)"
-assert_eq "$wtd" "$repo4/.crew/worktrees/2" "unknown lease state skipped"
+assert_eq "$wtd" "$repo4/.crew/worktrees/2-halfmeta" "unknown lease state skipped"
 
 # info/exclude append never corrupts a newline-less final line, and a
 # tracked .gitignore without our line is left byte-identical.
@@ -158,24 +171,24 @@ p2="$("$BIN/ac-tree.sh" get --repo "$repo9" --id p2 2>/dev/null)"
 "$BIN/ac-tree.sh" return "$p1" 2>/dev/null
 "$BIN/ac-tree.sh" return "$p2" 2>/dev/null
 p3="$("$BIN/ac-tree.sh" get --repo "$repo9" --id p3 --prefer 2 2>/dev/null)"
-assert_eq "$p3" "$repo9/.crew/worktrees/2" "prefer honored when slot available"
+assert_eq "$p3" "$repo9/.crew/worktrees/2-prefer" "prefer honored when slot available"
 "$BIN/ac-tree.sh" return "$p3" 2>/dev/null
-p4="$("$BIN/ac-tree.sh" get --repo "$repo9" --id p4 --prefer "$repo9/.crew/worktrees/2" 2>/dev/null)"
-assert_eq "$p4" "$repo9/.crew/worktrees/2" "prefer accepts the worktree path form"
+p4="$("$BIN/ac-tree.sh" get --repo "$repo9" --id p4 --prefer "$repo9/.crew/worktrees/2-prefer" 2>/dev/null)"
+assert_eq "$p4" "$repo9/.crew/worktrees/2-prefer" "prefer accepts the worktree path form"
 
 # A preferred slot leased by another task falls back to normal selection
 # with ONE warning line naming both slots.
 out="$("$BIN/ac-tree.sh" get --repo "$repo9" --id p5 --prefer 2 2>&1)"
-assert_eq "$(printf '%s\n' "$out" | tail -n1)" "$repo9/.crew/worktrees/1" "leased prefer falls back"
-assert_contains "$out" "prefer: slot 2 unavailable (leased by task p4) - leased slot 1 instead" "leased prefer warned"
+assert_eq "$(printf '%s\n' "$out" | tail -n1)" "$repo9/.crew/worktrees/1-prefer" "leased prefer falls back"
+assert_contains "$out" "prefer: slot 2-prefer unavailable (leased by task p4) - leased slot 1-prefer instead" "leased prefer warned"
 
 # An available-but-dirty preferred slot is never silently reset: fall back
 # and warn, like the normal selection does.
 "$BIN/ac-tree.sh" return "$p4" 2>/dev/null
-printf 'dirt\n' >>"$repo9/.crew/worktrees/2/file.txt"
+printf 'dirt\n' >>"$repo9/.crew/worktrees/2-prefer/file.txt"
 out="$("$BIN/ac-tree.sh" get --repo "$repo9" --id p6 --prefer 2 2>&1)"
-assert_eq "$(printf '%s\n' "$out" | tail -n1)" "$repo9/.crew/worktrees/3" "dirty prefer falls back"
-assert_contains "$out" "prefer: slot 2 unavailable (dirty" "dirty prefer warned"
+assert_eq "$(printf '%s\n' "$out" | tail -n1)" "$repo9/.crew/worktrees/3-prefer" "dirty prefer falls back"
+assert_contains "$out" "prefer: slot 2-prefer unavailable (dirty" "dirty prefer warned"
 
 # A preferred slot that does not exist falls back too; a malformed value dies.
 out="$("$BIN/ac-tree.sh" get --repo "$repo9" --id p7 --prefer 9 2>&1)"
@@ -187,7 +200,7 @@ assert_fails "$BIN/ac-tree.sh" get --repo "$repo9" --id p8 --prefer bogus
 # resetting the tree of whoever holds it now (the ABA case).
 repoL="$(make_repo lease)"
 wtA="$("$BIN/ac-tree.sh" get --repo "$repoL" --id a1 --holder crew:a1 2>/dev/null)"
-metaL="$repoL/.crew/slots/1.meta"
+metaL="$repoL/.crew/slots/1-lease.meta"
 idA="$(sed -n 's/^lease_id=//p' "$metaL")"
 [ -n "$idA" ] || fail "acquire must mint a lease id"
 "$BIN/ac-tree.sh" return "$wtA" --force --if-lease-id "$idA" 2>/dev/null \
@@ -226,7 +239,7 @@ grep -v '^lease_id=' "$metaL" >"$metaL.tmp" && mv "$metaL.tmp" "$metaL"
 # holder) and nothing may be destroyed until it is free.
 repoR="$(make_repo poollock)"
 wtR="$("$BIN/ac-tree.sh" get --repo "$repoR" --id r1 --holder crew:r1 2>/dev/null)"
-metaR="$repoR/.crew/slots/1.meta"
+metaR="$repoR/.crew/slots/1-poollock.meta"
 idR="$(sed -n 's/^lease_id=//p' "$metaR")"
 printf 'unlanded\n' >"$wtR/sentinel.txt"
 lockR="$repoR/.crew/lock"
@@ -266,7 +279,7 @@ if command -v lsof >/dev/null 2>&1; then
   sleep 1
   outW="$(AC_MAX_TREES=1 "$BIN/ac-tree.sh" get --repo "$repoW" --id w2 2>&1 || true)"
   case "$outW" in
-    *"$repoW/.crew/worktrees/1"*) fail "a return in flight must not leave its slot re-leasable: $outW" ;;
+    *"$repoW/.crew/worktrees/1-poolwindow"*) fail "a return in flight must not leave its slot re-leasable: $outW" ;;
   esac
   assert_contains "$outW" "pool is full" "the slot under return stays leased to its live owner"
   wait "$returner" || fail "the return must still complete"
@@ -281,13 +294,13 @@ fi
 repoH="$(make_repo broken)"
 wtH="$("$BIN/ac-tree.sh" get --repo "$repoH" --id b1 --holder crew:b1 2>/dev/null)"
 printf 'unlanded work\n' >"$wtH/wip.txt"
-rm -rf "$repoH/.git/worktrees/1"
+rm -rf "$repoH/.git/worktrees/1-broken"
 git -C "$wtH" rev-parse --git-dir >/dev/null 2>&1 && fail "fixture: the worktree must be broken"
 [ -n "$(git -C "$wtH" status --porcelain 2>/dev/null)" ] && fail "fixture: is_dirty must be blind here"
 out="$("$BIN/ac-tree.sh" list --repo "$repoH" 2>&1)"
 assert_file "$wtH/wip.txt" "a broken slot's unlanded work must survive heal"
-assert_file "$repoH/.crew/slots/1.meta" "a broken slot's meta must survive heal"
-assert_contains "$out" "slot 1: worktree broken" "the skip is announced"
+assert_file "$repoH/.crew/slots/1-broken.meta" "a broken slot's meta must survive heal"
+assert_contains "$out" "slot 1-broken: worktree broken" "the skip is announced"
 assert_contains "$out" "remove --force --include-leased $wtH" "the warn names the exact reclaim command"
 
 # ... and that named reclaim must actually RUN on such a slot - a skip whose
@@ -295,20 +308,20 @@ assert_contains "$out" "remove --force --include-leased $wtH" "the warn names th
 # neither dirty nor merged here, so the discard needs --force like every other
 # unverifiable one.
 outR="$("$BIN/ac-tree.sh" remove "$wtH" --include-leased 2>&1 || true)"
-assert_contains "$outR" "slot 1 is broken (gitdir unreadable)" "remove refuses an unverifiable slot without --force"
+assert_contains "$outR" "slot 1-broken is broken (gitdir unreadable)" "remove refuses an unverifiable slot without --force"
 assert_file "$wtH/wip.txt" "a refused remove must not destroy the slot"
 "$BIN/ac-tree.sh" remove "$wtH" --force --include-leased 2>/dev/null \
   || fail "the reclaim command the warn names must work on a broken slot"
 assert_no_file "$wtH" "the named reclaim takes the slot"
-assert_no_file "$repoH/.crew/slots/1.meta" "the reclaimed slot's meta is dropped"
+assert_no_file "$repoH/.crew/slots/1-broken.meta" "the reclaimed slot's meta is dropped"
 
 # A slot whose DIRECTORY has vanished has nothing left to lose: still healed.
 repoV="$(make_repo vanished)"
 wtV="$("$BIN/ac-tree.sh" get --repo "$repoV" --id v1 2>/dev/null)"
 rm -rf "$wtV"
 out="$("$BIN/ac-tree.sh" list --repo "$repoV" 2>&1)"
-assert_contains "$out" "healed slot 1" "a vanished worktree dir is still healed"
-assert_no_file "$repoV/.crew/slots/1.meta" "the healed slot's meta is dropped"
+assert_contains "$out" "healed slot 1-vanished" "a vanished worktree dir is still healed"
+assert_no_file "$repoV/.crew/slots/1-vanished.meta" "the healed slot's meta is dropped"
 
 # A /.crew/ line already committed in HEAD is project content: never
 # stripped (removing it would dirty the clone the other way).
