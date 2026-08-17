@@ -120,6 +120,29 @@ case "$out" in *"WIP-TOOLING"*) fail "an anchor at the primary itself must not w
 git -C "$wip_primary" worktree remove -f "$wip_leased" >/dev/null 2>&1 || true
 rm -f "$AC_HOME/state/.guard-stamp"
 
+# -- DISTRO-LAG: the running tree (anchor) behind the default branch -------------
+# Silent when 0 - guard's whole contract is that quiet means healthy; only
+# session-start prints the in-sync case.
+lag_root="$(make_repo guard-lag-root)"
+out="$(AC_GUARD_QUIET=0 AC_GUARD_ROOT="$lag_root" guard)"
+case "$out" in *"DISTRO-LAG"*) fail "an anchor in sync with its default branch must not warn DISTRO-LAG: $out" ;; esac
+rm -f "$AC_HOME/state/.guard-stamp"
+
+# The anchor lags once the default branch moves ahead of it - the ordinary
+# shape inside a leased pool worktree that has not synced since it was cut.
+lag_primary="$(make_repo guard-lag-primary)"
+lag_leased="$TMP/guard-lag-primary-leased"
+git -C "$lag_primary" worktree add -q --detach "$lag_leased" main >/dev/null
+git -C "$lag_primary" commit -q --allow-empty -m second
+out="$(AC_GUARD_QUIET=0 AC_GUARD_ROOT="$lag_leased" guard)"
+assert_contains "$out" "DISTRO-LAG: running tree is 1 behind main" "an anchor behind the default branch warns with the exact count"
+# Note the interaction, not a suppression rule (AGENTS.md task note): inside a
+# leased worktree this fires beside WIP-TOOLING - both honest, neither hides
+# the other.
+assert_contains "$out" "WIP-TOOLING" "DISTRO-LAG and WIP-TOOLING both fire for the same leased-worktree anchor"
+git -C "$lag_primary" worktree remove -f "$lag_leased" >/dev/null 2>&1 || true
+rm -f "$AC_HOME/state/.guard-stamp"
+
 # -- scope: the advisory mirrors what THIS session drains ------------------------
 # ac-guard rides ac-send/ac-peek/ac-spawn/ac-review-diff, so it runs inside
 # roomchief sessions too. It must nudge each session about ITS OWN wakes and

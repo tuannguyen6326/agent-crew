@@ -51,6 +51,44 @@ printf 'backend: %s\n' "$(ac_config_read backend herdr)"
 printf 'flow: %s\n' "$(ac_config_read flow auto)"
 printf 'promote: %s\n' "$(ac_config_read promote always)"
 
+# DISTRO-LAG: is the tree that owns the RUNNING bin/ behind the default
+# branch? Closes a blind spot nothing else checked (grep for rev-parse/HEAD
+# in this file found only the clone-staleness hint below, which is silent
+# by design). Tree = state/.ac-root (ac_root_pointer_path, the pointer
+# bin/ac-remote.sh writes on every invocation) when it exists and names a
+# git repo, else ac_root() - so a home that has never run ac-remote.sh (a
+# fresh crewdeputy home) still gets a line instead of nothing. FAIL-SOFT:
+# never dies, never hangs, never spills git errors - a stale pointer, a gone
+# path or a non-repo target degrades to one honest line, never silence.
+# ALWAYS PRINTS, including the in-sync (0) case - a silent no-op here would
+# be exactly the blindness this line exists to close.
+lag_tree=""
+lag_ptr="$(ac_root_pointer_path 2>/dev/null)" || lag_ptr=""
+if [ -n "$lag_ptr" ] && [ -s "$lag_ptr" ]; then
+  lag_cand="$(cat "$lag_ptr" 2>/dev/null)" || lag_cand=""
+  if [ -n "$lag_cand" ] && git -C "$lag_cand" rev-parse --git-dir >/dev/null 2>&1; then
+    lag_tree="$lag_cand"
+  fi
+fi
+[ -n "$lag_tree" ] || lag_tree="$(ac_root 2>/dev/null)" || lag_tree=""
+if [ -z "$lag_tree" ]; then
+  printf 'DISTRO-LAG: unknown (no resolvable distro checkout)\n'
+elif ! git -C "$lag_tree" rev-parse --git-dir >/dev/null 2>&1; then
+  printf 'DISTRO-LAG: unknown (%s is not a git repo)\n' "$lag_tree"
+else
+  lag_def="$(ac_default_branch "$lag_tree" 2>/dev/null)" || lag_def=""
+  if [ -z "$lag_def" ]; then
+    printf 'DISTRO-LAG: unknown (no default branch resolved for %s)\n' "$lag_tree"
+  else
+    lag_behind="$(git -C "$lag_tree" rev-list --count "HEAD..refs/heads/$lag_def" 2>/dev/null)" || lag_behind=""
+    case "$lag_behind" in
+      '' | *[!0-9]*) printf 'DISTRO-LAG: unknown (rev-list against refs/heads/%s failed)\n' "$lag_def" ;;
+      0) printf 'DISTRO-LAG: in sync with %s\n' "$lag_def" ;;
+      *) printf 'DISTRO-LAG: %s behind %s\n' "$lag_behind" "$lag_def" ;;
+    esac
+  fi
+fi
+
 printf -- '-- session lock --\n'
 read_only=0
 lock_rc=0

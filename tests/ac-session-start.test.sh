@@ -167,4 +167,42 @@ printf 'not a registry line\n- broken\n' >"$AC_HOME/records/crewdomains.md"
   || fail "a corrupt crewdomain registry must not take session start down"
 rm -f "$AC_HOME/records/crewdomains.md"
 
+# --- DISTRO-LAG (identity header) ---------------------------------------------
+# The pointer state/.ac-root (ac_root_pointer_path) names the tree to measure
+# when it exists and names a git repo; the whole point of the line is that it
+# ALWAYS prints, including the in-sync (0) case - a silent no-op would be the
+# exact blindness this line exists to close.
+ptr="$AC_HOME/state/.ac-root"
+rm -f "$ptr"
+
+lag_repo="$(make_repo lag-behind)"
+first_sha="$(git -C "$lag_repo" rev-parse HEAD)"
+git -C "$lag_repo" commit -q --allow-empty -m second
+git -C "$lag_repo" checkout -q "$first_sha"
+
+printf '%s\n' "$lag_repo" >"$ptr"
+out="$("$BIN/ac-session-start.sh" 2>&1)"
+assert_contains "$out" "DISTRO-LAG: 1 behind main" "pointer'd tree behind the default branch reports the exact count"
+
+git -C "$lag_repo" checkout -q main
+printf '%s\n' "$lag_repo" >"$ptr"
+out="$("$BIN/ac-session-start.sh" 2>&1)"
+assert_contains "$out" "DISTRO-LAG: in sync with main" "the 0 case is an explicit readable line, never a silent no-op"
+
+# Pointer names a path that names no git repo (gone, or never a repo at all):
+# FAIL-SOFT falls back to ac_root() (the checkout that owns the running bin/ -
+# this very worktree, a real repo) rather than dying, hanging or spilling git
+# errors - never printed as "unknown", since the fallback itself succeeds.
+printf '%s\n' "$TMP/gone-entirely" >"$ptr"
+out="$("$BIN/ac-session-start.sh" 2>&1)" || fail "a pointer to a missing path must not take session start down"
+assert_contains "$out" "DISTRO-LAG:" "a non-repo/missing pointer still prints one line (fallback to ac_root())"
+case "$out" in *"DISTRO-LAG: unknown"*) fail "ac_root() fallback must succeed, not report unknown: $out" ;; esac
+
+# No pointer at all (a home that has never run ac-remote.sh, e.g. a fresh
+# crewdeputy home) falls back to ac_root() the same way.
+rm -f "$ptr"
+out="$("$BIN/ac-session-start.sh" 2>&1)"
+assert_contains "$out" "DISTRO-LAG:" "an absent pointer still prints one line (fallback to ac_root())"
+case "$out" in *"DISTRO-LAG: unknown"*) fail "ac_root() fallback must succeed, not report unknown: $out" ;; esac
+
 pass

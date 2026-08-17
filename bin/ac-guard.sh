@@ -31,6 +31,13 @@
 #   crewmate running ac-merge-local.sh directly from its own worktree
 #   (that script's own :182 anticipates AC_CREW_ID/AC_SCOPE) - there this
 #   fires as a benign false positive on a fail-open advisory.
+# - DISTRO-LAG: the running tree (the anchor - the checkout owning the invoked
+#   bin/, same resolution as WIP-TOOLING above) is behind its default branch
+#   (`git rev-list --count HEAD..refs/heads/<default>` from the anchor).
+#   Silent at 0 - only bin/ac-session-start.sh prints the in-sync case; this
+#   is warn-only, same as every other check here. Fires alongside WIP-TOOLING
+#   inside a leased pool worktree that has not synced since it was cut - both
+#   honest, neither suppresses the other.
 #
 # Rate-limited via a state stamp so back-to-back commands do not spam: the
 # active warning set is recorded in state/.guard-stamp[.<fam>] (sig= + at=),
@@ -113,6 +120,28 @@ if [ -n "$anchor" ] && [ -n "$root" ] && [ "$anchor" != "$root" ]; then
   warnings="${warnings}WIP-TOOLING: running bin/ from '$anchor', not the primary '$root' - this may be a crewmate's leased worktree copy
 "
   sig="$sig wip-tooling"
+fi
+
+# DISTRO-LAG: the RUNNING tree (the anchor, not the resolved primary - a
+# leased pool worktree carries its own checked-out commit against the same
+# shared ref store) is behind the default branch. Silent at 0 - guard's whole
+# contract is that quiet means healthy; only session-start prints in-sync.
+# Note, not a suppression rule: inside a leased pool worktree this usually
+# fires beside WIP-TOOLING above - that tree genuinely IS both, and neither
+# warning should hide the other.
+if [ -n "$anchor" ] && git -C "$anchor" rev-parse --git-dir >/dev/null 2>&1; then
+  lag_def="$(ac_default_branch "$anchor" 2>/dev/null)" || lag_def=""
+  if [ -n "$lag_def" ]; then
+    lag_behind="$(git -C "$anchor" rev-list --count "HEAD..refs/heads/$lag_def" 2>/dev/null)" || lag_behind=""
+    case "$lag_behind" in
+      '' | 0 | *[!0-9]*) : ;;
+      *)
+        warnings="${warnings}DISTRO-LAG: running tree is $lag_behind behind $lag_def
+"
+        sig="$sig distro-lag"
+        ;;
+    esac
+  fi
 fi
 
 # Per-scope stamp: the quiet window is this session's own bookkeeping. With

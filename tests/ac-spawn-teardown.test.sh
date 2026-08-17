@@ -509,6 +509,16 @@ assert_fails "$BIN/ac-spawn.sh" t11 "$repo" --harness fake --recover
 
 "$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake >/dev/null 2>&1
 assert_file "$AC_HOME/state/dep1.meta" "the crewdeputy spawned"
+# The pane's CWD is the distro checkout (ac_root()), not the deputy home: the
+# home holds no bin/, so a cwd there stranded the charter's own relative
+# `bin/ac-session-start.sh` (bin/ac-spawn.sh crewdeputy path, was $home_dir).
+# AC_HOME on the launch line still names the home unchanged - only the tab's
+# cwd moves.
+assert_contains "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" "--cwd $ROOT " \
+  "the crewdeputy pane opens with its cwd at the distro checkout, which holds bin/"
+case "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" in
+  *"--cwd $dhome"*) fail "the crewdeputy pane must not open with its cwd at the home (no bin/ there)" ;;
+esac
 assert_contains "$(cat "$(fake_pane_buf dep1)")" "IDLE BY DEFAULT" \
   "the kickoff carries the idle contract, so it travels with the live deputy"
 assert_contains "$(cat "$(fake_pane_buf dep1)")" "ac-deputy.sh report" \

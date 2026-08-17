@@ -1381,8 +1381,15 @@ if [ "$crewdeputy" = 1 ]; then
   # A crewdeputy is fleet-level, not a family: its tab lives in the fleet
   # ROOT workspace (AC_WINDOW_FAMILY set EMPTY = deliberately the root;
   # ac-backend.sh FAMILY WORKSPACE GROUPING).
+  # The pane's CWD is the distro checkout (ac_root()), not the deputy home:
+  # the home holds no bin/ (config CREWMATE.md data projects records state
+  # only), while the charter below tells the pane to run a RELATIVE
+  # bin/ac-session-start.sh - exactly the roomchief path's own resolution at
+  # :1174/:1213. AC_HOME stays $home_dir on the launch line below and
+  # ac_meta_set worktree stays $home_dir (teardown reads that) - only the
+  # cwd moves.
   export AC_WINDOW_FAMILY=""
-  backend_window_new "$id" "$home_dir"
+  backend_window_new "$id" "$(ac_root)"
   unset AC_WINDOW_FAMILY
   window="$(backend_target "$id")"
   trap spawn_orphan_cleanup EXIT
@@ -1391,7 +1398,7 @@ if [ "$crewdeputy" = 1 ]; then
   # is the precedent) so both contracts travel with the LIVE deputy even when
   # its charter brief is thin. They are stated twice by design - here and in
   # AGENTS.md section 5 - and must stay in sync.
-  prompt="You are agent-crew crewdeputy $id. Your home is $home_dir (AC_HOME). Read and follow the brief at $brief; run bin/ac-session-start.sh there first. You are IDLE BY DEFAULT: act only on work routed to you or already recorded in your own home, then WAIT - an empty queue is healthy, and you never invent work (no self-directed survey, audit or refactor sweep). Answer every routed order (a pane line prefixed [chief-order ...]) on the DURABLE return channel with bin/ac-deputy.sh report '<text>' [--doc <abs-path>], never only in chat, and return only phase changes the parent must act on - done, blocked, needs-decision, failed, paused - never your home's routine churn."
+  prompt="You are agent-crew crewdeputy $id. Your home is $home_dir (AC_HOME). Read and follow the brief at $brief; run bin/ac-session-start.sh in your current directory first. You are IDLE BY DEFAULT: act only on work routed to you or already recorded in your own home, then WAIT - an empty queue is healthy, and you never invent work (no self-directed survey, audit or refactor sweep). Answer every routed order (a pane line prefixed [chief-order ...]) on the DURABLE return channel with bin/ac-deputy.sh report '<text>' [--doc <abs-path>], never only in chat, and return only phase changes the parent must act on - done, blocked, needs-decision, failed, paused - never your home's routine churn."
   backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$home_dir") $launch"
   deliver_kickoff "$id" "$harness" "$prompt"
 
