@@ -59,7 +59,10 @@
 #   report what is in it, so it may be unlanded work.
 #
 # Pool layout inside the target repo:
-#   .crew/worktrees/<n>/   worktree working dirs (numeric slots)
+#   .crew/worktrees/<n>/   worktree working dirs; <n> is <number>-<repo-name>
+#                          for newly minted slots (legacy bare numbers stay
+#                          valid - the id is opaque everywhere but the
+#                          highest-number scan, which reads the prefix)
 #   .crew/slots/<n>.meta   per-slot state (key=value, atomic rewrite), incl.
 #                          lease_id= - one opaque identity per acquisition
 #   .crew/lock/            mkdir lock guarding slot state
@@ -453,10 +456,19 @@ cmd_get() {
   [ -n "$repo" ] || ac_die "get: --repo is required"
   repo="$(resolve_repo "$repo")"
   if [ -n "$prefer" ]; then
-    # Normalize a pool worktree path to its slot number.
+    # Normalize a pool worktree path to its slot id.
     case "$prefer" in */*) prefer="${prefer%/}"; prefer="$(basename "$prefer")" ;; esac
     case "$prefer" in
-      ''|*[!0-9]*) ac_die "get: --prefer expects a slot number or a pool worktree path" ;;
+      '') ac_die "get: --prefer expects a slot id/number or a pool worktree path" ;;
+      [0-9]*-*) : ;; # already a full <number>-<repo> slot id
+      *[!0-9]*) ac_die "get: --prefer expects a slot id/number or a pool worktree path" ;;
+      *)
+        # A bare number names the slot by its prefix (legacy call shape); a
+        # legacy bare-numeric slot matches directly, a renamed slot by prefix.
+        if [ ! -f "$(slot_meta "$repo" "$prefer")" ]           && [ -f "$(slot_meta "$repo" "$prefer-$(basename "$repo")")" ]; then
+          prefer="$prefer-$(basename "$repo")"
+        fi
+        ;;
     esac
   fi
   git -C "$repo" rev-parse HEAD >/dev/null 2>&1 || ac_die "repository has no commits: $repo"
@@ -547,20 +559,44 @@ acquire_slot() {
 
   if [ -n "$free" ]; then
     n="$free"
+    # A legacy bare-numeric slot migrates to <n>-<repo> the moment it is
+    # reused: git worktree move keeps the admin metadata coherent, the meta
+    # file follows, and the slot's codegraph cache is dropped (its index
+    # stores absolute paths, so the lease hook re-inits at the new path).
+    # Fail-open: a refused move just keeps the legacy name.
+    case "$n" in
+      *-*) : ;;
+      *)
+        local newn newwt
+        newn="$n-$(basename "$repo")"
+        newwt="$(slot_path "$repo" "$newn")"
+        if git -C "$repo" worktree move "$(slot_path "$repo" "$n")" "$newwt" >/dev/null 2>&1; then
+          mv "$(slot_meta "$repo" "$n")" "$(slot_meta "$repo" "$newn")" 2>/dev/null || true
+          rm -rf "$newwt/.codegraph"
+          ac_warn "migrated slot $n -> $newn"
+          n="$newn"
+        fi
+        ;;
+    esac
     wt="$(slot_path "$repo" "$n")"
     ac_warn "reusing worktree slot $n"
   else
-    # Allocate a new slot below the pool cap.
-    local count=0 highest=0 base max
+    # Allocate a new slot below the pool cap. Slot names are
+    # <number>-<repo-basename> so a worktree path identifies its repo at a
+    # glance (editor tabs, codegraph Project lines, ps output); legacy bare
+    # numeric slots keep working - the number is the prefix either way, and
+    # everything downstream treats the slot id as an opaque string.
+    local count=0 highest=0 base num max
     for meta in "$(pool_dir "$repo")"/slots/*.meta; do
       [ -f "$meta" ] || continue
       count=$((count + 1))
       base="$(basename "$meta" .meta)"
-      [ "$base" -gt "$highest" ] 2>/dev/null && highest="$base"
+      num="${base%%-*}"
+      [ "$num" -gt "$highest" ] 2>/dev/null && highest="$num"
     done
     max="$(pool_max_trees "$repo")"
     [ "$count" -lt "$max" ] || ac_die "pool is full ($count/$max); raise max_trees in .crew/config or prune"
-    n=$((highest + 1))
+    n="$((highest + 1))-$(basename "$repo")"
     wt="$(slot_path "$repo" "$n")"
     # An orphan dir with no meta (partial create) wedges the number: clean it.
     if [ -e "$wt" ]; then

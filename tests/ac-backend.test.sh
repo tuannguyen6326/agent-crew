@@ -618,6 +618,22 @@ rc=0; run_backend herdr 'backend_window_alive nohandle' || rc=$?
 assert_eq "$rc" "1" "no recorded pane handle stays GONE - a local fact is never an outage"
 assert_eq "$(cat "$FAKE_HERDR/log")" "" "the no-handle answer asks the backend nothing"
 
+# --- launch-line env: pane env belongs to the herdr daemon, not the chief -----------
+
+# The daemon may have been (re)started from inside a claude session and then
+# carries CLAUDE_CODE_CHILD_SESSION=1 into every pane - each fleet claude
+# would silently stop persisting its transcript, breaking ac-follow and
+# --resume-from (measured live). The launch prefix must force persistence
+# unconditionally: harmless when the daemon env is clean, curative when not.
+out="$(run_backend herdr 'ac_claude_config_env')"
+assert_contains "$out" "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1" \
+  "launch prefix always forces claude transcript persistence"
+
+# CLAUDE_CONFIG_DIR stays conditional: only when the chief itself runs under one.
+case "$out" in *CLAUDE_CONFIG_DIR*) fail "no CLAUDE_CONFIG_DIR emitted when the chief has none" ;; esac
+out="$(CLAUDE_CONFIG_DIR=/tmp/cfg run_backend herdr 'ac_claude_config_env')"
+assert_contains "$out" "CLAUDE_CONFIG_DIR=/tmp/cfg" "chief's config dir rides the launch line"
+
 # --- dispatch validation: herdr is the ONLY backend ----------------------------------
 
 # tmux and wezterm were removed (2026-07-17); their names must be refused,

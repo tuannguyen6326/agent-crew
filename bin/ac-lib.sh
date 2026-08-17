@@ -2308,6 +2308,51 @@ ac_project_mode() {
 # of burned cores. READ-ONLY: it counts and hints, never kills - killing is a
 # deliberate captain/crewchief act.
 
+ac_codegraph_worktree() {
+  # ac_codegraph_worktree <repo> <worktree> - give a leased worktree its OWN
+  # CodeGraph index so callers/impact answers reflect the CREW BRANCH, not the
+  # primary checkout. AUTOMATIC for every lease (the captain's standing word:
+  # crew worktrees index themselves - the wider indexing-is-the-operator's-
+  # decision rule keeps governing repos OUTSIDE the fleet's pool); the
+  # per-fleet valve is config/codegraph=off. First lease on a slot runs a
+  # full init (measured ~9s on this distro's own repo); later leases run the
+  # incremental sync (measured ~0.15s after a one-file change) - the pool
+  # keeps ignored caches across leases, so the cost amortizes per SLOT.
+  # Fire-and-forget background: the index is an accelerator, never a spawn
+  # dependency, and codegraph's own lock serializes concurrent runs.
+  # .codegraph self-gitignores, so the cache never dirties the slot.
+  local repo="$1" wt="$2"
+  command -v codegraph >/dev/null 2>&1 || return 0
+  [ "$(ac_config_read codegraph on)" = on ] || return 0
+  [ -d "$wt" ] || return 0
+  # The tool's own .gitignore does NOT cover the whole cache dir, so an
+  # unignored .codegraph/ reads as ?? in git status and the pool skips the
+  # slot as dirty forever (measured: every return-then-lease grew the pool by
+  # one). The shared info/exclude covers root and every worktree at once and
+  # never touches a tracked file - the same channel the pool uses for /.crew/.
+  if [ -d "$repo/.git" ] || [ -f "$repo/.git" ]; then
+    local excl
+    excl="$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null)"
+    case "$excl" in /*) : ;; ?*) excl="$repo/$excl" ;; esac
+    excl="$excl/info/exclude"
+    if [ -n "$excl" ] && ! grep -qxF '.codegraph/' "$excl" 2>/dev/null; then
+      mkdir -p "$(dirname "$excl")" 2>/dev/null
+      printf '.codegraph/
+' >>"$excl" 2>/dev/null || true
+    fi
+  fi
+  # A REAL local index is codegraph.db; a bare .codegraph/ holding only a
+  # source.json is codegraph's own redirect marker at the ROOT index (it
+  # warns "belongs to a different git working tree" when served to a
+  # worktree) - init through it, never sync against it.
+  if [ -f "$wt/.codegraph/codegraph.db" ]; then
+    (cd "$wt" && codegraph sync >/dev/null 2>&1 &)
+  else
+    (cd "$wt" && codegraph init >/dev/null 2>&1 &)
+  fi
+  return 0
+}
+
 ac_orphan_snapshot_ps() {
   # ac_orphan_snapshot_ps - emit the process table the scan reads:
   # pid, ppid, %cpu, command (one header line, then one row per process). This

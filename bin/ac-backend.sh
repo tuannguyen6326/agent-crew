@@ -418,6 +418,14 @@ ac_claude_config_env() {
   # callers prefix it unconditionally - outside ac_build_launch, like AC_HOME,
   # so a verbatim custom launch template passes it on too.
   [ -z "${CLAUDE_CONFIG_DIR:-}" ] || printf 'CLAUDE_CONFIG_DIR=%q ' "$CLAUDE_CONFIG_DIR"
+  # Transcript persistence, UNCONDITIONAL: the herdr daemon may have been
+  # (re)started from inside a claude session, and then every pane inherits
+  # CLAUDE_CODE_CHILD_SESSION=1 - each fleet claude silently stops saving its
+  # transcript, which breaks ac-follow and --resume-from (measured live,
+  # fleet-wide). Forcing persistence on the launch line is the CLI's own
+  # documented remedy, a no-op under a clean daemon, and an unused var for
+  # every other harness.
+  printf 'CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 '
 }
 
 ac_build_launch() {

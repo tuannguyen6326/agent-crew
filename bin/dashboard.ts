@@ -69,6 +69,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { Database as BrainDb } from "bun:sqlite";
 
 const BIN = import.meta.dir; // the fleet's bin/ (where this file lives)
 const AC_HOME = process.env.AC_HOME ?? "";
@@ -3144,6 +3145,97 @@ async function roomList(homePath: string): Promise<RoomRow[]> {
 /** Processes route (§7.2): the selected fleet's rooms, worktree pool, remote
  *  threads, and per-family gate state (gate-dash-monitor). Crew rows + watcher
  *  come from the shell's snapshot poll, not here. */
+// LLM PROVIDER KEYS (admin) - per-home secret store <home>/config/providers.json
+// (0600, gitignored with config/). bin/ac-brain-engine.ts's PROVIDERS registry
+// is the authority for names/endpoints; this mirror exists because importing
+// the engine would execute its CLI dispatch. The API never returns a full key:
+// GET reports configured/masked/source only, POST sets or removes one entry.
+// Reachable only on the captain listener - the guest share listener 404s
+// every non-review path by construction.
+const LLM_PROVIDERS: Array<{ name: string; base_url: string; env: string; noKey?: boolean; caps: string }> = [
+  { name: "openrouter", base_url: "https://openrouter.ai/api/v1", env: "OPENROUTER_API_KEY", caps: "semantic search + synthesize" },
+  { name: "openai", base_url: "https://api.openai.com/v1", env: "OPENAI_API_KEY", caps: "semantic search + synthesize" },
+  { name: "voyage", base_url: "https://api.voyageai.com/v1", env: "VOYAGE_API_KEY", caps: "embeddings + rerank" },
+  { name: "opencode-go", base_url: "https://opencode.ai/zen/go/v1", env: "OPENCODE_API_KEY", caps: "chat" },
+  { name: "anthropic", base_url: "https://api.anthropic.com/v1", env: "ANTHROPIC_API_KEY", caps: "chat" },
+  { name: "ollama", base_url: "http://127.0.0.1:11434/v1", env: "", noKey: true, caps: "local model, no key - semantic search + synthesize" },
+];
+function providersFile(home: string) { return home + "/config/providers.json"; }
+function providersRead(home: string): Record<string, { api_key?: string }> {
+  try { return JSON.parse(readFileSync(providersFile(home), "utf8")); } catch { return {}; }
+}
+function providersDetail(home: string, warn?: string) {
+  const store = providersRead(home);
+  const active = brainJsonRead(home).embedding?.provider ?? null;
+  const mask = (k: string) => (k.length > 10 ? k.slice(0, 6) + "…" + k.slice(-4) : "…");
+  return json({
+    active, warn,
+    providers: LLM_PROVIDERS.filter(pv => ["openrouter", "openai", "ollama"].includes(pv.name)).map(pv => {
+      const envSet = pv.env && !!process.env[pv.env];
+      const fileKey = store[pv.name]?.api_key;
+      return { name: pv.name, base_url: pv.base_url, env: pv.env, caps: pv.caps, no_key: !!pv.noKey,
+        source: pv.noKey ? "none-needed" : envSet ? "env" : fileKey ? "file" : null,
+        masked: fileKey ? mask(fileKey) : null };
+    }),
+  });
+}
+// ONE-PROVIDER model (captain's rule: one LLM, one input): activating a
+// provider writes its key AND rewrites brain.json's embedding + synthesize
+// blocks from this defaults table, so the brain runs whole on a single
+// credential. Models stay editable by hand in brain.json afterwards.
+const BRAIN_DEFAULTS: Record<string, { embed: { model: string; dims: number }; chat: string }> = {
+  openrouter: { embed: { model: "openai/text-embedding-3-small", dims: 1536 }, chat: "openai/gpt-4o-mini" },
+  openai: { embed: { model: "text-embedding-3-small", dims: 1536 }, chat: "gpt-4o-mini" },
+  ollama: { embed: { model: "nomic-embed-text", dims: 768 }, chat: "llama3.1" },
+};
+function brainJsonRead(home: string): any {
+  try { return JSON.parse(readFileSync(home + "/config/brain.json", "utf8")); } catch { return {}; }
+}
+function providersSet(home: string, body: string) {
+  let b: any;
+  try { b = JSON.parse(body); } catch { return json({ error: "bad json" }, 400); }
+  const name = String(b.name || "");
+  if (!BRAIN_DEFAULTS[name]) return json({ error: "unknown provider" }, 400);
+  const store = providersRead(home);
+  const key = typeof b.api_key === "string" ? b.api_key.trim() : "";
+  if (key) store[name] = { api_key: key };
+  else if (b.remove) delete store[name];
+  try {
+    mkdirSync(home + "/config", { recursive: true });
+    writeFileSync(providersFile(home), JSON.stringify(store, null, 1), { mode: 0o600 });
+    try { require("node:fs").chmodSync(providersFile(home), 0o600); } catch {}
+    const bj = brainJsonRead(home);
+    const prevDims = bj.embedding?.dims;
+    const d = BRAIN_DEFAULTS[name];
+    bj.embedding = { provider: name, model: d.embed.model, dims: d.embed.dims };
+    bj.synthesize = { api: { provider: name, model: d.chat } };
+    writeFileSync(home + "/config/brain.json", JSON.stringify(bj, null, 1));
+    if (prevDims && prevDims !== d.embed.dims)
+      return providersDetail(home, "embedding width changed - run: bin/ac-brain.sh sync --rebuild --home " + home);
+  } catch (e) { return json({ error: String(e) }, 500); }
+  return providersDetail(home);
+}
+
+// Read-only KPI over the home's memory engine (bin/ac-brain-engine.ts owns
+// the schema); absent or unreadable reads as {present:false}, never an error.
+function brainStat(home: string) {
+  const p = home + "/state/brain.sqlite";
+  try {
+    if (!existsSync(p)) return json({ present: false });
+    const db = new BrainDb(p, { readonly: true });
+    db.run("PRAGMA busy_timeout=2000");
+    const g = (q: string) => { try { return (db.query(q).get() as any).c; } catch { return 0; } };
+    const r = {
+      present: true,
+      pages: g("SELECT COUNT(*) c FROM pages"),
+      facts: g("SELECT COUNT(*) c FROM facts WHERE expired_at IS NULL"),
+      last_sync: (db.query("SELECT v FROM meta WHERE k='last_sync'").get() as any)?.v ?? null,
+    };
+    db.close();
+    return json(r);
+  } catch { return json({ present: false }); }
+}
+
 async function processesDetail(homePath: string): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
@@ -3435,7 +3527,12 @@ function termFramePage(): Response {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>agent-crew terminal</title>
 <link rel="stylesheet" href="/assets/xterm/xterm.css">
-<style>html,body{margin:0;height:100%;background:#0c252d}#t{height:100%;padding:4px 0 0 6px;box-sizing:border-box}
+<style>
+/* overflow:hidden on BOTH: this document lives in an iframe, so a transient
+   few-px overshoot while the fit addon resizes would otherwise flash the
+   iframe's own UA scrollbars - the outer page hiding ITS scrollbars can't
+   reach these. */
+html,body{margin:0;height:100%;overflow:hidden;background:#0c252d}#t{height:100%;padding:4px 0 0 6px;box-sizing:border-box}
 /* Kill xterm's viewport scrollbar: the UA paints it a light track that reads as
    a white stripe down the right edge of a dark terminal. Scrollback is reached
    by wheel and by the pane's own keys, so the bar carries no function here. */
@@ -3503,14 +3600,24 @@ term.onData((d) => { if (ws && ws.readyState === 1) ws.send(enc.encode(d)); });
 // ResizeObserver on the holder sees the box change whatever caused it. The
 // guard is the point of the dedupe: only a real cols/rows CHANGE crosses the
 // wire, so the observer's own layout churn never floods the pty with SIGWINCH.
+// Oscillation damper: a scrollbar (or any layout feedback) can flip the box
+// between two sizes forever - A/B alternation slips the equality dedupe every
+// time and, at the 200ms debounce, storms the server with ~5 resizes/s that
+// reflow every shared pty (measured live: 272 resize events/min, two sizes
+// alternating). Remember the previous send; when the new size equals it
+// (A->B->A), hold that send until the size stays put for 1.5s.
+let prevCols = 0, prevRows = 0;
 function syncSize() {
   clearTimeout(rt);
-  rt = setTimeout(() => {
+  const doSend = () => {
     fit.fit();
     if (term.cols === sentCols && term.rows === sentRows) return;
+    if (term.cols === prevCols && term.rows === prevRows) { rt = setTimeout(doSend, 1500); return; }
+    prevCols = sentCols; prevRows = sentRows;
     sentCols = term.cols; sentRows = term.rows;
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
-  }, 200);
+  };
+  rt = setTimeout(doSend, 200);
 }
 addEventListener("resize", syncSize);
 new ResizeObserver(syncSize).observe(document.getElementById("t"));
@@ -6815,6 +6922,19 @@ if (import.meta.main) {
   // must not fork-bomb the machine. 4 covers every real captain shape (a few
   // browser tabs), and the 429 names the limit.
   let ptyCount = 0;
+  // Reap pty children on shutdown: a killed dashboard otherwise ORPHANS every
+  // live terminal's herdr client (reparented to launchd, still attached to
+  // the shared herdr session at its old size) - measured five zombies after a
+  // day of restarts, clamping the session and reflow-janking every live tab.
+  const livePtys = new Set<ReturnType<typeof Bun.spawn>>();
+  let reaping = false;
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
+    process.on(sig, () => {
+      if (reaping) return;
+      reaping = true;
+      for (const p of livePtys) try { p.kill(); } catch { /* already gone */ }
+      process.exit(sig === "SIGINT" ? 130 : 143);
+    });
   Bun.serve({
     hostname: "127.0.0.1",
     port,
@@ -6853,6 +6973,7 @@ if (import.meta.main) {
           });
           d.term = term;
           d.proc = Bun.spawn(["herdr"], { terminal: term, env: { ...process.env, TERM: "xterm-256color" } });
+          livePtys.add(d.proc);
         } catch {
           try { d.term?.close(); } catch {}
           ws.close(1011, "pty unavailable");
@@ -6899,7 +7020,7 @@ if (import.meta.main) {
         if (dk.kind === "pane") { if (dk.timer) clearInterval(dk.timer); return; }
         const d = ws.data as { term?: Bun.Terminal; proc?: ReturnType<typeof Bun.spawn> };
         ptyCount = Math.max(0, ptyCount - 1);
-        if (d.proc) try { d.proc.kill(); } catch {}
+        if (d.proc) { livePtys.delete(d.proc); try { d.proc.kill(); } catch {} }
         if (d.term) try { d.term.close(); } catch {}
       },
     },
@@ -6932,6 +7053,33 @@ if (import.meta.main) {
         return json({ error: "websocket required" }, 400);
       }
       if (url.pathname === "/api/snapshot.json") return snapshot();
+      if (url.pathname === "/api/brain") {
+        const p = url.searchParams.get("path");
+        return p ? brainStat(p) : json({ error: "path required" }, 400);
+      }
+      if (url.pathname === "/api/brain-recall") {
+        const p = url.searchParams.get("path");
+        const q = url.searchParams.get("q") ?? "";
+        if (!p) return json({ error: "path required" }, 400);
+        const argv = [process.execPath, BIN + "/ac-brain-engine.ts", "recall", "--home", p, "--limit", "10", "--compact"];
+        if (q) argv.push("--query", q);
+        const proc = Bun.spawnSync(argv, { timeout: 30000 });
+        const text = new TextDecoder().decode(proc.stdout).trim();
+        try { return json(JSON.parse(text)); } catch { return json({ error: "engine", detail: text.slice(0, 300) }, 500); }
+      }
+      if (url.pathname === "/api/brain-synthesize") {
+        const p = url.searchParams.get("path");
+        const q = url.searchParams.get("q") ?? "";
+        if (!p || !q) return json({ error: "path and q required" }, 400);
+        const proc = Bun.spawnSync([process.execPath, BIN + "/ac-brain-engine.ts", "synthesize", q, "--home", p, "--compact"], { timeout: 180000 });
+        const text = new TextDecoder().decode(proc.stdout).trim();
+        try { return json(JSON.parse(text)); } catch { return json({ error: "engine", detail: text.slice(0, 300) }, 500); }
+      }
+      if (url.pathname === "/api/providers") {
+        const p = url.searchParams.get("path");
+        if (!p) return json({ error: "path required" }, 400);
+        return req.method === "POST" ? providersSet(p, await req.text()) : providersDetail(p);
+      }
       if (url.pathname === "/api/processes") {
         const p = url.searchParams.get("path");
         return p ? processesDetail(p) : json({ error: "path required" }, 400);
@@ -7729,9 +7877,16 @@ ${UX_BASE}
   .chatpage, .termpage{ height:calc(100vh - 130px); min-height:420px; /* fallback; the fit fns measure the real offset */
     margin:calc(-1 * var(--pagepad-y)) calc(-1 * var(--pagepad-x)); }
   .chatpage .chiefp{ height:100%; border:0; border-radius:0; overflow:hidden; }
-  .chatpage .cterm{ font-size:13px; }
   .termpage iframe{ width:100%; height:100%; border:0; border-radius:0; background:var(--term-bg, var(--canvas)); }
-  .termpage{ position:relative; }
+  .termpage{ position:relative; overflow:hidden; }
+  /* full-bleed routes: the page shell's bottom padding is the last 15px of
+     scroll height (measured), and zoom rounding adds the rest - kill both so
+     the viewport-fitted pane never grows scrollbars */
+  .page:has(.termpage), .page:has(.chatpage){ padding-bottom:0; }
+  /* and the document itself never scrolls on full-bleed routes: transient
+     overflow during poll re-renders flickered both bars in and out */
+  html:has(.termpage), html:has(.chatpage){ overflow:hidden; }
+  body:has(.termpage), body:has(.chatpage){ overflow:hidden; }
   .termpage .termopen{ position:absolute; top:8px; right:14px; z-index:2; font-size:13px; line-height:1; padding:5px 8px; border-radius:6px; background:var(--surface); border:1px solid var(--border); color:var(--fg2); opacity:.55; }
   .termpage .termopen:hover{ opacity:1; color:var(--accent); border-color:var(--border-strong); text-decoration:none; }
   .termpage .cdead{ padding:16px; color:var(--muted); }
@@ -8193,6 +8348,7 @@ function parseRoute(path){
     if(pg==='chat' && parts.length===4) return { name:'chat', fleet:fleet, fam:dec(parts[3]) };
     if(pg==='backlog' && parts.length===3) return { name:'backlog', fleet:fleet };
     if(pg==='learning' && parts.length===3) return { name:'learning', fleet:fleet };
+    if(pg==='brain' && parts.length===3) return { name:'brain', fleet:fleet };
     if(pg==='config' && parts.length===3) return { name:'config', fleet:fleet };
     if(pg==='reports') return { name:'reports', fleet:fleet, sel: parts.length>=4 ? dec(parts.slice(3).join('/')) : null };
     if(pg==='whiteboards') return { name:'whiteboards', fleet:fleet, sel:null };
@@ -8282,6 +8438,7 @@ function routeEndpoint(r){
   if(r.name==='records') return '/api/ledgers?path='+p;
   if(r.name==='domains') return '/api/domains?path='+p;
   if(r.name==='learning') return '/api/learning?path='+p;
+  if(r.name==='brain') return '/api/brain?path='+p;
   if(r.name==='config') return '/api/config-list?path='+p;
   return null;
 }
@@ -8427,7 +8584,7 @@ function renderNav(){
 
   var cf=currentFleet();
   el('sel-name').textContent = cf || '—';
-  var pages=[['processes','Processes'],['board','Board'],['backlog','Backlog'],['reports','Reports'],['reviews','Reviews'],['whiteboards','Whiteboards'],['records','Records'],['domains','Domains'],['learning','Learning'],['config','Config']];
+  var pages=[['processes','Processes'],['board','Board'],['backlog','Backlog'],['reports','Reports'],['reviews','Reviews'],['whiteboards','Whiteboards'],['records','Records'],['brain','Brain'],['domains','Domains'],['learning','Learning'],['config','Config']];
   var pn='';
   for(var p=0;p<pages.length;p++){ var id=pages[p][0], lbl=pages[p][1];
     if(cf){ var pc=(r.name===id && r.fleet===cf)?' aria-current="page"':'';
@@ -8514,6 +8671,7 @@ function renderPage(){
   else if(r.name==='records') html=pageRecords();
   else if(r.name==='domains') html=pageDomains();
   else if(r.name==='learning') html=pageLearning();
+  else if(r.name==='brain') html=pageBrain();
   else if(r.name==='config') html=pageConfig();
   else html=pageNotFound(r);
   morphInto(el('page'), html, 'page');
@@ -8858,10 +9016,14 @@ function loadBoardKpi(hp){
   if(c && c.loading) return;
   if(c && c.ts && (Date.now()-c.ts)<12000) return;
   boardKpiC[hp]={ ts:(c&&c.ts)||0, pending:(c&&c.pending), loading:true };
+  fetch('/api/brain?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
+    if(boardKpiC[hp]) boardKpiC[hp].brain = j && j.present ? j : null;
+    if(S.route && S.route.name==='board') renderPage();
+  }).catch(function(){});
   fetch('/api/processes?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
     var rooms=(j&&j.rooms)||[], n=0;
     for(var i=0;i<rooms.length;i++){ if(rooms[i].pending||rooms[i].handback) n++; }
-    boardKpiC[hp]={ ts:Date.now(), pending:n, loading:false };
+    boardKpiC[hp]={ ts:Date.now(), pending:n, loading:false, brain:(boardKpiC[hp]&&boardKpiC[hp].brain)||null };
     if(S.route && S.route.name==='board') renderPage();
   }).catch(function(){ boardKpiC[hp]={ ts:Date.now(), pending:(c&&c.pending), loading:false }; });
 }
@@ -8887,6 +9049,8 @@ function boardKpis(hp, b, bd, sysCount){
     ['awaiting captain', pend==null?'…':String(pend), (pend>0)?'warn':''],
     ['done', String(cardCount('done')), ''],
   ];
+  var br=boardKpiC[hp]&&boardKpiC[hp].brain;
+  if(br) tiles.push(['brain pages', String(br.pages)+(br.facts?' +'+br.facts+'f':''), '']);
   var s='<div class="kpis">';
   for(var i=0;i<tiles.length;i++)
     s+='<div class="kpi '+tiles[i][2]+'"><b>'+tiles[i][1]+'</b><span>'+tiles[i][0]+'</span></div>';
@@ -9345,7 +9509,7 @@ function termFit(){
   // runs to the viewport floor - no gutter left under it either.
   var tp=document.querySelector('.termpage, .chatpage'); if(!tp) return;
   var r=tp.getBoundingClientRect();
-  tp.style.height=Math.max(420, window.innerHeight - r.top)+'px';
+  tp.style.height=Math.max(420, Math.floor(window.innerHeight - r.top) - 1)+'px';
 }
 // Paint the terminal frame in the page's OWN theme (captain: nền webterm phải
 // khớp nền theme). The frame is same-origin, so this is a direct call into the
@@ -9529,7 +9693,9 @@ function chiefFrame(j){
   if(!cols) cols=t._cols||100;
   if(cols!==t._cols || Math.abs((t._w||0)-t.clientWidth)>4){
     t._cols=cols; t._w=t.clientWidth;
-    var px=Math.max(9.5, Math.min(13.5, (t.clientWidth-26)/(cols*0.602)));
+    // Ceiling 12px = the web terminal's own size: fit only ever SHRINKS to
+    // avoid horizontal overflow, never grows the snapshot past the terminal.
+    var px=Math.max(9.5, Math.min(12, (t.clientWidth-26)/(cols*0.602)));
     t.style.fontSize=px.toFixed(2)+'px';
   }
   if(pinned) t.scrollTop=t.scrollHeight;
@@ -9945,6 +10111,69 @@ function learningDecisionRow(d, withBody){
   s+='</div>';
   return s;
 }
+var brainQ={}, brainRes=null, brainBusy=false, brainTimer=null, brainAns=null, brainAskBusy=false;
+function brainAsk(){
+  var hp=(S.route&&S.route.home)||''; var q=brainQ[hp]||'';
+  if(!q||brainAskBusy) return; brainAskBusy=true; brainAns=null; renderPage();
+  fetch('/api/brain-synthesize?path='+enc(hp)+'&q='+enc(q)).then(function(r){ return r.json(); }).then(function(j){
+    brainAns=j; brainAskBusy=false; if(S.route&&S.route.name==='brain') renderPage();
+  }).catch(function(){ brainAskBusy=false; renderPage(); });
+}
+function brainSearch(){
+  var hp=(S.route&&S.route.home)||''; var q=brainQ[hp]||'';
+  if(brainBusy) return; brainBusy=true;
+  fetch('/api/brain-recall?path='+enc(hp)+'&q='+enc(q)).then(function(r){ return r.json(); }).then(function(j){
+    brainRes=j; brainBusy=false; if(S.route&&S.route.name==='brain') renderPage();
+  }).catch(function(){ brainBusy=false; });
+}
+function pageBrain(){
+  var st=S.page;
+  if(!st){ return S.pageFail?stateBox('Brain unavailable','Could not read this home\u2019s brain.','err'):skeleton(); }
+  if(!st.present){
+    return stateBox('No brain yet','This home has no state/brain.sqlite. Build it with: bin/ac-brain.sh sync --home <home>','');
+  }
+  var hp=(S.route&&S.route.home)||'';
+  var s='<div class="kpis">'
+    +'<div class="kpi"><b>'+esc(String(st.pages))+'</b><span>pages</span></div>'
+    +'<div class="kpi"><b>'+esc(String(st.facts))+'</b><span>active facts</span></div>'
+    +'<div class="kpi"><b>'+esc(st.last_sync?String(st.last_sync).slice(0,16).replace('T',' '):'never')+'</b><span>last sync</span></div>'
+    +'</div>'
+    +'<div class="cfg-note">Semantic search / synthesize keys: <a href="/fleets/'+enc(S.route.fleet)+'/config" data-link>Config \u2192 Brain LLM providers</a></div>';
+  s+='<div style="margin:10px 0"><input class="search-in" type="search" data-brain-q placeholder="Ask the brain\u2026" aria-label="Ask the brain" autocomplete="off" spellcheck="false" value="'+esc(brainQ[hp]||'')+'" style="width:60%;max-width:520px"> '
+    +'<button class="btn sm primary" data-brain-go title="Hybrid search - instant, free">Recall</button> '
+    +'<button class="btn sm" data-brain-ask title="LLM-composed answer with citations - costs tokens, takes seconds">Ask (LLM)</button>'
+    +(brainBusy?' <span class="badge">searching\u2026</span>':'')
+    +(brainAskBusy?' <span class="badge warn">composing\u2026</span>':'')+'</div>';
+  if(brainAns){
+    s+='<div class="cfg-field" style="display:block"><div class="fname">Answer <span class="badge">'+esc(brainAns.synthesis_status||'')+'</span></div>'
+      +'<div style="white-space:pre-wrap;margin-top:6px">'+esc(brainAns.answer||'')+'</div>';
+    var src=brainAns.sources||[];
+    if(src.length){ s+='<div class="fdesc" style="margin-top:6px">sources: ';
+      for(var si=0;si<src.length;si++){ s+=(si?', ':'')+'<a href="/review?path='+enc(hp)+'&file='+enc(hp+'/'+(src[si].path||''))+'" target="_blank">'+esc(src[si].slug)+'</a>'; }
+      s+='</div>'; }
+    s+='</div>';
+  }
+  var res=brainRes;
+  if(res && res.results && res.results.length){
+    if(res.search_degraded) s+='<div class="cfg-note">degraded: '+esc(res.search_degraded)+'</div>';
+    for(var i=0;i<res.results.length;i++){ var h=res.results[i];
+      var link='/review?path='+enc(hp)+'&file='+enc(hp+'/'+(h.path||''));
+      s+='<div class="cfg-field"><div class="fname"><a href="'+esc(link)+'" target="_blank">'+esc(h.title||h.slug)+'</a>'
+        +'<div class="fdesc">'+esc(h.slug)+' \u00b7 '+esc(h.evidence||'')+' \u00b7 '+esc(h.trust||'')+'</div></div>'
+        +'<div class="cfg-val" style="max-width:52%">'+esc((h.snippet||'').slice(0,240))+'</div></div>';
+    }
+  } else if(res && res.results){ s+='<div class="cfg-note">No hits.</div>'; }
+  var facts=(res&&res.facts&&res.facts.length)?res.facts:null;
+  if(!res){ brainSearch(); }
+  if(facts){
+    s+='<h2 style="font-size:14px;margin:14px 0 6px">Working-memory facts</h2>';
+    for(var f=0;f<facts.length;f++){ var fa=facts[f];
+      s+='<div class="cfg-field"><div class="fname">['+esc(fa.kind||'fact')+'] '+esc(fa.fact)
+        +'<div class="fdesc">'+esc(fa.provenance||'')+' \u00b7 '+esc(fa.agent||'')+' \u00b7 '+esc((fa.created_at||'').slice(0,16).replace('T',' '))+'</div></div></div>';
+    }
+  }
+  return s;
+}
 function pageLearning(){
   var r=S.route, ui=uiFor(routeKey(r));
   if(!S.page){ return S.pageFail?stateBox('Learning unavailable','Could not load the fleet learning surface. Retrying.','err'):skeleton(); }
@@ -10074,7 +10303,7 @@ function pageConfig(){
   var covered={}; for(var g=0;g<CFG_SECTIONS.length;g++){ for(var k=0;k<CFG_SECTIONS[g].keys.length;k++) covered[CFG_SECTIONS[g].keys[k]]=1; }
   var others=[]; for(var e=0;e<ed.length;e++){ if(!covered[ed[e].name]) others.push(ed[e].name); }
   var secs=CFG_SECTIONS.slice(); if(others.length) secs=secs.concat([{id:'other', title:'Other', keys:others}]);
-  secs=secs.concat([{id:'dispatch', title:'Crew dispatch', keys:[]}]);
+  secs=secs.concat([{id:'dispatch', title:'Crew dispatch', keys:[]},{id:'providers', title:'Brain LLM providers', keys:[]}]);
   var sec=S.cfgSection; var chosen=null;
   for(var si=0;si<secs.length;si++){ if(secs[si].id===sec) chosen=secs[si]; }
   if(!chosen) chosen=secs[0];
@@ -10088,6 +10317,7 @@ function pageConfig(){
   s+='<div class="cfg-note">Changes apply on the next fleet session. Writes are confirmation-gated and receipted.</div>';
   if(S.cfgMsg){ s+='<div class="'+(S.cfgMsg.ok?'badge ok':'badge err')+'" style="margin-bottom:10px">'+esc(S.cfgMsg.text)+'</div>'; }
   if(chosen.id==='dispatch'){ s+=dispatchPanel(); }
+  else if(chosen.id==='providers'){ s+=providersPanel(); }
   else {
   for(var f=0;f<chosen.keys.length;f++){ var name=chosen.keys[f]; var row=byName[name]||{}; var val=row.value; var editing=S.cfgEdit&&S.cfgEdit.name===name;
     s+='<div class="cfg-field"><div class="fname">'+esc(name)
@@ -10133,6 +10363,45 @@ function useSummary(use){
   var parts=[];
   for(var i=0;i<arr.length;i++){ var u=arr[i]||{}; var t=esc(u.harness||'?'); if(u.model) t+=' &middot; '+esc(u.model); if(u.effort) t+=' &middot; '+esc(u.effort); parts.push('<span class="mono">'+t+'</span>'); }
   return parts.join(' <span class="muted">/</span> ');
+}
+var provC=null, provBusy=false;
+function loadProviders(){
+  if(provBusy) return; provBusy=true;
+  fetch('/api/providers?path='+enc((S.route&&S.route.home)||'')).then(function(r){ return r.json(); }).then(function(j){
+    provC=j; provBusy=false; if(S.route&&S.route.name==='config') renderPage();
+  }).catch(function(){ provBusy=false; });
+}
+function providersPanel(){
+  if(!provC){ loadProviders(); return skeleton(); }
+  var rows=(provC.providers)||[];
+  var active=provC.active||'openrouter';
+  var sel=S.provSel||active;
+  var cur=null; for(var i=0;i<rows.length;i++){ if(rows[i].name===sel) cur=rows[i]; }
+  var s='<div class="cfg-note">ONE provider runs the whole brain (semantic search + synthesize). Pick it, paste one key, Save - the engine config follows. Key lives in this home\u2019s <code>config/providers.json</code> (0600, never in the repo); an env var on the host overrides.</div>';
+  s+='<div class="cfg-field"><div class="fname">Provider</div><div class="cfg-val"><select class="cfg-in" data-prov-sel aria-label="Brain LLM provider">';
+  for(var i=0;i<rows.length;i++){ var pv=rows[i];
+    s+='<option value="'+esc(pv.name)+'"'+(pv.name===sel?' selected':'')+'>'+esc(pv.name)+(pv.name===active?' (active)':'')+' \u2014 '+esc(pv.caps)+'</option>';
+  }
+  s+='</select></div></div>';
+  if(cur){
+    var st = cur.no_key ? '<span class="badge ok">no key needed (local)</span>'
+      : cur.source==='env' ? '<span class="badge ok">env '+esc(cur.env)+'</span>'
+      : cur.source==='file' ? '<span class="badge ok">key saved '+esc(cur.masked||'')+'</span>'
+      : '<span class="badge">no key yet</span>';
+    s+='<div class="cfg-field"><div class="fname">Key</div><div class="cfg-val">'+st;
+    if(!cur.no_key) s+=' <input class="cfg-in" type="password" placeholder="paste key" aria-label="API key" autocomplete="new-password" spellcheck="false" data-prov-input="'+esc(cur.name)+'" style="width:240px">';
+    s+=' <button class="btn sm primary" data-prov-save="'+esc(cur.name)+'">'+(cur.name===active?'Save':'Save & activate')+'</button></div></div>';
+  }
+  if(provC.warn) s+='<div class="badge warn" style="margin-top:8px">'+esc(provC.warn)+'</div>';
+  return s;
+}
+var provDraft={};
+function provSave(name, remove){
+  var key = remove ? '' : (provDraft[name]||'');
+  fetch('/api/providers?path='+enc((S.route&&S.route.home)||''), { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name:name, api_key:key }) }).then(function(r){ return r.json(); }).then(function(j){
+    provC=j; provDraft[name]=''; renderPage();
+  }).catch(function(){});
 }
 function dispatchPanel(){
   var d=(S.page&&S.page.dispatch)||{exists:false,raw:'',rules:[],dflt:null,panes:[],error:null};
@@ -10520,6 +10789,10 @@ function onClick(e){
   if((n=t.closest('[data-cfg-edit]'))){ startEdit(n.getAttribute('data-cfg-edit')); return; }
   if((n=t.closest('[data-cfg-save]'))){ saveEdit(n.getAttribute('data-cfg-save')); return; }
   if(t.closest('[data-cfg-cancel]')){ cancelEdit(); return; }
+  if(t.closest('[data-brain-go]')){ brainRes=null; brainSearch(); renderPage(); return; }
+  if(t.closest('[data-brain-ask]')){ brainAsk(); return; }
+  if((n=t.closest('[data-prov-save]'))){ provSave(n.getAttribute('data-prov-save'), false); return; }
+  if((n=t.closest('[data-prov-remove]'))){ provSave(n.getAttribute('data-prov-remove'), true); return; }
   if(t.closest('[data-disp-edit]')){ dispStartEdit(); return; }
   if(t.closest('[data-disp-save]')){ dispSave(); return; }
   if(t.closest('[data-disp-cancel]')){ dispCancel(); return; }
@@ -10532,6 +10805,10 @@ function onInput(e){
   var t=e.target; if(!t||!t.hasAttribute) return;
   if(t.hasAttribute('data-cfg-input')){ if(S.cfgEdit) S.cfgEdit.buffer=t.value; return; }
   if(t.hasAttribute('data-disp-input')){ if(S.dispEdit) S.dispEdit.buffer=t.value; return; }
+  if(t.hasAttribute('data-prov-input')){ provDraft[t.getAttribute('data-prov-input')]=t.value; return; }
+  if(t.hasAttribute&&t.hasAttribute('data-prov-sel')){ S.provSel=t.value; renderPage(); return; }
+  if(t.hasAttribute('data-brain-q')){ brainQ[(S.route&&S.route.home)||'']=t.value;
+    if(brainTimer) clearTimeout(brainTimer); brainTimer=setTimeout(function(){ brainRes=null; brainSearch(); }, 400); return; }
   if(t.hasAttribute('data-wb-rename-input')){ uiFor(routeKey(S.route)).wbRenameDraft=t.value; return; }
   if(t.hasAttribute('data-list-search')){ var ul=uiFor(routeKey(S.route)); ul.query=t.value;
     if(S.route.name==='reports'){ ul.exp={};
