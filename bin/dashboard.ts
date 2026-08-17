@@ -3164,56 +3164,113 @@ function providersFile(home: string) { return home + "/config/providers.json"; }
 function providersRead(home: string): Record<string, { api_key?: string }> {
   try { return JSON.parse(readFileSync(providersFile(home), "utf8")); } catch { return {}; }
 }
+// PER-LANE provider model (supersedes the one-provider table): the captain's
+// real deployment SPLITS the brain - embeddings on one credential, synthesize
+// on another - so each lane carries its own provider set and defaults, and a
+// lane write never touches the other lane's block. Embedding models form a
+// CLOSED set because dims are load-bearing (a width change forces a rebuild);
+// synthesize models are free text over the provider's own catalog.
+export const PROVIDER_LANES: {
+  embedding: Record<string, { models: Record<string, number>; dflt: string }>;
+  synthesize: Record<string, { dflt: string }>;
+} = {
+  embedding: {
+    openrouter: { models: { "openai/text-embedding-3-small": 1536, "openai/text-embedding-3-large": 3072 }, dflt: "openai/text-embedding-3-small" },
+    openai: { models: { "text-embedding-3-small": 1536, "text-embedding-3-large": 3072 }, dflt: "text-embedding-3-small" },
+    ollama: { models: { "nomic-embed-text": 768, "mxbai-embed-large": 1024 }, dflt: "nomic-embed-text" },
+  },
+  synthesize: {
+    openrouter: { dflt: "openai/gpt-4o-mini" },
+    openai: { dflt: "gpt-4o-mini" },
+    ollama: { dflt: "llama3.1" },
+    "opencode-go": { dflt: "kimi-k2.7-code" },
+  },
+};
+export function applyProviderLane(
+  bj: any, store: Record<string, { api_key?: string }>, req: any,
+): { error: string } | { bj: any; store: Record<string, { api_key?: string }>; warn?: string } {
+  const lane = String(req.lane || "");
+  const provider = String(req.provider || "");
+  const laneSet: any = (PROVIDER_LANES as any)[lane];
+  if (!laneSet) return { error: "unknown lane " + (lane || "(none)") };
+  const pv = laneSet[provider];
+  if (!pv) return { error: "provider " + (provider || "(none)") + " is not in the " + lane + " set" };
+  const out = { ...bj };
+  const st = { ...store };
+  const key = typeof req.api_key === "string" ? req.api_key.trim() : "";
+  if (key) st[provider] = { api_key: key };
+  else if (req.remove) delete st[provider];
+  const model = typeof req.model === "string" && req.model.trim() ? req.model.trim() : pv.dflt;
+  let warn: string | undefined;
+  if (lane === "embedding") {
+    const dims = pv.models[model];
+    if (!dims) return { error: "unknown embedding model " + model + " - dims must be known (" + Object.keys(pv.models).join(", ") + ")" };
+    const prevDims = bj.embedding?.dims;
+    out.embedding = { provider, model, dims };
+    if (prevDims && prevDims !== dims) warn = "embedding width changed - run: bin/ac-brain.sh sync --rebuild";
+  } else {
+    out.synthesize = { ...(bj.synthesize || {}), api: { provider, model } };
+  }
+  return { bj: out, store: st, warn };
+}
 function providersDetail(home: string, warn?: string) {
   const store = providersRead(home);
-  const active = brainJsonRead(home).embedding?.provider ?? null;
+  const bj = brainJsonRead(home);
   const mask = (k: string) => (k.length > 10 ? k.slice(0, 6) + "…" + k.slice(-4) : "…");
+  const keyState = (name: string) => {
+    const meta = LLM_PROVIDERS.find(p => p.name === name);
+    const envSet = meta?.env && !!process.env[meta.env];
+    const fileKey = store[name]?.api_key;
+    return { no_key: !!meta?.noKey, env: meta?.env ?? "",
+      source: meta?.noKey ? "none-needed" : envSet ? "env" : fileKey ? "file" : null,
+      masked: fileKey ? mask(fileKey) : null };
+  };
   return json({
-    active, warn,
-    providers: LLM_PROVIDERS.filter(pv => ["openrouter", "openai", "ollama"].includes(pv.name)).map(pv => {
-      const envSet = pv.env && !!process.env[pv.env];
-      const fileKey = store[pv.name]?.api_key;
-      return { name: pv.name, base_url: pv.base_url, env: pv.env, caps: pv.caps, no_key: !!pv.noKey,
-        source: pv.noKey ? "none-needed" : envSet ? "env" : fileKey ? "file" : null,
-        masked: fileKey ? mask(fileKey) : null };
-    }),
+    warn,
+    active: bj.embedding?.provider ?? null,
+    embedding: bj.embedding ?? null,
+    synthesize: bj.synthesize?.api ?? null,
+    lanes: {
+      embedding: Object.entries(PROVIDER_LANES.embedding).map(([name, v]) =>
+        ({ name, models: Object.keys(v.models), dflt: v.dflt, ...keyState(name) })),
+      synthesize: Object.entries(PROVIDER_LANES.synthesize).map(([name, v]) =>
+        ({ name, dflt: v.dflt, ...keyState(name) })),
+    },
   });
 }
-// ONE-PROVIDER model (captain's rule: one LLM, one input): activating a
-// provider writes its key AND rewrites brain.json's embedding + synthesize
-// blocks from this defaults table, so the brain runs whole on a single
-// credential. Models stay editable by hand in brain.json afterwards.
-const BRAIN_DEFAULTS: Record<string, { embed: { model: string; dims: number }; chat: string }> = {
-  openrouter: { embed: { model: "openai/text-embedding-3-small", dims: 1536 }, chat: "openai/gpt-4o-mini" },
-  openai: { embed: { model: "text-embedding-3-small", dims: 1536 }, chat: "gpt-4o-mini" },
-  ollama: { embed: { model: "nomic-embed-text", dims: 768 }, chat: "llama3.1" },
-};
 function brainJsonRead(home: string): any {
   try { return JSON.parse(readFileSync(home + "/config/brain.json", "utf8")); } catch { return {}; }
 }
 function providersSet(home: string, body: string) {
   let b: any;
   try { b = JSON.parse(body); } catch { return json({ error: "bad json" }, 400); }
-  const name = String(b.name || "");
-  if (!BRAIN_DEFAULTS[name]) return json({ error: "unknown provider" }, 400);
-  const store = providersRead(home);
-  const key = typeof b.api_key === "string" ? b.api_key.trim() : "";
-  if (key) store[name] = { api_key: key };
-  else if (b.remove) delete store[name];
+  const r = applyProviderLane(brainJsonRead(home), providersRead(home), b);
+  if ("error" in r) return json({ error: r.error }, 400);
   try {
     mkdirSync(home + "/config", { recursive: true });
-    writeFileSync(providersFile(home), JSON.stringify(store, null, 1), { mode: 0o600 });
+    writeFileSync(providersFile(home), JSON.stringify(r.store, null, 1), { mode: 0o600 });
     try { require("node:fs").chmodSync(providersFile(home), 0o600); } catch {}
-    const bj = brainJsonRead(home);
-    const prevDims = bj.embedding?.dims;
-    const d = BRAIN_DEFAULTS[name];
-    bj.embedding = { provider: name, model: d.embed.model, dims: d.embed.dims };
-    bj.synthesize = { api: { provider: name, model: d.chat } };
-    writeFileSync(home + "/config/brain.json", JSON.stringify(bj, null, 1));
-    if (prevDims && prevDims !== d.embed.dims)
-      return providersDetail(home, "embedding width changed - run: bin/ac-brain.sh sync --rebuild --home " + home);
+    writeFileSync(home + "/config/brain.json", JSON.stringify(r.bj, null, 1));
   } catch (e) { return json({ error: String(e) }, 500); }
-  return providersDetail(home);
+  return providersDetail(home, r.warn ? r.warn + " --home " + home : undefined);
+}
+// Live model catalog for the synthesize lane's picker: proxy the provider's
+// own /models with the resolved key (env > file), server-side so the key
+// never reaches the page. Fail-open to an empty list - the input stays free
+// text either way.
+async function providerModels(home: string, provider: string): Promise<Response> {
+  const meta = LLM_PROVIDERS.find(x => x.name === provider);
+  if (!meta) return json({ models: [] });
+  const key = (meta.env && process.env[meta.env]) || providersRead(home)[provider]?.api_key || "";
+  try {
+    const res = await fetch(meta.base_url + "/models", {
+      headers: key ? { authorization: "Bearer " + key } : {},
+      signal: AbortSignal.timeout(6000),
+    });
+    const d: any = await res.json();
+    const ids = Array.isArray(d?.data) ? d.data.map((m: any) => String(m.id)).filter(Boolean) : [];
+    return json({ models: ids.slice(0, 200) });
+  } catch { return json({ models: [] }); }
 }
 
 // Read-only KPI over the home's memory engine (bin/ac-brain-engine.ts owns
@@ -7078,7 +7135,16 @@ if (import.meta.main) {
       if (url.pathname === "/api/providers") {
         const p = url.searchParams.get("path");
         if (!p) return json({ error: "path required" }, 400);
+        // Key store writes are home-scoped like every other write endpoint -
+        // an arbitrary path from the URL must not name where secrets land.
+        if (!(await allowedHomePaths()).has(p)) return json({ error: "unknown home" }, 404);
         return req.method === "POST" ? providersSet(p, await req.text()) : providersDetail(p);
+      }
+      if (url.pathname === "/api/provider-models") {
+        const p = url.searchParams.get("path");
+        if (!p) return json({ error: "path required" }, 400);
+        if (!(await allowedHomePaths()).has(p)) return json({ error: "unknown home" }, 404);
+        return providerModels(p, url.searchParams.get("provider") ?? "");
       }
       if (url.pathname === "/api/processes") {
         const p = url.searchParams.get("path");
@@ -10373,34 +10439,72 @@ function loadProviders(){
 }
 function providersPanel(){
   if(!provC){ loadProviders(); return skeleton(); }
-  var rows=(provC.providers)||[];
-  var active=provC.active||'openrouter';
-  var sel=S.provSel||active;
-  var cur=null; for(var i=0;i<rows.length;i++){ if(rows[i].name===sel) cur=rows[i]; }
-  var s='<div class="cfg-note">ONE provider runs the whole brain (semantic search + synthesize). Pick it, paste one key, Save - the engine config follows. Key lives in this home\u2019s <code>config/providers.json</code> (0600, never in the repo); an env var on the host overrides.</div>';
-  s+='<div class="cfg-field"><div class="fname">Provider</div><div class="cfg-val"><select class="cfg-in" data-prov-sel aria-label="Brain LLM provider">';
-  for(var i=0;i<rows.length;i++){ var pv=rows[i];
-    s+='<option value="'+esc(pv.name)+'"'+(pv.name===sel?' selected':'')+'>'+esc(pv.name)+(pv.name===active?' (active)':'')+' \u2014 '+esc(pv.caps)+'</option>';
-  }
-  s+='</select></div></div>';
-  if(cur){
-    var st = cur.no_key ? '<span class="badge ok">no key needed (local)</span>'
-      : cur.source==='env' ? '<span class="badge ok">env '+esc(cur.env)+'</span>'
-      : cur.source==='file' ? '<span class="badge ok">key saved '+esc(cur.masked||'')+'</span>'
-      : '<span class="badge">no key yet</span>';
-    s+='<div class="cfg-field"><div class="fname">Key</div><div class="cfg-val">'+st;
-    if(!cur.no_key) s+=' <input class="cfg-in" type="password" placeholder="paste key" aria-label="API key" autocomplete="new-password" spellcheck="false" data-prov-input="'+esc(cur.name)+'" style="width:240px">';
-    s+=' <button class="btn sm primary" data-prov-save="'+esc(cur.name)+'">'+(cur.name===active?'Save':'Save & activate')+'</button></div></div>';
-  }
+  var s='<div class="cfg-note">Two lanes, each on its own provider and key: <b>Embedding</b> powers semantic search (a model change needs a rebuild), <b>Synthesize</b> powers Ask (LLM). A save writes ONLY its own lane. Keys live in this home\u2019s <code>config/providers.json</code> (0600, never in the repo); an env var on the host overrides.</div>';
+  s+=provLaneCard('embedding','Embedding',(provC.lanes&&provC.lanes.embedding)||[],provC.embedding||null);
+  s+=provLaneCard('synthesize','Synthesize',(provC.lanes&&provC.lanes.synthesize)||[],provC.synthesize||null);
   if(provC.warn) s+='<div class="badge warn" style="margin-top:8px">'+esc(provC.warn)+'</div>';
   return s;
 }
-var provDraft={};
-function provSave(name, remove){
-  var key = remove ? '' : (provDraft[name]||'');
+function provLaneCard(lane,label,rows,curCfg){
+  var sel=(S.provSel&&S.provSel[lane])||(curCfg&&curCfg.provider)||(rows[0]&&rows[0].name)||'';
+  var cur=null; for(var i=0;i<rows.length;i++){ if(rows[i].name===sel) cur=rows[i]; }
+  var s='<div class="cfg-field"><div class="fname">'+esc(label)
+    +(curCfg?'<div class="fdesc">now: '+esc(curCfg.provider)+' / '+esc(curCfg.model||'')+'</div>':'')
+    +'</div><div class="cfg-val" style="flex-wrap:wrap;row-gap:6px">';
+  s+='<select class="cfg-in" data-prov-sel="'+lane+'" aria-label="'+esc(label)+' provider">';
+  for(var i=0;i<rows.length;i++){ var pv=rows[i];
+    s+='<option value="'+esc(pv.name)+'"'+(pv.name===sel?' selected':'')
+      +'>'+esc(pv.name)+(curCfg&&curCfg.provider===pv.name?' (active)':'')+'</option>';
+  }
+  s+='</select>';
+  if(cur){
+    var mkey=lane+'|'+cur.name;
+    var curModel=(provDraft['m:'+mkey]!==undefined)?provDraft['m:'+mkey]
+      :(curCfg&&curCfg.provider===cur.name&&curCfg.model)||cur.dflt;
+    if(lane==='embedding'){
+      // Closed set: dims ride the model, so free text cannot be honored here.
+      s+=' <select class="cfg-in" data-prov-model="'+mkey+'" aria-label="'+esc(label)+' model">';
+      var ms=cur.models||[];
+      for(var m=0;m<ms.length;m++) s+='<option value="'+esc(ms[m])+'"'+(ms[m]===curModel?' selected':'')+'>'+esc(ms[m])+'</option>';
+      s+='</select>';
+    } else {
+      var listId='provml-'+cur.name;
+      s+=' <input class="cfg-in" list="'+listId+'" value="'+esc(curModel)+'" data-prov-model="'+mkey+'" aria-label="'+esc(label)+' model" spellcheck="false" style="width:210px">';
+      s+='<datalist id="'+listId+'">';
+      var live=provModels[cur.name]||[];
+      for(var m=0;m<live.length;m++) s+='<option value="'+esc(live[m])+'">';
+      s+='</datalist>';
+      if(provModels[cur.name]===undefined) loadProvModels(cur.name);
+    }
+    var st = cur.no_key ? '<span class="badge ok">no key needed (local)</span>'
+      : cur.source==='env' ? '<span class="badge ok">env '+esc(cur.env)+'</span>'
+      : cur.source==='file' ? '<span class="badge ok">key '+esc(cur.masked||'')+'</span>'
+      : '<span class="badge">no key yet</span>';
+    s+=' '+st;
+    if(!cur.no_key) s+=' <input class="cfg-in" type="password" placeholder="'+(cur.source?'key saved - paste to replace':'paste key')+'" aria-label="'+esc(label)+' API key" autocomplete="new-password" spellcheck="false" data-prov-input="'+mkey+'" style="width:190px">';
+    s+=' <button class="btn sm primary" data-prov-save="'+mkey+'">Save '+lane+'</button>';
+  }
+  s+='</div></div>';
+  return s;
+}
+var provDraft={}, provModels={}, provModelsBusy={};
+function loadProvModels(name){
+  if(provModelsBusy[name]) return; provModelsBusy[name]=true;
+  fetch('/api/provider-models?path='+enc((S.route&&S.route.home)||'')+'&provider='+enc(name))
+    .then(function(r){ return r.json(); }).then(function(j){
+      provModels[name]=(j&&j.models)||[]; provModelsBusy[name]=false;
+      if(S.route&&S.route.name==='config') renderPage();
+    }).catch(function(){ provModels[name]=[]; provModelsBusy[name]=false; });
+}
+function provSave(ref){
+  var i=ref.indexOf('|'), lane=ref.slice(0,i), name=ref.slice(i+1);
+  var body={ lane:lane, provider:name };
+  var mel=document.querySelector('[data-prov-model="'+ref+'"]');
+  if(mel&&mel.value) body.model=mel.value;
+  if(provDraft[ref]) body.api_key=provDraft[ref];
   fetch('/api/providers?path='+enc((S.route&&S.route.home)||''), { method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ name:name, api_key:key }) }).then(function(r){ return r.json(); }).then(function(j){
-    provC=j; provDraft[name]=''; renderPage();
+    body: JSON.stringify(body) }).then(function(r){ return r.json(); }).then(function(j){
+    provC=j; provDraft[ref]=''; delete provDraft['m:'+ref]; renderPage();
   }).catch(function(){});
 }
 function dispatchPanel(){
@@ -10791,8 +10895,7 @@ function onClick(e){
   if(t.closest('[data-cfg-cancel]')){ cancelEdit(); return; }
   if(t.closest('[data-brain-go]')){ brainRes=null; brainSearch(); renderPage(); return; }
   if(t.closest('[data-brain-ask]')){ brainAsk(); return; }
-  if((n=t.closest('[data-prov-save]'))){ provSave(n.getAttribute('data-prov-save'), false); return; }
-  if((n=t.closest('[data-prov-remove]'))){ provSave(n.getAttribute('data-prov-remove'), true); return; }
+  if((n=t.closest('[data-prov-save]'))){ provSave(n.getAttribute('data-prov-save')); return; }
   if(t.closest('[data-disp-edit]')){ dispStartEdit(); return; }
   if(t.closest('[data-disp-save]')){ dispSave(); return; }
   if(t.closest('[data-disp-cancel]')){ dispCancel(); return; }
@@ -10806,7 +10909,8 @@ function onInput(e){
   if(t.hasAttribute('data-cfg-input')){ if(S.cfgEdit) S.cfgEdit.buffer=t.value; return; }
   if(t.hasAttribute('data-disp-input')){ if(S.dispEdit) S.dispEdit.buffer=t.value; return; }
   if(t.hasAttribute('data-prov-input')){ provDraft[t.getAttribute('data-prov-input')]=t.value; return; }
-  if(t.hasAttribute&&t.hasAttribute('data-prov-sel')){ S.provSel=t.value; renderPage(); return; }
+  if(t.hasAttribute('data-prov-model')){ provDraft['m:'+t.getAttribute('data-prov-model')]=t.value; return; }
+  if(t.hasAttribute&&t.hasAttribute('data-prov-sel')){ S.provSel=S.provSel||{}; S.provSel[t.getAttribute('data-prov-sel')]=t.value; renderPage(); return; }
   if(t.hasAttribute('data-brain-q')){ brainQ[(S.route&&S.route.home)||'']=t.value;
     if(brainTimer) clearTimeout(brainTimer); brainTimer=setTimeout(function(){ brainRes=null; brainSearch(); }, 400); return; }
   if(t.hasAttribute('data-wb-rename-input')){ uiFor(routeKey(S.route)).wbRenameDraft=t.value; return; }

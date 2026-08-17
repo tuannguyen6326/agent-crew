@@ -2844,3 +2844,57 @@ test("reviewApply attaches an image field to the queued record only when the act
   const s1 = reviewApply(s0, { type: "annotate", anchor: null, text: "t", at: "T" }) as ReturnType<typeof emptyReviewSession>;
   expect("image" in s1.queue[0]).toBe(false);
 });
+
+// --- applyProviderLane: per-lane brain config writes (embedding | synthesize) ---
+// The captain's real setup is a SPLIT - embeddings on one provider, synthesize
+// on another - so a lane write must never touch the other lane's block.
+
+import { applyProviderLane, PROVIDER_LANES } from "./dashboard.ts";
+
+test("applyProviderLane embedding: writes key + embedding block only, synthesize untouched", () => {
+  const bj = { synthesize: { api: { provider: "opencode-go", model: "kimi-k2.7-code" } } };
+  const r = applyProviderLane(bj, {}, { lane: "embedding", provider: "openrouter", model: "openai/text-embedding-3-small", api_key: "sk-x" }) as any;
+  expect(r.error).toBeUndefined();
+  expect(r.bj.embedding).toEqual({ provider: "openrouter", model: "openai/text-embedding-3-small", dims: 1536 });
+  expect(r.bj.synthesize.api.model).toBe("kimi-k2.7-code");
+  expect(r.store.openrouter.api_key).toBe("sk-x");
+});
+
+test("applyProviderLane synthesize: free-model write leaves embedding untouched", () => {
+  const bj = { embedding: { provider: "openrouter", model: "openai/text-embedding-3-small", dims: 1536 } };
+  const r = applyProviderLane(bj, {}, { lane: "synthesize", provider: "opencode-go", model: "deepseek-v4-pro", api_key: "" }) as any;
+  expect(r.error).toBeUndefined();
+  expect(r.bj.synthesize.api).toEqual({ provider: "opencode-go", model: "deepseek-v4-pro" });
+  expect(r.bj.embedding.dims).toBe(1536);
+  expect(Object.keys(r.store).length).toBe(0);  // no key offered, none written
+});
+
+test("applyProviderLane: omitted model falls to the lane default for that provider", () => {
+  const r1 = applyProviderLane({}, {}, { lane: "synthesize", provider: "opencode-go" }) as any;
+  expect(r1.bj.synthesize.api.model).toBe("kimi-k2.7-code");
+  const r2 = applyProviderLane({}, {}, { lane: "embedding", provider: "ollama" }) as any;
+  expect(r2.bj.embedding).toEqual({ provider: "ollama", model: "nomic-embed-text", dims: 768 });
+});
+
+test("applyProviderLane embedding: model must be a KNOWN model (dims are load-bearing)", () => {
+  const r = applyProviderLane({}, {}, { lane: "embedding", provider: "openrouter", model: "some/unknown-embed" }) as any;
+  expect(r.error).toContain("unknown embedding model");
+});
+
+test("applyProviderLane: dims change carries the rebuild warning", () => {
+  const bj = { embedding: { provider: "ollama", model: "nomic-embed-text", dims: 768 } };
+  const r = applyProviderLane(bj, {}, { lane: "embedding", provider: "openai", model: "text-embedding-3-large" }) as any;
+  expect(r.warn).toContain("sync --rebuild");
+});
+
+test("applyProviderLane: a provider outside its lane's set is refused", () => {
+  const r = applyProviderLane({}, {}, { lane: "embedding", provider: "opencode-go" }) as any;
+  expect(r.error).toBeTruthy();
+  const r2 = applyProviderLane({}, {}, { lane: "nope", provider: "openai" }) as any;
+  expect(r2.error).toBeTruthy();
+});
+
+test("PROVIDER_LANES: synthesize offers opencode-go, embedding does not", () => {
+  expect(Object.keys(PROVIDER_LANES.synthesize)).toContain("opencode-go");
+  expect(Object.keys(PROVIDER_LANES.embedding)).not.toContain("opencode-go");
+});
