@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-ledger-guard.test.sh - the PreToolUse fence that keeps a SCOPED session
-# (a roomchief, AC_SCOPE set) from writing records/backlog.md or
-# records/projects.md - the crewchief's own ledgers.
+# (a roomchief, AC_SCOPE set) from writing records/backlog.md,
+# records/projects.md or records/captain.md - the crewchief's own ledgers.
 
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/ (helpers.sh not found)\n' >&2; exit 1; }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ac-ledger-guard.sh - PreToolUse hook: refuse a SCOPED session (a roomchief,
-# AC_SCOPE set) writing records/backlog.md or records/projects.md.
+# AC_SCOPE set) writing records/backlog.md, records/projects.md or
+# records/captain.md.
 #
 # Wired in .claude/settings.json under hooks.PreToolUse; reads the hook
 # payload JSON on stdin and inspects .tool_name / .tool_input. Pure bash + jq,
