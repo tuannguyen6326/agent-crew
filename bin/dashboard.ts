@@ -10179,14 +10179,14 @@ function learningDecisionRow(d, withBody){
 }
 var brainQ={}, brainRes=null, brainBusy=false, brainTimer=null, brainAns=null, brainAskBusy=false;
 function brainAsk(){
-  var hp=(S.route&&S.route.home)||''; var q=brainQ[hp]||'';
+  var hp=(S.route&&S.route.home&&S.route.home.path)||''; var q=brainQ[hp]||'';
   if(!q||brainAskBusy) return; brainAskBusy=true; brainAns=null; renderPage();
   fetch('/api/brain-synthesize?path='+enc(hp)+'&q='+enc(q)).then(function(r){ return r.json(); }).then(function(j){
     brainAns=j; brainAskBusy=false; if(S.route&&S.route.name==='brain') renderPage();
   }).catch(function(){ brainAskBusy=false; renderPage(); });
 }
 function brainSearch(){
-  var hp=(S.route&&S.route.home)||''; var q=brainQ[hp]||'';
+  var hp=(S.route&&S.route.home&&S.route.home.path)||''; var q=brainQ[hp]||'';
   if(brainBusy) return; brainBusy=true;
   fetch('/api/brain-recall?path='+enc(hp)+'&q='+enc(q)).then(function(r){ return r.json(); }).then(function(j){
     brainRes=j; brainBusy=false; if(S.route&&S.route.name==='brain') renderPage();
@@ -10198,7 +10198,7 @@ function pageBrain(){
   if(!st.present){
     return stateBox('No brain yet','This home has no state/brain.sqlite. Build it with: bin/ac-brain.sh sync --home <home>','');
   }
-  var hp=(S.route&&S.route.home)||'';
+  var hp=(S.route&&S.route.home&&S.route.home.path)||'';
   var s='<div class="kpis">'
     +'<div class="kpi"><b>'+esc(String(st.pages))+'</b><span>pages</span></div>'
     +'<div class="kpi"><b>'+esc(String(st.facts))+'</b><span>active facts</span></div>'
@@ -10433,7 +10433,7 @@ function useSummary(use){
 var provC=null, provBusy=false;
 function loadProviders(){
   if(provBusy) return; provBusy=true;
-  fetch('/api/providers?path='+enc((S.route&&S.route.home)||'')).then(function(r){ return r.json(); }).then(function(j){
+  fetch('/api/providers?path='+enc((S.route&&S.route.home&&S.route.home.path)||'')).then(function(r){ return r.json(); }).then(function(j){
     provC=j; provBusy=false; if(S.route&&S.route.name==='config') renderPage();
   }).catch(function(){ provBusy=false; });
 }
@@ -10490,7 +10490,7 @@ function provLaneCard(lane,label,rows,curCfg){
 var provDraft={}, provModels={}, provModelsBusy={};
 function loadProvModels(name){
   if(provModelsBusy[name]) return; provModelsBusy[name]=true;
-  fetch('/api/provider-models?path='+enc((S.route&&S.route.home)||'')+'&provider='+enc(name))
+  fetch('/api/provider-models?path='+enc((S.route&&S.route.home&&S.route.home.path)||'')+'&provider='+enc(name))
     .then(function(r){ return r.json(); }).then(function(j){
       provModels[name]=(j&&j.models)||[]; provModelsBusy[name]=false;
       if(S.route&&S.route.name==='config') renderPage();
@@ -10502,7 +10502,7 @@ function provSave(ref){
   var mel=document.querySelector('[data-prov-model="'+ref+'"]');
   if(mel&&mel.value) body.model=mel.value;
   if(provDraft[ref]) body.api_key=provDraft[ref];
-  fetch('/api/providers?path='+enc((S.route&&S.route.home)||''), { method:'POST', headers:{'Content-Type':'application/json'},
+  fetch('/api/providers?path='+enc((S.route&&S.route.home&&S.route.home.path)||''), { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(body) }).then(function(r){ return r.json(); }).then(function(j){
     provC=j; provDraft[ref]=''; delete provDraft['m:'+ref]; renderPage();
   }).catch(function(){});
@@ -10911,7 +10911,7 @@ function onInput(e){
   if(t.hasAttribute('data-prov-input')){ provDraft[t.getAttribute('data-prov-input')]=t.value; return; }
   if(t.hasAttribute('data-prov-model')){ provDraft['m:'+t.getAttribute('data-prov-model')]=t.value; return; }
   if(t.hasAttribute&&t.hasAttribute('data-prov-sel')){ S.provSel=S.provSel||{}; S.provSel[t.getAttribute('data-prov-sel')]=t.value; renderPage(); return; }
-  if(t.hasAttribute('data-brain-q')){ brainQ[(S.route&&S.route.home)||'']=t.value;
+  if(t.hasAttribute('data-brain-q')){ brainQ[(S.route&&S.route.home&&S.route.home.path)||'']=t.value;
     if(brainTimer) clearTimeout(brainTimer); brainTimer=setTimeout(function(){ brainRes=null; brainSearch(); }, 400); return; }
   if(t.hasAttribute('data-wb-rename-input')){ uiFor(routeKey(S.route)).wbRenameDraft=t.value; return; }
   if(t.hasAttribute('data-list-search')){ var ul=uiFor(routeKey(S.route)); ul.query=t.value;
