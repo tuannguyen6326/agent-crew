@@ -1222,6 +1222,34 @@ check_remote() {
   return 0
 }
 
+brain_freshen() {
+  # Brain-freshen slot: index freshness rides THIS process - the one component
+  # the Stop hook machine-guarantees while crew flies - instead of the chief's
+  # memory of a session-only CronCreate (measured: a home whose chief lost its
+  # cron sat 7h stale while its watcher beat the whole time). One stat answers
+  # "how stale" (the engine touches state/.brain-last-sync on every sync);
+  # past AC_BRAIN_SYNC_IV (default 1800s) fire ONE fire-and-forget catch-up
+  # sync, throttled by an attempt stamp so a sync that cannot move the marker
+  # (bad key, locked db) retries once per interval, never per poll. DB
+  # existence is the opt-in - a home that never built a brain never fires -
+  # and config/brain-auto-sync=off is the valve. Zero cost on the fresh path:
+  # two stats, no subprocess.
+  local home iv now marker attempt last=0 la=0
+  home="$(ac_home)"
+  [ -f "$home/state/brain.sqlite" ] || return 0
+  [ "$(ac_config_read brain-auto-sync on)" = on ] || return 0
+  iv="${AC_BRAIN_SYNC_IV:-1800}"
+  now="$(ac_now)"
+  marker="$home/state/.brain-last-sync"
+  attempt="$state_dir/.brain-freshen-attempt"
+  [ -f "$marker" ] && last="$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)"
+  [ -f "$attempt" ] && la="$(stat -f %m "$attempt" 2>/dev/null || stat -c %Y "$attempt" 2>/dev/null || echo 0)"
+  [ $(( now - last )) -ge "$iv" ] || return 0
+  [ $(( now - la )) -ge "$iv" ] || return 0
+  : >"$attempt"
+  ("$(dirname "$0")/ac-brain.sh" sync --home "$home" --compact >/dev/null 2>&1 &)
+}
+
 queue_wake() {
   # queue_wake <kind> <id> <payload> - durable actionable wake, the record
   # every consumer (the crewchief's drain, a roomchief's scoped drain, the
@@ -1701,6 +1729,7 @@ while :; do
     exit 0
   fi
   publish_beacon "$(ac_now)"
+  brain_freshen
   if check_fleet; then
     exit 0
   fi

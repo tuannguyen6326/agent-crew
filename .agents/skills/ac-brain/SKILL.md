@@ -24,7 +24,7 @@ POSTURE: this is an AVAILABLE TOOL - the section-5 intake law (tier-ranked `ac-k
 - Trust the labels: results carry `trust: L1-verified ...` only for repo-knowledge pages; everything else is `unverified working material` - never cite a room quote as a verified fact.
 - `synthesize` is the ONE verb that costs LLM tokens (routed env > crew-dispatch `panes.brain` > `config/brain-agent`/`brain-model`/`brain-effort` > fleet defaults); never put it on a hot or automatic path.
 - Deputy brains are their own: `recall --deputy <id>` is READ-ONLY, resolved from `records/crewdeputies.md`, and used only on the captain's word - never ambient.
-- `sync` runs as a standing job (declare it in `records/standing-jobs.md` per that file's grammar) and on demand; `sync --rebuild` is safe by construction (markdown and the `state/facts.md` ledger are the truth; the DB is derived).
+- `sync` runs three ways: the fleet watcher's brain-freshen slot (the FLOOR - fires a catch-up when `state/.brain-last-sync` goes stale past 30m; valve `config/brain-auto-sync=off`), an optional `records/standing-jobs.md` CronCreate job for tighter cadence, and on demand; `sync --rebuild` is safe by construction (markdown and the `state/facts.md` ledger are the truth; the DB is derived).
 - Everything except `synthesize` is zero-LLM; the embedding lane is optional and keyless mode stays fully functional. Provider keys are configured on the dashboard's Config -> LLM providers panel (stored per-home in `config/providers.json`, 0600; an env var on the host overrides) - never in the repo, never in brain.json.
 
 ## Health

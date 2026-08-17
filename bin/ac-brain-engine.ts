@@ -65,7 +65,7 @@
 //   serve                         (MCP stdio, the seven verbs)
 // Errors: {"error":<code>,"message":...,"suggestion":...} on stdout, exit 1.
 import { Database } from "bun:sqlite";
-import { readdirSync, statSync, readFileSync, existsSync, appendFileSync, mkdirSync } from "fs";
+import { readdirSync, statSync, readFileSync, existsSync, appendFileSync, mkdirSync, writeFileSync } from "fs";
 import { join, relative, dirname, basename } from "path";
 import { hostname } from "os";
 
@@ -516,6 +516,9 @@ function syncInner(db: Database, t0: number) {
   if (flag("rebuild")) replayLedgerInto(db);
   db.run("INSERT OR REPLACE INTO meta(k,v) VALUES('last_sync', ?)", [iso()]);
   db.run("INSERT OR REPLACE INTO meta(k,v) VALUES('chunker_version', ?)", [String(CHUNKER_VERSION)]);
+  // Freshness marker for bash callers (the watcher's brain-freshen slot):
+  // mtime is the signal, so a stat answers "how stale" without opening sqlite.
+  try { writeFileSync(HOME + "/state/.brain-last-sync", iso() + "\n"); } catch {}
 
   const stats = {
     files: files.length, changed, deduped, deleted, refused_reconcile: refusedReconcile,
