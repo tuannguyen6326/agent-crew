@@ -57,7 +57,7 @@ Each script's header comment is its authoritative spec; this table is the map.
 | `ac-promote.sh <id> [--mode <m>]` | Promote a scout to a ship task in place. Spec: `bin/ac-promote.sh` header. |
 | `ac-lock.sh acquire\|status\|release` | Per-home chief session lock: one fleet-driving session at a time. Spec: `bin/ac-lock.sh` header. |
 | `ac-sync.sh [<project>]` | Clone-freshness sweep. Spec: `bin/ac-sync.sh` header. |
-| `ac-guard.sh` | Warn-only fleet advisory (WATCHER-DOWN / QUEUED-WAKES / TANGLE / WIP-TOOLING), always exit 0. Spec: `bin/ac-guard.sh` header. |
+| `ac-guard.sh` | Warn-only fleet advisory (WATCHER-DOWN / QUEUED-WAKES / TANGLE / WIP-TOOLING / DISTRO-LAG), always exit 0. Spec: `bin/ac-guard.sh` header. |
 | `ac-harness.sh` | Sourced per-harness registry (known set, busy regex, instruction file, pane arm, startup key, recorded-opts policy); a 4th harness edits this file plus the two launch tables. Spec: `bin/ac-harness.sh` header. |
 | `ac-watch-autoarm.sh` | Claude Stop hook: the fleet re-arms its OWN watcher instead of the chief remembering to. Spec: `bin/ac-watch-autoarm.sh` header. |
 | `ac-watch-policy-hook.sh` | PreToolUse hook denying the broad process-kill patterns that would take down watchers cross-session; fails open. Spec: `bin/ac-watch-policy-hook.sh` header. |
