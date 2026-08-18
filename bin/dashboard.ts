@@ -7219,7 +7219,7 @@ if (import.meta.main) {
         const p = url.searchParams.get("path");
         const q = url.searchParams.get("q") ?? "";
         if (!p) return json({ error: "path required" }, 400);
-        const argv = [process.execPath, BIN + "/ac-brain-engine.ts", "recall", "--home", p, "--limit", "10", "--compact"];
+        const argv = [process.execPath, BIN + "/ac-brain-engine.ts", "recall", "--home", p, "--limit", "10", "--by", "dashboard", "--compact"];
         if (q) argv.push("--query", q);
         const proc = Bun.spawnSync(argv, { timeout: 30000 });
         const text = new TextDecoder().decode(proc.stdout).trim();
@@ -7229,7 +7229,7 @@ if (import.meta.main) {
         const p = url.searchParams.get("path");
         const q = url.searchParams.get("q") ?? "";
         if (!p || !q) return json({ error: "path and q required" }, 400);
-        const proc = Bun.spawnSync([process.execPath, BIN + "/ac-brain-engine.ts", "synthesize", q, "--home", p, "--compact"], { timeout: 180000 });
+        const proc = Bun.spawnSync([process.execPath, BIN + "/ac-brain-engine.ts", "synthesize", q, "--home", p, "--by", "dashboard", "--compact"], { timeout: 180000 });
         const text = new TextDecoder().decode(proc.stdout).trim();
         try { return json(JSON.parse(text)); } catch { return json({ error: "engine", detail: text.slice(0, 300) }, 500); }
       }

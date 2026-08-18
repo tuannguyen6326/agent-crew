@@ -52,6 +52,11 @@
 //   READ-ONLY; there is no cross-brain write path.
 // - Usage log: every verb appends one line to state/brain-usage.jsonl
 //   (home-local, never uploaded) so later demand-signal work has evidence.
+//   Each line carries `by` (who asked): --by wins, else AC_SCOPE names a
+//   scoped chief as <fam>-chief, else the unscoped default "crewchief".
+// - Scale ceiling: vector retrieval is an in-process linear cosine scan,
+//   supported to 50k embedded chunks (doctor's vector_scan_scale check fails
+//   past it). An ANN index is deliberately out until measurements demand it.
 //
 // CLI: ac-brain.sh is the wrapper; every command prints ONE JSON value.
 //   sync [--rebuild] [--dry-run] [--no-embed] [--force-reconcile] [--break-lease]
@@ -63,7 +68,12 @@
 //   delta --agent a --session s [--since iso]
 //   synthesize <question>         doctor              stats
 //   serve                         (MCP stdio, the seven verbs)
-// Errors: {"error":<code>,"message":...,"suggestion":...} on stdout, exit 1.
+// Errors: {"protocol_version":1,"error":<code>,"message":...,"suggestion":...}
+//   on stdout, exit 1.
+// PROTOCOL: protocol_version refers to THIS file's shapes - ac-brain's own
+//   dialect. The seven verb NAMES are shared memory-verbs vocabulary, but the
+//   response shapes are deliberately not wire-conformant to any external
+//   MEMORY_VERBS spec; do not point an external protocol client at serve.
 import { Database } from "bun:sqlite";
 import { readdirSync, statSync, readFileSync, existsSync, appendFileSync, mkdirSync, writeFileSync } from "fs";
 import { join, relative, dirname, basename } from "path";
@@ -99,12 +109,15 @@ const CONFIG = join(HOME, "config", "brain.json");
 const iso = (ms?: number) => new Date(ms ?? Date.now()).toISOString();
 
 function die(code: string, message: string, suggestion: string): never {
-  console.log(JSON.stringify({ error: code, message, suggestion }));
+  console.log(JSON.stringify({ protocol_version: 1, error: code, message, suggestion }));
   process.exit(1);
 }
 function out(v: unknown) { console.log(JSON.stringify(v, null, flag("compact") ? 0 : 1)); }
+// Who asked: --by wins (surfaces like the dashboard name themselves), else a
+// scoped chief inherits its family from AC_SCOPE, else the unscoped crewchief.
+const USAGE_BY = opt("by") ?? (process.env.AC_SCOPE ? `${process.env.AC_SCOPE}-chief` : "crewchief");
 function usageLog(rec: Record<string, unknown>) {
-  try { appendFileSync(USAGE_LOG, JSON.stringify({ at: iso(), ...rec }) + "\n"); } catch {}
+  try { appendFileSync(USAGE_LOG, JSON.stringify({ at: iso(), by: USAGE_BY, ...rec }) + "\n"); } catch {}
 }
 function loadCfg(): any {
   try { return JSON.parse(readFileSync(CONFIG, "utf8")); } catch { return {}; }
@@ -272,9 +285,12 @@ function providerBase(name: string, override?: string): string {
 function embedKey(c: EmbedCfg): string | undefined {
   return providerKey(c.provider, c.key_env);
 }
+// Unicode-aware token hashing so non-ASCII content gets real signal in the
+// keyless lane (changing this reshapes stub vectors; the stub provider is
+// test/dev-only and any mismatch is cured by sync --rebuild).
 function stubVec(text: string, dims: number): Float32Array {
   const v = new Float32Array(dims);
-  for (const m of text.toLowerCase().matchAll(/[a-z0-9]+/g)) {
+  for (const m of text.normalize("NFKC").toLowerCase().matchAll(/[\p{L}\p{N}]+/gu)) {
     let h = 0;
     for (const c of m[0]) h = (h * 31 + c.charCodeAt(0)) >>> 0;
     v[h % dims] += 1;
@@ -354,6 +370,7 @@ function ttlSweep(db: Database) {
 }
 
 // ---------- sync ----------
+let CUR_LEASE = ""; // this process's exact serialized lease row (CAS cleanup key)
 function leaseGet(db: Database): any | null {
   const v = (db.query("SELECT v FROM meta WHERE k='sync_lease'").get() as any)?.v;
   try { return v ? JSON.parse(v) : null; } catch { return null; }
@@ -373,12 +390,33 @@ function cmdSync() {
     } else out({ broke: false, reason: "holder alive or foreign host", holder: l });
     return;
   }
-  const l = leaseGet(db);
-  if (l && l.host === hostname() && pidAlive(l.pid) && l.pid !== process.pid) {
-    out({ status: "already-running", holder: l }); return;
-  }
-  db.run("INSERT OR REPLACE INTO meta(k,v) VALUES('sync_lease', ?)", [JSON.stringify({ host: hostname(), pid: process.pid, at: iso() })]);
-  try { syncInner(db, t0); } finally { db.run("DELETE FROM meta WHERE k='sync_lease'"); }
+  // Atomic claim: read-check-write is ONE IMMEDIATE transaction, so two syncs
+  // racing the claim serialize at BEGIN and the loser sees the winner's lease
+  // (the bare check-then-INSERT let both pass the check and run concurrently,
+  // interleaving each slug's FTS delete+insert).
+  // Ownership: same-host holders are judged by pid (a dead pid is reclaimed);
+  // a FOREIGN host's pid is unverifiable, so its lease holds while fresh
+  // (sync runs in seconds - an hour-old foreign lease is a dead host) and is
+  // NEVER overwritten before that. Cleanup deletes only OUR OWN lease value,
+  // so a process that lost its lease can't sweep the next holder's.
+  db.run("BEGIN IMMEDIATE");
+  let leaseVal = "";
+  try {
+    const l = leaseGet(db);
+    const fresh = !!l && Date.now() - Date.parse(l.at || 0) < 60 * 60e3;
+    const held = !!l && (l.host === hostname()
+      ? pidAlive(l.pid) && l.pid !== process.pid
+      : fresh);
+    if (held) {
+      db.run("ROLLBACK");
+      out({ status: "already-running", holder: l }); return;
+    }
+    leaseVal = JSON.stringify({ host: hostname(), pid: process.pid, at: iso(), token: crypto.randomUUID() });
+    db.run("INSERT OR REPLACE INTO meta(k,v) VALUES('sync_lease', ?)", [leaseVal]);
+    db.run("COMMIT");
+  } catch (e) { try { db.run("ROLLBACK"); } catch {} throw e; }
+  CUR_LEASE = leaseVal;
+  try { syncInner(db, t0); } finally { db.run("DELETE FROM meta WHERE k='sync_lease' AND v=?", [leaseVal]); }
 }
 function syncInner(db: Database, t0: number) {
   const dry = flag("dry-run");
@@ -505,7 +543,10 @@ function syncInner(db: Database, t0: number) {
     else if (slugSet.has("data/" + t + "/room")) target = "data/" + t + "/room"; // bare family name
     else {
       const cands = base.get(t.split("/").pop()!) || base.get(t.toLowerCase().replace(/\s+/g, "-")) || [];
-      if (cands.length >= 1) target = cands.slice().sort()[0];
+      // ONE candidate resolves; several is a guess we refuse to make - a
+      // silently-wrong edge poisons backlink boosts and links-to worse than
+      // a missing one. The link stays unresolved; doctor lists the census.
+      if (cands.length === 1) target = cands[0];
     }
     // two raw refs may resolve to one (from,to,type) - REPLACE keeps a single edge
     if (target) db.run("UPDATE OR REPLACE links SET to_slug=?, resolved=1 WHERE rowid=?", [target, lrow.rowid]);
@@ -533,7 +574,7 @@ function syncInner(db: Database, t0: number) {
   if (ec && !flag("no-embed")) {
     const metaDims = (db.query("SELECT v FROM meta WHERE k='embed_dims'").get() as any)?.v;
     if (metaDims && Number(metaDims) !== ec.dims) {
-      db.run("DELETE FROM meta WHERE k='sync_lease'"); // die() skips the finally
+      db.run("DELETE FROM meta WHERE k='sync_lease' AND v=?", [CUR_LEASE]); // die() skips the finally; CAS on our own value
       die("invalid_params", `index embedded at ${metaDims} dims but config says ${ec.dims}`, "run: ac-brain sync --rebuild (re-embeds at the new width)");
     }
     const pending = db.query("SELECT id, slug, text FROM chunks WHERE embedding IS NULL LIMIT 4096").all() as any[];
@@ -564,15 +605,20 @@ function syncInner(db: Database, t0: number) {
 }
 
 // ---------- retrieval ----------
+// Term extraction is Unicode-aware (\p{L}\p{N}, NFKC-normalized): accented
+// words survive as whole terms - the accented form is the primary signal, and
+// fts5's unicode61 tokenizer folds diacritics identically on the index and
+// query sides, so the accent-less variant matches without a folded fallback.
 function ftsQuery(q: string) {
-  const terms = [...q.toLowerCase().matchAll(/[a-z0-9][a-z0-9._-]+/g)].map(m => m[0].replace(/[._-]+$/, ""))
+  const terms = [...q.normalize("NFKC").toLowerCase().matchAll(/[\p{L}\p{N}][\p{L}\p{N}._-]+/gu)]
+    .map(m => m[0].replace(/[._-]+$/, ""))
     .filter(t => t.length > 1 && !STOP.has(t));
   const quoted = terms.map(t => `"${t}"`);
   return { and: quoted.join(" "), or: quoted.join(" OR "), terms };
 }
 type Hit = { slug: string; title?: string; family?: string; type?: string; path?: string; score: number; evidence: string; snippet?: string; trust?: string; origin?: string };
 
-async function searchArm(db: Database, q: string, limit: number, boosts: boolean): Promise<{ hits: Hit[]; degraded?: string }> {
+async function searchArm(db: Database, q: string, limit: number, boosts: boolean, useVector = true): Promise<{ hits: Hit[]; degraded?: string }> {
   const { and, or, terms } = ftsQuery(q);
   if (!terms.length) return { hits: [] };
   if (terms.length >= 5) boosts = false; // intent: content-lookup - graded BM25 must not be reordered
@@ -592,7 +638,9 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
   let degraded: string | undefined;
   const ec = embedCfg();
   const vecScores = new Map<string, number>();
-  if (ec) {
+  // useVector=false is an internal keyword-only request (doctor's probe must
+  // never spend an embedding API call); it is not a degradation to stamp.
+  if (ec && useVector) {
     if (!embedKey(ec)) degraded = "keyword_only_no_api_key";
     else {
       const qv = (await embedBatch([q], ec))?.[0];
@@ -606,7 +654,7 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
         }
       }
     }
-  } else degraded = "keyword_only_no_provider";
+  } else if (!ec) degraded = "keyword_only_no_provider";
   // normalized fusion: boosts may only reorder near-ties, never graded relevance
   const norm = (rows: any[]) => {
     if (!rows.length) return new Map();
@@ -900,7 +948,8 @@ function entityCard(db: Database, name: string) {
   const n = name.toLowerCase();
   const byAlias = db.query("SELECT p.* FROM aliases a JOIN pages p ON p.slug=a.slug WHERE a.alias=?").all(n) as any[];
   const byTitle = db.query("SELECT * FROM pages WHERE lower(title)=?").all(n) as any[];
-  const bySlug = db.query("SELECT * FROM pages WHERE slug=? OR slug LIKE ?").all(n, "%/" + n) as any[];
+  // a bare family name resolves to its room page, the family's own entity
+  const bySlug = db.query("SELECT * FROM pages WHERE slug=? OR slug=? OR slug LIKE ?").all(n, "data/" + n + "/room", "%/" + n) as any[];
   const best = byAlias[0] || byTitle[0] || bySlug[0];
   if (!best) return null;
   const edges = db.query("SELECT to_slug, type FROM links WHERE from_slug=? AND resolved=1 LIMIT 10").all(best.slug);
@@ -930,19 +979,57 @@ function cmdContextPack() {
   const db = openDb();
   const budget = opt("budget-tokens") ? Number(opt("budget-tokens")) : undefined;
   let cards = ents.map(e => entityCard(db, e)).filter(Boolean) as any[];
-  let facts = db.query("SELECT id, entity, fact, kind, agent, created_at FROM facts WHERE expired_at IS NULL ORDER BY created_at DESC LIMIT 30").all() as any[];
+  // Facts are ENTITY-SCOPED in three tiers - never the latest-N home-wide
+  // (that dragged unrelated notes into every pack). Tier 1: facts on the
+  // requested entities; tier 2: facts on pages one resolved link hop away;
+  // tier 3: entity-less commitments, the one labeled global tail (capped).
+  // A bare name and its room slug are the SAME entity, canonicalized once.
+  const canon = (s: string) => s && !s.includes("/") ? `data/${s}/room` : s;
+  const scope = new Set<string>();
+  for (const s of [...ents, ...cards.map(c => c.slug)]) scope.add(canon(s));
+  const hop = new Set<string>();
+  for (const c of cards)
+    for (const r of db.query(
+      "SELECT to_slug t FROM links WHERE from_slug=? AND resolved=1 UNION SELECT from_slug t FROM links WHERE to_slug=? AND resolved=1"
+    ).all(c.slug, c.slug) as any[]) {
+      const t = canon(String(r.t));
+      if (!scope.has(t)) hop.add(t);
+    }
+  const tierOf = (f: any): number =>
+    scope.has(canon(f.entity || "")) ? 1 : hop.has(canon(f.entity || "")) ? 2 : (f.kind === "commitment" && !f.entity) ? 3 : 0;
+  const recent = db.query("SELECT id, entity, fact, kind, provenance, agent, created_at FROM facts WHERE expired_at IS NULL ORDER BY created_at DESC LIMIT 200").all() as any[];
+  let globals = 0;
+  let facts = recent.map(f => ({ ...f, tier: tierOf(f) }))
+    .filter(f => f.tier === 3 ? ++globals <= 5 : f.tier > 0)
+    .sort((a, b) => a.tier - b.tier || (a.created_at < b.created_at ? 1 : -1))
+    .slice(0, 30);
+  // Cards carry structure only (title/edges/meta): their facts live ONCE, in
+  // the packed tiered list, which is the single source for JSON and text.
+  cards = cards.map(({ facts: _f, open_threads: _o, ...c }: any) => c);
   let budget_used: number | undefined, dropped = 0;
-  const cardCost = (c: any) => estTokens(c.title) + estTokens(JSON.stringify(c.edges)) + c.facts.reduce((s: number, f: any) => s + estTokens(f.fact), 0);
+  const cardCost = (c: any) => estTokens(c.title) + estTokens(JSON.stringify(c.edges));
   if (budget) {
     const pc = packToBudget(cards, cardCost, budget);
     cards = pc.kept;
+    // facts arrive tier-sorted, so the packer sheds the global tail first
     const pf = packToBudget(facts, f => estTokens(f.fact) + 8, Math.max(0, budget - pc.used));
     facts = pf.kept;
     budget_used = pc.used + pf.used;
     dropped = pc.dropped + pf.dropped;
   }
-  const text = cards.map(c =>
-    `## ${c.title} (${c.slug})\n${c.facts.map((f: any) => `- [${f.kind}] ${f.fact} (${f.provenance})`).join("\n")}`).join("\n\n");
+  // Text renders FROM the packed facts list: tier-1 under its entity's card
+  // heading (leftovers under ## Facts), tiers 2 and 3 in labeled sections.
+  const factLine = (f: any) => `- [${f.kind}] ${f.fact} (${f.provenance})`;
+  const t1of = (slug: string) => facts.filter(f => f.tier === 1 && canon(f.entity || "") === canon(slug));
+  const renderedT1 = new Set(cards.flatMap(c => t1of(c.slug).map((f: any) => f.id)));
+  const t1Rest = facts.filter(f => f.tier === 1 && !renderedT1.has(f.id));
+  const t2 = facts.filter(f => f.tier === 2), t3 = facts.filter(f => f.tier === 3);
+  const text = [
+    ...cards.map(c => `## ${c.title} (${c.slug})` + (t1of(c.slug).length ? `\n${t1of(c.slug).map(factLine).join("\n")}` : "")),
+    t1Rest.length ? `## Facts\n${t1Rest.map(factLine).join("\n")}` : "",
+    t2.length ? `## Linked (1 hop)\n${t2.map(factLine).join("\n")}` : "",
+    t3.length ? `## Global commitments\n${t3.map(factLine).join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
   usageLog({ verb: "context_pack", entities: ents.length });
   out({ protocol_version: 1, entities: ents, cards, facts, text,
     ...(budget ? { budget_tokens: budget, budget_used, dropped_count: dropped } : {}) });
@@ -1018,7 +1105,7 @@ function cmdStats() {
     db_bytes: existsSync(DB_PATH) ? statSync(DB_PATH).size : 0,
   });
 }
-function cmdDoctor() {
+async function cmdDoctor() {
   const checks: Array<{ name: string; status: string; message?: string }> = [];
   const push = (name: string, ok: boolean, message?: string) => checks.push({ name, status: ok ? "ok" : "fail", message });
   let db: Database | null = null;
@@ -1040,6 +1127,44 @@ function cmdDoctor() {
     const ledgerActive = readLedger().reduce((s, l) => s + (l.op === "f" ? 1 : 0), 0);
     const dbTotal = (db.query("SELECT COUNT(*) c FROM facts").get() as any).c;
     push("facts_ledger_indexed", ledgerActive === dbTotal, `ledger ${ledgerActive} vs db ${dbTotal} (fix: sync --rebuild)`);
+    // Ambiguous-link census (informational, never a failure): unresolved links
+    // whose basename names several pages - sync refuses to guess among them.
+    const baseCount = new Map<string, number>();
+    for (const r of db.query("SELECT slug FROM pages").all() as any[]) {
+      const b = String(r.slug).split("/").pop()!;
+      baseCount.set(b, (baseCount.get(b) || 0) + 1);
+    }
+    const amb: string[] = [];
+    for (const r of db.query("SELECT DISTINCT to_slug FROM links WHERE resolved=0 AND type != 'cites_code'").all() as any[]) {
+      const t = String(r.to_slug).replace(/\.md$/, "");
+      const n = baseCount.get(t.split("/").pop()!) || 0;
+      if (n > 1) amb.push(`'${t}' -> ${n} candidates`);
+    }
+    push("ambiguous_links", true, amb.length ? `${amb.length} ambiguous: ${amb.slice(0, 3).join("; ")} (link the full path to disambiguate)` : "none");
+    // Self-retrieval probe (warn-only, keyless-safe): a page queried by its
+    // own opening words must rank in its top 5 - integrity_check proves the
+    // file is intact, only this proves retrieval still WORKS on it.
+    const sample = db.query(
+      "SELECT slug, text FROM chunks WHERE ord=0 AND LENGTH(text) > 60 ORDER BY LENGTH(text) DESC LIMIT 8").all() as any[];
+    if (sample.length) {
+      let found = 0; const misses: string[] = [];
+      for (const s of sample) {
+        const q = String(s.text).replace(/^#[^\n]*\n/, "").split(/\s+/).slice(0, 10).join(" ");
+        const { hits } = await searchArm(db, q, 5, true, false); // keyword-only: a health probe never spends an embedding call
+        if (hits.some(h => h.slug === s.slug)) found++;
+        else misses.push(s.slug);
+      }
+      // warn (not fail) on a miss: quirky corpora must not unhealth a home,
+      // but a page missing its own top-5 is a signal, not an ok.
+      checks.push({ name: "self_retrieval", status: misses.length ? "warn" : "ok",
+        message: `${found}/${sample.length} sampled pages find themselves${misses.length ? ` (missed: ${misses.slice(0, 3).join(", ")})` : ""}` });
+    }
+    // Published scale ceiling: vector retrieval is an in-process linear cosine
+    // scan, supported to 50k embedded chunks. Exceeding it FAILS the check -
+    // a stated limit, not a hidden latency cliff; ANN stays out until real
+    // corpora demand it.
+    const embN = (db.query("SELECT COUNT(*) c FROM chunks WHERE embedding IS NOT NULL").get() as any).c;
+    push("vector_scan_scale", embN <= 50000, `${embN} embedded chunks (linear-scan budget 50000)`);
   }
   const failed = checks.filter(c => c.status === "fail");
   out({ status: failed.length ? "unhealthy" : "healthy", checks });

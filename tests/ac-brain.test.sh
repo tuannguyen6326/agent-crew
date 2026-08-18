@@ -220,5 +220,136 @@ assert_eq "$ledger_smoke" "6" "the ledger serialized all six appends"
 
 # --- doctor -------------------------------------------------------------------
 docout="$("$BRAIN" doctor --home "$AC_HOME" --compact)" || fail "doctor exits 0 on a healthy brain: $docout"
+# self-retrieval probe (warn-only): sampled pages must find themselves via
+# their own opening words - integrity_check cannot see broken retrieval.
+assert_contains "$docout" '"name":"self_retrieval","status":"ok"' "doctor runs the self-retrieval probe: all-found is ok"
+assert_contains "$docout" "find themselves" "and reports the found ratio"
+# published scale ceiling: the cosine scan is linear - doctor states the
+# embedded-chunk census against the supported budget instead of hiding a cliff
+assert_contains "$docout" "vector_scan_scale" "doctor reports the linear-scan census"
+assert_contains "$docout" "50000" "and names the supported ceiling"
+
+# --- Unicode retrieval: Vietnamese survives the query tokenizer ---------------
+# The index side always tokenized correctly (fts5 unicode61); the query-side
+# term extractor was ASCII-only and shredded accented words before FTS ever
+# saw them. Accented is the primary signal; the accent-less variant matches
+# because unicode61 folds diacritics on BOTH sides at match time.
+mkdir -p "$AC_HOME/data/fam-viet"
+cat >"$AC_HOME/data/fam-viet/room.md" <<'EOF'
+# Room: fam-viet
+Điều phối bến cảng: phối hợp nghiệm thu giữa hai bến trước khi tàu rời cảng.
+EOF
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+# Every content word is accented: the old ASCII extractor shredded this query
+# to fragments ("ph", "ng") that match no FTS token, so BOTH arms went empty.
+vn1="$("$BRAIN" recall --query "phối hợp nghiệm bến cảng" --home "$AC_HOME" --compact)"
+assert_contains "$vn1" "fam-viet" "accented Vietnamese query reaches the page"
+vn2="$("$BRAIN" recall --query "phoi hop nghiem ben cang" --home "$AC_HOME" --compact)"
+assert_contains "$vn2" "fam-viet" "accent-less variant reaches the same page"
+
+# --- sync lease: atomic claim -------------------------------------------------
+# A live same-host holder refuses a second sync; a dead holder is reclaimed;
+# and two syncs racing the claim serialize (the old read-check-write let both
+# pass the check and interleave FTS delete+insert).
+lease_set() { sqlite3 "$AC_HOME/state/brain.sqlite" \
+  "INSERT OR REPLACE INTO meta(k,v) VALUES('sync_lease','{\"host\":\"$(hostname)\",\"pid\":$1,\"at\":\"2026-08-18T00:00:00Z\"}')"; }
+lease_set $$
+out="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+assert_contains "$out" "already-running" "a live holder refuses a second sync"
+sleep 0.01 & dead_pid=$!; wait "$dead_pid" 2>/dev/null
+lease_set "$dead_pid"
+out="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+assert_contains "$out" '"pages"' "a dead holder is reclaimed and sync proceeds"
+# foreign-host lease: NEVER overwritten while fresh (pids are unverifiable
+# across hosts); an hour-old foreign lease is a dead host and is reclaimed.
+lease_set_host() { sqlite3 "$AC_HOME/state/brain.sqlite" \
+  "INSERT OR REPLACE INTO meta(k,v) VALUES('sync_lease','{\"host\":\"$1\",\"pid\":1,\"at\":\"$2\",\"token\":\"zz\"}')"; }
+lease_set_host other-host "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+out="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+assert_contains "$out" "already-running" "a fresh foreign-host lease refuses the claim"
+assert_contains "$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT v FROM meta WHERE k='sync_lease'")" \
+  "other-host" "and the foreign lease was NOT overwritten"
+lease_set_host other-host "2026-08-17T00:00:00Z"
+out="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+assert_contains "$out" '"pages"' "a stale foreign-host lease is reclaimed"
+printf '# Room: fam-viet\nMột dòng mới để sync có việc thật sự phải làm.\n' >"$AC_HOME/data/fam-viet/room.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >"$TMP/race1.json" &
+"$BRAIN" sync --home "$AC_HOME" --compact >"$TMP/race2.json" &
+wait
+assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" 'PRAGMA integrity_check')" "ok" "integrity after racing syncs"
+fts_n="$(sqlite3 "$AC_HOME/state/brain.sqlite" 'SELECT COUNT(*) FROM chunks_fts')"
+ch_n="$(sqlite3 "$AC_HOME/state/brain.sqlite" 'SELECT COUNT(*) FROM chunks')"
+assert_eq "$fts_n" "$ch_n" "FTS stays 1:1 with chunks after racing syncs"
+
+# --- protocol honesty: errors carry the dialect version too -------------------
+# Every success shape stamps protocol_version: 1 (ac-brain's OWN dialect - the
+# verb names are shared vocabulary, the shapes are not wire-conformant to any
+# external protocol); an error is a response like any other and stamps it too.
+perr="$("$BRAIN" remember "an unprovenance fact" --home "$AC_HOME" --compact || true)"
+assert_contains "$perr" '"protocol_version":1' "error responses carry the dialect version"
+assert_contains "$perr" '"error"' "and are still errors"
+
+# --- ambiguous basename links: refuse to guess --------------------------------
+# Two pages named report.md exist (fam-two/spec/report.md is in the fixture);
+# a bare [[report]] link must stay UNRESOLVED - a silently-wrong edge poisons
+# backlink boosts and links-to worse than a missing one - and doctor lists it.
+mkdir -p "$AC_HOME/data/fam-one"
+printf '# R1\nThe fam-one weekly report body differs from every sibling page.\n' >"$AC_HOME/data/fam-one/report.md"
+printf '# R2\nThe fam-viet weekly report body is its own distinct thing too.\n' >"$AC_HOME/data/fam-viet/report.md"
+printf '# Amb\nSee [[report]] for the weekly numbers rollup.\n' >"$AC_HOME/data/fam-viet/amb.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+amb_n="$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT COUNT(*) FROM links WHERE from_slug='data/fam-viet/amb' AND to_slug='report' AND resolved=0")"
+assert_eq "$amb_n" "1" "an ambiguous basename link stays unresolved"
+docamb="$("$BRAIN" doctor --home "$AC_HOME" --compact)" || fail "doctor stays healthy with ambiguous links: $docamb"
+assert_contains "$docamb" "ambiguous_links" "doctor carries the ambiguous-links census"
+assert_contains "$docamb" "report" "and names the ambiguous target"
+
+# --- context_pack: entity-scoped facts, not the latest-30 home-wide -----------
+# Tier 1: facts on the requested entity. Tier 2: facts one resolved link hop
+# away. Tier 3: entity-less commitments (the one labeled global tail).
+# Anything else stays OUT - that was the pollution.
+"$BRAIN" remember "the fam-viet berth checklist is frozen" --provenance t --agent tester --entity data/fam-viet/room --home "$AC_HOME" --compact >/dev/null
+"$BRAIN" remember "the dom-a zebra cadence is quarterly" --provenance t --agent tester --entity crewdomains/dom-a/CREWMATE --home "$AC_HOME" --compact >/dev/null
+"$BRAIN" remember "always run the push gate before any release" --provenance t --agent tester --kind commitment --home "$AC_HOME" --compact >/dev/null
+cp2="$("$BRAIN" context_pack --entities data/fam-viet/room --home "$AC_HOME" --compact)"
+assert_contains "$cp2" "berth checklist" "the requested entity's facts ride the pack"
+case "$cp2" in *zebra*) fail "an unrelated entity's fact leaked into the pack" ;; esac
+assert_contains "$cp2" "push gate" "entity-less commitments are the labeled global tail"
+assert_contains "$cp2" '"tier"' "facts carry their tier"
+assert_contains "$cp2" '"provenance"' "packed facts keep provenance"
+assert_contains "$cp2" 'checklist is frozen (t)' "the text render carries provenance too"
+case "$cp2" in *'"open_threads"'*) fail "cards must not duplicate their facts inside the pack" ;; esac
+# one-hop: fam-one mentions fam-two in its room, so fam-two facts are tier 2
+mkdir -p "$AC_HOME/data/fam-one" "$AC_HOME/data/fam-two"
+printf '# Room: fam-one\nThe locking work continues; see data/fam-two/room.md for the sibling.\n' >"$AC_HOME/data/fam-one/room.md"
+printf '# Room: fam-two\nThe quorum reconciliation investigation record lives here now.\n' >"$AC_HOME/data/fam-two/room.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+"$BRAIN" remember "the fam-two quorum window is thirty seconds" --provenance t --agent tester --entity data/fam-two/room --home "$AC_HOME" --compact >/dev/null
+cp3="$("$BRAIN" context_pack --entities fam-one --home "$AC_HOME" --compact)"
+assert_contains "$cp3" "quorum window" "a one-hop neighbor's facts ride as tier 2"
+
+# --- usage-log attribution: the by field --------------------------------------
+# Every usage line carries who asked: --by wins, else AC_SCOPE names a scoped
+# chief (<fam>-chief), else the unscoped default crewchief. The log is the only
+# place usage forensics can read attribution from, so the field is a contract.
+env -u AC_SCOPE "$BRAIN" recall --query "widget" --home "$AC_HOME" --compact >/dev/null
+assert_contains "$(tail -1 "$AC_HOME/state/brain-usage.jsonl")" '"by":"crewchief"' "unscoped usage attributes to crewchief"
+AC_SCOPE=fam-one "$BRAIN" recall --query "widget" --home "$AC_HOME" --compact >/dev/null
+assert_contains "$(tail -1 "$AC_HOME/state/brain-usage.jsonl")" '"by":"fam-one-chief"' "AC_SCOPE attributes to the scoped chief"
+"$BRAIN" recall --query "widget" --by dashboard --home "$AC_HOME" --compact >/dev/null
+assert_contains "$(tail -1 "$AC_HOME/state/brain-usage.jsonl")" '"by":"dashboard"' "--by overrides the derived attribution"
+
+# --- self-retrieval probe: a page that cannot find itself turns the check warn
+# (never fail - quirky corpora must not unhealth a home). This page's opening
+# words are all stopwords, so its self-query extracts zero terms and misses.
+python3 - "$AC_HOME" <<'EOF'
+import sys
+words = "and are as at be by for from has have in is it its of on or that the this to was were will with you your not yes we our".split()
+open(sys.argv[1] + "/data/fam-viet/stopword-page.md", "w").write("# S\n" + " ".join(words * 12) + "\n")
+EOF
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+docwarn="$("$BRAIN" doctor --home "$AC_HOME" --compact)" || fail "a self-retrieval miss must not unhealth the home: $docwarn"
+assert_contains "$docwarn" '"name":"self_retrieval","status":"warn"' "a missed page turns the probe warn"
+assert_contains "$docwarn" "missed:" "and the miss is named"
 
 pass

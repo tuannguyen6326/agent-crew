@@ -30,4 +30,4 @@ POSTURE: this is an AVAILABLE TOOL - the section-5 intake law (tier-ranked `ac-k
 ## Health
 
 `ac-brain.sh doctor` (exit 1 only on fail) and `ac-brain.sh stats`; `sync --break-lease` clears a dead holder only.
-The usage log (`state/brain-usage.jsonl`) is home-local evidence for later demand-signal work - never uploaded, never trimmed by hand.
+The usage log (`state/brain-usage.jsonl`) is home-local evidence for later demand-signal work - never uploaded, never trimmed by hand. Every line carries `by` (who asked): an explicit `--by` wins, else `AC_SCOPE` attributes to `<fam>-chief`, else the unscoped default `crewchief`.

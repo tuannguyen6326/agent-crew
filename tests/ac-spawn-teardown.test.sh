@@ -1407,6 +1407,16 @@ for needle in 'DOMAINCHIEF' 'STANDING (domain:' 'crewdomains/'; do
   esac
 done
 
+# (10) memory - the brain clause rides the BASE roomchief kickoff (every
+# promote, not only the domain arm), because the kickoff is the only place a
+# roomchief learns the brain exists: the wake delta keyed to its own cursor
+# identity, the post-compaction repack, and recall for open questions.
+assert_contains "$nodom" "ac-brain.sh delta --agent dfam2-chief --session dfam2" \
+  "(10) the wake delta names the chief's own cursor identity"
+assert_contains "$nodom" "ac-brain.sh context_pack --entities data/dfam2/room" \
+  "(10) the post-compaction repack names the family room entity"
+assert_contains "$nodom" "ac-brain.sh recall" "(10) and the open-question recall verb"
+
 # AC-4.2 - an absent overlay is not an error, asserted as BEHAVIOUR not prose:
 # a domain whose detail file is empty and whose CREWMATE.md does not exist still
 # promotes. Nothing in the read path may require an overlay to exist.
