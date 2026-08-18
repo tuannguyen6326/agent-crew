@@ -2943,3 +2943,21 @@ test("fleetAttnItems: empty/garbage snapshot never throws", () => {
   expect(fleetAttnItems(null)).toEqual([]);
   expect(fleetAttnItems({ homes: [{}] })).toEqual([]);
 });
+
+// ---- two-mode commenting: range anchors through the normalizer ------------
+test("normalizeAnnotation: a range pin keeps quote/prefix/suffix, capped", () => {
+  const a = normalizeAnnotation(JSON.stringify({
+    text: "note",
+    anchor: { selector: "#x", fingerprint: "f", quote: "q".repeat(300), prefix: "p".repeat(100), suffix: "s" },
+  }))!;
+  expect(a.anchor!.quote!.length).toBe(200);
+  expect(a.anchor!.prefix!.length).toBe(64);
+  expect(a.anchor!.suffix).toBe("s");
+});
+
+test("normalizeAnnotation: element pins carry no range fields; junk quote dropped", () => {
+  const a = normalizeAnnotation(JSON.stringify({ text: "note", anchor: { selector: "#x", fingerprint: "f", quote: "   " } }))!;
+  expect(a.anchor!.quote).toBeUndefined();
+  const b = normalizeAnnotation(JSON.stringify({ text: "note", anchor: { selector: "#x", fingerprint: "f" } }))!;
+  expect(b.anchor!.quote).toBeUndefined();
+});

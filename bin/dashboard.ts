@@ -5423,6 +5423,15 @@ export function normalizeAnnotation(
     if (typeof a.selector !== "string" || typeof a.fingerprint !== "string") return null;
     anchor = { selector: a.selector, fingerprint: a.fingerprint.slice(0, 80) };
     if (typeof a.line === "number" && Number.isFinite(a.line) && a.line > 0) anchor.line = Math.floor(a.line);
+    // Range mode (two-mode commenting): a text-selection pin carries the
+    // selected QUOTE plus its immediate context; the element selector stays
+    // as the fallback anchor. All three are display/re-anchor data - capped,
+    // optional, and absent on element pins.
+    if (typeof a.quote === "string" && a.quote.trim()) {
+      anchor.quote = a.quote.slice(0, 200);
+      if (typeof a.prefix === "string") anchor.prefix = a.prefix.slice(0, 64);
+      if (typeof a.suffix === "string") anchor.suffix = a.suffix.slice(0, 64);
+    }
   }
   const scene = typeof o.scene === "string" && o.scene ? o.scene : undefined;
   const snapshot = typeof o.snapshot === "string" && o.snapshot ? o.snapshot : undefined;
@@ -6185,15 +6194,24 @@ ${UX_BASE}
   #csendmsg:hover{filter:brightness(1.08)}
   #wboverlay{position:fixed;inset:0;z-index:30;display:none;flex-direction:column;background:var(--canvas)}
   #wboverlay iframe{flex:1;border:0}
-  #composer{position:fixed;z-index:20;display:none;background:var(--surface);border:1px solid var(--border-strong);border-radius:8px;padding:10px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
-  #composer textarea{width:280px;height:72px;background:var(--canvas);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font:13px var(--ui)}
-  #composer .row{margin-top:8px;display:flex;gap:8px}
-  #composer button{font:inherit;border-radius:5px;padding:4px 12px;cursor:pointer;border:1px solid var(--border);background:var(--elev);color:var(--fg)}
-  #composer button.primary{background:var(--accent);color:var(--accent-ink);border:none;font-weight:600}
+  #composer{position:fixed;z-index:20;display:none;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 12px 10px;box-shadow:0 10px 28px rgba(0,0,0,.35);width:300px}
+  #composer .chead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  #composer .cava{width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font:700 11px/22px var(--ui);text-align:center}
+  #composer .cwho{font-weight:600;font-size:12.5px}
+  #composer textarea{width:100%;box-sizing:border-box;min-height:56px;background:transparent;color:var(--fg);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:2px 0 6px;font:13px/1.45 var(--ui);resize:vertical;outline:none}
+  #composer textarea:focus{border-bottom-color:var(--accent)}
+  #composer .row{margin-top:10px;display:flex;gap:8px;justify-content:flex-end}
+  #composer button{font:inherit;font-size:12.5px;border-radius:15px;padding:4px 14px;cursor:pointer;border:none;background:transparent;color:var(--fg2)}
+  #composer button:hover{background:var(--elev);color:var(--fg)}
+  #composer button.primary{background:var(--accent);color:var(--accent-ink);font-weight:600}
+  #composer button.primary:hover{filter:brightness(1.08);color:var(--accent-ink)}
+  #composer .ckey{font-size:10.5px;color:var(--fg2);margin-right:auto;align-self:center}
   .muted{color:var(--fg2);font-size:12px;padding:4px 12px}
 </style></head><body>
 <div id="bar">
+  ${guest ? "" : `<a id="backlink" target="_top" title="Back to this fleet's Reviews">&larr; Reviews</a>`}
   <span class="name" id="art-name"></span>
+  ${guest ? "" : `<a id="famlink" target="_top" class="mono" style="font-size:12px" title="Open this family on the Board"></a>`}
   <span id="dlinks"></span>
   <button id="annotate-toggle" class="on" title="Annotate ON: clicking any element pins a note. Turn OFF to use the page normally - links click, text selects.">&#9999;&#65039; Annotate: On</button>
   ${guest ? "" : `<span id="sharewrap"><button id="sharebtn" title="Mint a token link a VPN teammate can open (pin + comment only). Stop revokes it.">Share</button><span id="sharepop"><input id="sharepw" type="password" placeholder="Password (empty = open link)" autocomplete="new-password"><button id="sharego" class="primary">Share</button><button id="sharecancel">Cancel</button></span></span><span id="sharelnk"></span><span id="viewers"></span>`}
@@ -6215,7 +6233,7 @@ ${UX_BASE}
   </div>
 </div>
 <div id="wboverlay"><iframe id="wbo-frame"></iframe></div>
-<div id="composer"><textarea id="ctext" placeholder="Note for this element..."></textarea><div class="row"><button class="primary" id="csend">Pin note</button><button id="ccancel">Cancel</button></div></div>
+<div id="composer"><div class="chead"><span class="cava">${guest ? "G" : "C"}</span><span class="cwho">${guest ? "Guest" : "Captain"}</span></div><textarea id="ctext" placeholder="Add a comment\u2026"></textarea><div class="row"><span class="ckey">\u2318\u23ce to comment</span><button id="ccancel">Cancel</button><button class="primary" id="csend">Comment</button></div></div>
 <script>
 const GUEST = ${guest ? "true" : "false"};
 const q = new URLSearchParams(location.search);
@@ -6225,6 +6243,21 @@ const home = q.get("path") ?? "", file = q.get("file") ?? "";
 // appears in a guest URL or request.
 const TOKEN = GUEST ? (location.pathname.split("/").pop() ?? "") : "";
 document.getElementById("art-name").textContent = GUEST ? "shared review" : (file.split("/").pop() ?? file);
+// Context links (rich-review-nav): the page was a dead end - no way back to
+// the dashboard or the owning family. Fleet name = the home dir's basename;
+// family = the data/<family>/ segment of the artifact path.
+if (!GUEST) {
+  const fleetNm = (home.split("/").pop() || "");
+  const bl = document.getElementById("backlink");
+  if (bl && fleetNm) bl.href = "/fleets/" + encodeURIComponent(fleetNm) + "/reviews";
+  // Embedded in the tool overlay the back link is redundant chrome (the
+  // overlay's own Close returns to the page you were on) and clicking it
+  // yanks the top window away - full-tab only (captain 2026-08-18).
+  if (bl && window.self !== window.top) bl.style.display = "none";
+  const fm = /\\/data\\/([^/]+)\\//.exec(file);
+  const fl = document.getElementById("famlink");
+  if (fl && fm && fleetNm) { fl.textContent = fm[1]; fl.href = "/fleets/" + encodeURIComponent(fleetNm) + "/board/" + encodeURIComponent(fm[1]); }
+}
 // Guest identity: asked ONCE (stored locally), rides every request as &who -
 // presence shows it to the captain, and each pin/comment is stamped with it.
 // Skipping the prompt is fine: presence then shows the VPN IP alone and
@@ -6349,12 +6382,43 @@ const OVERLAY = \`<script data-acrv>
   addEventListener("click", (e) => {
     if (!annotateOn) return;
     if (e.target.closest && e.target.closest(".__wbui")) return;
+    // Two-mode commenting: a live text selection owns this gesture - the
+    // mouseup handler below already posted the range pin.
+    const sel0 = window.getSelection();
+    if (sel0 && !sel0.isCollapsed) { e.preventDefault(); e.stopPropagation(); return; }
     e.preventDefault(); e.stopPropagation();
     const t = e.target;
     const lineEl = t.closest ? t.closest("[data-srcline]") : null;
     parent.postMessage({ lavishNative: true, anchor: {
       selector: selectorOf(t),
       fingerprint: (t.textContent || "").trim().slice(0, 80),
+      line: lineEl ? Number(lineEl.getAttribute("data-srcline")) : null,
+    }, x: e.clientX, y: e.clientY }, "*");
+  }, true);
+  // Mode 2 (docs-style): select text -> comment on that RANGE. The anchor
+  // carries the quote + ~32 chars of context each side; the enclosing
+  // element's selector/fingerprint stay as the re-anchor fallback.
+  addEventListener("mouseup", (e) => {
+    if (!annotateOn) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return;
+    const quote = sel.toString().trim();
+    if (quote.length < 3) return;
+    // Anchor on the element the selection STARTS in - a triple-click's
+    // trailing newline drags commonAncestorContainer up to <body>, whose
+    // selector is empty and useless as a fallback.
+    let el = sel.getRangeAt(0).startContainer;
+    if (el.nodeType !== 1) el = el.parentElement;
+    if (!el || (el.closest && el.closest(".__wbui"))) return;
+    const full = el.textContent || "";
+    const idx = full.indexOf(quote);
+    const lineEl = el.closest ? el.closest("[data-srcline]") : null;
+    parent.postMessage({ lavishNative: true, anchor: {
+      selector: selectorOf(el),
+      fingerprint: quote.slice(0, 80),
+      quote: quote.slice(0, 200),
+      prefix: idx > 0 ? full.slice(Math.max(0, idx - 32), idx) : "",
+      suffix: idx >= 0 ? full.slice(idx + quote.length, idx + quote.length + 32) : "",
       line: lineEl ? Number(lineEl.getAttribute("data-srcline")) : null,
     }, x: e.clientX, y: e.clientY }, "*");
   }, true);
@@ -6366,6 +6430,9 @@ const OVERLAY = \`<script data-acrv>
   addEventListener("scroll", () => {
     parent.postMessage({ lavishNative: true, scrollY: window.scrollY }, "*");
   }, { passive: true });
+  { const hs = document.createElement("style");
+    hs.textContent = "::highlight(lavishq){background:#f5b54266;color:inherit}";
+    document.head.appendChild(hs); }
   // Inline whiteboard CARDS, one per rendered diagram (the card shape:
   // header "Whiteboard . diagram N" + note + Queue feedback + Fullscreen,
   // preview in place, Click to edit below). Editing itself happens in the
@@ -6582,7 +6649,26 @@ const OVERLAY = \`<script data-acrv>
     if (d.lavishHighlight) {
       let el = null;
       try { el = document.querySelector(d.lavishHighlight); } catch {}
-      if (el) {
+      let ranged = false;
+      if (d.lavishQuote && window.Highlight && CSS.highlights) {
+        // Find the quote's text range (within the element when it resolves,
+        // else the whole document) and light exactly those words.
+        const root = el || document.body;
+        const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = w.nextNode())) {
+          const i = (node.textContent || "").indexOf(d.lavishQuote);
+          if (i >= 0) {
+            const rng = document.createRange();
+            rng.setStart(node, i); rng.setEnd(node, i + d.lavishQuote.length);
+            CSS.highlights.set("lavishq", new Highlight(rng));
+            (node.parentElement || root).scrollIntoView({ block: "center", behavior: "smooth" });
+            setTimeout(() => CSS.highlights.delete("lavishq"), 2200);
+            ranged = true; break;
+          }
+        }
+      }
+      if (!ranged && el) {
         el.scrollIntoView({ block: "center", behavior: "smooth" });
         const old = el.style.outline;
         el.style.outline = "3px solid #d29922";
@@ -6594,7 +6680,14 @@ const OVERLAY = \`<script data-acrv>
       for (const a of d.lavishCheck) {
         let el = null;
         try { el = document.querySelector(a.selector); } catch {}
-        if (!el) res[a.n] = "missing";
+        if (a.quote) {
+          // Range pin: the quote decides. In-element = ok; anywhere else in
+          // the document = moved; nowhere = missing.
+          if (el && (el.textContent || "").indexOf(a.quote) >= 0) res[a.n] = "ok";
+          else if ((document.body.textContent || "").indexOf(a.quote) >= 0) res[a.n] = "moved";
+          else res[a.n] = "missing";
+        }
+        else if (!el) res[a.n] = "missing";
         else res[a.n] = ((el.textContent || "").trim().slice(0, 80) === a.fingerprint) ? "ok" : "moved";
       }
       parent.postMessage({ lavishNative: true, check: res }, "*");
@@ -6745,6 +6838,10 @@ addEventListener("message", (e) => {
   }
 });
 document.getElementById("ccancel").addEventListener("click", () => { composer.style.display = "none"; });
+document.getElementById("ctext").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); document.getElementById("csend").click(); }
+  if (e.key === "Escape") composer.style.display = "none";
+});
 document.getElementById("csend").addEventListener("click", async () => {
   const text = document.getElementById("ctext").value.trim();
   if (text) await api("/api/review/annotate", { method: "POST", body: JSON.stringify({ anchor: pendingAnchor, text }) });
@@ -6911,7 +7008,12 @@ async function refresh(force){
     const pending = !!a.by && !a.approved && !a.dismissed;
     const d = document.createElement("div");
     d.className = "note";
-    d.innerHTML = '<div class="head"><span class="nnum">#' + a.n + '</span><span class="nsel">' + (a.anchor.line ? ":" + a.anchor.line + " \u00b7 " : "") + esc(a.anchor.selector) + '</span>'
+    // The anchor's HUMAN face (captain 2026-08-18): the element's own text
+    // fingerprint (or the md line number) - never the CSS selector, which
+    // now rides only the tooltip.
+    const fp = String(a.anchor.fingerprint || "").trim();
+    const loc = a.anchor.line ? ("line " + a.anchor.line) : (fp ? "\u201c" + fp.slice(0, 64) + (fp.length > 64 ? "\u2026" : "") + "\u201d" : "");
+    d.innerHTML = '<div class="head"><span class="nnum">#' + a.n + '</span><span class="nsel" title="' + esc(a.anchor.selector) + '">' + esc(loc) + '</span>'
       + (a.by ? '<span class="nbadge">' + esc(a.by) + (a.approved ? " \\u2713" : "") + '</span>' : "")
       + (st !== "ok" ? '<span class="nbadge ' + st + '">' + st + "</span>" : "") + '</div>' + esc(a.text);
     if (!GUEST && pending) {
@@ -6924,12 +7026,12 @@ async function refresh(force){
       d.appendChild(row);
     }
     d.addEventListener("click", () => {
-      document.getElementById("frame").contentWindow.postMessage({ lavishHighlight: a.anchor.selector }, "*");
+      document.getElementById("frame").contentWindow.postMessage({ lavishHighlight: a.anchor.selector, lavishQuote: a.anchor.quote || null }, "*");
     });
     pv.appendChild(d);
   }
   const tv = document.getElementById("thread");
-  tv.innerHTML = "";
+  tv.innerHTML = chat.length ? "" : '<div class="muted" style="padding:8px 12px">no messages yet - write below; if nobody is polling, the owning chief is waked</div>';
   for (const m of chat) {
     const d = document.createElement("div");
     d.className = "msg " + m.who;
@@ -6950,7 +7052,7 @@ async function refresh(force){
 }
 function checkAnchors(){
   api("/api/review/session").then((r) => r.json()).then((s) => {
-    const anchors = (s.queue ?? []).filter((a) => a.anchor).map((a) => ({ n: a.n, selector: a.anchor.selector, fingerprint: a.anchor.fingerprint }));
+    const anchors = (s.queue ?? []).filter((a) => a.anchor).map((a) => ({ n: a.n, selector: a.anchor.selector, fingerprint: a.anchor.fingerprint, quote: a.anchor.quote || null }));
     if (anchors.length) document.getElementById("frame").contentWindow.postMessage({ lavishCheck: anchors }, "*");
   });
 }
@@ -7693,6 +7795,10 @@ ${UX_BASE}
   .attn .a-warn .num{ color:var(--warning); } .attn .a-err .num{ color:var(--error); }
   .attn .a-ok .num{ color:var(--fg); } .attn .item .lbl2{ color:var(--fg2); }
   /* needs-captain queue under the strip (fleets-attn-queue) */
+  /* material-icon-theme style tree icons (reports/records) */
+  .fico{ display:inline-flex; width:15px; height:15px; flex:0 0 auto; align-items:center; justify-content:center; }
+  .fico.m{ border-radius:3px; font:700 7.5px/15px var(--mono); text-align:center; letter-spacing:0; }
+  .fico.dir svg{ width:14px; height:14px; }
   .attnq{ display:flex; flex-direction:column; gap:6px; margin-bottom:16px; }
   .attnq-it{ display:flex; align-items:center; gap:10px; padding:9px 12px; background:var(--surface);
     border:1px solid var(--border); border-radius:6px; color:var(--fg); min-width:0; }
@@ -7758,13 +7864,15 @@ ${UX_BASE}
   .tnode{ display:flex; align-items:center; gap:6px; width:100%; text-align:left; color:var(--fg); font-size:13px; padding:5px 8px; border-radius:4px; }
   .tnode:hover{ background:var(--elev); }
   .tnode .caret{ color:var(--fg2); width:10px; flex:0 0 auto; }
-  .tnode .tname{ font-family:var(--mono); overflow-wrap:anywhere; }
+  /* One line, never wrapped (captain 2026-08-18) - the full name rides the
+     title tooltip on both folder and file rows. */
+  .tnode .tname{ font-family:var(--mono); flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tnode .cnt{ color:var(--fg2); font-size:12px; }
   .tnoderow{ display:flex; align-items:center; } .tnoderow .tnode{ flex:1 1 auto; min-width:0; }
   .tlink{ flex:0 0 auto; color:var(--fg2); font-size:12px; padding:4px 8px; border-radius:4px; }
   .tlink:hover{ color:var(--accent); background:var(--elev); }
-  .arow.atree{ align-items:flex-start; gap:6px; }
-  .arow.atree .aname{ overflow:visible; text-overflow:clip; white-space:normal; overflow-wrap:anywhere; }
+  .arow.atree{ align-items:center; gap:6px; }
+  .arow.atree .aname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .arow.atree .badge{ flex:0 0 auto; }
   /* Tree|Flat wraps as ONE unit (the 330px column never fits 5 chips on a line). */
   .filters .vsw{ display:inline-flex; gap:6px; margin-left:auto; }
@@ -9410,12 +9518,12 @@ function boardArtClass(stageName, kind){ return kind==='html'?' html':(stageName
 function boardArtRow(a, stageName, title){
   return '<button class="art'+boardArtClass(stageName,a.kind)+'" type="button" data-board-art'
     +' data-art-path="'+esc(a.path)+'" data-art-kind="'+esc(a.kind)+'" data-art-title="'+esc(title)+'">'
-    +'<span class="dot"></span> '+esc(a.name)+'</button>';
+    +fileIco(a.name)+' '+esc(a.name)+'</button>';
 }
 function boardStageNode(stg, titlePrefix, open){
   var arts=''; for(var i=0;i<stg.artifacts.length;i++){ var a=stg.artifacts[i]; arts+=boardArtRow(a, stg.stage, (titlePrefix||'')+stg.stage+'/'+a.name); }
   return '<div class="stage'+(open?'':' collapsed')+'">'
-    +'<div class="sh" data-stage-toggle><span class="chev">▾</span>'
+    +'<div class="sh" data-stage-toggle><span class="chev">▾</span>'+folderIco(open)
     +(stg.report?'<span class="tick">✓</span> ':'')+esc(stg.stage)+' <span class="n">('+stg.artifacts.length+')</span></div>'
     +'<div class="arts">'+arts+'</div></div>';
 }
@@ -10102,7 +10210,7 @@ function pageWhiteboards(){
       s+='<button class="chip" data-wb-rename-do="'+esc(nm)+'">Save</button>';
       s+='<button class="chip" data-wb-rename-cancel>Cancel</button>';
     } else {
-      s+='<span class="nm">'+esc(nm)+'</span><span class="ts">'+(mt?esc(agoMs(mt)):'')+'</span>';
+      s+='<span class="fico m" style="background:#ff7043;color:#fff" aria-hidden="true">\u25a6</span><span class="nm">'+esc(nm)+'</span><span class="ts">'+(mt?esc(agoMs(mt)):'')+'</span>';
       var wbUrl='/whiteboard?path='+wbHome+'&scene='+enc(nm);
     s+='<button class="chip" data-tool-open="'+esc(wbUrl)+'" data-tool-title="whiteboard &middot; '+esc(nm)+'">Edit</button>';
     s+='<a class="chip" href="'+esc(wbUrl)+'" target="_blank" rel="noopener" title="open in new tab">&#8599;</a>';
@@ -10181,7 +10289,12 @@ function pageReports(){
   // Empty-viewer landing was a dead screen (all-menu review): with no
   // selection, open the NEWEST artifact - replace, so back leaves the page.
   if(!r.sel && arts.length){
-    var best=arts[0]; for(var bi=1;bi<arts.length;bi++) if(arts[bi].mtime>best.mtime) best=arts[bi];
+    // Prefer the newest READABLE artifact (md/html) - the raw newest is often
+    // review-loop machinery (*.session.json) or a screenshot.
+    var best=null;
+    for(var bi=0;bi<arts.length;bi++){ var ab=arts[bi];
+      if((ab.kind==='md'||ab.kind==='html') && !/\.session\.json$/.test(ab.id) && (!best||ab.mtime>best.mtime)) best=ab; }
+    if(!best){ best=arts[0]; for(var bj=1;bj<arts.length;bj++) if(arts[bj].mtime>best.mtime) best=arts[bj]; }
     setTimeout(function(){ var cr=S.route; if(cr&&cr.name==='reports'&&!cr.sel&&cr.fleet===r.fleet) navigate('/fleets/'+enc(cr.fleet)+'/reports/'+enc(best.id),{replace:true}); },0);
   }
   var q=ui.query.toLowerCase(), flt=ui.filter;
@@ -10218,7 +10331,7 @@ function pageReports(){
     // Two lines: the stage owns a full-width line of its own, because it is what
     // tells two rows of one family apart and the ellipsis cuts from the right -
     // sharing one line with family+badge+ts clipped exactly that discriminator.
-    list+='<span class="astage" title="'+esc(a.family)+' / '+esc(a.stage)+'">'+esc(a.stage)+'</span>';
+    list+='<span class="astage" title="'+esc(a.family)+' / '+esc(a.stage)+'">'+fileIco(a.id)+' '+esc(a.stage)+'</span>';
     list+='<span class="ameta"><span class="afam">'+esc(a.family)+'</span><span class="badge">'+esc(extBadge(a.id))+'</span><span class="ts">'+esc(agoMs(a.mtime))+'</span></span></a>';
   }
   }
@@ -10234,6 +10347,31 @@ function treeDefOpen(d, r, i, depth){
   var sel=r.sel;
   return !!sel && (sel===d.key || sel.indexOf(d.key+'/')===0);
 }
+// Material-icon-theme style tree icons (captain 2026-08-18), self-contained:
+// files render as the theme's flat colored rounded-square glyph (no icon
+// font, no network - a CSS chip carries color + white glyph), folders as the
+// theme's filled blue-grey folder SVG with a lighter open flap.
+function fileIco(name){
+  var ext=(String(name).split('.').pop()||'').toLowerCase();
+  if(/^(png|jpe?g|gif|webp)$/.test(ext)) ext='img';
+  var M={
+    md:['#42a5f5','M'], html:['#e65100','&lt;&gt;'], htm:['#e65100','&lt;&gt;'],
+    json:['#f9a825','{}'], yaml:['#ef5350','Y'], yml:['#ef5350','Y'],
+    log:['#90a4ae','\u2261'], txt:['#90a4ae','\u2261'],
+    img:['#26a69a','\u25eb'], svg:['#ffb300','\u25eb'],
+    py:['#3776ab','Py'], sh:['#455a64','$'], ts:['#0288d1','TS'],
+    js:['#f7df1e','JS'], csv:['#66bb6a','\u229e']
+  };
+  var m=M[ext]||['#78909c','\u00b7'];
+  var ink=(ext==='js')?'#3b3b3b':'#fff';
+  return '<span class="fico m" style="background:'+m[0]+';color:'+ink+'" aria-hidden="true">'+m[1]+'</span>';
+}
+function folderIco(open){
+  return '<span class="fico dir" aria-hidden="true"><svg viewBox="0 0 16 16">'
+    +'<path fill="#90a4ae" d="M1.3 3.6c0-.5.4-.9.9-.9h3.6l1.5 1.6h6.5c.5 0 .9.4.9.9v7c0 .5-.4.9-.9.9H2.2c-.5 0-.9-.4-.9-.9z"/>'
+    +(open?'<path fill="#b0bec5" d="M2.6 6.8h12l-1.4 6.3H2.9c-.4 0-.7-.3-.7-.7z"/>':'')
+    +'</svg></span>';
+}
 function artTree(n, r, ui, force, depth){
   var s='', pad=8+depth*11;
   for(var i=0;i<n.dirs.length;i++){ var d=n.dirs[i], k='tree:'+d.key;
@@ -10246,8 +10384,8 @@ function artTree(n, r, ui, force, depth){
     var fam=(depth===0 && d.name!=='lavish')
       ? '<a class="tlink" href="/fleets/'+enc(r.fleet)+'/board/'+enc(d.name)+'" data-link title="Open task '+esc(d.name)+'">&#8599;</a>' : '';
     s+=(fam?'<div class="tnoderow">':'');
-    s+='<button class="tnode" data-tree="'+esc(d.key)+'" aria-expanded="'+(open?'true':'false')+'" style="padding-left:'+pad+'px">';
-    s+='<span class="caret">'+(open?'&#9662;':'&#9656;')+'</span><span class="tname">'+esc(d.name)+'</span><span class="cnt">'+d.count+'</span></button>';
+    s+='<button class="tnode" data-tree="'+esc(d.key)+'" aria-expanded="'+(open?'true':'false')+'" style="padding-left:'+pad+'px" title="'+esc(d.name)+'">';
+    s+='<span class="caret">'+(open?'&#9662;':'&#9656;')+'</span>'+folderIco(open)+'<span class="tname">'+esc(d.name)+'</span><span class="cnt">'+d.count+'</span></button>';
     s+=fam+(fam?'</div>':'');
     if(open) s+=artTree(d, r, ui, force, depth+1);
   }
@@ -10257,7 +10395,7 @@ function artTree(n, r, ui, force, depth){
     // ancestors, so repeating them is noise. It WRAPS instead of ellipsising -
     // a clipped tail is exactly what cost this page a round before.
     s+='<a class="arow atree" href="/fleets/'+enc(r.fleet)+'/reports/'+enc(a.id)+'" data-link'+cur+' style="padding-left:'+(pad+14)+'px" title="'+esc(a.id)+'">';
-    s+='<span class="aname">'+esc(f.name)+'</span><span class="badge">'+esc(extBadge(f.name))+'</span><span class="ts">'+esc(agoMs(a.mtime))+'</span></a>';
+    s+=fileIco(f.name)+'<span class="aname">'+esc(f.name)+'</span><span class="ts">'+esc(agoMs(a.mtime))+'</span></a>';
   }
   return s;
 }
@@ -10277,7 +10415,7 @@ function pageRecords(){
   if(!shown.length) list+='<div class="muted" style="padding:12px">no ledgers</div>';
   for(var i=0;i<shown.length;i++){ var x=shown[i]; var cur=(r.sel===x.name)?' aria-current="true"':'';
     list+='<a class="arow" href="/fleets/'+enc(r.fleet)+'/records/'+enc(x.name)+'" data-link'+cur+'>';
-    list+='<span class="aname">'+esc(x.name)+'</span><span class="ts">'+esc(agoMs(x.mtime))+'</span></a>';
+    list+=fileIco(x.name)+'<span class="aname">'+esc(x.name)+'</span><span class="ts">'+esc(agoMs(x.mtime))+'</span></a>';
   }
   list+='</div>';
   return '<div class="md-layout"><div class="md-list" data-listscroll>'+list+'</div>'+viewerHtml()+'</div>';
