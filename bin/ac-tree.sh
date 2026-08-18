@@ -25,6 +25,16 @@
 # the normal selection and prints ONE warning line:
 #   prefer: slot <n> unavailable (<why>) - leased slot <m> instead
 #
+# get --id, a SECOND time: when state/<id>.meta already exists for --id, get
+# appends the newly leased path (and its lease_id) to that meta's leases=/
+# lease_ids= (grammar: the LEASES block in ac-spawn.sh) - the mechanism by
+# which ac-teardown.sh later returns EVERY tree a task holds, not only the one
+# taken at spawn. A task's own FIRST lease never triggers this: spawn and
+# ac-self-task.sh write state/<id>.meta only after that first get returns, so
+# the append stays a silent no-op until the meta exists - which also keeps a
+# verifier's lease (a distinct id that never gets a crew meta) out of it, and
+# never mints a stray meta file for one.
+#
 # return --if-lease-id <id>: bind the return to the acquisition that took the
 # slot. A slot is identified by PATH, and a path is REUSED, so a return that
 # arrives after the slot was released and re-leased would otherwise kill the
@@ -618,8 +628,9 @@ acquire_slot() {
 
   # One atomic meta write: a slot is never observed half-leased.
   meta="$(slot_meta "$repo" "$n")"
-  local tmp="$meta.tmp.$$" created
+  local tmp="$meta.tmp.$$" created lease_id
   created="$(ac_meta_get "$meta" created_at)"
+  lease_id="$(mint_lease_id)"
   {
     printf 'created_at=%s\n' "${created:-$(ac_iso)}"
     printf 'leased=1\n'
@@ -627,10 +638,53 @@ acquire_slot() {
     printf 'holder=%s\n' "${holder:-cli}"
     printf 'owner_pid=%s\n' "${owner:-}"
     printf 'leased_at=%s\n' "$(ac_iso)"
-    printf 'lease_id=%s\n' "$(mint_lease_id)"
+    printf 'lease_id=%s\n' "$lease_id"
   } >"$tmp"
   mv "$tmp" "$meta"
+  append_lease_to_crew_meta "$id" "$wt" "$lease_id"
   printf '%s\n' "$wt"
+}
+
+append_lease_to_crew_meta() {
+  # append_lease_to_crew_meta <id> <worktree> <lease_id> - fold a SECOND (or
+  # later) lease for the same task into the durable crew/self-task meta that
+  # ac-teardown.sh reads (grammar: the LEASES block in ac-spawn.sh), so a task
+  # leasing more than one pooled worktree does not leak the extra slot
+  # forever. Silent no-op, never a mint, when:
+  # - no id was given (an unattributed CLI get);
+  # - state/<id>.meta does not exist YET - the FIRST lease of a spawn or a
+  #   self task always predates its own crew meta (ac-spawn.sh/
+  #   ac-self-task.sh write worktree=/leases= only after this call returns),
+  #   and a verifier's distinct id (`<family>-verify-<kind>[-e2e]`) never gets
+  #   one at all - ac_meta_set would CREATE the file were it called
+  #   unconditionally, minting a stray meta nothing ever tears down.
+  # No pool lock: ac_meta_set is an unlocked atomic rewrite, but a spawn takes
+  # exactly one lease and a crewmate's further leases run sequentially in its
+  # one shell, so two appends for the same id never race in practice.
+  local id="$1" wt="$2" lease_id="$3" sdir state_meta cur
+  [ -n "$id" ] || return 0
+  sdir="$(crew_state_dir)"
+  [ -n "$sdir" ] || return 0
+  state_meta="$sdir/$id.meta"
+  [ -f "$state_meta" ] || return 0
+  cur="$(ac_meta_get "$state_meta" leases)"
+  ac_meta_set "$state_meta" leases "${cur:+$cur:}$wt"
+  cur="$(ac_meta_get "$state_meta" lease_ids)"
+  ac_meta_set "$state_meta" lease_ids "${cur:+$cur:}$lease_id"
+}
+
+crew_state_dir() {
+  # The fleet state/ dir, resolved the same way ac-verify.sh's
+  # resolve_state_dir does: AC_FLEET_STATE first (what a homeless crewmate
+  # pane carries - AC_HOME never does), else ac_state_dir() when AC_HOME is
+  # set (a chief-side caller: ac-spawn.sh, ac-self-task.sh). Prints nothing,
+  # never dies, when neither is set - a bare CLI get (tests, a captain by
+  # hand with no fleet) has no crew meta to append to either way.
+  if [ -n "${AC_FLEET_STATE:-}" ]; then
+    printf '%s\n' "$AC_FLEET_STATE"
+  elif [ -n "${AC_HOME:-}" ]; then
+    ac_state_dir
+  fi
 }
 
 mint_lease_id() {

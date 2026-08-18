@@ -637,7 +637,7 @@ export function backlogFamilyIds(b: BacklogView): string[] {
  * feeds deriveProgress (never "done"/merged-date for a [failed]/[abandoned]
  * family) and is what boardCard's own-card badge, familyDetailHtml's header
  * pill, and boardOverview's Status line all read - none of them re-derive it.
- * boardStoryNode's story tick reads the composeFamily-derived child `state`
+ * The overview's story cards read the composeFamily-derived child `state`
  * rather than re-deriving it, and boardCard's chip sub-list calls this
  * function directly off the raw line it already holds client-side (the one
  * remaining direct caller, since it has no composeFamily result per child
@@ -1092,6 +1092,46 @@ export function cadenceLabel(c: any): { text: string; due: boolean } | null {
     text: "learn " + l.count + "/" + l.every + " · curate " + u.count + "/" + u.every,
     due: !!(l.due || u.due),
   };
+}
+
+/**
+ * The Fleets page's needs-captain QUEUE: every concrete item across the
+ * container that waits on the captain, as one flat actionable list - pending
+ * gates/asks first, then hand-backs, then watcher-down alerts (decisions the
+ * captain OWES rank above infrastructure), original home order kept inside
+ * each band. Walks each home's `crewdeputies` too (one level - the snapshot
+ * nests no deeper), so a deputy's stuck gate is as visible as its parent's.
+ * The counts in the attention strip already exist; this is the list behind
+ * them, so the captain jumps to the family instead of hunting it. Pure and
+ * ES5-plain - PAGE interpolates its toString(), the bun test proves the same
+ * code the browser runs.
+ */
+export function fleetAttnItems(snap: any): { fleet: string; kind: string; family: string; text: string }[] {
+  var pend = [], hand = [], watch = [];
+  var homes = (snap && snap.homes) || [];
+  var flat = [];
+  for (var i = 0; i < homes.length; i++) {
+    flat.push(homes[i]);
+    var deps = homes[i] && homes[i].crewdeputies;
+    if (deps && deps.length) for (var d = 0; d < deps.length; d++) flat.push(deps[d]);
+  }
+  for (var j = 0; j < flat.length; j++) {
+    var h = flat[j]; if (!h || !h.name) continue;
+    var entries = (h.inbox && h.inbox.entries) || [];
+    for (var e = 0; e < entries.length; e++) {
+      var en = entries[e] || {};
+      var st = String(en.status || "");
+      var it = { fleet: String(h.name), family: String(en.family || ""), text: String(en.last || "") };
+      if (st.indexOf("PENDING-CAPTAIN") === 0)
+        pend.push({ fleet: it.fleet, kind: "pending", family: it.family, text: it.text || "unanswered GATE/ASK" });
+      if (st === "HANDBACK" || st.indexOf("+HANDBACK") >= 0)
+        hand.push({ fleet: it.fleet, kind: "handback", family: it.family, text: it.text || "awaiting demote + close" });
+    }
+    if (h.watcher && h.watcher.state !== "armed")
+      watch.push({ fleet: String(h.name), kind: "watcher", family: "",
+        text: String((h.watcher && h.watcher.detail) || "watcher down - fleet is blind") });
+  }
+  return pend.concat(hand, watch);
 }
 
 /**
@@ -7561,6 +7601,11 @@ ${UX_BASE}
   .fleetlist li.dep a{ padding-left:42px; position:relative; }
   .fleetlist li.dep a::before{ content:"\\21B3"; position:absolute; left:26px; top:50%; transform:translateY(-50%); color:var(--fg2); font-size:11px; line-height:1; }
   .pagenav a[aria-disabled="true"]{ opacity:.4; pointer-events:none; }
+  /* Group captions must READ as captions (menu-redesign follow-up): a divider
+     above, less indent than the items they head, dimmer + spaced apart. */
+  .pagenav .navgap{ color:var(--fg2); opacity:.75; font-size:10px; font-weight:700; text-transform:uppercase;
+    letter-spacing:.09em; padding:9px 8px 3px 12px; margin-top:6px; border-top:1px solid var(--border); }
+  .pagenav li:first-child.navgap{ border-top:0; margin-top:0; }
   .selname{ padding:0 8px 4px; color:var(--fg); font-size:13px; }
   .navspacer{ flex:1 1 auto; }
   .sys{ border-top:1px solid var(--border); padding:8px; font-size:12px; color:var(--fg2); display:flex; flex-direction:column; gap:3px; }
@@ -7647,6 +7692,14 @@ ${UX_BASE}
   .attn .num{ font-weight:700; font-size:16px; }
   .attn .a-warn .num{ color:var(--warning); } .attn .a-err .num{ color:var(--error); }
   .attn .a-ok .num{ color:var(--fg); } .attn .item .lbl2{ color:var(--fg2); }
+  /* needs-captain queue under the strip (fleets-attn-queue) */
+  .attnq{ display:flex; flex-direction:column; gap:6px; margin-bottom:16px; }
+  .attnq-it{ display:flex; align-items:center; gap:10px; padding:9px 12px; background:var(--surface);
+    border:1px solid var(--border); border-radius:6px; color:var(--fg); min-width:0; }
+  .attnq-it:hover{ border-color:var(--border-strong); text-decoration:none; }
+  .attnq-it .fam{ font-weight:600; flex:0 0 auto; }
+  .attnq-it .fl{ color:var(--fg2); font-size:11px; border:1px solid var(--border); border-radius:4px; padding:0 5px; flex:0 0 auto; }
+  .attnq-it .tx{ color:var(--fg2); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
   .grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:14px; }
   .fcard{ display:flex; flex-direction:column; gap:9px; }
   .fcard:hover{ border-color:var(--border-strong); }
@@ -7755,6 +7808,7 @@ ${UX_BASE}
   .sresult .rhead{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .sresult .rfleet{ color:var(--accent); font-family:var(--mono); font-weight:600; }
   .sresult .rline{ color:var(--fg); font-size:13px; margin:6px 0; font-family:var(--mono); }
+  .sresult .rline.clip{ max-height:7.6em; overflow:hidden; -webkit-mask-image:linear-gradient(#000 70%, transparent); mask-image:linear-gradient(#000 70%, transparent); }
   .sresult .rlinks{ display:flex; gap:12px; }
   mark{ background:rgba(34,211,238,.22); color:var(--fg); border-radius:2px; padding:0 1px; }
 
@@ -7963,6 +8017,19 @@ ${UX_BASE}
   .ovroom .re{ padding:5px 0; border-top:1px solid var(--line); font-size:12.5px; line-height:1.55; white-space:pre-wrap; word-break:break-word; }
   .ovroom .rets{ color:var(--fg2); font-size:11px; }
   .ovroom .rea{ color:var(--fg2); font-size:11px; }
+  .ovstories{ margin-top:14px; }
+  /* Each story is a bordered card row, not a ruled text list (captain 2026-08-17). */
+  .ovstories .strow{ display:flex; align-items:center; gap:10px; padding:9px 12px; margin:6px 0;
+    background:var(--surface); border:1px solid var(--border); border-radius:8px; color:var(--fg); min-width:0; }
+  .ovstories .strow:hover{ border-color:var(--border-strong); background:var(--elev); text-decoration:none; }
+  .ovstories .stid{ font-family:var(--mono); font-size:11.5px; font-weight:700; color:var(--accent); flex:0 0 auto; max-width:28ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ovstories .srepo{ font-family:var(--mono); font-size:9.5px; font-weight:700; color:var(--accent); background:var(--accent-soft);
+    border-radius:5px; padding:1px 6px; flex:0 0 auto; max-width:20ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ovstories .spr{ font-family:var(--mono); font-size:9.5px; font-weight:700; color:var(--success); border:1px solid var(--success);
+    border-radius:5px; padding:0 6px; flex:0 0 auto; }
+  .ovstories .badge{ flex:0 0 auto; }
+  .ovstories .sttx{ flex:1 1 auto; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; white-space:normal; font-size:12.5px; line-height:1.45; }
   .ovroom .rev{ font-weight:700; font-family:var(--mono); font-size:11px; padding:1px 6px; border-radius:4px; background:var(--elev); }
   .ovroom .rev.warn{ color:var(--warning); border:1px solid var(--warning); }
   .ovroom .rev.ok{ color:var(--success); }
@@ -7992,7 +8059,10 @@ ${UX_BASE}
   .bdetail .story .sh .chev{ color:var(--muted); font-size:10px; width:11px; transition:transform .15s; }
   .bdetail .story.collapsed .sh .chev{ transform:rotate(-90deg); }
   .bdetail .story.collapsed .arts{ display:none; }
-  .bdetail .story .repo{ background:var(--accent-soft); color:var(--accent); border-radius:5px; font-size:9.5px; padding:1px 6px; font-weight:700; font-family:var(--mono); }
+  /* One line, ellipsized - a long repo name must not stack the story row
+     three chips tall (epic-stories-compact follow-up). */
+  .bdetail .story .repo{ background:var(--accent-soft); color:var(--accent); border-radius:5px; font-size:9.5px; padding:1px 6px; font-weight:700; font-family:var(--mono);
+    flex:0 1 auto; min-width:0; max-width:14ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .bdetail .story .pr{ margin-left:auto; background:var(--good); color:var(--bg); border-radius:20px; font-size:9.5px; padding:1px 7px; font-weight:700; }
   .bdetail .story .arts{ padding:6px 10px 8px; margin:0; border-left:none; }
   .bdetail .story .stage{ margin:4px 0; }
@@ -8013,7 +8083,21 @@ ${UX_BASE}
   .bdetail .tl{ padding:20px 26px; }
   .bdetail .tlrow{ display:flex; gap:12px; padding-bottom:16px; position:relative; }
   .bdetail .tlrow:not(:last-child)::before{ content:''; position:absolute; left:5px; top:14px; bottom:0; width:2px; background:var(--line); }
+  /* Segmented progress (progress-segments): one flex segment per stage. */
+  .prog.segd{ display:flex; gap:3px; }
+  .prog.segd i{ flex:1 1 0; width:auto; border-radius:3px; background:var(--elev); }
+  .prog.segd i.on{ background:var(--success); }
+  .prog.segd i.err{ background:var(--error); }
+  .prog.segd i.stale{ background:var(--stale); }
   .bdetail .tldot{ flex:0 0 auto; width:12px; height:12px; border-radius:50%; background:var(--accent); margin-top:2px; box-shadow:0 0 0 3px var(--accent-soft); z-index:1; }
+  .bdetail .tldot.warn{ background:var(--warning); box-shadow:0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent); }
+  .bdetail .tldot.err{ background:var(--error); box-shadow:0 0 0 3px color-mix(in srgb, var(--error) 20%, transparent); }
+  .bdetail .tl .rev{ font-weight:700; font-family:var(--mono); font-size:11px; padding:1px 6px; border-radius:4px; background:var(--elev); }
+  .bdetail .tl .rev.warn{ color:var(--warning); border:1px solid var(--warning); }
+  .bdetail .tl .rev.ok{ color:var(--success); }
+  .bdetail .tl .rev.acc{ color:var(--accent); }
+  .bdetail .tl .rev.err{ color:var(--error); border:1px solid var(--error); }
+  .bdetail .tl .rev.stale{ color:var(--stale); }
   .bdetail .tlmain{ min-width:0; flex:1 1 auto; }
   .bdetail .tlline{ font-size:13px; color:var(--ink); word-break:break-word; line-height:1.45; }
   .bdetail .tlmeta{ display:flex; align-items:center; gap:8px; margin-top:3px; }
@@ -8033,6 +8117,10 @@ ${UX_BASE}
   .bdetail .overview h3{ margin:0 0 4px; font-size:18px; color:var(--accent); font-weight:700; }
   .bdetail .overview .ovsub{ color:var(--muted); font-size:12.5px; margin-bottom:14px; }
   .bdetail .overview .ovrow{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:12px 0; }
+  /* Description owns a full row (board-detail-ux): the long prose block was
+     paired with the one-chip Repo block, half the width empty. The compact
+     fact blocks pair up beneath it. */
+  .bdetail .overview .ovb.wide{ grid-column:1 / -1; }
   @media (max-width:720px){ .bdetail .overview .ovrow{ grid-template-columns:1fr; } }
   .bdetail .overview .ovb{ background:var(--bg); border:1px solid var(--line); border-radius:11px; padding:13px 15px; }
   .bdetail .overview .ovb b{ color:var(--ink); font-size:13px; } .bdetail .overview .ovb p{ margin:5px 0 0; font-size:12px; color:var(--muted); word-break:break-word; }
@@ -8099,6 +8187,7 @@ ${groupArtifacts.toString()}
 ${isHtmlArtifact.toString()}
 ${reviewableArtifact.toString()}
 ${cadenceLabel.toString()}
+${fleetAttnItems.toString()}
 ${verifyProcessRows.toString()}
 // Board (dashboard-board): the card join runs the SAME bun-tested joiners the
 // server does - one source of truth, no client re-implementation.
@@ -8412,7 +8501,9 @@ function parseRoute(path){
     if(pg==='term' && parts.length===3) return { name:'term', fleet:fleet };
     if(pg==='chat' && parts.length===3) return { name:'chat', fleet:fleet, fam:null };
     if(pg==='chat' && parts.length===4) return { name:'chat', fleet:fleet, fam:dec(parts[3]) };
-    if(pg==='backlog' && parts.length===3) return { name:'backlog', fleet:fleet };
+    // Backlog ALIASES onto Board (menu-dedup): the two pages told the same
+    // ledger, so old /backlog deep links land on the Board rather than 404.
+    if(pg==='backlog' && parts.length===3) return { name:'board', fleet:fleet, fam:null };
     if(pg==='learning' && parts.length===3) return { name:'learning', fleet:fleet };
     if(pg==='brain' && parts.length===3) return { name:'brain', fleet:fleet };
     if(pg==='config' && parts.length===3) return { name:'config', fleet:fleet };
@@ -8500,7 +8591,7 @@ function routeEndpoint(r){
   if(r.name==='backlog') return '/api/backlog?path='+p;
   if(r.name==='reports'){ var ru=uiFor(routeKey(r)); return '/api/reports?path='+p+((ru.showAll||ru.query)?'':'&limit=20'); }
   if(r.name==='whiteboards') return '/api/whiteboard?path='+p;
-  if(r.name==='reviews') return reviewsCrossHome() ? '/api/reviews?all=1' : '/api/reviews?path='+p;
+  if(r.name==='reviews') return '/api/reviews?path='+p;
   if(r.name==='records') return '/api/ledgers?path='+p;
   if(r.name==='domains') return '/api/domains?path='+p;
   if(r.name==='learning') return '/api/learning?path='+p;
@@ -8650,12 +8741,25 @@ function renderNav(){
 
   var cf=currentFleet();
   el('sel-name').textContent = cf || '—';
-  var pages=[['processes','Processes'],['board','Board'],['backlog','Backlog'],['reports','Reports'],['reviews','Reviews'],['whiteboards','Whiteboards'],['records','Records'],['brain','Brain'],['domains','Domains'],['learning','Learning'],['config','Config']];
+  // Menu order = monitoring order (menu-redesign): the MONITOR group first
+  // (Board is the task surface, Processes the runtime, Chat the crewchief),
+  // then WORK artifacts, then KNOWLEDGE, config last. No Backlog entry
+  // (menu-dedup): Board and Backlog told the same ledger twice; /backlog
+  // deep links stay alive as a parseRoute alias onto the Board.
+  var groups=[
+    ['Monitor', [['board','Board'],['processes','Processes'],['chat','Chat']]],
+    ['Work',    [['reports','Reports'],['reviews','Reviews'],['whiteboards','Whiteboards']]],
+    ['Knowledge',[['records','Records'],['brain','Brain'],['learning','Learning'],['domains','Domains']]],
+    ['System',  [['config','Config']]]
+  ];
   var pn='';
-  for(var p=0;p<pages.length;p++){ var id=pages[p][0], lbl=pages[p][1];
-    if(cf){ var pc=(r.name===id && r.fleet===cf)?' aria-current="page"':'';
-      pn += '<li><a href="/fleets/'+enc(cf)+'/'+id+'" data-link'+pc+'>'+lbl+'</a></li>';
-    } else { pn += '<li><a aria-disabled="true">'+lbl+'</a></li>'; }
+  for(var g=0;g<groups.length;g++){ var cap=groups[g][0], pages=groups[g][1];
+    if(cap) pn+='<li class="navgap" aria-hidden="true">'+cap+'</li>';
+    for(var p=0;p<pages.length;p++){ var id=pages[p][0], lbl=pages[p][1];
+      if(cf){ var pc=(r.name===id && r.fleet===cf)?' aria-current="page"':'';
+        pn += '<li><a href="/fleets/'+enc(cf)+'/'+id+'" data-link'+pc+'>'+lbl+'</a></li>';
+      } else { pn += '<li><a aria-disabled="true">'+lbl+'</a></li>'; }
+    }
   }
   morphInto(el('page-nav'), pn, 'pagenav');
 }
@@ -8679,7 +8783,7 @@ function renderHealth(){
 
 function renderHead(){
   var r=S.route||{name:'fleets'};
-  var titles={fleets:'Fleets', processes:'Processes', board:'Board', chat:'Chat', term:'Terminal', backlog:'Backlog', reports:'Reports', reviews:'Reviews', whiteboards:'Whiteboards', records:'Records', domains:'Domains', learning:'Learning', search:'Search', config:'Config', notfound:'Not found', root:'Fleets'};
+  var titles={fleets:'Fleets', processes:'Processes', board:'Board', chat:'Chat', term:'Terminal', brain:'Brain', reports:'Reports', reviews:'Reviews', whiteboards:'Whiteboards', records:'Records', domains:'Domains', learning:'Learning', search:'Search', config:'Config', notfound:'Not found', root:'Fleets'};
   el('page-title').textContent = titles[r.name]||'Dashboard';
   var crumb='';
   if(r.fleet) crumb='<b>'+esc(r.fleet)+'</b>';
@@ -8699,7 +8803,6 @@ function headMeta(r){
     return '<span>'+(r.home.crew?r.home.crew.count:0)+' active</span>'
       +(cad?'<span class="cadence'+(cad.due?' due':'')+'">'+esc(cad.text)+'</span>':''); }
   if(r.name==='board' && S.page && S.page.backlog){ var bb=S.page.backlog; return '<span>'+bb.in_flight.length+' in flight &middot; '+bb.queued.length+' queued &middot; '+realDoneCount(bb.done)+' done</span>'; }
-  if(r.name==='backlog' && S.page && S.page.backlog){ var b=S.page.backlog; return '<span>'+b.in_flight.length+' in flight &middot; '+b.queued.length+' queued &middot; '+realDoneCount(b.done)+' done</span>'; }
   if(r.name==='reports' && S.page && S.page.artifacts){ return '<span>'+(S.page.total||S.page.artifacts.length)+' artifacts</span>'; }
   if(r.name==='records' && S.page && S.page.records){ return '<span>'+S.page.records.length+' ledgers</span>'; }
   if(r.name==='domains' && S.page && S.page.domains){ var dv=S.page.domains.filter(function(d){return d.cls==='VALID';}).length, di=S.page.domains.length-dv;
@@ -8730,7 +8833,6 @@ function renderPage(){
   else if(r.name==='board') html=pageBoard();
   else if(r.name==='chat') html=pageChat();
   else if(r.name==='term') html=pageTerm();
-  else if(r.name==='backlog') html=pageBacklog();
   else if(r.name==='reports') html=pageReports();
   else if(r.name==='whiteboards') html=pageWhiteboards();
   else if(r.name==='reviews') html=pageReviews();
@@ -8744,7 +8846,7 @@ function renderPage(){
   // Chat tab: the panel polls its own pane API; renderPage runs every poll
   // tick, so chiefPollStart's same-target guard keeps this idempotent. On the
   // board, boardSyncFamily owns the same poll for the open family's chief.
-  if(r && r.name==='chat') chiefPollStart(r.fam||true);
+  if(r && r.name==='chat'){ chiefNoChief=false; chiefPollStart(r.fam||true); }
   else if(chiefCur!==null && boardOpenFam===null) chiefPollStop();
   if(r && r.name==='term' && !termT && !termUrl) termPoll();
   if(r && (r.name==='term'||r.name==='chat')) termFit();
@@ -8773,6 +8875,25 @@ function pageFleets(){
   s+='<div class="item a-ok"><span class="num">'+(t.crew||0)+'</span><span class="lbl2">active</span></div>';
   s+='</div>';
   if(!fs.length) return s+stateBox('No fleets', 'No fleet homes under '+((snap.container)||'the container')+'.');
+  // Needs-captain queue (fleets-attn-queue): the LIST behind the strip's
+  // counts - each waiting item links straight at its family (or the blind
+  // fleet's Processes), so monitoring starts here instead of a per-fleet hunt.
+  var attq=fleetAttnItems(snap);
+  if(attq.length){
+    s+='<div class="attnq" role="list" aria-label="Waiting on captain">';
+    for(var qi=0;qi<attq.length;qi++){ var q1=attq[qi];
+      var href=q1.kind==='watcher'?'/fleets/'+enc(q1.fleet)+'/processes'
+        :'/fleets/'+enc(q1.fleet)+'/board/'+enc(q1.family);
+      var bcls=q1.kind==='watcher'?'err':'warn';
+      var blbl=q1.kind==='watcher'?'WATCHER':(q1.kind==='handback'?'HANDBACK':'GATE/ASK');
+      s+='<a class="attnq-it" role="listitem" href="'+href+'" data-link>'
+        +'<span class="badge '+bcls+'">'+blbl+'</span>'
+        +(q1.family?'<span class="mono fam">'+esc(q1.family)+'</span>':'')
+        +'<span class="fl mono">'+esc(q1.fleet)+'</span>'
+        +'<span class="tx">'+esc(q1.text)+'</span></a>';
+    }
+    s+='</div>';
+  }
   // Group each deputy with its parent, then order groups attention-first so a
   // deputy never scatters away from its parent (entry.parent drives the grouping;
   // stable sort keeps top-level fleets in their original order within a tier).
@@ -8795,7 +8916,7 @@ function fleetCard(entry){
   var pend=h.inbox?h.inbox.pending:0, hand=h.inbox?h.inbox.handback:0, blk=blockedCount(h);
   var wdown = h.watcher && h.watcher.state!=='armed';
   var dep=entry.parent;
-  var s='<a class="card fcard'+(dep?' depcard':'')+'" href="/fleets/'+enc(h.name)+'/processes" data-link'+(dep?' aria-label="'+esc(h.name)+', deputy of '+esc(dep)+'"':'')+'>';
+  var s='<a class="card fcard'+(dep?' depcard':'')+'" href="/fleets/'+enc(h.name)+'/board" data-link'+(dep?' aria-label="'+esc(h.name)+', deputy of '+esc(dep)+'"':'')+'>';
   s+='<div class="top"><span class="fname">'+(dep?'&#8627; ':'&#9875; ')+esc(h.name)+'</span>';
   s+='<span class="dot-i" style="background:'+dotColor(kind)+'" title="'+esc(kind)+'"></span></div>';
   s+='<div class="subline">'+esc((h.config&&h.config.flow)||'auto')+(dep?' &middot; deputy of '+esc(dep):'')+(h.captain?' &middot; captain '+esc(h.captain):'')+'</div>';
@@ -8809,12 +8930,12 @@ function fleetCard(entry){
   var cad=cadenceLabel(h.cadence);
   if(cad) s+='<div class="cadence'+(cad.due?' due':'')+'">'+esc(cad.text)+'</div>';
   s+='<div class="attnrow">';
-  s+='<span class="badge '+(wdown?(crew>0?'err':''):'ok')+'">watcher '+esc(h.watcher?h.watcher.state:'?')+(h.watcher&&h.watcher.beat?' &middot; '+agoMs(h.watcher.beat*1000):'')+'</span>';
+  s+='<span class="badge '+(wdown?'err':'ok')+'">watcher '+esc(h.watcher?h.watcher.state:'?')+(h.watcher&&h.watcher.beat?' &middot; '+agoMs(h.watcher.beat*1000):'')+'</span>';
   if(pend>0) s+='<span class="badge warn">'+pend+' pending</span>';
   if(hand>0) s+='<span class="badge warn">'+hand+' handback</span>';
   if(h.wakes>0) s+='<span class="badge warn">'+h.wakes+' wakes</span>';
   s+='</div>';
-  s+='<div class="cta"><span class="badge accent">'+(needsAttention(h)?'Needs attention':'Open processes')+' &rarr;</span></div>';
+  s+='<div class="cta"><span class="badge accent">'+(needsAttention(h)?'Needs attention':'Open board')+' &rarr;</span></div>';
   s+='</a>';
   return s;
 }
@@ -8903,20 +9024,32 @@ function pageProcesses(){
   }
   s+='</tbody></table></div>';
 
-  // Rooms (inbox) section
-  s+='<h2 style="font-size:14px;margin:18px 0 8px;color:var(--fg2)">Rooms (inbox) &mdash; '+rooms.length+'</h2>';
-  s+=roomInbox(rooms);
+  // Rooms with an OPEN obligation only (processes-ux): the full room list -
+  // hundreds of closed rooms in a mature fleet - drowned this page; the
+  // captain-facing subset is pending/handback, and the Fleets needs-captain
+  // queue already carries the cross-fleet view. History stays reachable per
+  // family from its Board detail.
+  var openRooms=[]; for(var ori=0;ori<rooms.length;ori++){ if(rooms[ori].pending||rooms[ori].handback) openRooms.push(rooms[ori]); }
+  if(openRooms.length){
+    s+='<h2 style="font-size:14px;margin:18px 0 8px;color:var(--fg2)">Rooms waiting on captain &mdash; '+openRooms.length+'</h2>';
+    s+=roomInbox(openRooms);
+  }
 
   // Worktree pool
   s+='<h2 style="font-size:14px;margin:18px 0 8px;color:var(--fg2)">Worktree pool</h2>';
   s+=poolTable(pools);
 
-  // Remote
+  // Remote - one status line; the thread LIST is reference material, folded
+  // behind a disclosure instead of a comma wall (processes-ux).
   var rem=(S.page&&S.page.remote)||{mirror:'off',channel:null,threads:[]};
   s+='<h2 style="font-size:14px;margin:18px 0 8px;color:var(--fg2)">Remote</h2>';
-  s+='<div class="card"><div>mirror <b class="mono">'+esc(rem.mirror)+'</b>'+(rem.channel?' &middot; channel <span class="mono">'+esc(rem.channel)+'</span>':'')+'</div>';
-  if(rem.threads&&rem.threads.length){ var nm=[]; for(var t2=0;t2<rem.threads.length;t2++) nm.push(esc(rem.threads[t2].family)); s+='<div class="muted mono" style="margin-top:6px">threads: '+nm.join(', ')+'</div>'; }
-  else s+='<div class="muted" style="margin-top:6px">no threads</div>';
+  s+='<div class="card"><div>mirror <b class="mono">'+esc(rem.mirror)+'</b>'+(rem.channel?' &middot; channel <span class="mono">'+esc(rem.channel)+'</span>':'')
+    +' &middot; <span class="muted">'+((rem.threads&&rem.threads.length)||0)+' threads</span></div>';
+  if(rem.threads&&rem.threads.length){
+    var nm=[]; for(var t2=0;t2<rem.threads.length;t2++) nm.push(esc(rem.threads[t2].family));
+    s+='<details style="margin-top:6px"><summary class="muted" style="cursor:pointer;font-size:12px">thread list</summary>'
+      +'<div class="muted mono" style="margin-top:6px;font-size:12px">'+nm.join('<br>')+'</div></details>';
+  }
   s+='</div>';
   return s;
 }
@@ -8936,7 +9069,6 @@ function processExpand(row, roomOf, known){
     var fam=familyOfTaskId(row.id, known||[]);
     if(fam && (known||[]).indexOf(fam)>=0)
       s+='<a href="/fleets/'+enc(S.route.fleet)+'/board/'+enc(fam)+'" data-link>Open task &rarr;</a>';
-    s+='<a href="/fleets/'+enc(S.route.fleet)+'/backlog" data-link>Open backlog &rarr;</a>';
     s+='<a href="/fleets/'+enc(S.route.fleet)+'/reports" data-link>Open reports &rarr;</a>';
   }
   s+='</div></div>';
@@ -8976,81 +9108,33 @@ function roomRows(list){
 }
 function poolTable(pools){
   if(!pools.length) return '<div class="muted">no pooled worktrees</div>';
-  var s='<div class="tblwrap"><table class="tbl"><thead><tr><th>Repo</th><th>Slot</th><th>State</th><th>Task</th><th>Since</th><th>Worktree</th></tr></thead><tbody>';
-  for(var i=0;i<pools.length;i++){ var p=pools[i];
-    s+='<tr><td class="mono">'+esc(p.repo)+'</td><td class="mono">'+esc(p.slot)+'</td>';
-    s+='<td><span class="badge '+(p.state==='leased'?'ok':'')+'">'+esc(p.state)+'</span></td>';
-    s+='<td class="mono">'+esc(p.task||'—')+'</td><td class="ts">'+esc(p.leased_at||'—')+'</td><td class="mono" style="font-size:11px">'+esc(p.worktree||'—')+'</td></tr>';
-  }
-  return s+'</tbody></table></div>';
-}
-
-// ---- Backlog ----
-function ltrim(s){ while(s.length && (s.charAt(0)===' '||s.charCodeAt(0)===9)) s=s.slice(1); return s; }
-function parseBl(line){
-  var s=line;
-  if(s.charAt(0)==='-'){ var b=s.indexOf('] '); if(b>0&&b<6) s=s.slice(b+2); }
-  s=ltrim(s);
-  var sp=s.indexOf(' '); var id = sp<0?s:s.slice(0,sp);
-  var dash=s.indexOf(' - '); var text = dash>=0?s.slice(dash+3):(sp<0?'':s.slice(sp+1));
-  return {id:id, text:text, full:line};
-}
-function blAttention(line){ var lo=line.toLowerCase(); return lo.indexOf('blocked-by')>=0||lo.indexOf('[failed]')>=0||lo.indexOf('[abandoned]')>=0||lo.indexOf('needs-decision')>=0; }
-function pageBacklog(){
-  var r=S.route, ui=uiFor(routeKey(r));
-  if(!S.page){ return S.pageFail?stateBox('Backlog unavailable','Could not load the ledger. Retrying.','err'):skeleton(); }
-  var b=S.page.backlog||{in_flight:[],queued:[],done:[]};
-  var q=ui.query.toLowerCase(), flt=ui.filter;
-  function keep(line){
-    if(q && line.toLowerCase().indexOf(q)<0) return false;
-    if(flt==='blocked') return line.toLowerCase().indexOf('blocked-by')>=0;
-    if(flt==='attention') return blAttention(line);
-    return true;
-  }
-  var s='';
-  s+='<div class="filters" style="margin-bottom:14px">';
-  s+='<input class="search-in" type="search" data-list-search placeholder="Search backlog…" aria-label="Search backlog" autocomplete="off" spellcheck="false">';
-  s+=chip('all','All',flt)+chip('attention','Attention',flt)+chip('blocked','Blocked',flt);
-  s+='</div>';
-  s+=blSection('inflight','IN FLIGHT', b.in_flight, keep, true);
-  s+=blSection('queued','QUEUED', b.queued, keep, true);
-  s+=blSection('done','DONE', b.done, keep, false);
-  return s;
-}
-function blSection(key, title, arr, keep, defOpen){
+  // Idle available slots are capacity, not activity (processes-ux): the
+  // monitoring view shows only slots DOING something (leased, or stuck dirty)
+  // and folds the idle rest into one count behind a disclosure.
+  var busy=[], idle=[];
+  for(var bi=0;bi<pools.length;bi++){ (pools[bi].state==='available'?idle:busy).push(pools[bi]); }
   var ui=uiFor(routeKey(S.route));
-  var ek='sec:'+key;
-  var open = (ek in ui.exp)? ui.exp[ek] : defOpen;
-  var shown = arr.filter(keep);
-  var s='<section class="disc">';
-  s+='<button class="dh" data-disc="'+ek+'" aria-expanded="'+(open?'true':'false')+'"><span class="caret">'+(open?'&#9662;':'&#9656;')+'</span>'+title+'<span class="cnt">'+shown.length+(shown.length!==arr.length?(' / '+arr.length):'')+'</span></button>';
-  if(open){ s+='<div class="dbody">';
-    if(!shown.length) s+='<div class="muted" style="padding:8px">'+(arr.length?'no matches':'—')+'</div>';
-    for(var i=0;i<shown.length;i++){ var raw=shown[i]; var rk='row:'+key+':'+i; var rowOpen=!!ui.exp[rk];
-      // The board card's own vocabulary (parseBacklogLine + storyState +
-      // badgeb/chipm), so a row reads the same on both pages; parseBl stays
-      // the fallback for a malformed line the strict parser rejects.
-      var f=parseBacklogLine(raw); var it=f.id?f:parseBl(raw);
-      var longish=it.text.length>160;
-      var st=(key==='done')?storyState(raw,'done'):null;
-      var badges=(f.isEpic?' <span class="badgeb epic">EPIC</span>':'')
-        +(f.pr?' <span class="badgeb pr">PR</span>':'')
-        +((st==='failed'||st==='abandoned')?' <span class="badge '+STORY_BADGE[st]+'" title="'+st+'">'+STORY_ICON[st]+' '+st.toUpperCase()+'</span>':'');
-      var cchips=contractChips(f.contract, '');
-      var repoChip=f.repo?'<span class="chipm">repo: '+esc(f.repo)+'</span>':'';
-      s+='<div class="blrow"><div class="blhead"><span class="bid">'+esc(it.id)+'</span>'+badges+cchips
-        +'<span class="rmeta">'+repoChip
-        +(longish?'<button class="more" data-disc="'+rk+'">'+(rowOpen?'less':'more')+'</button>':'')
-        +'</span></div>';
-      s+='<span class="btext'+(longish&&!rowOpen?' clip':'')+'">'+esc(it.text)+'</span></div>';
+  function rowsOf(list){
+    var r='';
+    for(var i=0;i<list.length;i++){ var p=list[i];
+      r+='<tr><td class="mono">'+esc(p.repo)+'</td><td class="mono">'+esc(p.slot)+'</td>';
+      r+='<td><span class="badge '+(p.state==='leased'?'ok':(p.state==='available'?'':'warn'))+'">'+esc(p.state)+'</span></td>';
+      r+='<td class="mono">'+esc(p.task||'—')+'</td><td class="ts">'+esc(p.leased_at||'—')+'</td><td class="mono" style="font-size:11px">'+esc(p.worktree||'—')+'</td></tr>';
     }
-    s+='</div>';
+    return r;
   }
-  s+='</section>';
+  var showIdle=!!ui.exp['idleslots'];
+  var btn=idle.length?'<button class="btn sm" data-disc="idleslots" aria-expanded="'+(showIdle?'true':'false')+'" style="margin:8px 0">'+(showIdle?'Hide':'Show')+' '+idle.length+' available slot'+(idle.length>1?'s':'')+'</button>':'';
+  // Nothing active and idle folded: one quiet line + the button - no empty
+  // table skeleton. The table renders only when it has rows to show.
+  var rows=(busy.length?rowsOf(busy):'')+(showIdle?rowsOf(idle):'');
+  if(!rows) return '<div class="muted" style="margin:4px 0 8px">No active worktrees.</div>'+btn;
+  var s='<div class="tblwrap"><table class="tbl"><thead><tr><th>Repo</th><th>Slot</th><th>State</th><th>Task</th><th>Since</th><th>Worktree</th></tr></thead><tbody>';
+  s+=rows;
+  s+='</tbody></table></div>'+btn;
   return s;
 }
 
-// ---- Board (dashboard-board): kanban by backlog status + task-detail overlay --
 // The board JOINS the existing /api/backlog (polled) with /api/reports (lazily
 // cached) client-side by family id, and reuses the SAME composeFamily/parseBacklogLine
 // /familyOfTaskId/deriveProgress the bun test proves. Live per-task status comes
@@ -9082,14 +9166,10 @@ function loadBoardKpi(hp){
   if(c && c.loading) return;
   if(c && c.ts && (Date.now()-c.ts)<12000) return;
   boardKpiC[hp]={ ts:(c&&c.ts)||0, pending:(c&&c.pending), loading:true };
-  fetch('/api/brain?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
-    if(boardKpiC[hp]) boardKpiC[hp].brain = j && j.present ? j : null;
-    if(S.route && S.route.name==='board') renderPage();
-  }).catch(function(){});
   fetch('/api/processes?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
     var rooms=(j&&j.rooms)||[], n=0;
     for(var i=0;i<rooms.length;i++){ if(rooms[i].pending||rooms[i].handback) n++; }
-    boardKpiC[hp]={ ts:Date.now(), pending:n, loading:false, brain:(boardKpiC[hp]&&boardKpiC[hp].brain)||null };
+    boardKpiC[hp]={ ts:Date.now(), pending:n, loading:false };
     if(S.route && S.route.name==='board') renderPage();
   }).catch(function(){ boardKpiC[hp]={ ts:Date.now(), pending:(c&&c.pending), loading:false }; });
 }
@@ -9115,8 +9195,6 @@ function boardKpis(hp, b, bd, sysCount){
     ['awaiting captain', pend==null?'…':String(pend), (pend>0)?'warn':''],
     ['done', String(cardCount('done')), ''],
   ];
-  var br=boardKpiC[hp]&&boardKpiC[hp].brain;
-  if(br) tiles.push(['brain pages', String(br.pages)+(br.facts?' +'+br.facts+'f':''), '']);
   var s='<div class="kpis">';
   for(var i=0;i<tiles.length;i++)
     s+='<div class="kpi '+tiles[i][2]+'"><b>'+tiles[i][1]+'</b><span>'+tiles[i][0]+'</span></div>';
@@ -9201,8 +9279,9 @@ function pageBoard(){
   var inflightIds=[]; var ifl=b.in_flight||[];
   for(var ii=0;ii<ifl.length;ii++){ var iff=parseBacklogLine(ifl[ii]); if(iff.id) inflightIds.push(iff.id); }
   var sysPanes=boardSystemPanes(r.home, bd.known, inflightIds);
-  // Column order (dashboard-board-v2): Queued -> In flight -> Done.
-  var cols=[['queued','queued','Queued'],['in_flight','flight','In flight'],['done','done','Done']];
+  // Column order (board-monitor): In flight FIRST - the monitoring question
+  // is what runs NOW; what waits comes second, what landed last.
+  var cols=[['in_flight','flight','In flight'],['queued','queued','Queued'],['done','done','Done']];
   var s=boardKpis(hp, b, bd, sysPanes.length);
   s+='<div class="filters" style="margin-bottom:14px">'
     +'<input class="search-in" type="search" data-list-search placeholder="Filter tasks…" aria-label="Filter tasks" autocomplete="off" spellcheck="false">'
@@ -9316,7 +9395,8 @@ function boardSyncFamily(r){
       .catch(function(){ done({error:'failed to load'}); });
   }
   var d=familyCache[ck];
-  if(d && d.chiefLive) chiefPollStart(fam); else chiefPollStop();
+  if(d && (d.chiefLive || famHasLiveCrew(d))){ chiefNoChief=!d.chiefLive; chiefPollStart(fam); }
+  else chiefPollStop();
 }
 
 // ---- Full-screen master-detail (dashboard-board-v2) ---------------------------
@@ -9351,15 +9431,6 @@ function boardStageTree(stages, titlePrefix){
   // bury the rail (a big verify/qa dump stays collapsed); every stage is one click.
   var s=''; for(var i=0;i<stages.length;i++){ var open=(i===stages.length-1) && stages[i].artifacts.length<=8; s+=boardStageNode(stages[i], titlePrefix, open); } return s;
 }
-function boardStoryNode(ch, open){
-  var repo=ch.repo?'<span class="repo">'+esc(ch.repo)+'</span>':'';
-  var pr=ch.pr?'<span class="pr">PR '+esc(prNum(ch.pr)||'↗')+'</span>':'';
-  var icon=STORY_ICON[ch.state]||'';
-  return '<div class="story'+(open?'':' collapsed')+'">'
-    +'<div class="sh" data-stage-toggle><span class="chev">▾</span>'+(icon?icon+' ':'')+esc(ch.id)+' '+repo+pr
-    +'<a class="fopen" href="/fleets/'+enc(currentFleet())+'/board/'+enc(ch.id)+'" data-link title="Open this story: its own room and chief terminal">↗</a></div>'
-    +'<div class="arts">'+boardStageTree(ch.stages, ch.id+(ch.repo?' @ '+ch.repo:'')+' · ')+'</div></div>';
-}
 // Same-done-miscount-in-three-more-surfaces: the detail overlay's own Status
 // text must not say "done" for a family whose own line is [failed]/
 // [abandoned] - reuses composeFamily's d.state (storyState), never re-derives.
@@ -9377,7 +9448,7 @@ function boardRepoList(d){
 }
 // One labelled block of the overview grid: label is markup (Repo carries its
 // own count), body is already-escaped or already-built html.
-function boardOvBlock(label, body){ return '<div class="ovb"><b>'+label+'</b><p>'+body+'</p></div>'; }
+function boardOvBlock(label, body, wide){ return '<div class="ovb'+(wide?' wide':'')+'"><b>'+label+'</b><p>'+body+'</p></div>'; }
 // ONE PR row: number, the repo it landed in, merged/open, and who raised it -
 // a multi-repo family's PRs are told apart by nothing else. The by-label is
 // dropped when it would only repeat the family the detail is already showing.
@@ -9400,7 +9471,7 @@ function boardOverview(d){
   // the same join the board column runs (boardLiveModes), never a new fetch.
   var lm=(boardLiveModes(S.route.home, [d.family])||{})[d.family]||'';
   var cchips=contractChips(d.contract, lm);
-  var rows=boardOvBlock('Description', esc(d.text||'—'))
+  var rows=boardOvBlock('Description', esc(d.text||'—'), true)
     +boardOvBlock('Repo'+boardCount(d.repos?d.repos.length:0), boardRepoList(d))
     +boardOvBlock('Status', esc(sec)+(d.merged?' · merged '+esc(d.merged):'')+(d.rollup?' · rollup '+d.rollup.done+'/'+d.rollup.total:''))
     +boardOvBlock('Delivery contract', cchips||'<span class="muted">— no pins (cheap-path defaults; heavy modes would have asked the captain)</span>')
@@ -9417,9 +9488,28 @@ function boardOverview(d){
     for(var i=Math.max(0,d.roomEntries.length-30);i<d.roomEntries.length;i++) reRows+='<div class="re">'+roomEntryHtml(d.roomEntries[i])+'</div>';
     room=boardOvList('ovroom','Room',d.roomEntries.length,reRows);
   }
+  // Epic: the stories as FLAT one-line rows - id, state, text, repo, pill -
+  // the main-pane view of the whole epic (epic-stories-flat); the rail keeps
+  // its compact tree for artifact drilling.
+  var stories='';
+  if(d.rollup && d.children.length){
+    var srows='';
+    for(var ci=0;ci<d.children.length;ci++){ var ch=d.children[ci];
+      srows+='<a class="strow" href="/fleets/'+enc(currentFleet())+'/board/'+enc(ch.id)+'" data-link>'
+        +'<span class="stid">'+esc(ch.id)+'</span>'
+        +'<span class="sttx">'+esc(ch.text||'')+'</span>'
+        +(ch.pr?'<span class="spr" role="link" tabindex="0" data-ext="'+esc(ch.pr)+'" title="'+esc(ch.pr)+'">PR '+esc(prNum(ch.pr)||'\u2197')+'</span>'
+          // Many rows record a PR as prose ('LANDED: PR #5 merged ...') with
+          // no URL - still worth a (non-clickable) chip so the captain sees
+          // which stories raised one (captain 2026-08-17 'k co PR?').
+          :(function(){ var pm=/\bPR #(\d+)\b/.exec(ch.text||''); return pm?'<span class="spr" title="PR number recorded on the row; no URL to open">PR '+pm[1]+'</span>':''; })())
+        +(ch.repo?'<span class="srepo" title="'+esc(ch.repo)+'">'+esc(ch.repo)+'</span>':'')
+        +'<span class="badge '+(STORY_BADGE[ch.state]||'')+'">'+STORY_ICON[ch.state]+' '+esc(ch.state)+'</span></a>'; }
+    stories=boardOvList('ovstories','Stories', d.rollup.done+'/'+d.rollup.total+' done', srows);
+  }
   return '<div class="overview"><h3>'+esc(d.id)+'</h3>'
     +'<div class="ovsub">Pick an artifact on the left to view it inline here.</div>'
-    +'<div class="ovrow">'+rows+'</div>'+pr+room+'</div>';
+    +'<div class="ovrow">'+rows+'</div>'+stories+pr+room+'</div>';
 }
 // One room.md line -> highlighted html ('- [ts] actor> VERB: text'). The verb
 // chip colors match the grammar the captain reads everywhere else.
@@ -9456,42 +9546,72 @@ function boardLinkRows(links, fleet){
 // The left rail: progress, the artifact tree (an epic lists its stories instead),
 // the reused-knowledge links, the repo list, and the room button.
 function boardDetailRail(d, fleet){
+  // Progress flags the STEPS (progress-segments): one segment per FLOW stage
+  // (spec/arch/design/plan/implement/qa/report - verifier and chief dirs are
+  // artifacts, not steps), filled when that stage has its report. A family
+  // whose flow stages carry no report yet (an in-flight direct task) falls
+  // back to the % fill so the bar never reads as unloaded. Terminal tints.
+  var FLOW_STAGES={spec:1,architecture:1,arch:1,design:1,plan:1,implement:1,qa:1,report:1};
+  var flow=[], anyRep=false;
+  for(var sg=0;sg<d.stages.length;sg++){ var st0=d.stages[sg];
+    if(FLOW_STAGES[st0.stage]){ flow.push(st0); if(st0.report) anyRep=true; } }
+  var segCls, segs='';
+  if(flow.length && anyRep){
+    segCls='prog segd';
+    for(var sg2=0;sg2<flow.length;sg2++){ var st1=flow[sg2];
+      segs+='<i class="'+(st1.report?(d.state==='failed'?'err':(d.state==='abandoned'?'stale':'on')):'')+'" title="'+esc(st1.stage)+(st1.report?' ✓':'')+'"></i>'; }
+  } else {
+    segCls='prog';
+    segs='<i class="'+(d.state==='failed'?'err':(d.state==='abandoned'?'stale':''))+'" style="width:'+d.progress.pct+'%"></i>';
+  }
   var s='<div class="rail">'
-    +'<h4>Progress</h4><div class="prog"><i class="'+(d.state==='failed'?'err':(d.state==='abandoned'?'stale':''))+'" style="width:'+d.progress.pct+'%"></i></div><div class="plabel">'+esc(d.progress.label||'—')+'</div>';
+    +'<h4>Progress</h4><div class="'+segCls+'">'+segs+'</div><div class="plabel">'+esc(d.progress.label||'—')+'</div>';
   if(d.timeline && d.timeline.length)
     s+='<button class="tlbtn" type="button" data-board-timeline>🕑 Timeline <span class="n">('+d.timeline.length+')</span></button>';
   if(d.rollup){
+    // ONE story surface (stories-merge): the overview's highlighted card list
+    // is the epic's story view; the rail keeps epic-level artifacts and a
+    // counted button into that list. A story's own artifacts live on its own
+    // detail page (each card links there).
     s+='<h4>Epic artifacts</h4>'+boardStageTree(d.stages, '')
-      +'<h4>Stories ('+d.children.length+')</h4>';
-    if(d.children.length){ for(var k=0;k<d.children.length;k++) s+=boardStoryNode(d.children[k], k===0); }
-    else s+=boardEmpty('— none —');
+      +'<button class="tlbtn" type="button" data-board-overview>\u25a4 Stories <span class="n">('+d.children.length+')</span></button>';
   } else {
     s+='<h4>Stages + artifacts</h4>'+boardStageTree(d.stages, '');
   }
   s+='<h4>Linked (reused)</h4>'+boardLinkRows(d.links, fleet)
     +'<h4>Repo'+boardCount(d.repos?d.repos.length:0)+'</h4>'
     +'<div class="repotxt">'+boardRepoList(d)+'</div>';
-  if(d.roomCount) s+='<a class="roombtn" href="/fleets/'+enc(fleet)+'/processes" data-link>💬 Room ('+d.roomCount+')</a>';
+  if(d.roomCount) s+='<button class="roombtn" type="button" data-board-room>💬 Room ('+d.roomCount+')</button>';
   return s+'</div>';
 }
 // The right viewer: a toolbar whose ids the artifact loader writes into, over a
 // body that starts on the overview.
 function boardDetailViewer(d){
   return '<div class="viewer">'
-    +'<div class="vbar"><span class="vpath" id="board-vpath">overview</span><span class="vkind" id="board-vkind" hidden></span>'
+    +'<div class="vbar"><button class="btn sm" type="button" id="board-ovbtn" data-board-overview title="Back to the family overview" hidden>\u2302 Overview</button>'
+    +'<span class="vpath" id="board-vpath">overview</span><span class="vkind" id="board-vkind" hidden></span>'
     +'<button class="btn sm" id="board-review-btn" type="button" data-tool-open="" data-tool-title="" hidden>Review &#9655;</button>'
     +'<a class="btn sm" id="board-review-ext" href="#" target="_blank" rel="noopener" title="open in new tab" hidden>&#8599;</a></div>'
     +'<div class="vbody" id="board-vbody">'+boardOverview(d)+'</div></div>';
 }
+// A family with live CREW but no roomchief (direct flow) still has panes worth
+// watching - the same snapshot join the board column runs (task-terminal-mount).
+function famHasLiveCrew(d){
+  var lm=boardLive(S.route.home, [d.family||d.id]);
+  return !!lm[d.family||d.id];
+}
 function familyDetailHtml(d){
   var fleet=S.route.fleet;
   if(d.error) return boardDetailHead(boardOpenFam, null)+'<div style="padding:20px 18px">'+stateBox('Detail unavailable', d.error, 'err')+'</div>';
-  // Chief panel (room-chat slice A, read-only): mounted only for a family whose
-  // roomchief meta is live; the pane content itself streams in via chiefPoll.
-  var chief=d.chiefLive?chiefPanelHtml(d.id+'-chief'):'';
-  var grip=d.chiefLive?'<div class="cgrip" id="chief-grip" title="Drag to resize the chief panel"></div>':'';
+  // Chief panel (room-chat slice A; widened by task-terminal-mount): mounted
+  // for a live roomchief OR a direct-flow family with live crew panes - the
+  // task view answers "what is the terminal doing" either way. Without a
+  // chief the panel auto-watches the first family pane, read-only.
+  var live=d.chiefLive||famHasLiveCrew(d);
+  var chief=live?chiefPanelHtml(d.chiefLive?(d.id+'-chief'):(d.id+' crew')):'';
+  var grip=live?'<div class="cgrip" id="chief-grip" title="Drag to resize the chief panel"></div>':'';
   return boardDetailHead(d.id, d)
-    +'<div class="fbody'+(d.chiefLive?' haschief':'')+'"'+(d.chiefLive?chiefWStyle():'')+'>'
+    +'<div class="fbody'+(live?' haschief':'')+'"'+(live?chiefWStyle():'')+'>'
     +boardDetailRail(d, fleet)+boardDetailViewer(d)+grip+chief+'</div>';
 }
 // ---- Chief panel input (room-chat slice B/C) ------------------------------
@@ -9499,6 +9619,7 @@ function familyDetailHtml(d){
 // crewchief drawer - opening either closes the other, so the shared ids
 // (chief-term/chief-msg/...) never exist twice.
 var chiefKb=false, chiefWatch='';   // ''=the chief itself; else a family pane id (read-only)
+var chiefNoChief=false;             // task-terminal-mount: panel mounted for crew panes only (no roomchief tab, auto-watch)
 function chatRoute(){ return S.route&&S.route.name==='chat'?S.route:null; }
 function chiefFam(){ var cr=chatRoute(); if(cr) return cr.fam||null; return boardOpenFam; }
 function chiefLoadTabs(){
@@ -9509,7 +9630,11 @@ function chiefLoadTabs(){
     var box2=el('chief-tabs'); if(!box2) return;
     var panes=(j&&j.panes)||[];
     if(!panes.length){ box2.innerHTML=''; return; }
-    var h='<button type="button" class="ct'+(chiefWatch===''?' on':'')+'" data-chief-watch=""><span class="dot"></span>chief</button>';
+    // No roomchief: there is no chief tab to offer, and an empty watch would
+    // poll a pane that cannot exist - pick the first crew pane instead
+    // (task-terminal-mount). setWatch re-runs this loader with watch set.
+    if(chiefNoChief && chiefWatch===''){ chiefSetWatch(panes[0].id); return; }
+    var h=chiefNoChief?'':'<button type="button" class="ct'+(chiefWatch===''?' on':'')+'" data-chief-watch=""><span class="dot"></span>chief</button>';
     for(var i=0;i<panes.length;i++){ var pn=panes[i];
       var lbl = pn.id===fam ? (pn.kind||'task')
               : (pn.id.indexOf(fam+'-')===0 ? pn.id.slice(fam.length+1) : pn.id);
@@ -9521,6 +9646,7 @@ function chiefLoadTabs(){
 }
 function chiefSetWatch(id){
   chiefWatch=id||'';
+  try{ if(chiefWatch) localStorage.setItem(chiefWatchKey(chiefCur), chiefWatch); else localStorage.removeItem(chiefWatchKey(chiefCur)); }catch(e){}
   var ro=chiefWatch!=='';
   var tt=el('chief-title'); if(tt) tt.textContent = ro ? chiefWatch : (tt.getAttribute('data-t')||'');
   var ta=el('chief-msg'); if(ta) ta.placeholder = ro ? 'Message '+chiefWatch+'… (Enter to send)' : 'Message the chief… (Enter to send, Shift+Enter for newline)';
@@ -9787,10 +9913,16 @@ function chiefRearmCadence(){ if(!chiefTimer||!chiefTickFn) return; clearInterva
 // arrives in ~150ms instead of at the next tick.
 function chiefPoke(){ if(!chiefTickFn) return; clearTimeout(chiefPokeT); chiefPokeT=setTimeout(function(){ if(chiefTickFn) chiefTickFn(); },150); }
 function chiefPollStop(){ chiefStreamStop(); if(chiefTimer){ clearInterval(chiefTimer); chiefTimer=null; } chiefCur=null; chiefTickFn=null; }
+// The picked watch tab survives reloads and route round-trips per family
+// (watch-tab-persist): a browser refresh used to snap 'ship' back to 'chief'.
+function chiefWatchKey(target){
+  var hp=S.route.home?S.route.home.path:'';
+  return 'ac_dash_watch:'+hp+'|'+(target===true?'fleet':String(target));
+}
 function chiefPollStart(target, keepWatch){
   if((chiefSock||chiefTimer) && chiefCur===target) return;   // renderPage re-arms every poll tick; same target keeps its transport
   chiefPollStop(); chiefCur=target; chiefLines=400;
-  if(!keepWatch) chiefWatch='';   // a NEW target starts on its chief; a watch switch keeps its pick
+  if(!keepWatch){ try{ chiefWatch=localStorage.getItem(chiefWatchKey(target))||''; }catch(e){ chiefWatch=''; } }   // a NEW target restores its remembered pick
   if(target!==true) chiefLoadTabs();   // family targets get the linked-pane chips
   if(chiefStreamStart(target)) return;   // ws push (250ms server-side); the loop below is the fallback
   chiefPollStartPoll(target);
@@ -9853,6 +9985,39 @@ function boardSetReviewBtn(path){
     btn.hidden=true; ext.hidden=true;
   }
 }
+// Back to the overview from any viewer state - room, timeline, artifact
+// (viewer-overview-return): the same reset every renderer starts with.
+function boardShowOverview(){
+  var box=document.querySelector('.bdetail'); if(!box) return;
+  var prev=box.querySelector('.art.on'); if(prev) prev.classList.remove('on');
+  var hp=S.route.home?S.route.home.path:'', d=familyCache[hp+'|'+boardOpenFam];
+  var vpath=el('board-vpath'), vkind=el('board-vkind'), vbody=el('board-vbody');
+  if(vpath) vpath.textContent='overview';
+  if(vkind) vkind.hidden=true;
+  var ob0=el('board-ovbtn'); if(ob0) ob0.hidden=true;   // no button while already home
+  boardSetReviewBtn(null);
+  if(vbody && d) vbody.innerHTML=boardOverview(d);
+}
+// Room in the viewer (room-in-viewer): the rail's Room button used to jump to
+// Processes, which no longer lists closed rooms - the record belongs HERE,
+// rendered with the same verb-chip line renderer the overview tail uses.
+function boardShowRoom(){
+  var box=document.querySelector('.bdetail'); if(!box) return;
+  var prev=box.querySelector('.art.on'); if(prev) prev.classList.remove('on');
+  var hp=S.route.home?S.route.home.path:'', d=familyCache[hp+'|'+boardOpenFam];
+  var evs=(d&&d.roomEntries)||[];
+  var vpath=el('board-vpath'), vkind=el('board-vkind'), vbody=el('board-vbody');
+  if(vpath) vpath.textContent='room';
+  if(vkind){ vkind.hidden=true; }
+  var ob1=el('board-ovbtn'); if(ob1) ob1.hidden=false;
+  boardSetReviewBtn(null);
+  if(!vbody) return;
+  if(!evs.length){ vbody.innerHTML=stateBox('Empty room','no entries recorded yet',''); return; }
+  var s='<div class="ovroom" style="margin:14px 0 0"><b>Room ('+evs.length+')</b>';
+  for(var i=0;i<evs.length;i++) s+='<div class="re">'+roomEntryHtml(evs[i])+'</div>';
+  s+='</div>';
+  vbody.innerHTML=s;
+}
 function boardShowTimeline(){
   var box=document.querySelector('.bdetail'); if(!box) return;   // the detail lives in #page now, not under a modal id
   var prev=box.querySelector('.art.on'); if(prev) prev.classList.remove('on');
@@ -9861,16 +10026,27 @@ function boardShowTimeline(){
   var vpath=el('board-vpath'), vkind=el('board-vkind'), vbody=el('board-vbody');
   if(vpath) vpath.textContent='timeline';
   if(vkind){ vkind.hidden=true; }
+  var ob2=el('board-ovbtn'); if(ob2) ob2.hidden=false;
   boardSetReviewBtn(null);
   if(!vbody) return;
   if(!evs.length){ vbody.innerHTML=stateBox('No timeline','no lifecycle events recorded yet',''); return; }
   var s='<div class="tl">';
+  // Each ac_status_append line is '<state>: <text>' - split the STEP out as a
+  // colored chip so the lifecycle reads as steps, not prose (board-detail-ux).
+  var TL_CLS={working:'acc',spawned:'acc',resumed:'acc',done:'ok',merged:'ok',resolved:'ok',landed:'ok',
+    blocked:'warn','needs-decision':'warn',failed:'err',abandoned:'stale',paused:'stale',routed:'acc'};
   for(var i=0;i<evs.length;i++){
     var e=evs[i], ms=Date.parse(e.ts), dur=(i>0)?fmtDur(e.deltaMs):'';
-    s+='<div class="tlrow"><div class="tldot"></div>'
-      +'<div class="tlmain"><div class="tlline">'+esc(e.line)+'</div>'
+    // Strip any leading marker glyphs (\u23fa, \u23bf, ...) but ONLY when a verb:
+    // follows - never eat the first word of a plain-prose event.
+    var line=String(e.line||'').replace(/^[^a-zA-Z]+(?=[a-z][a-z-]*:)/,'');
+    var vm=/^([a-z][a-z-]*):\s*(.*)$/.exec(line);
+    var chip=vm?'<span class="rev '+(TL_CLS[vm[1]]||'')+'">'+esc(vm[1])+'</span> ':'';
+    var body=vm?vm[2]:line;
+    s+='<div class="tlrow"><div class="tldot'+(vm&&TL_CLS[vm[1]]==='err'?' err':(vm&&TL_CLS[vm[1]]==='warn'?' warn':''))+'"></div>'
+      +'<div class="tlmain"><div class="tlline">'+chip+esc(body||'(no text)')+'</div>'
       +'<div class="tlmeta"><span class="tlclock">'+esc(isNaN(ms)?e.ts:clockOf(ms))+'</span>'
-      +(dur?'<span class="tldelta">+'+esc(dur)+'</span>':'')+'</div></div></div>';
+      +(dur?'<span class="tldelta">+'+esc(dur)+' after prev step</span>':'')+'</div></div></div>';
   }
   s+='</div>';
   vbody.innerHTML=s;
@@ -9882,6 +10058,7 @@ function boardOpenArt(node){
   node.classList.add('on');
   var vpath=el('board-vpath'), vkind=el('board-vkind'), vbody=el('board-vbody');
   if(vpath) vpath.textContent=title||'';
+  var ob3=el('board-ovbtn'); if(ob3) ob3.hidden=false;
   if(vkind){ vkind.hidden=false; vkind.className='vkind'+(kind==='md'?' md':''); vkind.textContent=(kind==='html'?'HTML':(kind==='md'?'MD':(kind||'file'))); }
   boardSetReviewBtn(path);
   if(vbody) vbody.innerHTML=skeleton();
@@ -9944,11 +10121,19 @@ function pageWhiteboards(){
 // pollGen and abort pageCtrl - so an in-flight per-fleet fetch can never
 // resolve and render under the new flag (a stale response's gen check would
 // otherwise still match).
-function reviewsCrossHome(){ try{ return localStorage.getItem('ac_dash_reviews_cross')==='1'; }catch(e){ return false; } }
-function toggleReviewsCrossHome(){
-  var v=!reviewsCrossHome(); try{ localStorage.setItem('ac_dash_reviews_cross', v?'1':'0'); }catch(e){}
-  pollGen++; if(pageCtrl){ try{pageCtrl.abort();}catch(e){} } pageInFlight=false; S.page=null; S.pageFail=false;
-  renderPage(); pollRoute();
+// Active-only view filter (captain 2026-08-18: per-fleet only, no all-homes
+// toggle in the UI - /api/reviews?all=1 stays for shims). Pure client filter.
+function reviewsActiveOnly(){ try{ return localStorage.getItem('ac_dash_reviews_active')==='1'; }catch(e){ return false; } }
+function toggleReviewsActive(){
+  var v=!reviewsActiveOnly(); try{ localStorage.setItem('ac_dash_reviews_active', v?'1':'0'); }catch(e){}
+  renderPage();
+}
+// End / reopen a session straight from the list row - same endpoint the
+// /review page's own button uses (reviewMutate owns the semantics).
+function reviewRowEnd(home, file, reopen){
+  if(!home||!file) return;
+  var qs='/api/review/end?path='+enc(home)+'&file='+enc(file)+(reopen?'&reopen=1&force=1':'&by=human');
+  fetch(qs,{method:'POST'}).then(function(){ S.page=null; renderPage(); pollRoute(); }).catch(function(){});
 }
 // Revoke a share from the Reviews list - the "turned it on and forgot" path:
 // the row shows SHARED, this kills the token, the row re-renders clean.
@@ -9961,26 +10146,28 @@ function stopShare(home, file){
 function pageReviews(){
   var r=S.route;
   if(!S.page){ return S.pageFail?stateBox('Reviews unavailable','Could not load the review sessions. Retrying.','err'):skeleton(); }
-  var rows=S.page.reviews||[];
-  var cross=reviewsCrossHome();
-  var s='<div class="wbtools"><span class="muted">'+(cross?'every OPEN review session across every home - the session file lives beside its artifact':'every review session of this fleet - the session file lives beside its artifact')+'</span>'
-    +'<button class="btoggle" type="button" data-reviews-crosshome aria-pressed="'+(cross?'true':'false')+'"><span class="sw" aria-hidden="true"></span>All homes</button></div>';
-  if(!rows.length) s+='<div class="muted" style="padding:12px">'+(cross?'no open review sessions anywhere':'no review sessions yet - open one from a Reports artifact')+'</div>';
+  var all=S.page.reviews||[];
+  var act=reviewsActiveOnly();
+  var rows=act?all.filter(function(v){ return v.state==='open'; }):all;
+  var s='<div class="wbtools"><span class="muted">every review session of this fleet - the session file lives beside its artifact</span>'
+    +'<button class="btoggle" type="button" data-reviews-active aria-pressed="'+(act?'true':'false')+'"><span class="sw" aria-hidden="true"></span>Active only</button></div>';
+  if(!rows.length) s+='<div class="muted" style="padding:12px">'+(act&&all.length?'no ACTIVE review session - '+all.length+' ended hidden by the filter':'no review sessions yet - open one from a Reports artifact')+'</div>';
   for(var i=0;i<rows.length;i++){
     var v=rows[i];
     var open=v.state==='open';
-    var rowHome=cross?(v.home||''):(r.home?r.home.path:'');
+    var rowHome=r.home?r.home.path:'';
     s+='<div class="wbrow">';
     s+='<span class="rvdot'+(open?' ok':'')+'" aria-hidden="true"></span>';
-    if(cross) s+='<span class="chipm" title="'+esc(rowHome)+'">'+esc(homeName(rowHome))+'</span>';
     s+='<span class="nm">'+esc(v.id)+'</span>';
-    s+='<span class="muted">'+(open?(v.listening?'agent listening':'open - nobody polling'):'ended ('+esc(v.endedBy||'?')+')')+'</span>';
+    s+='<span class="muted">'+(open?(v.listening?'agent listening':'open &middot; idle'):'ended ('+esc(v.endedBy||'?')+')')+'</span>';
     if(v.shared) s+='<span class="chipm shared" title="a guest token link is live for this session">SHARED</span>';
     s+='<span class="muted">'+v.pins+' pin'+(v.pins===1?'':'s')+' &middot; '+v.messages+' msg'+(v.messages===1?'':'s')+'</span>';
     s+='<span class="ts">'+(v.mtime?esc(agoMs(v.mtime)):'')+'</span>';
     var rvUrl='/review?path='+enc(rowHome)+'&file='+enc(v.path);
     s+='<button class="chip" data-tool-open="'+esc(rvUrl)+'" data-tool-title="review &middot; '+esc(v.id.split('/').pop())+'">Open</button>';
     s+='<a class="chip" href="'+esc(rvUrl)+'" target="_blank" rel="noopener" title="open in new tab">&#8599;</a>';
+    if(open) s+='<button class="chip" data-review-end="'+esc(rowHome)+'" data-review-end-file="'+esc(v.path)+'" title="end this review session (reopen stays possible)">End session</button>';
+    else s+='<button class="chip" data-review-reopen="'+esc(rowHome)+'" data-review-reopen-file="'+esc(v.path)+'" title="reopen this ended session - wakes the fleet">Reopen</button>';
     if(v.shared) s+='<button class="chip" data-stop-share="'+esc(rowHome)+'" data-stop-share-file="'+esc(v.path)+'" title="revoke the guest link">Stop share</button>';
     s+='</div>';
   }
@@ -9991,6 +10178,12 @@ function pageReports(){
   var r=S.route, ui=uiFor(routeKey(r));
   if(!S.page){ return S.pageFail?stateBox('Reports unavailable','Could not load the artifact list. Retrying.','err'):skeleton(); }
   var arts=S.page.artifacts||[];
+  // Empty-viewer landing was a dead screen (all-menu review): with no
+  // selection, open the NEWEST artifact - replace, so back leaves the page.
+  if(!r.sel && arts.length){
+    var best=arts[0]; for(var bi=1;bi<arts.length;bi++) if(arts[bi].mtime>best.mtime) best=arts[bi];
+    setTimeout(function(){ var cr=S.route; if(cr&&cr.name==='reports'&&!cr.sel&&cr.fleet===r.fleet) navigate('/fleets/'+enc(cr.fleet)+'/reports/'+enc(best.id),{replace:true}); },0);
+  }
   var q=ui.query.toLowerCase(), flt=ui.filter;
   var shown=arts.filter(function(a){
     if(flt==='md' && a.kind!=='md') return false;
@@ -10072,6 +10265,12 @@ function pageRecords(){
   var r=S.route, ui=uiFor(routeKey(r));
   if(!S.page){ return S.pageFail?stateBox('Records unavailable','Could not load the ledger list. Retrying.','err'):skeleton(); }
   var recs=S.page.records||[];
+  if(!r.sel && recs.length){
+    var dflt='backlog.md'; var has=false;
+    for(var di=0;di<recs.length;di++) if(recs[di].name===dflt){ has=true; break; }
+    var pick=has?dflt:recs[0].name;
+    setTimeout(function(){ var cr=S.route; if(cr&&cr.name==='records'&&!cr.sel&&cr.fleet===r.fleet) navigate('/fleets/'+enc(cr.fleet)+'/records/'+enc(pick),{replace:true}); },0);
+  }
   var q=ui.query.toLowerCase();
   var shown=recs.filter(function(x){ return !q || x.name.toLowerCase().indexOf(q)>=0; });
   var list='<div class="ltools"><input class="search-in" type="search" data-list-search placeholder="Search ledgers…" aria-label="Search ledgers" autocomplete="off" spellcheck="false"></div><div class="lbody">';
@@ -10234,7 +10433,7 @@ function pageBrain(){
   if(facts){
     s+='<h2 style="font-size:14px;margin:14px 0 6px">Working-memory facts</h2>';
     for(var f=0;f<facts.length;f++){ var fa=facts[f];
-      s+='<div class="cfg-field"><div class="fname">['+esc(fa.kind||'fact')+'] '+esc(fa.fact)
+      s+='<div class="cfg-field" style="display:block"><div class="fname">['+esc(fa.kind||'fact')+'] '+esc(fa.fact)
         +'<div class="fdesc">'+esc(fa.provenance||'')+' \u00b7 '+esc(fa.agent||'')+' \u00b7 '+esc((fa.created_at||'').slice(0,16).replace('T',' '))+'</div></div></div>';
     }
   }
@@ -10328,10 +10527,16 @@ function pageSearch(){
   s+='<div class="muted" style="margin:12px 0">'+hits.length+' result'+(hits.length===1?'':'s')+' &middot; query retained</div>';
   if(!hits.length){ s+='<div class="state"><div class="st-title">No matches</div><div>No backlog line matches "'+esc(q)+'".</div></div></div>'; return s; }
   for(var i=0;i<hits.length;i++){ var hit=hits[i]; var fn=homeName(hit.home);
-    s+='<div class="sresult"><div class="rhead"><span class="rfleet">'+esc(fn)+'</span><span class="badge">'+esc(hit.section)+'</span></div>';
-    s+='<div class="rline">'+hl(hit.line, q)+'</div>';
-    s+='<div class="rlinks"><a href="/fleets/'+enc(fn)+'/backlog" data-link data-jumpq="'+esc(hit.family)+'">Open task &rarr;</a>';
-    s+='<a href="/fleets/'+enc(fn)+'/reports" data-link data-jumpq="'+esc(hit.family)+'">Reports &rarr;</a></div></div>';
+    var rk='sr:'+i, openRow=!!ui.exp[rk];
+    s+='<div class="sresult"><div class="rhead"><span class="rfleet">'+esc(fn)+'</span>'
+      +(hit.family?'<span class="mono" style="color:var(--accent);font-size:12px">'+esc(hit.family)+'</span>':'')
+      +'<span class="badge">'+esc(hit.section)+'</span></div>';
+    // A raw ledger row runs hundreds of words - clamp it and let the captain
+    // expand the one they care about (all-menu review).
+    s+='<div class="rline'+(openRow?'':' clip')+'">'+hl(hit.line, q)+'</div>';
+    s+='<div class="rlinks"><a href="/fleets/'+enc(fn)+'/board/'+enc(hit.family)+'" data-link>Open task &rarr;</a>';
+    s+='<a href="/fleets/'+enc(fn)+'/reports" data-link data-jumpq="'+esc(hit.family)+'">Reports &rarr;</a>';
+    s+='<button class="chip" data-disc="'+rk+'">'+(openRow?'less':'more')+'</button></div></div>';
   }
   s+='</div>';
   return s;
@@ -10769,6 +10974,8 @@ function toggleDisc(dk){ var ui=uiFor(routeKey(S.route)); var cur=(dk in ui.exp)
 // Event delegation
 // ===========================================================================
 function onClick(e){
+  var x0=e.target&&e.target.closest?e.target.closest('[data-ext]'):null;
+  if(x0){ window.open(x0.getAttribute('data-ext'),'_blank','noopener'); e.preventDefault(); e.stopPropagation(); return; }
   var t=e.target; if(!t) return; if(t.nodeType===3) t=t.parentElement; if(!t||!t.closest) return;
   var n;
   if(t.closest('#refresh-btn')){ tick(true); return; }
@@ -10827,10 +11034,14 @@ function onClick(e){
     if(S.route.name==='reports') uf.exp={}; renderPage(); return; }
   if((n=t.closest('[data-rview]'))){ try{ localStorage.setItem('ac_dash_rview', n.getAttribute('data-rview')); }catch(e){} renderPage(); return; }
   if((n=t.closest('[data-board-hidedone]'))){ toggleHideDone(); return; }
-  if((n=t.closest('[data-reviews-crosshome]'))){ toggleReviewsCrossHome(); return; }
+  if((n=t.closest('[data-reviews-active]'))){ toggleReviewsActive(); return; }
+  if((n=t.closest('[data-review-end]'))){ reviewRowEnd(n.getAttribute('data-review-end'), n.getAttribute('data-review-end-file'), false); return; }
+  if((n=t.closest('[data-review-reopen]'))){ reviewRowEnd(n.getAttribute('data-review-reopen'), n.getAttribute('data-review-reopen-file'), true); return; }
   if((n=t.closest('[data-stop-share]'))){ stopShare(n.getAttribute('data-stop-share'), n.getAttribute('data-stop-share-file')); return; }
   if((n=t.closest('[data-reveal]'))){ fetch('/api/reveal?path='+enc(n.getAttribute('data-reveal'))+'&file='+enc(n.getAttribute('data-reveal-file')),{method:'POST'}).catch(function(){}); return; }
   if((n=t.closest('[data-board-timeline]'))){ boardShowTimeline(); return; }   // render the lifecycle timeline in the viewer
+  if((n=t.closest('[data-board-room]'))){ boardShowRoom(); return; }           // render the family room in the viewer (room-in-viewer)
+  if((n=t.closest('[data-board-overview]'))){ boardShowOverview(); return; }   // back from room/timeline/artifact to the overview
   if((n=t.closest('[data-board-art]'))){ boardOpenArt(n); return; }   // load artifact inline (detail viewer)
   if((n=t.closest('[data-stage-toggle]'))){ var box2=n.closest('.stage,.story'); if(box2) box2.classList.toggle('collapsed'); return; }
   if((n=t.closest('[data-tool-open]'))){

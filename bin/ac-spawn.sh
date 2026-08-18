@@ -136,9 +136,15 @@
 # every pooled worktree the task holds, colon-separated - and ac-teardown.sh
 # returns EACH one, not just the primary tree. A spawn takes exactly one lease,
 # so the list normally has a single entry equal to worktree=; anything that
-# leases a SECOND tree for the same task (the qa e2e companion checkout, taken
-# by hand today) appends its path here, and that append is the whole mechanism
-# by which teardown gives it back. worktree= keeps its own meaning - the
+# leases a SECOND tree for the same task (a qa e2e companion checkout, taken
+# by calling `bin/ac-tree.sh get --id <this task's id> ...` again) has its path
+# appended here automatically - `ac-tree.sh get` itself does the append, the
+# moment it sees state/<id>.meta already on disk - and that append is the whole
+# mechanism by which teardown gives it back. The task's OWN first lease never
+# triggers it: spawn/self-task write state/<id>.meta only after that first
+# `get` returns, so the append is silently a no-op until the meta exists (also
+# why a verifier's distinct id, which never gets a crew meta at all, never has
+# one minted for it either). worktree= keeps its own meaning - the
 # PRIMARY tree, the crewmate's cwd, which every other script resolves - and a
 # meta written before leases= existed carries only worktree=, which teardown
 # reads as a one-entry list (back-compat, no migration). Chief and crewdeputy

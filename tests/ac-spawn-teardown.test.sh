@@ -895,6 +895,24 @@ grep -q "leased.*dualsrc" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
 grep -q "leased.*duale2e" <<<"$("$BIN/ac-tree.sh" list --repo "$dual_e2e_repo")" \
   && fail "teardown must return the E2E lease of a dual-ref verifier"
 
+# Story 4: an ORDINARY crew/local-only task (kind=ship) with a SECOND lease
+# goes through teardown's CREW return loop (:627) - a separate code path from
+# Story 3's verifier loop (:467). Before ac-tree.sh get appended a second
+# lease into a live crew meta, a spawn's single lease meant leases= could
+# never carry more than one entry here, so this loop never actually ran on a
+# multi-entry list. Take the second lease the same way a crewmate would: a
+# bare `ac-tree.sh get --id <id>` call, the real append path under test.
+"$BIN/ac-brief.sh" t25 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t25 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt25a="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t25.meta")"
+wt25b="$("$BIN/ac-tree.sh" get --repo "$repo" --id t25 --holder crew:t25 | tail -n1)"
+assert_eq "$(awk -F= '$1=="leases"{print $2}' "$AC_HOME/state/t25.meta")" "$wt25a:$wt25b" \
+  "the second lease is folded into the crew meta before teardown ever runs"
+"$BIN/ac-teardown.sh" t25 --force >/dev/null 2>&1 || fail "a dual-lease crew task must tear down"
+out25="$("$BIN/ac-tree.sh" list --repo "$repo")"
+grep -q "leased.*t25" <<<"$out25" \
+  && fail "teardown must return BOTH leases of a dual-lease crew task, not only the primary one"
+
 # Back-compat: a meta written before leases= existed carries only worktree=, and
 # teardown must still return that one tree (no migration script).
 "$BIN/ac-brief.sh" t14 proj --mode local-only >/dev/null

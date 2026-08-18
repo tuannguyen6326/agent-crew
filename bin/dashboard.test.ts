@@ -2898,3 +2898,48 @@ test("PROVIDER_LANES: synthesize offers opencode-go, embedding does not", () => 
   expect(Object.keys(PROVIDER_LANES.synthesize)).toContain("opencode-go");
   expect(Object.keys(PROVIDER_LANES.embedding)).not.toContain("opencode-go");
 });
+
+// ---- fleetAttnItems (fleets-attn-queue) -----------------------------------
+import { fleetAttnItems } from "./dashboard.ts";
+
+const ATTN_SNAP = {
+  homes: [
+    {
+      name: "drydock",
+      watcher: { state: "armed" },
+      inbox: { entries: [
+        { status: "PENDING-CAPTAIN(1)", family: "payments", last: "GATE: plan awaiting captain" },
+        { status: "HANDBACK", family: "docs-pass", last: "HANDBACK: landed" },
+      ] },
+      crewdeputies: [
+        { name: "demo", watcher: { state: "down" }, inbox: { entries: [] } },
+      ],
+    },
+    {
+      name: "lab",
+      watcher: { state: "down", detail: "no beacon" },
+      inbox: { entries: [{ status: "PENDING-CAPTAIN(2)+HANDBACK", family: "fx", last: "combined" }] },
+    },
+  ],
+};
+
+test("fleetAttnItems: pending, then handback, then watcher-down", () => {
+  const items = fleetAttnItems(ATTN_SNAP);
+  expect(items.map((i) => i.kind)).toEqual(["pending", "pending", "handback", "handback", "watcher", "watcher"]);
+  expect(items[0]).toMatchObject({ fleet: "drydock", family: "payments" });
+});
+
+test("fleetAttnItems: a combined PENDING+HANDBACK entry lands in both bands", () => {
+  const items = fleetAttnItems(ATTN_SNAP).filter((i) => i.fleet === "lab" && i.family === "fx");
+  expect(items.map((i) => i.kind).sort()).toEqual(["handback", "pending"]);
+});
+
+test("fleetAttnItems: walks one level of crewdeputies (demo's dead watcher shows)", () => {
+  const w = fleetAttnItems(ATTN_SNAP).filter((i) => i.kind === "watcher").map((i) => i.fleet);
+  expect(w).toEqual(["demo", "lab"]);
+});
+
+test("fleetAttnItems: empty/garbage snapshot never throws", () => {
+  expect(fleetAttnItems(null)).toEqual([]);
+  expect(fleetAttnItems({ homes: [{}] })).toEqual([]);
+});

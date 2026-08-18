@@ -333,4 +333,32 @@ case "$out" in *migrated*) fail "committed /.crew/ line must not be migrated" ;;
 grep -qxF '/.crew/' "$repo8/.gitignore" || fail "committed .gitignore line removed"
 [ -z "$(git -C "$repo8" status --porcelain)" ] || fail "clone dirtied"
 
+# A second worktree lease for a task whose crew meta already exists is
+# appended to state/<id>.meta leases=/lease_ids=, index-aligned - the
+# mechanism that lets ac-teardown.sh return every tree a task holds. The
+# FIRST lease of a spawn/self-task always predates state/<id>.meta (spawn
+# writes it only after get returns), so get must mint nothing for it.
+repoM="$(make_repo secondlease)"
+wtM1="$("$BIN/ac-tree.sh" get --repo "$repoM" --id t9 --holder crew:t9 2>/dev/null)"
+assert_no_file "$AC_HOME/state/t9.meta" "the first lease predates the crew meta - get must not mint one"
+idM1="$(awk -F= '$1=="lease_id"{print $2}' "$repoM/.crew/slots/$(basename "$wtM1").meta")"
+# Mimic what ac-spawn.sh/ac-self-task.sh write right after this same call.
+printf 'kind=ship\nworktree=%s\nleases=%s\nlease_ids=%s\n' "$wtM1" "$wtM1" "$idM1" \
+  >"$AC_HOME/state/t9.meta"
+wtM2="$("$BIN/ac-tree.sh" get --repo "$repoM" --id t9 --holder crew:t9 2>/dev/null)"
+idM2="$(awk -F= '$1=="lease_id"{print $2}' "$repoM/.crew/slots/$(basename "$wtM2").meta")"
+assert_eq "$(awk -F= '$1=="leases"{print $2}' "$AC_HOME/state/t9.meta")" "$wtM1:$wtM2" \
+  "a second lease is appended to leases="
+assert_eq "$(awk -F= '$1=="lease_ids"{print $2}' "$AC_HOME/state/t9.meta")" "$idM1:$idM2" \
+  "lease_ids stays index-aligned with leases"
+assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9.meta")" "$wtM1" \
+  "worktree= (the primary tree) is untouched by the append"
+
+# A verifier's distinct id (grammar: bin/ac-verify.sh, <family>-verify-<kind>
+# and its -e2e companion) never gets a crew meta - get must mint none for it.
+"$BIN/ac-tree.sh" get --repo "$repoM" --id fam-verify-codereview --holder verify >/dev/null 2>&1
+assert_no_file "$AC_HOME/state/fam-verify-codereview.meta" "no stray meta for a verifier id"
+"$BIN/ac-tree.sh" get --repo "$repoM" --id fam-verify-qa-e2e --holder verify >/dev/null 2>&1
+assert_no_file "$AC_HOME/state/fam-verify-qa-e2e.meta" "no stray meta for a verifier -e2e id"
+
 pass
