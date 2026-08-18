@@ -140,3 +140,45 @@ bwant "listspace||1" "a space inside the id list reads MALFORMED, not a trailing
 bwant "unblocked||" "prose containing 'unblocked-by' is neither a blocker nor malformed"
 
 pass
+
+# ---- domain:<name> (crewdomain-token) -------------------------------------
+# Two-arm position rule: authoritative before a trailing (repo: ...) group or
+# at end-of-line; anywhere else unquoted = malformed (fail-visible); a
+# backtick-wrapped run is a documentation mention. epic: and domain: coexist.
+parse_domain() {
+  awk "$AC_DONELINE_AWK"'
+    /^- \[[ x]\] / {
+      ac_doneline($0, o)
+      printf "%s|%s|%s|%s\n", o["id"], o["domain"], o["domain_malformed"], o["epic"]
+    }
+  ' "$1"
+}
+
+DFX="$TMP/domainshapes.md"
+cat >"$DFX" <<'DEOF'
+## Queued
+- [ ] payfix - round the payout row; domain:payments (repo: payments-core)
+- [ ] payfix2 - waits on api (repo: payments-core) blocked-by: payapi - contract first; domain:payments
+- [ ] story1 - conversion leg; epic:payv2; domain:payments (repo: ledger-api)
+- [ ] prose1 - the row merely mentions domain:payments in prose (repo: notify-svc)
+- [ ] prose2 - documents the `domain:payments` token shape (repo: notify-svc)
+- [ ] misplaced - forgot the semicolon domain:payments (repo: notify-svc)
+
+## Done
+- [x] payland - landed the rounding fix - local main (merged 2026-08-18); domain:payments
+DEOF
+
+dgot="$(parse_domain "$DFX")"
+assert_contains "$dgot" "payfix|payments||" "arm 1: token before the trailing (repo:) group"
+assert_contains "$dgot" "payfix2|payments||" "arm 2: token at end-of-line on a blocked row"
+assert_contains "$dgot" "story1|payments||payv2" "epic: and domain: coexist on one story row"
+assert_contains "$dgot" "prose1||1|" "an unquoted prose mention is malformed, never authoritative"
+assert_contains "$dgot" "prose2|||" "a backtick-quoted mention is inert - no token, no flag"
+assert_contains "$dgot" "misplaced||1|" "a token off both arms is malformed, fail-visible"
+assert_contains "$dgot" "payland|payments||" "a Done row keeps its token (arm 2) as durable provenance"
+
+# The token is date-free by charset: date/verb extraction unmoved by the stamp.
+dv="$(awk "$AC_DONELINE_AWK"'
+  /^- \[x\] payland/ { ac_doneline($0, o); printf "%s|%s\n", o["verb"], o["date"] }
+' "$DFX")"
+assert_eq "$dv" "merged|2026-08-18" "date/verb parse is inert to a trailing domain token"

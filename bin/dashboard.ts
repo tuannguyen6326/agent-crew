@@ -1581,54 +1581,8 @@ export function domainProjectLinks(pkg: string): DomainProjectLink[] {
   return out;
 }
 
-/** Every crewdomain package's own backlog.md under a home - the same unquoted
- *  glob ac_domain_tally itself walks (bin/ac-lib.sh:625), ghost packages
- *  included, so this list's denominator matches the tally's. */
-function domainBacklogFiles(homePath: string): { name: string; file: string }[] {
-  const dir = `${homePath}/crewdomains`;
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return [];
-  }
-  const out: { name: string; file: string }[] = [];
-  for (const name of names) {
-    const file = `${dir}/${name}/records/backlog.md`;
-    if (existsSync(file)) out.push({ name, file });
-  }
-  return out;
-}
 
-/** Tag a backlog line with its crewdomain source, unless it already carries
- *  one (defensive - a domain's own backlog line should never carry the marker
- *  itself). */
-function tagDomainLine(line: string, name: string): string {
-  return line.includes("(domain:") ? line : `${line} (domain:${name})`;
-}
 
-/** Merge every crewdomain package's own backlog.md into `bl`'s three
- *  sections, each line tagged with its source (dash-domain-records surface
- *  c) - closes the blind spot where a row assigned into a domain leaves the
- *  fleet ledger and disappears from the UI entirely. Reuses parseBacklog -
- *  no new backlog grammar. Pure given the strings it reads; `bl` itself is
- *  never mutated. */
-export function withDomainBacklogs(homePath: string, bl: BacklogView): BacklogView {
-  const out: BacklogView = { in_flight: [...bl.in_flight], queued: [...bl.queued], done: [...bl.done] };
-  for (const { name, file } of domainBacklogFiles(homePath)) {
-    let md: string;
-    try {
-      md = readFileSync(file, "utf8");
-    } catch {
-      continue;
-    }
-    const dbl = parseBacklog(md);
-    for (const key of ["in_flight", "queued", "done"] as const) {
-      for (const line of dbl[key]) out[key].push(tagDomainLine(line, name));
-    }
-  }
-  return out;
-}
 
 export interface DomainTally {
   queued: number;
@@ -1636,7 +1590,7 @@ export interface DomainTally {
   done: number;
 }
 
-/** ac_domain_tally (bin/ac-lib.sh:625), run for every VALID id in ONE sourced
+/** ac_domain_tally (fleet-ledger token census since crewdomain-token), run for every VALID id in ONE sourced
  *  bash invocation - not one shell-out per domain - so this route never grows
  *  the unbounded per-domain process-spawn loop the performance guard warns
  *  against (the ac-room.sh fork-per-room fix this same month is the fleet's
@@ -1664,7 +1618,6 @@ async function domainTallies(homePath: string, ids: string[]): Promise<Map<strin
 }
 
 export interface DomainMembers {
-  backlog: boolean;
   projectsDoc: boolean;
   crewmate: boolean;
 }
@@ -1707,7 +1660,6 @@ async function domainsDetail(homePath: string): Promise<Response> {
       ...r,
       backlog: tallies.get(r.id) ?? null,
       members: {
-        backlog: existsSync(`${pkg}/records/backlog.md`),
         projectsDoc: projectsHtml !== null,
         crewmate: crewmateHtml !== null,
       },
@@ -3349,13 +3301,12 @@ async function processesDetail(homePath: string): Promise<Response> {
     // room.md, which is a SUBSET (a room opens on a family's first
     // captain-facing event), so it would have broken more links than the
     // unconditional strip it replaced.
+    // crewdomain-token: domain rows live IN the fleet ledger (stamped), so the
+    // one parse covers them - the old per-package merge had nothing left to add.
     families: backlogFamilyIds(
-      withDomainBacklogs(
-        homePath,
-        existsSync(backlogFile)
-          ? parseBacklog(readFileSync(backlogFile, "utf8"))
-          : { in_flight: [], queued: [], done: [] },
-      ),
+      existsSync(backlogFile)
+        ? parseBacklog(readFileSync(backlogFile, "utf8"))
+        : { in_flight: [], queued: [], done: [] },
     ),
   });
 }
@@ -10445,8 +10396,8 @@ function domainPanel(d){
   if(d.backlog) s+=' <span class="muted" style="font-size:12px">queued '+d.backlog.queued+' &middot; in flight '+d.backlog.inFlight+' &middot; done '+d.backlog.done+'</span>';
   s+='</summary>';
   s+='<div class="tblwrap" style="margin-top:10px"><table class="tbl"><tbody>';
-  s+='<tr><th>records/backlog.md</th><td>'+domainMemberBadge(d.members.backlog)+'</td><th>records/projects.md</th><td>'+domainMemberBadge(d.members.projectsDoc)+'</td></tr>';
-  s+='<tr><th>CREWMATE.md</th><td>'+domainMemberBadge(d.members.crewmate)+'</td><th>projects/ links</th><td>'+d.projects.length+'</td></tr>';
+  s+='<tr><th>records/projects.md</th><td>'+domainMemberBadge(d.members.projectsDoc)+'</td><th>CREWMATE.md</th><td>'+domainMemberBadge(d.members.crewmate)+'</td></tr>';
+  s+='<tr><th>projects/ links</th><td>'+d.projects.length+'</td><th>backlog</th><td><span class="muted">fleet ledger rows tagged domain:'+esc(d.id)+'</span></td></tr>';
   s+='</tbody></table></div>';
   if(d.projects.length){
     s+='<div class="tblwrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Entry</th><th>Resolved target</th><th>State</th></tr></thead><tbody>';

@@ -10,7 +10,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, withDomainBacklogs, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -835,50 +835,7 @@ test("domainProjectLinks: no projects/ dir -> []", () => {
   }
 });
 
-test("withDomainBacklogs merges every crewdomains/*/records/backlog.md into the fleet sections, tagged with its source", () => {
-  const root = mkdtempSync(`${tmpdir()}/ac-dash-domain-backlog-`);
-  try {
-    mkdirSync(`${root}/crewdomains/payments/records`, { recursive: true });
-    writeFileSync(`${root}/crewdomains/payments/records/backlog.md`, [
-      "## In flight",
-      "- [ ] pay-1 - charge retries (repo: agent-crew, since 2026-08-01)",
-      "## Queued",
-      "- [ ] pay-2 - refund flow",
-      "## Done",
-      "- [x] pay-0 - old work - local main (merged 2026-07-01)",
-    ].join("\n"));
-    mkdirSync(`${root}/crewdomains/empty-domain/records`, { recursive: true }); // no backlog.md -> contributes nothing
 
-    const fleetBl = { in_flight: ["- [ ] own-1 - fleet work"], queued: [], done: [] };
-    const merged = withDomainBacklogs(root, fleetBl);
-
-    expect(merged.in_flight.length).toBe(2);
-    expect(merged.in_flight[0]).toBe("- [ ] own-1 - fleet work"); // fleet's own line, untouched
-    expect(merged.in_flight[1]).toContain("pay-1");
-    expect(merged.in_flight[1]).toContain("(domain:payments)");
-
-    expect(merged.queued.length).toBe(1);
-    expect(merged.queued[0]).toContain("(domain:payments)");
-
-    expect(merged.done.length).toBe(1);
-    expect(merged.done[0]).toContain("(domain:payments)");
-
-    // the input view is not mutated
-    expect(fleetBl.in_flight.length).toBe(1);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("withDomainBacklogs: no crewdomains/ dir at all -> the fleet's own sections pass through unchanged", () => {
-  const root = mkdtempSync(`${tmpdir()}/ac-dash-domain-backlog-`);
-  try {
-    const fleetBl = { in_flight: [], queued: ["- [ ] q - x"], done: [] };
-    expect(withDomainBacklogs(root, fleetBl)).toEqual(fleetBl);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
 
 // --- dash-config: editable-knob allowlist (the security boundary) ----------
 

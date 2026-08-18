@@ -1,36 +1,55 @@
 #!/usr/bin/env bash
 # ac-domain.sh - the CREWDOMAIN verb layer: create a domain package and route
-# work into it.
+# work to it by TOKEN.
 #
 # Usage: ac-domain.sh new <name> --scope '<text>' --charter '<text>'
 #                                (--projects <p1,p2,...> | --no-projects)
+#        ac-domain.sh assign <name> <backlog-id>...     (stamp domain:<name>)
+#        ac-domain.sh unassign <name> <backlog-id>...   (strip the token)
+#        ac-domain.sh queue <name> [--ids]              (the domain's slice)
+#        ac-domain.sh list | validate | retire <name>
 #
-# A crewdomain is durable STATE inside this fleet - a package plus one routing
-# line - with no home, no session, no liveness and no lifecycle of its own. Work
-# reaches it when the crewchief ASSIGNS a row into its backlog; work happens
-# when the crewchief promotes a DOMAINCHIEF, an ordinary roomchief whose domain
-# binding is derived from that assignment.
+# A crewdomain is durable STATE inside this fleet - a KNOWLEDGE package plus
+# one routing line - with no home, no session, no liveness and no ledger of
+# its own (crewdomain-token refactor, captain-ordered 2026-08-18). Work
+# reaches it when the crewchief STAMPS a fleet backlog row with the
+# `domain:<name>` token (grammar owner: AC_DONELINE_AWK's f["domain"] -
+# position-pinned at the slot the retired assigned:crewchief defined); work
+# happens when the crewchief promotes a DOMAINCHIEF, an ordinary roomchief
+# whose domain binding is derived from that token. The row NEVER leaves
+# records/backlog.md: ac-ready.sh keeps scheduling it, blocked-by edges stay
+# resolvable, epic rollups keep counting it - which is why the old epic
+# refusal is gone (an epic row is assignable; live fleet evidence showed
+# epics ARE the domain workload). The domainchief never edits any
+# ledger - the crewchief moves rows at the ordinary checkpoints (promote ->
+# In flight, handback -> Done), the roomchief precedent made total. A Done
+# row KEEPS its token as durable per-domain provenance (date-free, so
+# ac_doneline's date/verb stay inert).
 #
-# COEXISTENCE with crewdeputy, which this script never touches. The two features
-# share no registry, no root, no script and no verb - crewdeputy keeps
-# bin/ac-deputy.sh, records/crewdeputies.md, $AC_HOME/crewdeputies/<name>/ and
-# every verb it has. Choose by what the work needs: ISOLATION (separate clones,
-# credentials, budget, delegable to another operator) -> a crewdeputy or a full
-# fleet; a KNOWLEDGE and BACKLOG SLICE over the fleet's own clones -> a
-# crewdomain. The one place the two meet is the NAME, and `new` refuses a
-# collision rather than leaving the chief to disambiguate it forever.
+# The old per-domain records/backlog.md is GONE, and with it the whole
+# UNAUTHORIZED defect class: there is no second ledger to mint a row into.
+# What remains detectable is the ORPHAN-TOKEN (a token naming no VALID
+# registry entry - `list` prints it, promote refuses it) and the malformed
+# token (f["domain_malformed"], flagged by `validate`, fail-visible).
 #
-# The registry GRAMMAR is owned by ac-lib.sh's `crewdomain routing table` block;
-# this script owns the verbs.
+# COEXISTENCE with crewdeputy, which this script never touches. The two
+# features share no registry, no root, no script and no verb - crewdeputy
+# keeps bin/ac-deputy.sh, records/crewdeputies.md, $AC_HOME/crewdeputies/
+# <name>/ and every verb it has. Choose by what the work needs: ISOLATION
+# (separate clones, credentials, budget, delegable to another operator) -> a
+# crewdeputy or a full fleet; a KNOWLEDGE slice + routed slice of the fleet
+# ledger over the fleet's own clones -> a crewdomain. The one place the two
+# meet is the NAME, and `new` refuses a collision rather than leaving the
+# chief to disambiguate it forever.
+#
+# The registry GRAMMAR is owned by ac-lib.sh's `crewdomain routing table`
+# block; the TOKEN grammar by AC_DONELINE_AWK; this script owns the verbs.
 #
 # --- new: the package, whole or nothing ----------------------------------------
 #
-# AUTHORITATIVE for the package layout. FOUR members at
+# AUTHORITATIVE for the package layout. THREE members at
 # $AC_HOME/crewdomains/<name>/:
 #
-#   records/backlog.md    the fleet ledger's sections and line grammar. `assign`
-#                         creates rows; the domainchief moves them between
-#                         sections and may never mint one.
 #   records/projects.md   the domain's DETAIL about its in-scope projects - what
 #                         part of each belongs to the domain, partner context,
 #                         constraints, entry points. NEVER `[mode]` and never
@@ -116,9 +135,9 @@ domain_require_ids() {
 domain_chief_only() {
   # domain_chief_only <verb> - the crewchief owns every mutating verb here.
   # The ledger guard covers Edit/Write/NotebookEdit and NOT the Bash tool, so
-  # without this a scoped session could run the verb directly, move a fleet row
-  # and STAMP it assigned:crewchief - after which the audit reads the forged
-  # provenance as authorized and chief-only-add is defeated by its own token.
+  # without this a scoped session could run the verb directly and STAMP a
+  # fleet row domain:<name> itself - forged authorization, and chief-only-add
+  # defeated by its own token.
   [ -z "${AC_SCOPE:-}" ] \
     || ac_die "$1 is the CREWCHIEF's verb and this session is scoped (AC_SCOPE=$AC_SCOPE) - only the crewchief creates domain rows, and the provenance token means nothing if a scoped session can stamp it"
 }
@@ -140,31 +159,7 @@ domain_dedupe() {
   done
 }
 
-domain_row_tokened() {
-  # domain_row_tokened <row> - 0 when the row carries the provenance token AT
-  # its grammar position: immediately before the trailing `(repo: ...)` group,
-  # or at end of line when the row has none.
-  #
-  # THE ONE definition. audit and unassign each had their own and they
-  # disagreed - audit end-anchored, unassign a bare substring - so a row whose
-  # prose merely MENTIONS the token read as UNAUTHORIZED to the audit and as
-  # legitimate to unassign, which is precisely the laundering path. A predicate
-  # with two implementations is a predicate with two answers.
-  case "$1" in
-    *"; assigned:crewchief") return 0 ;;
-  esac
-  printf '%s' "$1" | grep -qE '; assigned:crewchief \(repo: [^()]*\)$'
-}
 
-domain_token_re() {
-  # domain_token_re - the provenance token AT ITS GRAMMAR POSITION, never
-  # anywhere on the line. `assign` writes `; assigned:crewchief` immediately
-  # before the trailing `(repo: ...)` group, or at end-of-line when a row has
-  # none. Matching the bare phrase anywhere would let ordinary task prose that
-  # merely QUOTES it pass the audit, and would make the strip delete that prose
-  # while leaving the real token in place.
-  printf '%s' '; assigned:crewchief\( (repo: \|$\)'
-}
 
 cmd_new() {
   local name="" scope="" charter="" projects="" no_projects=0
@@ -309,7 +304,6 @@ cmd_new() {
   _ac_new_pkg="$pkg"
   trap domain_new_rollback EXIT
   mkdir -p "$pkg/records" "$pkg/projects"
-  printf '# Backlog: %s\n\n## In flight\n\n## Queued\n\n## Done\n' "$name" >"$pkg/records/backlog.md"
   # ONE `## <project-name>` heading per in-scope project (captain ruling
   # 2026-08-02). The file is free prose everywhere else; the heading is the only
   # machine-readable part, and it exists so `validate` can compare the DETAIL
@@ -363,12 +357,6 @@ domain_valid_scope() {
   printf '%s\n' "$rec"
 }
 
-domain_backlog() {
-  # domain_backlog <name> - the package backlog, or die.
-  local f; f="$(domain_pkg "$1")/records/backlog.md"
-  [ -f "$f" ] || ac_die "crewdomain '$1' has no records/backlog.md at $f"
-  printf '%s\n' "$f"
-}
 
 domain_view_names() {
   # domain_view_names <name> - the project names the view links, one per line.
@@ -383,19 +371,54 @@ domain_view_names() {
   done
 }
 
-domain_unauthorized() {
-  # domain_unauthorized <name> - one `<name> <id>` line per untokened row.
-  # Read-only. `assign` stamps the token and is its ONLY writer, so a row
-  # without one was not put there by the chief.
-  local name="$1" f
-  f="$(domain_pkg "$name")/records/backlog.md"
-  [ -f "$f" ] || return 0
-  awk -v n="$name" '
-    /^- \[/ && $0 !~ /; assigned:crewchief \(repo: [^()]*\)$/ && $0 !~ /; assigned:crewchief$/ {
-      line = $0; sub(/^- \[[ x]\] /, "", line); split(line, p, " ")
-      printf "%s %s\n", n, p[1]
-    }
-  ' "$f"
+
+domain_row_of() {
+  # domain_row_of <id> <ledger> - "<section>\t<line>" for the SINGLE row with
+  # this id, empty when absent or ambiguous. The one row-finder every verb
+  # shares (assign/unassign had private twins under the old two-file design).
+  awk -v id="$1" '
+    /^## / { sec = substr($0, 4); next }
+    $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { n++; s = sec; l = $0 }
+    END { if (n == 1) printf "%s\t%s\n", s, l }
+  ' "$2"
+}
+
+domain_of_row() {
+  # domain_of_row <line> - the row's authoritative domain token, "" when none.
+  # ONE parser: AC_DONELINE_AWK's f["domain"], never a private regex twin (the
+  # measured two-parser lesson the retired domain_row_tokened carried).
+  printf '%s\n' "$1" | awk "$AC_DONELINE_AWK"'
+    { ac_doneline($0, o); print o["domain"] }
+  '
+}
+
+domain_stamp_line() {
+  # domain_stamp_line <line> <name> - the line with `; domain:<name>` at its
+  # grammar position: before a trailing (repo: ...) group, else end-of-line.
+  # DATE-FREE on purpose: ac_doneline's fallback takes the LAST date anywhere
+  # on the line, so a timestamped token would become the row's date and verb.
+  printf '%s\n' "$1" | awk -v n="$2" \
+    '{ if (sub(/ \(repo: [^()]*\)$/, "; domain:" n "&")) print; else print $0 "; domain:" n }'
+}
+
+domain_strip_line() {
+  # domain_strip_line <line> <name> - the exact mirror of the stamp, both arms.
+  printf '%s\n' "$1" | sed -E \
+    -e "s/; domain:$2( \(repo: [^()]*\))\$/\1/" \
+    -e "s/; domain:$2\$//"
+}
+
+domain_rewrite_row() {
+  # domain_rewrite_row <ledger> <old-line> <new-line> - replace ONE exact line
+  # in place (tmp+mv, the ledger's single-writer property is the lock). The
+  # row keeps its section and its queue position - nothing moves, which is
+  # the whole point of the token design.
+  awk -v old="$2" -v new="$3" '
+    !done && $0 == old { print new; done = 1; next }
+    { print }
+    END { exit done ? 0 : 1 }
+  ' "$1" >"$1.tmp.$$" || { rm -f "$1.tmp.$$"; return 1; }
+  mv "$1.tmp.$$" "$1"
 }
 
 domain_names() {
@@ -404,192 +427,219 @@ domain_names() {
 }
 
 cmd_assign() {
-  # cmd_assign <name> <backlog-id>... - move named fleet `## Queued` rows into
-  # the domain backlog. Every precondition is checked BEFORE any write and any
-  # failure aborts the WHOLE assign: a partial move splits a queue across two
-  # ledgers with no record of the split.
-  #
-  # There is deliberately NO delivery-mode branch here, and no local-only
-  # refusal. The deputy handoff has one because a deputy home holds its OWN
-  # clone, so a local-only landing there never reaches the fleet's copy; a
-  # crewdomain links the FLEET's clone, so that ground cannot arise. The
-  # absence is by construction, not a veto - the deputy guard stays alive and
-  # correct where it is (bin/ac-deputy.sh handoff, which owns the rule and every
-  # mention of its name; this file deliberately carries none, so that guard's
-  # site inventory stays exactly as long as it is).
-  local name="${1:-}" backlog dom_backlog item found line section arc unauth
+  # cmd_assign <name> <backlog-id>... - STAMP the named fleet `## Queued` rows
+  # with `domain:<name>`, in place. Nothing moves: the row keeps its section,
+  # its queue position, its blocked-by edges and its epic membership - so the
+  # old epic refusal and the dependent-stranding check have no ground and are
+  # gone. Pass 1 judges EVERY id before pass 2 writes anything; any failure
+  # aborts the WHOLE assign. Idempotent per id: an already-stamped row is a
+  # printed no-op, never an error; a row stamped for ANOTHER domain refuses
+  # the whole command (unassign there first - never a silent steal).
+  local name="${1:-}" backlog item found line section cur tab captain_req=""
+  tab="$(printf '\t')"
   shift 1 2>/dev/null || true
-  [ -n "$name" ] && [ $# -gt 0 ] || ac_die "usage: ac-domain.sh assign <name> <backlog-id>..."
+  # --captain-requested '<the captain's words>' unlocks stamping an IN FLIGHT
+  # row (design open question 1, captain-approved 2026-08-18): a stamp changes
+  # nothing in the flying crewmate's env - the baked-scope refusal is policy,
+  # not physics - but adopting live work into a domain is the captain's call,
+  # so the authority is REQUIRED and recorded on the status line. Done rows
+  # stay refused with or without it: history keeps the provenance it was made
+  # with.
+  local -a rest=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --captain-requested)
+        captain_req="${2:-}"
+        [ -n "$captain_req" ] || ac_die "--captain-requested needs the captain's words (the authority is the record)"
+        shift 2 ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+  set -- ${rest+"${rest[@]}"}
+  [ -n "$name" ] && [ $# -gt 0 ] || ac_die "usage: ac-domain.sh assign <name> <backlog-id>... [--captain-requested '<words>']"
   domain_chief_only assign
   domain_require_name "$name"
-  # `set -- $(...)` reports the BUILTIN's status, not the substitution's, so a
-  # refusal inside it would be lost; assign to a variable, which errexit checks.
   local idlist; idlist="$(domain_dedupe "backlog id" "$@")"
   set -f; set -- $idlist; set +f
   domain_require_ids "$@"
   domain_valid_scope "$name" >/dev/null
-  dom_backlog="$(domain_backlog "$name")"
   backlog="$(ac_records_dir)/backlog.md"
   [ -f "$backlog" ] || ac_die "no fleet backlog at $backlog"
 
-  unauth="$(domain_unauthorized "$name")"
-  [ -z "$unauth" ] || ac_die "crewdomain '$name' is carrying an UNAUTHORIZED row and may not be given more work until it is reconciled:
-$unauth
-Either ADOPT it (mint it in records/backlog.md, then assign it - which stamps the provenance) or DELETE it, and tell the family room either way."
-
-  local moving="" ids=""
+  # Pass 1: judge every id before any write.
+  local todo="" already="" ids=""
   for item in "$@"; do
-    found="$(awk -v id="$item" '
-      /^## / { sec = substr($0, 4); next }
-      $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { n++; s = sec; l = $0 }
-      END { if (n == 1) printf "%s\t%s\n", s, l }
-    ' "$backlog")"
-    [ -n "$found" ] || ac_die "no single '## Queued' line for '$item' in $backlog"
-    section="${found%%	*}"
-    line="${found#*	}"
-    [ "$section" = "Queued" ] \
-      || ac_die "'$item' sits under '## $section', not '## Queued' - a crewmate's supervision scope is baked into its launch env and meta at spawn and cannot change afterwards, and Done history stays where it was made"
-    case "$line" in
-      *epic:*) ac_die "'$item' belongs to an epic - moving it would strand its dependents in a ledger the scheduler never reads" ;;
+    found="$(domain_row_of "$item" "$backlog")"
+    [ -n "$found" ] || ac_die "no single row for '$item' in $backlog"
+    section="${found%%"$tab"*}"
+    line="${found#*"$tab"}"
+    cur="$(domain_of_row "$line")"
+    if [ "$cur" = "$name" ]; then
+      already="${already:+$already,}$item"
+      continue
+    fi
+    [ -z "$cur" ] \
+      || ac_die "'$item' is already assigned to crewdomain '$cur' - unassign it there first; a silent steal is how one row ends up claimed twice"
+    case "$section" in
+      Queued) ;;
+      "In flight")
+        [ -n "$captain_req" ] \
+          || ac_die "'$item' sits under '## In flight' - adopting live work into a domain is the captain's call: re-run with --captain-requested '<the captain's words>' (a stamp changes nothing in the flying crewmate's env, but the authority must be on record)" ;;
+      *)
+        ac_die "'$item' sits under '## $section' - Done history keeps the provenance it was made with" ;;
     esac
-    awk -v id="$item" '
-      $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { next }
-      /blocked-by:/ {
-        bb = $0; sub(/.*blocked-by:[ ]*/, "", bb); sub(/ - .*/, "", bb)
-        n = split(bb, a, ",")
-        for (i = 1; i <= n; i++) if (a[i] == id) exit 1
-      }
-    ' "$backlog" || ac_die "'$item' is named in another line's blocked-by: - moving it would strand that dependent"
-    moving="$moving$line
-"
+    todo="${todo:+$todo }$item"
     ids="${ids:+$ids,}$item"
   done
+  [ -z "$already" ] || printf 'already assigned to %s: %s\n' "$name" "$already"
+  [ -n "$ids" ] || { printf 'nothing to do\n'; return 0; }
 
-  arc="$(ac_records_backup domain-assign)"
+  local arc; arc="$(ac_records_backup domain-assign)"
   printf 'backup: %s\n' "$arc"
-  printf '%s' "$moving" >"$backlog.moving.$$"
-  awk 'NR == FNR { drop[$0] = 1; next } !($0 in drop)' "$backlog.moving.$$" "$backlog" >"$backlog.tmp.$$"
-  mv "$backlog.tmp.$$" "$backlog"
-  # Stamp the provenance token where the grammar already puts `epic:<id>` -
-  # before the trailing `(repo: ...)` group. DATE-FREE on purpose: ac_doneline's
-  # fallback takes the LAST date anywhere on the line when that group carries
-  # none, so a timestamped token would silently become the row's date and verb.
-  # APPEND at the END of `## Queued` - queue order is meaningful, and inserting
-  # at the head would reprioritize fleet rows above the domain's own work.
-  awk '{ if (sub(/ \(repo: [^()]*\)$/, "; assigned:crewchief&")) print; else print $0 "; assigned:crewchief" }' \
-    "$backlog.moving.$$" >"$backlog.stamped.$$"
-  awk -v f="$backlog.stamped.$$" '
-    inq && /^## / { while ((getline l < f) > 0) print l; inq = 0 }
-    { print }
-    /^## Queued/ { inq = 1 }
-    END { if (inq) while ((getline l < f) > 0) print l }
-  ' "$dom_backlog" >"$dom_backlog.tmp.$$"
-  mv "$dom_backlog.tmp.$$" "$dom_backlog"
-  cat "$backlog.stamped.$$"
-  rm -f "$backlog.moving.$$" "$backlog.stamped.$$"
-  ac_status_append "$name" "assign: $ids"
+  # Pass 2: re-read each row at write time (main shell - ac_die aborts for
+  # real) and rewrite it in place; the exact-line match in domain_rewrite_row
+  # catches a ledger that changed between the passes.
+  local stamped
+  for item in $todo; do
+    found="$(domain_row_of "$item" "$backlog")"
+    [ -n "$found" ] || ac_die "the row for '$item' vanished mid-assign - the ledger changed under this command; re-run"
+    line="${found#*"$tab"}"
+    stamped="$(domain_stamp_line "$line" "$name")"
+    domain_rewrite_row "$backlog" "$line" "$stamped" \
+      || ac_die "could not rewrite the row for '$item' - the ledger changed under this command; re-run"
+    printf '%s\n' "$stamped"
+  done
+  ac_status_append "$name" "assign: $ids${captain_req:+ [captain-requested: $captain_req]}"
   # LOUD on failure. Suppressing it left the chief believing its drain would
   # report the assignment when nothing had been published - the success line
   # below prints either way, so silence here is indistinguishable from a wake.
   ac_wake_publish "$(ac_state_dir)" "" domain "$name" "assign: $ids" >/dev/null \
-    || ac_warn "assign: the durable wake could not be published - the rows MOVED, but your drain will not announce it; check $(ac_state_dir)/.wake-spool"
+    || ac_warn "assign: the durable wake could not be published - the rows are STAMPED, but your drain will not announce it; check $(ac_state_dir)/.wake-spool"
   printf 'assigned %s to crewdomain %s\n' "$ids" "$name"
 }
 
 cmd_unassign() {
-  # cmd_unassign <name> <id>... - the mirror, so a retirement, a re-route and a
-  # mis-assignment all have a safe reverse rather than a hand edit. The row
-  # returns with the token STRIPPED: the fleet ledger is read by ac-curate.sh
-  # and ac-learn.sh, so a returned row must be indistinguishable from one that
-  # never left.
-  local name="${1:-}" backlog dom_backlog item found line section arc
+  # cmd_unassign <name> <id>... - strip the token in place: the safe reverse
+  # for a re-route or a mis-assignment. Queued rows only - an In flight row's
+  # crewmate scope is baked at spawn, and a Done row's token is history (the
+  # per-domain tally reads it; retiring a domain only requires its OPEN rows
+  # unassigned). A row not carrying `domain:<name>` at position is simply not
+  # assigned here - there is no UNAUTHORIZED third state anymore.
+  local name="${1:-}" backlog item found line section cur tab
+  tab="$(printf '\t')"
   shift 1 2>/dev/null || true
   [ -n "$name" ] && [ $# -gt 0 ] || ac_die "usage: ac-domain.sh unassign <name> <id>..."
+  domain_chief_only unassign
+  domain_require_name "$name"
   local idlist; idlist="$(domain_dedupe "backlog id" "$@")"
   set -f; set -- $idlist; set +f
-  domain_require_name "$name"
   domain_require_ids "$@"
-  [ -z "${AC_SCOPE:-}" ] \
-    || ac_die "unassign is the CREWCHIEF's verb and this session is scoped (AC_SCOPE=$AC_SCOPE) - a domainchief moves its own rows between sections, it never returns work to the fleet"
-  dom_backlog="$(domain_backlog "$name")"
   backlog="$(ac_records_dir)/backlog.md"
   [ -f "$backlog" ] || ac_die "no fleet backlog at $backlog"
 
-  local moving="" ids=""
+  local todo="" ids=""
   for item in "$@"; do
-    found="$(awk -v id="$item" '
-      /^## / { sec = substr($0, 4); next }
-      $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { n++; s = sec; l = $0 }
-      END { if (n == 1) printf "%s\t%s\n", s, l }
-    ' "$dom_backlog")"
-    [ -n "$found" ] || ac_die "no single line for '$item' in $dom_backlog"
-    section="${found%%	*}"
-    line="${found#*	}"
+    found="$(domain_row_of "$item" "$backlog")"
+    [ -n "$found" ] || ac_die "no single row for '$item' in $backlog"
+    section="${found%%"$tab"*}"
+    line="${found#*"$tab"}"
+    cur="$(domain_of_row "$line")"
+    [ "$cur" = "$name" ] \
+      || ac_die "'$item' carries no domain:$name token at its grammar position${cur:+ (it is assigned to '$cur')} - nothing to reverse"
     [ "$section" = "Queued" ] \
-      || ac_die "'$item' sits under '## $section' in the domain backlog, not '## Queued' - an in-flight row's crewmate scope is baked at spawn and cannot follow the line back"
-    # An UNTOKENED row was never assigned, so there is nothing to reverse: moving
-    # it to the fleet ledger would LAUNDER invented work into a legitimate row
-    # and strip the very evidence that it was unauthorized. R7's mandatory
-    # response is adopt-or-delete, and neither of those is this verb.
-    domain_row_tokened "$line" \
-      || ac_die "'$item' carries no assigned:crewchief provenance at its grammar position - it is an UNAUTHORIZED row, not work to reverse. Either ADOPT it (mint it in records/backlog.md, then assign it) or DELETE it from the domain backlog, and tell the family room either way."
-    moving="$moving$line
-"
+      || ac_die "'$item' sits under '## $section', not '## Queued' - an in-flight row's crewmate scope is baked at spawn, and a Done row's token is durable provenance"
+    todo="${todo:+$todo }$item"
     ids="${ids:+$ids,}$item"
   done
+  [ -n "$ids" ] || { printf 'nothing to do\n'; return 0; }
 
-  arc="$(ac_records_backup domain-unassign)"
+  local arc; arc="$(ac_records_backup domain-unassign)"
   printf 'backup: %s\n' "$arc"
-  printf '%s' "$moving" >"$dom_backlog.moving.$$"
-  awk 'NR == FNR { drop[$0] = 1; next } !($0 in drop)' "$dom_backlog.moving.$$" "$dom_backlog" >"$dom_backlog.tmp.$$"
-  mv "$dom_backlog.tmp.$$" "$dom_backlog"
-  # BRE: the paren is LITERAL and must NOT be backslash-escaped (an escaped one
-  # opens a group). Positional on both arms, mirroring the audit predicate.
-  sed -E -e 's/; assigned:crewchief( \(repo: [^()]*\))$/\1/' -e 's/; assigned:crewchief$//' \
-    "$dom_backlog.moving.$$" >"$dom_backlog.stripped.$$"
-  awk -v f="$dom_backlog.stripped.$$" '
-    inq && /^## / { while ((getline l < f) > 0) print l; inq = 0 }
-    { print }
-    /^## Queued/ { inq = 1 }
-    END { if (inq) while ((getline l < f) > 0) print l }
-  ' "$backlog" >"$backlog.tmp.$$"
-  mv "$backlog.tmp.$$" "$backlog"
-  cat "$dom_backlog.stripped.$$"
-  rm -f "$dom_backlog.moving.$$" "$dom_backlog.stripped.$$"
+  local stripped
+  for item in $todo; do
+    found="$(domain_row_of "$item" "$backlog")"
+    [ -n "$found" ] || ac_die "the row for '$item' vanished mid-unassign - the ledger changed under this command; re-run"
+    line="${found#*"$tab"}"
+    stripped="$(domain_strip_line "$line" "$name")"
+    domain_rewrite_row "$backlog" "$line" "$stripped" \
+      || ac_die "could not rewrite the row for '$item' - the ledger changed under this command; re-run"
+    printf '%s\n' "$stripped"
+  done
   ac_status_append "$name" "unassign: $ids"
   printf 'unassigned %s from crewdomain %s\n' "$ids" "$name"
 }
 
-cmd_audit() {
-  # cmd_audit [<name>] - read-only; non-zero when any domain backlog carries a
-  # row `assign` did not stamp. `list` calls it and the session-start digest
-  # prints `list` unconditionally, so detection costs no new discipline.
-  local name="${1:-}" out=""
-  local n
-  [ -z "$name" ] || domain_require_name "$name"
-  if [ -n "$name" ]; then
-    out="$(domain_unauthorized "$name")"
-  else
-    # Every package on disk, not every REGISTERED id. Retirement is a manual
-    # records act, so a package whose line was removed still holds rows - the
-    # ghost shape - and keying this walk on the registry would hide exactly the
-    # state the audit exists to report.
-    local d
-    for d in "$(ac_home)"/crewdomains/*/records/backlog.md; do
-      [ -f "$d" ] || continue
-      n="${d%/records/backlog.md}"; n="${n##*/}"
-      ac_domain_name_ok "$n" || continue
-      out="$out$(domain_unauthorized "$n")
-"
-    done
-    out="$(printf '%s' "$out" | grep -v '^$' || true)"
+cmd_queue() {
+  # cmd_queue <name> [--ids] - the domain's SLICE of the fleet ledger,
+  # read-only and callable from a scoped session (a domainchief reads its
+  # work here; it never reads a ledger of its own because there is none).
+  # Prints tokened rows grouped under their section headers, plus rows
+  # INHERITED via an epic: a story whose own row carries no domain token
+  # belongs to its epic row's domain (annotated "(via epic:<e>)"). --ids
+  # prints bare ids for piping. Always exits 0 on an empty slice.
+  local name="${1:-}" mode="${2:-}" backlog
+  [ -n "$name" ] || ac_die "usage: ac-domain.sh queue <name> [--ids]"
+  domain_require_name "$name"
+  backlog="$(ac_records_dir)/backlog.md"
+  [ -f "$backlog" ] || { printf 'no fleet backlog\n'; return 0; }
+  awk "$AC_DONELINE_AWK"'
+    # Pass 1 (NR==FNR): id -> authoritative domain, for epic inheritance.
+    NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
+    /^## /   { sec = $0; secshown = 0; next }
+    /^- \[/ {
+      ac_doneline($0, o)
+      via = ""
+      if (o["domain"] == n) { }
+      else if (o["domain"] == "" && o["epic"] != "" && dom[o["epic"]] == n) via = " (via epic:" o["epic"] ")"
+      else next
+      if (ids) { print o["id"]; next }
+      if (!secshown && sec != "") { print sec; secshown = 1 }
+      print $0 via
+    }
+  ' n="$name" ids="$([ "$mode" = --ids ] && printf 1 || printf 0)" "$backlog" "$backlog"
+  return 0
+}
+
+cmd_retire() {
+  # cmd_retire <name> - remove the ONE registry line, fail-closed. The old
+  # design could not mechanize this (it meant coordinating two files); one
+  # ledger makes it a checkable one-line act. Refuses while any OPEN (non-
+  # Done) row carries the token, while any chief meta flies domain=<name>,
+  # or while the name is not VALID in the registry. The package is NEVER
+  # deleted - it is the domain'"'"'s knowledge, and a later `new` with the same
+  # name may re-adopt it.
+  local name="${1:-}" backlog reg open flying
+  [ -n "$name" ] || ac_die "usage: ac-domain.sh retire <name>"
+  domain_chief_only retire
+  domain_require_name "$name"
+  reg="$(ac_domain_registry)"
+  ac_domain_parse "$reg" 2>/dev/null | awk -F'\t' -v n="$name" '$1 == "VALID" && $2 == n { found = 1 } END { exit !found }' \
+    || ac_die "no VALID crewdomain '$name' in $REGISTRY_LABEL - nothing to retire"
+  backlog="$(ac_records_dir)/backlog.md"
+  if [ -f "$backlog" ]; then
+    open="$(awk "$AC_DONELINE_AWK"'
+      /^## Done/ { done = 1 } /^## / && !/^## Done/ { done = 0 }
+      /^- \[/ && !done { ac_doneline($0, o); if (o["domain"] == n) print o["id"] }
+    ' n="$name" "$backlog")"
+    [ -z "$open" ] \
+      || ac_die "crewdomain '$name' still holds OPEN tokened rows - unassign them first:
+$open"
   fi
-  [ -n "$out" ] || return 0
-  printf '%s\n' "$out" | while read -r d i; do
-    [ -n "$d" ] || continue
-    printf 'UNAUTHORIZED %s %s\n' "$d" "$i"
-  done
-  return 1
+  flying="$(domain_flying "$name")"
+  [ -z "$flying" ] \
+    || ac_die "crewdomain '$name' has a domainchief in flight ($flying) - demote it first"
+  local arc; arc="$(ac_records_backup domain-retire)"
+  printf 'backup: %s\n' "$arc"
+  awk -v n="$name" '
+    substr($0, 1, 2) == "- " {
+      line = substr($0, 3); sub(/ +- .*$/, "", line); gsub(/^[ \t]+|[ \t]+$/, "", line)
+      if (line == n) next
+    }
+    { print }
+  ' "$reg" >"$reg.tmp.$$"
+  mv "$reg.tmp.$$" "$reg"
+  ac_status_append "$name" "retire"
+  printf 'retired crewdomain %s - registry line removed; the package at crewdomains/%s is kept (knowledge is never deleted by tooling)\n' "$name" "$name"
 }
 
 cmd_list() {
@@ -632,30 +682,32 @@ EOF
     printf '\tbacklog: %s\n' "$tally"
     flying="$(domain_flying "$id")"
     [ -z "$flying" ] || printf '\tin flight: %s\n' "$flying"
-    domain_unauthorized "$id" | while read -r _ row; do
-      [ -n "$row" ] || continue
-      printf '\tUNAUTHORIZED: %s - DELETE it from the domain backlog, or ADOPT it (delete it here, mint it in records/backlog.md, then assign)\n' "$row"
-    done
   done <<EOF
 $records
 EOF
-  # GHOST PACKAGES too. Rendering only REGISTERED entries hid the one shape the
-  # audit was widened to catch: a package whose registry line was removed while
-  # its rows remain. The digest is where detection happens, so a row invisible
-  # here is a row nobody ever sees.
+  # RETIRED-BUT-PRESENT packages (knowledge kept, line gone) and ORPHAN
+  # TOKENS (a ledger row naming a domain with no VALID line - the ghost shape
+  # the promote also refuses). The digest is where detection happens.
   local gd gn
-  for gd in "$(ac_home)"/crewdomains/*/records/backlog.md; do
-    [ -f "$gd" ] || continue
-    gn="${gd%/records/backlog.md}"; gn="${gn##*/}"
+  for gd in "$(ac_home)"/crewdomains/*/; do
+    [ -d "$gd" ] || continue
+    gn="${gd%/}"; gn="${gn##*/}"
     ac_domain_name_ok "$gn" || continue
     printf '%s\n' "$records" | grep -q "VALID${FS_US}${gn}${FS_US}" && continue
-    printf 'UNREGISTERED\t%s\tpackage on disk with no VALID registry line - restore its line in %s, or unassign its rows and clean the package\n' \
+    printf 'UNREGISTERED\t%s\tpackage on disk with no VALID registry line - re-adopt it with `new`, restore its line in %s, or leave it as kept knowledge\n' \
       "$gn" "$REGISTRY_LABEL"
-    domain_unauthorized "$gn" | while read -r _ row; do
-      [ -n "$row" ] || continue
-      printf '\tUNAUTHORIZED: %s\n' "$row"
-    done
   done
+  local ob
+  ob="$(ac_records_dir)/backlog.md"
+  if [ -f "$ob" ]; then
+    awk "$AC_DONELINE_AWK"'
+      /^- \[/ { ac_doneline($0, o); if (o["domain"] != "") print o["domain"], o["id"] }
+    ' "$ob" | while read -r gn gi; do
+      [ -n "$gn" ] || continue
+      printf '%s\n' "$records" | grep -q "VALID${FS_US}${gn}${FS_US}" && continue
+      printf 'ORPHAN-TOKEN\t%s\t%s - the row names a domain with no VALID registry line (unassign it, or re-`new` the domain)\n' "$gn" "$gi"
+    done
+  fi
   printf 'registered: %s (invalid %s)\n' "$n" "$invalid"
   return 0
 }
@@ -774,6 +826,37 @@ EOF
   for n in $(domain_names); do
     domain_validate_projects "$n" || rc=1
   done
+  # Token discipline over the ONE ledger (crewdomain-token): a malformed
+  # domain:-shaped run, an orphan token, or a story whose own token disagrees
+  # with its epic row'"'"'s are each a refusal - fail-visible, like the doneline
+  # hold/blockers malformed fields they ride on.
+  local vb; vb="$(ac_records_dir)/backlog.md"
+  if [ -f "$vb" ]; then
+    local tok
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      case "$tok" in
+        MALFORMED*) printf 'INVALID token: %s\n' "${tok#MALFORMED }"; rc=1 ;;
+        DISAGREE*)  printf 'INVALID token: %s\n' "${tok#DISAGREE }"; rc=1 ;;
+        ORPHAN*)
+          printf '%s\n' "$(domain_names)" | grep -qxF -- "$(printf '%s' "${tok#ORPHAN }" | awk "{print \$1}")" \
+            || { printf 'INVALID token: orphan domain token %s\n' "${tok#ORPHAN }"; rc=1; } ;;
+      esac
+    done <<VEOF
+$(awk "$AC_DONELINE_AWK"'
+  NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
+  /^- \[/ {
+    ac_doneline($0, o)
+    if (o["domain_malformed"] == "1")
+      printf "MALFORMED %s carries a domain:-shaped run off its grammar position (backtick-quote a mention, or re-stamp with assign)\n", o["id"]
+    if (o["domain"] != "")
+      printf "ORPHAN %s %s\n", o["domain"], o["id"]
+    if (o["domain"] != "" && o["epic"] != "" && dom[o["epic"]] != "" && dom[o["epic"]] != o["domain"])
+      printf "DISAGREE story %s carries domain:%s but its epic %s carries domain:%s - one family, one domain\n", o["id"], o["domain"], o["epic"], dom[o["epic"]]
+  }
+' "$vb" "$vb")
+VEOF
+  fi
   return "$rc"
 }
 
@@ -781,8 +864,9 @@ case "${1:-}" in
   new) shift; cmd_new "$@" ;;
   assign) shift; cmd_assign "$@" ;;
   unassign) shift; cmd_unassign "$@" ;;
-  audit) shift; cmd_audit "$@" ;;
+  queue) shift; cmd_queue "$@" ;;
+  retire) shift; cmd_retire "$@" ;;
   list) cmd_list ;;
   validate) cmd_validate ;;
-  *) ac_die "usage: ac-domain.sh <new|assign|unassign|audit|list|validate>" ;;
+  *) ac_die "usage: ac-domain.sh <new|assign|unassign|queue|retire|list|validate>" ;;
 esac

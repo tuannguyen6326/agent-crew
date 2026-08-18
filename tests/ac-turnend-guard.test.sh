@@ -21,16 +21,14 @@ rc=0
 out="$(printf '{}' | AC_HOME="$wt" "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
 assert_eq "$rc" "0" "a linked worktree must stay inert even with crew in flight and no watcher beacon: $out"
 
-# --- RC-5: the PARKED reminder sees crewdomain queued rows -------------------
-# The reminder gates on ac-ready.sh, which reads the FLEET backlog only. A fleet
-# holding rows ASSIGNED into a crewdomain but not yet promoted therefore read as
-# "nothing READY - safe to park", and the guard told the chief to END the
-# session on top of queued work. Every other domain-unaware consumer merely
-# fails to SHOW something; this one's failure is an ACTION, which is why it is
-# fixed rather than named in the residual list.
+# --- RC-5 (revised for crewdomain-token): domain rows ARE fleet rows ----------
+# The old blind spot - rows moved into a domain ledger that ac-ready.sh never
+# read - has no substrate: a domain-assigned row stays in the ONE fleet
+# ledger, stamped, so the reminder's ordinary ready probe sees it with zero
+# domain-aware code.
 #
 # BOTH directions are asserted: a reminder that never fires is as broken as one
-# that fires wrongly, and only the pair pins the tally as the reason.
+# that fires wrongly, and only the pair pins the ready probe as the reason.
 make_home
 : >"$AC_HOME/records/backlog.md"
 
@@ -41,16 +39,16 @@ assert_contains "$out" "/debrief" "an empty fleet with no domain work is still r
 
 # One QUEUED row in a crewdomain backlog, everything else identical -> SILENT.
 mkdir -p "$AC_HOME/crewdomains/payments/records"
-printf '# Backlog: payments\n\n## In flight\n\n## Queued\n\n- [ ] pay-fix - assigned, not yet promoted; assigned:crewchief (repo: alpha)\n\n## Done\n' \
-  >"$AC_HOME/crewdomains/payments/records/backlog.md"
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] pay-fix - assigned, not yet promoted; domain:payments (repo: alpha)\n\n## Done\n' \
+  >"$AC_HOME/records/backlog.md"
 assert_eq "$(printf '{}' | "$BIN/ac-turnend-guard.sh")" "" \
   "RC-5: queued crewdomain work keeps the reminder silent - the chief must not park on top of it"
 
 # A row that is NOT queued does not hold the session open: an in-flight row has
 # a live crewmate the in-flight predicate already sees, and a done row is
 # history. Only the QUEUED count is the reminder's input.
-printf '# Backlog: payments\n\n## In flight\n\n## Queued\n\n## Done\n\n- [x] pay-fix - landed; assigned:crewchief (merged 2026-08-02)\n' \
-  >"$AC_HOME/crewdomains/payments/records/backlog.md"
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n\n- [x] pay-fix - landed (merged 2026-08-02); domain:payments\n' \
+  >"$AC_HOME/records/backlog.md"
 out="$(printf '{}' | "$BIN/ac-turnend-guard.sh")" || fail "the reminder must never block"
 assert_contains "$out" "/debrief" "RC-5: a drained crewdomain parks exactly as today"
 

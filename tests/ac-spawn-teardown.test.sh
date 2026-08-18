@@ -1237,30 +1237,31 @@ rm -f "$dstub/docker"
 unset AC_TEARDOWN_QA_TIMEOUT
 
 # --- the DERIVED crewdomain binding on the roomchief promote (R3) ------------
-# A promote of a family whose row sits in a crewdomain backlog becomes a
-# DOMAINCHIEF: AC_DOMAIN on the launch line (for the session and everything it
-# spawns) and domain= in the meta (for every OTHER process, which reads durable
-# state, not the chief's environment). The binding is DERIVED from the
-# assignment, never passed - so a mis-bind is impossible, and a family the
-# chief never assigned cannot become a domainchief at all.
+# A promote of a family whose FLEET row carries the domain:<name> token
+# becomes a DOMAINCHIEF (crewdomain-token): AC_DOMAIN on the launch line (for
+# the session and everything it spawns) and domain= in the meta (for every
+# OTHER process, which reads durable state, not the chief's environment). The
+# binding is DERIVED from the token, never passed - only the chief-only
+# assign verb stamps it, so a mis-bind is impossible and a family the chief
+# never assigned cannot become a domainchief at all.
 
 dom_reg="$AC_HOME/records/crewdomains.md"
 dom_pkg() { printf '%s/crewdomains/%s\n' "$AC_HOME" "$1"; }
 # This suite does not source ac-lib.sh, so the meta is read the way the rest of
 # the file reads one - directly off disk.
 meta_field() { awk -v k="$2" 'index($0, k "=") == 1 { print substr($0, length(k) + 2) }' "$1"; }
-dom_seed() {  # dom_seed <domain> <family>... - a registered domain holding rows
-  mkdir -p "$(dom_pkg "$1")/records"
-  { printf '# Backlog: %s\n\n## In flight\n\n## Queued\n\n' "$1"
-    shift
-    for f in "$@"; do printf -- '- [ ] %s - assigned work; assigned:crewchief (repo: proj)\n' "$f"; done
+fleet_bl="$AC_HOME/records/backlog.md"
+dom_seed() {  # dom_seed <domain> <family>... - tokened fleet Queued rows
+  local d="$1"; shift
+  { printf '# Backlog\n\n## In flight\n\n## Queued\n\n'
+    for f in "$@"; do printf -- '- [ ] %s - assigned work; domain:%s (repo: proj)\n' "$f" "$d"; done
     printf '\n## Done\n'
-  } >"$(dom_pkg "$1")/records/backlog.md"
+  } >"$fleet_bl"
 }
 dom_register() { printf -- '- %s - the %s domain - scope: %s work (added 2026-08-02T00:00:00Z)\n' "$1" "$1" "$1" >>"$dom_reg"; }
 room_seed() { "$BIN/ac-room.sh" post "$1" crewchief "the captain order for $1, posted before the promote" >/dev/null; }
 
-# AC-3.1 - an ASSIGNED family binds in both places.
+# AC-3.1 - an ASSIGNED (tokened) family binds in both places.
 dom_register payments
 dom_seed payments dfam1
 room_seed dfam1
@@ -1270,12 +1271,11 @@ assert_eq "$(meta_field "$AC_HOME/state/dfam1-chief.meta" domain)" "payments" \
 assert_contains "$(cat "$(fake_pane_buf dfam1-chief)")" "AC_DOMAIN=payments" \
   "AC-3.1: and the launch line, for the session and everything it spawns"
 
-# R2-CR-001 - the derivation requires the PROVENANCE, not merely a matching row.
-# Without it a HAND-ADDED row mints a domainchief and gets worked, and R3's
-# claim that chief-only-add is STRUCTURAL at the session level is false.
-mkdir -p "$(dom_pkg payments)/records"
-printf '# Backlog: payments\n\n## In flight\n\n## Queued\n\n- [ ] dfam1b - hand-added, nobody assigned it (repo: proj)\n\n## Done\n' \
-  >"$(dom_pkg payments)/records/backlog.md"
+# R2-CR-001 - the derivation requires the TOKEN AT ITS GRAMMAR POSITION, not
+# merely a matching row (or a prose mention). Without it any row mints a
+# domainchief and chief-only-add stops being structural.
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] dfam1b - mentions domain:payments mid-prose only (repo: proj)\n\n## Done\n' \
+  >"$fleet_bl"
 room_seed dfam1b
 "$BIN/ac-spawn.sh" --roomchief dfam1b --harness fake >/dev/null 2>&1
 assert_eq "$(meta_field "$AC_HOME/state/dfam1b-chief.meta" domain)" "" \
@@ -1296,28 +1296,26 @@ case "$(cat "$(fake_pane_buf dfam2-chief)")" in
   *AC_DOMAIN*) fail "AC-3.2: an unassigned family's launch line must carry no AC_DOMAIN" ;;
 esac
 
-# AC-3.3 - the same id in TWO domain backlogs is corrupt state, not a coin
-# flip: refuse fail-closed naming both, before any window, lease or meta.
+# AC-3.3 (token grammar) - ONE FAMILY, ONE DOMAIN: a story whose own token
+# disagrees with its epic row's is corrupt state, not a coin flip: refuse
+# fail-closed naming both, before any window, lease or meta.
 dom_register infra
-dom_seed infra dfam3
-mkdir -p "$(dom_pkg payments)/records"
-printf '# Backlog: payments\n\n## In flight\n\n## Queued\n\n- [ ] dfam3 - also here; assigned:crewchief (repo: proj)\n\n## Done\n' \
-  >"$(dom_pkg payments)/records/backlog.md"
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] bigfam [EPIC] - the epic; domain:infra (repo: proj)\n- [ ] dfam3 - a story; epic:bigfam; domain:payments (repo: proj)\n\n## Done\n' \
+  >"$fleet_bl"
 room_seed dfam3
 err="$("$BIN/ac-spawn.sh" --roomchief dfam3 --harness fake 2>&1 || true)"
 assert_contains "$err" "payments" "AC-3.3: the refusal names the first domain"
 assert_contains "$err" "infra" "AC-3.3: and the second"
 assert_no_file "$AC_HOME/state/dfam3-chief.meta" "AC-3.3: refused before any meta was written"
 
-# AC-3.4 - the GHOST DOMAIN. Retirement is a manual records act, so a package
-# whose registry line was removed while it still holds rows would otherwise go
-# on minting domainchiefs forever - a domain nothing routes to and nothing
-# lists. The derivation demands a VALID entry, symmetric with assign.
+# AC-3.4 - the ORPHAN TOKEN. A token naming a domain with no VALID registry
+# line (retired, or never registered) must not mint a domainchief - a ghost
+# domain nothing routes to and nothing lists. Symmetric with assign.
 dom_seed ghosts dfam4
 room_seed dfam4
 err="$("$BIN/ac-spawn.sh" --roomchief dfam4 --harness fake 2>&1 || true)"
-assert_contains "$err" "crewdomains/ghosts" "AC-3.4: the refusal names the package path"
-assert_contains "$err" "unassign" "AC-3.4: and the unassign-and-clean remedy"
+assert_contains "$err" "domain:ghosts" "AC-3.4: the refusal names the orphan token"
+assert_contains "$err" "unassign" "AC-3.4: and the strip-the-token remedy"
 assert_contains "$err" "crewdomains.md" "AC-3.4: and the restore-the-registry-line remedy"
 assert_no_file "$AC_HOME/state/dfam4-chief.meta" "AC-3.4: refused before any window, lease or meta"
 
@@ -1325,7 +1323,7 @@ assert_no_file "$AC_HOME/state/dfam4-chief.meta" "AC-3.4: refused before any win
 # typo in the ledger cannot quietly authorize a binding.
 printf -- '- ghosts - a charter - home: /wrong - scope: x (added 2026-08-02T00:00:00Z)\n' >>"$dom_reg"
 err="$("$BIN/ac-spawn.sh" --roomchief dfam4 --harness fake 2>&1 || true)"
-assert_contains "$err" "crewdomains/ghosts" "AC-3.4: an INVALID line is not a VALID entry"
+assert_contains "$err" "domain:ghosts" "AC-3.4: an INVALID line is not a VALID entry"
 assert_no_file "$AC_HOME/state/dfam4-chief.meta" "AC-3.4: and still nothing is written"
 
 # AC-10.1/AC-10.2 - a domain family is an ORDINARY promote: it passes through
@@ -1379,9 +1377,14 @@ assert_contains "$kick" "crewdomains/payments/records/projects.md" "(4) the deta
 assert_contains "$kick" "[mode]" "(4) the fleet registry stays authoritative for [mode]"
 assert_contains "$kick" "records/repo-knowledge/" "(4) and code facts belong in the repo-knowledge store"
 
-# (5) backlog - move the row, never mint one.
-assert_contains "$kick" "crewdomains/payments/records/backlog.md" "(5) the domain backlog is named"
-assert_contains "$kick" "assigned:crewchief" "(5) and the provenance token that makes a minted row detectable"
+# (5) backlog - ONE fleet ledger, never edited by the domainchief; the slice
+# verb is the read path (crewdomain-token).
+assert_contains "$kick" "FLEET records/backlog.md" "(5) the fleet ledger is named as the one ledger"
+assert_contains "$kick" "domain:payments" "(5) with the stamp that binds the family"
+assert_contains "$kick" "ac-domain.sh queue payments" "(5) and the slice read verb"
+case "$kick" in
+  *"crewdomains/payments/records/backlog.md"*) fail "(5) the kickoff must name NO domain ledger" ;;
+esac
 
 # (6) overlap - fleet-wide, because the domain shares the fleet's clones.
 assert_contains "$kick" "ac-ready.sh overlap" "(6) the overlap duty is named"
@@ -1409,6 +1412,7 @@ done
 # promotes. Nothing in the read path may require an overlay to exist.
 dom_register bare
 dom_seed bare dfam7
+mkdir -p "$(dom_pkg bare)/records"
 : >"$(dom_pkg bare)/records/projects.md"
 rm -f "$(dom_pkg bare)/CREWMATE.md"
 room_seed dfam7

@@ -107,12 +107,15 @@ done
 # duties: moving rows through its own backlog, and enriching its projects
 # detail before handback.
 
-for f in backlog.md projects.md; do
-  assert_eq "$(hook fam1 Edit file_path "/home/fleet/crewdomains/payments/records/$f")" "0" \
-    "AC-7.4: a scoped domainchief MAY edit its own crewdomains/<name>/records/$f"
-  assert_eq "$(hook fam1 Write file_path "crewdomains/payments/records/$f")" "0" \
-    "AC-7.4: the relative form too - the leading-slash and bare forms both exempt"
-done
+# NARROWED with the crewdomain-token refactor: the per-domain backlog.md no
+# longer exists, so ONLY the projects detail file earns the exemption - a
+# package-relative backlog path is refused like any other ledger-shaped write.
+assert_eq "$(hook fam1 Edit file_path "/home/fleet/crewdomains/payments/records/projects.md")" "0" \
+  "AC-7.4: a scoped domainchief MAY edit its own crewdomains/<name>/records/projects.md"
+assert_eq "$(hook fam1 Write file_path "crewdomains/payments/records/projects.md")" "0" \
+  "AC-7.4: the relative form too - the leading-slash and bare forms both exempt"
+assert_eq "$(hook fam1 Edit file_path "/home/fleet/crewdomains/payments/records/backlog.md")" "2" \
+  "AC-7.4 (revised): a package backlog path is fenced - no domain ledger exists to own"
 
 # R5-CR-002 - a TRAVERSING path must not take the exemption. The allow arm
 # matched the RAW path, so `crewdomains/p/records/../../../records/captain.md`
@@ -129,10 +132,10 @@ done
 # removed, the very same paths are refused. This is the regression guard that
 # keeps someone from "simplifying" the branch away later.
 noallow="$TMP/guard-no-allow.sh"
-awk '/^  crewdomains\/\*\/records\/\* \| \*\/crewdomains\/\*\/records\/\*\) exit 0 ;;$/ { next } { print }' \
+awk '/^  crewdomains\/\*\/records\/projects\.md \| \*\/crewdomains\/\*\/records\/projects\.md\) exit 0 ;;$/ { next } { print }' \
   "$guard" >"$noallow"
 chmod +x "$noallow"
-rc=0; ( printf '{"tool_name":"Edit","tool_input":{"file_path":"/home/fleet/crewdomains/payments/records/backlog.md"}}' \
+rc=0; ( printf '{"tool_name":"Edit","tool_input":{"file_path":"/home/fleet/crewdomains/payments/records/projects.md"}}' \
   | AC_SCOPE=fam1 "$noallow" >/dev/null 2>&1 ) || rc=$?
 assert_eq "$rc" "2" \
   "AC-7.4: without the explicit allow branch the package path IS refused - the branch is load-bearing"

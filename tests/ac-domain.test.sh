@@ -46,23 +46,17 @@ make_clone beta
 
 "$dom" new payments --scope 'money movement' --charter 'the payments domain' --projects alpha,beta >/dev/null
 
-# FOUR members: records/{backlog.md,projects.md}, CREWMATE.md, projects/. No
+# THREE members: records/projects.md, CREWMATE.md, projects/. No backlog.md
+# (crewdomain-token: rows live in the ONE fleet ledger, stamped), no
 # captain.md (P6-v2 - domain standing rules are STANDING (domain:<name>): lines
 # in the FLEET records/captain.md) and no learnings.md (P8-v2 - a domainchief
 # notes to the fleet ledger with a (domain:<name>) prefix).
-assert_eq "$(listing payments)" "$(printf 'CREWMATE.md\nprojects\nprojects/alpha\nprojects/alpha.yaml\nprojects/beta\nprojects/beta.yaml\nrecords\nrecords/backlog.md\nrecords/projects.md')" \
-  "AC-1.1: the package holds exactly its four members - no captain.md, no learnings.md"
+assert_eq "$(listing payments)" "$(printf 'CREWMATE.md\nprojects\nprojects/alpha\nprojects/alpha.yaml\nprojects/beta\nprojects/beta.yaml\nrecords\nrecords/projects.md')" \
+  "AC-1.1: the package holds exactly its three members - no backlog.md, no captain.md, no learnings.md"
 
 assert_contains "$(cat "$dreg")" "- payments - the payments domain - scope: money movement (added " \
   "new writes the routing line in the three-field grammar"
 assert_eq "$(ac_domain_parse "$dreg" | cut -f1)" "VALID" "and the line it writes parses VALID"
-
-# The backlog skeleton is the FLEET ledger's own sections - assign appends into
-# `## Queued` and the domainchief moves rows between them, so a missing heading
-# would break both.
-for h in '## In flight' '## Queued' '## Done'; do
-  assert_contains "$(cat "$(pkg payments)/records/backlog.md")" "$h" "the domain backlog carries $h"
-done
 
 # AC-1.6 - the DETAIL file is the domain's view of its projects. `[mode]` and
 # the fleet description resolve from records/projects.md and nowhere else.
@@ -144,126 +138,149 @@ refuses thing-plan 'reserved' 'a reserved stage suffix'                 # 8
 # AC-1.4 (the package inside the reversibility floor) lives with the function it
 # constrains, in tests/ac-maintenance-core.test.sh.
 
-# --- assign / unassign / audit / list ----------------------------------------
+# --- assign / unassign: the token stamp, in place (crewdomain-token) ---------
 
 fleet_backlog="$AC_HOME/records/backlog.md"
-dom_backlog="$(pkg payments)/records/backlog.md"
 row_local='- [ ] pay-fix - a local-only row (repo: alpha)'
 row_other='- [ ] other-row - untouched (repo: beta)'
 
-reset_backlogs() {
+reset_backlog() {
   printf '# Backlog\n\n## In flight\n\n## Queued\n\n%s\n%s\n\n## Done\n' "$row_local" "$row_other" \
     >"$fleet_backlog"
-  printf '# Backlog: payments\n\n## In flight\n\n## Queued\n\n## Done\n' >"$dom_backlog"
 }
-dom_rows() { grep -c '^- \[' "$dom_backlog" || true; }
 
-# AC-5.1 - a local-only row assigns SUCCESSFULLY. It is refused by the deputy
-# verb next door and correctly so: a deputy home holds its own clone, so a local
-# landing there never reaches the fleet's copy. A crewdomain works the FLEET's
-# clone by symlink, so AS1's ground never arises - and that this test passes
-# while tests/ac-deputy-channel.test.sh still asserts the refusal is the proof
-# the two verbs are genuinely independent.
-reset_backlogs
+# AC-5.1 - assign STAMPS the row where it stands: same file, same section,
+# same position. Nothing moves - which is the whole refactor.
+reset_backlog
 out="$("$dom" assign payments pay-fix)"
-assert_contains "$out" "backup:" "AC-5.3: assign writes a backup archive before mutating either ledger"
-assert_eq "$(grep -c 'pay-fix' "$fleet_backlog" || true)" "0" "AC-5.1: the row leaves the fleet ledger"
-assert_contains "$(cat "$dom_backlog")" "pay-fix" "AC-5.1: and lands in the domain backlog"
-assert_contains "$(cat "$fleet_backlog")" "other-row" "an unnamed row is untouched"
+assert_contains "$out" "backup:" "AC-5.3: assign writes a backup archive before mutating the ledger"
+assert_contains "$(cat "$fleet_backlog")" "- [ ] pay-fix - a local-only row; domain:payments (repo: alpha)" \
+  "AC-5.1: the row is stamped in place, token before the trailing (repo:) group"
+assert_eq "$(grep -n 'pay-fix' "$fleet_backlog" | cut -d: -f1)" \
+  "$(grep -n 'other-row' "$fleet_backlog" | cut -d: -f1 | awk '{print $1 - 1}')" \
+  "AC-5.1: the row kept its queue position - nothing moved"
+assert_contains "$(cat "$fleet_backlog")" "$row_other" "an unnamed row is untouched"
 
-# R7 provenance - the token rides where the grammar already puts epic:<id>, and
-# it is DATE-FREE on purpose: ac_doneline's fallback takes the LAST date
-# anywhere on the line when the trailing group carries none, so a timestamped
-# token would silently become the row's date and verb.
-assert_contains "$(cat "$dom_backlog")" "assigned:crewchief" "assign stamps the provenance token"
-assert_contains "$(cat "$dom_backlog")" "(repo: alpha)" "and the (repo: ...) group stays last"
-
-# AC-7.3 - the token changes NO field ac_doneline extracts. Driven straight
-# against the shared awk on a `## Queued` row whose group carries no date: the
-# exact shape that made a timestamped token dangerous.
+# AC-7.3 - the token changes NO field ac_doneline extracts (and f[domain]
+# reads it back - one parser, both directions).
 fields() {
   awk "$AC_DONELINE_AWK"'{ ac_doneline($0, f); printf "%s|%s|%s|%s|%s|%s\n", f["id"], f["terminal"], f["epic"], f["blockers"], f["date"], f["verb"] }' <<<"$1"
 }
-assert_eq "$(fields "$(grep 'pay-fix' "$dom_backlog")")" "$(fields "$row_local")" \
+assert_eq "$(fields "$(grep 'pay-fix' "$fleet_backlog")")" "$(fields "$row_local")" \
   "AC-7.3: id/terminal/epic/blockers/date/verb are identical with and without the token"
+assert_eq "$(awk "$AC_DONELINE_AWK"'{ ac_doneline($0, f); print f["domain"] }' <<<"$(grep 'pay-fix' "$fleet_backlog")")" \
+  "payments" "AC-7.3: and f[domain] reads the stamp back"
 
-# AC-6.1 - unassign is the mirror. The returned ROW is byte-identical to the
-# pre-assign row with the token stripped, and the fleet's row SET is restored.
-# Whole-file identity is deliberately NOT asserted: the row returns at the END
-# of `## Queued`, mirroring assign's own end-append, and neither direction
-# carries position memory.
+# Idempotent per id: a re-assign is a printed no-op, never an error.
+before="$(shasum -a 256 <"$fleet_backlog")"
+out="$("$dom" assign payments pay-fix)"
+assert_contains "$out" "already assigned" "AC-5.5: a re-assign says so"
+assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$before" "AC-5.5: and writes nothing"
+
+# A row stamped for ANOTHER domain refuses the whole command - never a steal.
+"$dom" new invoices --scope 'invoices' --charter 'the invoices domain' --no-projects >/dev/null
+assert_fails_with "unassign it there first" -- "$dom" assign invoices pay-fix
+assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$before" "a cross-domain steal writes nothing"
+
+# AC-6.1 - unassign is the exact mirror: the row returns byte-identical, in
+# place.
 "$dom" unassign payments pay-fix >/dev/null
-assert_contains "$(cat "$fleet_backlog")" "$row_local" "AC-6.1: the row returns byte-identical, token stripped"
-assert_eq "$(grep -c 'assigned:crewchief' "$fleet_backlog" || true)" "0" \
-  "AC-6.1: a returned row is indistinguishable from one that never left"
-assert_eq "$(dom_rows)" "0" "AC-6.1: and it is gone from the domain backlog"
+assert_contains "$(cat "$fleet_backlog")" "$row_local" "AC-6.1: the strip restores the row byte-identical"
+assert_eq "$(grep -c 'domain:payments' "$fleet_backlog" || true)" "0" \
+  "AC-6.1: a returned row is indistinguishable from one never assigned"
 
-# AC-5.4 - a row carrying a delivery-contract group (S1 grammar: the tokens
-# sit in the leading run between id and content) is findable by id, assigns,
-# and returns with its contract byte-identical - the matcher accepts the
-# groups instead of demanding `id - ` adjacency.
+# AC-5.4 - a row carrying a delivery-contract group stamps and strips with the
+# contract byte-identical.
 row_pinned='- [ ] pin-fix [src:cap mode:direct-pr rev:no] - a pinned row (repo: alpha)'
 printf '# Backlog\n\n## In flight\n\n## Queued\n\n%s\n%s\n%s\n\n## Done\n' \
   "$row_local" "$row_other" "$row_pinned" >"$fleet_backlog"
 "$dom" assign payments pin-fix >/dev/null
-assert_eq "$(grep -c 'pin-fix' "$fleet_backlog" || true)" "0" "AC-5.4: the pinned row leaves the fleet ledger"
-assert_contains "$(cat "$dom_backlog")" "[src:cap mode:direct-pr rev:no]" "AC-5.4: the contract rides the move untouched"
-assert_contains "$(cat "$dom_backlog")" "assigned:crewchief" "AC-5.4: provenance stamps a pinned row too"
+assert_contains "$(cat "$fleet_backlog")" "[src:cap mode:direct-pr rev:no] - a pinned row; domain:payments (repo: alpha)" \
+  "AC-5.4: contract untouched, token at position"
 "$dom" unassign payments pin-fix >/dev/null
-assert_contains "$(cat "$fleet_backlog")" "$row_pinned" "AC-5.4: the pinned row returns byte-identical"
-assert_eq "$(dom_rows)" "0" "AC-5.4: and leaves the domain backlog"
+assert_contains "$(cat "$fleet_backlog")" "$row_pinned" "AC-5.4: the pinned row restores byte-identical"
 
-# AC-5.2 - every refusal leaves BOTH ledgers byte-unchanged, including in a
-# mixed set where some ids would have been legal.
+# EPIC rows and blocked-by-named rows are now ASSIGNABLE - the two old
+# refusals existed because assign MOVED the row out of the scheduler's file;
+# a stamp moves nothing, so their whole ground is gone (live fleet evidence:
+# the empty domain backlog was the epic refusal's artifact).
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] big-epic [EPIC] - the epic row (repo: alpha)\n- [ ] story-a - a story; epic:big-epic (repo: alpha)\n- [ ] dependent - waits (repo: alpha) blocked-by: pay-fix - needs it\n%s\n\n## Done\n' "$row_local" >"$fleet_backlog"
+"$dom" assign payments big-epic >/dev/null
+assert_contains "$(cat "$fleet_backlog")" "- [ ] big-epic [EPIC] - the epic row; domain:payments (repo: alpha)" \
+  "the old epic refusal is GONE: an epic row stamps in place"
+"$dom" assign payments pay-fix >/dev/null
+assert_contains "$(cat "$fleet_backlog")" "a local-only row; domain:payments" \
+  "the old blocked-by-dependent refusal is GONE: nothing is stranded because nothing moves"
+
+# STORY INHERITANCE: a story with no token of its own belongs to its epic
+# row's domain - queue shows it annotated, the tally counts it.
+q="$("$dom" queue payments)"
+assert_contains "$q" "big-epic" "queue: the epic row is in the slice"
+assert_contains "$q" "story-a - a story; epic:big-epic (repo: alpha) (via epic:big-epic)" \
+  "queue: a story INHERITS its epic row's domain, annotated"
+assert_contains "$q" "## Queued" "queue: rows are grouped under their section header"
+assert_contains "$("$dom" queue payments --ids)" "story-a" "queue --ids prints bare ids"
+read -r tq ti td <<EOF
+$(ac_domain_tally payments)
+EOF
+assert_eq "$tq" "3" "tally: epic + inherited story + direct row = 3 queued"
+
+# Refusals leave the ledger byte-unchanged.
 refuses_assign() {  # refuses_assign <needle> <why> <id>...
   local needle="$1" why="$2"; shift 2
-  local fb db
-  fb="$(shasum -a 256 <"$fleet_backlog")"; db="$(shasum -a 256 <"$dom_backlog")"
+  local fb
+  fb="$(shasum -a 256 <"$fleet_backlog")"
   assert_fails_with "$needle" -- "$dom" assign payments "$@"
-  assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$fb" "AC-5.2: fleet ledger unchanged ($why)"
-  assert_eq "$(shasum -a 256 <"$dom_backlog")" "$db" "AC-5.2: domain ledger unchanged ($why)"
+  assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$fb" "AC-5.2: ledger unchanged ($why)"
 }
-reset_backlogs
-refuses_assign 'Queued' 'an id that is not queued' nosuch-row
 printf '# Backlog\n\n## In flight\n\n- [ ] flying - in flight (repo: alpha)\n\n## Queued\n\n%s\n\n## Done\n\n- [x] finished - done (merged 2026-08-01)\n' "$row_local" >"$fleet_backlog"
+refuses_assign 'no single row' 'an unknown id' nosuch-row
 refuses_assign 'In flight' 'an in-flight row - its crewmate scope is baked at spawn' flying
-refuses_assign 'Done' 'a done row - history stays where it was made' finished
-printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] story-a - a story; epic:big-epic (repo: alpha)\n- [ ] dependent - waits (repo: alpha) blocked-by: pay-fix - needs it\n%s\n\n## Done\n' "$row_local" >"$fleet_backlog"
-refuses_assign 'epic' 'an epic story - moving it strands its dependents' story-a
-refuses_assign 'blocked-by' 'a row another row is blocked by' pay-fix
-refuses_assign 'Queued' 'a MIXED set - the legal id must not slip through' dependent nosuch-row
+refuses_assign 'Done' 'a done row - provenance is stamped before, not after' finished
+refuses_assign 'no single row' 'a MIXED set - the legal id must not slip through' pay-fix nosuch-row
 
-# AC-6.2 - unassign is the CREWCHIEF's verb; a scoped session is refused before
-# any write. A domainchief moves its own rows between sections, it never
-# returns work to the fleet.
-reset_backlogs
+# unassign refusals: a row not carrying the token, and an in-flight row.
+reset_backlog
+assert_fails_with "nothing to reverse" -- "$dom" unassign payments pay-fix
+printf '# Backlog\n\n## In flight\n\n- [ ] flying2 - in flight; domain:payments (repo: alpha)\n\n## Queued\n\n## Done\n' >"$fleet_backlog"
+assert_fails_with "In flight" -- "$dom" unassign payments flying2
+
+# --- retire: fail-closed, one-line act, package kept -------------------------
+reset_backlog
 "$dom" assign payments pay-fix >/dev/null
-before="$(shasum -a 256 <"$dom_backlog")"
-assert_fails_with "AC_SCOPE" -- env AC_SCOPE=somefamily "$dom" unassign payments pay-fix
-assert_eq "$(shasum -a 256 <"$dom_backlog")" "$before" "AC-6.2: refused before any write"
+assert_fails_with "OPEN tokened rows" -- "$dom" retire payments
+"$dom" unassign payments pay-fix >/dev/null
+printf 'kind=roomchief\ndomain=payments\n' >"$AC_HOME/state/payfam-chief.meta"
+assert_fails_with "domainchief in flight" -- "$dom" retire payments
+rm -f "$AC_HOME/state/payfam-chief.meta"
+"$dom" retire payments >/dev/null
+assert_eq "$(grep -c '^- payments ' "$dreg" || true)" "0" "retire removes exactly the registry line"
+assert_file "$(pkg payments)/CREWMATE.md" "retire keeps the package - knowledge is never deleted by tooling"
+assert_fails_with "nothing to retire" -- "$dom" retire payments
+# A Done row's token survives a retire (history), and a QUEUED token naming a
+# retired domain is the ORPHAN the digest must show.
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] strayrow - stray; domain:payments (repo: alpha)\n\n## Done\n' >"$fleet_backlog"
+assert_contains "$("$dom" list)" "ORPHAN-TOKEN" "list surfaces a token naming no VALID registry line"
+assert_fails_with "orphan" -- "$dom" validate
+# restore the domain for the sections below
+printf -- '- payments - the payments domain - scope: money movement (added 2026-08-02T00:00:00Z)\n' >"$dreg"
+reset_backlog
+"$dom" assign payments pay-fix >/dev/null
 
-# --- R7 audit: an unauthorized row can never become silently accepted work ---
-# The guard is an ACCIDENT guard, not a security boundary - the token can be
-# typed by hand. What it guarantees is detection at every session start, since
-# the digest prints `list` unconditionally.
-
-printf -- '- [ ] snuck-in - hand-added, no token (repo: alpha)\n' >>"$dom_backlog"
-assert_fails_with "UNAUTHORIZED" -- "$dom" audit payments
-assert_contains "$("$dom" audit payments 2>&1 || true)" "snuck-in" "AC-7.1: audit names the row"
-assert_contains "$("$dom" list)" "UNAUTHORIZED" "AC-7.1: and it shows in the digest render"
-
-# AC-7.2 - assign refuses to add work to a domain already carrying one, naming
-# the row and BOTH allowed responses (adopt it, or delete it).
-out="$("$dom" assign payments other-row 2>&1 || true)"
-assert_contains "$out" "snuck-in" "AC-7.2: the refusal names the unauthorized row"
-assert_contains "$out" "ADOPT" "AC-7.2: and the adopt response"
-assert_contains "$out" "DELETE" "AC-7.2: and the delete response"
-
-# The audit is read-only and exits 0 when the ledger is clean.
-awk '!/snuck-in/' "$dom_backlog" >"$dom_backlog.clean" && mv "$dom_backlog.clean" "$dom_backlog"
-"$dom" audit payments >/dev/null
-assert_eq "$(printf '%s' "$("$dom" audit payments)" | grep -c UNAUTHORIZED || true)" "0" \
-  "a clean domain audits silently"
+# --- validate: token discipline over the one ledger --------------------------
+printf '%s\n- [ ] prose-tok - mentions domain:payments in prose (repo: alpha)\n' "$(cat "$fleet_backlog")" >"$fleet_backlog"
+assert_fails_with "grammar position" -- "$dom" validate
+printf '%s\n' "$(grep -v 'prose-tok' "$fleet_backlog")" >"$fleet_backlog"
+printf '%s\n- [ ] doc-tok - documents the `domain:payments` shape (repo: alpha)\n' "$(cat "$fleet_backlog")" >"$fleet_backlog"
+"$dom" validate >/dev/null || fail "a backtick-quoted mention is inert to validate"
+printf '%s\n' "$(grep -v 'doc-tok' "$fleet_backlog")" >"$fleet_backlog"
+# story token disagreeing with its epic row's token - one family, one domain.
+"$dom" new logistics --scope 'shipping' --charter 'the logistics domain' --no-projects >/dev/null
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] two-epic [EPIC] - epic; domain:payments (repo: alpha)\n- [ ] two-story - story; epic:two-epic; domain:logistics (repo: alpha)\n\n## Done\n' >"$fleet_backlog"
+assert_fails_with "one family, one domain" -- "$dom" validate
+"$dom" retire logistics >/dev/null 2>&1 || true
+reset_backlog
+"$dom" assign payments pay-fix >/dev/null
 
 # --- AC-2.3: list renders and ALWAYS exits 0 ---------------------------------
 # A digest block may never take session start down - the rule bin/ac-deputy.sh
@@ -341,31 +358,32 @@ printf '# Backlog: demo\n\n## Queued\n\n- [ ] deputy-row - deputy work (repo: al
 deputy_before="$(shasum -a 256 <"$AC_HOME/crewdeputies/demo/records/backlog.md")"
 for bad in '../crewdeputies/demo' '..' 'has/slash' 'UPPER'; do
   assert_fails_with "legal crewdomain name" -- "$dom" unassign "$bad" deputy-row
-  assert_fails_with "legal crewdomain name" -- "$dom" audit "$bad"
+  assert_fails_with "legal crewdomain name" -- "$dom" queue "$bad"
 done
 assert_eq "$(shasum -a 256 <"$AC_HOME/crewdeputies/demo/records/backlog.md")" "$deputy_before" \
   "CR-001: no traversal reached the crewdeputy ledger next door"
 
-# CR-002 - chief-only-add has to bind the WRITER of the token. The ledger guard
-# covers Edit/Write and NOT Bash, so without this a scoped session runs the verb
-# and mints a row stamped assigned:crewchief - forged provenance the audit then
-# reads as authorized.
-reset_backlogs
-fb_before="$(shasum -a 256 <"$fleet_backlog")"; db_before="$(shasum -a 256 <"$dom_backlog")"
+# CR-002 - chief-only-add binds the WRITER of the token. The ledger guard
+# covers Edit/Write and NOT Bash, so without this a scoped session runs the
+# verb and stamps domain:<name> itself - forged authorization.
+reset_backlog
+fb_before="$(shasum -a 256 <"$fleet_backlog")"
 assert_fails_with "AC_SCOPE" -- env AC_SCOPE=somefamily "$dom" assign payments pay-fix
+assert_fails_with "AC_SCOPE" -- env AC_SCOPE=somefamily "$dom" unassign payments pay-fix
+assert_fails_with "AC_SCOPE" -- env AC_SCOPE=somefamily "$dom" retire payments
 assert_fails_with "AC_SCOPE" -- env AC_SCOPE=somefamily "$dom" new scoped-new --scope s --charter c --no-projects
-assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$fb_before" "CR-002: a scoped assign leaves the fleet ledger unchanged"
-assert_eq "$(shasum -a 256 <"$dom_backlog")" "$db_before" "CR-002: and the domain ledger unchanged"
+assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$fb_before" "CR-002: a scoped mutating verb leaves the ledger unchanged"
 assert_no_file "$(pkg scoped-new)" "CR-002: a scoped new builds no package"
+# ... while the READ verb stays open to a scoped session - a domainchief
+# reads its slice here.
+env AC_SCOPE=somefamily "$dom" queue payments >/dev/null \
+  || fail "CR-002: queue is readable from a scoped session"
 
-# CR-003 - the token is matched AT ITS GRAMMAR POSITION. Prose that merely
-# quotes it must not pass the audit, and the strip must not eat that prose.
-reset_backlogs
-printf -- '- [ ] prose-row - a row discussing assigned:crewchief in prose (repo: alpha)\n' >>"$dom_backlog"
-assert_fails_with "UNAUTHORIZED" -- "$dom" audit payments
-assert_contains "$("$dom" audit payments 2>&1 || true)" "prose-row" \
-  "CR-003: a row merely QUOTING the token is still unauthorized"
-reset_backlogs
+# CR-003 - the token is parsed AT ITS GRAMMAR POSITION by the ONE doneline
+# parser: prose that merely quotes it never authorizes (covered as MALFORMED
+# in the validate section above), and the positional strip restores prose
+# exactly.
+reset_backlog
 "$dom" assign payments pay-fix >/dev/null
 "$dom" unassign payments pay-fix >/dev/null
 assert_contains "$(cat "$fleet_backlog")" "$row_local" "CR-003: the positional strip restores the row exactly"
@@ -375,7 +393,7 @@ assert_contains "$(cat "$fleet_backlog")" "$row_local" "CR-003: the positional s
 # stamped row, breaking whole-or-nothing and reversibility alike.
 assert_fails_with "duplicate" -- "$dom" new dupes --scope s --charter c --projects alpha,alpha
 assert_no_file "$(pkg dupes)" "CR-008: a duplicate project name leaves no partial package"
-reset_backlogs
+reset_backlog
 fb_before="$(shasum -a 256 <"$fleet_backlog")"
 assert_fails_with "duplicate" -- "$dom" assign payments pay-fix pay-fix
 assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$fb_before" "CR-008: a duplicate id writes nothing"
@@ -405,37 +423,18 @@ assert_eq "$(cd "$(pkg payments)/projects/alpha" && git log --oneline -1 | sed '
 
 # --- review round 2 repairs --------------------------------------------------
 
-# R2-CR-002 - unassign must not LAUNDER an unauthorized row into the fleet
-# ledger. It carries no provenance, so there is nothing to reverse; moving it
-# would mint a legitimate fleet row out of invented work AND strip the evidence.
-reset_backlogs
-printf '# Backlog: payments\n\n## In flight\n\n## Queued\n\n- [ ] invented - nobody assigned this (repo: alpha)\n\n## Done\n' >"$dom_backlog"
-fb_before="$(shasum -a 256 <"$fleet_backlog")"
-assert_fails_with "UNAUTHORIZED" -- "$dom" unassign payments invented
-assert_contains "$("$dom" unassign payments invented 2>&1 || true)" "ADOPT" \
-  "R2-CR-002: the refusal names the adopt-or-delete response, not a reversal"
-assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$fb_before" "R2-CR-002: the fleet ledger is untouched"
-
-# R2-CR-003 - the token is anchored at END OF LINE, so token-shaped text sitting
-# MID-line (in prose, before some other trailing text) is still unauthorized.
-reset_backlogs
-printf '# Backlog: payments\n\n## In flight\n\n## Queued\n\n- [ ] midline - see; assigned:crewchief (repo: x) for context, then more (repo: alpha)\n\n## Done\n' >"$dom_backlog"
-assert_fails_with "UNAUTHORIZED" -- "$dom" audit payments
-assert_contains "$("$dom" audit payments 2>&1 || true)" "midline" \
-  "R2-CR-003: token-shaped text mid-line does not authorize a row"
-# R3-CR-001 - and unassign must agree with audit about that. Two definitions of
-# "tokened" is two answers, and the disagreeing one launders the row.
-assert_fails_with "UNAUTHORIZED" -- "$dom" unassign payments midline
-fbm="$(shasum -a 256 <"$fleet_backlog")"
-"$dom" unassign payments midline >/dev/null 2>&1 || true
-assert_eq "$(shasum -a 256 <"$fleet_backlog")" "$fbm" \
-  "R3-CR-001: a mid-line mention never reaches the fleet ledger"
+# R2-CR-003 - the token is position-anchored, so token-shaped text sitting
+# MID-line never authorizes: unassign sees "no token at position" (nothing
+# to reverse) and validate flags the row MALFORMED - one parser, one answer,
+# the R3-CR-001 laundering path has no second definition to disagree with.
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] midline - see; domain:payments (repo: x) for context, then more (repo: alpha)\n\n## Done\n' >"$fleet_backlog"
+assert_fails_with "nothing to reverse" -- "$dom" unassign payments midline
+assert_fails_with "grammar position" -- "$dom" validate
 # ... and the producer stamps before the LAST (repo: ...) group, not the first
 # one a prose fragment happens to contain.
-reset_backlogs
 printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] proserepo - mentions (repo: other) inside prose (repo: alpha)\n\n## Done\n' >"$fleet_backlog"
 "$dom" assign payments proserepo >/dev/null
-assert_contains "$(cat "$dom_backlog")" "inside prose; assigned:crewchief (repo: alpha)" \
+assert_contains "$(cat "$fleet_backlog")" "inside prose; domain:payments (repo: alpha)" \
   "R2-CR-003: the stamp lands before the TRAILING group, not the first match"
 "$dom" unassign payments proserepo >/dev/null
 assert_contains "$(cat "$fleet_backlog")" "mentions (repo: other) inside prose (repo: alpha)" \
@@ -512,7 +511,7 @@ assert_no_file "$(pkg bothopts)" "R2-CR-008: and nothing was written"
 
 # R5-CR-001 - a backlog id is a LITERAL. Unvalidated it reaches an awk regex,
 # where `.` matches any character and moves a row nobody named.
-reset_backlogs
+reset_backlog
 fb="$(shasum -a 256 <"$fleet_backlog")"
 for badid in 'pay.fix' 'pay*' '../x'; do
   assert_fails_with "legal backlog id" -- "$dom" assign payments "$badid"
@@ -549,13 +548,12 @@ assert_fails_with "scope" -- "$dom" new noscope --charter c --projects alpha
 assert_no_file "$(pkg noscope)" "R5-CR-005: and nothing was written"
 assert_fails_with "mutually exclusive" -- "$dom" new bothempty --scope s --charter c --projects '' --no-projects
 
-# R5-CR-007 - the no-arg audit walks PACKAGES, not registered ids: a package
-# whose registry line was removed (the ghost shape) is exactly what it must
-# still surface.
+# R5-CR-007 (revised for crewdomain-token) - a package on disk with no VALID
+# registry line still surfaces in the digest as UNREGISTERED kept knowledge;
+# there is no ledger inside it for rows to hide in anymore.
 mkdir -p "$AC_HOME/crewdomains/ghostpkg/records"
-printf '# Backlog: ghostpkg\n\n## In flight\n\n## Queued\n\n- [ ] ghostrow - no line, no token (repo: alpha)\n\n## Done\n' \
-  >"$AC_HOME/crewdomains/ghostpkg/records/backlog.md"
-assert_fails_with "ghostrow" -- "$dom" audit
+printf '# ghost knowledge\n' >"$AC_HOME/crewdomains/ghostpkg/CREWMATE.md"
+assert_contains "$("$dom" list)" "UNREGISTERED" "a lineless package renders UNREGISTERED"
 rm -rf "$AC_HOME/crewdomains/ghostpkg"
 
 # R5-CR-008 - AC-1.6's other half: a fleet DESCRIPTION copied into the detail.
@@ -575,5 +573,19 @@ printf -- '- payments - the payments domain - scope: money movement (added 2026-
 
 printf 'this is not a registry line at all\n- broken\n' >"$dreg"
 "$dom" list >/dev/null || fail "AC-2.3: list must exit 0 even on a corrupt registry"
+
+# ---- in-flight assign: the captain-requested escape (approved 2026-08-18) ---
+# A stamp changes nothing in the flying crewmate's env - the refusal is
+# policy, so the captain's word unlocks it and rides the status record. Done
+# rows stay refused with or without the flag.
+printf -- '- payments - the payments domain - scope: money movement (added 2026-08-02T00:00:00Z)\n' >"$dreg"
+printf '# Backlog\n\n## In flight\n\n- [ ] flyfam - flying now (repo: alpha)\n\n## Queued\n\n## Done\n\n- [x] oldone - done (merged 2026-08-01)\n' >"$fleet_backlog"
+assert_fails_with "captain-requested" -- "$dom" assign payments flyfam
+"$dom" assign payments flyfam --captain-requested 'captain said 1, 2026-08-18' >/dev/null
+assert_contains "$(cat "$fleet_backlog")" "- [ ] flyfam - flying now; domain:payments (repo: alpha)" \
+  "the captain's word stamps an in-flight row in place"
+assert_contains "$(cat "$AC_HOME/state/payments.status" 2>/dev/null || cat "$AC_HOME"/state/*.status 2>/dev/null)" "captain-requested" \
+  "and the authority rides the durable status record"
+assert_fails_with "Done history" -- "$dom" assign payments oldone --captain-requested 'even with the word'
 
 pass

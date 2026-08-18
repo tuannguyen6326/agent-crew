@@ -139,15 +139,22 @@ snapshot() {
   # the id), never a substring, so a story documenting its own terminal states
   # in prose (the epic maps' two-terminal-state convention) never reads as if it
   # carried one. This walk keeps its own section tracking.
+  # Field 10 is the row's EFFECTIVE domain (crewdomain-token): its own token,
+  # else its epic row's - the same inheritance ac_domain_tally and the promote
+  # derivation apply, computed here in a first pass so every consumer fences
+  # or displays domain rows off ONE derivation.
   awk "$AC_DONELINE_AWK"'
+    NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dm[o["id"]] = o["domain"] } next }
     /^## In flight/ { sec = "inflight"; next }
     /^## Queued/    { sec = "queued";   next }
     /^## Done/      { sec = "done";     next }
     /^- \[[ x]\] /  {
       ac_doneline($0, o)
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, o["id"], o["terminal"], o["epic"], o["blockers"], o["blockers_malformed"], o["hold"], o["hold_malformed"], o["contract"]
+      d = o["domain"]
+      if (d == "" && o["epic"] != "") d = dm[o["epic"]]
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, o["id"], o["terminal"], o["epic"], o["blockers"], o["blockers_malformed"], o["hold"], o["hold_malformed"], o["contract"], d
     }
-  ' "$backlog"
+  ' "$backlog" "$backlog"
 }
 
 report_lint() {
@@ -169,11 +176,11 @@ cmd_report() {
   snapshot | awk -v cap="$cap" '
     BEGIN { FS = "\t" }
     {
-      sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; contract = $9
+      sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; dom = $10; contract = $9
       state[id] = sec
       mark[id] = marker
       if (sec == "inflight" && epic != "" && marker != "epic") flying[epic]++
-      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad; qcon[id] = contract }
+      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad; qcon[id] = contract; qdom[id] = dom }
     }
     END {
       for (i = 1; i <= n; i++) {
@@ -220,10 +227,15 @@ cmd_report() {
         # The contract rides the READY line as INFORMATION - a display, never a
         # scheduling condition: an invalid token must not stop the row, it must
         # be visible (the lint lines below the report are the judge).
-        if (qepic[id] != "" && qcon[id] != "") printf "READY  %s (epic:%s) [%s]\n", id, qepic[id], qcon[id]
-        else if (qepic[id] != "") printf "READY  %s (epic:%s)\n", id, qepic[id]
-        else if (qcon[id] != "") printf "READY  %s [%s]\n", id, qcon[id]
-        else printf "READY  %s\n", id
+        # A DOMAIN row is startable ONLY by promoting its domainchief - the
+        # auto-fly rule is defined over this report, so the line must say the
+        # start action or the chief flies it as an ordinary task and bypasses
+        # the domainchief (crewdomain-token, red-team mitigation).
+        dnote = (qdom[id] != "") ? sprintf(" {domain:%s - start = promote its domainchief}", qdom[id]) : ""
+        if (qepic[id] != "" && qcon[id] != "") printf "READY  %s (epic:%s) [%s]%s\n", id, qepic[id], qcon[id], dnote
+        else if (qepic[id] != "") printf "READY  %s (epic:%s)%s\n", id, qepic[id], dnote
+        else if (qcon[id] != "") printf "READY  %s [%s]%s\n", id, qcon[id], dnote
+        else printf "READY  %s%s\n", id, dnote
       }
     }
   '
@@ -239,11 +251,11 @@ cmd_queued() {
   snapshot | awk -v cap="$cap" '
     BEGIN { FS = "\t" }
     {
-      sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8
+      sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; dom = $10
       state[id] = sec
       mark[id] = marker
       if (sec == "inflight" && epic != "" && marker != "epic") flying[epic]++
-      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad }
+      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad; qdom[id] = dom }
     }
     END {
       for (i = 1; i <= n; i++) {
@@ -252,6 +264,11 @@ cmd_queued() {
         # line to say so: a malformed or held row is simply never offered.
         if (qbad[id] != "") continue
         if (qhold[id] != "" || qholdbad[id] != "") continue
+        # DOMAIN rows are never offered here (crewdomain-token): this list
+        # feeds auto-fly and teardown next-promote, and a domain row starts
+        # only by promoting its domainchief - offering it would double-
+        # schedule the family past the domain binding.
+        if (qdom[id] != "") continue
         startable = 1
         m = split(qblock[id], bs, ",")
         for (j = 1; j <= m; j++) {

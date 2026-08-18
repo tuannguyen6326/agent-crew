@@ -1559,43 +1559,34 @@ printf '# Room: victim\n' >"$rdata/archive/2026/victim/room.md"
 assert_eq "$(lib "ac_room_file '*'")" "$rdata/*/room.md" \
   "an unsafe family name never globs into some other family's archived room"
 
-# --- ac_domain_tally: done means REAL done, not Done-section membership ------
-# same-done-miscount-in-three-more-surfaces: a [failed]/[abandoned] row in a
-# crewdomain's own Done section must not inflate the "done" field - same defect
-# class board-rollup-and-overlay-count-failed-as-done fixed for the epic
-# rollup, reusing AC_DONELINE_AWK's terminal detection instead of a second
-# marker parser.
-mkdir -p "$AC_HOME/crewdomains/fx-dom1/records" "$AC_HOME/crewdomains/fx-dom2/records"
-cat >"$AC_HOME/crewdomains/fx-dom1/records/backlog.md" <<'EOF'
-# Backlog: fx-dom1
+# --- ac_domain_tally: fleet-ledger token census (crewdomain-token) -----------
+# done means REAL done, not Done-section membership: a [failed]/[abandoned]
+# row must not inflate the field (same-done-miscount-in-three-more-surfaces,
+# reusing AC_DONELINE_AWK's terminal detection). Rows count by their
+# `domain:<name>` token; a story with no token of its own INHERITS its epic
+# row's domain.
+cat >"$AC_HOME/records/backlog.md" <<'EOF'
+# Backlog
 
 ## In flight
-- [ ] fx-a - a thing (repo: fx)
+- [ ] fx-a - a thing; domain:fx-dom1 (repo: fx)
 
 ## Queued
-- [ ] fx-b - another thing (repo: fx)
-- [ ] fx-c - yet another (repo: fx)
+- [ ] fx-epic [EPIC] - the epic; domain:fx-dom1 (repo: fx)
+- [ ] fx-b - a story with no token of its own; epic:fx-epic (repo: fx)
+- [ ] fx-plain - not domain work at all (repo: fx)
+- [ ] fx-other - other domain; domain:fx-dom2 (repo: fx)
 
 ## Done
-- [x] fx-done - real success (merged 2026-08-03)
-- [x] fx-failed [failed] - did not land (2026-08-03)
-- [x] fx-abandoned [abandoned] - dropped (2026-08-03)
+- [x] fx-done - real success (merged 2026-08-03); domain:fx-dom1
+- [x] fx-failed [failed] - did not land (2026-08-03); domain:fx-dom1
+- [x] fx-abandoned [abandoned] - dropped (2026-08-03); domain:fx-dom1
+- [x] fx-other-done - real success (merged 2026-08-03); domain:fx-dom2
 EOF
 assert_eq "$(lib "ac_domain_tally fx-dom1")" "2 1 1" \
-  "a [failed]/[abandoned] Done row must not count toward the done field"
-
-cat >"$AC_HOME/crewdomains/fx-dom2/records/backlog.md" <<'EOF'
-# Backlog: fx-dom2
-
-## In flight
-
-## Queued
-
-## Done
-- [x] fx-other-done - real success (merged 2026-08-03)
-EOF
-assert_eq "$(lib "ac_domain_tally")" "2 1 2" \
-  "the no-name summed tally also excludes failed/abandoned rows across every package"
-rm -rf "$AC_HOME/crewdomains/fx-dom1" "$AC_HOME/crewdomains/fx-dom2"
+  "per-domain: epic + inherited story queued, failed/abandoned excluded from done"
+assert_eq "$(lib "ac_domain_tally")" "3 1 2" \
+  "the no-name summed tally spans every domain token, untokened rows excluded"
+rm -f "$AC_HOME/records/backlog.md"
 
 pass

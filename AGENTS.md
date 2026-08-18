@@ -26,7 +26,7 @@ It combines fleet orchestration, pooled in-repo worktrees, a guarded ship pipeli
 | `data/` | Task dirs (flat `<id>/` for direct tasks, nested `<family>/<stage>/` for staged flows - each holding `brief.md`/`report.md`; `<family>/room.md` at the family root). A roomchief's own dir nests the same way at `<family>/chief/` but is not a staged flow and holds neither (`bin/ac-brief.sh` owns the full layout grammar). A CLOSED family is relocated whole to `archive/<year>/<family>/` by the manual migration `bin/ac-archive.sh` (its header owns the archive layout and eligibility); new artifacts are always born live, and `ac_room_file` is what keeps a history read resolving across the move. Gitignored. |
 | `projects/` | Project clones (read-only to you), each alongside its per-project pipeline config `<name>.yaml` (HOME-ONLY, captain-owned). Gitignored. |
 | `config/` | Local per-fleet config: `crew-harness`, `launch-<harness>`, `crew-dispatch.json`. Gitignored. |
-| `crewdomains/` | One CREWDOMAIN package per directory: `records/{backlog.md, projects.md}` + `CREWMATE.md` + `projects/` (symlinks into this fleet's own clones and their `.yaml` pipeline configs). Durable domain STATE, no home and no session; `bin/ac-domain.sh` owns the verbs and `records/crewdomains.md` is its routing table. Disjoint from `crewdeputies/`. Gitignored. |
+| `crewdomains/` | One CREWDOMAIN package per directory: `records/projects.md` + `CREWMATE.md` + `projects/` (symlinks into this fleet's own clones and their `.yaml` pipeline configs). Durable domain KNOWLEDGE + routing, no home, no session and NO ledger (crewdomain-token: a domain's rows live in the fleet `records/backlog.md`, stamped `domain:<name>`); `bin/ac-domain.sh` owns the verbs and `records/crewdomains.md` is its routing table. Disjoint from `crewdeputies/`. Gitignored. |
 | `records/scenes/` | The L2 SCENE store: one consolidated, heat-tracked topic file per subject (`<slug>.md`) between L1 (repo-knowledge facts, the learnings ledger) and L3 (the always-loaded `CREWMATE-learned.md`) - what a reader opens to restore a topic's working context in ONE read. PULL context: never seeded into a worktree, never auto-loaded, so it takes the repo-knowledge trust tier (a chief writes one directly). `bin/ac-scene.sh` owns the grammar, the `config/scene-max` tiered cap, and `scenes-archive/`; the DISTILL scout PROPOSES scenes in its report and the chief runs the verb. Gitignored. |
 | `skills/` | Permanent per-fleet store for learned skills (`ac_skills_dir`), seeded into that fleet's crew worktrees; `skills/skills-archive/` is the recoverable retired-skill store. Gitignored. |
 | `.agents/skills/` | Skills you load (`.claude/skills` symlinks here); each is an Agent Skills spec package - schema contract in section 12. |
@@ -777,34 +777,39 @@ standing session and its OWN clones; a crewdomain is durable STATE inside THIS
 fleet: a package plus one routing line, with no home, no session, no liveness
 and no lifecycle. Pick by what the work needs - ISOLATION (separate clones,
 credentials, budget, delegable to another operator) is a crewdeputy or a full
-fleet; a KNOWLEDGE and BACKLOG SLICE over the fleet's own clones is a
-crewdomain. The two share no registry, no root, no script and no verb, so
-nothing is ever ambiguous about which feature a line belongs to.
+fleet; a KNOWLEDGE slice + a routed slice of the fleet ledger over the
+fleet's own clones is a crewdomain. The two share no registry, no root, no
+script and no verb, so nothing is ever ambiguous about which feature a line
+belongs to.
 Create one with `bin/ac-domain.sh new <name> --scope '<t>' --charter '<t>'
 (--projects <csv> | --no-projects)`: it validates EIGHT namespaces before any
 write - including a crewdeputy id and an existing deputy home, the only place
-the two features touch - then builds the FOUR-member package at
+the two features touch - then builds the THREE-member package at
 `$AC_HOME/crewdomains/<name>/` (section 2) and appends its line to
 `records/crewdomains.md` (`- <id> - <charter> - scope: <text> (added <iso>)`;
 `scope:` is the routing key you READ, never a script's).
-The cycle: mint the row in `records/backlog.md` as ordinary intake ->
-`bin/ac-domain.sh assign <name> <id>` moves it into the domain backlog and
-stamps its provenance -> post the ORDER into `data/<family>/room.md` ->
-`bin/ac-spawn.sh --roomchief <family>` promotes a DOMAINCHIEF, whose binding is
-DERIVED from that assignment (no new flag; `kind` stays `roomchief`, the domain
-rides as `domain=<name>` in the meta and `AC_DOMAIN` on the launch line) ->
-it works the family, moving its row through the DOMAIN backlog and never
-minting one -> at landing it hands back on the ordinary roomchief channel and
-you demote it. The domain persists; the session does not. A domain family is an
+The cycle (crewdomain-token): mint the row in `records/backlog.md` as
+ordinary intake -> `bin/ac-domain.sh assign <name> <id>` STAMPS it with the
+`domain:<name>` token in place - nothing moves, so an epic row is assignable
+and every scheduler keeps reading it -> post the ORDER into
+`data/<family>/room.md` -> `bin/ac-spawn.sh --roomchief <family>` promotes a
+DOMAINCHIEF, whose binding is DERIVED from that token (no new flag; `kind`
+stays `roomchief`, the domain rides as `domain=<name>` in the meta and
+`AC_DOMAIN` on the launch line; a story row with no token of its own inherits
+its epic row's - one family, one domain) -> it works the family, reading its
+slice with `bin/ac-domain.sh queue <name>` and NEVER editing any ledger (the
+crewchief moves the fleet row at promote and at handback, the ordinary
+roomchief contract) -> at landing it hands back on the ordinary roomchief
+channel and you demote it; the Done row KEEPS its token as durable per-domain
+provenance. The domain persists; the session does not. A domain family is an
 ordinary promote, so it consumes the FLEET's `config/room-parallel` (a deputy
-home keeps its own budget - two regimes, one per feature, each coherent on its
-own clone set). Retiring a crewdomain is a records act, not a verb: `unassign`
-whatever is queued, confirm nothing is in flight in `list`, then remove the
-registry line; tooling never deletes the package.
+home keeps its own budget - two regimes, one per feature, each coherent on
+its own clone set). Retire with `bin/ac-domain.sh retire <name>` - fail-closed
+(refuses while any OPEN tokened row or flying domainchief exists), removes
+exactly the registry line, and never deletes the package.
 `bin/ac-domain.sh list` rides the session-start digest and always exits 0; it
-reports any UNAUTHORIZED row - one nobody assigned - which you reconcile by
-ADOPTING it (mint in the fleet ledger, then `assign`) or DELETING it, telling
-the family room either way.
+reports any ORPHAN-TOKEN - a row naming a domain with no VALID registry line -
+which you reconcile by `unassign`-ing the token or re-`new`-ing the domain.
 
 ## 6. Worktrees (in-repo pool)
 
@@ -1139,12 +1144,21 @@ gate (section 5). `src` values: `cap` (captain order), `chief`
 `rev:yes`, `qa:yes`) on a row is the captain's PIN - writing one without
 the captain's word is exactly the drift this grammar exists to stop.
 
-A row `bin/ac-domain.sh assign` moved into a crewdomain backlog carries the
-provenance token `assigned:crewchief`, in the position the grammar gives
-`epic:<id>`; `unassign` strips it, and a domain-backlog row WITHOUT it is
-reported UNAUTHORIZED at every session start (only the chief may create one).
-The token is deliberately date-free - `ac_doneline`'s date fallback would
-otherwise adopt a timestamp as the row's date and verb.
+A row `bin/ac-domain.sh assign` stamps carries the `domain:<name>` token in
+the position the grammar gives `epic:<id>` (crewdomain-token) - authoritative
+ONLY there (before a trailing `(repo: ...)` group, or at end of line); a
+`domain:`-shaped run anywhere else unquoted is MALFORMED, fail-visible, and a
+backtick-wrapped one is a documentation mention. `epic:<id>` and
+`domain:<name>` coexist on one row; a story with no token of its own inherits
+its epic row's, and a disagreement is a `validate` refusal - one family, one
+domain. `unassign` strips the token from a Queued row; a Done row keeps it as
+durable per-domain provenance - re-stamped at END of line when the landing
+rewrite gives the row a new trailing `(merged ...)` group, since that group
+is not a `(repo: ...)` arm. Only the crewchief stamps (the verb is
+chief-only and the ledger guard fences the file), and the token is
+deliberately date-free - `ac_doneline`'s date fallback would otherwise adopt
+a timestamp as the row's date and verb. `AC_DONELINE_AWK`'s `f["domain"]` is
+the ONE parser.
 
 `blocked-by` grammar is machine-read by `bin/ac-ready.sh`: comma-joined ids
 with NO spaces, then ` - <reason>`. Story membership is the `epic:<epic-id>`

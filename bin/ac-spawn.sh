@@ -21,7 +21,7 @@
 # in the agent-crew checkout (no worktree lease, no brief - the room IS
 # the brief) with AC_SCOPE=<family> exported.
 #
-# A promote whose family has a row in a crewdomain backlog becomes a
+# A promote whose family row carries the domain:<name> token becomes a
 # DOMAINCHIEF - the same session kind, carrying a domain. Its meta stays
 # kind=roomchief and gains domain=<name>, its launch line gains AC_DOMAIN
 # beside AC_SCOPE, and its kickoff gains the domain section. The binding is
@@ -1138,43 +1138,44 @@ if [ -n "$roomchief_family" ]; then
   grep -q '^- \[' "$(ac_data_dir)/$fam/room.md" 2>/dev/null \
     || ac_die "room $fam holds no entry: --roomchief takes no brief - the room IS the brief - so this promote would hand the new chief nothing to read. Post the order into the room FIRST, then promote: bin/ac-room.sh post $fam crewchief 'ORDER: <the captain order, verbatim>' && bin/ac-spawn.sh --roomchief $fam"
 
-  # THE DERIVED CREWDOMAIN BINDING (R3). A family whose row was ASSIGNED into a
-  # crewdomain backlog promotes a DOMAINCHIEF - an ordinary roomchief carrying
-  # the domain. The binding is DERIVED from the assignment rather than passed as
-  # a flag: the assignment IS the binding, so a mis-bind is impossible, and a
-  # family the chief never assigned cannot become a domainchief at all - which
-  # makes chief-only-add structural at the session level, not advisory.
+  # THE DERIVED CREWDOMAIN BINDING (R3, crewdomain-token). A family whose fleet
+  # row carries the `domain:<name>` token promotes a DOMAINCHIEF - an ordinary
+  # roomchief carrying the domain. The binding is DERIVED from the token rather
+  # than passed as a flag: the stamp IS the binding, only `ac-domain.sh assign`
+  # (chief-only) writes it, and the ledger guard fences the file from scoped
+  # sessions - chief-only-add stays structural at the session level. A STORY
+  # row with no token of its own INHERITS its epic row's domain (one family,
+  # one domain - validate refuses a disagreement). Parsed by the ONE doneline
+  # parser, never a private regex twin; a malformed (off-position) token
+  # creates no binding, exactly as it creates no slice membership.
   # Placed with the other pre-window refusals so a failure costs no window,
   # lease or meta and the promote stays retryable.
-  # TWO passes, and the order matters. UNIQUENESS is judged over EVERY matching
-  # row whatever its token state: an id sitting in two domain backlogs is corrupt
-  # state per AC-3.3, and filtering by provenance first would let the corruption
-  # through whenever one of the two rows happens to be untokened. Only once the
-  # row is unique does PROVENANCE decide whether it creates a binding.
-  dom=""; dom_seen=""; dom_tokened=""
-  for dom_backlog in "$(ac_home)"/crewdomains/*/records/backlog.md; do
-    [ -f "$dom_backlog" ] || continue
-    grep -qE "^- \[[ x]\] $fam " "$dom_backlog" || continue
-    dom_cand="${dom_backlog%/records/backlog.md}"; dom_cand="${dom_cand##*/}"
-    [ -z "$dom_seen" ] \
-      || ac_die "family $fam has a row in TWO crewdomain backlogs ($dom_seen and $dom_cand) - corrupt state, not a choice this promote may make. Unassign it from the one that should not hold it: bin/ac-domain.sh unassign <name> $fam"
-    dom_seen="$dom_cand"
-    # The row must carry the provenance token AT its grammar position, or a
-    # HAND-ADDED one would mint a domainchief and be worked - which is exactly
-    # the "a family the chief never assigned cannot become a domainchief at all"
-    # property this derivation exists to make structural rather than advisory.
-    grep -qE "^- \[[ x]\] $fam .*; assigned:crewchief( \(repo: [^()]*\))?$" "$dom_backlog" \
-      && dom_tokened="$dom_cand"
-  done
-  dom="$dom_tokened"
+  dom_pair="$(awk "$AC_DONELINE_AWK"'
+    NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") d[o["id"]] = o["domain"] } next }
+    /^- \[/ {
+      ac_doneline($0, o)
+      if (o["id"] != f) next
+      inh = (o["epic"] != "") ? d[o["epic"]] : ""
+      printf "%s|%s\n", o["domain"], inh
+      exit
+    }
+  ' f="$fam" "$(ac_records_dir)/backlog.md" "$(ac_records_dir)/backlog.md" 2>/dev/null || true)"
+  dom_own="${dom_pair%%|*}"; dom_inh="${dom_pair#*|}"
+  [ "$dom_pair" = "$dom_own" ] && dom_inh=""   # no row found: empty pair
+  # ONE FAMILY, ONE DOMAIN: a story whose own token disagrees with its epic
+  # row's is corrupt state, not a choice this promote may make - the AC-3.3
+  # fail-closed direction, kept under the token grammar.
+  if [ -n "$dom_own" ] && [ -n "$dom_inh" ] && [ "$dom_own" != "$dom_inh" ]; then
+    ac_die "family $fam carries domain:$dom_own but its epic row carries domain:$dom_inh - one family, one domain; corrupt state, not a choice this promote may make. Strip the wrong token: bin/ac-domain.sh unassign <name> <id>"
+  fi
+  dom="${dom_own:-$dom_inh}"
   if [ -n "$dom" ]; then
-    # A VALID registry entry is REQUIRED, not assumed. Retirement is a manual
-    # records act, so a package whose line was removed while it still holds rows
-    # would otherwise go on minting domainchiefs forever - a ghost domain
-    # nothing routes to and nothing lists. Symmetric with assign, which already
-    # demands one.
+    # A VALID registry entry is REQUIRED, not assumed: a token naming a retired
+    # domain (the ORPHAN-TOKEN shape `ac-domain.sh list` reports) must not go
+    # on minting domainchiefs - a ghost domain nothing routes to and nothing
+    # lists. Symmetric with assign, which already demands one.
     ac_domain_parse | awk -F'\t' -v n="$dom" '$1 == "VALID" && $2 == n { f = 1 } END { exit !f }' \
-      || ac_die "family $fam has a row in crewdomains/$dom but '$dom' is not a VALID entry in records/crewdomains.md - refusing to promote a chief bound to a domain nothing routes to. Either restore its line in records/crewdomains.md, or clear the package: bin/ac-domain.sh unassign $dom $fam"
+      || ac_die "family $fam carries domain:$dom but '$dom' is not a VALID entry in records/crewdomains.md - refusing to promote a chief bound to a domain nothing routes to. Either restore its line in records/crewdomains.md, or strip the token: bin/ac-domain.sh unassign $dom $fam"
   fi
 
   root="$(ac_root)"
@@ -1241,7 +1242,7 @@ STANDING RULES: read the FLEET records/captain.md exactly as any chief does - yo
 LEARNINGS: your domain has no learnings ledger. Note lessons to the FLEET records/learnings.md with bin/ac-learn.sh note as any roomchief does, prefixing each lesson '(domain:$dom)' so the domain's material stays filterable.
 PROJECTS - MEMBERSHIP: your view is crewdomains/$dom/projects/, symlinks into the fleet's OWN clones. A crewmate spawn for a project outside that view is REFUSED, so brief only what the view holds.
 PROJECTS - DETAIL: read crewdomains/$dom/records/projects.md - the domain's view of each in-scope project. The FLEET records/projects.md stays authoritative for [mode] and the description; verified CODE facts belong in records/repo-knowledge/<project>.md, never in the detail file.
-BACKLOG: move your family's row through the DOMAIN backlog crewdomains/$dom/records/backlog.md (Queued -> In flight -> Done). You may never MINT a row there - only the crewchief's bin/ac-domain.sh assign creates one, and it stamps assigned:crewchief; an untokened row is reported UNAUTHORIZED at every session start.
+BACKLOG: your family's row lives in the FLEET records/backlog.md, stamped domain:$dom - there is NO domain ledger. You NEVER edit that file (the ledger guard fences it; the crewchief moves rows at promote and at your handback, the ordinary roomchief contract). Read your domain's slice with bin/ac-domain.sh queue $dom.
 OVERLAP: before starting work run bin/ac-ready.sh overlap on the order's file surface plus git status in every live lease, against EVERY in-flight family - your domain shares the fleet's clones, so an overlap is fleet-wide, never domain-local.
 DISTIL BEFORE HANDBACK: raw lessons and curated knowledge are two classes and only the second is what your successor re-reads directly. Note the raw ones as above; fold DURABLE domain knowledge into the curated files - crewdomains/$dom/CREWMATE.md and the records/projects.md detail - before you hand back. With no domain ledger, that fold is the ONLY per-domain memory write path.
 HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there is no domain-specific return channel."

@@ -341,3 +341,27 @@ case "$out" in *"READY  heldcampaign"*) fail "(a) a landed blocker must never ov
 case "$("$BIN/ac-ready.sh" queued)" in *heldcampaign*) fail "(a) queued must still never offer the held row once its blocker lands" ;; esac
 
 pass
+
+# ---- crewdomain-token: domain rows are promote-only ------------------------
+# The auto-fly rule is defined over the report, and `queued` feeds auto-fly
+# and teardown's next-promote - so a domain row (own token, or inherited via
+# its epic) must SAY its start action in the report and never be offered by
+# the pipeable selector (red-team mitigation: no double-scheduling past the
+# domain binding).
+cat >"$AC_HOME/records/backlog.md" <<'DEOF'
+## In flight
+
+## Queued
+- [ ] dompay - do it; domain:payments (repo: alpha)
+- [ ] domstory - s; epic:dompay (repo: alpha)
+- [ ] plainrow - normal (repo: alpha)
+
+## Done
+DEOF
+out="$("$BIN/ac-ready.sh")"
+assert_contains "$out" "READY  dompay {domain:payments - start = promote its domainchief}" \
+  "a domain row is READY with its start action named"
+assert_contains "$out" "READY  domstory (epic:dompay) {domain:payments" \
+  "a story INHERITS its epic row's domain in the report"
+q="$("$BIN/ac-ready.sh" queued)"
+assert_eq "$q" "plainrow" "queued never offers a domain row - promote is its only start"

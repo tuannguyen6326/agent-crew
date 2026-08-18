@@ -52,16 +52,16 @@ case "$tool" in
 esac
 [ -n "$path" ] || exit 0
 
-# A CREWDOMAIN SLICE IS EXEMPT, and the exemption has to be an EXPLICIT branch
-# rather than the absence of a matching pattern. In a bash `case`, `*` matches
-# `/` - so `*/records/backlog.md` MATCHES
-# crewdomains/payments/records/backlog.md, and `*/records/projects.md` matches
-# the package's detail file. An earlier reading of this file claimed those
-# patterns "do not match a nested path"; that claim is FALSE, verified by
-# running the patterns rather than reasoning about them. Left implicit, this
-# guard would refuse a domainchief BOTH of its core write duties: moving rows
-# through its own domain backlog, and enriching its projects detail before
-# handback. Placed BEFORE the fence so it wins outright.
+# THE CREWDOMAIN DETAIL FILE IS EXEMPT, and the exemption has to be an
+# EXPLICIT branch rather than the absence of a matching pattern: in a bash
+# `case`, `*` matches `/`, so `*/records/projects.md` MATCHES
+# crewdomains/payments/records/projects.md (a claim once made false-wise and
+# disproven by RUNNING the patterns). The exemption NARROWED with the
+# crewdomain-token refactor: the per-domain backlog.md no longer exists, so
+# the domainchief's one remaining records/ write duty is enriching its
+# projects detail before handback (CREWMATE.md sits at the package root,
+# outside every fenced pattern). A package-relative backlog path no longer
+# earns an exemption - there is no ledger there for a scoped session to own.
 # A `..` ANYWHERE disqualifies the exemption before it is considered:
 # `crewdomains/payments/records/../../../records/captain.md` matches the allow
 # glob and resolves to the FLEET captain file, so a raw-path allow arm would
@@ -69,7 +69,7 @@ esac
 # traversing path is fail-closed - the fence below still judges it.
 case "$path" in
   *..*) : ;;
-  crewdomains/*/records/* | */crewdomains/*/records/*) exit 0 ;;
+  crewdomains/*/records/projects.md | */crewdomains/*/records/projects.md) exit 0 ;;
 esac
 
 case "$path" in
@@ -85,6 +85,6 @@ esac
 # able to edit that layer; it is the same argument this guard already makes for
 # the backlog, arriving at a file that only just became load-bearing for scoped
 # sessions.
-printf 'ac-ledger-guard: %s on %s is refused in a scoped session (AC_SCOPE=%s) - the crewchief owns records/backlog.md, records/projects.md and records/captain.md; a scoped chief (roomchief or domainchief) reads them but never edits them. Report the change instead (hand it back to the crewchief, or note it in your report.md) rather than editing the ledger yourself. A crewdomain slice at crewdomains/<name>/records/ is YOURS to edit and is not fenced.\n' \
+printf 'ac-ledger-guard: %s on %s is refused in a scoped session (AC_SCOPE=%s) - the crewchief owns records/backlog.md, records/projects.md and records/captain.md; a scoped chief (roomchief or domainchief) reads them but never edits them. Report the change instead (hand it back to the crewchief, or note it in your report.md) rather than editing the ledger yourself. A crewdomain detail file at crewdomains/<name>/records/projects.md is YOURS to edit and is not fenced.\n' \
   "$tool" "$path" "$AC_SCOPE" >&2
 exit 2

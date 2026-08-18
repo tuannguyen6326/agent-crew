@@ -287,17 +287,13 @@ parked_reminder() {
   # Silence is the load-bearing direction, so every unreadable input returns
   # quietly: a wrong reminder tells the chief to stop mid-backlog.
   [ -z "$scope" ] || return 0
-  local ready data queued
+  local ready data
   ready="$("$(dirname "$0")/ac-ready.sh" 2>/dev/null)" || return 0
   [ -z "$ready" ] || return 0            # anything on the schedule: keep going
-  # ac-ready.sh reads the FLEET backlog only, so a fleet holding assigned-but-
-  # unpromoted crewdomain rows would read as "nothing READY" and this reminder
-  # would tell the chief to END the session on top of queued work. Every other
-  # domain-unaware consumer merely fails to SHOW something; this one's failure
-  # is an ACTION, which is why it is fixed rather than named. Same helper the
-  # `ac-domain.sh list` render uses - never a parse of that rendered block.
-  queued="$(ac_domain_tally 2>/dev/null | awk '{ print $1 }')" || return 0
-  [ "${queued:-0}" = 0 ] || return 0     # queued domain work: keep going
+  # No separate domain probe anymore (crewdomain-token): a domain-assigned
+  # Queued row lives in the ONE fleet ledger and is an ordinary ac-ready.sh
+  # row, so the ready check above already covers it - the blind spot the old
+  # ac_domain_tally probe existed for has no substrate.
   data="$(ac_data_dir 2>/dev/null)" || return 0
   set -- "$data"/*/room.md
   if [ -f "$1" ]; then

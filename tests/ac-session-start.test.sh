@@ -143,21 +143,21 @@ assert_contains "$out" "converged: model" "it pulls a drifted inheritable knob f
 assert_eq "$(cat "$dep/config/model")" "opus" "the value actually lands in the deputy's own config"
 
 # --- the crewdomain routing block, and the detection that rides on it --------
-# It prints UNCONDITIONALLY beside the crewdeputy block, and it carries one duty
-# that block does not: `ac-domain.sh list` runs the provenance audit, so a row
-# no `assign` stamped is surfaced at EVERY crewchief session start. Chief-only-
-# add is only as strong as its detection, and this is where the detection lives.
+# It prints UNCONDITIONALLY beside the crewdeputy block, and it carries one
+# duty that block does not (crewdomain-token): `ac-domain.sh list` runs the
+# token census, so an ORPHAN token - a fleet row naming a domain with no
+# VALID registry line - is surfaced at EVERY crewchief session start.
 mkdir -p "$AC_HOME/crewdomains/payments/records"
 printf -- '- payments - the payments domain - scope: money (added 2026-08-02T00:00:00Z)\n' \
   >"$AC_HOME/records/crewdomains.md"
-printf '# Backlog: payments\n\n## In flight\n\n## Queued\n\n- [ ] snuck-in - nobody assigned this (repo: alpha)\n\n## Done\n' \
-  >"$AC_HOME/crewdomains/payments/records/backlog.md"
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] stray-row - names a retired domain; domain:ghosts (repo: alpha)\n\n## Done\n' \
+  >"$AC_HOME/records/backlog.md"
 
 dig="$("$BIN/ac-session-start.sh" 2>/dev/null)"
 assert_contains "$dig" "-- crewdomains (routing table) --" "the crewdomain block prints unconditionally"
 assert_contains "$dig" "payments" "... naming the registered domain"
-assert_contains "$dig" "UNAUTHORIZED" "... and surfacing a row no assign stamped"
-assert_contains "$dig" "snuck-in" "... by id, so the chief can adopt or delete it"
+assert_contains "$dig" "ORPHAN-TOKEN" "... and surfacing a token no VALID line backs"
+assert_contains "$dig" "stray-row" "... by id, so the chief can unassign or re-new it"
 assert_contains "$dig" "-- crewdeputies (routing table) --" "the crewdeputy block still prints beside it"
 
 # A digest block may never take session start down: even a corrupt registry

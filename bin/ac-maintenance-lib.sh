@@ -208,9 +208,10 @@ ac_records_backup() {
   mkdir -p "$bdir"
   arc="$bdir/$prefix-$(ac_now).tar.gz"
   members=(records skills)
-  # Crewdomain packages hold mutable truth too - a domain backlog and a projects
-  # detail file - and they live OUTSIDE records/, so without this they would sit
-  # outside the reversibility floor. Extending the one shared function is what
+  # Crewdomain packages hold mutable truth too - the projects detail file and
+  # the CREWMATE layer (no ledger since the crewdomain-token refactor: rows
+  # live in the fleet backlog.md, already inside the floor) - and they live
+  # OUTSIDE records/, so without this they would sit outside the floor. Extending the one shared function is what
   # lets assign/unassign/learn/curate all inherit coverage; a per-verb tar would
   # replicate the logic and silently omit the next mutator anyone adds.
   # PATH-SPECIFIC members per package, never the bare crewdomains dir: a foreign
@@ -226,7 +227,7 @@ ac_records_backup() {
       || members+=("crewdomains/$pkgname/CREWMATE.md")
     # The projects/ VIEW is authoritative membership state and the registry
     # deliberately does not duplicate it, so a restore without it recovers the
-    # backlog and the prose but loses which projects the domain may work. It
+    # prose but loses which projects the domain may work. It
     # rides as LINKS - the tar must never gain -h - so no clone content follows.
     [ ! -d "$(dirname "$pkgrec")/projects" ] \
       || members+=("crewdomains/$pkgname/projects")

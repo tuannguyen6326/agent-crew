@@ -689,48 +689,37 @@ ac_domain_view_entry() {
 
 ac_domain_tally() {
   # ac_domain_tally [<name>] - "<queued> <inflight> <done>" row counts for one
-  # crewdomain backlog, or summed over every package when no name is given.
-  # "done" means a row that REALLY finished - a [failed]/[abandoned] Done-
-  # section row is terminal but not done, and is EXCLUDED from the done field
-  # (same-done-miscount-in-three-more-surfaces; the field's own consumers - see
-  # below - never distinguish failed/abandoned themselves, so folding them out
-  # here is the one place that can be honest without a field-count/order
-  # change). Detection reuses AC_DONELINE_AWK's ac_doneline terminal field -
-  # the same position-pinned parser ac-ready.sh's snapshot() uses - rather than
-  # a second marker parser.
-  #
-  # ONE helper with TWO consumers on purpose: `bin/ac-domain.sh list` renders
-  # the per-domain counts and the PARKED reminder in ac-turnend-guard.sh reads
-  # the total. Two tallies could disagree, and the direction that matters is the
-  # reminder's - it gates on ac-ready.sh, which does not read domain backlogs,
-  # so a fleet holding assigned-but-unpromoted rows would otherwise read as
-  # "nothing READY, safe to park" and the guard would tell the chief to END the
-  # session on top of queued work. The guard reads THIS, never a rendered digest
-  # block. PURE: reads, writes nothing.
-  local name="${1:-}" home f q=0 i=0 d=0
-  home="$(ac_home)"
-  # The glob stays UNQUOTED and the name filters the result: "${name:-*}" would
-  # quote the star into a literal, so the no-name (total) call would match
-  # nothing and the PARKED reminder would silently read every fleet as drained.
-  for f in "$home"/crewdomains/*/records/backlog.md; do
-    [ -f "$f" ] || continue
-    if [ -n "$name" ]; then
-      case "$f" in "$home/crewdomains/$name/records/backlog.md") ;; *) continue ;; esac
-    fi
-    eval "$(awk "$AC_DONELINE_AWK"'
-      /^## In flight/ { sec = "i"; next }
-      /^## Queued/    { sec = "q"; next }
-      /^## Done/      { sec = "d"; next }
-      /^- \[/ && sec == "d" {
-        ac_doneline($0, o)
-        if (o["terminal"] != "failed" && o["terminal"] != "abandoned") n["d"]++
-        next
-      }
-      /^- \[/ && sec  { n[sec]++ }
-      END { printf "q=$((q+%d)) i=$((i+%d)) d=$((d+%d))\n", n["q"] + 0, n["i"] + 0, n["d"] + 0 }
-    ' "$f")"
-  done
-  printf '%s %s %s\n' "$q" "$i" "$d"
+  # crewdomain, or summed over every domain token when no name is given -
+  # read from the ONE fleet ledger by the `domain:<name>` token
+  # (crewdomain-token refactor: the per-domain backlog is gone). A story
+  # INHERITS its epic row's domain when it carries no token of its own.
+  # "done" means a row that REALLY finished - a [failed]/[abandoned]
+  # Done-section row is terminal but not done and is EXCLUDED (same-done-
+  # miscount-in-three-more-surfaces); detection reuses ac_doneline's
+  # position-pinned terminal field, never a second marker parser. PURE:
+  # reads, writes nothing. Its once-load-bearing second consumer - the
+  # PARKED reminder in ac-turnend-guard.sh - retired with the move: a
+  # tokened Queued row is an ordinary ac-ready.sh row now, so the guard's
+  # own ready probe already sees it.
+  local name="${1:-}" f
+  f="$(ac_records_dir)/backlog.md"
+  [ -f "$f" ] || { printf '0 0 0\n'; return 0; }
+  awk "$AC_DONELINE_AWK"'
+    NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
+    /^## In flight/ { sec = "i"; next }
+    /^## Queued/    { sec = "q"; next }
+    /^## Done/      { sec = "d"; next }
+    /^- \[/ && sec {
+      ac_doneline($0, o)
+      d = o["domain"]
+      if (d == "" && o["epic"] != "") d = dom[o["epic"]]
+      if (d == "") next
+      if (want != "" && d != want) next
+      if (sec == "d" && (o["terminal"] == "failed" || o["terminal"] == "abandoned")) next
+      n[sec]++
+    }
+    END { printf "%d %d %d\n", n["q"] + 0, n["i"] + 0, n["d"] + 0 }
+  ' want="$name" "$f" "$f"
 }
 
 ac_require() {
@@ -1048,6 +1037,23 @@ ac_room_file() {
 #                   write `` `[@held]` `` or `` `[held]` `` without holding or
 #                   flagging itself.
 #   f["epic"]     - the id in an `epic:<id>` token anywhere on the line, else "".
+#   f["domain"]   - the name in a `domain:<name>` CREWDOMAIN assignment token
+#                   (crewdomain-token) - authoritative ONLY at the two grammar
+#                   positions the old `assigned:crewchief` slot defined:
+#                   `; domain:<name>` immediately before a trailing
+#                   `(repo: ...)` group, or `; domain:<name>` at end of line
+#                   (the arm a Done row and a blocked Queued row take). NOT
+#                   anywhere-matched like `epic:` - epic is a membership
+#                   token, domain is an AUTHORIZATION token (the assignment
+#                   itself), so a prose quotation must be inert; the measured
+#                   `[@held]` and domain_row_tokened lessons both bind here.
+#                   Name charset [a-z0-9-] = ac_domain_name_ok's.
+#   f["domain_malformed"] - "1" when a `domain:[a-z0-9-]+`-shaped run sits
+#                   ANYWHERE ELSE on the line un-backticked (a mis-placed or
+#                   mis-typed stamp, or an unquoted prose mention). Fails
+#                   VISIBLE like hold_malformed/blockers_malformed: the row
+#                   never silently drops out of its domain's slice. A
+#                   backtick-wrapped run is a documentation mention, exempt.
 #   f["blockers"] - the comma-joined ids in a `blocked-by: <ids>` token, else "".
 #   f["date"]     - the first YYYY-MM-DD inside the LAST top-level (non-nested)
 #                   parenthetical group; fallback to the LAST YYYY-MM-DD anywhere
@@ -1063,9 +1069,10 @@ ac_room_file() {
 # A site needing the failed/abandoned-OR-verb "marker" (ac-learn) composes it:
 # terminal in {failed,abandoned} ? terminal : verb.
 read -r -d '' AC_DONELINE_AWK <<'ACAWK' || true
-function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv) {
+function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv, dauth) {
   f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_malformed"] = ""; f["epic"] = ""
   f["blockers"] = ""; f["blockers_malformed"] = ""; f["date"] = ""; f["verb"] = ""; f["contract"] = ""
+  f["domain"] = ""; f["domain_malformed"] = ""
   rest = line
   sub(/^- \[[ x]\] /, "", rest)
   split(rest, rp, " ")
@@ -1134,6 +1141,31 @@ function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, f
   }
   if (match(line, /epic:[a-zA-Z0-9_-]+/))
     f["epic"] = substr(line, RSTART + 5, RLENGTH - 5)
+  # domain:<name> (crewdomain-token) - see the field notes above. Two-arm
+  # position rule inherited from the retired domain_row_tokened; every other
+  # occurrence is malformed unless backtick-quoted.
+  dauth = 0
+  if (match(line, /; domain:[a-z0-9-]+ \(repo: [^()]*\)$/)) {
+    seg = substr(line, RSTART, RLENGTH); dauth = RSTART
+    match(seg, /domain:[a-z0-9-]+/)
+    dauth = dauth + RSTART - 1
+    f["domain"] = substr(seg, RSTART + 7, RLENGTH - 7)
+  } else if (match(line, /; domain:[a-z0-9-]+$/)) {
+    dauth = RSTART + 2
+    f["domain"] = substr(line, RSTART + 9, RLENGTH - 9)
+  }
+  hpos = 1
+  while (1) {
+    hseg = substr(line, hpos)
+    if (hseg == "" || !match(hseg, /domain:[a-z0-9-]+/)) break
+    gstart = hpos + RSTART - 1
+    gend = gstart + RLENGTH - 1
+    leftch = (gstart > 1) ? substr(line, gstart - 1, 1) : ""
+    rightch = substr(line, gend + 1, 1)
+    quoted = (leftch == "`" && rightch == "`")
+    if (gstart != dauth && !quoted) f["domain_malformed"] = "1"
+    hpos = gend + 1
+  }
   # blocked-by is read STRICTLY and its slips are detected LENIENTLY. The
   # strict shape is the pinned one (AGENTS.md section 9, `blocked-by: id1,id2 -
   # reason`): one space, lowercase, comma-joined with no empty component, and
