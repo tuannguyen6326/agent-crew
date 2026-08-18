@@ -533,6 +533,7 @@ export interface BacklogLineFields {
   epic: string; // `epic:<id>` membership token (a story's parent), "" if none
   isEpic: boolean; // the line carries an [EPIC...] marker (it IS an epic)
   contract: string; // delivery-contract group content ("src:cap mode:local-only ..."), "" if none
+  domain: string; // crewdomain token at its grammar position, "" if none
 }
 
 /**
@@ -578,7 +579,12 @@ export function parseBacklogLine(line: string): BacklogLineFields {
   const pr = (s.match(/https?:\/\/github\.com\/[^\s)]+\/pull\/\d+/) || [""])[0] || "";
   const merged = (s.match(/\(merged\s+([0-9]{4}-[0-9]{2}-[0-9]{2})/) || ["", ""])[1];
   const epic = (s.match(/\bepic:([a-z0-9][a-z0-9-]*)/) || ["", ""])[1];
-  return { id, text, repo, pr, merged, epic, isEpic: /\[EPIC/i.test(s), contract };
+  // The crewdomain assignment token, position-pinned exactly like the awk
+  // twin (AC_DONELINE_AWK f["domain"]): before a trailing (repo: ...) group,
+  // or at end of line. Never anywhere-matched - a prose mention is inert.
+  const dm = s.match(/; domain:([a-z0-9-]+) \(repo: [^()]*\)$/) || s.match(/; domain:([a-z0-9-]+)$/);
+  const domain = dm ? dm[1] : "";
+  return { id, text, repo, pr, merged, epic, domain, isEpic: /\[EPIC/i.test(s), contract };
 }
 
 /**
@@ -3319,10 +3325,12 @@ async function backlogDetail(homePath: string): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
   const backlogFile = `${homePath}/records/backlog.md`;
+  // crewdomain-token: domain rows live IN the fleet ledger (stamped), so the
+  // one parse covers them - the old per-package merge had nothing left to add.
   const own = existsSync(backlogFile)
     ? parseBacklog(readFileSync(backlogFile, "utf8"))
     : { in_flight: [], queued: [], done: [] };
-  return json({ backlog: withDomainBacklogs(homePath, own) });
+  return json({ backlog: own });
 }
 
 /** Reports route (§7.4): the discovered artifact master list (viewer bodies load
@@ -7963,6 +7971,7 @@ ${UX_BASE}
   .chipm.cauto{ background:transparent; color:var(--muted); border:1px dashed var(--muted); }
   .badgeb{ display:inline-block; border-radius:20px; padding:0 7px; font-size:10px; font-weight:700; }
   .badgeb.epic{ background:var(--purple-soft); color:var(--purple); } .badgeb.pr{ background:var(--good); color:var(--bg); }
+  .badgeb.domain{ background:var(--accent-soft); color:var(--accent); font-family:var(--mono); text-transform:none; }
   .bprog{ height:5px; background:var(--panel); border:1px solid var(--line); border-radius:5px; overflow:hidden; margin:8px 0 4px; }
   .bprog i{ display:block; height:100%; background:var(--good); }
   .bprog i.err{ background:var(--error); } .bprog i.stale{ background:var(--stale); }
@@ -9389,7 +9398,8 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode){
   // d.state is composeFamily's own storyState derivation - never re-derived
   // here (no second marker parser).
   var termBadge=(d.state==='failed'||d.state==='abandoned')?' <span class="badge '+STORY_BADGE[d.state]+'" title="'+d.state+'">'+STORY_ICON[d.state]+' '+d.state.toUpperCase()+'</span>':'';
-  var badges=(d.isEpic?' <span class="badgeb epic">EPIC</span>':'')+(d.pr?' <span class="badgeb pr">PR</span>':'')+termBadge;
+  var domBadge=f.domain?' <span class="badgeb domain" title="crewdomain '+esc(f.domain)+' - start = promote its domainchief">'+esc(f.domain)+'</span>':'';
+  var badges=(d.isEpic?' <span class="badgeb epic">EPIC</span>':'')+domBadge+(d.pr?' <span class="badgeb pr">PR</span>':'')+termBadge;
   var chips=''; for(var i=0;i<d.stages.length;i++){ var st=d.stages[i]; chips+='<span class="chipm '+(st.report?'g':'a')+'">'+(st.report?'✓ ':'')+esc(st.stage)+'</span>'; }
   // The bar's FILL is a visual claim too, same as the badge above it: a full
   // green fill for a failed/abandoned family asserts success just as loudly
@@ -10393,7 +10403,8 @@ function pageDomains(){
 function domainPanel(d){
   var s='<details class="card" style="margin-bottom:9px;padding:11px 13px">';
   s+='<summary style="cursor:pointer"><span class="mono" style="color:var(--accent)">'+esc(d.id)+'</span>';
-  if(d.backlog) s+=' <span class="muted" style="font-size:12px">queued '+d.backlog.queued+' &middot; in flight '+d.backlog.inFlight+' &middot; done '+d.backlog.done+'</span>';
+  if(d.backlog) s+=' <span class="muted" style="font-size:12px">queued '+d.backlog.queued+' &middot; in flight '+d.backlog.inFlight+' &middot; done '+d.backlog.done+'</span>'
+    +' <a class="chip" href="/fleets/'+enc(S.route.fleet)+'/board" data-link data-jumpq="domain:'+esc(d.id)+'" title="Open the Board filtered to this domain rows">Board &rarr;</a>';
   s+='</summary>';
   s+='<div class="tblwrap" style="margin-top:10px"><table class="tbl"><tbody>';
   s+='<tr><th>records/projects.md</th><td>'+domainMemberBadge(d.members.projectsDoc)+'</td><th>CREWMATE.md</th><td>'+domainMemberBadge(d.members.crewmate)+'</td></tr>';

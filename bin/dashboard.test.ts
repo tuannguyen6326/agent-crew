@@ -2918,3 +2918,16 @@ test("normalizeAnnotation: element pins carry no range fields; junk quote droppe
   const b = normalizeAnnotation(JSON.stringify({ text: "note", anchor: { selector: "#x", fingerprint: "f" } }))!;
   expect(b.anchor!.quote).toBeUndefined();
 });
+
+// ---- crewdomain-token on the client parser --------------------------------
+test("parseBacklogLine: domain token is position-pinned, epic coexists, prose inert", () => {
+  const a = parseBacklogLine("- [ ] payx - do it; domain:payments (repo: alpha)");
+  expect(a.domain).toBe("payments");
+  const b = parseBacklogLine("- [x] payx - done (merged 2026-08-18); domain:payments");
+  expect(b.domain).toBe("payments");
+  const c = parseBacklogLine("- [ ] s1 - story; epic:payx; domain:payments (repo: alpha)");
+  expect(c.domain).toBe("payments");
+  expect(c.epic).toBe("payx");
+  const d = parseBacklogLine("- [ ] p - mentions domain:payments mid-prose (repo: alpha)");
+  expect(d.domain).toBe("");
+});
