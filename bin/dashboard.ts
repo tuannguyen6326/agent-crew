@@ -1251,7 +1251,7 @@ function inlineMd(escaped: string): string {
     return "\u0000" + (stash.length - 1) + "\u0000";
   };
   let s = escaped;
-  s = s.replace(/`([^`]+)`/g, (_m, c) => keep("<code>" + c + "</code>"));
+  s = s.replace(/\`([^\`]+)\`/g, (_m, c) => keep("<code>" + c + "</code>"));
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, text, url) =>
     /^(https?:\/\/|mailto:|\/|\.|#)/i.test(url)
       ? keep('<a href="' + url + '" rel="noopener">' + text + "</a>")
@@ -7758,6 +7758,17 @@ ${UX_BASE}
   .fico{ display:inline-flex; width:15px; height:15px; flex:0 0 auto; align-items:center; justify-content:center; }
   .fico.m{ border-radius:3px; font:700 7.5px/15px var(--mono); text-align:center; letter-spacing:0; }
   .fico.dir svg{ width:14px; height:14px; }
+  /* brain-ui: readable answer + block hit cards */
+  .brainans{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin:10px 0; max-width:920px; }
+  .brainans .atext{ white-space:pre-wrap; margin-top:6px; line-height:1.55; }
+  .brainans .asrc{ display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .srcchip{ font-family:var(--mono); font-size:11px; border:1px solid var(--border); border-radius:5px; padding:1px 7px;
+    max-width:38ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .brainhit{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:9px 13px; margin:6px 0; max-width:920px; }
+  .brainhit .bh1{ display:flex; align-items:center; gap:8px; min-width:0; }
+  .brainhit .bh1 a{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .brainhit .bh1 .ts{ flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg2); }
+  .brainhit .bh2{ color:var(--fg2); font-size:12.5px; margin-top:4px; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
   .attnq{ display:flex; flex-direction:column; gap:6px; margin-bottom:16px; }
   .attnq-it{ display:flex; align-items:center; gap:10px; padding:9px 12px; background:var(--surface);
     border:1px solid var(--border); border-radius:6px; color:var(--fg); min-width:0; }
@@ -10510,11 +10521,16 @@ function pageBrain(){
     +(brainBusy?' <span class="badge">searching\u2026</span>':'')
     +(brainAskBusy?' <span class="badge warn">composing\u2026</span>':'')+'</div>';
   if(brainAns){
-    s+='<div class="cfg-field" style="display:block"><div class="fname">Answer <span class="badge">'+esc(brainAns.synthesis_status||'')+'</span></div>'
-      +'<div style="white-space:pre-wrap;margin-top:6px">'+esc(brainAns.answer||'')+'</div>';
+    // The synthesized answer arrives as light markdown - render bold and code
+    // spans over ESCAPED text (never raw HTML), keep paragraphs (brain-ui).
+    var ans=esc(brainAns.answer||'')
+      .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+      .replace(/\`([^\`]+)\`/g,'<code class="mono" style="background:var(--elev);border-radius:4px;padding:0 4px;font-size:12px">$1</code>');
+    s+='<div class="brainans"><div class="fname">Answer <span class="badge">'+esc(brainAns.synthesis_status||'')+'</span></div>'
+      +'<div class="atext">'+ans+'</div>';
     var src=brainAns.sources||[];
-    if(src.length){ s+='<div class="fdesc" style="margin-top:6px">sources: ';
-      for(var si=0;si<src.length;si++){ s+=(si?', ':'')+'<a href="/review?path='+enc(hp)+'&file='+enc(hp+'/'+(src[si].path||''))+'" target="_blank">'+esc(src[si].slug)+'</a>'; }
+    if(src.length){ s+='<div class="asrc">';
+      for(var si=0;si<src.length;si++){ s+='<a class="srcchip" href="/review?path='+enc(hp)+'&file='+enc(hp+'/'+(src[si].path||''))+'" target="_blank" title="'+esc(src[si].path||'')+'">'+esc(src[si].slug)+'</a>'; }
       s+='</div>'; }
     s+='</div>';
   }
@@ -10523,11 +10539,17 @@ function pageBrain(){
     if(res.search_degraded) s+='<div class="cfg-note">degraded: '+esc(res.search_degraded)+'</div>';
     for(var i=0;i<res.results.length;i++){ var h=res.results[i];
       var link='/review?path='+enc(hp)+'&file='+enc(hp+'/'+(h.path||''));
-      s+='<div class="cfg-field"><div class="fname"><a href="'+esc(link)+'" target="_blank">'+esc(h.title||h.slug)+'</a>'
-        +'<div class="fdesc">'+esc(h.slug)+' \u00b7 '+esc(h.evidence||'')+' \u00b7 '+esc(h.trust||'')+'</div></div>'
-        +'<div class="cfg-val" style="max-width:52%">'+esc((h.snippet||'').slice(0,240))+'</div></div>';
+      // Block card, not the cfg two-column grid: the title owns one full line
+      // and the snippet the next - the narrow-name-column squeeze is the same
+      // defect the facts block already fixed (brain-ui).
+      s+='<div class="brainhit"><div class="bh1"><a href="'+esc(link)+'" target="_blank">'+esc(h.title||h.slug)+'</a>'
+        +'<span class="chipm">'+esc(h.evidence||'')+'</span>'
+        +'<span class="chipm'+(String(h.trust||'').indexOf('L1')===0?' g':'')+'" title="'+esc(h.trust||'')+'">'+esc(String(h.trust||'').split(' ')[0])+'</span>'
+        +'<span class="ts mono" style="margin-left:auto;font-size:11px" title="'+esc(h.path||'')+'">'+esc(h.slug)+'</span></div>'
+      +((h.snippet)?'<div class="bh2">'+esc((h.snippet||'').slice(0,300))+'</div>':'')
+      +'</div>';
     }
-  } else if(res && res.results){ s+='<div class="cfg-note">No hits.</div>'; }
+  } else if(res && res.results){ s+='<div class="cfg-note">No hits for this query - try broader terms, or Ask (LLM) to compose across pages.</div>'; }
   var facts=(res&&res.facts&&res.facts.length)?res.facts:null;
   if(!res){ brainSearch(); }
   if(facts){
