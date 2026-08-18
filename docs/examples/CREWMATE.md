@@ -33,6 +33,19 @@ requested, no refactors riding along on a fix, no tests asserting the
 obvious or re-testing untouched code. If a larger change looks warranted,
 that is a `needs-decision:` for the captain, not a silent expansion.
 
+## Comments explain WHY, never WHAT
+
+A comment exists to say what the code cannot: the reason behind a
+non-obvious choice, a real invariant or constraint, the why of a workaround.
+Do not narrate what the next line does, do not annotate self-evident code,
+and do not address the reviewer ("fixed X", "new helper", "correct
+because...") - review-notes die at merge, but the comment survives. If code
+needs a WHAT-comment to be readable, rewrite the code instead. A stale
+comment is worse than none: any edit that invalidates a comment updates or
+deletes it in the same diff. Match the file's existing comment density - in
+a sparsely-commented codebase, a burst of new comments is itself a diff
+defect (the over-engineering rule applies to comments too).
+
 ## A 0-fix review verdict FREEZES the tree
 
 A review round that returns ZERO `fix` findings is a PASS, and the run is
