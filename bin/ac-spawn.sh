@@ -1599,6 +1599,14 @@ window="$(backend_target "$id")"
 prompt="You are an agent-crew crewmate. Read and follow the brief at $brief. Work only inside this worktree."
 [ -z "$seed_fallback" ] \
   || prompt="$prompt Read $worktree/$seed_fallback first - the fleet-wide crewmate instructions, which this repo's own instruction file does not carry."
+# Epic-branch fence, the crewmate-facing half (epic-branch-mech): the lease
+# itself was already cut from the recorded branch by ac-tree.sh's fence; this
+# line makes the base and the LANDING TARGET explicit so the crewmate never
+# re-derives them from room prose. Silent when the id has no record.
+if eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)"; then
+  eb_branch="${eb_entry%% *}"
+  prompt="$prompt INTEGRATION BRANCH: this worktree is cut from $eb_branch and your work lands INTO $eb_branch, never the default branch - branch crew/$id from it as usual, and any PR you are told to open targets $eb_branch."
+fi
 # Carry the fleet's knobs forward to the pane agents this crewmate will start
 # (contract: the AC_FLEET_MODEL/AC_FLEET_EFFORT block in this header). Each is
 # emitted only when there is something to pass on, so a fleet that pins nothing

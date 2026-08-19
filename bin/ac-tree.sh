@@ -334,15 +334,18 @@ freshest_ref() {
 }
 
 reset_worktree() {
-  # reset_worktree <repo> <wt> - detach onto the freshest default ref, drop
-  # local changes and untracked files (ignored files survive: caches).
+  # reset_worktree <repo> <wt> [<ref>] - detach onto <ref> (default: the
+  # freshest default ref), drop local changes and untracked files (ignored
+  # files survive: caches). The ref parameter is the epic-branch fence's
+  # (cmd_get computes it); return/prune stay on the default - a released
+  # slot's contract is the default base.
   # qa run state (.crew/qa) is swept explicitly - it is ignored, so clean
   # keeps it, and a stale ports.env/serve.pid must never leak to the next
   # lessee of the slot.
   # Explicit status checks: callers must handle failure, set -e may be off.
-  local repo="$1" wt="$2" ref
+  local repo="$1" wt="$2" ref="${3:-}"
   rm -rf "$wt/.crew/qa" 2>/dev/null || true
-  ref="$(freshest_ref "$repo")"
+  [ -n "$ref" ] || ref="$(freshest_ref "$repo")"
   git -C "$wt" checkout --detach --force --quiet "$ref" \
     && git -C "$wt" reset --hard --quiet "$ref" \
     && git -C "$wt" clean -fdq
@@ -477,14 +480,34 @@ cmd_get() {
   with_pool_lock "$repo" ensure_commit_guard "$repo"
   mkdir -p "$(pool_dir "$repo")/worktrees" "$(pool_dir "$repo")/slots"
   fetch_origin "$repo"
-  with_pool_lock "$repo" acquire_slot "$repo" "$id" "$holder" "$owner" "$prefer"
+  # Epic-branch fence (epic-branch-mech): a lease for an id whose epic records
+  # an integration branch for THIS repo is cut from that branch, and REFUSES
+  # when the branch is missing - never a silent fall-through to the default
+  # base. It lives HERE (not in ac-spawn) so the documented mid-task
+  # second-lease path a crewmate takes itself, and the --prefer resume lease,
+  # ride the same fence. ac_epic_base_for (ac-lib.sh) owns the resolution.
+  local base_ref="" eb ebranch rname
+  rname="$(basename "$repo")"
+  if [ -n "$id" ] && eb="$(ac_epic_base_for "$id" "$rname")"; then
+    ebranch="${eb%% *}"
+    if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+      git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$ebranch" \
+        || ac_die "get: epic branch $ebranch is not on origin of $rname - cut it first: ac-epic-branch.sh create <epic> $rname"
+      base_ref="origin/$ebranch"
+    else
+      git -C "$repo" show-ref --verify --quiet "refs/heads/$ebranch" \
+        || ac_die "get: epic branch $ebranch does not exist in $rname - cut it first: ac-epic-branch.sh create <epic> $rname"
+      base_ref="$ebranch"
+    fi
+  fi
+  with_pool_lock "$repo" acquire_slot "$repo" "$id" "$holder" "$owner" "$prefer" "$base_ref"
   write_workspace "$repo"
 }
 
 acquire_slot() {
   # Runs under the pool lock; set -e may be suppressed by the caller, so
   # every git outcome is checked explicitly.
-  local repo="$1" id="$2" holder="$3" owner="$4" prefer="${5:-}" meta wt n free="" leased prefer_why=""
+  local repo="$1" id="$2" holder="$3" owner="$4" prefer="${5:-}" base_ref="${6:-}" meta wt n free="" leased prefer_why=""
   git -C "$repo" worktree prune >/dev/null 2>&1 || true
   heal_slots "$repo"
 
@@ -513,7 +536,7 @@ acquire_slot() {
       if [ -z "$prefer_why" ]; then
         if is_dirty "$wt"; then
           prefer_why="dirty (unlanded work)"
-        elif ! reset_worktree "$repo" "$wt"; then
+        elif ! reset_worktree "$repo" "$wt" "$base_ref"; then
           prefer_why="reset failed"
         else
           free="$prefer"
@@ -545,7 +568,7 @@ acquire_slot() {
         ac_warn "skip slot $n: dirty (unlanded work; inspect or remove --force)"
         continue
       fi
-      if ! reset_worktree "$repo" "$wt"; then
+      if ! reset_worktree "$repo" "$wt" "$base_ref"; then
         ac_warn "skip slot $n: reset failed"
         continue
       fi
@@ -603,7 +626,7 @@ acquire_slot() {
       git -C "$repo" worktree prune >/dev/null 2>&1 || true
     fi
     ac_warn "creating worktree slot $n"
-    if ! git -C "$repo" worktree add --force --detach --quiet "$wt" "$(freshest_ref "$repo")"; then
+    if ! git -C "$repo" worktree add --force --detach --quiet "$wt" "${base_ref:-$(freshest_ref "$repo")}"; then
       drop_slot "$repo" "$n"
       ac_die "git worktree add failed for slot $n"
     fi

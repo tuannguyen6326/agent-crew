@@ -2204,6 +2204,37 @@ ac_epic_branches_file() {
   return 1
 }
 
+ac_epic_base_for() {
+  # ac_epic_base_for <id> <repo-name> - the integration-branch entry a lease
+  # for <id> on <repo-name> must honor. Resolves <id>'s ledger row by LONGEST
+  # id-prefix (an intra-family fan-out sub-task carries no row of its own),
+  # then tries the row's `epic:<e>` token AND the row id itself (an epic's own
+  # scouts integrate on the epic's branch too) against the branch record.
+  # Prints `<branch> [key=value ...]`; rc 1 = no fence (no row, no record, or
+  # a retired record - retirement is the DELIBERATE end of the fence).
+  local id="$1" repo="$2" ledger row_id="" row_epic="" cand entry base
+  ledger="$(ac_records_dir)/backlog.md"
+  [ -f "$ledger" ] || return 1
+  base="$id"
+  while :; do
+    if row_epic="$(awk -v want="$base" "$AC_DONELINE_AWK"'
+      /^- \[/ { ac_doneline($0, f); if (f["id"] == want) { print f["epic"]; found = 1; exit } }
+      END { if (!found) exit 1 }' "$ledger")"; then
+      row_id="$base"
+      break
+    fi
+    case "$base" in *-*) base="${base%-*}" ;; *) return 1 ;; esac
+  done
+  for cand in "$row_epic" "$row_id"; do
+    [ -n "$cand" ] || continue
+    if entry="$(ac_epic_branch_entry "$cand" "$repo")"; then
+      printf '%s\n' "$entry"
+      return 0
+    fi
+  done
+  return 1
+}
+
 ac_epic_branch_entry() {
   # ac_epic_branch_entry <epic> <repo> - prints `<branch> [key=value ...]`.
   # rc 0 found; 1 no record or no entry for this repo (no fence);

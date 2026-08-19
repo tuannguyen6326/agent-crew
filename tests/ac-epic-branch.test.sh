@@ -90,4 +90,46 @@ assert_contains "$out" "proj epic/eppy2" "an archived family's record still reso
 # --- no record at all: distinct from moved - callers get a clean miss ---------
 if "$EB" show never-was >/dev/null 2>&1; then fail "show on a never-recorded epic must fail"; fi
 
+# --- the FENCE in ac-tree get (slice 2) ---------------------------------------
+# A lease for an id whose epic records a branch for the repo is cut FROM that
+# branch; the fence resolves by longest id-prefix so fan-out sub-tasks and the
+# epic's own scouts ride it too, and a recorded-but-never-created branch
+# REFUSES the lease instead of falling through to the default base.
+cat >>"$AC_HOME/records/backlog.md" <<'EOF'
+## In flight
+- [ ] eppy3 [EPIC] - integration test epic (repo: proj)
+- [ ] eppy3-s1 - story one; epic:eppy3 (repo: proj)
+- [ ] eppy4 [EPIC] - fence-refusal epic (repo: proj)
+- [ ] eppy4-s1 - story; epic:eppy4 (repo: proj)
+- [ ] freetask - no epic at all (repo: proj)
+EOF
+mkdir -p "$AC_HOME/data/eppy3" "$AC_HOME/data/eppy4"
+printf 'proj epic/eppy3 push=yes\n' >"$AC_HOME/data/eppy3/branches"
+printf 'proj epic/eppy4\n' >"$AC_HOME/data/eppy4/branches"
+"$EB" create eppy3 proj >/dev/null
+epic_tip="$(git -C "$upstream" rev-parse refs/heads/epic/eppy3)"
+# advance the default AFTER the cut, so epic tip != default tip provably
+printf 'post-cut\n' >>"$upstream/file.txt"
+git -C "$upstream" add -A; git -C "$upstream" commit -qm post-cut
+def_tip="$(git -C "$upstream" rev-parse main)"
+
+wt="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj" --id eppy3-s1 --holder t 2>/dev/null)"
+assert_eq "$(git -C "$wt" rev-parse HEAD)" "$epic_tip" "a story lease is cut from the recorded epic branch, not the default"
+"$BIN/ac-tree.sh" return "$wt" >/dev/null 2>&1
+
+wt2="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj" --id eppy3-s1-fix --holder t 2>/dev/null)"
+assert_eq "$(git -C "$wt2" rev-parse HEAD)" "$epic_tip" "a fan-out sub-id (no row) rides its story's fence via the prefix walk"
+"$BIN/ac-tree.sh" return "$wt2" >/dev/null 2>&1
+
+wt3="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj" --id eppy3-asbuilt --holder t 2>/dev/null)"
+assert_eq "$(git -C "$wt3" rev-parse HEAD)" "$epic_tip" "the epic's OWN task id rides the fence too (row-id arm)"
+"$BIN/ac-tree.sh" return "$wt3" >/dev/null 2>&1
+
+out="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj" --id eppy4-s1 --holder t 2>&1 || true)"
+assert_contains "$out" "cut it first" "a recorded-but-missing branch refuses the lease (never silent fall-through)"
+
+wt4="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj" --id freetask --holder t 2>/dev/null)"
+assert_eq "$(git -C "$wt4" rev-parse HEAD)" "$def_tip" "an id with no epic record keeps today's default base"
+"$BIN/ac-tree.sh" return "$wt4" >/dev/null 2>&1
+
 pass
