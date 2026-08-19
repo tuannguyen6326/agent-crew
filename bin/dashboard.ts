@@ -7811,6 +7811,12 @@ ${UX_BASE}
   .sys .w{ color:var(--warning); } .sys .e{ color:var(--error); }
   .collapse{ background:var(--elev); border:1px solid var(--border); border-radius:4px; padding:6px; color:var(--fg2); display:flex; align-items:center; gap:8px; justify-content:center; }
   .collapse:hover{ border-color:var(--border-strong); }
+  /* Nav drawer trigger + scrim (dash-responsive): hidden at desktop widths,
+     shown only under the phone breakpoint below - the sidebar itself stays a
+     sticky flex item until then. */
+  .navtoggle{ display:none; background:var(--elev); border:1px solid var(--border); border-radius:4px; padding:5px 9px; color:var(--fg); font-size:16px; line-height:1; flex:0 0 auto; }
+  .navtoggle:hover{ border-color:var(--border-strong); }
+  .navscrim{ display:none; position:fixed; inset:0; background:var(--scrim); z-index:69; }
 
   /* ---- main ---- */
   .main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
@@ -8076,11 +8082,30 @@ ${UX_BASE}
     .grid{ grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); }
   }
 
+  /* Phone breakpoint (dash-responsive), the same mark the task-detail rules
+     below already use: the sidebar's fixed 224px rail is what overflows a
+     phone viewport, so it leaves flex flow and becomes a drawer instead. */
+  @media (max-width:720px){
+    .navtoggle{ display:inline-flex; }
+    #collapse-btn{ display:none; } /* icon-rail density has no effect once the sidebar is off-canvas by default */
+    .sidebar{ position:fixed; top:0; left:0; z-index:70; height:100vh;
+      transform:translateX(-100%); transition:transform .18s ease; box-shadow:var(--shadow-pop); }
+    body.nav-open .sidebar{ transform:translateX(0); }
+    body.nav-open .navscrim{ display:block; }
+    /* Master-detail pages (Reports/Records/Config): a fixed side column
+       leaves no room for the reader/panel at phone width, so stack instead.
+       minmax(0,1fr), not 1fr - a bare 1fr still sizes the track to its
+       content's min-content width (measured: the chief terminal below hits
+       this same trap), which reintroduces the overflow this block exists to
+       remove. */
+    .md-layout, .cfg-layout{ grid-template-columns:minmax(0,1fr); }
+  }
+
   /* ---- Board (dashboard-board): kanban by backlog status + task-detail overlay.
      Colors consume ONLY the semantic tokens above - theme-agnostic by design. ---- */
   .board{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; align-items:start; }
   .board.hidden-done{ grid-template-columns:repeat(2,1fr); }
-  @media (max-width:900px){ .board, .board.hidden-done{ grid-template-columns:1fr; } }
+  @media (max-width:900px){ .board, .board.hidden-done{ grid-template-columns:minmax(0,1fr); } }
   /* Hide-Done toggle (dashboard-board-v2): a pill switch in the board toolbar. */
   .btoggle{ display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); background:var(--panel); border-radius:9px; padding:6px 12px; font-size:12.5px; color:var(--ink); font-weight:500; margin-left:auto; }
   .btoggle .sw{ width:30px; height:17px; border-radius:20px; background:var(--border-strong); position:relative; transition:background .15s; }
@@ -8163,7 +8188,7 @@ ${UX_BASE}
   .bdetail .fhead .x:hover{ background:var(--bg); color:var(--ink); }
   .bdetail .fbody{ flex:1 1 auto; display:grid; grid-template-columns:300px 1fr; min-height:0; }
   .bdetail .fbody.haschief{ grid-template-columns:300px 1fr 6px var(--chiefw, minmax(360px,34%)); }
-  @media (max-width:720px){ .bdetail .fbody, .bdetail .fbody.haschief{ grid-template-columns:1fr; } .bdetail .rail{ max-height:40%; } }
+  @media (max-width:720px){ .bdetail .fbody, .bdetail .fbody.haschief{ grid-template-columns:minmax(0,1fr); } .bdetail .rail{ max-height:40%; } }
   .chiefp{ border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; min-height:0; }
   .chiefp .cbar{ display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); }
   .chiefp .cbar b{ color:var(--ink); font-family:var(--mono); font-weight:600; }
@@ -8377,8 +8402,10 @@ ${UX_BASE}
     <div id="sys-health" class="sys" aria-label="System health" aria-live="polite"></div>
     <button id="collapse-btn" class="collapse" type="button" aria-label="Collapse sidebar" aria-pressed="false"><span class="clbl">Collapse</span><span class="cico" aria-hidden="true">&#8676;</span></button>
   </nav>
+  <div id="nav-scrim" class="navscrim"></div>
   <main id="main" class="main">
     <header class="pagehead">
+      <button id="nav-toggle" class="navtoggle" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">&#9776;</button>
       <div class="headline">
         <h1 id="page-title">Fleets</h1>
         <div id="page-crumb" class="crumb"></div>
@@ -8745,6 +8772,7 @@ var pollGen=0, pageCtrl=null, pageInFlight=false, snapInFlight=false;
 
 function navigate(path, opts){
   opts=opts||{};
+  toggleNav(false); // a route change is the drawer's other close trigger, on top of the scrim/hamburger
   if(path===location.pathname) { return; }
   saveScroll();
   if(opts.replace) history.replaceState({}, '', path);
@@ -11285,6 +11313,16 @@ function toggleSidebar(){
   el('collapse-btn').setAttribute('aria-pressed', c?'true':'false');
   try{ localStorage.setItem('ac_dash_sb', c?'1':'0'); }catch(e){}
 }
+function toggleNav(force){
+  var open = typeof force==='boolean' ? force : !document.body.classList.contains('nav-open');
+  // The desktop icon-rail collapse and the phone drawer are two different
+  // affordances over the same element - opening the drawer always shows full
+  // labels, so a collapse toggled on a wide window before resizing down never
+  // strands the phone view on icon-only nav.
+  if(open) document.body.classList.remove('sb-collapsed');
+  document.body.classList.toggle('nav-open', open);
+  var b=el('nav-toggle'); if(b) b.setAttribute('aria-expanded', open?'true':'false');
+}
 function defOpenOf(dk){ return dk==='sec:inflight'||dk==='sec:queued'; }
 function toggleDisc(dk){ var ui=uiFor(routeKey(S.route)); var cur=(dk in ui.exp)?ui.exp[dk]:defOpenOf(dk); ui.exp[dk]=!cur; renderPage(); }
 
@@ -11322,6 +11360,8 @@ function onClick(e){
   if(t.closest('#palette-btn')){ togglePalette(); return; }
   if(t.closest('#bg-btn')){ openBgDialog(); return; }
   if(t.closest('#collapse-btn')){ toggleSidebar(); return; }
+  if(t.closest('#nav-toggle')){ toggleNav(); return; }
+  if(t.closest('#nav-scrim')){ toggleNav(false); return; }
   // New-tab chat/terminal chips: open PROGRAMMATICALLY instead of trusting the
   // anchor default - in the captain's real Chrome the default was observed
   // swallowed (anchor focused, tooltip up, no navigation; headless clicks
