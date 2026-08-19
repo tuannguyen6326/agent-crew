@@ -197,6 +197,16 @@ printf 'project_dir=%s\nworktree=%s\nproject=proj\n' "$AC_HOME/projects/proj" "$
 rd="$("$BIN/ac-review-diff.sh" eppy3-s1 --stat)"
 assert_contains "$rd" "round2.txt" "review-diff shows the story's own new work"
 case "$rd" in *story.txt*) fail "review-diff must not render the LANDED sibling work as this story's diff" ;; esac
+
+# --- checked-out epic target: the live practice lands in place ----------------
+# The lab clones sit ON the epic branch; `git fetch . src:dst` refuses to move
+# the current branch's ref, so this ff must be an in-place --ff-only merge.
+git -C "$AC_HOME/projects/proj" checkout -q epic/eppy3
+out="$("$BIN/ac-merge-local.sh" eppy3-s1)"
+assert_contains "$out" "in place" "a checked-out epic target lands by in-place ff"
+assert_eq "$(git -C "$AC_HOME/projects/proj" rev-parse HEAD)" "$(git -C "$wt6" rev-parse crew/eppy3-s1)" \
+  "the checked-out target followed the story head"
+git -C "$AC_HOME/projects/proj" checkout -q main
 "$BIN/ac-tree.sh" return "$wt6" --force >/dev/null 2>&1
 
 pass

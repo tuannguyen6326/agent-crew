@@ -98,8 +98,16 @@ if eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")")"; then
     git -C "$project_dir" branch "$target" "refs/remotes/origin/$target"
   fi
 fi
+# The primary checkout must sit on the DEFAULT branch - except an epic-mode
+# landing, where sitting on the TARGET itself is the live practice (the epic
+# IS those clones' working line) and is handled by an in-place ff merge below.
 current="$(git -C "$project_dir" symbolic-ref --short HEAD 2>/dev/null || printf 'DETACHED')"
-[ "$current" = "$default" ] || ac_die "primary checkout is on '$current', not '$default'"
+if [ "$epic_mode" = 1 ]; then
+  [ "$current" = "$default" ] || [ "$current" = "$target" ] \
+    || ac_die "primary checkout is on '$current' - an epic landing needs it on '$default' or on the target '$target'"
+else
+  [ "$current" = "$default" ] || ac_die "primary checkout is on '$current', not '$default'"
+fi
 
 status="$(git -C "$project_dir" status --porcelain -uno)"
 if [ -n "$status" ]; then
@@ -226,6 +234,15 @@ else
     # nothing to see. Already-ancestor (no-op re-land) is landed truthfully.
     if git -C "$project_dir" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$target"; then
       printf '%s already contains %s; nothing to move\n' "$target" "$branch"
+    elif [ "$current" = "$target" ]; then
+      # The target is CHECKED OUT in the primary (the live epic practice) -
+      # `git fetch . src:dst` refuses to move the current branch's ref, so
+      # this ff is an in-place --ff-only merge: no commit is minted, the
+      # commit guard has nothing to see, and the tree follows the ref.
+      if ! err="$(git -C "$project_dir" merge --ff-only "$branch" 2>&1 >/dev/null)"; then
+        ac_die "ff of $target (checked out) from $branch failed: $err ($target untouched)"
+      fi
+      printf 'fast-forwarded %s to %s (in place)\n' "$target" "$branch"
     elif ! err="$(git -C "$project_dir" fetch --quiet . "refs/heads/$branch:refs/heads/$target" 2>&1 >/dev/null)"; then
       ac_die "ff update of $target from $branch failed: $err ($target untouched)"
     else
