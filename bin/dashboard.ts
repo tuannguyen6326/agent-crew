@@ -3721,9 +3721,9 @@ const path = q.get("path") ?? "";
 // Font size is captain-adjustable (the page chrome's A-/A+) and persists per
 // browser under one key, so every mount comes back at the chosen size.
 const FKEY = "ac_term_font";
-const fclamp = (v) => Math.max(8, Math.min(24, Math.round((v || 12) * 2) / 2));
+const fclamp = (v) => Math.max(8, Math.min(24, v || 12));
 let fpx = 12;
-try { fpx = fclamp(parseFloat(localStorage.getItem(FKEY) || "12")); } catch { }
+try { fpx = fclamp(parseInt(localStorage.getItem(FKEY) || "12", 10)); } catch { }
 const term = new Terminal({
   fontSize: fpx, scrollback: 5000, theme: { background: "#0c252d" },
   fontFamily: "'JetBrains Mono', Menlo, Monaco, 'SF Mono', 'DejaVu Sans Mono', monospace",
@@ -8309,25 +8309,6 @@ ${UX_BASE}
   .tbtitle{ font-size:11px; color:var(--muted); font-weight:700; }
   .tbsp{ flex:1 1 auto; }
   .tbfs{ font-size:11px; color:var(--fg2); min-width:2ch; text-align:center; }
-  /* Global terminal dock (split-right / fullscreen-with-header). */
-  .termdock{ position:fixed; top:0; right:0; bottom:0; width:var(--tdw,480px); z-index:60; display:flex;
-    background:var(--panel); border-left:1px solid var(--line); box-shadow:-6px 0 22px rgba(0,0,0,.18); }
-  .termdock.full{ width:100vw; border-left:0; }
-  .termdock.full .tdgrip{ display:none; }
-  .tdgrip{ flex:0 0 6px; cursor:col-resize; background:transparent; }
-  .tdgrip:hover{ background:var(--accent-soft); }
-  .tdcol{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
-  .tdbar{ flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:5px 10px;
-    border-bottom:1px solid var(--line); background:var(--surface); }
-  .tddot{ width:7px; height:7px; border-radius:50%; background:var(--success); flex:0 0 auto; }
-  .tdtitle{ font-size:11px; color:var(--muted); font-weight:700; }
-  .tdsp{ flex:1 1 auto; }
-  .tdfs{ font-size:11px; color:var(--fg2); min-width:3ch; text-align:center; }
-  .tdbar .btn[aria-pressed="true"]{ color:var(--accent); border-color:var(--accent); }
-  .tdbody{ flex:1 1 auto; min-height:0; position:relative; }
-  .tdbody iframe{ width:100%; height:100%; border:0; background:var(--term-bg, var(--canvas)); }
-  .tdbody .cdead{ padding:16px; color:var(--muted); }
-  body.term-docked .app{ margin-right:var(--tdw,480px); }
   /* Pressed state is DELIBERATE accent styling (fullscreen active), never a
      leftover focus ring - clicks blur the button after acting. */
   .termbar .btn[aria-pressed="true"]{ color:var(--accent); border-color:var(--accent); }
@@ -8506,27 +8487,6 @@ ${UX_BASE}
       <div class="skeleton"><div class="sk"></div><div class="sk"></div><div class="sk"></div></div>
     </div>
   </main>
-</div>
-<!-- Global terminal dock (peer-UX adoption, captain 2026-08-19: their UX, our
-     backend). Lives OUTSIDE #page so route morphs never remount the iframe -
-     the herdr client survives navigation. Three states: closed, split-right
-     (the app shifts left), fullscreen - and fullscreen KEEPS this header, so
-     the controls never collide with the app chrome (v1's one real defect). -->
-<div id="term-dock" class="termdock" hidden>
-  <div class="tdgrip" id="td-grip" title="Drag to resize (min 320px, max 72% of the window)"></div>
-  <div class="tdcol">
-    <div class="tdbar">
-      <span class="tddot" aria-hidden="true"></span>
-      <span class="tdtitle mono">herdr &middot; global</span>
-      <span class="tdsp"></span>
-      <button type="button" class="btn sm" id="td-fminus" title="Smaller terminal font">A-</button>
-      <span id="td-fsize" class="tdfs mono">12</span>
-      <button type="button" class="btn sm" id="td-fplus" title="Larger terminal font">A+</button>
-      <button type="button" class="btn sm" id="td-full" aria-pressed="false" title="Fullscreen (header stays; press again or Esc outside the terminal to return to split)">&#x2922;</button>
-      <button type="button" class="btn sm" id="td-close" title="Close the dock - the terminal session ends (Ctrl+&#96; reopens)">&#10005;</button>
-    </div>
-    <div class="tdbody" id="td-body"></div>
-  </div>
 </div>
 <div id="dialog-root"></div>
 <script>
@@ -10113,80 +10073,12 @@ function termFit(){
 ${termThemeCore.toString()}
 var termBg='';
 function termTheme(){
-  // Every terminal surface present (the Terminal tab AND the global dock)
-  // gets the page theme; the dedupe sig only advances when all took the
-  // paint, so a dock mounted later still gets its coat.
-  var fs=document.querySelectorAll('.termpage iframe, #td-body iframe'); if(!fs.length) return;
+  var f=document.querySelector('.termpage iframe'); if(!f) return;
   var r=termThemeCore(getComputedStyle(document.documentElement));
   if(!r || r.sig===termBg) return;
-  var ok=true;
-  for(var i=0;i<fs.length;i++){
-    var w=fs[i].contentWindow;
-    if(w && typeof w.acSetTheme==='function') w.acSetTheme(r.theme); else ok=false;
-  }
-  if(ok) termBg=r.sig;
+  var w=f.contentWindow;
+  if(w && typeof w.acSetTheme==='function'){ w.acSetTheme(r.theme); termBg=r.sig; }
 }
-// ---- Global terminal dock (peer-UX adoption; OUR backend: /term-frame +
-// /api/term/ws untouched). Mounted once outside #page; closing deliberately
-// ends the session, exactly like leaving the Terminal tab does.
-var tdMode='closed', tdW=480;
-try{ var tds=JSON.parse(localStorage.getItem('ac_term_dock')||'{}'); if(tds.w) tdW=tds.w; }catch(e){}
-function tdApply(){
-  var d=el('term-dock'); if(!d) return;
-  d.hidden = tdMode==='closed';
-  d.classList.toggle('full', tdMode==='full');
-  document.documentElement.style.setProperty('--tdw', tdW+'px');
-  document.body.classList.toggle('term-docked', tdMode==='split');
-  var fb=el('td-full'); if(fb) fb.setAttribute('aria-pressed', tdMode==='full'?'true':'false');
-  var ni=document.querySelector('.navitem[data-nav="/terminal"]'); if(ni) ni.classList.toggle('active', tdMode!=='closed');
-}
-function tdFrameWin(){ var f=document.querySelector('#td-body iframe'); return f?f.contentWindow:null; }
-function tdMount(){
-  var b=el('td-body'); if(!b||b.firstChild) return;
-  var hp=S.route&&S.route.home?S.route.home.path:'';
-  if(!hp){ var th=fleetByName(S.snap, currentFleet()); hp=th?th.path:''; }
-  if(!hp){ b.innerHTML='<div class="cdead">no fleet home resolved yet - open any fleet page once</div>'; return; }
-  fetch('/api/term/status?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
-    var bb=el('td-body'); if(!bb||bb.firstChild) return;
-    if(j.running&&j.url){
-      var f=document.createElement('iframe'); f.src=j.url; f.title='herdr terminal';
-      bb.appendChild(f);
-      termBg=''; setTimeout(function(){ termTheme(); tdFontLabel(); }, 800);
-    } else bb.innerHTML='<div class="cdead">'+esc(j.why||j.error||'terminal unavailable')+'</div>';
-  }).catch(function(){ var bb=el('td-body'); if(bb&&!bb.firstChild) bb.innerHTML='<div class="cdead">terminal unreachable</div>'; });
-}
-function tdOpen(mode){ tdMode=mode; tdApply(); tdMount(); }
-function tdClose(){ tdMode='closed'; tdApply(); var b=el('td-body'); if(b) b.innerHTML=''; }
-function tdFont(d){
-  var w=tdFrameWin();
-  if(w && typeof w.acSetFont==='function'){ var v=w.acSetFont(d); var sp=el('td-fsize'); if(sp) sp.textContent=String(v); }
-}
-function tdFontLabel(){
-  var w=tdFrameWin(); var sp=el('td-fsize');
-  if(w && sp && typeof w.acGetFont==='function'){ try{ sp.textContent=String(w.acGetFont()); }catch(e){} }
-}
-(function(){
-  var g=el('td-grip'); if(!g) return;
-  var drag=false, sx=0, sw=0;
-  g.addEventListener('mousedown', function(e){ drag=true; sx=e.clientX; sw=tdW; e.preventDefault(); document.body.style.userSelect='none'; });
-  addEventListener('mousemove', function(e){
-    if(!drag) return;
-    tdW=Math.max(320, Math.min(Math.floor(innerWidth*0.72), sw+(sx-e.clientX)));
-    tdApply();
-  });
-  addEventListener('mouseup', function(){
-    if(!drag) return;
-    drag=false; document.body.style.userSelect='';
-    try{ localStorage.setItem('ac_term_dock', JSON.stringify({w:tdW})); }catch(e){}
-  });
-})();
-// Ctrl+&#96;-equivalent toggle (the peer's muscle memory); Esc drops
-// fullscreen to split. Both fire only with focus OUTSIDE the terminal frame -
-// inside it, every key belongs to the pty.
-addEventListener('keydown', function(e){
-  if(e.ctrlKey && e.key==='\u0060'){ e.preventDefault(); tdMode==='closed'?tdOpen('split'):tdClose(); return; }
-  if(e.key==='Escape' && tdMode==='full') tdOpen('split');
-});
 function termPoll(){
   // Top-level /terminal has no fleet in the route: herdr is one session
   // machine-wide, so any known home path satisfies the server's gate.
@@ -11518,20 +11410,6 @@ function onClick(e){
   var t=e.target; if(!t) return; if(t.nodeType===3) t=t.parentElement; if(!t||!t.closest) return;
   var n;
   if(t.closest('#refresh-btn')){ tick(true); return; }
-  // Global dock controls (blur after acting - the focus-ring lesson); the
-  // Terminal NAV item toggles the dock instead of routing (peer UX ruling -
-  // /terminal and the standalone /term page stay reachable as fallbacks).
-  var tdb=t.closest('#td-fminus,#td-fplus,#td-full,#td-close');
-  if(tdb){
-    tdb.blur();
-    if(tdb.id==='td-fminus') tdFont(-0.5);
-    else if(tdb.id==='td-fplus') tdFont(0.5);
-    else if(tdb.id==='td-full') tdOpen(tdMode==='full'?'split':'full');
-    else tdClose();
-    return;
-  }
-  var tnav=t.closest('.navitem[data-nav="/terminal"]');
-  if(tnav){ e.preventDefault(); tdMode==='closed'?tdOpen('split'):tdClose(); return; }
   // Terminal toolbar: blur the clicked button so the focus ring never sticks
   // as a phantom highlight after the action (captain: "button highlight lỗi").
   var tpb=t.closest('#tp-fminus,#tp-fplus,#tp-side');
