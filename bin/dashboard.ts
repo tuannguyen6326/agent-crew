@@ -1237,6 +1237,20 @@ export function verifyProcessRows(verify: { id: string; kind?: string; project?:
   return out;
 }
 
+/**
+ * Chief-panel pane auto-fit: the font size that makes `cols` monospace
+ * columns span the pane's available pixel width. Ceiling 12px = the web
+ * terminal's own size (fit only ever SHRINKS, never grows past the
+ * snapshot's native rendering); floor 9.5px keeps a very-wide pane legible
+ * instead of vanishing. `0.602` is JetBrains Mono's measured advance-width
+ * ratio at this stack; `26` is the .cterm horizontal padding (12px * 2) plus
+ * a small rounding margin. Pure math - PAGE interpolates its toString(), the
+ * bun test proves the same formula the browser runs.
+ */
+export function chiefFitPx(cols: number, clientWidth: number): number {
+  return Math.max(9.5, Math.min(12, (clientWidth - 26) / (cols * 0.602)));
+}
+
 export interface ArtifactNode {
   name: string; // this dir's own segment
   key: string; // the full path prefix down to it ("shp/review-r2")
@@ -4057,6 +4071,48 @@ async function roomAttach(homePath: string, family: string, watchId: string, con
   return json({ ok: typed.code === 0, file, typed: typed.code === 0 });
 }
 
+/**
+ * The queried pane's real column count out of `herdr pane layout --pane
+ * <id>`'s JSON stdout. The client used to INFER columns from the pane's own
+ * box-drawing separator runs, but a TUI that draws a separator wider than its
+ * own pty (or "recent-unwrapped" rejoining several stacked separator lines
+ * into one) inflates that guess past the true width - this reads the pty's
+ * actual size instead. `undefined` on anything unparseable, so the caller can
+ * fall back to the old heuristic rather than fail the frame.
+ */
+export function paneLayoutCols(out: string, pane: string): number | undefined {
+  try {
+    const j = JSON.parse(out) as { result?: { layout?: { panes?: { pane_id?: string; rect?: { width?: number } }[] } } };
+    const p = (j.result?.layout?.panes || []).find((x) => x.pane_id === pane);
+    const w = p?.rect?.width;
+    return typeof w === "number" && w > 0 ? w : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// True column count per pane, cached: the pane stream ticks every 250ms, and
+// a pane's width only changes when someone resizes the herdr workspace, so
+// re-shelling `herdr pane layout` on every tick would double this hot path's
+// subprocess cost for a value that is almost always unchanged.
+const paneColsCache = new Map<string, { cols: number; at: number }>();
+const PANE_COLS_TTL_MS = 5000;
+async function paneCols(homePath: string, pane: string): Promise<number | undefined> {
+  const cached = paneColsCache.get(pane);
+  const now = Date.now();
+  if (cached && now - cached.at < PANE_COLS_TTL_MS) return cached.cols;
+  const { code, out } = await run(["herdr", "pane", "layout", "--pane", pane], { AC_HOME: homePath });
+  if (code !== 0) return cached?.cols;
+  const cols = paneLayoutCols(out, pane);
+  if (cols === undefined) return cached?.cols;
+  // Panes churn (worktree pool leases, task teardown) - drop entries nobody
+  // has refreshed in a while so the cache does not grow for the process's
+  // whole lifetime.
+  for (const [id, e] of paneColsCache) if (now - e.at > PANE_COLS_TTL_MS * 4) paneColsCache.delete(id);
+  paneColsCache.set(pane, { cols, at: now });
+  return cols;
+}
+
 /** Live capture of a family's ROOMCHIEF pane (chief panel, slice A): resolves
  * the pane strictly from state/<family>-chief.meta via chiefPaneOf (kind gate
  * included - a crewmate id can never be read through here), fetches an ANSI
@@ -4090,7 +4146,7 @@ async function roomPane(homePath: string, family: string, watchId = "", lines = 
       { AC_HOME: homePath },
     );
     if (r.code !== 0) return json({ live: false, why: "pane unreadable (backend down or pane gone)" });
-    return json({ live: true, pane: h.pane, readonly: true, html: ansiToHtml(r.out.split("\n").slice(-lines).join("\n")) });
+    return json({ live: true, pane: h.pane, readonly: true, cols: await paneCols(homePath, h.pane), html: ansiToHtml(r.out.split("\n").slice(-lines).join("\n")) });
   }
   if (family === "") {
     // Crewchief target (slice C): resolved via the session lock, not a meta.
@@ -4101,7 +4157,7 @@ async function roomPane(homePath: string, family: string, watchId = "", lines = 
       { AC_HOME: homePath },
     );
     if (r.code !== 0) return json({ live: false, why: "pane unreadable (backend down or pane gone)" });
-    return json({ live: true, pane: h.pane, html: ansiToHtml(r.out.split("\n").slice(-lines).join("\n")) });
+    return json({ live: true, pane: h.pane, cols: await paneCols(homePath, h.pane), html: ansiToHtml(r.out.split("\n").slice(-lines).join("\n")) });
   }
   let metaText = "";
   try {
@@ -4123,7 +4179,7 @@ async function roomPane(homePath: string, family: string, watchId = "", lines = 
   );
   if (code !== 0) return json({ live: false, why: "pane unreadable (backend down or pane gone)" });
   const tail = out.split("\n").slice(-lines).join("\n");
-  return json({ live: true, pane, html: ansiToHtml(tail) });
+  return json({ live: true, pane, cols: await paneCols(homePath, pane), html: ansiToHtml(tail) });
 }
 
 /** Full room narrative for one family (§2.3). */
@@ -7242,8 +7298,8 @@ if (import.meta.main) {
           const tick = async () => {
             try {
               const res = await roomPane(d.home, d.fam, d.watch, d.lines);
-              const j = await res.json() as { live?: boolean; html?: string };
-              const key = (j.live ? "1" : "0") + (j.html ?? "") + String(d.lines);
+              const j = await res.json() as { live?: boolean; html?: string; cols?: number };
+              const key = (j.live ? "1" : "0") + (j.html ?? "") + String(d.lines) + "|" + String(j.cols ?? "");
               if (d.last === key) return;
               d.last = key;
               ws.send(JSON.stringify(j));
@@ -8447,6 +8503,7 @@ ${reviewableArtifact.toString()}
 ${cadenceLabel.toString()}
 ${fleetAttnItems.toString()}
 ${verifyProcessRows.toString()}
+${chiefFitPx.toString()}
 // Board (dashboard-board): the card join runs the SAME bun-tested joiners the
 // server does - one source of truth, no client re-implementation.
 ${parseBacklogLine.toString()}
@@ -10170,27 +10227,37 @@ function chiefFrame(j){
   if(j.inputError){ chiefNote('refused: '+j.inputError, true); return; }
   if(!j.live){ st.textContent=j.why||'not live'; return; }
   st.textContent=(j.readonly?'live · watching '+chiefWatch:'live · type here')+' · stream';
-  if(t._h===j.html) return;
+  var htmlChanged = t._h!==j.html;
+  // A pure resize (server's true cols moved, pane text did not) still needs a
+  // refit - html-only dedupe would leave the OLD font stuck until the pane's
+  // text next changes.
+  if(!htmlChanged && t._trueCols===j.cols) return;
   var pinned = t.scrollTop + t.clientHeight >= t.scrollHeight - 8;
   var fromBottom = t.scrollHeight - t.scrollTop;
-  t._h=j.html;
-  // Box-drawing separator rows are drawn at the pane's own column width;
-  // wider than the panel they would soft-wrap and leave a stub line under
-  // each rule - keep every run on one line, clipped at the panel edge.
-  t.innerHTML=(j.html||'').replace(/─{20,}/g, '<span class="csep">$&</span>');
-  // Auto-fit (no horizontal scroll): the pane's column count is the width of
-  // its box-drawing separator rows; size the font so exactly that many
-  // monospace cells fit the panel, and let longer prose lines soft-wrap.
-  var cols=0, runs=(t.textContent||'').match(/─{20,}/g)||[];
-  for(var li2=0;li2<runs.length;li2++){ if(runs[li2].length>cols) cols=runs[li2].length; }
-  cols=Math.min(cols, 240);
-  if(!cols) cols=t._cols||100;
+  if(htmlChanged){
+    t._h=j.html;
+    // Box-drawing separator rows are drawn at the pane's own column width;
+    // wider than the panel they would soft-wrap and leave a stub line under
+    // each rule - keep every run on one line, clipped at the panel edge.
+    t.innerHTML=(j.html||'').replace(/─{20,}/g, '<span class="csep">$&</span>');
+  }
+  t._trueCols=j.cols;
+  // Auto-fit (no horizontal scroll): prefer the pane's REAL column count
+  // (herdr pane layout, resolved server-side) over inferring it from
+  // box-drawing separator runs - a TUI that draws a rule wider than its own
+  // pty (or "recent-unwrapped" rejoining several stacked separator lines
+  // into one) inflates that guess past the true width. Fall back to the old
+  // text heuristic only when the server could not resolve one.
+  var cols=j.cols>0?j.cols:0;
+  if(!cols){
+    var runs=(t.textContent||'').match(/─{20,}/g)||[];
+    for(var li2=0;li2<runs.length;li2++){ if(runs[li2].length>cols) cols=runs[li2].length; }
+    cols=Math.min(cols, 240);
+    if(!cols) cols=t._cols||100;
+  }
   if(cols!==t._cols || Math.abs((t._w||0)-t.clientWidth)>4){
     t._cols=cols; t._w=t.clientWidth;
-    // Ceiling 12px = the web terminal's own size: fit only ever SHRINKS to
-    // avoid horizontal overflow, never grows the snapshot past the terminal.
-    var px=Math.max(9.5, Math.min(12, (t.clientWidth-26)/(cols*0.602)));
-    t.style.fontSize=px.toFixed(2)+'px';
+    t.style.fontSize=chiefFitPx(cols, t.clientWidth).toFixed(2)+'px';
   }
   if(pinned) t.scrollTop=t.scrollHeight;
   else t.scrollTop=Math.max(0, t.scrollHeight - fromBottom);
