@@ -354,7 +354,15 @@ repos / N independently-landable deliverables` (or `epic=no - single
 deliverable` / `epic=no - dependencies serialize: <chain>`). A deviation from
 the trigger stays possible but must be receipted with grounds (e.g. a
 two-line cross-repo rename not worth two stories) - the captain vetoes the
-receipt, never discovers serial-by-accident after the fact. The
+receipt, never discovers serial-by-accident after the fact. A BRANCH-RECORDED epic (epic-branch-mech) additionally
+integrates each repo's stories on one recorded branch: `data/<epic>/branches`
+is the captain-worded record, `bin/ac-epic-branch.sh` owns
+create/verify/show/retire, the lease fence lives in `ac-tree.sh get`
+(fail-closed on a missing branch), landings ride `ac-merge-local.sh`/`ac-ship
+--target` into the branch, per-story review/QA derive per the section-5 epic
+exception, and `bin/ac-epic-ship.sh` is the gated 2-PR exit (stories
+terminal, partial-epic captain receipts, one review round at the tip, qa
+attestation when pinned; the captain merges every PR). The
 `epic-intake` skill owns the mechanics and `bin/ac-ready.sh`'s header owns the
 scheduler primitive + `blocked-by` grammar; the invariants that stay here: the
 STORY MAP is gated (and captain-required whenever any story is irreversible or
@@ -924,7 +932,7 @@ CAPTAIN'S language/style preferences recorded as standing rules in
 `records/captain.md`; the preference belongs to the captain, never to
 this file. Two constraints ARE the distro's own, whatever the captain
 prefers: the grammar verbs and labels (TRIAGE:, GATE:, ASK:, DECIDED:,
-SELF-APPROVED:, LANDED:, HANDBACK:, PROMOTED:, DEMOTED:, CLOSED:) stay
+SELF-APPROVED:, LANDED:, HANDBACK:, PROMOTED:, DEMOTED:, CLOSED:, SHIPS:) stay
 English verbatim - they are machine-parsed; and the Slack mirror bullets
 exactly two marker families - ALL-CAPS section tokens
 (INPUTS:/SCOPE:/PLAN:/WHY:) and numbered items ((1) (2) ...) - so

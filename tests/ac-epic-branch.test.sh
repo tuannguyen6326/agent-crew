@@ -209,4 +209,73 @@ assert_eq "$(git -C "$AC_HOME/projects/proj" rev-parse HEAD)" "$(git -C "$wt6" r
 git -C "$AC_HOME/projects/proj" checkout -q main
 "$BIN/ac-tree.sh" return "$wt6" --force >/dev/null 2>&1
 
+# --- the epic gate + 2-PR exit (ac-epic-ship, slice 6) ------------------------
+ES="$BIN/ac-epic-ship.sh"
+cat >>"$AC_HOME/records/backlog.md" <<'EOF'
+- [ ] eppy5 [EPIC] [src:cap flow:direct mode:direct-pr rev:no qa:no] - exit-test epic (repo: proj)
+- [ ] eppy5-s1 - open story; epic:eppy5 (repo: proj)
+EOF
+mkdir -p "$AC_HOME/data/eppy5"
+printf 'proj epic/eppy5 push=yes staging=stagebr\n' >"$AC_HOME/data/eppy5/branches"
+"$EB" create eppy5 proj >/dev/null
+
+out="$(AC_SCOPE=eppy5 "$ES" eppy5 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "CREWCHIEF" "epic-ship is chief-only"
+out="$("$ES" eppy5 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "non-terminal stories: eppy5-s1" "an open story refuses the exit and is named"
+
+# stories terminal, one abandoned -> the partial-epic captain receipt gate
+python3 - "$AC_HOME/records/backlog.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("- [ ] eppy5-s1 - open story; epic:eppy5 (repo: proj)",
+  "- [x] eppy5-s1 - landed story; epic:eppy5 (repo: proj)\n- [x] eppy5-s2 [abandoned] - died mid-epic; epic:eppy5 (repo: proj)")
+open(p, "w").write(s)
+PYEOF
+out="$("$ES" eppy5 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "partial epic" "an abandoned story without a captain receipt refuses"
+assert_contains "$out" "eppy5-s2" "and names it"
+printf -- '- [2026-08-19T12:00:00Z] crewchief> DECIDED: epic-ship partial - eppy5-s2 keep (captain: giu lai, cong viec da land van dung)\n' >>"$AC_HOME/data/eppy5/room.md"
+
+# review round: absent -> refuse naming the exact command; stale ref -> refuse
+out="$("$ES" eppy5 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "no epic review round on record" "a missing review round refuses"
+assert_contains "$out" "ac-verify.sh codereview" "and prints the exact round command"
+tip5="$(git -C "$AC_HOME/projects/proj" rev-parse refs/remotes/origin/epic/eppy5)"
+mkdir -p "$AC_HOME/data/eppy5/gate"
+printf '{"findings":[{"action":"fix","summary":"x"}],"reviewed_ref":"%s"}\n' "$tip5" >"$AC_HOME/data/eppy5/gate/review.json"
+out="$("$ES" eppy5 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "open fix finding" "an open fix finding refuses the exit"
+printf '{"findings":[],"reviewed_ref":"%s"}\n' "$tip5" >"$AC_HOME/data/eppy5/gate/review.json"
+
+# gates green -> dry-run opens PR-1 to staging and HOLDS PR-2
+out="$("$ES" eppy5 proj --dry-run)"
+assert_contains "$out" "DRY-RUN: git -C" "push=yes rides the exit (dry-printed)"
+assert_contains "$out" -- "--base stagebr" "PR-1 targets the recorded staging branch"
+assert_contains "$out" "PR-2 (-> main) held" "PR-2 is held until PR-1 is proven merged"
+
+# staging proven to CONTAIN the tip (ancestry arm) -> PR-2 opens
+git -C "$upstream" branch stagebr epic/eppy5
+git -C "$AC_HOME/projects/proj" fetch -q origin
+out="$("$ES" eppy5 proj --dry-run)"
+assert_contains "$out" "proven merged; opening PR-2" "the ancestry arm releases PR-2"
+assert_contains "$out" -- "--base main" "PR-2 targets the default branch"
+
+# qa pin on the epic row: no attestation at the tip -> refuse with the caveat
+python3 - "$AC_HOME/records/backlog.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("- [ ] eppy5 [EPIC] [src:cap flow:direct mode:direct-pr rev:no qa:no]",
+              "- [ ] eppy5 [EPIC] [src:cap flow:direct mode:direct-pr rev:no qa:yes]")
+open(p, "w").write(s)
+PYEOF
+out="$("$ES" eppy5 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "no crew-qa pass attestation" "a qa:yes epic refuses without an attestation at the tip"
+mkdir -p "$AC_HOME/projects/proj/.crew/qa/passed"
+: >"$AC_HOME/projects/proj/.crew/qa/passed/$tip5"
+out="$("$ES" eppy5 proj --dry-run)"
+assert_contains "$out" "proven merged; opening PR-2" "the attestation at the tip satisfies the qa gate"
+
 pass
