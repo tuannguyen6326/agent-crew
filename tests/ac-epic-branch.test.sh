@@ -132,4 +132,29 @@ wt4="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj" --id freetask --hol
 assert_eq "$(git -C "$wt4" rev-parse HEAD)" "$def_tip" "an id with no epic record keeps today's default base"
 "$BIN/ac-tree.sh" return "$wt4" >/dev/null 2>&1
 
+# --- epic-target landing (slice 3): ref-only ff into the recorded branch ------
+wt5="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj" --id eppy3-s1 --holder t 2>/dev/null)"
+git -C "$wt5" checkout -q -b crew/eppy3-s1
+printf 'story work\n' >"$wt5/story.txt"
+git -C "$wt5" add -A; git -C "$wt5" commit -qm "story work"
+story_head="$(git -C "$wt5" rev-parse HEAD)"
+printf 'project_dir=%s\nworktree=%s\n' "$AC_HOME/projects/proj" "$wt5" >"$AC_HOME/state/eppy3-s1.meta"
+clone_main_before="$(git -C "$AC_HOME/projects/proj" rev-parse main)"
+out="$("$BIN/ac-merge-local.sh" eppy3-s1)"
+assert_contains "$out" "ref-only" "the epic landing is a ref-only ff, never a checkout merge"
+assert_contains "$out" "deferred to the epic gate" "qa.require_for_ship defers to the epic gate on an epic landing"
+assert_contains "$out" "pushed epic/eppy3" "the record's push=yes rides the landing"
+assert_eq "$(git -C "$AC_HOME/projects/proj" rev-parse refs/heads/epic/eppy3)" "$story_head" \
+  "the LOCAL epic branch fast-forwarded to the story head"
+assert_eq "$(git -C "$upstream" rev-parse refs/heads/epic/eppy3)" "$story_head" \
+  "and origin followed (push=yes)"
+assert_eq "$(git -C "$AC_HOME/projects/proj" rev-parse main)" "$clone_main_before" \
+  "the default branch is untouched by an epic landing"
+# --no-ff refuses on an epic target (a merge commit belongs in a leased tree)
+out="$("$BIN/ac-merge-local.sh" eppy3-s1 --no-ff 2>&1 || true)"
+assert_contains "$out" "leased worktree" "--no-ff onto an epic target refuses with the remedy"
+# no-op re-land lands truthfully
+out="$("$BIN/ac-merge-local.sh" eppy3-s1)"
+assert_contains "$out" "already contains" "a re-land is a truthful no-op"
+
 pass

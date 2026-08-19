@@ -195,13 +195,25 @@ head_landed() {
   # projects (crew-ship, direct-pr) land on origin. Checking only the
   # freshest ref (ac_default_ref: origin wins) reported a local-only
   # project's fully merged work as unlanded.
-  local head="$1" ref
+  local head="$1" ref eb ebranch
   [ "$(ac_meta_get "$meta" pr_merged)" = "1" ] && return 0
   for ref in "$(ac_default_branch "$project_dir")" "$(ac_default_ref "$project_dir")"; do
     if git -C "$project_dir" merge-base --is-ancestor "$head" "$ref" 2>/dev/null; then
       return 0
     fi
   done
+  # Epic-target landing (epic-branch-mech): a story lands into its epic's
+  # recorded integration branch, which on a local-only repo exists ONLY
+  # locally - containment there is landed proof exactly like the default's,
+  # or every epic-landed story becomes an "unlanded" --force trap.
+  if eb="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)"; then
+    ebranch="${eb%% *}"
+    for ref in "refs/heads/$ebranch" "refs/remotes/origin/$ebranch"; do
+      if git -C "$project_dir" merge-base --is-ancestor "$head" "$ref" 2>/dev/null; then
+        return 0
+      fi
+    done
+  fi
   [ -n "$(git -C "$project_dir" branch -r --contains "$head" 2>/dev/null)" ] && return 0
   return 1
 }
@@ -660,7 +672,19 @@ EOF
   # swallowing it is what left an orphaned branch behind a `complete` line.
   # -d stays -d, and like every step here this can never fail the teardown.
   if git -C "$project_dir" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
-    if ! branch_err="$(git -C "$project_dir" branch -d "$branch" 2>&1)"; then
+    # An epic-landed branch is merged into the RECORDED integration branch,
+    # not the default - -d's merged check cannot see that, so prove the
+    # containment ourselves and use -D deliberately (else the stale branch
+    # blocks this story's own -r2 spawn on the name-collision refusal).
+    del_flag="-d"
+    if eb_del="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)"; then
+      eb_del_branch="${eb_del%% *}"
+      if git -C "$project_dir" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$eb_del_branch" 2>/dev/null \
+        || git -C "$project_dir" merge-base --is-ancestor "refs/heads/$branch" "refs/remotes/origin/$eb_del_branch" 2>/dev/null; then
+        del_flag="-D"
+      fi
+    fi
+    if ! branch_err="$(git -C "$project_dir" branch "$del_flag" "$branch" 2>&1)"; then
       # `git branch -D` refuses IDENTICALLY when a worktree holds the branch
       # checked out (verified on git 2.55.0: same "used by worktree" message,
       # exit 1), so suggesting -D there sends the reader into a second

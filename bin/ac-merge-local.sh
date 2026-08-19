@@ -81,6 +81,23 @@ worktree="$(ac_meta_get "$meta" worktree)"
 branch="$(ac_crew_branch "$id")"
 
 default="$(ac_default_branch "$project_dir")"
+# Epic-target landing (epic-branch-mech): when the id's epic records an
+# integration branch for this repo, THAT branch is the landing target, by
+# REF-ONLY ff update - no checkout flip, so the primary-checkout-on-default
+# invariant and the commit guard stay untouched and a SCOPED chief can land
+# (the live epic practice). --no-ff onto an epic target is refused here: a
+# genuine merge commit belongs in a leased worktree, not the primary.
+target="$default"; epic_mode=0; epic_push=0
+if eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")")"; then
+  target="${eb_entry%% *}"
+  epic_mode=1
+  case " ${eb_entry#"$target"} " in *" push=yes "*) epic_push=1 ;; esac
+  if ! git -C "$project_dir" rev-parse --verify --quiet "refs/heads/$target" >/dev/null; then
+    git -C "$project_dir" rev-parse --verify --quiet "refs/remotes/origin/$target" >/dev/null \
+      || ac_die "epic target $target exists neither locally nor on origin - cut it first: ac-epic-branch.sh create <epic> $(basename "$project_dir")"
+    git -C "$project_dir" branch "$target" "refs/remotes/origin/$target"
+  fi
+fi
 current="$(git -C "$project_dir" symbolic-ref --short HEAD 2>/dev/null || printf 'DETACHED')"
 [ "$current" = "$default" ] || ac_die "primary checkout is on '$current', not '$default'"
 
@@ -100,8 +117,15 @@ git -C "$project_dir" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null
 # task id lets the gate adjudicate a required-profile MANIFEST when the task
 # declared one - EVERY required profile must have a passing attestation at this
 # head, not merely any one pair (ac_qa_gate_ok / ac_qa_gate_matrix).
-ac_qa_gate_ok "$project_dir" "$(git -C "$project_dir" rev-parse "refs/heads/$branch")" "$id" \
-  || ac_die "local merge blocked by qa.require_for_ship (see message above)"
+if [ "$epic_mode" = 1 ]; then
+  # qa.require_for_ship guards the PRODUCTION merge; an epic-branch landing
+  # is integration, not production - the epic gate's own QA round owns it
+  # (epic-branch-mech proposal, captain ruling 2026-08-19).
+  printf 'qa.require_for_ship: deferred to the epic gate (epic-branch landing)\n'
+else
+  ac_qa_gate_ok "$project_dir" "$(git -C "$project_dir" rev-parse "refs/heads/$branch")" "$id" \
+    || ac_die "local merge blocked by qa.require_for_ship (see message above)"
+fi
 
 # Landing interlock: warn on <24h foreign-family overlaps before the merge,
 # record the landed files after it (header + ac-lib.sh landing-ledger block).
@@ -116,7 +140,7 @@ ac_qa_gate_ok "$project_dir" "$(git -C "$project_dir" rev-parse "refs/heads/$bra
 family="$(ac_family_of_id "$id")"
 landed=()
 while IFS= read -r p; do landed+=("$p"); done \
-  < <(git -C "$project_dir" diff --name-only "$default...refs/heads/$branch")
+  < <(git -C "$project_dir" diff --name-only "$target...refs/heads/$branch")
 [ "${#landed[@]}" -eq 0 ] || ac_landing_warn "$family" "${landed[@]}"
 # The KNOWLEDGE-GAP flag rides the same checkpoint but NOT the landed[] guard:
 # a family that recorded no repo knowledge is flagged whatever its diff looks
@@ -124,6 +148,8 @@ while IFS= read -r p; do landed+=("$p"); done \
 ac_knowledge_warn "$family" "$project_dir"
 
 if [ "$noff" = "--no-ff" ]; then
+  [ "$epic_mode" = 0 ] \
+    || ac_die "--no-ff is not available for an epic-branch landing: a merge commit onto $target belongs in a leased worktree, never the primary checkout - rebase $branch onto $target and land ff, or route the merge through the epic gate"
   # --no-ff lands a CLEAN merge only: try it with --no-commit so a conflict
   # can be inspected and unwound before anything is refused. Two distinct
   # failure shapes exist and must not be handled alike: (a) git ENTERED the
@@ -172,14 +198,17 @@ else
   # --ff-only also succeeds as a no-op when $branch is already an ancestor of
   # $default (already-landed/no-op re-land, case 8 in the test file), so both
   # directions count as fast-forwardable - only a genuine divergence refuses.
-  if ! git -C "$project_dir" merge-base --is-ancestor "$default" "refs/heads/$branch" \
-      && ! git -C "$project_dir" merge-base --is-ancestor "refs/heads/$branch" "$default"; then
+  if ! git -C "$project_dir" merge-base --is-ancestor "refs/heads/$target" "refs/heads/$branch" \
+      && ! git -C "$project_dir" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$target"; then
     # --no-ff is only real advice for an actor the primary-checkout commit
     # guard (bin/ac-tree.sh D2) does not fence: AC_CREW_ID/AC_SCOPE set means
     # a crewmate/roomchief, whose --no-ff merge commit that guard refuses
     # late, at the --no-ff path's own commit refusal below - so a scoped
     # actor gets the remedies it can actually use instead of advice that
     # only burns a cycle.
+    if [ "$epic_mode" = 1 ]; then
+      ac_die "$branch is not fast-forwardable: $target has diverged from it (a sibling story landed first). Rebase $branch onto $target and re-run the plain land"
+    fi
     if [ -n "${AC_CREW_ID:-}" ] || [ -n "${AC_SCOPE:-}" ]; then
       ac_die "$branch is not fast-forwardable: $default has diverged from it. --no-ff is not available here (the primary-checkout commit guard refuses it for a crewmate/roomchief) - rebase $branch onto $default and re-run the plain land, or hand the landing back to the crewchief"
     fi
@@ -191,10 +220,35 @@ else
   # refuses the fast-forward outright (no ref move, no MERGE_HEAD) and this
   # wraps that refusal in the helper's own voice instead of leaving git's
   # bare stderr as the only signal.
-  if ! err="$(git -C "$project_dir" merge --ff-only "$branch" 2>&1 >/dev/null)"; then
-    ac_die "fast-forward of $branch failed: $err ($default untouched)"
+  if [ "$epic_mode" = 1 ]; then
+    # REF-ONLY ff update: `git fetch . src:dst` refuses a non-ff move by
+    # default, the checkout is never touched, and the commit guard has
+    # nothing to see. Already-ancestor (no-op re-land) is landed truthfully.
+    if git -C "$project_dir" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$target"; then
+      printf '%s already contains %s; nothing to move\n' "$target" "$branch"
+    elif ! err="$(git -C "$project_dir" fetch --quiet . "refs/heads/$branch:refs/heads/$target" 2>&1 >/dev/null)"; then
+      ac_die "ff update of $target from $branch failed: $err ($target untouched)"
+    else
+      printf 'fast-forwarded %s to %s (ref-only)\n' "$target" "$branch"
+    fi
+    if [ "$epic_push" = 1 ] && git -C "$project_dir" remote get-url origin >/dev/null 2>&1; then
+      # The record's push=yes flag is the captain's own landing rule - the
+      # push rides the landing so the integration branch is never stale for
+      # the next story's fence. A failed push is LOUD but does not un-land.
+      if git -C "$project_dir" push --quiet origin "refs/heads/$target:refs/heads/$target" 2>/dev/null; then
+        printf 'pushed %s to origin (record push=yes)\n' "$target"
+      else
+        ac_warn "push of $target to origin FAILED - the landing stands; retry: git -C $project_dir push origin $target"
+      fi
+    fi
+    [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
+    ac_status_append "$id" "merged: local $target (epic)"
+  else
+    if ! err="$(git -C "$project_dir" merge --ff-only "$branch" 2>&1 >/dev/null)"; then
+      ac_die "fast-forward of $branch failed: $err ($default untouched)"
+    fi
+    [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
+    ac_status_append "$id" "merged: local $default"
+    printf 'fast-forwarded %s to %s\n' "$default" "$branch"
   fi
-  [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
-  ac_status_append "$id" "merged: local $default"
-  printf 'fast-forwarded %s to %s\n' "$default" "$branch"
 fi
