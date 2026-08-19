@@ -10,7 +10,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -389,6 +389,25 @@ test("artifactKind classifies by extension (text is the optimistic default)", ()
 
 // The grouper only reads {id, mtime}; the rest of the Artifact rides along.
 const art = (id: string, mtime: number) => ({ id, mtime, kind: "md" as const });
+
+test("stemRegroup nests a fan-out sub-family under its base, transitively, nav id untouched", () => {
+  const list = [
+    { id: "pviam-wire/room.md", mtime: 1 },
+    { id: "pviam-wire-a/report.md", mtime: 2 },
+    { id: "pviam-wire-e34/brief.md", mtime: 3 },
+    { id: "pviam-wire-e34-r2/wip.patch", mtime: 4 },
+    { id: "other-fam/report.md", mtime: 5 },
+  ];
+  const out = stemRegroup(list) as any[];
+  expect(out[0].gid).toBeUndefined(); // the base itself stays put
+  expect(out[1].gid).toBe("pviam-wire/-a/report.md");
+  expect(out[1].id).toBe("pviam-wire-a/report.md"); // navigation id untouched
+  expect(out[2].gid).toBe("pviam-wire/-e34/brief.md");
+  expect(out[3].gid).toBe("pviam-wire/-e34/-r2/wip.patch"); // chains follow their parent
+  expect(out[4].gid).toBeUndefined(); // no base present - stays top-level
+  const root = groupArtifacts(out);
+  expect(root.dirs.length).toBe(2); // pviam-wire + other-fam, not 5 folders
+});
 
 test("groupArtifacts nests family -> each sub-dir -> files, keyed by path prefix", () => {
   const root = groupArtifacts([
@@ -1201,6 +1220,47 @@ test("composeFamily joins stage timeline, design html, progress, and reused link
   ]);
 });
 
+test("composeFamily derives fan-out sub-tasks from metas + artifact dirs, excluding stories and the chief", () => {
+  const d = composeFamily({
+    family: "wire",
+    line: "- [ ] wire - connect the app (repo: apps, since 2026-08-18)",
+    section: "in_flight",
+    project: "apps",
+    artifacts: [
+      artOf("wire", "room.md", "md"),
+      artOf("wire-qa", "report.md", "md"), // artifact-only sub-task (meta pruned)
+      artOf("wire", "tasks/n1/report.md", "md"), // tasks/-nested layout unit
+      artOf("wire-story", "report.md", "md"), // a real story: excluded from sub-tasks
+      artOf("wire-story-qa", "report.md", "md"), // a STORY's own unit: belongs to the story, not the epic
+      artOf("wire-scout-chief", "timeline.log", "md"), // a chief dir is never a sub-task
+    ],
+    roomEntries: [],
+    children: [{ id: "wire-story", line: "- [ ] wire-story - s; epic:wire (repo: apps)", section: "in_flight" }],
+    knowledgeRepos: [],
+    learningsCiteFamily: false,
+    tasks: [
+      { id: "wire-c", family: "wire", repo: "apps", pr: "https://github.com/o/r/pull/1", prMerged: true, kind: "ship", live: false },
+      { id: "wire-e34", family: "wire", repo: "apps", pr: "", prMerged: false, kind: "ship", live: true },
+      { id: "wire-chief", family: "wire", repo: "", pr: "https://github.com/o/r/pull/9", prMerged: false, kind: "roomchief", live: true },
+      { id: "wire-story", family: "wire", repo: "apps", pr: "", prMerged: false, kind: "ship", live: true },
+    ],
+  });
+  const ids = d.subtasks.map((s) => s.id);
+  expect(ids).toEqual(["wire-c", "wire-e34", "wire-n1", "wire-qa"]); // sorted; no story, no story-owned unit, no chief
+  const byId: any = {};
+  for (const s of d.subtasks) byId[s.id] = s;
+  expect(byId["wire-c"].prMerged).toBe(true);
+  expect(byId["wire-c"].slug).toBe("c");
+  expect(byId["wire-e34"].live).toBe(true);
+  expect(byId["wire-qa"].hasReport).toBe(true);
+  expect(byId["wire-qa"].live).toBe(false);
+  expect(byId["wire-qa"].reportId).toBe("wire-qa/report.md"); // flat legacy path
+  expect(byId["wire-n1"].hasReport).toBe(true);
+  expect(byId["wire-n1"].reportId).toBe("wire/tasks/n1/report.md"); // nested path
+  // and the nested unit never pollutes the stage timeline as a "tasks" stage
+  expect(d.stages.some((s) => s.stage === "tasks")).toBe(false);
+});
+
 test("composeFamily's rollup counts only real done stories - a [failed]/[abandoned] Done-section story is NOT done (board-rollup-and-overlay-count-failed-as-done)", () => {
   const d = composeFamily({
     family: "fx-epic",
@@ -1484,8 +1544,8 @@ test("collectFamilyTasks reads live + archived metas, prefers fleet_scope, and s
     writeFileSync(`${home}/state/archive/checkout/meta`, "project=other\nfleet_scope=checkout\n"); // another family
     const rows = collectFamilyTasks(home, ["signup"], ["signup", "checkout"]);
     expect(rows).toEqual([
-      { id: "signup", family: "signup", repo: "gateway", pr: "https://github.com/o/gateway/pull/86", prMerged: false },
-      { id: "signup-api", family: "signup", repo: "api-services", pr: "https://github.com/o/api/pull/297", prMerged: true },
+      { id: "signup", family: "signup", repo: "gateway", pr: "https://github.com/o/gateway/pull/86", prMerged: false, kind: "", live: true },
+      { id: "signup-api", family: "signup", repo: "api-services", pr: "https://github.com/o/api/pull/297", prMerged: true, kind: "", live: false },
     ]);
   } finally {
     rmSync(home, { recursive: true, force: true });

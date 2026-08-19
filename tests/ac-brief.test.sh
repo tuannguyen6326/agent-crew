@@ -576,4 +576,34 @@ assert_contains "$s7b" 'leave it as a handover for the chief' \
   "step 7 still states the fail-closed default when no standing rule speaks to the landing"
 rm -f "$AC_HOME/records/captain.md"
 
+# --- fan-out nesting (tasks/): the scope is the family signal -----------------
+# A SCOPED chief's free-slug sub-task (AC_SCOPE=<family>, id=<family>-<slug>,
+# no stage/-rN suffix) scaffolds at data/<family>/tasks/<slug>/; unscoped
+# scaffolds and ids that do not extend the scope stay flat - an unrelated
+# top-level id that merely EXTENDS another family's name must never nest.
+cat >>"$AC_HOME/records/backlog.md" <<'PINEOF'
+- [ ] wire [src:cap flow:direct mode:local-only rev:no qa:no] - fan-out base (repo: myproj)
+- [ ] wire-camera [src:cap flow:direct mode:local-only rev:no qa:no] - unrelated task extending the name (repo: myproj)
+PINEOF
+mkdir -p "$AC_HOME/data/wire"
+: >"$AC_HOME/data/wire/room.md"
+AC_SCOPE=wire "$BIN/ac-brief.sh" wire-slice-a myproj --mode local-only >/dev/null
+assert_file "$AC_HOME/data/wire/tasks/slice-a/brief.md" \
+  "a scoped free-slug sub-task scaffolds tasks/-nested under its family"
+assert_eq "$(bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; ac_task_dir wire-slice-a")" \
+  "$AC_HOME/data/wire/tasks/slice-a" "and the resolver finds it from the bare id"
+"$BIN/ac-brief.sh" wire-camera myproj >/dev/null
+assert_file "$AC_HOME/data/wire-camera/brief.md" \
+  "an UNSCOPED scaffold stays flat even when the id extends a family's name"
+AC_SCOPE=other-fam "$BIN/ac-brief.sh" wire-slice-b myproj --mode local-only >/dev/null 2>&1 || true
+assert_file "$AC_HOME/data/wire-slice-b/brief.md" \
+  "a scoped scaffold whose id does not extend the scope stays flat"
+# the other-layout refusal covers the tasks/ twin in both directions
+out="$(AC_SCOPE=wire "$BIN/ac-brief.sh" wire-camera myproj 2>&1 || true)"
+assert_contains "$out" "already exists" \
+  "a scoped re-scaffold of an id whose flat brief exists refuses"
+out="$("$BIN/ac-brief.sh" wire-slice-a myproj --mode local-only 2>&1 || true)"
+assert_contains "$out" "already exists" \
+  "an unscoped re-scaffold of a tasks/-nested id refuses instead of minting a flat twin"
+
 pass

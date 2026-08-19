@@ -1103,6 +1103,32 @@ assert_contains "$out" "ambiguous task data" \
   "briefs at both the nested chief dir's family and a flat dir still die (deliberate ambiguity)"
 rm -rf "$AC_HOME/data/bar" "$AC_HOME/data/bar-chief"
 
+# --- ac_task_dir: tasks/-nested fan-out sub-tasks (section-8 fan-out) ---------
+# A free-slug sub-task a SCOPED chief scaffolded lives at
+# data/<family>/tasks/<slug>; the read side recovers the family by what
+# EXISTS, longest prefix first, with no AC_SCOPE in the environment.
+mkdir -p "$AC_HOME/data/wire/tasks/c"
+: >"$AC_HOME/data/wire/tasks/c/brief.md"
+assert_eq "$(lib "ac_task_dir 'wire-c'")" "$AC_HOME/data/wire/tasks/c" \
+  "a tasks/-nested sub-task brief resolves from the bare id"
+# longest present prefix wins: wire-e34-fix under wire-e34, never under wire
+# (a slug that IS a stage/-rN suffix never nests - the write side refuses it
+# too, so the revision grammar keeps owning those ids)
+mkdir -p "$AC_HOME/data/wire-e34/tasks/fix"
+: >"$AC_HOME/data/wire-e34/tasks/fix/brief.md"
+assert_eq "$(lib "ac_task_dir 'wire-e34-fix'")" "$AC_HOME/data/wire-e34/tasks/fix" \
+  "the longest present family prefix wins the tasks/ probe"
+# ambiguity dies, same direction as every other double-brief
+mkdir -p "$AC_HOME/data/wire-c"
+: >"$AC_HOME/data/wire-c/brief.md"
+out="$(lib "ac_task_dir 'wire-c' 2>&1" || true)"
+assert_contains "$out" "ambiguous task data" \
+  "a tasks/-nested brief plus a flat brief for one id still dies"
+# no nested brief anywhere: the flat dir stays the answer (legacy fan-outs)
+assert_eq "$(lib "ac_task_dir 'wire-zz'")" "$AC_HOME/data/wire-zz" \
+  "a free-slug id with no nested brief keeps resolving flat"
+rm -rf "$AC_HOME/data/wire" "$AC_HOME/data/wire-e34" "$AC_HOME/data/wire-c"
+
 # --- ac_meta_get: "empty if absent" must hold at BOTH instants ----------------
 # Contract and reasoning: ac_meta_get's own comment block (bin/ac-lib.sh). What
 # these cases pin: a VANISH mid-read is empty+0, a present-but-unreadable file

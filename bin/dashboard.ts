@@ -843,6 +843,10 @@ export function familyStages(
     var a = mine[mi];
     var parts = a.stage.split("/").filter(Boolean);
     if (!parts.length) continue;
+    // tasks/<slug>/... are fan-out SUB-TASKS, not stages - they render in the
+    // overview's own Sub-tasks panel (composeFamily.subtasks), never as a
+    // phantom "tasks" stage whose report is whichever sub-task's came last.
+    if (parts[0] === "tasks" && parts.length >= 2) continue;
     var base = parts[parts.length - 1];
     var stage: string;
     if (parts.length === 1) {
@@ -913,6 +917,21 @@ export interface FamilyDetail {
   rollup: { done: number; total: number } | null;
   links: { label: string; kind: string; path: string }[];
   contract: string; // the row's delivery-contract group content, "" if none
+  subtasks: FamilySubtask[]; // section-8 fan-out units - derived, never minted
+}
+
+/** One intra-family fan-out unit (`<family>-<slug>`: fan-out crewmate, QA
+ *  round, revision) - NOT a ledger story. Derived from task metas (live +
+ *  archived) joined with the data dirs' artifacts. */
+export interface FamilySubtask {
+  id: string;
+  slug: string; // id minus the family prefix, what the captain scans
+  repo: string;
+  pr: string;
+  prMerged: boolean;
+  live: boolean; // a live state/<id>.meta exists (still flying)
+  hasReport: boolean; // the unit's report.md exists - the done artifact
+  reportId: string; // the report's artifact id (flat or tasks/-nested path), "" if none
 }
 
 /**
@@ -965,7 +984,7 @@ export function composeFamily(input: {
   knowledgeRepos: string[]; // the family's repos that HAVE a records/repo-knowledge/<repo>.md
   learningsCiteFamily: boolean; // the learnings ledger names this family (never merely exists)
   timelineText?: string;
-  tasks?: { id: string; family: string; repo: string; pr: string; prMerged: boolean }[];
+  tasks?: { id: string; family: string; repo: string; pr: string; prMerged: boolean; kind?: string; live?: boolean }[];
 }): FamilyDetail {
   const fields = parseBacklogLine(input.line || "");
   // Stage timeline + design html for THIS family (familyStages inlines
@@ -1055,6 +1074,43 @@ export function composeFamily(input: {
   for (const p of childPrs)
     addPr({ url: p.url, repo: prRepo(p.url) || realRepo(p.repo), task: p.task, family: p.family, merged: p.merged });
 
+  // Sub-tasks (section-8 intra-family fan-out): `<family>-<slug>` units that
+  // are NOT ledger stories - derived from task metas (live + archived) joined
+  // with the data dirs' artifacts, never minted. The artifact join is what
+  // keeps a fan-out whose meta was pruned visible through its report dir.
+  const storyIds: string[] = (input.children || []).map((c) => c.id);
+  const storySet: { [id: string]: 1 } = {};
+  for (const s of storyIds) storySet[s] = 1;
+  // A unit extending a STORY id belongs to that story's own panel, never the
+  // epic's (measured: 91 of a live epic's 105 candidates were story-owned);
+  // any -chief id is a chief, not a sub-task, whoever it belongs to.
+  const subOf = (id: string) =>
+    id !== input.family && id.indexOf(input.family + "-") === 0 &&
+    !storySet[id] && !/-chief$/.test(id) &&
+    !storyIds.some((s) => id.indexOf(s + "-") === 0);
+  const subMap: { [id: string]: FamilySubtask } = {};
+  const subAt = (id: string): FamilySubtask =>
+    subMap[id] || (subMap[id] = { id, slug: id.slice(input.family.length + 1), repo: "", pr: "", prMerged: false, live: false, hasReport: false, reportId: "" });
+  for (const t of tasks) {
+    if (!subOf(t.id) || /^(roomchief|verify)/.test(t.kind || "")) continue;
+    const e = subAt(t.id);
+    e.repo = realRepo(t.repo);
+    e.pr = t.pr || "";
+    e.prMerged = !!t.prMerged;
+    e.live = !!t.live;
+  }
+  for (const a of input.artifacts || []) {
+    // tasks/-nested layout: the unit lives INSIDE the family dir, so its
+    // artifacts carry the family itself plus a tasks/<slug>/ stage path -
+    // the id (<family>-<slug>) matches the meta id, so the two sources merge.
+    const nested = a.family === input.family && /^tasks\/([^/]+)\//.exec(a.stage || "");
+    const subId = nested ? input.family + "-" + nested[1] : (subOf(a.family) ? a.family : "");
+    if (!subId) continue;
+    const e = subAt(subId);
+    if (/(^|\/)report\.md$/.test(a.id)) { e.hasReport = true; e.reportId = a.id; }
+  }
+  const subtasks = Object.keys(subMap).sort().map((k) => subMap[k]);
+
   return {
     family: input.family,
     id: fields.id || input.family,
@@ -1078,6 +1134,7 @@ export function composeFamily(input: {
     rollup,
     links,
     contract: fields.contract,
+    subtasks,
   };
 }
 
@@ -1203,11 +1260,47 @@ export interface ArtifactNode {
  * Ordering is recomputed here, never inherited from the input order: files
  * newest-first by mtime, a dir by the newest mtime it contains.
  */
-export function groupArtifacts(list: { id: string; mtime: number }[]): ArtifactNode {
+/** Reports-tree stem grouping: a top-level folder named `<base>-<suffix>` whose
+ *  `<base>` is itself a present top-level folder is a section-8 fan-out
+ *  sub-family - regroup it under the base (chains follow transitively:
+ *  base -> -e34 -> -r2) so one family's fan-outs, QA rounds and revisions read
+ *  as one group instead of N siblings. Only the GROUPING id (gid) is written;
+ *  a.id and navigation stay untouched. ES5-plain: PAGE interpolates. */
+export function stemRegroup(list: { id: string }[]): { id: string; gid?: string }[] {
+  var tops: { [k: string]: 1 } = {};
+  for (var i = 0; i < list.length; i++) {
+    var t = String(list[i].id || "").split("/")[0];
+    if (t) tops[t] = 1;
+  }
+  var memo: { [k: string]: string } = {};
+  var gidOf = function (fam: string): string {
+    if (memo[fam] !== undefined) return memo[fam];
+    memo[fam] = fam; // self while resolving, so a pathological cycle terminates
+    for (var cut = fam.lastIndexOf("-"); cut > 0; cut = fam.lastIndexOf("-", cut - 1)) {
+      var p = fam.slice(0, cut);
+      if (tops[p] === 1) { memo[fam] = gidOf(p) + "/-" + fam.slice(cut + 1); break; } // longest present prefix wins
+    }
+    return memo[fam];
+  };
+  var out = [];
+  for (var j = 0; j < list.length; j++) {
+    var a: any = list[j];
+    var seg = String(a.id || "").split("/");
+    var g = gidOf(seg[0]);
+    if (g === seg[0]) { out.push(a); continue; }
+    var copy: any = {};
+    for (var k in a) copy[k] = a[k];
+    copy.gid = [g].concat(seg.slice(1)).join("/");
+    out.push(copy);
+  }
+  return out;
+}
+
+export function groupArtifacts(list: { id: string; gid?: string; mtime: number }[]): ArtifactNode {
   var root: ArtifactNode = { name: "", key: "", dirs: [], files: [], mtime: 0, count: 0 };
   for (var i = 0; i < list.length; i++) {
     var a = list[i];
-    var raw = String(a && a.id != null ? a.id : "").split("/");
+    var raw = String(a && (a.gid != null ? a.gid : a.id) != null ? (a.gid != null ? a.gid : a.id) : "").split("/");
     var segs = [];
     for (var s = 0; s < raw.length; s++) { if (raw[s]) segs.push(raw[s]); }
     if (!segs.length) continue;
@@ -3609,8 +3702,14 @@ const path = q.get("path") ?? "";
 // Unicode 6 widths, while herdr lays panes out with modern (Unicode 11+)
 // widths - on glyphs like the TUI's status arrows the two disagree, so
 // redraw-in-place left misaligned residue (the captain's "lỗi font" report).
+// Font size is captain-adjustable (the page chrome's A-/A+) and persists per
+// browser under one key, so every mount comes back at the chosen size.
+const FKEY = "ac_term_font";
+const fclamp = (v) => Math.max(8, Math.min(24, v || 12));
+let fpx = 12;
+try { fpx = fclamp(parseInt(localStorage.getItem(FKEY) || "12", 10)); } catch { }
 const term = new Terminal({
-  fontSize: 12, scrollback: 5000, theme: { background: "#0c252d" },
+  fontSize: fpx, scrollback: 5000, theme: { background: "#0c252d" },
   fontFamily: "'JetBrains Mono', Menlo, Monaco, 'SF Mono', 'DejaVu Sans Mono', monospace",
   allowProposedApi: true,  // the unicode-version switch is behind this flag
 });
@@ -3636,11 +3735,15 @@ function connect() {
   ws = new WebSocket("ws://" + location.host + "/api/term/ws?path=" + encodeURIComponent(path)
     + "&cols=" + term.cols + "&rows=" + term.rows);
   ws.binaryType = "arraybuffer";
+  // Reset only when a connection actually OPENS (fresh stream, fresh screen).
+  // Resetting before each RETRY blanked the screen every 1.2s, so a capped
+  // server (429 handshake) showed an empty terminal instead of the message.
+  ws.onopen = () => { if (g === gen) term.reset(); };
   ws.onmessage = (e) => { if (g !== gen) return; term.write(typeof e.data === "string" ? e.data : new Uint8Array(e.data)); };
   ws.onclose = (e) => {
     if (g !== gen) return;
     term.write("\\r\\n\\x1b[33m[" + (e.reason || "disconnected") + " - reconnecting…]\\x1b[0m\\r\\n");
-    setTimeout(() => { if (g === gen) { term.reset(); connect(); } }, 1200);
+    setTimeout(() => { if (g === gen) connect(); }, 1200);
   };
 }
 // Keystrokes ride BINARY frames; TEXT frames carry control JSON (resize).
@@ -3693,6 +3796,17 @@ window.acSetTheme = (t) => {
   if (!t || !t.background) return;
   document.body.style.background = t.background;
   term.options.theme = { ...(term.options.theme || {}), ...t };
+};
+// Font controls, driven by the parent chrome (same-origin direct calls like
+// acSetTheme): step the size, persist it, refit, tell the pty. Returns the
+// applied size so the chrome's label never guesses.
+window.acGetFont = () => term.options.fontSize || 12;
+window.acSetFont = (d) => {
+  const v = fclamp((term.options.fontSize || 12) + d);
+  term.options.fontSize = v;
+  try { localStorage.setItem(FKEY, String(v)); } catch { }
+  fit.fit(); syncSize();
+  return v;
 };
 // Ask for it now rather than waiting for the parent's next poll render - the
 // frame knows when it is ready, the parent does not.
@@ -4063,31 +4177,34 @@ export function collectFamilyTasks(
   homePath: string,
   families: string[],
   known: string[],
-): { id: string; family: string; repo: string; pr: string; prMerged: boolean }[] {
-  const out: { id: string; family: string; repo: string; pr: string; prMerged: boolean }[] = [];
-  const take = (id: string, text: string) => {
+): { id: string; family: string; repo: string; pr: string; prMerged: boolean; kind: string; live: boolean }[] {
+  const out: { id: string; family: string; repo: string; pr: string; prMerged: boolean; kind: string; live: boolean }[] = [];
+  const take = (id: string, text: string, live: boolean) => {
     const family = metaValue(text, "fleet_scope") || taskFamilyOf(id, known);
-    if (families.indexOf(family) < 0) return;
+    // exact-id match rides beside the family match so a SUB-TASK detail
+    // (families=[<sub-id>]) finds its own meta even though the meta's scope
+    // names the parent family
+    if (families.indexOf(family) < 0 && families.indexOf(id) < 0) return;
     const kind = metaValue(text, "kind");
     const repo = kind === "roomchief" || kind === "crewdeputy" ? "" : metaValue(text, "project");
     const pr = metaValue(text, "pr");
     if (!repo && !pr) return;
-    out.push({ id, family, repo, pr, prMerged: metaValue(text, "pr_merged") === "1" });
+    out.push({ id, family, repo, pr, prMerged: metaValue(text, "pr_merged") === "1", kind, live });
   };
-  const read = (file: string, id: string) => {
+  const read = (file: string, id: string, live: boolean) => {
     try {
-      take(id, readFileSync(file, "utf8"));
+      take(id, readFileSync(file, "utf8"), live);
     } catch { /* unreadable meta - the task simply contributes nothing */ }
   };
   try {
     for (const f of readdirSync(`${homePath}/state`))
-      if (f.endsWith(".meta")) read(`${homePath}/state/${f}`, f.slice(0, -5));
+      if (f.endsWith(".meta")) read(`${homePath}/state/${f}`, f.slice(0, -5), true);
   } catch { /* no state dir */ }
   // ac-teardown.sh relocates a finished task's state to state/archive/<id>/ -
   // where a LANDED family's PRs live, since the meta is archived at teardown.
   try {
     for (const d of readdirSync(`${homePath}/state/archive`))
-      read(`${homePath}/state/archive/${d}/meta`, d);
+      read(`${homePath}/state/archive/${d}/meta`, d, false);
   } catch { /* no archive dir */ }
   out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return out;
@@ -4137,7 +4254,21 @@ async function familyDetail(homePath: string, family: string): Promise<Response>
   }
 
   const project = parseBacklogLine(line || "").repo;
-  const artifacts = collectArtifacts(homePath);
+  // SUB-TASK DETAIL: a family arg with NO ledger row that extends a known
+  // family is a section-8 fan-out unit - compose it from its OWN material. A
+  // tasks/-nested unit's artifacts are remapped to the sub id (grouping only,
+  // nav ids stay); the flat legacy layout already composes as-is. `parent`
+  // rides the response so the client links back to the owning family.
+  const parent = line === null ? taskFamilyOf(family, known) : "";
+  const isSub = !!parent && parent !== family;
+  const subPfx = isSub ? "tasks/" + family.slice(parent.length + 1) + "/" : "";
+  let artifacts = collectArtifacts(homePath);
+  if (isSub)
+    artifacts = artifacts.map((a) =>
+      a.family === parent && a.stage.indexOf(subPfx) === 0
+        ? { ...a, family, stage: a.stage.slice(subPfx.length) }
+        : a,
+    );
   // An epic's repos and PRs are its STORIES', so its own metas are not enough:
   // the member set is the family plus every story line that named it.
   const tasks = collectFamilyTasks(
@@ -4162,7 +4293,9 @@ async function familyDetail(homePath: string, family: string): Promise<Response>
   // `^[a-zA-Z0-9_-]+$` above, so neither path can escape the home. A history
   // read: resolve the archived copy too, same as readRoomEntries.
   let timelineText = "";
-  const timelineFile = `${familyDataDir(homePath, family)}/timeline.log`;
+  let tdir = familyDataDir(homePath, family);
+  if (isSub && !existsSync(tdir)) tdir = `${homePath}/data/${parent}/${subPfx}`.replace(/\/$/, "");
+  const timelineFile = `${tdir}/timeline.log`;
   if (existsSync(timelineFile)) {
     try { timelineText += readFileSync(timelineFile, "utf8"); } catch {}
   }
@@ -4193,6 +4326,7 @@ async function familyDetail(homePath: string, family: string): Promise<Response>
       timelineText,
       tasks,
     }),
+    parent: isSub ? parent : "",
     chiefLive,
   });
 }
@@ -7190,7 +7324,10 @@ if (import.meta.main) {
         const p = url.searchParams.get("path") ?? "";
         if (!(await allowedHomePaths()).has(p) || !webtermEnabled(p))
           return json({ error: "terminal disabled (config/webterm)" }, 403);
-        if (ptyCount >= 4) return json({ error: "too many terminals (4 max)" }, 429);
+        // 8, not 4: the global dock and the Terminal tab are separate clients
+        // by design, so one captain with a couple of windows hits 4 fast
+        // (measured live: a blank dock on the captain's own machine).
+        if (ptyCount >= 8) return json({ error: "too many terminals (8 max)" }, 429);
         const size = termSize(url.searchParams.get("cols"), url.searchParams.get("rows"));
         if (server.upgrade(req, { data: { kind: "pty", ...size } })) return undefined as unknown as Response;
         return json({ error: "websocket required" }, 400);
@@ -8076,8 +8213,16 @@ ${UX_BASE}
   .chatpage, .termpage{ height:calc(100vh - 130px); min-height:420px; /* fallback; the fit fns measure the real offset */
     margin:calc(-1 * var(--pagepad-y)) calc(-1 * var(--pagepad-x)); }
   .chatpage .chiefp{ height:100%; border:0; border-radius:0; overflow:hidden; }
-  .termpage iframe{ width:100%; height:100%; border:0; border-radius:0; background:var(--term-bg, var(--canvas)); }
-  .termpage{ position:relative; overflow:hidden; }
+  .termpage iframe{ width:100%; border:0; border-radius:0; background:var(--term-bg, var(--canvas)); flex:1 1 auto; min-height:0; }
+  .termpage{ position:relative; overflow:hidden; display:flex; flex-direction:column; }
+  .termbar{ flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:5px 10px;
+    border-bottom:1px solid var(--line); background:var(--surface); }
+  .tbtitle{ font-size:11px; color:var(--muted); font-weight:700; }
+  .tbsp{ flex:1 1 auto; }
+  .tbfs{ font-size:11px; color:var(--fg2); min-width:2ch; text-align:center; }
+  /* Pressed state is DELIBERATE accent styling (fullscreen active), never a
+     leftover focus ring - clicks blur the button after acting. */
+  .termbar .btn[aria-pressed="true"]{ color:var(--accent); border-color:var(--accent); }
   /* full-bleed routes: the page shell's bottom padding is the last 15px of
      scroll height (measured), and zoom rounding adds the rest - kill both so
      the viewport-fitted pane never grows scrollbars */
@@ -8096,18 +8241,18 @@ ${UX_BASE}
   .ovroom .re{ padding:5px 0; border-top:1px solid var(--line); font-size:12.5px; line-height:1.55; white-space:pre-wrap; word-break:break-word; }
   .ovroom .rets{ color:var(--fg2); font-size:11px; }
   .ovroom .rea{ color:var(--fg2); font-size:11px; }
-  .ovstories{ margin-top:14px; }
+  .ovstories, .ovsubs{ margin-top:14px; }
   /* Each story is a bordered card row, not a ruled text list (captain 2026-08-17). */
-  .ovstories .strow{ display:flex; align-items:center; gap:10px; padding:9px 12px; margin:6px 0;
+  .ovstories .strow, .ovsubs .strow{ display:flex; align-items:center; gap:10px; padding:9px 12px; margin:6px 0;
     background:var(--surface); border:1px solid var(--border); border-radius:8px; color:var(--fg); min-width:0; }
-  .ovstories .strow:hover{ border-color:var(--border-strong); background:var(--elev); text-decoration:none; }
-  .ovstories .stid{ font-family:var(--mono); font-size:11.5px; font-weight:700; color:var(--accent); flex:0 0 auto; max-width:28ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .ovstories .srepo{ font-family:var(--mono); font-size:9.5px; font-weight:700; color:var(--accent); background:var(--accent-soft);
+  .ovstories .strow:hover, .ovsubs .strow:hover{ border-color:var(--border-strong); background:var(--elev); text-decoration:none; }
+  .ovstories .stid, .ovsubs .stid{ font-family:var(--mono); font-size:11.5px; font-weight:700; color:var(--accent); flex:0 0 auto; max-width:28ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ovstories .srepo, .ovsubs .srepo{ font-family:var(--mono); font-size:9.5px; font-weight:700; color:var(--accent); background:var(--accent-soft);
     border-radius:5px; padding:1px 6px; flex:0 0 auto; max-width:20ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .ovstories .spr{ font-family:var(--mono); font-size:9.5px; font-weight:700; color:var(--success); border:1px solid var(--success);
+  .ovstories .spr, .ovsubs .spr{ font-family:var(--mono); font-size:9.5px; font-weight:700; color:var(--success); border:1px solid var(--success);
     border-radius:5px; padding:0 6px; flex:0 0 auto; }
-  .ovstories .badge{ flex:0 0 auto; }
-  .ovstories .sttx{ flex:1 1 auto; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  .ovstories .badge, .ovsubs .badge{ flex:0 0 auto; }
+  .ovstories .sttx, .ovsubs .sttx{ flex:1 1 auto; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
     overflow:hidden; white-space:normal; font-size:12.5px; line-height:1.45; }
   .ovroom .rev{ font-weight:700; font-family:var(--mono); font-size:11px; padding:1px 6px; border-radius:4px; background:var(--elev); }
   .ovroom .rev.warn{ color:var(--warning); border:1px solid var(--warning); }
@@ -8263,6 +8408,7 @@ var POLL_MS = 5000;
 // pure functions the bun test proves (see groupArtifacts, isHtmlArtifact,
 // cadenceLabel, verifyProcessRows).
 ${groupArtifacts.toString()}
+${stemRegroup.toString()}
 ${isHtmlArtifact.toString()}
 ${reviewableArtifact.toString()}
 ${cadenceLabel.toString()}
@@ -8929,7 +9075,7 @@ function renderPage(){
   else if(chiefCur!==null && boardOpenFam===null) chiefPollStop();
   if(r && r.name==='term' && !termT && !termUrl) termPoll();
   if(r && (r.name==='term'||r.name==='chat')) termFit();
-  if(r && r.name==='term') termTheme();   // frame not up yet on the first pass - the next render lands it
+  if(r && r.name==='term'){ termTheme(); termFontLabel(); }   // frame not up yet on the first pass - the next render lands it
   if(r && r.name!=='term' && termUrl) termUrl=null;
   postFrames();
 }
@@ -9587,9 +9733,30 @@ function boardOverview(d){
         +'<span class="badge '+(STORY_BADGE[ch.state]||'')+'">'+STORY_ICON[ch.state]+' '+esc(ch.state)+'</span></a>'; }
     stories=boardOvList('ovstories','Stories', d.rollup.done+'/'+d.rollup.total+' done', srows);
   }
+  // Sub-tasks (section-8 fan-out units, derived - never ledger rows): the
+  // captain's answer to "which pieces ran and what did each land" without
+  // reading the room prose. Slug links open the unit's report in Reports.
+  var subs='';
+  if(d.subtasks && d.subtasks.length){
+    var done=0, subRows='';
+    for(var si=0;si<d.subtasks.length;si++){ var sb=d.subtasks[si];
+      var stt=sb.live?'flying':(sb.prMerged||sb.hasReport?'done':'ended');
+      if(stt==='done') done++;
+      // The whole row is the detail link (same /board/<id> composer renders a
+      // sub-task from its own brief/report/timeline/meta); the PR chip stays
+      // a delegated data-ext hop since a nested anchor is invalid.
+      subRows+='<a class="strow" href="/fleets/'+enc(currentFleet())+'/board/'+enc(sb.id)+'" data-link title="'+esc(sb.id)+' detail">'
+        +'<span class="stid">'+esc(sb.slug)+'</span>'
+        +'<span class="sttx"></span>'
+        +(sb.pr?'<span class="spr" role="link" tabindex="0" data-ext="'+esc(sb.pr)+'" title="'+esc(sb.pr)+'">PR '+esc(prNum(sb.pr)||'↗')+(sb.prMerged?' ✓':'')+'</span>':'')
+        +(sb.repo?'<span class="srepo" title="'+esc(sb.repo)+'">'+esc(sb.repo)+'</span>':'')
+        +'<span class="badge '+(stt==='flying'?'accent':(stt==='done'?'ok':''))+'">'+(stt==='flying'?'●':(stt==='done'?'✓':'○'))+' '+stt+'</span>'
+        +'</a>'; }
+    subs=boardOvList('ovsubs','Sub-tasks', done+'/'+d.subtasks.length+' done', subRows);
+  }
   return '<div class="overview"><h3>'+esc(d.id)+'</h3>'
     +'<div class="ovsub">Pick an artifact on the left to view it inline here.</div>'
-    +'<div class="ovrow">'+rows+'</div>'+stories+pr+room+'</div>';
+    +'<div class="ovrow">'+rows+'</div>'+stories+subs+pr+room+'</div>';
 }
 // One room.md line -> highlighted html ('- [ts] actor> VERB: text'). The verb
 // chip colors match the grammar the captain reads everywhere else.
@@ -9609,6 +9776,7 @@ function boardDetailHead(id, d){
   var stCls=!d?'':(d.state==='failed'?' err':(d.state==='abandoned'?' stale':(d.section==='queued'?' q':(d.section==='in_flight'?' f':''))));
   return '<div class="fhead"><span class="did">'+esc(id)+'</span>'
     +(d&&d.isEpic?'<span class="badgeb epic">EPIC</span>':'')
+    +(d&&d.parent?'<a class="badgeb" href="/fleets/'+enc(currentFleet())+'/board/'+enc(d.parent)+'" data-link title="this is a fan-out sub-task of '+esc(d.parent)+'">↳ sub-task of '+esc(d.parent)+'</a>':'')
     +(d?'<span class="stt'+stCls+'">'+esc(sectionLabel(d))+(d.rollup?' · '+d.rollup.done+'/'+d.rollup.total:'')+'</span>':'')
     +'</div>';
 }
@@ -9768,10 +9936,30 @@ function chiefPanelHtml(title, backHref){
 var termUrl=null, termWhy='checking…', termT=null;
 function pageTerm(){
   if(termUrl){
-    var open='<a class="termopen" href="/term" target="_blank" rel="noopener" title="open in its own page">&#8599;</a>';
-    return '<div class="termpage">'+open+'<iframe src="'+esc(termUrl)+'" title="herdr terminal"></iframe></div>';
+    // The toolbar carries the mockup-approved controls on the EXISTING
+    // terminal: A-/A+ font, the sidebar toggle (widen the terminal), and the
+    // open-in-own-tab hop.
+    var bar='<div class="termbar">'
+      +'<span class="tbtitle mono">herdr &middot; terminal</span>'
+      +'<span class="tbsp"></span>'
+      +'<button type="button" class="btn sm" id="tp-fminus" title="Smaller terminal font">A-</button>'
+      +'<span id="tp-fsize" class="tbfs mono">&middot;</span>'
+      +'<button type="button" class="btn sm" id="tp-fplus" title="Larger terminal font">A+</button>'
+      +'<button type="button" class="btn sm" id="tp-side" title="Toggle the sidebar - widen the terminal">&#8676;</button>'
+      +'<a class="btn sm" href="/term" target="_blank" rel="noopener" title="open in its own page">&#8599;</a>'
+      +'</div>';
+    return '<div class="termpage">'+bar+'<iframe src="'+esc(termUrl)+'" title="herdr terminal"></iframe></div>';
   }
   return '<div class="termpage"><div class="cdead">'+esc(termWhy)+'</div></div>';
+}
+function termFrameWin(){ var f=document.querySelector('.termpage iframe'); return f?f.contentWindow:null; }
+function termFont(d){
+  var w=termFrameWin();
+  if(w && typeof w.acSetFont==='function'){ var v=w.acSetFont(d); var s=el('tp-fsize'); if(s) s.textContent=String(v); }
+}
+function termFontLabel(){
+  var w=termFrameWin(); var s=el('tp-fsize');
+  if(w && s && typeof w.acGetFont==='function'){ try{ s.textContent=String(w.acGetFont()); }catch(e){} }
 }
 function termFit(){
   // Fill the viewport exactly: the old fixed calc guessed the header height
@@ -9806,7 +9994,7 @@ function termPoll(){
   if(!hp) return;
   fetch('/api/term/status?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
     if(!S.route||S.route.name!=='term'){ clearTimeout(termT); termT=null; return; }
-    if(j.running&&j.url){ if(termUrl!==j.url){ termUrl=j.url; renderPage(); } return; }
+    if(j.running&&j.url){ if(termUrl!==j.url){ termUrl=j.url; renderPage(); setTimeout(termFontLabel, 900); } return; }
     termUrl=null; termWhy=j.why||j.error||'unavailable'; renderPage();
     termT=setTimeout(termPoll, 1500);
   }).catch(function(){ termT=setTimeout(termPoll, 3000); });
@@ -10000,10 +10188,18 @@ function chiefWatchKey(target){
   return 'ac_dash_watch:'+hp+'|'+(target===true?'fleet':String(target));
 }
 function chiefPollStart(target, keepWatch){
-  if((chiefSock||chiefTimer) && chiefCur===target) return;   // renderPage re-arms every poll tick; same target keeps its transport
+  if((chiefSock||chiefTimer) && chiefCur===target){
+    // Same target keeps its transport - but the tabs strip can still be BARE:
+    // board detail arms this BEFORE the panel's DOM is morphed in (the first
+    // chiefLoadTabs found no #chief-tabs and gave up), so repopulate whenever
+    // the strip exists empty. Chat mounts the panel up front and never hits it.
+    var tb=el('chief-tabs');
+    if(target!==true && tb && !tb.firstChild) chiefLoadTabs();
+    return;
+  }
   chiefPollStop(); chiefCur=target; chiefLines=400;
   if(!keepWatch){ try{ chiefWatch=localStorage.getItem(chiefWatchKey(target))||''; }catch(e){ chiefWatch=''; } }   // a NEW target restores its remembered pick
-  if(target!==true) chiefLoadTabs();   // family targets get the linked-pane chips
+  if(target!==true) setTimeout(chiefLoadTabs, 0);   // family targets get the linked-pane chips; deferred past the morph that mounts the panel
   if(chiefStreamStart(target)) return;   // ws push (250ms server-side); the loop below is the fallback
   chiefPollStartPoll(target);
 }
@@ -10294,7 +10490,7 @@ function pageReports(){
   // Tree: family -> each sub-dir -> files. A narrowed list (query or a kind chip)
   // renders every node expanded by default - a tree that hides a search hit reads
   // as broken.
-  else if(tree) list+=artTree(groupArtifacts(shown), r, ui, !!q||flt!=='all', 0);
+  else if(tree) list+=artTree(groupArtifacts(stemRegroup(shown)), r, ui, !!q||flt!=='all', 0);
   else {
   // Flat, time-sorted (newest first); family is shown per row so it stays identifiable.
   for(var i=0;i<shown.length;i++){ var a=shown[i];
@@ -11101,6 +11297,16 @@ function onClick(e){
   var t=e.target; if(!t) return; if(t.nodeType===3) t=t.parentElement; if(!t||!t.closest) return;
   var n;
   if(t.closest('#refresh-btn')){ tick(true); return; }
+  // Terminal toolbar: blur the clicked button so the focus ring never sticks
+  // as a phantom highlight after the action (captain: "button highlight lỗi").
+  var tpb=t.closest('#tp-fminus,#tp-fplus,#tp-side');
+  if(tpb){
+    tpb.blur();
+    if(tpb.id==='tp-fminus') termFont(-1);
+    else if(tpb.id==='tp-fplus') termFont(1);
+    else { var cb=el('collapse-btn'); if(cb) cb.click(); }
+    return;
+  }
   if((n=t.closest('[data-chief-key]'))){ chiefKey(n.getAttribute('data-chief-key')); return; }
   if((n=t.closest('[data-chief-watch]'))!==null && n){ chiefSetWatch(n.getAttribute('data-chief-watch')); return; }
   if(t.closest('#chief-term')){

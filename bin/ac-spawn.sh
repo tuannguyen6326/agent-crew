@@ -156,8 +156,9 @@
 # id) means teardown returns unconditionally, as it always did.
 #
 # Requires an existing brief, resolved with ac_task_dir: flat data/<id>/brief.md
-# for direct tasks, nested data/<family>/<stage>/brief.md for staged flows
-# (ac-brief.sh scaffolds it and owns the layout contract).
+# for direct tasks, nested data/<family>/<stage>/brief.md for staged flows,
+# nested data/<family>/tasks/<slug>/brief.md for a scoped chief's fan-out
+# sub-tasks (ac-brief.sh scaffolds it and owns the layout contract).
 # On success prints:
 #   spawned <id> harness=<h> kind=<ship|scout|crewdeputy> mode=<mode> yolo=<on|off> backend=<b> window=<target> worktree=<path>
 #
@@ -714,7 +715,8 @@ if [ "$recover" = 1 ]; then
 fi
 [ -e "$meta" ] && ac_die "crewmate $id already exists (see $meta); tear it down first"
 
-# Staged-flow briefs nest under their family (data/<family>/<stage>/brief.md);
+# Staged-flow briefs nest under their family (data/<family>/<stage>/brief.md),
+# a scoped chief's fan-out sub-tasks under data/<family>/tasks/<slug>/;
 # direct tasks stay flat. ac_task_dir resolves by what exists and dies on
 # an ambiguous double-brief.
 brief="$(ac_task_dir "$id")/brief.md"

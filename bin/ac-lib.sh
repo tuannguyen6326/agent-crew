@@ -808,6 +808,14 @@ ac_bare_marker_verbs() {
 # A roomchief's own data dir nests the same way, at data/<family>/chief, but
 # `chief` is NOT a staged-flow production stage: it carries no brief (the room
 # IS the roomchief's brief) and ac-brief.sh's stage whitelist refuses it.
+# FAN-OUT NESTING (tasks/): a section-8 fan-out sub-task - free slug, no stage
+# or -rN suffix - that a SCOPED chief scaffolds lives at
+# data/<family>/tasks/<slug>/ (create rule: ac-brief.sh, keyed on AC_SCOPE so
+# an unrelated top-level id that merely EXTENDS another family's name never
+# nests). The read side recovers the family by what EXISTS - longest prefix
+# whose tasks/<slug>/brief.md is on disk - so no environment is needed to
+# resolve. Pre-existing flat fan-out dirs stay readable forever (flat is the
+# fallback, exactly like direct -rN ids).
 
 ac_stage_dir_for_id() {
   # ac_stage_dir_for_id <id> - the "<family>/<stage>[-rN]" subpath a staged id
@@ -864,7 +872,7 @@ ac_task_dir() {
   # creates that dir, so this resolver cannot require it first
   # (chicken-and-egg). A family whose OWN name merely ends in -chief (no
   # parent data/<base>/ dir) never satisfies this and keeps resolving flat.
-  local id="$1" d sub nested="" flat stage fam
+  local id="$1" d sub nested="" flat stage fam base slug
   d="$(ac_data_dir)"
   flat="$d/$id"
   sub="$(ac_stage_dir_for_id "$id")"
@@ -881,6 +889,21 @@ ac_task_dir() {
       && ac_die "ambiguous task data for $id: briefs at both $nested and $flat"
     printf '%s\n' "$nested"
     return 0
+  fi
+  # Fan-out nesting (tasks/, block comment above): recover the family of a
+  # free-slug sub-task by what EXISTS, longest prefix first.
+  if [ -z "$sub" ]; then
+    base="$id"
+    while [ "${base%-*}" != "$base" ]; do
+      base="${base%-*}"
+      slug="${id#"$base"-}"
+      if [ -f "$d/$base/tasks/$slug/brief.md" ]; then
+        [ -f "$flat/brief.md" ] \
+          && ac_die "ambiguous task data for $id: briefs at both $d/$base/tasks/$slug and $flat"
+        printf '%s\n' "$d/$base/tasks/$slug"
+        return 0
+      fi
+    done
   fi
   printf '%s\n' "$flat"
 }

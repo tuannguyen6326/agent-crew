@@ -29,6 +29,14 @@
 #
 # Brief location - the one authoritative statement of the task-data layout:
 # - direct tasks and plain scouts (no --stage): data/<id>/brief.md (flat).
+#   EXCEPT a SCOPED chief's free-slug fan-out sub-task (AC_SCOPE=<family>,
+#   id=<family>-<slug>, no stage/-rN suffix): data/<family>/tasks/<slug>/brief.md,
+#   nested so a family's fan-outs, QA rounds and revisions live inside the
+#   family dir the way its stages already do (and ride ac-archive.sh's
+#   whole-family move for free). The scope is the family signal ON PURPOSE -
+#   a prefix guess would nest an unrelated top-level id that merely extends
+#   another row's name; unscoped scaffolds stay flat, and pre-existing flat
+#   fan-out dirs stay readable forever (ac_task_dir's tasks/ probe).
 # - staged-flow tasks (--stage <s>): data/<family>/<stage>[-rN]/brief.md,
 #   nested under the family dir with the SHORT stage names
 #   (spec, arch, plan, implement, design, qa). Historical review/ship dirs remain
@@ -124,6 +132,17 @@ if [ "$staged" = 1 ]; then
   fi
 else
   task_dir="$data_dir/$id"
+  # Fan-out nesting (tasks/; resolver + block comment: ac-lib.sh): a SCOPED
+  # chief's free-slug sub-task (AC_SCOPE=<family>, id=<family>-<slug>, no
+  # stage/-rN suffix) scaffolds at data/<family>/tasks/<slug>/. The scope is
+  # the family signal ON PURPOSE: a prefix guess would nest an unrelated
+  # top-level id that merely extends another row's name (dash-review vs
+  # dash); an unscoped (crewchief) scaffold stays flat.
+  if [ -n "${AC_SCOPE:-}" ] && [ -z "$(ac_stage_dir_for_id "$id")" ]; then
+    case "$id" in
+      "$AC_SCOPE"-?*) task_dir="$data_dir/$AC_SCOPE/tasks/${id#"$AC_SCOPE"-}" ;;
+    esac
+  fi
 fi
 
 brief="$task_dir/brief.md"
@@ -140,6 +159,23 @@ else
     other="$data_dir/$osub/brief.md"
   elif [ -f "$data_dir/$id/implement/brief.md" ]; then
     other="$data_dir/$id/implement/brief.md"
+  fi
+  # the tasks/-nested twin is the same ambiguity, in BOTH directions: a
+  # nested scaffold refuses on an existing flat brief, and a flat scaffold
+  # refuses on an existing nested one (longest-prefix probe, resolver-mirrored).
+  if [ -z "$other" ]; then
+    if [ "$task_dir" != "$data_dir/$id" ]; then
+      other="$data_dir/$id/brief.md"
+    else
+      twin_base="$id"
+      while [ "${twin_base%-*}" != "$twin_base" ]; do
+        twin_base="${twin_base%-*}"
+        if [ -f "$data_dir/$twin_base/tasks/${id#"$twin_base"-}/brief.md" ]; then
+          other="$data_dir/$twin_base/tasks/${id#"$twin_base"-}/brief.md"
+          break
+        fi
+      done
+    fi
   fi
 fi
 if [ -n "$other" ] && [ -f "$other" ]; then
