@@ -8099,6 +8099,12 @@ ${UX_BASE}
        this same trap), which reintroduces the overflow this block exists to
        remove. */
     .md-layout, .cfg-layout{ grid-template-columns:minmax(0,1fr); }
+    /* #toolview's left:var(--sb) assumes the sidebar always occupies its
+       224px of flex space - once it goes off-canvas above, that gutter is
+       just empty space stealing width from the panel (measured: a review
+       opened from Reports squeezed into ~166px and word-wrapped per
+       character). */
+    #toolview{ left:0; }
   }
 
   /* ---- Board (dashboard-board): kanban by backlog status + task-detail overlay.
