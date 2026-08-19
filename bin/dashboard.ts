@@ -1239,16 +1239,18 @@ export function verifyProcessRows(verify: { id: string; kind?: string; project?:
 
 /**
  * Chief-panel pane auto-fit: the font size that makes `cols` monospace
- * columns span the pane's available pixel width. Ceiling 12px = the web
- * terminal's own size (fit only ever SHRINKS, never grows past the
- * snapshot's native rendering); floor 9.5px keeps a very-wide pane legible
- * instead of vanishing. `0.602` is JetBrains Mono's measured advance-width
- * ratio at this stack; `26` is the .cterm horizontal padding (12px * 2) plus
- * a small rounding margin. Pure math - PAGE interpolates its toString(), the
- * bun test proves the same formula the browser runs.
+ * columns span the pane's available pixel width. Ceiling 15px (captain
+ * ruling 2026-08-19, chosen from a measured 151-col pane at a 1399px panel):
+ * filling the panel outranks matching the native web terminal's own font
+ * size, bounded so a narrow-true-width pane still isn't magnified into
+ * ugliness. Floor 9.5px keeps a very-wide pane legible instead of vanishing.
+ * `0.602` is JetBrains Mono's measured advance-width ratio at this stack;
+ * `26` is the .cterm horizontal padding (12px * 2) plus a small rounding
+ * margin. Pure math - PAGE interpolates its toString(), the bun test proves
+ * the same formula the browser runs.
  */
 export function chiefFitPx(cols: number, clientWidth: number): number {
-  return Math.max(9.5, Math.min(12, (clientWidth - 26) / (cols * 0.602)));
+  return Math.max(9.5, Math.min(15, (clientWidth - 26) / (cols * 0.602)));
 }
 
 export interface ArtifactNode {

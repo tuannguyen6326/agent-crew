@@ -541,8 +541,8 @@ test("cadenceLabel renders NOTHING for an absent or half-formed cadence", () => 
 
 // --- chief-panel pane auto-fit (font math + true-cols extraction) --------
 
-test("chiefFitPx never exceeds the 12px ceiling (fit only ever shrinks)", () => {
-  expect(chiefFitPx(10, 2000)).toBe(12);
+test("chiefFitPx never exceeds the 15px ceiling", () => {
+  expect(chiefFitPx(10, 2000)).toBe(15);
 });
 
 test("chiefFitPx never drops below the 9.5px floor", () => {
