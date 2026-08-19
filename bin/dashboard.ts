@@ -11531,7 +11531,17 @@ function onClick(e){
     return;
   }
   var tnav=t.closest('.navitem[data-nav="/terminal"]');
-  if(tnav){ e.preventDefault(); tdMode==='closed'?tdOpen('split'):tdClose(); return; }
+  if(tnav){
+    e.preventDefault();
+    if(tdMode==='closed'){
+      tdOpen('split');
+      // Standing on the /terminal PAGE when the dock opens would run TWO full
+      // herdr clients side by side (and race the pty cap) - the dock IS the
+      // terminal, so leave the page; its pty dies with it as it always did.
+      if(S.route&&S.route.name==='term') navigate('/fleets');
+    } else tdClose();
+    return;
+  }
   // Terminal toolbar: blur the clicked button so the focus ring never sticks
   // as a phantom highlight after the action (captain: "button highlight lỗi").
   var tpb=t.closest('#tp-fminus,#tp-fplus,#tp-side');
