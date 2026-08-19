@@ -184,4 +184,19 @@ assert_contains "$s3b" "Review: yes" "crew-ship keeps its pipeline round (story-
 assert_contains "$(cat "$AC_HOME/data/eppy3-s4/brief.md")" "epic integration branch" \
   "a direct-pr epic story's brief names the PR base"
 
+# --- review-diff against the EPIC base (slice 5) ------------------------------
+# story.txt already LANDED into epic/eppy3; a new lease + one new commit must
+# diff as ONLY the new commit - a default-based merge-base would render the
+# landed sibling work as this story's diff.
+"$BIN/ac-tree.sh" return "$wt5" --force >/dev/null 2>&1
+wt6="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj" --id eppy3-s1 --holder t 2>/dev/null)"
+git -C "$wt6" checkout -q -B crew/eppy3-s1
+printf 'round two\n' >"$wt6/round2.txt"
+git -C "$wt6" add -A; git -C "$wt6" commit -qm "round two"
+printf 'project_dir=%s\nworktree=%s\nproject=proj\n' "$AC_HOME/projects/proj" "$wt6" >"$AC_HOME/state/eppy3-s1.meta"
+rd="$("$BIN/ac-review-diff.sh" eppy3-s1 --stat)"
+assert_contains "$rd" "round2.txt" "review-diff shows the story's own new work"
+case "$rd" in *story.txt*) fail "review-diff must not render the LANDED sibling work as this story's diff" ;; esac
+"$BIN/ac-tree.sh" return "$wt6" --force >/dev/null 2>&1
+
 pass

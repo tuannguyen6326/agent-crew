@@ -44,6 +44,17 @@ branch="$(ac_crew_branch "$id")"
 head="$branch"
 git -C "$worktree" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null || head="HEAD"
 defref="$(diff_base_ref "$worktree")"
+# Epic stories diff against the EPIC branch (epic-branch-mech): the default
+# merge-base would render every sibling story's commits as this story's diff.
+proj_name="$(ac_meta_get "$meta" project)"
+if [ -n "$proj_name" ] && eb="$(ac_epic_base_for "$id" "$proj_name" 2>/dev/null)"; then
+  ebb="${eb%% *}"
+  if git -C "$worktree" rev-parse --verify --quiet "refs/heads/$ebb" >/dev/null; then
+    defref="$ebb"
+  elif git -C "$worktree" rev-parse --verify --quiet "refs/remotes/origin/$ebb" >/dev/null; then
+    defref="origin/$ebb"
+  fi
+fi
 base="$(git -C "$worktree" merge-base "$defref" "$head")"
 
 if [ "$stat" = 1 ]; then

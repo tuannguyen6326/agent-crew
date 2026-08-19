@@ -891,8 +891,23 @@ prune_pass() {
       continue
     fi
     if ! git -C "$repo" merge-base --is-ancestor "$(git -C "$wt" rev-parse HEAD)" "$ref" 2>/dev/null; then
-      printf 'skip slot %s: HEAD not merged into %s\n' "$n" "$ref"
-      continue
+      # Epic-landed slots (epic-branch-mech): the slot's task may have landed
+      # into its epic's RECORDED branch, which the default-based check cannot
+      # see - containment there is equally merged, or pool health ends up
+      # recommending remove --force (the discard verb) for landed work.
+      slot_task="$(ac_meta_get "$meta" task)"
+      eb_ok=0
+      if [ -n "$slot_task" ] && eb_p="$(ac_epic_base_for "$slot_task" "$(basename "$repo")" 2>/dev/null)"; then
+        eb_pb="${eb_p%% *}"
+        if git -C "$repo" merge-base --is-ancestor "$(git -C "$wt" rev-parse HEAD)" "refs/heads/$eb_pb" 2>/dev/null \
+          || git -C "$repo" merge-base --is-ancestor "$(git -C "$wt" rev-parse HEAD)" "refs/remotes/origin/$eb_pb" 2>/dev/null; then
+          eb_ok=1
+        fi
+      fi
+      if [ "$eb_ok" = 0 ]; then
+        printf 'skip slot %s: HEAD not merged into %s\n' "$n" "$ref"
+        continue
+      fi
     fi
     if [ "$yes" = 1 ]; then
       drop_slot "$repo" "$n"
@@ -956,7 +971,17 @@ remove_slot() {
   head="$(git -C "$wt" rev-parse HEAD 2>/dev/null || true)"
   if [ -n "$head" ] && [ "$force" != 1 ] \
     && ! git -C "$repo" merge-base --is-ancestor "$head" "$(ac_default_ref "$repo")" 2>/dev/null; then
-    ac_die "remove: slot $n holds commits not merged into the default branch; use --force to discard"
+    # Epic-landed slots count as merged too (epic-branch-mech, same arm as prune).
+    rm_task="$(ac_meta_get "$(slot_meta "$repo" "$n")" task)"
+    rm_ok=0
+    if [ -n "$rm_task" ] && rm_eb="$(ac_epic_base_for "$rm_task" "$(basename "$repo")" 2>/dev/null)"; then
+      rm_ebb="${rm_eb%% *}"
+      if git -C "$repo" merge-base --is-ancestor "$head" "refs/heads/$rm_ebb" 2>/dev/null \
+        || git -C "$repo" merge-base --is-ancestor "$head" "refs/remotes/origin/$rm_ebb" 2>/dev/null; then
+        rm_ok=1
+      fi
+    fi
+    [ "$rm_ok" = 1 ] || ac_die "remove: slot $n holds commits not merged into the default branch; use --force to discard"
   fi
   kill_worktree_procs "$wt"
   drop_slot "$repo" "$n"
