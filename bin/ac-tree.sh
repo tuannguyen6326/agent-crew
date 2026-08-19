@@ -327,23 +327,10 @@ resolve_repo() {
 }
 
 freshest_ref() {
-  # Freshest default-branch ref: whichever of local vs origin is ahead
-  # (origin wins on true divergence).
-  local repo="$1" branch have_l=0 have_o=0
-  branch="$(ac_default_branch "$repo")"
-  git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" && have_l=1
-  git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch" && have_o=1
-  if [ "$have_l" = 1 ] && [ "$have_o" = 1 ]; then
-    if git -C "$repo" merge-base --is-ancestor "refs/remotes/origin/$branch" "refs/heads/$branch" 2>/dev/null; then
-      printf '%s\n' "$branch"
-    else
-      printf 'origin/%s\n' "$branch"
-    fi
-  elif [ "$have_o" = 1 ]; then
-    printf 'origin/%s\n' "$branch"
-  else
-    printf '%s\n' "$branch"
-  fi
+  # Freshest default-branch ref - delegates to THE shared resolver
+  # (ac_freshest_ref, ac-lib.sh) so the pool and ac-epic-branch.sh can never
+  # disagree about "the tip".
+  ac_freshest_ref "$1"
 }
 
 reset_worktree() {

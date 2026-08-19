@@ -2156,6 +2156,66 @@ ac_default_ref() {
   fi
 }
 
+ac_freshest_ref() {
+  # ac_freshest_ref <repo> - the freshest default-branch ref: whichever of
+  # local vs origin is AHEAD (origin wins on true divergence). THE one
+  # freshest-tip resolver: ac-tree.sh's pool reset and ac-epic-branch.sh's
+  # create both cut here, so the two can never disagree about "the tip"
+  # (ac_default_ref above is the cruder origin-if-it-exists rule and stays
+  # for callers that want exactly that).
+  local repo="$1" branch have_l=0 have_o=0
+  branch="$(ac_default_branch "$repo")"
+  git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" && have_l=1
+  git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch" && have_o=1
+  if [ "$have_l" = 1 ] && [ "$have_o" = 1 ]; then
+    if git -C "$repo" merge-base --is-ancestor "refs/remotes/origin/$branch" "refs/heads/$branch" 2>/dev/null; then
+      printf '%s\n' "$branch"
+    else
+      printf 'origin/%s\n' "$branch"
+    fi
+  elif [ "$have_o" = 1 ]; then
+    printf 'origin/%s\n' "$branch"
+  else
+    printf '%s\n' "$branch"
+  fi
+}
+
+# --- epic integration-branch record (epic-branch-mech) -------------------------
+# data/<epic>/branches: `<repo> <branch> [key=value ...]`, one line per repo a
+# branch-recorded epic integrates. Chief-written on the captain's word and
+# receipted DECIDED: to the epic room; bin/ac-epic-branch.sh owns the verbs.
+# Resolution is ARCHIVE-AWARE like ac_room_file: live data/<epic>/ first, then
+# data/archive/<year>/<epic>/ - a family move must never silently disengage a
+# fence keyed on this file, so the resolver distinguishes MOVED from NEVER WAS.
+# A record whose first line is `# retired <iso>` is deliberately ended:
+# readers treat it as no-fence, and verify explains the retirement.
+
+ac_epic_branches_file() {
+  # ac_epic_branches_file <epic> - resolved record path, live else archived;
+  # rc 1 when the record never existed. Charset-guarded like ac_room_file:
+  # an unsafe name must never reach the archive glob.
+  local epic="$1" live y
+  live="$(ac_data_dir)/$epic/branches"
+  [ -f "$live" ] && { printf '%s\n' "$live"; return 0; }
+  case "$epic" in '' | *[!a-zA-Z0-9_-]*) return 1 ;; esac
+  for y in "$(ac_data_dir)"/archive/*/"$epic"/branches; do
+    [ -f "$y" ] && { printf '%s\n' "$y"; return 0; }
+  done
+  return 1
+}
+
+ac_epic_branch_entry() {
+  # ac_epic_branch_entry <epic> <repo> - prints `<branch> [key=value ...]`.
+  # rc 0 found; 1 no record or no entry for this repo (no fence);
+  # 2 record retired (no fence either, but a caller that wants to SAY why can).
+  local epic="$1" repo="$2" f line
+  f="$(ac_epic_branches_file "$epic")" || return 1
+  head -1 "$f" | grep -q '^# retired' && return 2
+  line="$(awk -v r="$repo" '$1==r { $1=""; sub(/^ /, ""); print; exit }' "$f")"
+  [ -n "$line" ] || return 1
+  printf '%s\n' "$line"
+}
+
 ac_project_dir() {
   # ac_project_dir <name-or-path> - absolute repo root for a project argument:
   # a path to (inside) a git repo, or a directory name under projects/.
