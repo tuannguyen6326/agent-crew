@@ -213,7 +213,30 @@ fi
 
 # Review is an intake obligation, not a stage or delivery profile. Staged work
 # and crew-ship always require it; direct direct-pr/local-only may opt in.
-if [ "$staged" = 1 ]; then
+# EPIC EXCEPTION (captain ruling 2026-08-19: review and
+# QA run per EPIC, not per story): a story of a BRANCH-RECORDED epic integrates on the epic branch,
+# not production, so its per-story independent review defaults to NO - the
+# epic gate owns the round over the integrated diff. Staged stories keep
+# their design-stage gates; crew-ship stories KEEP their pipeline round for
+# now (the --target makes it story-sized; the F4 skip amendment belongs to
+# the epic-gate slice). Raising review back on a story stays the captain's
+# word (ruling: ask-captain unchanged) - the pin/--captain-requested path
+# below is unchanged.
+epic_eb_entry=""
+epic_eb_branch=""
+if epic_eb_entry="$(ac_epic_base_for "$id" "$project" 2>/dev/null)"; then
+  epic_eb_branch="${epic_eb_entry%% *}"
+fi
+pr_base_phrase="the target branch"
+[ -z "$epic_eb_branch" ] || pr_base_phrase="the epic integration branch \`$epic_eb_branch\`"
+if [ "$staged" = 1 ] && [ -n "$epic_eb_branch" ]; then
+  review="${review_flag:-no}"
+  if [ "$review" = yes ]; then
+    review_line="yes (captain word required - see the raise guard below)"
+  else
+    review_line="no (epic gate owns the review round - captain ruling 2026-08-19)"
+  fi
+elif [ "$staged" = 1 ]; then
   [ "$review_flag" != no ] || ac_die "staged flow requires review=yes; --review no is not allowed"
   review=yes
 elif [ "$mode" = crew-ship ]; then
@@ -729,12 +752,15 @@ EOF
     if [ "$mode" = crew-ship ]; then
       review_block="Review is required and is fulfilled exactly once by the \`ac-ship\` review step inside the \`crew-ship\` engine. Do not invoke \`ac-verify codereview\` separately."
       delivery_mode="- Mode crew-ship: run the \`crew-ship\` skill. Its \`ac-ship\` engine owns the guarded 8-step delivery pipeline (intent, rebase, review, test, document, lint, push, pr). Hand over only after checks pass and include the PR URL."
+      [ -z "$epic_eb_branch" ] \
+        || delivery_mode="$delivery_mode
+- EPIC TARGET: start the engine with \`--target $epic_eb_branch\` - this story integrates on the epic branch, and the pipeline's review/base/push/PR all follow that target."
       signals_suffix=" (include the PR URL)"
     elif [ "$review" = yes ]; then
       review_block="Review is required. After delivery preparation and a clean implementation commit, invoke the canonical independent verifier before test/document/lint. Use the exact current ref and target base with this command shape (set \`TARGET_REF\` first):
 \`$(ac_root)/bin/ac-verify.sh codereview --repo \"\$PWD\" --ref HEAD --family $fam --caller \"\$AC_CREW_ID\" --base \"\$TARGET_REF\" --intent $brief --output $task_dir/verification/review.json\`"
       if [ "$mode" = direct-pr ]; then
-        delivery_mode="- Mode direct-pr: after the ordered review/check/doc loop below, push \`$crew_branch\` and open a PR against the target branch. The PR body covers intent, changes, and verification evidence."
+        delivery_mode="- Mode direct-pr: after the ordered review/check/doc loop below, push \`$crew_branch\` and open a PR against $pr_base_phrase. The PR body covers intent, changes, and verification evidence."
         signals_suffix=" (include the PR URL)"
       else
         delivery_mode="- Mode local-only: after the ordered review/check/doc loop below, leave \`$crew_branch\` clean and fully committed. Never push or open a PR."
@@ -743,7 +769,7 @@ EOF
     else
       review_block="Review is not required for this direct task. Skip independent code review unless the captain changes the intake obligation to \`review=yes\`."
       if [ "$mode" = direct-pr ]; then
-        delivery_mode="- Mode direct-pr: after the ordered check/doc loop below, push \`$crew_branch\` and open a PR against the target branch. The PR body covers intent, changes, and verification evidence."
+        delivery_mode="- Mode direct-pr: after the ordered check/doc loop below, push \`$crew_branch\` and open a PR against $pr_base_phrase. The PR body covers intent, changes, and verification evidence."
         signals_suffix=" (include the PR URL)"
       else
         delivery_mode="- Mode local-only: after the ordered check/doc loop below, leave \`$crew_branch\` clean and fully committed. Never push or open a PR."

@@ -157,4 +157,31 @@ assert_contains "$out" "leased worktree" "--no-ff onto an epic target refuses wi
 out="$("$BIN/ac-merge-local.sh" eppy3-s1)"
 assert_contains "$out" "already contains" "a re-land is a truthful no-op"
 
+# --- review derivation under the epic ruling (slice 4) ------------------------
+# Captain ruling 2026-08-19: a branch-recorded epic's stories default to
+# review=no (the epic gate owns the round); staged keeps its design gates but
+# drops the code-review round; crew-ship KEEPS its pipeline round (story-sized
+# via --target) until the epic-gate slice; a non-epic staged task still
+# refuses --review no.
+mkdir -p "$AC_HOME/records"
+cat >>"$AC_HOME/records/backlog.md" <<'EOF'
+- [ ] eppy3-s2 [src:cap flow:staged mode:local-only qa:no] - staged story; epic:eppy3 (repo: proj)
+- [ ] eppy3-s3 [src:cap flow:direct mode:crew-ship rev:yes qa:no] - ship story; epic:eppy3 (repo: proj)
+- [ ] eppy3-s4 [src:cap flow:direct mode:direct-pr rev:no qa:no] - pr story; epic:eppy3 (repo: proj)
+- [ ] solo1 [src:cap flow:staged mode:local-only qa:no] - standalone staged (repo: proj)
+EOF
+"$BIN/ac-brief.sh" eppy3-s2 proj --stage implement >/dev/null
+assert_contains "$(cat "$AC_HOME/data/eppy3-s2/implement/brief.md")" "epic gate owns the review round" \
+  "a staged epic story's EXECUTION brief derives review=no with the ruling on record"
+out="$("$BIN/ac-brief.sh" solo1-spec proj --stage spec --review no 2>&1 || true)"
+assert_contains "$out" "staged flow requires review=yes" \
+  "a NON-epic staged task still refuses --review no"
+"$BIN/ac-brief.sh" eppy3-s3 proj >/dev/null
+s3b="$(cat "$AC_HOME/data/eppy3-s3/brief.md")"
+assert_contains "$s3b" -- "--target epic/eppy3" "a crew-ship epic story's brief names the engine target"
+assert_contains "$s3b" "Review: yes" "crew-ship keeps its pipeline round (story-sized via the target)"
+"$BIN/ac-brief.sh" eppy3-s4 proj >/dev/null
+assert_contains "$(cat "$AC_HOME/data/eppy3-s4/brief.md")" "epic integration branch" \
+  "a direct-pr epic story's brief names the PR base"
+
 pass

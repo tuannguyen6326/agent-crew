@@ -255,6 +255,18 @@ captain redirects a task whose crewmate is already in flight -
     the caller declares the authority with `ac-brief.sh --captain-requested
     '<the captain's words, or the order ref>'`, which the brief then records.
   `--review no` is invalid for staged and `crew-ship` work.
+  EPIC EXCEPTION (captain ruling 2026-08-19: review and QA
+  run per EPIC, not per story): a story of a BRANCH-RECORDED epic (`data/<epic>/branches` -
+  epic-branch-mech; `bin/ac-epic-branch.sh` owns the verbs) integrates on the
+  epic branch, not production, so its per-story independent review defaults
+  to `no` - the EPIC GATE owns one review round over the integrated diff
+  before any production PR. Staged stories keep their design-stage gates and
+  drop only the code-review round; `crew-ship` stories KEEP their pipeline
+  round for now (the `--target <epic-branch>` makes it story-sized; moving it
+  to the gate is the epic-gate slice). Raising a story back to `rev:yes` is
+  the captain's word exactly as above (second ruling, same date: the
+  ask-captain rules are unchanged inside an epic); `qa.require_for_ship`
+  defers to the epic gate on an epic-branch landing.
 - `crew-ship` is an 8-step delivery engine inside the execution role. Its review
   step fulfills the single review obligation through `ac-verify codereview`; do
   not invoke a second reviewer outside the engine. For required review in
