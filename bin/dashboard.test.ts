@@ -10,7 +10,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -537,6 +537,45 @@ test("cadenceLabel renders NOTHING for an absent or half-formed cadence", () => 
   expect(cadenceLabel({ curate: { count: 0, every: 2, due: false } })).toBeNull();
   // a block missing its threshold would have rendered "learn 2/undefined"
   expect(cadenceLabel({ learn: { count: 2 }, curate: { count: 0, every: 2 } })).toBeNull();
+});
+
+// --- chief-panel pane auto-fit (font math + true-cols extraction) --------
+
+test("chiefFitPx never exceeds the 15px ceiling", () => {
+  expect(chiefFitPx(10, 2000)).toBe(15);
+});
+
+test("chiefFitPx never drops below the 9.5px floor", () => {
+  expect(chiefFitPx(500, 300)).toBe(9.5);
+});
+
+test("chiefFitPx: the true column count yields a LARGER font than the old inflated heuristic (the bug this fixes)", () => {
+  // Real pane measured at 232 cols (`herdr pane layout`); the old client
+  // heuristic inferred 240 (its hard cap) from a box-drawing run "recent-unwrapped"
+  // rejoined across several stacked separator lines - see report.md MEASUREMENT.
+  // A bigger cols-than-real means the font is shrunk more than the pane needs,
+  // leaving the "half-empty" gap the captain reported.
+  const w = 1600; // a realistic chief-panel pixel width
+  expect(chiefFitPx(232, w)).toBeGreaterThan(chiefFitPx(240, w));
+});
+
+test("paneLayoutCols reads the queried pane's real column count from herdr pane layout JSON", () => {
+  const out = JSON.stringify({ result: { layout: { panes: [{ pane_id: "w7X:p3", rect: { width: 232, height: 63 } }] } } });
+  expect(paneLayoutCols(out, "w7X:p3")).toBe(232);
+});
+
+test("paneLayoutCols picks the QUERIED pane out of a multi-pane layout, never panes[0]", () => {
+  const out = JSON.stringify({
+    result: { layout: { panes: [{ pane_id: "w7T:p2", rect: { width: 100 } }, { pane_id: "w7T:pB", rect: { width: 232 } }] } },
+  });
+  expect(paneLayoutCols(out, "w7T:pB")).toBe(232);
+});
+
+test("paneLayoutCols returns undefined on malformed JSON, a missing pane, or no width", () => {
+  expect(paneLayoutCols("not json", "w7X:p3")).toBeUndefined();
+  expect(paneLayoutCols(JSON.stringify({ result: {} }), "w7X:p3")).toBeUndefined();
+  expect(paneLayoutCols(JSON.stringify({ result: { layout: { panes: [{ pane_id: "other", rect: { width: 5 } }] } } }), "w7X:p3")).toBeUndefined();
+  expect(paneLayoutCols(JSON.stringify({ result: { layout: { panes: [{ pane_id: "w7X:p3", rect: {} }] } } }), "w7X:p3")).toBeUndefined();
 });
 
 // --- Slice 3a: markdown -> readable HTML renderer ------------------------
