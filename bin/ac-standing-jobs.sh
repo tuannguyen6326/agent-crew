@@ -21,6 +21,17 @@
 #   - <id> [on|off] cadence:<cadence> recreate:<exact re-create action>
 # Mirrors the records/projects.md bracket grammar (ac_project_mode).
 #
+# Usage: ac-standing-jobs.sh [--ids]
+#
+# --ids prints one declared id per line, in file order, and nothing else - no
+# header, no grading. It exists so the OTHER reader of this grammar
+# (bin/ac-rig.sh's standing_jobs class) never re-derives the id itself: the
+# grammar has exactly one parser, in the file AGENTS.md section 2 names as its
+# owner, which is what section 13's one-contract-one-file rule requires. Same
+# shape as bin/ac-pool-health.sh reading pool state only through `ac-tree.sh
+# list` instead of re-deriving it. Both modes walk the SAME loop and the same
+# line selection, so there is no second copy to drift.
+#
 # Always prints its "-- standing jobs --" header, unlike the pool-health
 # ride-along which stays silent when healthy: a standing job with no
 # declaration on disk is exactly the invisible-cron failure this exists to
@@ -29,12 +40,27 @@
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 
-printf -- '-- standing jobs --\n'
+mode=digest
+case "${1:-}" in
+  --ids) mode=ids ;;
+  '') : ;;
+  *) ac_die "usage: ac-standing-jobs.sh [--ids]" ;;
+esac
+
+[ "$mode" = ids ] || printf -- '-- standing jobs --\n'
 
 f="$(ac_records_dir)/standing-jobs.md"
 if [ ! -s "$f" ]; then
-  printf '(no standing-jobs declaration - records/standing-jobs.md)\n'
+  [ "$mode" = ids ] || printf '(no standing-jobs declaration - records/standing-jobs.md)\n'
   exit 0
+fi
+# --ids ONLY: an unreadable file would otherwise print nothing and still exit
+# 0, and its consumer cannot tell that empty set from "no jobs declared" - it
+# would report every declared job as missing. The digest path keeps its own
+# behaviour untouched: it renders prose a human reads, and the shell's own
+# redirect error is already visible there.
+if [ "$mode" = ids ] && [ ! -r "$f" ]; then
+  ac_die "records/standing-jobs.md is not readable - refusing to report an empty id set"
 fi
 
 found=0
@@ -45,6 +71,10 @@ while IFS= read -r line; do
   esac
   found=1
   id="$(sed -n 's/^- \([^ ]*\) .*/\1/p' <<<"$line")"
+  if [ "$mode" = ids ]; then
+    [ -n "$id" ] && printf '%s\n' "$id"
+    continue
+  fi
   state="$(sed -n 's/^- [^[]*\[\([^]]*\)\].*/\1/p' <<<"$line")"
   cadence="$(sed -n 's/.*cadence:\(.*\) recreate:.*/\1/p' <<<"$line")"
   recreate="$(sed -n 's/.*recreate:\(.*\)$/\1/p' <<<"$line")"
@@ -63,6 +93,6 @@ while IFS= read -r line; do
   esac
 done <"$f"
 
-[ "$found" -eq 1 ] || printf '(records/standing-jobs.md has no declared job lines)\n'
+[ "$mode" = ids ] || [ "$found" -eq 1 ] || printf '(records/standing-jobs.md has no declared job lines)\n'
 
 exit 0

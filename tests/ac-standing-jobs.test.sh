@@ -49,4 +49,46 @@ out="$("$BIN/ac-standing-jobs.sh")"
 assert_contains "$out" "broken-job" "malformed line still names the job"
 assert_contains "$out" "unknown declared state" "malformed state is flagged, not silently dropped"
 
+# 4. --ids: the id list, for the ONE other reader of this grammar
+#    (bin/ac-rig.sh's standing_jobs class). It exists so the grammar keeps
+#    exactly one parser in the file AGENTS.md section 2 names as its owner -
+#    the ac-pool-health.sh -> `ac-tree.sh list` shape, where the consumer
+#    never re-derives what the owner already parses.
+cat >"$AC_HOME/records/standing-jobs.md" <<'EOF'
+# Standing jobs (fixture)
+
+Prose that must be skipped, even with [brackets] in it.
+
+- alpha-job [on] cadence::07/:37 recreate:CronCreate a job at :07 and :37
+- beta-job [off] cadence:every 30 minutes recreate:CronCreate a 30-min job (disabled)
+- gamma-job [maybe] cadence:hourly recreate:whatever
+- delta-job [on] cadence:30m recreate:CronCreate "*/30 * * * *" -> bin/ac-brain.sh sync --home $AC_HOME --compact
+EOF
+ids="$("$BIN/ac-standing-jobs.sh" --ids)"
+assert_eq "$ids" "alpha-job
+beta-job
+gamma-job
+delta-job" "--ids prints every declared id in file order, prose lines skipped"
+
+# A malformed STATE is still a declared job - --ids reports the id and leaves
+# the grading to the digest, which already has a branch for it.
+assert_contains "$ids" "gamma-job" "a job with an unknown state still has an id"
+
+# --- 5. THE EXTRACTION CHANGED NOTHING THE DIGEST PRINTS ---------------------
+# The id parser now has one caller more than it did; this pins the whole
+# rendered block byte-for-byte against the output captured BEFORE the
+# extraction, so a refactor can never quietly reword the digest.
+want='-- standing jobs --
+alpha-job: declared ON (cadence: :07/:37) - runtime liveness unverifiable from disk (CronCreate is session-only); run CronList to confirm, re-create if missing: CronCreate a job at :07 and :37
+beta-job: declared OFF - do not re-create (CronCreate a 30-min job (disabled))
+gamma-job: unknown declared state [maybe] in records/standing-jobs.md - fix the line
+delta-job: declared ON (cadence: 30m) - runtime liveness unverifiable from disk (CronCreate is session-only); run CronList to confirm, re-create if missing: CronCreate "*/30 * * * *" -> bin/ac-brain.sh sync --home $AC_HOME --compact'
+assert_eq "$("$BIN/ac-standing-jobs.sh")" "$want" "the rendered digest block is byte-identical to the pre-extraction output"
+
+# 6. --ids on a home with no declaration: empty, exit 0 - the caller decides
+#    what an empty set means, and a missing file is not this verb's error.
+rm -f "$AC_HOME/records/standing-jobs.md"
+assert_eq "$("$BIN/ac-standing-jobs.sh" --ids)" "" "--ids is empty with no declaration on disk"
+"$BIN/ac-standing-jobs.sh" --ids >/dev/null || fail "--ids exits 0 with no declaration on disk"
+
 pass
