@@ -117,4 +117,90 @@ out="$("$BIN/ac-review-diff.sh" foo-r2)"
 assert_contains "$out" "crewdelta.txt" \
   "family-scoped id diffs against crew/<family>, not a raw crew/<id> alias"
 
+# ---- Case 4: --live shows the WORKING TREE - uncommitted edits and untracked
+#      files included - while the default stays committed-only. A crewmate
+#      mid-task has most of its change uncommitted; the dashboard's live view
+#      reads base -> worktree, not base -> branch tip.
+r4="$TMP/live-tree"
+git init -q -b main "$r4"; git_id "$r4"
+commit "$r4" file.txt genesis >/dev/null
+git -C "$r4" checkout -q -b crew/c4
+commit "$r4" committed.txt "committed delta" >/dev/null
+printf 'uncommitted edit\n' >>"$r4/file.txt"          # tracked, dirty
+printf 'brand new\n' >"$r4/untracked.txt"             # untracked
+mk_meta c4 "$r4"
+
+out="$("$BIN/ac-review-diff.sh" c4)"
+assert_contains "$out" "committed.txt" "default diff still shows the committed delta"
+case "$out" in *"uncommitted edit"*|*untracked.txt*)
+  fail "default diff leaked working-tree changes (must stay committed-only)" ;;
+esac
+
+live="$("$BIN/ac-review-diff.sh" c4 --live)"
+assert_contains "$live" "committed.txt" "--live keeps the committed delta"
+assert_contains "$live" "uncommitted edit" "--live shows an uncommitted tracked edit"
+assert_contains "$live" "+++ b/untracked.txt" \
+  "--live shows an untracked new file under its repo-relative path"
+case "$live" in *"b$r4/untracked.txt"*)
+  fail "--live leaked the absolute worktree path into the untracked file's header" ;;
+esac
+
+# ---- Case 5: --tree diffs a NAMED worktree - the pool is the truth of trees
+#      (a multi-repo task holds several leases, and a pool lease can outlive
+#      its task meta). The id still names the crew branch; the meta is not
+#      required. A non-repo path refuses. Pool MEMBERSHIP is the dashboard's
+#      gate (its /api/diff only forwards trees the ac-tree pool lists) - the
+#      CLI trusts its operator like every other bin/ script.
+r5a="$TMP/multi-a"; r5b="$TMP/multi-b"
+for r in "$r5a" "$r5b"; do git init -q -b main "$r"; git_id "$r"; done
+commit "$r5a" file.txt genesis >/dev/null
+commit "$r5b" file.txt genesis >/dev/null
+git -C "$r5b" checkout -q -b crew/c5
+commit "$r5b" second-tree.txt "second tree delta" >/dev/null
+mk_meta c5 "$r5a"
+printf 'leases=%s:%s\n' "$r5a" "$r5b" >>"$AC_HOME/state/c5.meta"
+
+t5="$("$BIN/ac-review-diff.sh" c5 --live --tree "$r5b")"
+assert_contains "$t5" "second-tree.txt" "--tree diffs the named second worktree"
+if "$BIN/ac-review-diff.sh" c5 --tree "$TMP" >/dev/null 2>&1; then
+  fail "--tree accepted a non-repo path (must refuse)"
+fi
+rm "$AC_HOME/state/c5.meta"
+t5o="$("$BIN/ac-review-diff.sh" c5 --live --tree "$r5b")"
+assert_contains "$t5o" "second-tree.txt" \
+  "--tree still diffs when the task meta is gone (orphan pool lease)"
+
+# ---- Case 6: the three SCM groups split cleanly (dashboard file lists).
+#      --uncommitted = HEAD -> worktree, tracked only; --untracked = untracked
+#      new-file diffs only; default stays base -> branch tip (committed).
+#      Reuses case 4's r4: committed.txt (committed), file.txt (dirty edit),
+#      untracked.txt (untracked).
+unc="$("$BIN/ac-review-diff.sh" c4 --uncommitted)"
+assert_contains "$unc" "uncommitted edit" "--uncommitted shows the dirty tracked edit"
+case "$unc" in *committed.txt*|*untracked.txt*)
+  fail "--uncommitted leaked committed or untracked content" ;;
+esac
+unt="$("$BIN/ac-review-diff.sh" c4 --untracked)"
+assert_contains "$unt" "+++ b/untracked.txt" "--untracked shows only untracked files"
+case "$unt" in *committed.txt*|*"uncommitted edit"*)
+  fail "--untracked leaked tracked content" ;;
+esac
+
+# ---- Case 7: a worktree pinned to REWRITTEN history has no merge-base with
+#      the default branch (measured live: a pool tree leased before a
+#      commit-tree history scrub). No base -> the committed view is empty and
+#      the working tree is still shown, never a hard death.
+r7="$TMP/orphan-history"
+git init -q -b main "$r7"; git_id "$r7"
+commit "$r7" file.txt genesis >/dev/null
+git -C "$r7" checkout -q --orphan side
+git -C "$r7" -c user.email=test@test -c user.name=test commit -qm rootless
+printf 'dirty after the rewrite\n' >"$r7/wip.txt"
+mk_meta c7 "$r7"
+
+out7="$("$BIN/ac-review-diff.sh" c7)" || fail "orphan-history committed view died instead of printing empty"
+[ -z "$out7" ] || fail "orphan-history committed view should be empty (no base to diff against)"
+live7="$("$BIN/ac-review-diff.sh" c7 --live)"
+assert_contains "$live7" "wip.txt" "orphan-history --live still shows the working tree"
+
 pass

@@ -2,7 +2,24 @@
 # ac-review-diff.sh - show a crewmate's change as a diff against the
 # authoritative base (merge-base with the default branch).
 #
-# Usage: ac-review-diff.sh <id> [--stat]
+# Usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked]
+#                               [--tree <worktree>]
+#
+# Modes (default = committed-only, base -> branch tip: the chief/roomchief
+# delivered-change review):
+# - --live: base -> WORKING TREE (uncommitted tracked edits included,
+#   untracked files appended as new-file diffs) - the mid-task view, where
+#   most of a crewmate's change has not been committed yet.
+# - --uncommitted: HEAD -> working tree, tracked files only.
+# - --untracked: untracked files only, each as a new-file diff.
+# The three SCM groups a dashboard file list wants are the default,
+# --uncommitted, and --untracked - --live is their union for a single read.
+#
+# --tree <path> diffs that worktree instead of the meta's: the ac-tree pool is
+# the truth of leased trees (a multi-repo task holds several; a pool lease can
+# outlive its task meta). The id still names the crew branch; no meta is
+# required. Pool MEMBERSHIP gating belongs to the dashboard's /api/diff - the
+# CLI trusts its operator like every other bin/ script.
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
@@ -32,13 +49,29 @@ diff_base_ref() {
   fi
 }
 
-id="${1:-}"; stat=0
-[ -n "$id" ] || ac_die "usage: ac-review-diff.sh <id> [--stat]"
-[ "${2:-}" = "--stat" ] && stat=1
+id="${1:-}"; mode=committed; tree=""
+[ -n "$id" ] || ac_die "usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked] [--tree <worktree>]"
+shift
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --stat) mode=stat ;;
+    --live) mode=live ;;
+    --uncommitted) mode=uncommitted ;;
+    --untracked) mode=untracked ;;
+    --tree) shift; tree="${1:-}"; [ -n "$tree" ] || ac_die "--tree needs a path" ;;
+    *) ac_die "unknown argument: $1" ;;
+  esac
+  shift
+done
 meta="$(ac_task_meta "$id")"
-[ -f "$meta" ] || ac_die "no crewmate meta for $id"
-worktree="$(ac_meta_get "$meta" worktree)"
-[ -d "$worktree" ] || ac_die "worktree gone: $worktree"
+if [ -n "$tree" ]; then
+  worktree="$tree"
+  git -C "$worktree" rev-parse --git-dir >/dev/null 2>&1 || ac_die "not a git worktree: $tree"
+else
+  [ -f "$meta" ] || ac_die "no crewmate meta for $id"
+  worktree="$(ac_meta_get "$meta" worktree)"
+  [ -d "$worktree" ] || ac_die "worktree gone: $worktree"
+fi
 
 branch="$(ac_crew_branch "$id")"
 head="$branch"
@@ -55,10 +88,29 @@ if [ -n "$proj_name" ] && eb="$(ac_epic_base_for "$id" "$proj_name" 2>/dev/null)
     defref="origin/$ebb"
   fi
 fi
-base="$(git -C "$worktree" merge-base "$defref" "$head")"
-
-if [ "$stat" = 1 ]; then
-  git -C "$worktree" diff --stat "$base" "$head"
-else
-  git -C "$worktree" diff "$base" "$head"
+# A tree pinned to REWRITTEN default-branch history shares no ancestor with
+# defref (measured: a pool lease taken before a commit-tree scrub). No base ->
+# fall back to the tree's own head: the committed view reads empty and the
+# working-tree views still work, instead of a hard errexit death.
+if ! base="$(git -C "$worktree" merge-base "$defref" "$head" 2>/dev/null)"; then
+  base="$head"
 fi
+
+# Untracked files as new-file diffs: read-only by design - `git add -N` would
+# mutate the crewmate's index. --no-index exits 1 on any difference. Relative
+# paths on purpose: -C already stands in the worktree, and an absolute
+# argument would become the rendered a/-b/ header path.
+untracked_diffs() {
+  git -C "$worktree" ls-files --others --exclude-standard -z \
+    | while IFS= read -r -d '' f; do
+        git -C "$worktree" diff --no-index -- /dev/null "$f" || true
+      done
+}
+
+case "$mode" in
+  stat)        git -C "$worktree" diff --stat "$base" "$head" ;;
+  live)        git -C "$worktree" diff "$base"; untracked_diffs ;;
+  uncommitted) git -C "$worktree" diff ;;
+  untracked)   untracked_diffs ;;
+  *)           git -C "$worktree" diff "$base" "$head" ;;
+esac

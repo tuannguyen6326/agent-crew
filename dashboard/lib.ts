@@ -1571,48 +1571,73 @@ export function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Unified-diff colorizer for the board viewer (worktree diff-review): one
- * collapsible <details class="df"> per file with +/- counts, each line span-
- * classed add/del/hunk/meta. Self-contained ES5 (own escaping, no helpers) -
+/** Unified-diff renderer for the board viewer (worktree diff-review),
+ * GitHub-shaped: one collapsible <details class="df"> per file with colored
+ * +/- counts and a state badge (added/deleted/renamed/binary), the body a
+ * table whose rows carry the old/new line-number gutter pair tracked from the
+ * hunk headers; git meta lines (index/---/+++/mode) never render - the file
+ * header already says it. Self-contained ES5 (own escaping, no helpers) -
  * PAGE interpolates its toString(), so the browser runs this exact code. */
-export function diffHtml(text: string): string {
+export function diffHtml(text: string, closed?: boolean): string {
   var src = String(text || "");
   if (!src.replace(/\s/g, "")) return "";
   var lines = src.split("\n");
-  var files: { name: string; lines: string[]; add: number; del: number }[] = [];
-  var cur: { name: string; lines: string[]; add: number; del: number } | null = null;
+  var files: { name: string; rows: string[]; add: number; del: number; badge: string }[] = [];
+  var cur: { name: string; rows: string[]; add: number; del: number; badge: string } | null = null;
+  var oldN = 0, newN = 0;
   function escd(s: string): string {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
   for (var i = 0; i < lines.length; i++) {
     var l = lines[i];
+    if (i === lines.length - 1 && l === "") break;   // the trailing newline's empty tail is not a context line
     if (l.indexOf("diff --git ") === 0) {
       // The b/ side names the file after the change (renames, new files).
       var m = /\sb\/(.+)$/.exec(l);
-      cur = { name: m ? m[1] : l.slice(11), lines: [], add: 0, del: 0 };
+      cur = { name: m ? m[1] : l.slice(11), rows: [], add: 0, del: 0, badge: "" };
       files.push(cur);
+      continue;
     }
-    if (!cur) { cur = { name: "(diff)", lines: [], add: 0, del: 0 }; files.push(cur); }
-    var cls = "meta";
-    if (l.indexOf("@@") === 0) cls = "hunk";
-    else if (l.indexOf("+++") === 0 || l.indexOf("---") === 0 || l.indexOf("diff --git") === 0
-      || l.indexOf("index ") === 0 || l.indexOf("new file") === 0 || l.indexOf("deleted file") === 0
-      || l.indexOf("similarity ") === 0 || l.indexOf("rename ") === 0 || l.indexOf("Binary files") === 0
-      || l.indexOf("old mode") === 0 || l.indexOf("new mode") === 0) cls = "meta";
-    else if (l.charAt(0) === "+") { cls = "add"; cur.add++; }
-    else if (l.charAt(0) === "-") { cls = "del"; cur.del++; }
-    else cls = "ctx";
-    cur.lines.push('<span class="dl ' + cls + '">' + (escd(l) || " ") + "</span>");
+    if (!cur) { cur = { name: "(diff)", rows: [], add: 0, del: 0, badge: "" }; files.push(cur); }
+    if (l.indexOf("new file") === 0) { cur.badge = "added"; continue; }
+    if (l.indexOf("deleted file") === 0) { cur.badge = "deleted"; continue; }
+    if (l.indexOf("rename from") === 0 || l.indexOf("rename to") === 0 || l.indexOf("similarity ") === 0) { cur.badge = "renamed"; continue; }
+    if (l.indexOf("Binary files") === 0) { if (!cur.badge) cur.badge = "binary"; continue; }
+    if (l.indexOf("index ") === 0 || l.indexOf("+++") === 0 || l.indexOf("---") === 0
+      || l.indexOf("old mode") === 0 || l.indexOf("new mode") === 0
+      || l.indexOf("\\ No newline") === 0) continue;
+    var hm = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
+    if (hm) {
+      oldN = Number(hm[1]); newN = Number(hm[2]);
+      cur.rows.push('<tr class="hunk"><td class="ln" colspan="2">&#8943;</td><td class="dc">' + escd(l) + "</td></tr>");
+      continue;
+    }
+    var c0 = l.charAt(0);
+    if (c0 === "+") {
+      cur.add++;
+      cur.rows.push('<tr class="add"><td class="ln"></td><td class="ln">' + newN + '</td><td class="dc">' + escd(l) + "</td></tr>");
+      newN++;
+    } else if (c0 === "-") {
+      cur.del++;
+      cur.rows.push('<tr class="del"><td class="ln">' + oldN + '</td><td class="ln"></td><td class="dc">' + escd(l) + "</td></tr>");
+      oldN++;
+    } else {
+      cur.rows.push('<tr class="ctx"><td class="ln">' + oldN + '</td><td class="ln">' + newN + '</td><td class="dc">' + (escd(l) || " ") + "</td></tr>");
+      oldN++; newN++;
+    }
   }
   var out = "";
   for (var f = 0; f < files.length; f++) {
     var fl = files[f];
-    out += '<details class="df" open><summary><span class="fn">' + escd(fl.name) + "</span>"
-      + ' <span class="n">+' + fl.add + "</span>"
-      + ' <span class="n">-' + fl.del + "</span></summary><pre>"
-      // Each .dl is display:block - a \n separator would render a second,
-      // empty line inside the white-space:pre parent.
-      + fl.lines.join("") + "</pre></details>";
+    // SCM-panel file row: basename first, its directory de-emphasized after.
+    var cut = fl.name.lastIndexOf("/");
+    var bn = cut >= 0 ? fl.name.slice(cut + 1) : fl.name;
+    var dir = cut >= 0 ? fl.name.slice(0, cut) : "";
+    out += '<details class="df"' + (closed ? "" : " open") + '><summary><span class="fn">' + escd(bn) + "</span>"
+      + (dir ? ' <span class="fp">' + escd(dir) + "</span>" : "")
+      + (fl.badge ? ' <span class="fb ' + fl.badge + '">' + fl.badge + "</span>" : "")
+      + ' <span class="n na">+' + fl.add + '</span> <span class="n nd">-' + fl.del + "</span></summary>"
+      + '<div class="dfx"><table class="dft"><tbody>' + fl.rows.join("") + "</tbody></table></div></details>";
   }
   return out;
 }

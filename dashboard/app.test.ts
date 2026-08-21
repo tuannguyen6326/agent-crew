@@ -3133,17 +3133,37 @@ const SAMPLE_DIFF = [
   "+hello",
 ].join("\n");
 
-test("diffHtml groups per file with +/- counts and classified lines", () => {
+test("diffHtml groups per file with +/- counts and classified rows", () => {
   const h = diffHtml(SAMPLE_DIFF);
-  expect(h).toContain("src/a.ts");
-  expect(h).toContain("docs/b.md");
+  // File-list summary, SCM-panel shape: basename first, dir de-emphasized.
+  expect(h).toContain('<span class="fn">a.ts</span> <span class="fp">src</span>');
+  expect(h).toContain('<span class="fn">b.md</span> <span class="fp">docs</span>');
   expect((h.match(/<details class="df"/g) || []).length).toBe(2);
-  expect(h).toContain('<span class="n">+2</span>');       // a.ts adds
-  expect(h).toContain('<span class="n">-1</span>');
-  expect(h).toContain('<span class="n">+1</span>');       // b.md adds
-  expect(h).toContain('class="dl add"');
-  expect(h).toContain('class="dl del"');
-  expect(h).toContain('class="dl hunk"');
+  expect(h).toContain('<span class="n na">+2</span>');    // a.ts adds
+  expect(h).toContain('<span class="n nd">-1</span>');
+  expect(h).toContain('<span class="n na">+1</span>');    // b.md adds
+  expect(h).toContain('<tr class="add">');
+  expect(h).toContain('<tr class="del">');
+  expect(h).toContain('<tr class="hunk">');
+});
+
+test("diffHtml carries GitHub-style line-number gutters from the hunk headers", () => {
+  const h = diffHtml(SAMPLE_DIFF);
+  // a.ts @@ -1,3 +1,4 @@: ctx keep = 1|1, del = 2|-, add new & better = -|2, add added = -|3
+  expect(h).toContain('<tr class="ctx"><td class="ln">1</td><td class="ln">1</td>');
+  expect(h).toContain('<tr class="del"><td class="ln">2</td><td class="ln"></td>');
+  expect(h).toContain('<tr class="add"><td class="ln"></td><td class="ln">2</td>');
+  expect(h).toContain('<tr class="add"><td class="ln"></td><td class="ln">3</td>');
+  // b.md @@ -0,0 +1 @@: its one added line is new-line 1
+  expect(h).toContain('<tr class="add"><td class="ln"></td><td class="ln">1</td>');
+});
+
+test("diffHtml hides git meta lines and badges the file state instead", () => {
+  const h = diffHtml(SAMPLE_DIFF);
+  expect(h).not.toContain("index 111..222");
+  expect(h).not.toContain("+++ b/src/a.ts");
+  expect(h).not.toContain("--- /dev/null");
+  expect(h).toContain('<span class="fb added">added</span>');   // b.md is a new file
 });
 
 test("diffHtml escapes payload HTML so a diffed <script> never runs", () => {
@@ -3156,4 +3176,9 @@ test("diffHtml escapes payload HTML so a diffed <script> never runs", () => {
 test("diffHtml on an empty diff returns the empty string (the caller renders the empty state)", () => {
   expect(diffHtml("")).toBe("");
   expect(diffHtml("   \n")).toBe("");
+});
+
+test("diffHtml closed=true collapses every file card (the SCM file-list shape)", () => {
+  expect(diffHtml(SAMPLE_DIFF, true)).not.toContain('<details class="df" open>');
+  expect(diffHtml(SAMPLE_DIFF)).toContain('<details class="df" open>');
 });

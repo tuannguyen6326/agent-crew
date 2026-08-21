@@ -928,17 +928,20 @@ function readPools(homePath: string): PoolSlot[] {
       const meta = `${slotsDir}/${f}`;
       const leased = metaGet(meta, "leased") === "1";
       const task = metaGet(meta, "task");
+      // The slot's OWN tree: slots/<n>.meta <-> worktrees/<n> is the pool
+      // mapping (ac-tree.sh). Joining the task meta here was wrong twice
+      // over - a second lease showed the task's FIRST tree, and an archived
+      // task showed none at all.
+      const slot = f.replace(/\.meta$/, "");
+      const slotTree = `${root}/.crew/worktrees/${slot}`;
       pools.push({
         repo,
-        slot: f.replace(/\.meta$/, ""),
+        slot,
         state: leased ? "leased" : "available",
         task: leased && task ? task : null,
         holder: leased ? metaGet(meta, "holder") || null : null,
         leased_at: leased ? metaGet(meta, "leased_at") || null : null,
-        worktree:
-          leased && task
-            ? metaGet(`${homePath}/state/${task}.meta`, "worktree") || null
-            : null,
+        worktree: leased && existsSync(slotTree) ? slotTree : null,
       });
     }
   }
@@ -3115,17 +3118,29 @@ export function collectFamilyTasks(
  * with the LOCAL-ONLY-aware default branch, epic-branch aware). The id gate +
  * home allowlist are the whole surface - the script itself refuses an id with
  * no meta or a gone worktree, which the client renders as the empty state. */
-async function diffShow(homePath: string, id: string): Promise<Response> {
+const DIFF_MODES: Record<string, string> = {
+  live: "--live", committed: "", uncommitted: "--uncommitted", untracked: "--untracked",
+};
+async function diffShow(homePath: string, id: string, mode: string, tree: string): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
   if (!/^[a-zA-Z0-9_-]+$/.test(id))
     return json({ error: "bad id" }, 400);
-  const { code, out } = await run([`${BIN}/ac-review-diff.sh`, id], { AC_HOME: homePath });
+  if (!(mode in DIFF_MODES)) return json({ error: "bad mode" }, 400);
+  // A client-supplied tree must be one the ac-tree pool actually lists for
+  // this home - the pool is the truth of leased trees, and this gate is what
+  // lets the script itself stay path-trusting for its CLI operator.
+  if (tree && !readPools(homePath).some((p) => p.worktree === tree))
+    return json({ error: "worktree not in this home's pool" }, 404);
+  const args = [`${BIN}/ac-review-diff.sh`, id];
+  if (DIFF_MODES[mode]) args.push(DIFF_MODES[mode]);
+  if (tree) args.push("--tree", tree);
+  const { code, out } = await run(args, { AC_HOME: homePath });
   if (code !== 0)
     return json({ error: `no diff for ${id} - no live worktree (torn down, or a stage id?)` }, 404);
   // 400KB keeps a runaway diff from freezing the viewer; the cut is stated.
   const MAX = 400 * 1024;
-  return json({ id, diff: out.slice(0, MAX), truncated: out.length > MAX });
+  return json({ id, mode, diff: out.slice(0, MAX), truncated: out.length > MAX });
 }
 
 async function familyDetail(homePath: string, family: string): Promise<Response> {
@@ -6509,7 +6524,9 @@ export function dashboardMain() {
       if (url.pathname === "/api/diff") {
         const p = url.searchParams.get("path");
         const id = url.searchParams.get("id");
-        return p && id ? diffShow(p, id) : json({ error: "path and id required" }, 400);
+        const mode = url.searchParams.get("mode") ?? "live";
+        const tree = url.searchParams.get("tree") ?? "";
+        return p && id ? diffShow(p, id, mode, tree) : json({ error: "path and id required" }, 400);
       }
       if (url.pathname === "/api/artifact") {
         const p = url.searchParams.get("path");

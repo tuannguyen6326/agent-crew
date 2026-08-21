@@ -693,8 +693,9 @@ ${UX_BASE}
   .chiefp .cbar .cback{ font-size:15px; line-height:1; padding:2px 9px; border:1px solid var(--line); border-radius:4px;
     color:var(--muted); text-decoration:none; }
   .chiefp .cbar .cback:hover{ color:var(--accent); border-color:var(--accent); text-decoration:none; }
-  .story .fopen{ margin-left:auto; font-size:11px; padding:1px 7px; border:1px solid var(--line); border-radius:4px; background:var(--elev); color:var(--muted); cursor:pointer; }
-  .story .fopen:hover{ color:var(--accent); border-color:var(--accent); }
+  .story .fopen, .tbl .fopen{ margin-left:auto; font-size:11px; padding:1px 7px; border:1px solid var(--line); border-radius:4px; background:var(--elev); color:var(--muted); cursor:pointer; }
+  .story .fopen:hover, .tbl .fopen:hover{ color:var(--accent); border-color:var(--accent); }
+  .tbl .fopen{ margin-left:6px; }
   .bdetail .rail{ border-right:1px solid var(--line); background:var(--panel); overflow:auto; padding:16px; }
   .bdetail h4{ margin:16px 0 8px; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:700; }
   .bdetail h4:first-child{ margin-top:0; }
@@ -738,18 +739,43 @@ ${UX_BASE}
   .bdetail .tlbtn{ display:flex; align-items:center; gap:6px; margin-top:10px; width:100%; text-align:left; background:var(--accent-soft); color:var(--accent); border:1px solid var(--line); border-radius:9px; padding:8px 12px; font-size:12.5px; font-weight:600; cursor:pointer; }
   .bdetail .tlbtn:hover{ background:var(--accent); color:var(--accent-ink); }
   .bdetail .tlbtn .n{ color:inherit; opacity:.75; font-weight:400; font-size:11px; }
-  /* Worktree diff viewer (diff-review): one collapsible card per file. */
+  /* Worktree diff viewer (diff-review), GitHub-shaped: one collapsible card
+     per file, a line-number gutter pair, full-row add/del tints. */
   .dfwrap{ padding:16px 20px; }
   .df{ border:1px solid var(--line); border-radius:9px; margin:0 0 12px; overflow:hidden; background:var(--surface); }
   .df>summary{ cursor:pointer; padding:8px 12px; font:600 12.5px/1.4 var(--mono); border-bottom:1px solid var(--line); list-style-position:inside; }
-  .df>summary .n{ font-weight:400; font-size:11px; color:var(--muted); margin-left:2px; }
-  .df pre{ margin:0; padding:8px 0; overflow-x:auto; font:12px/1.55 var(--mono); }
-  .df .dl{ display:block; padding:0 12px; white-space:pre; min-height:1.55em; }
-  .df .dl.add{ color:var(--success); background:color-mix(in srgb, var(--success) 9%, transparent); }
-  .df .dl.del{ color:var(--error); background:color-mix(in srgb, var(--error) 9%, transparent); }
-  .df .dl.hunk{ color:var(--accent); }
-  .df .dl.meta{ color:var(--muted); }
+  .df>summary .n{ font-weight:600; font-size:11px; margin-left:2px; }
+  .df>summary .na{ color:var(--success); }
+  .df>summary .nd{ color:var(--error); }
+  .df>summary .fb{ font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; padding:1px 6px; border-radius:9px; border:1px solid var(--line); color:var(--muted); margin-left:4px; }
+  .df>summary .fb.added{ color:var(--success); border-color:var(--success); }
+  .df>summary .fb.deleted{ color:var(--error); border-color:var(--error); }
+  .dfx{ overflow-x:auto; }
+  .dft{ border-collapse:collapse; width:100%; font:12px/1.6 var(--mono); }
+  .dft td{ padding:0 10px; vertical-align:top; }
+  .dft .ln{ width:1%; min-width:36px; text-align:right; color:var(--muted); font-size:11px; user-select:none; background:color-mix(in srgb, var(--elev) 55%, transparent); }
+  .dft .dc{ white-space:pre; }
+  .dft tr.add .dc{ background:color-mix(in srgb, var(--success) 12%, transparent); }
+  .dft tr.add .ln{ background:color-mix(in srgb, var(--success) 22%, transparent); }
+  .dft tr.del .dc{ background:color-mix(in srgb, var(--error) 12%, transparent); }
+  .dft tr.del .ln{ background:color-mix(in srgb, var(--error) 22%, transparent); }
+  .dft tr.hunk td{ background:color-mix(in srgb, var(--accent) 10%, transparent); color:var(--accent); padding-top:3px; padding-bottom:3px; }
   .dfnote{ color:var(--warning); font-size:12px; padding:4px 2px; }
+  .dflive{ color:var(--muted); font-size:11px; margin:0 0 8px; }
+  /* Source Control tab: one collapsible section per live worktree. */
+  .scwrap{ padding:16px 20px; max-width:1200px; }
+  .sctask{ border:1px solid var(--line); border-radius:9px; margin:0 0 14px; background:var(--surface); }
+  .sctask>summary{ cursor:pointer; padding:9px 14px; display:flex; align-items:center; gap:10px; list-style-position:inside; }
+  .sctask>summary .scid{ font-weight:600; font-size:13px; }
+  .sctask>summary .scmeta{ margin-left:auto; font:600 11px var(--mono); display:flex; gap:8px; align-items:center; }
+  .sctask>summary .na{ color:var(--success); } .sctask>summary .nd{ color:var(--error); }
+  .sctask[open]>summary{ border-bottom:1px solid var(--line); }
+  .scbody{ padding:10px 14px; }
+  .scbody .df{ background:var(--canvas); margin:0 0 6px; }
+  .scgroup{ margin:12px 0 6px; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+  .scgroup:first-child{ margin-top:2px; }
+  .scgroup .scgn{ color:var(--fg2); font-weight:600; }
+  .df>summary .fp{ color:var(--muted); font-size:11px; font-weight:400; }
   .bdetail .tl{ padding:20px 26px; }
   .bdetail .tlrow{ display:flex; gap:12px; padding-bottom:16px; position:relative; }
   .bdetail .tlrow:not(:last-child)::before{ content:''; position:absolute; left:5px; top:14px; bottom:0; width:2px; background:var(--line); }
@@ -1193,6 +1219,7 @@ function parseRoute(path){
   if(parts[0]==='fleets' && parts.length>=3){
     var fleet=dec(parts[1]); var pg=parts[2];
     if(pg==='processes' && parts.length===3) return { name:'processes', fleet:fleet };
+    if(pg==='changes' && parts.length===3) return { name:'changes', fleet:fleet };
     if(pg==='board' && parts.length===3) return { name:'board', fleet:fleet, fam:null };
     // A family's detail is a ROUTE, not a modal: same page, deep-linkable,
     // back/forward walks in and out of it like every other view here.
@@ -1301,6 +1328,7 @@ function routeEndpoint(r){
   if(!r || !r.home) return null;
   var p=enc(r.home.path);
   if(r.name==='processes') return '/api/processes?path='+p;
+  if(r.name==='changes') return '/api/processes?path='+p;   // the pool list IS this page's data
   if(r.name==='board') return '/api/backlog?path='+p;
   if(r.name==='backlog') return '/api/backlog?path='+p;
   if(r.name==='reports'){ var ru=uiFor(routeKey(r)); return '/api/reports?path='+p+((ru.showAll||ru.query)?'':'&limit=20'); }
@@ -1461,7 +1489,7 @@ function renderNav(){
   // (menu-dedup): Board and Backlog told the same ledger twice; /backlog
   // deep links stay alive as a parseRoute alias onto the Board.
   var groups=[
-    ['Monitor', [['board','Board'],['processes','Processes']]],
+    ['Monitor', [['board','Board'],['processes','Processes'],['changes','Source Control']]],
     ['Work',    [['reports','Reports'],['reviews','Reviews'],['whiteboards','Whiteboards']]],
     ['Knowledge',[['records','Records'],['brain','Brain'],['learning','Learning'],['domains','Domains']]],
     ['System',  [['config','Config']]]
@@ -1497,7 +1525,7 @@ function renderHealth(){
 
 function renderHead(){
   var r=S.route||{name:'fleets'};
-  var titles={fleets:'Fleets', processes:'Processes', board:'Board', chat:'Chat', term:'Terminal', brain:'Brain', reports:'Reports', reviews:'Reviews', whiteboards:'Whiteboards', records:'Records', domains:'Domains', learning:'Learning', search:'Search', config:'Config', notfound:'Not found', root:'Fleets'};
+  var titles={fleets:'Fleets', processes:'Processes', changes:'Source Control', board:'Board', chat:'Chat', term:'Terminal', brain:'Brain', reports:'Reports', reviews:'Reviews', whiteboards:'Whiteboards', records:'Records', domains:'Domains', learning:'Learning', search:'Search', config:'Config', notfound:'Not found', root:'Fleets'};
   el('page-title').textContent = titles[r.name]||'Dashboard';
   var crumb='';
   if(r.fleet) crumb='<b>'+esc(r.fleet)+'</b>';
@@ -1517,6 +1545,9 @@ function headMeta(r){
     return '<span>'+(r.home.crew?r.home.crew.count:0)+' active</span>'
       +(cad?'<span class="cadence'+(cad.due?' due':'')+'">'+esc(cad.text)+'</span>':''); }
   if(r.name==='board' && S.page && S.page.backlog){ var bb=S.page.backlog; return '<span>'+bb.in_flight.length+' in flight &middot; '+bb.queued.length+' queued &middot; '+realDoneCount(bb.done)+' done</span>'; }
+  if(r.name==='changes' && S.page && S.page.pools){ var cp=S.page.pools, cn=0;
+    for(var ci=0;ci<cp.length;ci++){ if(cp[ci].state==='leased') cn++; }
+    return '<span>'+cn+' leased worktree'+(cn===1?'':'s')+'</span>'; }
   if(r.name==='reports' && S.page && S.page.artifacts){ return '<span>'+(S.page.total||S.page.artifacts.length)+' artifacts</span>'; }
   if(r.name==='records' && S.page && S.page.records){ return '<span>'+S.page.records.length+' ledgers</span>'; }
   if(r.name==='domains' && S.page && S.page.domains){ var dv=S.page.domains.filter(function(d){return d.cls==='VALID';}).length, di=S.page.domains.length-dv;
@@ -1544,6 +1575,7 @@ function renderPage(){
   else if(r.fleet && S.snap && !r.home) html=stateBox('Fleet not found', 'No fleet named "'+r.fleet+'" in the current survey.', 'err');
   else if(r.fleet && !r.home) html=skeleton();
   else if(r.name==='processes') html=pageProcesses();
+  else if(r.name==='changes') html=pageChanges();
   else if(r.name==='board') html=pageBoard();
   else if(r.name==='chat') html=pageChat();
   else if(r.name==='term') html=pageTerm();
@@ -1557,6 +1589,12 @@ function renderPage(){
   else if(r.name==='config') html=pageConfig();
   else html=pageNotFound(r);
   morphInto(el('page'), html, 'page');
+  // Pool-table diff hop: fire once the detail's viewer exists (the detail body
+  // renders only after its /api/family lands); leaving the board drops it.
+  if(boardDiffPending){
+    if(!(r&&r.name==='board'&&r.fam)) boardDiffPending=null;
+    else if(el('board-vbody')){ var pdi=boardDiffPending; boardDiffPending=null; boardShowDiff(pdi.id, pdi.tree); }
+  }
   // Chat tab: the panel polls its own pane API; renderPage runs every poll
   // tick, so chiefPollStart's same-target guard keeps this idempotent. On the
   // board, boardSyncFamily owns the same poll for the open family's chief.
@@ -1840,7 +1878,9 @@ function poolTable(pools){
     for(var i=0;i<list.length;i++){ var p=list[i];
       r+='<tr><td class="mono">'+esc(p.repo)+'</td><td class="mono">'+esc(p.slot)+'</td>';
       r+='<td><span class="badge '+(p.state==='leased'?'ok':(p.state==='available'?'':'warn'))+'">'+esc(p.state)+'</span></td>';
-      r+='<td class="mono">'+esc(p.task||'—')+'</td><td class="ts">'+esc(p.leased_at||'—')+'</td><td class="mono" style="font-size:11px">'+esc(p.worktree||'—')+'</td></tr>';
+      var dchip=(p.state==='leased'&&p.task&&p.worktree&&p.task.slice(-6)!=='-chief')
+        ?' <button type="button" class="fopen mono" data-pool-diff="'+esc(p.task)+'" data-pool-tree="'+esc(p.worktree)+'" title="Review this worktree&#39;s diff">± diff</button>':'';
+      r+='<td class="mono">'+esc(p.task||'—')+dchip+'</td><td class="ts">'+esc(p.leased_at||'—')+'</td><td class="mono" style="font-size:11px">'+esc(p.worktree||'—')+'</td></tr>';
     }
     return r;
   }
@@ -1863,6 +1903,7 @@ function poolTable(pools){
 var boardArt={};                       // per-home reports cache: { ts, arts, loading }
 var familyCache={}, familyLoading={};  // per "home|family" detail cache (overlay)
 var boardOpenFam=null;                 // family id whose detail overlay is open
+var boardDiffPending=null;             // task id to open in the diff viewer once its board detail mounts (pool-table hop)
 var boardArtReq=0;                      // monotonic guard: a newer inline-artifact fetch wins
 
 // Fetch the home's artifact list once (12s TTL); a board re-render refreshes it.
@@ -2948,7 +2989,7 @@ function boardShowRoom(){
 }
 // Diff in the viewer (worktree diff-review): the rail's per-live-task Diff
 // button fetches /api/diff and renders it through the bun-tested diffHtml.
-function boardShowDiff(id){
+function boardShowDiff(id, tree){
   var box=document.querySelector('.bdetail'); if(!box) return;
   var prev=box.querySelector('.art.on'); if(prev) prev.classList.remove('on');
   var hp=S.route.home?S.route.home.path:'';
@@ -2959,13 +3000,74 @@ function boardShowDiff(id){
   boardSetReviewBtn(null);
   if(!vbody) return;
   vbody.innerHTML=skeleton();
-  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)).then(function(x){ return x.json(); }).then(function(j){
+  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+(tree?'&tree='+enc(tree):'')).then(function(x){ return x.json(); }).then(function(j){
     var vb=el('board-vbody'); if(!vb) return;
     if(j.error){ vb.innerHTML=stateBox('No diff', j.error, ''); return; }
     if(!j.diff||!j.diff.trim()){ vb.innerHTML=stateBox('Empty diff','the worktree carries no change against its base',''); return; }
-    vb.innerHTML='<div class="dfwrap">'+diffHtml(j.diff)
-      +(j.truncated?'<div class="dfnote">diff truncated at 400KB - read the rest with bin/ac-review-diff.sh '+esc(id)+'</div>':'')+'</div>';
+    vb.innerHTML='<div class="dfwrap"><div class="dflive">live worktree - uncommitted changes included</div>'+diffHtml(j.diff)
+      +(j.truncated?'<div class="dfnote">diff truncated at 400KB - read the rest with bin/ac-review-diff.sh '+esc(id)+' --live</div>':'')+'</div>';
   }).catch(function(){ var vb=el('board-vbody'); if(vb) vb.innerHTML=stateBox('Diff unavailable','request failed',''); });
+}
+// ---- Source Control (dash-source-control): the ac-tree POOL is the truth of
+// worktrees - one collapsible section per leased slot (a multi-repo task
+// shows each of its trees; a lease that outlived its task meta still shows).
+// Each section renders the three SCM groups (changes / untracked / committed
+// on branch), file cards closed until clicked. A loaded section is a
+// preserved island keyed on its load states, so toggles survive polling.
+var SC_GROUPS=[['uncommitted','Changes'],['untracked','Untracked files'],['committed','Committed on branch']];
+var scDiff={};   // hp|id|tree|mode -> {loading} | {error} | {empty:1} | {html,add,del,files}
+function scLoad(hp,id,tree,mode){
+  var ck=hp+'|'+id+'|'+tree+'|'+mode; if(scDiff[ck]) return;
+  scDiff[ck]={loading:1};
+  var settle=function(e){ scDiff[ck]=e; if(S.route&&S.route.name==='changes') renderPage(); };
+  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+'&mode='+enc(mode)+(tree?'&tree='+enc(tree):'')).then(function(x){ return x.json(); }).then(function(j){
+    if(j.error) return settle({error:j.error});
+    if(!j.diff||!j.diff.trim()) return settle({empty:1});
+    var add=0, del=0, files=0, lines=j.diff.split(String.fromCharCode(10));
+    for(var i=0;i<lines.length;i++){ var l=lines[i];
+      if(l.indexOf('diff --git ')===0){ files++; continue; }
+      if(l.indexOf('+++')===0||l.indexOf('---')===0) continue;
+      if(l.charAt(0)==='+') add++; else if(l.charAt(0)==='-') del++;
+    }
+    settle({html:diffHtml(j.diff,true)+(j.truncated?'<div class="dfnote">diff truncated at 400KB</div>':''), add:add, del:del, files:files});
+  }).catch(function(){ settle({error:'request failed'}); });
+}
+function scState(d){ return !d||d.loading?'l':(d.error?'x':(d.empty?'0':'k')); }
+function pageChanges(){
+  var r=S.route, hp=r.home?r.home.path:'';
+  var pools=(S.page&&S.page.pools)||[], rows=[];
+  for(var i=0;i<pools.length;i++){ var p=pools[i]; if(p.state==='leased'&&p.worktree) rows.push(p); }
+  if(!rows.length) return S.page?stateBox('No leased worktrees','the ac-tree pool has nothing leased - changes appear here while crew work is in flight',''):skeleton();
+  var s='<div class="scwrap"><div class="dflive">the ac-tree worktree pool - every leased tree, uncommitted work included</div>';
+  for(var k=0;k<rows.length;k++){ var pl=rows[k], id=pl.task||'', tree=pl.worktree;
+    var ds={}, states='', tAdd=0, tDel=0, tFiles=0, loading=false;
+    for(var g=0;g<SC_GROUPS.length;g++){ var mk=SC_GROUPS[g][0], d=scDiff[hp+'|'+id+'|'+tree+'|'+mk];
+      if(!d) scLoad(hp, id, tree, mk);
+      d=scDiff[hp+'|'+id+'|'+tree+'|'+mk]; ds[mk]=d; states+=scState(d);
+      if(!d||d.loading) loading=true;
+      else if(d.html){ tAdd+=d.add; tDel+=d.del; tFiles+=d.files; }
+    }
+    var badge = loading ? '<span class="muted">loading&hellip;</span>'
+      : ds.committed&&ds.committed.error ? '<span class="badge warn">no diff</span>'
+      : !tFiles ? '<span class="muted">clean</span>'
+      : '<span class="n na">+'+tAdd+'</span> <span class="n nd">-'+tDel+'</span> <span class="muted">'+tFiles+' file'+(tFiles===1?'':'s')+'</span>';
+    var body='';
+    if(ds.committed&&ds.committed.error){ body=stateBox('No diff', ds.committed.error, ''); }
+    else if(loading){ body=skeleton(); }
+    else if(!tFiles){ body='<div class="muted" style="padding:6px 0 2px">worktree clean - no change against its base</div>'; }
+    else{
+      for(var g2=0;g2<SC_GROUPS.length;g2++){ var mk2=SC_GROUPS[g2][0], d2=ds[mk2];
+        if(!d2||!d2.html) continue;
+        body+='<div class="scgroup"><span class="scgh">'+SC_GROUPS[g2][1]+'</span> <span class="scgn">'+d2.files+'</span></div>'+d2.html;
+      }
+    }
+    s+='<details class="sctask" open data-preserve="sc|'+esc(hp)+'|'+esc(id)+'|'+esc(tree)+'|'+states+'">'
+      +'<summary><span class="mono scid">'+esc(id||'(unattributed)')+'</span>'
+      +' <span class="muted" style="font-size:11px">'+esc(pl.repo)+' &middot; '+esc(pl.slot)+'</span>'
+      +'<span class="scmeta">'+badge+'</span></summary>'
+      +'<div class="scbody">'+body+'</div></details>';
+  }
+  return s+'</div>';
 }
 function boardShowTimeline(){
   var box=document.querySelector('.bdetail'); if(!box) return;   // the detail lives in #page now, not under a modal id
@@ -4098,6 +4200,18 @@ function onClick(e){
   if((n=t.closest('[data-board-timeline]'))){ boardShowTimeline(); return; }   // render the lifecycle timeline in the viewer
   if((n=t.closest('[data-board-room]'))){ boardShowRoom(); return; }           // render the family room in the viewer (room-in-viewer)
   if((n=t.closest('[data-board-diff]'))){ boardShowDiff(n.getAttribute('data-board-diff')); return; }  // render a live task's worktree diff
+  if((n=t.closest('[data-pool-diff]'))){
+    // Worktree-pool hop: resolve the task's family by longest known-family
+    // prefix (the processes payload carries the ledger's ids), fall back to
+    // the id itself - the detail page renders headless families fine.
+    var pdid=n.getAttribute('data-pool-diff'), pfam=pdid;
+    var kn=(S.page&&S.page.families)||[], best='';
+    for(var kj=0;kj<kn.length;kj++){ if((pdid===kn[kj]||pdid.indexOf(kn[kj]+'-')===0)&&kn[kj].length>best.length) best=kn[kj]; }
+    if(best) pfam=best;
+    boardDiffPending={id:pdid, tree:n.getAttribute('data-pool-tree')||''};
+    navigate('/fleets/'+enc(S.route.fleet)+'/board/'+enc(pfam));
+    return;
+  }
   if((n=t.closest('[data-board-overview]'))){ boardShowOverview(); return; }   // back from room/timeline/artifact to the overview
   if((n=t.closest('[data-board-art]'))){ boardOpenArt(n); return; }   // load artifact inline (detail viewer)
   if((n=t.closest('[data-stage-toggle]'))){ var box2=n.closest('.stage,.story'); if(box2) box2.classList.toggle('collapsed'); return; }
