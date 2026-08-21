@@ -7755,13 +7755,16 @@ if (import.meta.main) {
           return;
         }
         void d.proc.exited.then(() => { try { ws.close(1000, "herdr client exited"); } catch {} });
-        const dd = ws.data as { wsDigit?: string };
+        const dd = ws.data as { wsDigit?: string; focusTab?: string; home?: string };
         if (dd.wsDigit) {
           // Steer ONLY this client onto the scoped workspace once herdr has
           // painted: the config prefix chord (ctrl+b, then the picker digit).
           // Workspace view is per-client - captain-verified: a webterm client
           // never moves the WezTerm one.
           setTimeout(() => { try { d.term?.write("\x02" + dd.wsDigit); } catch { /* pty gone */ } }, 900);
+        }
+        if (dd.focusTab && dd.home) {
+          setTimeout(() => { void run(["herdr", "tab", "focus", dd.focusTab!], { AC_HOME: dd.home }); }, 1200);
         }
       },
       message(ws, data) {
@@ -7827,7 +7830,7 @@ if (import.meta.main) {
         // A fleet/family scope opens this client AT that target's workspace:
         // resolve the pane, map its workspace to its picker number, and the
         // pty open branch types the switch chord once herdr has painted.
-        let wsDigit = "";
+        let wsDigit = "", focusTab = "";
         const famT = url.searchParams.get("fleet") === "1" ? "" : url.searchParams.get("family");
         if (famT !== null) {
           const t = await panelPaneOf(p, famT, "");
@@ -7838,9 +7841,18 @@ if (import.meta.main) {
               const n = wss.find((w) => w.workspace_id === t.pane.split(":")[0])?.number;
               if (n && n >= 1 && n <= 9) wsDigit = String(n);
             } catch { /* list unreadable - open unscoped */ }
+            // The workspace chord alone can land on whichever tab was active
+            // there (a watcher tail, a crewmate) - focus the target's own tab
+            // so the scoped open shows the CHIEF pane (the roomSend precedent:
+            // it focuses this same tab before every typed message).
+            const pl = await run(["herdr", "pane", "list"], { AC_HOME: p });
+            try {
+              const panes = (JSON.parse(pl.out) as { result?: { panes?: { pane_id: string; tab_id?: string }[] } }).result?.panes ?? [];
+              focusTab = panes.find((x) => x.pane_id === t.pane)?.tab_id ?? "";
+            } catch { /* unreadable - workspace-only steering */ }
           }
         }
-        if (server.upgrade(req, { data: { kind: "pty", ...size, wsDigit } })) return undefined as unknown as Response;
+        if (server.upgrade(req, { data: { kind: "pty", ...size, wsDigit, focusTab, home: p } })) return undefined as unknown as Response;
         return json({ error: "websocket required" }, 400);
       }
       if (url.pathname === "/api/room/stream") {
@@ -8686,18 +8698,10 @@ ${UX_BASE}
   .bcard.wait{ border-color:var(--warning); border-left-color:var(--warning); background:var(--warn-soft); }
   .bcard.wait:hover{ border-color:var(--warning); }
   .chipm.wait{ color:var(--warning); border-color:var(--warning); background:var(--warn-soft); font-weight:700; }
-  /* Answer-in-place: the reply box docks under its amber card as one unit. */
-  .bunit{ margin:8px 0 0; }
-  .bunit .bcard{ margin:0; border-bottom-left-radius:0; border-bottom-right-radius:0; border-bottom:0; }
-  .bans{ border:1px solid var(--warning); border-top:1px dashed var(--warning); background:var(--warn-soft);
-    border-radius:0 0 8px 8px; padding:8px 10px; }
-  .bdetail > .bans{ border-radius:8px; border-top-style:solid; margin:10px 14px 0; }
-  .bans .q{ font-size:11.5px; color:var(--ink); white-space:pre-wrap; word-break:break-word; margin-bottom:6px; max-height:96px; overflow-y:auto; }
-  .bans .row{ display:flex; gap:6px; align-items:flex-end; }
-  .bans textarea{ flex:1; resize:vertical; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:12px var(--ui); }
-  .bans .note{ font-size:11px; color:var(--muted); min-height:14px; margin-top:4px; }
-  .bans .note.err{ color:var(--error); }
-  .bans .note.okk{ color:var(--success); }
+  /* The wait chip doubles as the approve shortcut (opens the dock at the
+     family's pane), so it reads as pressable. */
+  .chipm.wait{ cursor:pointer; }
+  .chipm.wait:hover{ filter:brightness(1.25); }
   .chipm.shared{ color:var(--success); border-color:var(--success); }
   .chipm.g{ background:var(--good-soft); color:var(--good); border-color:transparent; } .chipm.a{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
   /* Delivery-contract chips: SOLID = pinned on the row (the captain's word),
@@ -8745,9 +8749,12 @@ ${UX_BASE}
   .bdetail.inpage{ height:calc(100vh - 90px); }
   .bback{ display:inline-block; align-self:flex-start; margin:0 0 2px 2px; padding:4px 10px; font-size:12.5px; color:var(--muted); border:1px solid var(--line); border-radius:7px; background:var(--bg); }
   .bback:hover{ color:var(--accent); border-color:var(--accent); text-decoration:none; }
-  .bdetail .fhead{ display:flex; align-items:center; gap:11px; padding:14px 20px; border-bottom:1px solid var(--line); background:var(--panel-2); flex:0 0 auto; }
-  .bdetail .fhead .did{ font-family:var(--mono); font-weight:700; font-size:17px; letter-spacing:-.01em; color:var(--ink); word-break:break-all; }
-  .bdetail .fhead .stt{ background:var(--good-soft); color:var(--good); border-radius:6px; font-size:11px; padding:3px 9px; font-weight:600; }
+  .bdetail .fhead{ display:flex; align-items:center; flex-wrap:wrap; gap:8px 11px; padding:14px 20px; border-bottom:1px solid var(--line); background:var(--panel-2); flex:0 0 auto; }
+  /* overflow-wrap, not break-all: a hyphenated family id breaks at its
+     hyphens, never mid-word, and only a truly unbreakable run falls back to
+     a character break. */
+  .bdetail .fhead .did{ font-family:var(--mono); font-weight:700; font-size:17px; letter-spacing:-.01em; color:var(--ink); overflow-wrap:anywhere; min-width:0; }
+  .bdetail .fhead .stt{ background:var(--good-soft); color:var(--good); border-radius:6px; font-size:11px; padding:3px 9px; font-weight:600; white-space:nowrap; flex:0 0 auto; }
   .bdetail .fhead .stt.q{ background:var(--warn-soft); color:var(--warn); } .bdetail .fhead .stt.f{ background:var(--accent-soft); color:var(--accent); }
   .bdetail .fhead .stt.err{ background:transparent; color:var(--error); border:1px solid var(--error); } .bdetail .fhead .stt.stale{ background:transparent; color:var(--stale); border:1px solid var(--stale); }
   .bdetail .fhead .x{ margin-left:auto; font-size:18px; color:var(--muted); border:1px solid var(--line); border-radius:9px; width:32px; height:32px; display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
@@ -8759,7 +8766,16 @@ ${UX_BASE}
   .bdetail .railtg{ float:right; font:600 11px var(--mono); padding:2px 6px; border:1px solid var(--line); border-radius:4px; background:var(--elev); color:var(--muted); cursor:pointer; }
   .bdetail .fbody.railcut .rail{ padding:6px 2px; }
   .bdetail .fbody.railcut .rail > *:not(.railtg){ display:none; }
-  @media (max-width:720px){ .bdetail .fbody, .bdetail .fbody.haschief{ grid-template-columns:minmax(0,1fr); } .bdetail .rail{ max-height:40%; } }
+  @media (max-width:720px){
+    .bdetail .fbody, .bdetail .fbody.haschief, .bdetail .fbody.railcut{ grid-template-columns:minmax(0,1fr); }
+    .bdetail .rail{ max-height:40%; }
+    /* Stacked rail: a collapse-to-26px control is meaningless, and the big
+       mono id needs a phone-sized step down. */
+    .bdetail .railtg{ display:none; }
+    .bdetail .fbody.railcut .rail > *{ display:block; }
+    .bdetail .fhead{ padding:10px 12px; gap:6px 8px; }
+    .bdetail .fhead .did{ font-size:14.5px; }
+  }
   .chiefp{ border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; min-height:0; }
   .chiefp .cbar{ display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); }
   .chiefp .cbar b{ color:var(--ink); font-family:var(--mono); font-weight:600; }
@@ -8965,8 +8981,10 @@ ${UX_BASE}
   .bdetail .art.plan{ color:var(--warn); } .bdetail .art.plan .dot{ background:var(--warn); } .bdetail .art.on.plan{ background:var(--warn-soft); }
   .bdetail .rlink{ display:block; color:var(--muted); font-size:12px; margin:5px 0; }
   .bdetail .rlink:hover{ color:var(--accent); }
-  .bdetail .roombtn{ display:inline-block; margin-top:10px; background:var(--accent); color:var(--accent-ink); border-radius:9px; padding:8px 14px; font-size:12.5px; font-weight:600; box-shadow:var(--shadow-card); }
-  .bdetail .roombtn:hover{ background:var(--accent-hover); text-decoration:none; }
+  /* Same weight as .tlbtn: Room, Timeline and the artifact rows are one
+     class of action (swap the viewer body) - one visual voice. */
+  .bdetail .roombtn{ display:inline-block; margin-top:10px; background:var(--accent-soft); color:var(--accent); border:1px solid var(--line); border-radius:9px; padding:8px 14px; font-size:12.5px; font-weight:600; }
+  .bdetail .roombtn:hover{ background:var(--accent); color:var(--accent-ink); text-decoration:none; }
   .bdetail .repotxt{ font-size:12.5px; color:var(--ink); }
   .bdetail .tlbtn{ display:flex; align-items:center; gap:6px; margin-top:10px; width:100%; text-align:left; background:var(--accent-soft); color:var(--accent); border:1px solid var(--line); border-radius:9px; padding:8px 12px; font-size:12.5px; font-weight:600; cursor:pointer; }
   .bdetail .tlbtn:hover{ background:var(--accent); color:var(--accent-ink); }
@@ -9956,7 +9974,9 @@ function pageProcesses(){
     else if(expandable){ s+='<button class="rowdisc" data-exprow="'+esc(rid)+'" aria-expanded="'+(open?'true':'false')+'"><span class="caret">'+(open?'&#9662;':'&#9656;')+'</span>'+esc(row.id)+'</button>'; }
     else { s+=esc(row.id); }
     s+='</td>';
-    s+='<td class="mono">'+esc(row.work)+'</td><td class="mono">'+esc(row.project)+'</td>';
+    s+='<td class="mono">'+esc(row.work)
+      +(famHref?' <button type="button" class="fopen" data-td-open data-td-family="'+esc(row.id.replace(/-chief$/,''))+'" title="Open the dock at this roomchief&#39;s pane">💬</button>':'')
+      +'</td><td class="mono">'+esc(row.project)+'</td>';
     s+='<td><span class="'+stCls+'">'+esc(row.state||'—')+'</span> <span class="muted" style="font-size:11px">'+(row.live?'live':'file')+'</span></td>';
     s+='<td class="mono">'+esc(row.age||'—')+'</td></tr>';
     if(open && expandable){ s+='<tr class="exp-row"><td colspan="5">'+processExpand(row, roomOf, famKnown)+'</td></tr>'; }
@@ -10106,9 +10126,9 @@ function loadBoardKpi(hp){
   if(c && c.ts && (Date.now()-c.ts)<12000) return;
   boardKpiC[hp]={ ts:(c&&c.ts)||0, pending:(c&&c.pending), loading:true };
   fetch('/api/processes?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
-    var rooms=(j&&j.rooms)||[], n=0, fams=[], asks={};
-    for(var i=0;i<rooms.length;i++){ if(rooms[i].pending||rooms[i].handback){ n++; fams.push(rooms[i].family); asks[rooms[i].family]=rooms[i].last||''; } }
-    boardKpiC[hp]={ ts:Date.now(), pending:n, fams:fams, asks:asks, loading:false };
+    var rooms=(j&&j.rooms)||[], n=0, fams=[];
+    for(var i=0;i<rooms.length;i++){ if(rooms[i].pending||rooms[i].handback){ n++; fams.push(rooms[i].family); } }
+    boardKpiC[hp]={ ts:Date.now(), pending:n, fams:fams, loading:false };
     if(S.route && S.route.name==='board') renderPage();
   }).catch(function(){ boardKpiC[hp]={ ts:Date.now(), pending:(c&&c.pending), fams:(c&&c.fams), loading:false }; });
 }
@@ -10121,25 +10141,6 @@ function boardWaits(fam, line){
   var hp=S.route&&S.route.home?S.route.home.path:'';
   var c=hp&&boardKpiC[hp];
   return !!(c&&c.fams&&c.fams.indexOf(fam)>=0);
-}
-// Answer-in-place: the pending question (the room list's own preview line -
-// the same source the KPI counts) plus a reply box, right where the amber
-// is. The reply rides the EXISTING gated /api/room/send (ac-send into the
-// roomchief session); the roomchief records the DECIDED - this box only
-// delivers the captain's words. Rendered OUTSIDE the card anchor: a form
-// inside an <a> is invalid and every click would fight navigation.
-function boardAnswerHtml(fam){
-  var hp=S.route&&S.route.home?S.route.home.path:'';
-  var c=hp&&boardKpiC[hp];
-  var ask=(c&&c.asks&&c.asks[fam])||'';
-  ask=ask.replace(/^-\\s*\\[[^\\]]*\\]\\s*/,'');
-  // data-preserve: the reply box is a morph island - a poll re-render must
-  // never wipe the captain's half-typed answer or steal the caret.
-  return '<div class="bans" data-preserve="ans-'+esc(fam)+'">'
-    +(ask?'<div class="q">'+esc(ask)+'</div>':'')
-    +'<div class="row"><textarea id="ans-'+esc(fam)+'" rows="2" placeholder="Answer the roomchief… (sent whole via ac-send)"></textarea>'
-    +'<button type="button" class="btn sm primary" data-ans="'+esc(fam)+'">Send</button></div>'
-    +'<div class="note" id="ansn-'+esc(fam)+'"></div></div>';
 }
 function boardKpis(hp, b, bd, sysCount){
   loadBoardKpi(hp);
@@ -10325,15 +10326,18 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode){
   // it was a button only because the detail used to be a modal.
   var cchips=contractChips(d.contract, liveMode);
   var wait=boardWaits(f.id, line);
-  var waitChip=wait?' <span class="chipm wait">⏳ waiting on captain</span>':'';
-  return (wait?'<div class="bunit">':'')+'<a class="bcard st-'+d.state+(wait?' wait':'')+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(f.id)+'" data-link>'
+  // The wait chip is the approve shortcut: it opens the dock AT this
+  // family's pane (the full context lives there - a truncated preview is not
+  // enough to decide on).
+  var waitChip=wait?' <span class="chipm wait" data-td-open data-td-family="'+esc(f.id)+'" title="Open the dock at this roomchief&#39;s pane to answer">⏳ waiting on captain</span>':'';
+  return '<a class="bcard st-'+d.state+(wait?' wait':'')+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(f.id)+'" data-link>'
     +'<div class="cid">'+esc(f.id)+badges+waitChip+'</div>'
     +'<div class="ct">'+esc(d.text||f.id)+'</div>'
     +(cchips?'<div class="brow">'+cchips+'</div>':'')
     +(chips?'<div class="brow">'+chips+'</div>':'')
     +prog
     +'<div class="brow"><span class="chipm">repo: '+esc(d.repo||'—')+'</span>'+right+'</div>'
-    +roll+subs+'</a>'+(wait?boardAnswerHtml(f.id)+'</div>':'');
+    +roll+subs+'</a>';
 }
 
 // A live system/paned task with no backlog row (board-live-panes): styled like
@@ -10346,11 +10350,11 @@ function boardSysCard(p){
   // the brainstorm shape), any other id is its own family.
   var fam=(p.kind==='roomchief' && /-chief$/.test(p.id)) ? p.id.replace(/-chief$/,'') : p.id;
   var wait=boardWaits(fam,'');
-  return (wait?'<div class="bunit">':'')+'<a class="bcard sys'+(wait?' wait':'')+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(fam)+'" data-link>'
-    +'<div class="cid">'+esc(p.id)+' <span class="badgeb sys">'+esc(p.kind)+'</span>'+(wait?' <span class="chipm wait">⏳ waiting on captain</span>':'')+'</div>'
+  return '<a class="bcard sys'+(wait?' wait':'')+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(fam)+'" data-link>'
+    +'<div class="cid">'+esc(p.id)+' <span class="badgeb sys">'+esc(p.kind)+'</span>'+(wait?' <span class="chipm wait" data-td-open data-td-family="'+esc(fam)+'" title="Open the dock at this roomchief&#39;s pane to answer">⏳ waiting on captain</span>':'')+'</div>'
     +'<div class="brow"><span class="chipm">repo: '+esc(p.project||'—')+'</span>'
     +'<span class="chipm a live">'+esc(p.status||'—')+'</span></div>'
-    +'</a>'+(wait?boardAnswerHtml(fam)+'</div>':'');
+    +'</a>';
 }
 
 // ---- Task detail, fetched from /api/family. Same FamilyDetail shape the
@@ -10615,9 +10619,7 @@ function familyDetailHtml(d){
   if(d.error) return boardDetailHead(boardOpenFam, null)+'<div style="padding:20px 18px">'+stateBox('Detail unavailable', d.error, 'err')+'</div>';
   // The snapshot chief panel is retired - the terminal dock (the herdr pill)
   // is the one live-terminal surface, so the detail keeps the full width.
-  var hp=S.route.home?S.route.home.path:''; if(hp) loadBoardKpi(hp);
   return boardDetailHead(d.id, d)
-    +(boardWaits(d.id,'')?boardAnswerHtml(d.id):'')
     +'<div class="fbody'+(railCut()?' railcut':'')+'">'
     +boardDetailRail(d, fleet)+boardDetailViewer(d)+'</div>';
 }
@@ -12205,29 +12207,10 @@ function onClick(e){
     else { var cb=el('collapse-btn'); if(cb) cb.click(); }
     return;
   }
-  // Answer-in-place send: the captain's words go whole into the roomchief
-  // session over the existing gated room-send; the roomchief records the
-  // DECIDED. Failures land in the box's own note line, never a dialog.
-  if((n=t.closest('[data-ans]'))){
-    n.blur();
-    var afam=n.getAttribute('data-ans');
-    var ta=el('ans-'+afam), note=el('ansn-'+afam);
-    var msg=ta?ta.value.replace(/\\r/g,'').trim():'';
-    if(!msg){ if(note){ note.textContent='type an answer first'; note.className='note err'; } return; }
-    n.disabled=true; if(note){ note.textContent='sending…'; note.className='note'; }
-    var ahp=S.route.home?S.route.home.path:'';
-    fetch('/api/room/send?path='+enc(ahp)+'&family='+enc(afam), {method:'POST', headers:{'content-type':'text/plain'}, body:msg})
-      .then(function(r){ return r.json(); }).then(function(j){
-        n.disabled=false;
-        if(j&&j.ok){ if(ta) ta.value=''; if(note){ note.textContent='✓ sent — the roomchief records the DECIDED'; note.className='note okk'; } delete boardKpiC[ahp]; }
-        else if(note){ note.textContent=(j&&j.error)||'send failed'; note.className='note err'; }
-      }).catch(function(){ n.disabled=false; if(note){ note.textContent='send failed'; note.className='note err'; } });
-    return;
-  }
   // Any [data-td-open] control raises the dock IN PLACE - never a route hop;
   // data-td-family / data-td-fleet aim the client at a workspace.
   if((n=t.closest('[data-td-open]'))){
-    n.blur();
+    e.preventDefault(); n.blur();   // the wait chip sits inside a card anchor - never navigate
     var tf=n.getAttribute('data-td-family');
     tdOpenScoped(tf ? '&family='+enc(tf) : (n.hasAttribute('data-td-fleet') ? '&fleet=1' : tdScope));
     return;
