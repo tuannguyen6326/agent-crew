@@ -52,6 +52,15 @@ exit 0
 EOF
   chmod +x "$fakebin/$s.sh"
 done
+# The brain ride-along parses the sync JSON for its one summary line, so its
+# stub answers in the engine's shape.
+rm -f "$fakebin/ac-brain.sh"
+cat >"$fakebin/ac-brain.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$TMP/ac-brain.calls"
+printf '{\n "files": 42,\n "changed": 1\n}\n'
+EOF
+chmod +x "$fakebin/ac-brain.sh"
 # The remote push ride-along only exists when the transport is configured.
 printf '#!/usr/bin/env bash\nexit 0\n' >"$AC_HOME/config/remote-poll"
 chmod +x "$AC_HOME/config/remote-poll"
@@ -512,6 +521,22 @@ reset_state
 drain '' >/dev/null
 assert_file "$TMP/ac-ready.calls" "the fleet drain runs the epic scheduler"
 assert_contains "$(cat "$TMP/ac-remote.calls")" "push-pending" "the fleet drain pushes the remote batch"
+
+# Brain ride-along: syncs only a home that already runs the engine (never
+# mints a db), fleet drain only, and narrates one summary line.
+reset_state
+rm -f "$TMP/ac-brain.calls" "$state/brain.sqlite"
+drain '' >/dev/null
+assert_no_file "$TMP/ac-brain.calls" "no brain.sqlite - the drain never mints an engine"
+: >"$state/brain.sqlite"
+publish fam1 report fam1-t1 'done: x'
+chief_live fam1
+drain fam1 >/dev/null
+assert_no_file "$TMP/ac-brain.calls" "a scoped drain never runs the fleet's brain sync"
+out="$(drain '')"
+assert_contains "$(cat "$TMP/ac-brain.calls")" "sync" "the fleet drain syncs the brain"
+assert_contains "$out" "brain-sync ok - 42 files, 1 changed" "the drain narrates the sync summary"
+rm -f "$state/brain.sqlite"
 
 # --- 7. scoped WATCHER-DOWN beacon ------------------------------------------
 

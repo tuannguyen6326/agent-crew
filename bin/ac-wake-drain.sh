@@ -372,4 +372,15 @@ if [ -z "$scope" ]; then
   # waiting for a chief to notice a digest flag (best-effort - prints nothing
   # when nothing is owed or a learning room already exists).
   "$(dirname "$0")/ac-learn.sh" autoroom || true
+
+  # Brain ride-along: keep the home's memory index fresh at every checkpoint
+  # by machine instead of each chief session's habit (two fleets measurably
+  # drifted apart on exactly this). Only a home already running the engine
+  # syncs - the drain never mints a db - and a sync failure never breaks the
+  # drain.
+  if [ -f "$state_dir/brain.sqlite" ]; then
+    bsync="$("$(dirname "$0")/ac-brain.sh" sync 2>/dev/null)" && printf 'brain-sync ok - %s files, %s changed\n' \
+      "$(printf '%s' "$bsync" | sed -n 's/.*"files":[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)" \
+      "$(printf '%s' "$bsync" | sed -n 's/.*"changed":[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)" || true
+  fi
 fi
