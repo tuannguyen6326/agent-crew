@@ -1,14 +1,15 @@
 ---
 name: brainstorm
-description: Captain-invocable ideation flow - the captain thinks a topic through with a DEDICATED brainstorm roomchief (clean context, its own room journal, chat right in the dashboard Board detail), not in the crewchief's own loaded session; the crewchief only opens it and, at the end, mints what the captain confirms - backlog rows, and optionally a SPEC the session authored (the captain's live acceptance is the gate). The roomchief is machine-barred from the ledger. No code, no crewmate, no ledger write while thinking. Use when the captain invokes /brainstorm <topic> (or --direct <topic> for a quick riff in the chief session), or opens a "should we / how might we" conversation that is not yet an order.
+description: Captain-invocable ideation flow - the captain thinks a topic through with a DEDICATED brainstorm roomchief (clean context, its own room journal, chat right in the dashboard Board detail), not in the crewchief's own loaded session; the crewchief only opens it and, at the end, mints what the captain confirms - backlog rows, the requirements.md the session authored, and optionally a SPEC on top of it (the captain's live acceptance is the gate). The roomchief is machine-barred from the ledger. No code, no crewmate, no ledger write while thinking. Use when the captain invokes /brainstorm <topic> (or --direct <topic> for a quick riff in the chief session), or opens a "should we / how might we" conversation that is not yet an order.
 ---
 
 # brainstorm
 
 The captain invoked `/brainstorm <topic>` - an IDEATION session, upstream of
 every execution flow. Nothing here is an order yet: the deliverable is queued
-backlog rows the captain has confirmed - plus, when a thread went deep
-enough, a SPEC the session authored with the captain (below) - or the
+backlog rows the captain has confirmed - each order-shaped one linking the
+`data/<family>/requirements.md` the session authored with the captain, plus,
+when a thread went deep enough, a SPEC on top of it (below) - or the
 explicit outcome "no rows". What this flow mints is the INPUT a later
 `/order-direct`, `/order-staged`, or `epic-intake` runs on - this skill
 never starts execution itself.
@@ -46,7 +47,9 @@ promote, nothing new (mechanics: `bin/ac-spawn.sh` header):
    ground from disk first and cite; spawn NOTHING and write NOTHING
    outside this room - an idea needing real investigation becomes a draft
    row, not an action; end by posting DRAFT-ROWS entries (section-9
-   grammar) for the crewchief to confirm and mint."` - the room IS the
+   grammar) and the DRAFT-REQUIREMENTS behind them - written into this
+   room's own dir - for the crewchief to
+   confirm and mint."` - the room IS the
    brief, so the charter is the contract.
 2. `bin/ac-spawn.sh --roomchief brainstorm-<slug> --captain-initiated
    "/brainstorm <topic>" [--harness <h> --model <m> --effort <e>]`
@@ -72,6 +75,12 @@ brief, no worktree, no backlog row, no code or config change. Instruments
 are conversation and READS. An idea that needs real investigation to
 evaluate is itself a conclusion - "needs a scout to answer" becomes a
 draft row the captain confirms like any other.
+
+The room DIR is the one place a write lands: `room.md` plus the DRAFTS the
+section below defines. That is the session's own output surface, owned by
+nothing downstream - a draft there binds no family, enters no gate, and stays
+journal until the crewchief copies it out on the captain's word. Everything
+the ban names above stays banned.
 
 ## Ground before proposing (the roomchief's first move)
 
@@ -116,7 +125,8 @@ the crewchief then:
    confirmation is the order-source; a settled heavy dimension pinned here
    is pre-consent the escalation gate never re-asks; an UNSETTLED
    dimension stays off the row for intake to triage later), the one-line
-   description, `(repo: <name>)`.
+   description, the `inputs:` clause naming what this brainstorm minted
+   for it (section 9), `(repo: <name>)`.
 2. Reads every row back to the captain VERBATIM and waits for the yes -
    per row or batch, but real; a pin written without the captain's word is
    the exact drift the contract grammar exists to stop (section 9).
@@ -128,31 +138,96 @@ the crewchief then:
    of the outcome. In `--direct` mode the crewchief runs the same steps
    off its own conversation notes.
 
-## Spec: the session may author it - the captain's live acceptance IS the gate
+## The artifacts: requirements.md for the order-shaped threads, a spec when one earned it
 
-A thread that went deep enough - requirements settled, boundaries drawn,
-acceptance criteria named - may end as a SPEC, not just a row pointing at
-one. The staged flow's gates exist to bring the captain INTO design
-decisions; in a brainstorm the captain is already in the loop, so a spec
+A brainstorm IS the product-owner interview - the captain settling in their
+own words what the work must satisfy - so a thread that ends in an
+ORDER-SHAPED row (something to build, with requirements the conversation
+settled) also ends in `data/<family>/requirements.md`: the same PO artifact
+section 5's PO STEP names, authored HERE instead of re-asked at intake. A
+scout row ("needs a scout to answer") settles no requirements and gets no
+file - the question it carries IS its brief. A thread that went
+further still - boundaries drawn, acceptance criteria named - ends as a SPEC
+on top of it. The staged flow's gates exist to bring the captain INTO design
+decisions; in a brainstorm the captain is already in the loop, so what is
 accepted here live outranks a stage report waiting for its gate. The shape:
 
-1. The roomchief DRAFTS the spec in its room (`DRAFT-SPEC` entries beside
-   `DRAFT-ROWS`) - never as a file; its output surface is the room.
-2. At minting, the crewchief reads the draft back for the captain's yes
+1. The roomchief WRITES both drafts into its OWN room dir -
+   `data/brainstorm-<slug>/requirements.md`, and `spec.md` beside it when the
+   thread earned one - and posts a `DRAFT-REQUIREMENTS` entry (and
+   `DRAFT-SPEC`) naming each path, so the journal stays the index of what
+   exists. It writes them where they bind nothing rather than handing the
+   crewchief prose to re-type: a long artifact reproduced by a second reader
+   drifts, and the captain accepted the bytes, not the gist.
+   Every requirements line carries its CITE
+   (the captain's words verbatim, an answer already recorded `DECIDED:`, a
+   standing rule), exactly as section 5 demands of the PO artifact.
+2. At minting, the crewchief reads each draft back for the captain's yes
    like any row - then, and only then, MATERIALIZES it as
-   `data/<family>/spec/report.md` for the row's new family, byte-faithful
-   to what was accepted, with a provenance header naming the brainstorm
-   room and the acceptance date ("authored in brainstorm-<slug> with the
-   captain; captain accepted <date>"). The captain's yes journaled in the
-   brainstorm room is the gate receipt - this report enters no gate-route.
-3. The row mints pinned `[src:cap flow:staged ...]`; the staged family
-   starts PAST spec - its next stage (plan or implement, per triage)
-   links the seeded `spec/report.md` exactly as it would an accepted
-   stage report (the layout grammar already resolves it by path).
-4. When the captain instead wants the draft CHECKED before it binds
-   ("needs a scout on this"), mint the row with the spec stage still to
-   run and the room as its input - the draft is then a head start, not
+   `data/<family>/requirements.md`, and `data/<family>/spec/report.md` when
+   a spec was accepted too, by COPYING the accepted draft out of the room dir
+   and prepending a provenance header naming the brainstorm room and the
+   acceptance date ("authored in brainstorm-<slug> with the captain; captain
+   accepted <date>"). A copy, never a re-typing - the bytes the captain
+   accepted are the bytes that land, and the draft stays in the room as the
+   durable original. The captain's yes journaled in the brainstorm room is
+   the gate receipt - each file enters no gate-route.
+3. The row LINKS what was minted: `inputs: data/<family>/requirements.md`,
+   plus `, data/<family>/spec/report.md` when there is one (section 9 owns
+   the clause). The link is the point - the family's first brief lifts those
+   paths into its `## Inputs` without hunting for them, and a captain
+   reading the ledger sees what the row already stands on.
+4. The pin stays the captain's: `flow:staged` rides the row only when the
+   captain settled that dimension (Ending step 1 - settled dimensions
+   only), and an accepted SPEC settles it by its nature (a spec is a
+   design-stage artifact; the captain accepting one has chosen the flow
+   that runs on it). On a row that IS staged, the accepted requirements.md
+   IS the staged PO step - the family starts AT spec with it as the anchor
+   and no chief re-interviews the captain on settled ground; with a spec
+   accepted too, the family instead starts PAST spec, its next stage (plan
+   or implement, per triage) linking the seeded `spec/report.md` exactly
+   as it would an accepted stage report (the layout grammar already
+   resolves it by path). On a row triaged `direct` later, the
+   requirements.md is ordinary `## Inputs` context the brief cites -
+   direct's own contract still authors no PO artifact (order-direct).
+5. When the captain instead wants a draft CHECKED before it binds ("needs a
+   scout on this"), mint the row with that stage still to run and the room
+   as its input - the draft is then a head start, not
    the record.
+
+## Leaving a trail: the scene and the Done row
+
+A brainstorm that leaves only rows is unfindable the moment the rows are the
+wrong search - and the outcome this flow is proudest of, "we thought it
+through and decided not to", mints no row at all, so it leaves nothing. Two
+writes at close fix that, both the CREWCHIEF's - the Done row because the
+roomchief is ledger-barred, the scene because the close happens after the
+roomchief is already demoted (Ending step 3), and mint-at-close is one act
+by one actor:
+
+1. A SCENE. The roomchief drafts the body as `data/brainstorm-<slug>/scene.md`
+   and posts `DRAFT-SCENE` naming it - threads that settled and threads that
+   died, each with its why, in the shape a reader needs to re-enter this topic
+   in ONE read. At close the crewchief runs `bin/ac-scene.sh` on that file:
+   `update <slug>` when the grounding step already FOUND a scene on this topic
+   (it read the store first, and a second scene on one subject is the rot the
+   store exists to prevent), else `new <topic-slug> --summary '<line>'`.
+   `update` REPLACES the body wholesale (`bin/ac-scene.sh` header), so on an
+   existing scene the draft must be the CONSOLIDATED body - the old scene,
+   which grounding already read, folded together with what this brainstorm
+   settled - never this brainstorm's notes alone, which would erase the very
+   context the scene held. This
+   is the point of the whole trail - `records/scenes/` is the layer the NEXT
+   brainstorm's grounding reads, so a conclusion parked here is what ends that
+   thread cheaply instead of re-running it. At the store's AMBER or RED cap
+   `new` refuses and names the coldest scenes: merge per `bin/ac-scene.sh`,
+   never work around it.
+2. A DONE ROW - `- [x] brainstorm-<slug> - <outcome> -
+   data/brainstorm-<slug>/room.md (reported <date>)`, its one line naming what
+   came of it (`3 rows minted: a,b,c`, or `no rows - <why>`). It passed
+   through neither In flight nor Queued because a brainstorm is not a task: it
+   is a RECORD ROW written straight to Done (section 9 owns the shape), the
+   ledger's own answer to "was this already thought about?".
 
 "No rows" is a fully valid ending. Grammar, gate, and triage law stay where
 they live (sections 5, 8, 9) - this skill cites them and duplicates nothing.

@@ -17,7 +17,7 @@ Nothing here invents new machinery - every stage below is the staged flow's own 
 2. PO STEP (the section-5 REQUIREMENTS CHECK, grown into an artifact - that clause is the authoritative contract, this is only the activation): run the brief-without-guessing test on the order.
    Route by guess count: 0 -> draft; 1-4 -> ONE bundled clarify exchange with the captain first, select etiquette; >=5 or the deliverable itself a guess -> propose `/brainstorm` and stop.
    When the family is promoted, the ROOMCHIEF owns this interview in its own thread - the crewchief only promotes and hands the order over.
-   Then write `data/<family>/requirements.md` (every line cite-carrying) and get the captain's LIVE acceptance - that acceptance is the whole gate.
+   Then write `data/<family>/requirements.md` (every line cite-carrying) and get the captain's LIVE acceptance - that acceptance is the whole gate. A requirements.md the row's `inputs:` already names, authored and accepted in a `/brainstorm`, IS this step: adopt it rather than re-interviewing settled ground.
    NO SPEC WORK STARTS before the accepted file exists.
 
 3. Intake exactly as `/order-staged`: mint the row with its delivery-contract group - `src:cap flow:staged rev:yes` plus a token per captain flag - post the TRIAGE receipt (flow/mode/promote/qa + the design sub-stages you keep or drop), record `STAGE-ADMISSION:` per stage, and spawn ONE design crewmate (`--stage design`) with requirements.md linked under `## Inputs`.

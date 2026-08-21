@@ -132,9 +132,14 @@ crewchief in the fleet chat otherwise - interviews the captain as
 product owner and writes `data/<family>/requirements.md`, every line
 cite-carrying (the order verbatim, clarify answers already recorded
 `DECIDED:` in the room, standing rules). The captain's LIVE
-acceptance of that file is its whole gate - the brainstorm-spec
-precedent: the captain was in the loop the stage-gates exist to
-reach, so it enters no gate-route. NO SPEC WORK STARTS before the
+acceptance of that file is its whole gate - the captain was in
+the loop the stage-gates exist to reach, so it enters no
+gate-route. A `/brainstorm` that already authored this file and
+got that acceptance HAS DONE the PO step - the row's `inputs:`
+names it (section 9), the chief ADOPTS it and re-interviews
+nothing already settled there; a gap the order exposes is one
+bundled clarify exchange appended to the file, never a fresh
+interview. NO SPEC WORK STARTS before the
 accepted requirements.md exists; the spec report's Trace IDs then
 trace to requirements.md lines rather than the raw order, and the
 design brief links it under `## Inputs`. A clear order still gets the
@@ -1185,12 +1190,31 @@ the ONE parser.
 with NO spaces, then ` - <reason>`. Story membership is the `epic:<epic-id>`
 token on the story line - never an id prefix.
 
+`inputs: <path>[, <path>]` is a row's ARTIFACT LINK - home-relative paths to
+what the row already stands on and its first brief must read
+(`data/<family>/requirements.md`, an accepted `spec/report.md`), written
+where the grammar puts `epic:`/`domain:`: before a trailing `(repo: ...)`
+group, or at end of line. It is free text to every parser - no scheduler
+reads it and none may - and it exists so an artifact minted upstream of the
+brief (a `/brainstorm` requirements.md, a design report a re-routed task
+carried over) is found by reading the row instead of guessing a path. The
+brief lifts each path into its `## Inputs`; a path that no longer resolves is
+fixed on the row, never silently dropped.
+
 Before minting a new row, read the open rows (In flight + Queued) and look for one related to it - related means the same file surface, the same mechanism, or the same defect class, not the same wording.
 Only a Queued row is foldable: fold the new material into it and name what was added and when.
 An In flight row is OFF LIMITS - its crewmate is already working the scope it was briefed on, and folding into it changes that scope mid-run, which is the one thing a brief must not do.
 Material overlapping a flying task instead mints a new row, tagged with the overlap and the flying task's id, so whoever picks it up rebases after that task lands.
 Folding merges the landing surface only - it does not license scope growth inside the folded row, and each part still gets the smallest diff that solves it.
 This binds the crewchief, every roomchief, and every automatic writer of the ledger (monitor sweeps, Learning, Curate).
+
+A RECORD ROW is the one row born in `## Done`, never passing through In
+flight or Queued: a `/brainstorm` writes `- [x] brainstorm-<slug> - <outcome>
+- <path to its room.md> (reported <date>)` at close. It is not a task -
+nothing spawns and nothing lands - and its most valuable outcome ("no rows")
+would otherwise leave the ledger silent about a question already thought
+through. It carries no delivery-contract group: no flow, mode or review was
+ever chosen for it.
 
 Keep it current: spawn moves an item to In flight; teardown moves it to Done or back to Queued.
 
@@ -1222,7 +1246,7 @@ Prefer a review artifact over a wall of markdown whenever the captain must visua
 - `crew-ship` - the validation pipeline (crewmates run it; you audit its state).
 - `document` - the doc-authoring method for a delivered change: judge whether docs are warranted at all (skippable, reason in the done line), create missing docs in the project's own conventions (BMAD shapes into `/docs` when the project has none; staged-flow stage reports are first-class inputs), and sync every existing doc the change makes stale. Runs crewmate-side at direct-flow delivery, the direct-pr PR step, and inside crew-ship's document step (pipeline mechanics stay with the `bin/ac-ship.sh` header).
 - `diagram-design` - vendored editorial diagram system (MIT, upstream `cathrynlavery/diagram-design`; LICENSE + THIRD_PARTY_LICENSES.md ride in the package): 27+ diagram types as self-contained HTML + inline SVG under one shared design system, complexity budget, and pre-output taste gate - reach for it whenever a captain-facing artifact (stage report, gate-review page, rich-review HTML) needs an architecture/flow/sequence/ER/timeline/quadrant/... diagram instead of Mermaid; per-type conventions live in its `references/`, gallery examples in `assets/`, and it also imports existing draw.io/Mermaid sources and dashboard whiteboard (Excalidraw) scenes - the captain sketches or edits on `/whiteboard` (the editable source of truth), the skill redraws the presentable artifact (section 11 owns the round-trip rule).
-- `brainstorm` - captain-invocable ideation (`/brainstorm <topic>`, `--direct` for a quick riff in the chief session): the captain thinks a topic through with a DEDICATED brainstorm roomchief (charter posted to `data/brainstorm-<slug>/room.md` then `ac-spawn.sh --roomchief --captain-initiated` - clean context, the room as durable journal, dashboard Board-detail chat; the chief's own session is the fleet's most loaded and ideation both burns and gets anchored by it), grounded from disk (`ac-know.sh recall`/scenes/learnings + `ac-ready.sh overlap` first, hits cited). Architectural or captain-required topics ask one decision question at a time, present 2-3 viable approaches with trade-offs and a recommendation, and validate design sections incrementally before a spec is materialized; quick riffs, routine topics, and already-settled decisions stay lightweight with no universal approval rounds. While thinking, no spawns and no writes outside the room journal; the roomchief is machine-barred from the ledgers (`ac-ledger-guard.sh`) and ends by posting DRAFT-ROWS - and, when a thread went deep enough, DRAFT-SPEC - to its room; the CHIEF alone mints, reading each back VERBATIM for the captain's yes (contract tokens only for dimensions actually settled; a pin minted here is pre-consent the escalation gate never re-asks) or recording the outcome "no rows". An accepted spec is materialized by the chief as `data/<family>/spec/report.md` with a provenance header naming the brainstorm room and acceptance date - the captain's LIVE acceptance is the gate (the captain was in the loop the stage-gates exist to reach), so it enters no gate-route and the pinned-staged family starts past spec. Upstream of `order-direct`/`order-staged`/`epic-intake`: its rows are their input, it never starts execution.
+- `brainstorm` - captain-invocable ideation (`/brainstorm <topic>`, `--direct` for a quick riff in the chief session): the captain thinks a topic through with a DEDICATED brainstorm roomchief (charter posted to `data/brainstorm-<slug>/room.md` then `ac-spawn.sh --roomchief --captain-initiated` - clean context, the room as durable journal, dashboard Board-detail chat; the chief's own session is the fleet's most loaded and ideation both burns and gets anchored by it), grounded from disk (`ac-know.sh recall`/scenes/learnings + `ac-ready.sh overlap` first, hits cited). Architectural or captain-required topics ask one decision question at a time, present 2-3 viable approaches with trade-offs and a recommendation, and validate design sections incrementally before a spec is materialized; quick riffs, routine topics, and already-settled decisions stay lightweight with no universal approval rounds. While thinking, no spawns and no writes outside the room journal; the roomchief is machine-barred from the ledgers (`ac-ledger-guard.sh`) and writes only inside its own room dir, where a draft binds nothing: it ends by posting DRAFT-ROWS plus DRAFT-REQUIREMENTS entries naming the `requirements.md` it wrote there - and `spec.md` when a thread went deep enough. The CHIEF alone mints, reading each back VERBATIM for the captain's yes (contract tokens only for dimensions actually settled; a pin minted here is pre-consent the escalation gate never re-asks) or recording the outcome "no rows". What the chief materializes, by COPYING the accepted draft out rather than re-typing it, is `data/<family>/requirements.md` - the section-5 PO artifact, authored here instead of re-asked at intake - and `data/<family>/spec/report.md` when a spec was accepted too, each with a provenance header naming the brainstorm room and acceptance date; the captain's LIVE acceptance is the gate, so neither enters a gate-route, the row LINKS both with its `inputs:` clause (section 9), and the pinned-staged family starts AT spec on the accepted requirements - PAST spec when a spec came with it. At close the chief also leaves the TRAIL, because rows alone are unfindable and a "no rows" ending leaves nothing: an L2 SCENE (`bin/ac-scene.sh`, drafted by the roomchief as `scene.md` in its room dir and posted `DRAFT-SCENE` - `update` when grounding already found a scene on the topic, else `new`; merge at the store's cap) so the NEXT brainstorm's own grounding read hits it, plus a Done RECORD ROW naming the outcome and the room path (section 9). Upstream of `order-direct`/`order-staged`/`epic-intake`: its rows are their input, it never starts execution.
 - `order-direct` / `order-staged` - captain-invocable pins: `/order-direct [--mode <m>] [--review yes|no] [--promote yes|no] [--qa yes|no] <order>` (same for `/order-staged`, except staged review is always yes) starts an intake with the flow and flagged dimensions pinned at the top of the precedence ladder; every unpinned dimension is still triaged with receipts. `--qa` pins an independent crew-qa gate after delivery. Both open with the section-5 REQUIREMENTS CHECK; staged additionally runs its PO STEP - the captain-accepted `data/<family>/requirements.md` exists before any spec work.
 - `order-design` - captain-invocable design-first flow (`/order-design <order>`, same flags as `/order-staged`): the PO step and the staged flow's design stages (spec/architecture/plan, gated as law) run NOW, execution does NOT - after the pre-implement gate the design crewmate is torn down and the row parks in Queued as `design-complete` with its pins kept, room receipted `DESIGN-COMPLETE:` (never a pending gate); a later captain order naming the row restarts at `--stage implement` with the accepted reports as Inputs, re-hashed against their gate receipts. Rides the staged machinery verbatim - the only new behavior is where the flow stops.
 - `crew-qa` - standalone behavioral verification driving the `bin/ac-qa.sh` pipeline: accepted-authority and reuse-first test planning, a frozen AC-to-UT/IT/E2E coverage manifest, conditional exact-SHA ship-receipt reuse for UT, four-tier client-boundary execution, an effective-receipt-ordered final full-flow case/group, frozen config/scope/store/routing inputs, task-scoped infra, durable per-case evidence, oracle amendments, non-gating curation, run-derived verdict, canonical stage report, and atomic v2 merge attestation. It is separate from code review and never fixes or lands its own test proposal. Execution calls the `ac-qa.sh agent` adapter over `ac-verify qa`; exactly one fresh exact-ref pane owns each complete profile round, never the execution crewmate's context or per-step subagents. Dispatch selects only the pane harness/model profile; the manifest and QA gates own behavior.

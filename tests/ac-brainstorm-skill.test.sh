@@ -85,9 +85,19 @@ assert_contains "$skill" "Quick riffs, routine topics, and already-settled decis
 assert_contains "$skill" "no universal approval rounds" \
   "the collaborative cadence does not become routine ceremony"
 
-# --- spec path: authored in the room, captain's live acceptance is the gate ---
+# --- artifacts: requirements.md always, spec when the thread earned one ------
+assert_contains "$skill" "DRAFT-REQUIREMENTS" "the PO artifact is drafted in the room beside the rows"
+assert_contains "$skill" "data/<family>/requirements.md" "the artifact is the section-5 PO file, not a private shape"
+assert_contains "$skill" "IS the staged PO step" "an accepted requirements.md discharges the staged PO step"
+assert_contains "$skill" "settles no requirements" "a scout row carries no PO ceremony"
+assert_contains "$skill" "The pin stays the captain's" "no unconditional flow pin - settled dimensions only"
+assert_contains "$skill" "starts AT spec" "the family begins at spec on the requirements alone"
+assert_contains "$skill" "Every requirements line carries its CITE" "the PO artifact keeps its cite-carrying duty"
+assert_contains "$skill" "inputs: data/<family>/requirements.md" "the row links what was minted"
 assert_contains "$skill" "DRAFT-SPEC" "the spec is drafted in the room beside the rows"
-assert_contains "$skill" "never as a file; its output surface is the room" "the roomchief materializes nothing"
+assert_contains "$skill" "WRITES both drafts into its OWN room dir" "the roomchief authors the drafts itself"
+assert_contains "$skill" "a draft there binds no family, enters no gate" "a room-dir draft is inert until minted"
+assert_contains "$skill" "A copy, never a re-typing" "minting copies the accepted bytes instead of reproducing them"
 assert_contains "$skill" "MATERIALIZES it as" "only the crewchief writes the spec artifact"
 assert_contains "$skill" "captain accepted" "the provenance header records the acceptance"
 assert_contains "$skill" "enters no gate-route" "live acceptance replaces the stage gate"
@@ -98,10 +108,21 @@ assert_contains "$skill" "a head start, not
 # --- ending: verbatim confirm, settled-dims-only pins, no-rows valid ----------
 assert_contains "$skill" "VERBATIM" "rows are read back verbatim before minting"
 assert_contains "$skill" "carrying ONLY the dimensions the captain" "pins carry settled dimensions only"
+assert_contains "$skill" 'the `inputs:` clause naming what this brainstorm minted' \
+  "the minted row points at its own artifacts"
 assert_contains "$skill" "src:cap" "the captain's confirmation is the order-source token"
 assert_contains "$skill" "escalation gate never re-asks" "a pin minted here is pre-consent"
 assert_contains "$skill" '"No rows" is a fully valid ending' "an empty outcome is legitimate"
 assert_contains "$skill" "deliberately NOT" "the not-minted list is part of the outcome"
+
+# --- the trail: every ending is findable later --------------------------------
+assert_contains "$skill" "DRAFT-SCENE" "the scene body is drafted in the room like every other artifact"
+assert_contains "$skill" "ac-scene.sh" "the trail lands in the L2 scene store"
+assert_contains "$skill" "the layer the NEXT" "the scene feeds the grounding read a later brainstorm runs"
+assert_contains "$skill" "CONSOLIDATED body" "an update folds the old scene in - update replaces wholesale"
+assert_contains "$skill" "merge per" "the store cap is obeyed, never worked around"
+assert_contains "$skill" "RECORD ROW written straight to Done" "a brainstorm records itself without becoming a task"
+assert_contains "$skill" "no rows - <why>" "the empty outcome is what the record row exists for"
 
 # --- upstream boundary + split rule -------------------------------------------
 assert_contains "$skill" "never starts execution" "brainstorm is upstream of every execution flow"
@@ -115,6 +136,20 @@ assert_contains "$(<"$ROOT/AGENTS.md")" '`brainstorm` - captain-invocable ideati
 assert_contains "$(<"$ROOT/docs/architecture.md")" '`brainstorm` (captain ideation' "architecture.md lists the skill"
 assert_contains "$(<"$ROOT/AGENTS.md")" "one decision question at a time" \
   "AGENTS.md keeps the brainstorm cadence synchronized"
+assert_contains "$(<"$ROOT/AGENTS.md")" "the section-5 PO artifact, authored here instead of re-asked at intake" \
+  "AGENTS.md section 12 names the requirements.md output"
+assert_contains "$(<"$ROOT/AGENTS.md")" '`inputs: <path>[, <path>]` is a row' \
+  "section 9 owns the inputs clause the skill writes"
+assert_contains "$(<"$ROOT/AGENTS.md")" "HAS DONE the PO step" \
+  "section 5 adopts a brainstorm-accepted requirements.md instead of re-interviewing"
+assert_contains "$(<"$ROOT/AGENTS.md")" "A RECORD ROW is the one row born in" \
+  "section 9 owns the Done-only record row the skill writes"
+assert_contains "$(<"$ROOT/AGENTS.md")" "At close the chief also leaves the TRAIL" \
+  "AGENTS.md section 12 carries the trail duty"
+assert_contains "$(<"$ROOT/.agents/skills/order-staged/SKILL.md")" "which IS this step" \
+  "order-staged adopts the brainstorm-authored requirements.md"
+assert_contains "$(<"$ROOT/.agents/skills/order-design/SKILL.md")" "IS this step: adopt it" \
+  "order-design adopts the brainstorm-authored requirements.md"
 assert_contains "$(<"$ROOT/docs/architecture.md")" "risk-scaled design cadence" \
   "architecture overview keeps the brainstorm cadence synchronized"
 

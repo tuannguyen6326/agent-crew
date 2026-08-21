@@ -30,7 +30,10 @@ yourself.
    exchange with the captain; >=5 -> propose `/brainstorm` and stop). When
    the family is promoted the ROOMCHIEF owns the interview in its own
    thread. Write `data/<family>/requirements.md` (every line
-   cite-carrying) and get the captain's LIVE acceptance - NO SPEC WORK
+   cite-carrying) and get the captain's LIVE acceptance - unless the row's
+   `inputs:` already names one a `/brainstorm` authored and the captain
+   accepted, which IS this step: adopt it, and clarify only what the order
+   exposes as still open. NO SPEC WORK
    STARTS before that file exists; the design brief links it under
    `## Inputs` and the spec report's Trace IDs trace to its lines.
 
