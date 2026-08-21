@@ -2552,42 +2552,53 @@ test("mermaidPass: fence/foreign-block selectors and the data-mmd/data-processed
   expect(src).toContain("data-processed");
 });
 
-// Paint guard predicate (dash-review-polish-paint) - artifactPainted is DOM-
-// coupled (document.body, querySelectorAll, getBoundingClientRect) exactly
-// like mermaidPass above it, so it has no pure input/output surface a bun
-// test can drive without a browser; acceptance 1/2/3 are proved live (see
-// the report). What IS a real, checkable claim about its SOURCE: it reads
-// rendered text via innerText (which already excludes display:none/
-// visibility:hidden content - the exact false-positive class this guard
-// exists to catch) rather than innerHTML/textContent (which would not), and
-// it falls back to a real-area check on graphic elements so a diagram-only
-// page (mermaidPass replaces the source text with an <svg>) still counts.
-test("artifactPainted: reads rendered text via innerText, not innerHTML/textContent", () => {
-  const src = artifactPainted.toString();
-  expect(src).toContain("innerText");
-  expect(src).not.toContain("innerHTML");
-  expect(src).not.toContain(".textContent");
+// Paint guard predicate (dash-review-polish-paint) - artifactPainted only
+// touches document.body: .innerText, .querySelectorAll, and each result's
+// .getBoundingClientRect(). None of that requires a real DOM (bun has no
+// `document`/`getComputedStyle`, but a plain stub object satisfies every
+// property this function reads), so this is a real BEHAVIOUR test of the
+// predicate itself (roundchief r1: dropping the getComputedStyle-only
+// background-image check made this possible), not a source-string proxy for
+// one. The diagram-only case (async content replacing a mermaid block's
+// source text with an <svg>, per mermaidPass) is proved live in the report -
+// the real DOM layout (getBoundingClientRect returning a non-zero rect only
+// once mermaid has actually rendered) is exactly what a stub cannot stand in
+// for.
+function stubBody(innerText: string, els: { w: number; h: number }[] = []) {
+  return {
+    body: {
+      innerText,
+      querySelectorAll: () => els.map((e) => ({ getBoundingClientRect: () => ({ width: e.w, height: e.h }) })),
+    },
+  } as unknown as Document;
+}
+
+test("artifactPainted: no body at all - false", () => {
+  expect(artifactPainted({ body: null } as unknown as Document)).toBe(false);
 });
 
-test("artifactPainted: falls back to a real-area check on graphic elements for a diagram-only page", () => {
-  const src = artifactPainted.toString();
-  expect(src).toContain("img, svg, canvas, video");
-  expect(src).toContain("getBoundingClientRect");
+test("artifactPainted: blank body, no text and no graphic element - false", () => {
+  expect(artifactPainted(stubBody(""))).toBe(false);
 });
 
-// A body-only CSS background-image (a full-bleed poster artifact with no
-// text and no img/svg/canvas/video tag) is a real paint the first two
-// checks both miss (code-review self-review finding). background-COLOR is
-// deliberately never read here: IFRAME_STYLE's own body{background:
-// var(--canvas)} always paints kind:"md" documents a real background-color
-// regardless of the artifact's own content, so reading color would defeat
-// the guard on every blank markdown report - background-image stays "none"
-// under that same shorthand (it resets every sub-property it does not
-// name), so it is the one background signal safe to trust here.
-test("artifactPainted: falls back to background-image, never background-color (which IFRAME_STYLE always sets for md)", () => {
-  const src = artifactPainted.toString();
-  expect(src).toContain("backgroundImage");
-  expect(src).not.toContain("backgroundColor");
+test("artifactPainted: whitespace-only innerText still reads as blank - false", () => {
+  expect(artifactPainted(stubBody("   \n  "))).toBe(false);
+});
+
+test("artifactPainted: prose body - true, never needs to reach the graphic fallback", () => {
+  expect(artifactPainted(stubBody("hello"))).toBe(true);
+});
+
+test("artifactPainted: empty text but a real-area graphic element - true (the diagram-only case)", () => {
+  expect(artifactPainted(stubBody("", [{ w: 100, h: 100 }]))).toBe(true);
+});
+
+test("artifactPainted: empty text and only a zero-area graphic element - false", () => {
+  expect(artifactPainted(stubBody("", [{ w: 0, h: 0 }]))).toBe(false);
+});
+
+test("artifactPainted: real-area element required on both axes - a sliver does not count", () => {
+  expect(artifactPainted(stubBody("", [{ w: 100, h: 2 }]))).toBe(false);
 });
 
 // The .mmdview wrapper div was the SPA-only reader's OWN second render path

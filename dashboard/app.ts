@@ -82,11 +82,11 @@ const AC_HOME = process.env.AC_HOME ?? "";
 // (bin/dashboard.ts) re-exports this module, so re-exporting lib.ts here keeps
 // the historical single-module import surface (tests, ac-contract differential).
 import {
-  ANSI_DARK, ANSI_LIGHT, ArtifactKind, ArtifactMeta, ArtifactNode, BacklogHit,
-  BacklogLineFields, BacklogView, FamilyDetail, FamilyPr, FamilyStage, FamilySubtask,
-  LearningLedgerView, LearningPointer, Progress, RoomRow, StageArtifact, THEME_INIT, THEME_VARS,
-  TimelineEvent, UX_BASE, artifactKind, artifactPainted, backlogFamilyIds, boardSystemPanes, buildReviewSrcdoc,
-  cadenceLabel, chiefFitPx, clampBgDim, composeFamily, contractTokens, deriveProgress,
+  ANSI_DARK, ANSI_LIGHT, ArtifactKind, ArtifactMeta, ArtifactNode, BacklogHit, 
+  BacklogLineFields, BacklogView, FamilyDetail, FamilyPr, FamilyStage, FamilySubtask, 
+  LearningLedgerView, LearningPointer, Progress, RoomRow, StageArtifact, THEME_INIT, THEME_VARS, 
+  TimelineEvent, UX_BASE, artifactKind, artifactPainted, backlogFamilyIds, boardSystemPanes, buildReviewSrcdoc, 
+  cadenceLabel, chiefFitPx, clampBgDim, composeFamily, contractTokens, deriveProgress, 
   familyOfTaskId, familyRepos, familyStages, fleetAttnItems, groupArtifacts, isHtmlArtifact, 
   matchBacklog, mermaidPass, nextPalette, nextTheme, normalizeBgColor, parseArtifactPath, 
   parseBacklog, parseBacklogLine, parseLearningLedger, parseRoomList, parseTimeline, readerCss, 
