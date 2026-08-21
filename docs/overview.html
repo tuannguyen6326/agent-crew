@@ -6,7 +6,7 @@
 <title>agent-crew — overview</title>
 <link rel="icon" href="data:,">
 <style>
-  /* The fleet dashboard's palette (bin/dashboard.ts SPA shell), dark-only:
+  /* The fleet dashboard's palette (dashboard/app.ts SPA shell), dark-only:
      canvas/surface/elev grays, #273445 borders, #22D3EE cyan accent. */
   :root {
     --paper: #0B0F14;        /* --canvas */
@@ -369,7 +369,7 @@
     <tr>
       <td>Web dashboard</td>
       <td>Cross-fleet SPA over <code>127.0.0.1</code>: every fleet's processes, backlog, artifacts, reviews, whiteboards, records, domains, learning and config in a browser — read-only except a few guarded writes</td>
-      <td><code>bin/ac-dashboard.sh</code>, <code>bin/dashboard.ts</code></td>
+      <td><code>bin/ac-dashboard.sh</code>, <code>dashboard/app.ts</code></td>
     </tr>
   </table></div>
 </section>
@@ -695,7 +695,7 @@
     <tr><td><code>ac-crew-state.sh</code></td><td>One deterministic state line: crew-ship run step &gt; gone/unobservable &gt; busy &gt; last status.</td></tr>
     <tr><td><code>ac-fleet-view.sh</code></td><td>One line per crewmate: id, kind, project, mode, state, window.</td></tr>
     <tr><td><code>ac-dash.sh</code> / <code>ac-statusline.sh</code></td><td>Captain dashboard in the terminal / one-line fleet status for status bars.</td></tr>
-    <tr><td><code>ac-dashboard.sh</code></td><td>Local Bun web dashboard (<code>bin/dashboard.ts</code>, no build step): cross-fleet survey plus per-fleet Processes / Backlog / Reports / Reviews / Whiteboards / Records / Domains / Learning / Search / Config pages, the native <code>/review</code> annotate loop and the Excalidraw <code>/whiteboard</code> editor.</td></tr>
+    <tr><td><code>ac-dashboard.sh</code></td><td>Local Bun web dashboard (<code>dashboard/app.ts</code>, no build step): cross-fleet survey plus per-fleet Processes / Backlog / Reports / Reviews / Whiteboards / Records / Domains / Learning / Search / Config pages, the native <code>/review</code> annotate loop and the Excalidraw <code>/whiteboard</code> editor.</td></tr>
     <tr><td><code>ac-review.sh</code></td><td>Crewmate CLI for the native review loop: open / poll (blocking) / reply / end against the dashboard review API.</td></tr>
     <tr><td><code>ac-deputy.sh</code></td><td>Crewdeputy routing table: list (digest block with liveness), validate, report (return channel), handoff.</td></tr>
     <tr><td><code>ac-domain.sh</code></td><td>Crewdomain verbs: new / assign / unassign / audit / list / validate over <code>crewdomains/&lt;name&gt;/</code> and <code>records/crewdomains.md</code>.</td></tr>

@@ -1,8 +1,9 @@
-// dashboard.test.ts - Bun unit test for the dashboard's PURE parsers.
-// Run: bun test bin/dashboard.test.ts   (importing dashboard.ts does NOT start
-// the server - Bun.serve is guarded by import.meta.main).
+// app.test.ts - Bun unit test for the dashboard's PURE parsers.
+// Run: bun test dashboard/app.test.ts   (importing app.ts does NOT start the
+// server - Bun.serve lives inside dashboardMain, called only by the
+// bin/dashboard.ts shim's import.meta.main guard).
 //
-// Only the two non-trivial pure functions are tested: the rest of dashboard.ts
+// Only the two non-trivial pure functions are tested: the rest of app.ts
 // is thin IO/shell-out/render that a unit test would only re-assert the obvious
 // for. parseRoomList in particular must READ ac-room.sh's status token, never
 // re-count pending/handback (the no-second-bookkeeping rule).
@@ -10,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass } from "./dashboard.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass } from "./app.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -869,7 +870,7 @@ test.skipIf(!Bun.which("bash"))(
       writeFileSync(file, fixture);
       const md = readFileSync(file, "utf8"); // byte-identical input to both parsers
 
-      const binDir = import.meta.dir; // this test file lives in bin/, same as ac-lib.sh
+      const binDir = new URL("../bin", import.meta.url).pathname; // ac-lib.sh lives in bin/, one level up
       const proc = Bun.spawnSync(
         ["bash", "-c", '. "$1/ac-lib.sh"; ac_domain_parse "$2"', "--", binDir, file],
         { stdout: "pipe", stderr: "pipe" },
@@ -2012,7 +2013,7 @@ test("ttlMemo's TTL window starts at resolution, so a slow loader still caches",
   expect(calls).toBe(1);
 });
 
-// dashboard.ts:2592 sets the client poll interval POLL_MS = 5000, but that
+// app.ts sets the client poll interval POLL_MS = 5000, but that
 // constant lives inside the `PAGE` template literal (bun test cannot import
 // it - see the dashboard-verifier-kind-hardcode repo-knowledge entry), so the
 // bound below is the known client value. Regression for the bug this task
@@ -2030,7 +2031,7 @@ test("HOME_PATHS_TTL_MS exceeds the client's 5000ms poll interval, so a steady-s
 // cannot import PAGE, but it can lint the SOURCE: inside the literal, a
 // backslash-quote must always be doubled (`\\\\'` in the file), never single.
 test("PAGE literal carries no single-escaped quote (the template eats one level and blanks the client)", () => {
-  const src = require("fs").readFileSync(new URL("./dashboard.ts", import.meta.url), "utf8");
+  const src = require("fs").readFileSync(new URL("./page.ts", import.meta.url), "utf8");
   const start = src.indexOf("const PAGE = `");
   expect(start).toBeGreaterThan(0);
   const page = src.slice(start);
@@ -2227,7 +2228,7 @@ test("reviewApply queues annotations with a monotonic seq and refuses when ended
   expect(typeof reviewApply(ended, { type: "annotate", anchor: null, text: "x", at: "T" })).toBe("string");
 });
 
-// REVIEW SHARE (dashboard.ts share block): the token lives in the session
+// REVIEW SHARE (app.ts share block): the token lives in the session
 // file, dies with the session, and reopen never resurrects it - a revoked or
 // ended link must go dark durably, not merely until a restart.
 test("reviewApply share/unshare set and clear the token; end kills it; reopen does not resurrect it", () => {
@@ -2985,7 +2986,7 @@ test("reviewApply attaches an image field to the queued record only when the act
 // The captain's real setup is a SPLIT - embeddings on one provider, synthesize
 // on another - so a lane write must never touch the other lane's block.
 
-import { applyProviderLane, PROVIDER_LANES } from "./dashboard.ts";
+import { applyProviderLane, PROVIDER_LANES } from "./app.ts";
 
 test("applyProviderLane embedding: writes key + embedding block only, synthesize untouched", () => {
   const bj = { synthesize: { api: { provider: "opencode-go", model: "kimi-k2.7-code" } } };
@@ -3036,7 +3037,7 @@ test("PROVIDER_LANES: synthesize offers opencode-go, embedding does not", () => 
 });
 
 // ---- fleetAttnItems (fleets-attn-queue) -----------------------------------
-import { fleetAttnItems } from "./dashboard.ts";
+import { fleetAttnItems } from "./app.ts";
 
 const ATTN_SNAP = {
   homes: [

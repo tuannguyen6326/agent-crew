@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dashboard.test.sh - thin wrapper so bin/dashboard.test.ts (Bun) runs as part
+# dashboard.test.sh - thin wrapper so dashboard/app.test.ts (Bun) runs as part
 # of the canonical suite. Before this file, the dashboard's write-endpoint
 # security assertions (isEditableConfig, applyConfigWrite/applyDispatchWrite
 # refusing writes, parseArtifactPath traversal rejection, ...) were reachable
@@ -13,7 +13,7 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/ (helpers.sh not found)\n' >&2; exit 1; }
 
-command -v bun >/dev/null 2>&1 || { printf 'SKIP: bun not available - bin/dashboard.test.ts skipped\n'; exit 0; }
+command -v bun >/dev/null 2>&1 || { printf 'SKIP: bun not available - dashboard/app.test.ts skipped\n'; exit 0; }
 
-bun test "$ROOT/bin/dashboard.test.ts"
+bun test "$ROOT/dashboard/app.test.ts"
 pass

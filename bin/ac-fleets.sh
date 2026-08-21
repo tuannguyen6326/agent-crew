@@ -16,7 +16,7 @@
 # --paths is the paths-only sibling of --json: `{homes:[{path,crewdeputies:
 # [...]}]}`, home-discovery only (is_home + crewdeputy nesting), none of
 # --json's per-home crew/inbox/watcher/wakes/lock/cadence/config computation -
-# no totals either. bin/dashboard.ts's allowedHomePaths() is the one consumer:
+# no totals either. dashboard/app.ts's allowedHomePaths() is the one consumer:
 # it reads only h.path/h.crewdeputies from a full --json walk and threw the
 # rest away, paying the whole per-home accounting (including one ac-room.sh
 # list shell-out per home) for nothing every time its cache expired.
@@ -433,7 +433,7 @@ emit_home_paths() {
   # crewdeputies:[...]}`, home-discovery only. No crew scan, no ac-room.sh
   # list shell-out, no watcher/wakes/lock reads, no config/cadence reads -
   # every one of those is per-home work emit_home pays for that
-  # allowedHomePaths (bin/dashboard.ts) never reads.
+  # allowedHomePaths (dashboard/app.ts) never reads.
   local home="$1" cdroot cd children="[]" cj
   cdroot="$home/crewdeputies"
   if [ -d "$cdroot" ]; then

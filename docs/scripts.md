@@ -36,7 +36,7 @@ Each script's header comment is its authoritative spec; this table is the map.
 | `ac-relocate.sh <id> [--family <fam> \| --root]` | Move a live task window into a family workspace (default: its own family) or the fleet root workspace without losing its claude session. Spec: `bin/ac-relocate.sh` header. |
 | `ac-dash.sh [--watch [<s>]]` | Captain dashboard IN the terminal. Spec: `bin/ac-dash.sh` header. |
 | `ac-fleets.sh [--json] [<container>]` | Strictly read-only cross-fleet survey. Spec: `bin/ac-fleets.sh` header. |
-| `ac-dashboard.sh [--port <N>]` | Launch the local Bun dashboard in the foreground; `bin/dashboard.ts` is the implementation and owns the route/API contracts. Spec: `bin/ac-dashboard.sh` header. |
+| `ac-dashboard.sh [--port <N>]` | Launch the local Bun dashboard in the foreground; `dashboard/app.ts` is the implementation and owns the route/API contracts. Spec: `bin/ac-dashboard.sh` header. |
 | `ac-statusline.sh` | One-line fleet status for status bars. Spec: `bin/ac-statusline.sh` header. |
 | `ac-watch.sh [--once \| --release <pid>]` | Zero-token watcher: polls panes and stage artifacts, publishes each wake durably to its scope's spool, and exits with one reason line. Spec: `bin/ac-watch.sh` header. |
 | `ac-done.sh <id> <marker>` | The agent-side completion PUSH: publish ONE durable wake record and end the armed watcher's poll wait at once. Spec: `bin/ac-done.sh` header. |
@@ -51,7 +51,7 @@ Each script's header comment is its authoritative spec; this table is the map.
 | `ac-ship.sh start\|step\|findings\|meta\|cmd\|attest-test\|attest-check\|push\|base\|evidence-dir\|skip-remaining\|config\|fix-report\|review-agent\|status\|finish` | Deterministic 8-step crew-ship engine run by the execution crewmate that implemented the task. Spec: `bin/ac-ship.sh` header. |
 | `ac-verify.sh codereview\|qa ...` | Synchronous independent-verification facade for exactly two kinds (codereview, qa). Spec: `bin/ac-verify.sh` header. |
 | `ac-notify.sh <title> <msg>` | Best-effort captain notification over the `config/wedge-alarm` channel. Spec: `bin/ac-notify.sh` header. |
-| `ac-review.sh open\|poll\|reply\|end\|url <file>.html` | Crewmate CLI for the dashboard's native annotate loop: thin curl shim over the review API - the dashboard owns sessions, anchors, and the viewer (`bin/dashboard.ts` review block). Spec: `bin/ac-review.sh` header. |
+| `ac-review.sh open\|poll\|reply\|end\|url <file>.html` | Crewmate CLI for the dashboard's native annotate loop: thin curl shim over the review API - the dashboard owns sessions, anchors, and the viewer (`dashboard/app.ts` review block). Spec: `bin/ac-review.sh` header. |
 | `ac-review-diff.sh <id> [--stat]` | Crewmate change vs merge-base with the default branch. Spec: `bin/ac-review-diff.sh` header. |
 | `ac-pr-check.sh <id> <url>` | Record PR + head SHA on the task meta. Spec: `bin/ac-pr-check.sh` header. |
 | `ac-pr-merge.sh <id> <url> [-- flags]` | Merge the PR after captain approval, with the landing interlock. Spec: `bin/ac-pr-merge.sh` header. |
