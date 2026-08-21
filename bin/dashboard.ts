@@ -4204,6 +4204,28 @@ async function roomShow(homePath: string, family: string): Promise<Response> {
  * family of its own, never folded onto the epic it is a story of).
  * "" when no prefix is a known family - an archived task whose row is gone.
  */
+/** Parse a data/<epic>/branches record (epic-branch-mech): one `<repo>
+ *  <branch> [key=value ...]` per line; a `# retired <iso>` first line marks
+ *  the deliberate end of the fence. Pure - familyDetail feeds it the file. */
+export function parseEpicBranches(text: string): { repo: string; branch: string; staging: string; push: boolean; retired: boolean }[] {
+  const lines = String(text || "").split("\n");
+  const retired = /^# retired /.test(lines[0] || "");
+  const out: { repo: string; branch: string; staging: string; push: boolean; retired: boolean }[] = [];
+  for (const ln of lines) {
+    const t = ln.trim();
+    if (!t || t.startsWith("#")) continue;
+    const parts = t.split(/\s+/);
+    if (parts.length < 2) continue;
+    let staging = "", push = false;
+    for (const kv of parts.slice(2)) {
+      if (kv.startsWith("staging=")) staging = kv.slice(8);
+      if (kv === "push=yes") push = true;
+    }
+    out.push({ repo: parts[0], branch: parts[1], staging, push, retired });
+  }
+  return out;
+}
+
 export function taskFamilyOf(id: string, known: string[]): string {
   let s = String(id || "");
   while (s) {
@@ -4370,6 +4392,24 @@ async function familyDetail(homePath: string, family: string): Promise<Response>
     chiefLive = chiefPaneOf(readFileSync(`${homePath}/state/${family}-chief.meta`, "utf8")) !== null;
   } catch { /* no chief meta - unpromoted or demoted family */ }
 
+  // Epic-branch record + recorded ship PRs (epic-branch-mech), live else
+  // archived - display only, the CLI verbs own the truth.
+  let epicBranches: ReturnType<typeof parseEpicBranches> = [];
+  let shipPrs: string[] = [];
+  for (const cand of [`${homePath}/data/${family}/branches`, ...(function () {
+    try {
+      return readdirSync(`${homePath}/data/archive`).map((y) => `${homePath}/data/archive/${y}/${family}/branches`);
+    } catch { return [] as string[]; }
+  })()]) {
+    if (!existsSync(cand)) continue;
+    try { epicBranches = parseEpicBranches(readFileSync(cand, "utf8")); } catch { /* unreadable record renders nothing */ }
+    break;
+  }
+  try {
+    const sh = readFileSync(`${homePath}/data/${family}/gate/ships.env`, "utf8");
+    for (const m of sh.matchAll(/^pr[12]_url=(\S+)$/gm)) shipPrs.push(m[1]);
+  } catch { /* no ships yet */ }
+
   return json({
     ...composeFamily({
       family,
@@ -4385,6 +4425,8 @@ async function familyDetail(homePath: string, family: string): Promise<Response>
       tasks,
     }),
     parent: isSub ? parent : "",
+    epicBranches,
+    shipPrs,
     chiefLive,
   });
 }
@@ -8208,6 +8250,8 @@ ${UX_BASE}
   .chipm.cauto{ background:transparent; color:var(--muted); border:1px dashed var(--muted); }
   .badgeb{ display:inline-block; border-radius:20px; padding:0 7px; font-size:10px; font-weight:700; }
   .badgeb.epic{ background:var(--purple-soft); color:var(--purple); } .badgeb.pr{ background:var(--good); color:var(--bg); }
+  .badgeb.ebr{ background:var(--accent-soft); color:var(--accent); font-family:var(--mono); }
+  .badgeb.ebr.retired{ opacity:.55; text-decoration:line-through; }
   .badgeb.domain{ background:var(--accent-soft); color:var(--accent); font-family:var(--mono); text-transform:none; }
   .bprog{ height:5px; background:var(--panel); border:1px solid var(--line); border-radius:5px; overflow:hidden; margin:8px 0 4px; }
   .bprog i{ display:block; height:100%; background:var(--good); }
@@ -9869,6 +9913,9 @@ function boardDetailHead(id, d){
   var stCls=!d?'':(d.state==='failed'?' err':(d.state==='abandoned'?' stale':(d.section==='queued'?' q':(d.section==='in_flight'?' f':''))));
   return '<div class="fhead"><span class="did">'+esc(id)+'</span>'
     +(d&&d.isEpic?'<span class="badgeb epic">EPIC</span>':'')
+    +((d&&d.epicBranches&&d.epicBranches.length)?d.epicBranches.map(function(b){
+        return '<span class="badgeb ebr'+(b.retired?' retired':'')+'" title="integration branch of '+esc(b.repo)+(b.staging?' (staging '+esc(b.staging)+')':'')+(b.push?' - push=yes':'')+(b.retired?' - RETIRED':'')+'">&#9095; '+esc(b.branch)+' &middot; '+esc(b.repo)+'</span>';
+      }).join(''):'')
     +(d&&d.parent?'<a class="badgeb" href="/fleets/'+enc(currentFleet())+'/board/'+enc(d.parent)+'" data-link title="this is a fan-out sub-task of '+esc(d.parent)+'">↳ sub-task of '+esc(d.parent)+'</a>':'')
     +(d?'<span class="stt'+stCls+'">'+esc(sectionLabel(d))+(d.rollup?' · '+d.rollup.done+'/'+d.rollup.total:'')+'</span>':'')
     +'</div>';
