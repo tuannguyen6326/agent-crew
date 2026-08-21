@@ -1562,6 +1562,35 @@ export function mermaidPass(loadMermaid: () => Promise<any>, theme: string, pape
 }
 
 
+/** Paint-guard predicate (dash-review-polish-paint): true iff the frame
+ * rendered something the captain can actually see, not merely non-empty
+ * bytes. innerText already excludes display:none/visibility:hidden text -
+ * the exact false-positive class this guard exists to catch - so a
+ * length check on it alone is enough for prose artifacts; the img/svg/
+ * canvas/video fallback covers a diagram-only page, since mermaidPass
+ * REPLACES a .mermaid block's source text with an <svg> (a page whose
+ * only content is a settled diagram has empty innerText from source text
+ * but a real rendered element with area). A THIRD check reads the body's
+ * own computed background-image alone, never background-color: the review
+ * iframe's own chrome (IFRAME_STYLE) always paints kind:"md" documents a
+ * real background-color regardless of the artifact's own content, so
+ * that channel would silently defeat the guard on every blank markdown
+ * report; background-image stays the artifact's own signal in both kinds
+ * (the shorthand `background:var(--canvas)` IFRAME_STYLE sets resets it to
+ * "none"), so it is the one background signal this check can trust. DOM-
+ * coupled like mermaidPass above it - no pure input/output surface a bun
+ * test can drive without a browser; proved live via e2e (see the report). */
+export function artifactPainted(root: Document): boolean {
+  const body = root.body;
+  if (!body) return false;
+  if ((body.innerText || "").trim().length > 0) return true;
+  if (Array.prototype.some.call(body.querySelectorAll("img, svg, canvas, video"), (el: Element) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 4 && r.height > 4;
+  })) return true;
+  return getComputedStyle(body).backgroundImage !== "none";
+}
+
 /** HTML-escape text (matches the page's client-side esc()). */
 export function escapeHtml(s: string): string {
   return s

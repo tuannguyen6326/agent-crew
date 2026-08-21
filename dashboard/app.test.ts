@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted } from "./app.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -2550,6 +2550,44 @@ test("mermaidPass: fence/foreign-block selectors and the data-mmd/data-processed
   expect(src).toContain("data-acrv");
   expect(src).toContain("data-mmd");
   expect(src).toContain("data-processed");
+});
+
+// Paint guard predicate (dash-review-polish-paint) - artifactPainted is DOM-
+// coupled (document.body, querySelectorAll, getBoundingClientRect) exactly
+// like mermaidPass above it, so it has no pure input/output surface a bun
+// test can drive without a browser; acceptance 1/2/3 are proved live (see
+// the report). What IS a real, checkable claim about its SOURCE: it reads
+// rendered text via innerText (which already excludes display:none/
+// visibility:hidden content - the exact false-positive class this guard
+// exists to catch) rather than innerHTML/textContent (which would not), and
+// it falls back to a real-area check on graphic elements so a diagram-only
+// page (mermaidPass replaces the source text with an <svg>) still counts.
+test("artifactPainted: reads rendered text via innerText, not innerHTML/textContent", () => {
+  const src = artifactPainted.toString();
+  expect(src).toContain("innerText");
+  expect(src).not.toContain("innerHTML");
+  expect(src).not.toContain(".textContent");
+});
+
+test("artifactPainted: falls back to a real-area check on graphic elements for a diagram-only page", () => {
+  const src = artifactPainted.toString();
+  expect(src).toContain("img, svg, canvas, video");
+  expect(src).toContain("getBoundingClientRect");
+});
+
+// A body-only CSS background-image (a full-bleed poster artifact with no
+// text and no img/svg/canvas/video tag) is a real paint the first two
+// checks both miss (code-review self-review finding). background-COLOR is
+// deliberately never read here: IFRAME_STYLE's own body{background:
+// var(--canvas)} always paints kind:"md" documents a real background-color
+// regardless of the artifact's own content, so reading color would defeat
+// the guard on every blank markdown report - background-image stays "none"
+// under that same shorthand (it resets every sub-property it does not
+// name), so it is the one background signal safe to trust here.
+test("artifactPainted: falls back to background-image, never background-color (which IFRAME_STYLE always sets for md)", () => {
+  const src = artifactPainted.toString();
+  expect(src).toContain("backgroundImage");
+  expect(src).not.toContain("backgroundColor");
 });
 
 // The .mmdview wrapper div was the SPA-only reader's OWN second render path

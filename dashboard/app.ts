@@ -82,11 +82,11 @@ const AC_HOME = process.env.AC_HOME ?? "";
 // (bin/dashboard.ts) re-exports this module, so re-exporting lib.ts here keeps
 // the historical single-module import surface (tests, ac-contract differential).
 import {
-  ANSI_DARK, ANSI_LIGHT, ArtifactKind, ArtifactMeta, ArtifactNode, BacklogHit, 
-  BacklogLineFields, BacklogView, FamilyDetail, FamilyPr, FamilyStage, FamilySubtask, 
-  LearningLedgerView, LearningPointer, Progress, RoomRow, StageArtifact, THEME_INIT, THEME_VARS, 
-  TimelineEvent, UX_BASE, artifactKind, backlogFamilyIds, boardSystemPanes, buildReviewSrcdoc, 
-  cadenceLabel, chiefFitPx, clampBgDim, composeFamily, contractTokens, deriveProgress, 
+  ANSI_DARK, ANSI_LIGHT, ArtifactKind, ArtifactMeta, ArtifactNode, BacklogHit,
+  BacklogLineFields, BacklogView, FamilyDetail, FamilyPr, FamilyStage, FamilySubtask,
+  LearningLedgerView, LearningPointer, Progress, RoomRow, StageArtifact, THEME_INIT, THEME_VARS,
+  TimelineEvent, UX_BASE, artifactKind, artifactPainted, backlogFamilyIds, boardSystemPanes, buildReviewSrcdoc,
+  cadenceLabel, chiefFitPx, clampBgDim, composeFamily, contractTokens, deriveProgress,
   familyOfTaskId, familyRepos, familyStages, fleetAttnItems, groupArtifacts, isHtmlArtifact, 
   matchBacklog, mermaidPass, nextPalette, nextTheme, normalizeBgColor, parseArtifactPath, 
   parseBacklog, parseBacklogLine, parseLearningLedger, parseRoomList, parseTimeline, readerCss, 
@@ -5174,6 +5174,7 @@ ${UX_BASE}
   #status{margin-left:auto;color:var(--fg2);font-size:12px;display:flex;align-items:center;gap:6px}
   #dot{width:8px;height:8px;border-radius:50%;background:var(--success)}
   #dot.ended{background:var(--stale)}
+  #paintguard{display:none;padding:8px 14px;background:var(--error);color:#fff;font:700 13px var(--ui);text-align:center}
   #main{flex:1;display:flex;min-height:0}
   #frame{flex:1;border:0;background:#fff}
   #panel{width:min(380px,42vw);border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
@@ -5253,6 +5254,7 @@ ${UX_BASE}
   ${guest ? "" : `<span id="sharewrap"><button id="sharebtn" title="Mint a token link a VPN teammate can open (pin + comment only). Stop revokes it.">Share</button><span id="sharepop"><input id="sharepw" type="password" placeholder="Password (empty = open link)" autocomplete="new-password"><button id="sharego" class="primary">Share</button><button id="sharecancel">Cancel</button></span></span><span id="sharelnk"></span><span id="viewers"></span>`}
   <span id="status"><span id="dot"></span><span id="stxt"></span></span>
 </div>
+<div id="paintguard">&#9888;&#65039; Không phát hiện nội dung hiển thị nào trong artifact này &mdash; trang có thể đang trống hoặc bị lỗi.</div>
 <div id="main">
   <iframe id="frame" sandbox="allow-scripts"></iframe>
   <div id="panel">
@@ -5549,14 +5551,18 @@ const OVERLAY = \`<script data-acrv>
   // SPA's markdown readers (Reports/Records/Board) run the one implementation
   // instead of two independently-maintained copies.
 ${mermaidPass.toString()}
+${artifactPainted.toString()}
   function boot(){
     tagDiagrams();
     // Scroll-restore readiness (dash-review-polish-scroll defect 2, r1 fix):
     // fires only once mermaidPass()'s own layout-affecting async work has
     // actually settled, so the review page never restores a scroll position
-    // into a document whose diagrams have not finished rendering yet.
+    // into a document whose diagrams have not finished rendering yet. The
+    // paint guard measures on the same "ready" edge (dash-review-polish-
+    // paint) - measuring any earlier would catch mermaid's async layout
+    // mid-render and manufacture a false blank verdict.
     mermaidPass(() => import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs").then((m) => m.default), "neutral", "background:#fff;border:0;margin:0;padding:10px;overflow-x:auto").then(() => {
-      parent.postMessage({ lavishNative: true, ready: true }, "*");
+      parent.postMessage({ lavishNative: true, ready: true, painted: artifactPainted(document) }, "*");
     });
   }
   if (document.readyState === "loading") addEventListener("DOMContentLoaded", boot);
@@ -5720,6 +5726,7 @@ async function loadArtifact(){
   frameReady = false;
   embedRoundDone = false;
   diagramsReady = false;
+  document.getElementById("paintguard").style.display = "none";
   frame._mountedContent = content;
   frame.srcdoc = buildReviewSrcdoc(body.kind, content, IFRAME_STYLE, document.documentElement.getAttribute("data-theme") || "", document.documentElement.getAttribute("data-palette") || "") + OVERLAY;
   const dres = await api("/api/review/diagrams");
@@ -5760,6 +5767,7 @@ addEventListener("message", (e) => {
     // turns true inside that round.
     frameReady = true;
     maybeEmbedRound();
+    document.getElementById("paintguard").style.display = d.painted ? "none" : "block";
     return;
   }
   if (d.wbo === "close") {
