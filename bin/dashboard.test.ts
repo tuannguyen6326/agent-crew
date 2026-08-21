@@ -10,7 +10,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass } from "./dashboard.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass } from "./dashboard.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -589,6 +589,22 @@ test("paneLayoutCols returns undefined on malformed JSON, a missing pane, or no 
   expect(paneLayoutCols(JSON.stringify({ result: { layout: { panes: [{ pane_id: "w7X:p3", rect: {} }] } } }), "w7X:p3")).toBeUndefined();
 });
 
+test("attachArgv builds the shared non-disruptive mirror command", () => {
+  expect(attachArgv("w7X:p3")).toEqual(["herdr", "agent", "attach", "w7X:p3"]);
+});
+
+test("paneViewportRows reads the pane's real viewport height from herdr pane get JSON", () => {
+  const out = JSON.stringify({ result: { pane: { scroll: { viewport_rows: 47 } } } });
+  expect(paneViewportRows(out, 40)).toBe(47);
+});
+
+test("paneViewportRows falls back on malformed JSON, a missing field, or a non-positive value", () => {
+  expect(paneViewportRows("not json", 40)).toBe(40);
+  expect(paneViewportRows(JSON.stringify({ result: {} }), 40)).toBe(40);
+  expect(paneViewportRows(JSON.stringify({ result: { pane: { scroll: { viewport_rows: 0 } } } }), 40)).toBe(40);
+  expect(paneViewportRows(JSON.stringify({ result: { pane: { scroll: { viewport_rows: 9999 } } } }), 40)).toBe(200);
+});
+
 // --- Slice 3a: markdown -> readable HTML renderer ------------------------
 
 test("renderMarkdown emits headings, paragraphs with hard breaks, and lists", () => {
@@ -912,7 +928,7 @@ test("isEditableConfig passes exactly the editable knobs and rejects everything 
   // every allowlisted knob passes
   for (const name of EDITABLE_CONFIG) expect(isEditableConfig(name)).toBe(true);
   // per-role verification knobs, renamed to the gate-* shape and completed with
-  // agent+effort (captain ruling, routed-pane-rules-for-gate-codereview-
+  // agent+effort (routed-pane-rules-for-gate-codereview-
   // roomchief TASK 2): <role>-{agent,model,effort} for codereview and qa.
   for (const role of ["codereview", "qa"])
     for (const knob of ["agent", "model", "effort"])
@@ -922,11 +938,11 @@ test("isEditableConfig passes exactly the editable knobs and rejects everything 
   expect(isEditableConfig("model-codereview")).toBe(false);
   expect(isEditableConfig("model-qa")).toBe(false);
   expect(isEditableConfig("model-ship")).toBe(false);
-  // the fleet's default crew harness is surfaced (captain: "model agent"); it is
+  // the fleet's default crew harness is surfaced; it is
   // the EXISTING crew-harness knob, never a new duplicate `agent` key.
   expect(isEditableConfig("crew-harness")).toBe(true);
   expect(isEditableConfig("agent")).toBe(false);
-  // identity/transport scalars are now editable (captain widened the allowlist)
+  // identity/transport scalars are now editable (allowlist widened)
   expect(isEditableConfig("captain")).toBe(true);
   expect(isEditableConfig("slack-captain-id")).toBe(true);
   expect(isEditableConfig("slack-channel")).toBe(true);
@@ -978,7 +994,7 @@ test("applyConfigWrite writes an editable knob and appends a well-formed receipt
 test("applyConfigWrite refuses a non-allowlisted name and writes NOTHING", () => {
   const home = tmpHome();
   try {
-    // still-excluded: the hook SCRIPTS and the receipt log (captain is editable now)
+    // still-excluded: the hook SCRIPTS and the receipt log (the captain knob is editable now)
     const hook = "#!/usr/bin/env bash\necho hi\n";
     writeFileSync(`${home}/config/remote-poll`, hook);
     for (const name of ["remote-poll", "remote-ack", ".dash-edits.log"]) {
@@ -2234,7 +2250,7 @@ test("reviewApply stamps the guest author on annotations that carry one and neve
   expect(c.queue[1].by).toBeUndefined();
 });
 
-// THE MODERATION WALL (captain order: agents never read unapproved guest
+// THE MODERATION WALL (agents never read unapproved guest
 // feedback): pollSlice is the one delivery path, so the wall lives there -
 // a by-record is invisible until approved, and approval re-seqs it PAST any
 // cursor an agent already advanced.
@@ -2637,9 +2653,14 @@ test("familyPaneIds: own tasks + verify panes in, chief/self/other families out"
   expect(ids).toEqual(["greet2", "greet2-design", "greet2-frontend", "greet2-verify-codereview", "verify-qa-x"]);
 });
 
-test("chief input surface: closed key allowlist, single printable chars only", () => {
+test("chief input surface: named keys + the full ctrl range, single printable chars only", () => {
   for (const k of CHIEF_KEYS) expect(isChiefKey(k), k).toBe(true);
-  expect(isChiefKey("ctrl+d")).toBe(false);   // EOF - never from the browser
+  // Web-terminal parity: every ctrl+<letter>
+  // passes - the full-shell web terminal on this same listener already
+  // grants strictly more.
+  expect(isChiefKey("ctrl+d")).toBe(true);
+  expect(isChiefKey("ctrl+r")).toBe(true);
+  expect(isChiefKey("ctrl+")).toBe(false);    // shape stays strict: one letter
   expect(isChiefKey("f12")).toBe(false);
   expect(isChiefKey("")).toBe(false);
   expect(isChiefChar("a")).toBe(true);

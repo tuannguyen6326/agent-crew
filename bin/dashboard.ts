@@ -29,6 +29,8 @@
 //
 // Routes:
 //   GET  /* (non-/api)         -> the SPA shell page (deep-link / reload safe)
+//   GET  /attach-frame?path=<home>&(fleet=1|family=<fam>)[&watch=<id>] -> standalone xterm page over the attach ws below: ONE task pane, full width, typed input via roomInput (chief-pane-native-attach, re-landed as its own URL - the chief panel stays on the snapshot stream)
+//   WS   /api/room/attach-ws?path=<home>&(fleet=1|family=<fam>)[&watch=<id>] -> native byte-stream of that pane (`herdr agent attach` on a server pty at the PANE's own geometry, reattached when the pane resizes; output-only - the attach pty is a pure viewer, measured)
 //   GET  /api/snapshot.json    -> ac-fleets.sh --json, passed through (Fleets route + shell health)
 //   GET  /api/processes?path=<home> -> {rooms,pools,remote} for the Processes route
 //   GET  /api/backlog?path=<home>   -> {backlog:{in_flight,queued,done}} for the Backlog route
@@ -279,7 +281,7 @@ export function artifactKind(name: string): ArtifactKind {
  * Derive {family, stage, kind} from an artifact's path RELATIVE to a home's
  * data/ dir (POSIX, forward-slash). Pure - the discovery walk supplies the rel
  * path, this only names it. There is NO allowlist: EVERY file under a family dir
- * is surfaced (captain's call - the Reports tree shows all folders/files), so
+ * is surfaced (deliberate - the Reports tree shows all folders/files), so
  * the only rejections are a path with no file under a family (< 2 segments) and a
  * family token that is not a plain id (guards traversal like `../etc/...`).
  *   <family>/report.md        -> stage "report.md",       kind "md"
@@ -390,7 +392,7 @@ export function clampBgDim(stored: string | null): number {
 // its own cyan-default accent group plus one override block per non-default
 // palette, so the media block and the [data-theme="light"] block stay in
 // step palette-for-palette, not just token-for-token.
-// The 16 ANSI slots, per theme (captain: "apply theme/background như warp?").
+// The 16 ANSI slots, per theme (Warp-style theme/background support).
 // A terminal's TEXT colour is chosen by the agent, not by us, so painting only
 // the ground is what made a light page unreadable: slots 7 and 15 are what a
 // dark-ground TUI uses for ordinary text, and left as near-white they vanish.
@@ -443,7 +445,7 @@ const THEME_VARS = `
     :root:not([data-theme])[data-palette="navy"]{ --accent:#1e3a8a; --accent-ink:#ffffff; --accent-soft:#eaeef8; --accent-hover:#15306e; }
   }`;
 
-// UX baseline (ui-ux-pro-max audit, captain-ordered refactor 2026-08-13),
+// UX baseline (ui-ux-pro-max audit refactor),
 // injected into every captain-facing page's <style> right after THEME_VARS -
 // deliberately NOT into IFRAME_STYLE, whose artifact internals stay put.
 // One rule per finding, additive so page-local CSS stays authoritative:
@@ -537,7 +539,7 @@ export interface BacklogLineFields {
 /**
  * Parse ONE backlog line into the fields the board card + detail render (§9
  * grammar). Pure regex over the SAME raw string parseBacklog keeps - the fields
- * live inside that string and are never stored broken out (captain's principle).
+ * live inside that string and are never stored broken out.
  */
 export function parseBacklogLine(line: string): BacklogLineFields {
   const s = String(line || "");
@@ -1237,18 +1239,19 @@ export function verifyProcessRows(verify: { id: string; kind?: string; project?:
 
 /**
  * Chief-panel pane auto-fit: the font size that makes `cols` monospace
- * columns span the pane's available pixel width. Ceiling 15px (captain
- * ruling 2026-08-19, chosen from a measured 151-col pane at a 1399px panel):
+ * columns span the pane's available pixel width. Ceiling 15px (chosen from
+ * a measured 151-col pane at a 1399px panel):
  * filling the panel outranks matching the native web terminal's own font
  * size, bounded so a narrow-true-width pane still isn't magnified into
  * ugliness. Floor 9.5px keeps a very-wide pane legible instead of vanishing.
- * `0.602` is JetBrains Mono's measured advance-width ratio at this stack;
+ * `0.6` is JetBrains Mono's measured advance-width ratio in Chrome (the
+ * stack's lead font since the WezTerm-parity order);
  * `26` is the .cterm horizontal padding (12px * 2) plus a small rounding
  * margin. Pure math - PAGE interpolates its toString(), the bun test proves
  * the same formula the browser runs.
  */
 export function chiefFitPx(cols: number, clientWidth: number): number {
-  return Math.max(9.5, Math.min(15, (clientWidth - 26) / (cols * 0.602)));
+  return Math.max(9.5, Math.min(15, (clientWidth - 26) / (cols * 0.6)));
 }
 
 export interface ArtifactNode {
@@ -2734,8 +2737,7 @@ export function isEditableConfig(name: string): boolean {
 }
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultracode"] as const;
-// One set again (captain ruling "codereview-agent / qa-agent / gate-agent
-// apply pi vs cursor"): every registry harness is offerable on every knob;
+// One set again: every registry harness is offerable on every knob;
 // the pane arm and one-shot forms carry the per-harness boundaries.
 const CREW_HARNESSES = ["claude", "codex", "opencode", "pi", "cursor"] as const;
 const PANE_HARNESSES = CREW_HARNESSES;
@@ -3445,7 +3447,7 @@ async function backlogDetail(homePath: string): Promise<Response> {
 async function reportsDetail(homePath: string, limit = 0): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
-  // Paging BY FOLDER (captain orders 2026-08-01): the unit is the family
+  // Paging BY FOLDER: the unit is the family
   // dir, not the file - a slice of the newest 20 FILES scattered arbitrary
   // fragments of many folders into the tree. limit = how many of the
   // newest-first folders ship complete; 0 is everything (search and
@@ -3535,7 +3537,10 @@ export const CHIEF_KEYS = [
   "backspace", "space", "pageup", "pagedown", "ctrl+c", "ctrl+v", "ctrl+u",
 ] as const;
 export function isChiefKey(k: string): boolean {
-  return (CHIEF_KEYS as readonly string[]).includes(k);
+  // Web-terminal parity: the attach page types like
+  // the web terminal, so the whole ctrl+<letter> range passes - the full-shell
+  // /api/term/ws on this same listener already grants strictly more.
+  return (CHIEF_KEYS as readonly string[]).includes(k) || /^ctrl\+[a-z]$/.test(k);
 }
 
 /** Text a type-through keystroke may carry: one printable character. The
@@ -3715,16 +3720,20 @@ const path = q.get("path") ?? "";
 // Font + width tables both matter here: xterm's defaults are courier-new and
 // Unicode 6 widths, while herdr lays panes out with modern (Unicode 11+)
 // widths - on glyphs like the TUI's status arrows the two disagree, so
-// redraw-in-place left misaligned residue (the captain's "lỗi font" report).
+// redraw-in-place left misaligned residue (reported as a font glitch).
 // Font size is captain-adjustable (the page chrome's A-/A+) and persists per
 // browser under one key, so every mount comes back at the chosen size.
 const FKEY = "ac_term_font";
-const fclamp = (v) => Math.max(8, Math.min(24, v || 12));
+const fclamp = (v) => Math.max(8, Math.min(24, Math.round((v || 12) * 2) / 2));
 let fpx = 12;
-try { fpx = fclamp(parseInt(localStorage.getItem(FKEY) || "12", 10)); } catch { }
+try { fpx = fclamp(parseFloat(localStorage.getItem(FKEY) || "12")); } catch { }
 const term = new Terminal({
   fontSize: fpx, scrollback: 5000, theme: { background: "#0c252d" },
-  fontFamily: "'JetBrains Mono', Menlo, Monaco, 'SF Mono', 'DejaVu Sans Mono', monospace",
+  // WezTerm parity: JetBrains Mono is what the operator's WezTerm renders,
+  // so the web terminal leads with it; Hack Nerd
+  // Font Mono next supplies the nerd/powerline glyphs JetBrains Mono lacks -
+  // the same shape as WezTerm's own built-in Symbols Nerd Font fallback.
+  fontFamily: "'JetBrains Mono', 'Hack Nerd Font Mono', Menlo, Monaco, 'SF Mono', 'DejaVu Sans Mono', monospace",
   allowProposedApi: true,  // the unicode-version switch is behind this flag
 });
 const fit = new FitAddon.FitAddon();
@@ -3746,16 +3755,38 @@ function connect() {
   // The spawn query IS a size send, so record it as one - else the dedupe below
   // would suppress the first real change back to whatever we opened with.
   sentCols = term.cols; sentRows = term.rows;
-  ws = new WebSocket("ws://" + location.host + "/api/term/ws?path=" + encodeURIComponent(path)
+  // fleet=1 / family=<fam> ride through: the server resolves the target's
+  // workspace and steers THIS client onto it right after spawn - a full
+  // herdr client opened at the pane the URL names.
+  const scope = (q.get("fleet") === "1" ? "&fleet=1" : "") + (q.get("family") ? "&family=" + encodeURIComponent(q.get("family")) : "");
+  ws = new WebSocket("ws://" + location.host + "/api/term/ws?path=" + encodeURIComponent(path) + scope
     + "&cols=" + term.cols + "&rows=" + term.rows);
   ws.binaryType = "arraybuffer";
   // Reset only when a connection actually OPENS (fresh stream, fresh screen).
   // Resetting before each RETRY blanked the screen every 1.2s, so a capped
   // server (429 handshake) showed an empty terminal instead of the message.
   ws.onopen = () => { if (g === gen) term.reset(); };
-  ws.onmessage = (e) => { if (g !== gen) return; term.write(typeof e.data === "string" ? e.data : new Uint8Array(e.data)); };
+  // First-byte watchdog (the dock once opened onto a silent blank): a
+  // connection that OPENS but
+  // never streams is a dead pty wearing a live socket - no close event ever
+  // fires, so the reconnect loop below never runs. Say so and force the
+  // reconnect; on first output tell the embedding parent (the dock drops its
+  // connecting overlay on this signal - same-origin direct call, the
+  // parent.termTheme precedent).
+  let gotByte = false;
+  const wd = setTimeout(() => {
+    if (g !== gen || gotByte) return;
+    term.write("\\x1b[33m[no output - respawning…]\\x1b[0m\\r\\n");
+    try { ws.close(); } catch { }
+  }, 4000);
+  ws.onmessage = (e) => {
+    if (g !== gen) return;
+    if (!gotByte) { gotByte = true; clearTimeout(wd); try { if (parent !== window && typeof parent.acTermLive === "function") parent.acTermLive(); } catch { } }
+    term.write(typeof e.data === "string" ? e.data : new Uint8Array(e.data));
+  };
   ws.onclose = (e) => {
     if (g !== gen) return;
+    clearTimeout(wd);
     term.write("\\r\\n\\x1b[33m[" + (e.reason || "disconnected") + " - reconnecting…]\\x1b[0m\\r\\n");
     setTimeout(() => { if (g === gen) connect(); }, 1200);
   };
@@ -3826,6 +3857,241 @@ window.acSetFont = (d) => {
 // frame knows when it is ready, the parent does not.
 try { if (parent !== window && typeof parent.termTheme === "function") parent.termTheme(); } catch { /* no parent - opened directly */ }
 connect();
+</script></body></html>`;
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+/** Standalone native pane view (chief-pane-native-attach, re-landed as its
+ * own URL after the panel reverted to the snapshot): xterm.js over
+ * /api/room/attach-ws - a real byte-stream of ONE task pane. The grid is
+ * FIXED at the pane's real geometry (the server's {geometry} frame); the
+ * FONT fills the width and the bottom anchors (the pane's aspect never
+ * matches the window's). Typing translates xterm.onData into the gated
+ * roomInput route - the attach pty itself is a pure viewer (measured). */
+function attachFramePage(): Response {
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><title>agent-crew pane mirror</title>
+<link rel="stylesheet" href="/assets/xterm/xterm.css">
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0c252d}
+/* Bottom-anchored: the pane grid rarely shares the panel's aspect ratio, so a
+ * width-filling font can overflow the height - a terminal lives at its bottom
+ * (prompt, newest output), so the top is what crops, and the wheel (xterm
+ * scrollback) still reaches everything above. */
+#t{height:100%;padding:4px 0 0 6px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden}
+/* WRAP mode (re-wrap to the viewer's font): the byte mirror can only zoom -
+ * its grid belongs to the real pane - so rewrap-on-font rides the snapshot
+ * HTML instead, where soft-wrap is free. Reading surface: typing needs the
+ * mirror, so the toggle swaps whole surfaces. */
+:root{${ANSI_DARK}}
+#w{display:none;height:100%;overflow-y:auto;padding:6px 12px;box-sizing:border-box;white-space:pre-wrap;word-break:break-word;font:13px 'JetBrains Mono','Hack Nerd Font Mono',Menlo,Monaco,monospace;line-height:1.4;color:var(--ansi-7)}
+body.wrapmode #t{display:none}
+body.wrapmode #w{display:block}
+/* Box-drawing rules are drawn at the pane's own width - wrapped they leave a
+ * stub line under every rule, so each run stays on one clipped line. */
+#w .wsep{display:inline-block;max-width:100%;white-space:nowrap;overflow:hidden;vertical-align:bottom}
+/* Font controls: hover-dim so the bar never competes with pane content; the
+ * size label doubles as the back-to-auto-fit reset. */
+#bar{position:fixed;top:6px;right:10px;z-index:2;display:flex;gap:4px;align-items:center;opacity:.35;transition:opacity .15s;font:11px 'JetBrains Mono',Menlo,monospace}
+#bar:hover{opacity:1}
+#bar button,#bar span{background:#16323c;color:#9fb6bd;border:1px solid #24444f;border-radius:4px;padding:2px 7px;cursor:pointer;font:inherit}
+.xterm-viewport{scrollbar-width:none;-ms-overflow-style:none}
+.xterm-viewport::-webkit-scrollbar{width:0;height:0}</style>
+<script src="/assets/xterm/xterm.js"></script>
+<script src="/assets/xterm/addon-unicode11.js"></script>
+<script src="/assets/xterm/addon-web-links.js"></script>
+</head><body><div id="t"></div>
+<pre id="w"></pre>
+<div id="bar"><button id="fm" title="Smaller font">A-</button><span id="fs" title="Click: back to auto-fit">auto</span><button id="fp" title="Larger font">A+</button><button id="wr" title="Wrap: re-wrap the pane text to this window and font (reading view; typing needs the mirror)">wrap</button></div>
+<script>
+const q = new URLSearchParams(location.search);
+const path = q.get("path") ?? "";
+const tq = q.get("fleet") === "1" ? "&fleet=1" : "&family=" + encodeURIComponent(q.get("family") ?? "");
+const watch = q.get("watch") ?? "";
+const term = new Terminal({
+  fontSize: 12, scrollback: 2000, theme: { background: "#0c252d" },
+  // Same stack as the term page: WezTerm parity (see the note there).
+  fontFamily: "'JetBrains Mono', 'Hack Nerd Font Mono', Menlo, Monaco, 'SF Mono', 'DejaVu Sans Mono', monospace",
+  allowProposedApi: true,
+});
+term.loadAddon(new Unicode11Addon.Unicode11Addon());
+term.unicode.activeVersion = "11";
+term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => {
+  if (/^https?:$/i.test(uri.split("//")[0])) { const w = window.open(uri, "_blank"); if (w) w.opener = null; }
+}));
+term.open(document.getElementById("t"));
+// Typing types into the pane, web-terminal style. The attach pty itself
+// never forwards input (measured: \`herdr agent attach\` is a pure viewer)
+// and the ws stays output-only - xterm.onData (composed text, Vietnamese IME
+// included, or an encoded control sequence) is translated to the roomInput
+// shapes, the same gated path every other typing surface uses.
+const ATT_KEYS = { "\\r": "enter", "\\x7f": "backspace", "\\t": "tab", "\\x1b": "esc", "\\x1b[A": "up", "\\x1b[B": "down", "\\x1b[C": "right", "\\x1b[D": "left", "\\x1b[Z": "shift+tab", "\\x1b[5~": "pageup", "\\x1b[6~": "pagedown" };
+function sendInput(body) {
+  fetch("/api/room/input?path=" + encodeURIComponent(path) + tq + (watch ? "&watch=" + encodeURIComponent(watch) : ""),
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => { });
+}
+term.onData((d) => {
+  if (ATT_KEYS[d] !== undefined) { sendInput({ key: ATT_KEYS[d] }); return; }
+  if (d.length === 1) {
+    const c = d.charCodeAt(0);
+    if (c < 32 || c === 127) { if (c >= 1 && c <= 26) sendInput({ key: "ctrl+" + String.fromCharCode(96 + c) }); return; }
+    sendInput({ text: d }); return;
+  }
+  if (d.charCodeAt(0) === 27) return;   // unmapped escape sequence - dropped
+  sendInput({ paste: d });
+});
+term.focus();
+// Font-fit: grid is the pane's, so scale the font until the pane's COLUMNS
+// span the box - full width, no dead right margin; height crops at the TOP
+// via the bottom-anchored holder. One
+// proportional step off the rendered screen size, then ONE settle pass that
+// may only SHRINK: xterm cell sizes round to whole pixels, so the exact fit
+// can sit between two font steps and a symmetric epsilon loop oscillates
+// between them forever (measured: the whole pane shimmered between two
+// sizes). Shrink-only settling terminates by construction.
+let grid = null, fitT = null;
+// Manual font override (the A-/A+ header, web-terminal parity): a chosen size
+// wins over auto-fit until reset to auto; persisted per browser like the web
+// terminal's own FKEY.
+const AFK = "ac_attach_font";
+let manualFont = 0;
+try { manualFont = parseInt(localStorage.getItem(AFK) || "0", 10) || 0; } catch { }
+window.acGetFont = () => term.options.fontSize || 12;
+window.acSetFont = (d) => {
+  if (d === 0) { manualFont = 0; try { localStorage.removeItem(AFK); } catch { } fitFont(); return window.acGetFont(); }
+  manualFont = Math.max(6, Math.min(24, Math.round((term.options.fontSize || 12) + d)));
+  try { localStorage.setItem(AFK, String(manualFont)); } catch { }
+  term.options.fontSize = manualFont;
+  return manualFont;
+};
+function fitFont(settle) {
+  if (!grid) return;
+  if (manualFont) { if (term.options.fontSize !== manualFont) term.options.fontSize = manualFont; return; }
+  const holder = document.getElementById("t");
+  const screen = document.querySelector(".xterm-screen");
+  if (!holder || !screen || !screen.clientWidth || !screen.clientHeight) return;
+  const f = term.options.fontSize || 12;
+  const scale = (holder.clientWidth - 10) / screen.clientWidth;
+  const nf = Math.max(6, Math.min(20, Math.floor(f * scale * 100) / 100));
+  if (Math.abs(nf - f) > 0.15 && (!settle || nf < f)) {
+    term.options.fontSize = nf;
+    if (!settle) { clearTimeout(fitT); fitT = setTimeout(() => fitFont(true), 60); }
+  }
+}
+new ResizeObserver(() => { clearTimeout(fitT); fitT = setTimeout(fitFont, 120); }).observe(document.getElementById("t"));
+// A pane that cannot be mirrored: tell the parent when embedded, else say so
+// inline - a standalone tab has nobody else to fall back to.
+function attachGone(why) {
+  try { if (parent !== window && parent.acAttachDead) { parent.acAttachDead(why); return; } } catch { }
+  term.write("\\r\\n\\x1b[33m[" + why + " - reload to retry]\\x1b[0m\\r\\n");
+}
+let ws = null, gen = 0, dead = false, retries = 0, carry = "";
+// NOT TextDecoder("latin1"): that label is windows-1252, which remaps bytes
+// 0x80-0x9f onto punctuation code points - exactly the range Vietnamese
+// UTF-8 continuation bytes live in (measured: every "đ" vanished). A manual
+// byte->char map is the only true 1:1 round-trip.
+const b2s = (buf) => { const u = new Uint8Array(buf); let out = ""; for (let i = 0; i < u.length; i++) out += String.fromCharCode(u[i]); return out; };
+function connect() {
+  const g = ++gen;
+  carry = "";
+  ws = new WebSocket("ws://" + location.host + "/api/room/attach-ws?path=" + encodeURIComponent(path)
+    + tq + (watch ? "&watch=" + encodeURIComponent(watch) : ""));
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { if (g === gen) { retries = 0; term.reset(); } };
+  ws.onmessage = (e) => {
+    if (g !== gen) return;
+    if (typeof e.data === "string") {
+      // TEXT frames are server control: {closed,why} latches pane-gone (no
+      // reconnect loop on a dead pane); {geometry} fixes the grid.
+      try {
+        const c = JSON.parse(e.data);
+        if (c.closed) { dead = true; attachGone(c.why || "pane gone"); return; }
+        if (c.geometry) { grid = c.geometry; term.resize(grid.cols, grid.rows); requestAnimationFrame(fitFont); }
+      } catch { }
+      return;
+    }
+    // The pane paints on the ALTERNATE screen (no xterm scrollback) and
+    // enables MOUSE TRACKING (the wheel reports to the app instead of
+    // scrolling - measured: 1000h/1002h/1003h/1006h ride the live stream).
+    // Strip both families of switches: the paint lands on the normal buffer
+    // where the preloaded history accumulates, and the wheel scrolls it
+    // locally. Bytes ride a manual 1:1 char map and re-encode, so UTF-8 text
+    // is never mangled; the carry holds an escape split across chunks.
+    let s = carry + b2s(e.data);
+    carry = "";
+    const tail = s.match(/\\x1b(?:\\[\\??[0-9]{0,4})?$/);
+    if (tail) { carry = tail[0]; s = s.slice(0, s.length - tail[0].length); }
+    s = s.replace(/\\x1b\\[\\?(?:1049|1047|47|100[0-6]|101[56])[hl]/g, "");
+    if (s) term.write(Uint8Array.from(s, (ch) => ch.charCodeAt(0)));
+  };
+  ws.onclose = (e) => {
+    if (g !== gen || dead) return;
+    retries++;
+    if (retries > 3) { attachGone(e.reason || "attach unavailable"); return; }
+    term.write("\\r\\n\\x1b[33m[reconnecting…]\\x1b[0m\\r\\n");
+    setTimeout(() => { if (g === gen) connect(); }, 1200);
+  };
+}
+// Theme: pull the parent's live palette at load (same-origin), then follow
+// pushes - the parent's termTheme() covers every later theme/palette change.
+window.acSetTheme = (t) => {
+  if (!t || !t.background) return;
+  document.body.style.background = t.background;
+  term.options.theme = { ...(term.options.theme || {}), ...t };
+};
+try {
+  if (parent !== window && typeof parent.termThemeCore === "function") {
+    const r = parent.termThemeCore(parent.getComputedStyle(parent.document.documentElement));
+    if (r) window.acSetTheme(r.theme);
+  }
+} catch { /* opened directly - keep the default */ }
+// WRAP mode: 1s snapshot poll into the pre-wrap surface; the mirror ws stays
+// connected underneath so switching back is instant.
+const wEl = document.getElementById("w");
+let wrapMode = false, wrapT = null, wrapFont = 13;
+try { wrapFont = parseInt(localStorage.getItem("ac_wrap_font") || "13", 10) || 13; } catch { }
+wEl.style.fontSize = wrapFont + "px";
+function wrapTick() {
+  fetch("/api/room/pane?path=" + encodeURIComponent(path) + tq + (watch ? "&watch=" + encodeURIComponent(watch) : "") + "&lines=1200")
+    .then((r) => r.json()).then((j) => {
+      if (!wrapMode || j.html === undefined || wEl._h === j.html) return;
+      const pinned = wEl.scrollTop + wEl.clientHeight >= wEl.scrollHeight - 8;
+      wEl._h = j.html;
+      // Pane lines are padded to the pane's full width - the trailing space
+      // runs wrap into phantom blank fragments, so they go before render.
+      wEl.innerHTML = j.html.replace(/ +(?=\\n|$)/gm, "").replace(/─{20,}/g, '<span class="wsep">$&</span>');
+      if (pinned) wEl.scrollTop = wEl.scrollHeight;
+    }).catch(() => { });
+}
+function setWrap(on) {
+  wrapMode = on;
+  document.body.classList.toggle("wrapmode", on);
+  document.getElementById("wr").style.color = on ? "#b4fa72" : "";
+  try { localStorage.setItem("ac_attach_wrap", on ? "1" : "0"); } catch { }
+  if (on) { wEl._h = undefined; wrapTick(); wrapT = setInterval(wrapTick, 1000); }
+  else { clearInterval(wrapT); wrapT = null; term.focus(); }
+  fsLabel();
+}
+// The bar drives whichever surface is up: mirror font is the acSetFont
+// manual-override (label resets to auto-fit), wrap font is its own persisted
+// size (label resets to 13).
+const fsEl = document.getElementById("fs");
+const fsLabel = () => { fsEl.textContent = wrapMode ? String(wrapFont) : (manualFont ? String(manualFont) : "auto"); };
+const bump = (d) => {
+  if (wrapMode) {
+    wrapFont = d === 0 ? 13 : Math.max(8, Math.min(28, wrapFont + d));
+    try { localStorage.setItem("ac_wrap_font", String(wrapFont)); } catch { }
+    wEl.style.fontSize = wrapFont + "px";
+  } else window.acSetFont(d);
+  fsLabel();
+};
+document.getElementById("fm").onclick = () => bump(-1);
+document.getElementById("fp").onclick = () => bump(1);
+fsEl.onclick = () => bump(0);
+document.getElementById("wr").onclick = () => setWrap(!wrapMode);
+fsLabel();
+connect();
+try { if (localStorage.getItem("ac_attach_wrap") === "1") setWrap(true); } catch { }
 </script></body></html>`;
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
@@ -4113,6 +4379,49 @@ async function paneCols(homePath: string, pane: string): Promise<number | undefi
   return cols;
 }
 
+/** Resolve the pane the chief panel points at - the family's roomchief, the
+ * fleet crewchief (family ""), or a watched member pane. ONE resolver shared
+ * by the snapshot read (roomPane) and the native attach ws, so both surfaces
+ * hold the same membership gate: a watch id only counts when the family
+ * really owns it, and a crewmate id can never be read as a chief. */
+async function panelPaneOf(homePath: string, family: string, watchId: string): Promise<{ pane: string; readonly: boolean } | { why: string }> {
+  if (watchId) {
+    let metas: { id: string; text: string }[] = [];
+    try {
+      metas = readdirSync(`${homePath}/state`).filter((f) => f.endsWith(".meta"))
+        .map((f) => { try { return { id: f.slice(0, -5), text: readFileSync(`${homePath}/state/${f}`, "utf8") }; } catch { return null; } })
+        .filter((x): x is { id: string; text: string } => !!x);
+    } catch { /* no state dir */ }
+    const member = familyPaneIds(metas, family).find((x) => x.id === watchId);
+    if (!member) return { why: "not a pane of this family" };
+    const meta = metas.find((x) => x.id === watchId);
+    const h = paneHandleByMeta(homePath, watchId, meta ? meta.text : "");
+    if (!h) return { why: "pane handle unresolvable" };
+    return { pane: h.pane, readonly: true };
+  }
+  if (family === "") {
+    // Crewchief target (slice C): resolved via the session lock, not a meta.
+    const h = await fleetChiefHandle(homePath);
+    if (!h) return { why: "no live crewchief session" };
+    return { pane: h.pane, readonly: false };
+  }
+  let metaText = "";
+  try {
+    metaText = readFileSync(`${homePath}/state/${family}-chief.meta`, "utf8");
+  } catch {
+    return { why: "no roomchief for this family" };
+  }
+  let pane = chiefPaneOf(metaText);
+  if (!pane) return { why: "chief meta carries no readable pane" };
+  // The handle FILE is what the backend itself reads (backend_capture): panes
+  // can be re-created after spawn, so its first token outranks the meta echo.
+  try {
+    const tok = readFileSync(`${homePath}/state/.pane-${family}-chief`, "utf8").trim().split(/\s+/)[0];
+    if (tok && /^[A-Za-z0-9]+:[A-Za-z0-9]+$/.test(tok)) pane = tok;
+  } catch { /* no handle file - keep the meta-derived pane */ }
+  return { pane, readonly: false };
+}
+
 /** Live capture of a family's ROOMCHIEF pane (chief panel, slice A): resolves
  * the pane strictly from state/<family>-chief.meta via chiefPaneOf (kind gate
  * included - a crewmate id can never be read through here), fetches an ANSI
@@ -4124,62 +4433,42 @@ async function roomPane(homePath: string, family: string, watchId = "", lines = 
     return json({ error: "unknown home" }, 404);
   if (family !== "" && !/^[a-zA-Z0-9_-]+$/.test(family))
     return json({ error: "bad family" }, 400);
-  if (watchId) {
-    // Linked terminals: watch a crewmate/verify pane OF THIS FAMILY,
-    // read-only. Membership is re-derived here from state/ metas - the id the
-    // client sent only counts if this family really owns it.
-    if (family === "" || !/^[a-zA-Z0-9_.-]+$/.test(watchId))
-      return json({ error: "bad watch id" }, 400);
-    let metas: { id: string; text: string }[] = [];
-    try {
-      metas = readdirSync(`${homePath}/state`).filter((f) => f.endsWith(".meta"))
-        .map((f) => { try { return { id: f.slice(0, -5), text: readFileSync(`${homePath}/state/${f}`, "utf8") }; } catch { return null; } })
-        .filter((x): x is { id: string; text: string } => !!x);
-    } catch { /* no state dir */ }
-    const member = familyPaneIds(metas, family).find((x) => x.id === watchId);
-    if (!member) return json({ live: false, why: "not a pane of this family" });
-    const meta = metas.find((x) => x.id === watchId);
-    const h = paneHandleByMeta(homePath, watchId, meta ? meta.text : "");
-    if (!h) return json({ live: false, why: "pane handle unresolvable" });
-    const r = await run(
-      ["herdr", "pane", "read", h.pane, "--source", "recent-unwrapped", "--format", "ansi", "--lines", String(Math.max(lines, 200))],
-      { AC_HOME: homePath },
-    );
-    if (r.code !== 0) return json({ live: false, why: "pane unreadable (backend down or pane gone)" });
-    return json({ live: true, pane: h.pane, readonly: true, cols: await paneCols(homePath, h.pane), html: ansiToHtml(r.out.split("\n").slice(-lines).join("\n")) });
-  }
-  if (family === "") {
-    // Crewchief target (slice C): resolved via the session lock, not a meta.
-    const h = await fleetChiefHandle(homePath);
-    if (!h) return json({ live: false, why: "no live crewchief session" });
-    const r = await run(
-      ["herdr", "pane", "read", h.pane, "--source", "recent-unwrapped", "--format", "ansi", "--lines", String(Math.max(lines, 200))],
-      { AC_HOME: homePath },
-    );
-    if (r.code !== 0) return json({ live: false, why: "pane unreadable (backend down or pane gone)" });
-    return json({ live: true, pane: h.pane, cols: await paneCols(homePath, h.pane), html: ansiToHtml(r.out.split("\n").slice(-lines).join("\n")) });
-  }
-  let metaText = "";
-  try {
-    metaText = readFileSync(`${homePath}/state/${family}-chief.meta`, "utf8");
-  } catch {
-    return json({ live: false, why: "no roomchief for this family" });
-  }
-  let pane = chiefPaneOf(metaText);
-  if (!pane) return json({ live: false, why: "chief meta carries no readable pane" });
-  // The handle FILE is what the backend itself reads (backend_capture): panes
-  // can be re-created after spawn, so its first token outranks the meta echo.
-  try {
-    const tok = readFileSync(`${homePath}/state/.pane-${family}-chief`, "utf8").trim().split(/\s+/)[0];
-    if (tok && /^[A-Za-z0-9]+:[A-Za-z0-9]+$/.test(tok)) pane = tok;
-  } catch { /* no handle file - keep the meta-derived pane */ }
-  const { code, out } = await run(
-    ["herdr", "pane", "read", pane, "--source", "recent-unwrapped", "--format", "ansi", "--lines", String(Math.max(lines, 200))],
+  if (watchId && (family === "" || !/^[a-zA-Z0-9_.-]+$/.test(watchId)))
+    return json({ error: "bad watch id" }, 400);
+  const t = await panelPaneOf(homePath, family, watchId);
+  if ("why" in t) return json({ live: false, why: t.why });
+  const r = await run(
+    ["herdr", "pane", "read", t.pane, "--source", "recent-unwrapped", "--format", "ansi", "--lines", String(Math.max(lines, 200))],
     { AC_HOME: homePath },
   );
-  if (code !== 0) return json({ live: false, why: "pane unreadable (backend down or pane gone)" });
-  const tail = out.split("\n").slice(-lines).join("\n");
-  return json({ live: true, pane, cols: await paneCols(homePath, pane), html: ansiToHtml(tail) });
+  if (r.code !== 0) return json({ live: false, why: "pane unreadable (backend down or pane gone)" });
+  const body: Record<string, unknown> = { live: true, pane: t.pane, cols: await paneCols(homePath, t.pane), html: ansiToHtml(r.out.split("\n").slice(-lines).join("\n")) };
+  if (t.readonly) body.readonly = true;
+  return json(body);
+}
+
+/** herdr argv for the chief panel's native mirror: `agent attach` shares the
+ * pane's real pty non-disruptively (proven in the field by the distro peer's
+ * dash-server). Pure - unit-tested. */
+export function attachArgv(pane: string): string[] {
+  return ["herdr", "agent", "attach", pane];
+}
+
+/** Rows for a native attach, from `herdr pane get` scroll.viewport_rows: the
+ * mirror must spawn at the pane's OWN grid (passive-size), because herdr
+ * sizes a shared pane to the last writer - a viewer-sized attach would
+ * reflow the pane under the working agent. Pure - unit-tested. */
+export function paneViewportRows(out: string, dflt: number): number {
+  try {
+    const r = (JSON.parse(out) as { result?: { pane?: { scroll?: { viewport_rows?: number } } } }).result?.pane?.scroll?.viewport_rows;
+    return typeof r === "number" && Number.isFinite(r) && r >= 1 ? Math.min(Math.floor(r), 200) : dflt;
+  } catch {
+    return dflt;
+  }
+}
+async function paneRows(homePath: string, pane: string): Promise<number> {
+  const { code, out } = await run(["herdr", "pane", "get", pane], { AC_HOME: homePath });
+  return code === 0 ? paneViewportRows(out, 40) : 40;
 }
 
 /** Full room narrative for one family (§2.3). */
@@ -4724,8 +5013,8 @@ export function diagramSceneName(file: string, n: number): string {
 }
 
 function whiteboardDir(homePath: string): string {
-  // <home>/whiteboards/ - a captain-facing store of its own (captain order
-  // 2026-08-01), NOT under data/: scenes are not task artifacts, and under
+  // <home>/whiteboards/ - a captain-facing store of its own, NOT under
+  // data/: scenes are not task artifacts, and under
   // data/ they leaked into artifact discovery as a phantom "whiteboards"
   // family. Legacy scenes migrate by rename on first touch, idempotently.
   const dir = `${homePath}/whiteboards`;
@@ -6086,7 +6375,7 @@ function publishReviewWake(homePath: string, file: string, text: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// REVIEW SHARE (the authoritative contract; captain ruling): the
+// REVIEW SHARE (the authoritative contract): the
 // captain shares ONE review page to a teammate on the same VPN. Click Share
 // on the review page -> a capability token is minted into that session file
 // and a SECOND listener starts on port+1, bound 0.0.0.0 so the captain can
@@ -6506,7 +6795,7 @@ if (!GUEST) {
   if (bl && fleetNm) bl.href = "/fleets/" + encodeURIComponent(fleetNm) + "/reviews";
   // Embedded in the tool overlay the back link is redundant chrome (the
   // overlay's own Close returns to the page you were on) and clicking it
-  // yanks the top window away - full-tab only (captain 2026-08-18).
+  // yanks the top window away - full-tab only.
   if (bl && window.self !== window.top) bl.style.display = "none";
   const fm = /\\/data\\/([^/]+)\\//.exec(file);
   const fl = document.getElementById("famlink");
@@ -7226,7 +7515,7 @@ async function refresh(force){
     const pending = !!a.by && !a.approved && !a.dismissed;
     const d = document.createElement("div");
     d.className = "note";
-    // The anchor's HUMAN face (captain 2026-08-18): the element's own text
+    // The anchor's HUMAN face: the element's own text
     // fingerprint (or the md line number) - never the CSS selector, which
     // now rides only the tooltip.
     const fp = String(a.anchor.fingerprint || "").trim();
@@ -7362,6 +7651,75 @@ if (import.meta.main) {
     websocket: {
       open(ws) {
         const dk = ws.data as { kind?: string };
+        if (dk.kind === "attach") {
+          // Native mirror (chief-pane-native-attach): a real `herdr agent
+          // attach` on a pty this process owns, spawned at the PANE's own
+          // geometry (passive-size - herdr sizes a shared pane to the last
+          // writer, so a viewer-sized attach would reflow it under the
+          // working agent). OUTPUT-ONLY by construction: the message handler
+          // drops every frame, so typing keeps riding roomInput's gates.
+          const d = ws.data as { home: string; fam: string; watch: string; term?: Bun.Terminal; proc?: ReturnType<typeof Bun.spawn>; timer?: ReturnType<typeof setInterval> };
+          ptyCount++;
+          void (async () => {
+            const t = await panelPaneOf(d.home, d.fam, d.watch);
+            if ("why" in t) {
+              // {closed} FIRST so the frame latches "pane gone" instead of
+              // treating the bare close as transient and reconnect-looping.
+              try { ws.send(JSON.stringify({ closed: true, why: t.why })); } catch { /* ws gone */ }
+              try { ws.close(1008, "no pane"); } catch { /* already closed */ }
+              return;
+            }
+            const cols = (await paneCols(d.home, t.pane)) ?? 120;
+            const rows = await paneRows(d.home, t.pane);
+            if (ws.readyState !== WebSocket.OPEN) return; // closed mid-gate; close already released the slot
+            // Scrollback: the attach stream only ever paints the live
+            // viewport, so the wheel had nothing to scroll. Pre-fill xterm's
+            // buffer with the pane's history once per mount (minus the
+            // viewport rows the live paint is about to draw) - local scroll,
+            // the real pane is never moved.
+            const hist = await run(
+              ["herdr", "pane", "read", t.pane, "--source", "recent-unwrapped", "--format", "ansi", "--lines", "2000"],
+              { AC_HOME: d.home },
+            );
+            if (hist.code === 0 && hist.out) {
+              const lines = hist.out.split("\n").slice(0, -rows).join("\r\n");
+              if (lines) { try { ws.send(new TextEncoder().encode(lines + "\r\n")); } catch { /* ws closing */ } }
+            }
+            if (ws.readyState !== WebSocket.OPEN) return;
+            try {
+              const term = new Bun.Terminal({
+                cols, rows,
+                data(_t, chunk) { try { ws.send(chunk); } catch { /* socket gone */ } },
+              });
+              d.term = term;
+              d.proc = Bun.spawn(attachArgv(t.pane), { terminal: term, env: { ...process.env, TERM: "xterm-256color" } });
+              livePtys.add(d.proc);
+              void d.proc.exited.then(() => { try { ws.close(1000, "attach ended"); } catch { /* already closed */ } });
+              // The pane's REAL grid: the frame sizes its FONT to show the
+              // whole pane instead of clipping; {resize} is never honored.
+              try { ws.send(JSON.stringify({ geometry: { cols, rows } })); } catch { /* ws closing */ }
+              // Follow the pane by REATTACHING, not resizing in place: herdr
+              // streams an attach only at the pane's exact grid (measured: a
+              // mismatched viewer receives no further frames and the initial
+              // paint is a stub), so once the working client resizes the pane
+              // this pty is starved - close, and the frame reconnects into a
+              // fresh attach at the new grid with a full paint.
+              const geo0 = cols + "x" + rows;
+              d.timer = setInterval(() => {
+                void (async () => {
+                  const c2 = (await paneCols(d.home, t.pane)) ?? cols;
+                  const r2 = await paneRows(d.home, t.pane);
+                  if (c2 + "x" + r2 === geo0) return;
+                  try { ws.close(1000, "pane resized"); } catch { /* already closed */ }
+                })();
+              }, 5000);
+            } catch {
+              try { d.term?.close(); } catch { /* never opened */ }
+              try { ws.close(1011, "pty unavailable"); } catch { /* already closed */ }
+            }
+          })();
+          return;
+        }
         if (dk.kind === "pane") {
           const d = ws.data as { home: string; fam: string; watch: string; lines: number; last?: string; timer?: ReturnType<typeof setInterval> };
           const tick = async () => {
@@ -7397,9 +7755,20 @@ if (import.meta.main) {
           return;
         }
         void d.proc.exited.then(() => { try { ws.close(1000, "herdr client exited"); } catch {} });
+        const dd = ws.data as { wsDigit?: string };
+        if (dd.wsDigit) {
+          // Steer ONLY this client onto the scoped workspace once herdr has
+          // painted: the config prefix chord (ctrl+b, then the picker digit).
+          // Workspace view is per-client - captain-verified: a webterm client
+          // never moves the WezTerm one.
+          setTimeout(() => { try { d.term?.write("\x02" + dd.wsDigit); } catch { /* pty gone */ } }, 900);
+        }
       },
       message(ws, data) {
         const dk = ws.data as { kind?: string };
+        // A native mirror is display-only: every inbound frame is dropped, so
+        // the frame's own typing path stays the gated roomInput HTTP route.
+        if (dk.kind === "attach") return;
         if (dk.kind === "pane") {
           const d = ws.data as { home: string; fam: string; watch: string; lines: number; last?: string };
           let body: { key?: string; text?: string; paste?: string; lines?: number } = {};
@@ -7435,7 +7804,8 @@ if (import.meta.main) {
       close(ws) {
         const dk = ws.data as { kind?: string; timer?: ReturnType<typeof setInterval> };
         if (dk.kind === "pane") { if (dk.timer) clearInterval(dk.timer); return; }
-        const d = ws.data as { term?: Bun.Terminal; proc?: ReturnType<typeof Bun.spawn> };
+        const d = ws.data as { term?: Bun.Terminal; proc?: ReturnType<typeof Bun.spawn>; timer?: ReturnType<typeof setInterval> };
+        if (d.timer) clearInterval(d.timer);
         ptyCount = Math.max(0, ptyCount - 1);
         if (d.proc) { livePtys.delete(d.proc); try { d.proc.kill(); } catch {} }
         if (d.term) try { d.term.close(); } catch {}
@@ -7454,11 +7824,27 @@ if (import.meta.main) {
         // (measured live: a blank dock on the captain's own machine).
         if (ptyCount >= 8) return json({ error: "too many terminals (8 max)" }, 429);
         const size = termSize(url.searchParams.get("cols"), url.searchParams.get("rows"));
-        if (server.upgrade(req, { data: { kind: "pty", ...size } })) return undefined as unknown as Response;
+        // A fleet/family scope opens this client AT that target's workspace:
+        // resolve the pane, map its workspace to its picker number, and the
+        // pty open branch types the switch chord once herdr has painted.
+        let wsDigit = "";
+        const famT = url.searchParams.get("fleet") === "1" ? "" : url.searchParams.get("family");
+        if (famT !== null) {
+          const t = await panelPaneOf(p, famT, "");
+          if (!("why" in t)) {
+            const wl = await run(["herdr", "workspace", "list"], { AC_HOME: p });
+            try {
+              const wss = (JSON.parse(wl.out) as { result?: { workspaces?: { workspace_id: string; number: number }[] } }).result?.workspaces ?? [];
+              const n = wss.find((w) => w.workspace_id === t.pane.split(":")[0])?.number;
+              if (n && n >= 1 && n <= 9) wsDigit = String(n);
+            } catch { /* list unreadable - open unscoped */ }
+          }
+        }
+        if (server.upgrade(req, { data: { kind: "pty", ...size, wsDigit } })) return undefined as unknown as Response;
         return json({ error: "websocket required" }, 400);
       }
       if (url.pathname === "/api/room/stream") {
-        // Chat-panel pane stream (captain ruling: native, ONE task pane,
+        // Chat-panel pane stream (native, ONE task pane,
         // never a full herdr client): the server reads the pane every 250ms
         // and pushes a frame only when it changed; input rides the same
         // socket and is executed by roomInput - so every membership gate,
@@ -7469,6 +7855,24 @@ if (import.meta.main) {
         if (fam2 !== "" && !/^[a-zA-Z0-9_-]+$/.test(fam2)) return json({ error: "bad family" }, 400);
         const watch2 = url.searchParams.get("watch") ?? "";
         if (server.upgrade(req, { data: { kind: "pane", home: p2, fam: fam2, watch: watch2, lines: 400 } }))
+          return undefined as unknown as Response;
+        return json({ error: "websocket required" }, 400);
+      }
+      if (url.pathname === "/api/room/attach-ws") {
+        // Standalone native view of ONE task pane (`herdr agent attach` on a
+        // server pty at the PANE's own geometry, /attach-frame renders it):
+        // never a full herdr client - the pty is scoped to the single
+        // resolved pane, the socket is output-only, and typing rides the
+        // gated roomInput route. The chief panel itself stays on the
+        // snapshot stream (the settled chief-panel transport).
+        const p3 = url.searchParams.get("path") ?? "";
+        if (!(await allowedHomePaths()).has(p3)) return json({ error: "unknown home" }, 404);
+        const fam3 = url.searchParams.get("fleet") === "1" ? "" : (url.searchParams.get("family") ?? "");
+        if (fam3 !== "" && !/^[a-zA-Z0-9_-]+$/.test(fam3)) return json({ error: "bad family" }, 400);
+        const watch3 = url.searchParams.get("watch") ?? "";
+        if (watch3 && (fam3 === "" || !/^[a-zA-Z0-9_.-]+$/.test(watch3))) return json({ error: "bad watch id" }, 400);
+        if (ptyCount >= 8) return json({ error: "too many terminals (8 max)" }, 429);
+        if (server.upgrade(req, { data: { kind: "attach", home: p3, fam: fam3, watch: watch3 } }))
           return undefined as unknown as Response;
         return json({ error: "websocket required" }, 400);
       }
@@ -7556,6 +7960,11 @@ if (import.meta.main) {
         if (!(await allowedHomePaths()).has(p) || !webtermEnabled(p))
           return json({ error: "terminal disabled (config/webterm)" }, 403);
         return termFramePage();
+      }
+      if (url.pathname === "/attach-frame") {
+        const p = url.searchParams.get("path") ?? "";
+        if (!(await allowedHomePaths()).has(p)) return json({ error: "unknown home" }, 404);
+        return attachFramePage();
       }
       if (url.pathname === "/api/term/status") {
         const p = url.searchParams.get("path");
@@ -8010,6 +8419,12 @@ ${UX_BASE}
   .tbl tr.exp-row td{ background:var(--elev); }
   .rowdisc{ display:inline-flex; align-items:center; gap:6px; color:var(--fg); text-align:left; width:100%; }
   .rowdisc .caret{ color:var(--fg2); width:10px; display:inline-block; }
+  /* Caret-only variant (roomchief rows: the NAME beside it is its own link
+     into the board detail) - full width here would push the name to a second
+     line. */
+  .rowdisc.co{ width:auto; margin-right:2px; }
+  .tbl td.id a{ color:var(--accent); text-decoration:none; }
+  .tbl td.id a:hover{ text-decoration:underline; }
   .expbox{ padding:4px 0; }
   .expbox .lnk{ display:inline-flex; gap:12px; margin-top:6px; flex-wrap:wrap; }
   pre.room{ background:var(--canvas); border:1px solid var(--border); border-radius:6px; padding:10px 12px; margin:6px 0 0;
@@ -8102,7 +8517,7 @@ ${UX_BASE}
   .tnode{ display:flex; align-items:center; gap:6px; width:100%; text-align:left; color:var(--fg); font-size:13px; padding:5px 8px; border-radius:4px; }
   .tnode:hover{ background:var(--elev); }
   .tnode .caret{ color:var(--fg2); width:10px; flex:0 0 auto; }
-  /* One line, never wrapped (captain 2026-08-18) - the full name rides the
+  /* One line, never wrapped - the full name rides the
      title tooltip on both folder and file rows. */
   .tnode .tname{ font-family:var(--mono); flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tnode .cnt{ color:var(--fg2); font-size:12px; }
@@ -8267,6 +8682,22 @@ ${UX_BASE}
   .bcard .ct{ font-size:12.5px; color:var(--ink); margin:3px 0 7px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .bcard .brow{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px; color:var(--muted); }
   .chipm{ display:inline-block; background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:10.5px; color:var(--muted); white-space:nowrap; }
+  /* Waiting-on-captain highlight: the same amber pair the KPI tile speaks. */
+  .bcard.wait{ border-color:var(--warning); border-left-color:var(--warning); background:var(--warn-soft); }
+  .bcard.wait:hover{ border-color:var(--warning); }
+  .chipm.wait{ color:var(--warning); border-color:var(--warning); background:var(--warn-soft); font-weight:700; }
+  /* Answer-in-place: the reply box docks under its amber card as one unit. */
+  .bunit{ margin:8px 0 0; }
+  .bunit .bcard{ margin:0; border-bottom-left-radius:0; border-bottom-right-radius:0; border-bottom:0; }
+  .bans{ border:1px solid var(--warning); border-top:1px dashed var(--warning); background:var(--warn-soft);
+    border-radius:0 0 8px 8px; padding:8px 10px; }
+  .bdetail > .bans{ border-radius:8px; border-top-style:solid; margin:10px 14px 0; }
+  .bans .q{ font-size:11.5px; color:var(--ink); white-space:pre-wrap; word-break:break-word; margin-bottom:6px; max-height:96px; overflow-y:auto; }
+  .bans .row{ display:flex; gap:6px; align-items:flex-end; }
+  .bans textarea{ flex:1; resize:vertical; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:12px var(--ui); }
+  .bans .note{ font-size:11px; color:var(--muted); min-height:14px; margin-top:4px; }
+  .bans .note.err{ color:var(--error); }
+  .bans .note.okk{ color:var(--success); }
   .chipm.shared{ color:var(--success); border-color:var(--success); }
   .chipm.g{ background:var(--good-soft); color:var(--good); border-color:transparent; } .chipm.a{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
   /* Delivery-contract chips: SOLID = pinned on the row (the captain's word),
@@ -8299,8 +8730,10 @@ ${UX_BASE}
   .kpi.warn{ border-color:var(--warning); background:var(--warn-soft); }
   .kpi.warn b{ color:var(--warning); }
   /* Live system/paned task (board-live-panes): muted + dashed so background machinery reads distinct from backlog work, in both themes (design tokens only). */
-  .bcard.sys{ background:var(--panel); border-style:dashed; cursor:default; }
-  .bcard.sys:hover, .bcard.sys:focus-visible{ border-color:var(--line); box-shadow:none; transform:none; }
+  /* A live system pane IS running work - it reads like any in-flight card
+     (green edge, real hover), not like dashed machinery. */
+  .bcard.sys{ border-left-color:var(--success); }
+  .bcard.sys:hover{ border-left-color:var(--success); }
   .bcard.sys .cid{ color:var(--muted); }
   .badgeb.sys{ background:var(--panel-2); color:var(--muted); border:1px solid var(--line); font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
 
@@ -8321,6 +8754,11 @@ ${UX_BASE}
   .bdetail .fhead .x:hover{ background:var(--bg); color:var(--ink); }
   .bdetail .fbody{ flex:1 1 auto; display:grid; grid-template-columns:300px 1fr; min-height:0; }
   .bdetail .fbody.haschief{ grid-template-columns:300px 1fr 6px var(--chiefw, minmax(360px,34%)); }
+  .bdetail .fbody.railcut{ grid-template-columns:26px 1fr; }
+  .bdetail .fbody.railcut.haschief{ grid-template-columns:26px 1fr 6px var(--chiefw, minmax(360px,34%)); }
+  .bdetail .railtg{ float:right; font:600 11px var(--mono); padding:2px 6px; border:1px solid var(--line); border-radius:4px; background:var(--elev); color:var(--muted); cursor:pointer; }
+  .bdetail .fbody.railcut .rail{ padding:6px 2px; }
+  .bdetail .fbody.railcut .rail > *:not(.railtg){ display:none; }
   @media (max-width:720px){ .bdetail .fbody, .bdetail .fbody.haschief{ grid-template-columns:minmax(0,1fr); } .bdetail .rail{ max-height:40%; } }
   .chiefp{ border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; min-height:0; }
   .chiefp .cbar{ display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); }
@@ -8333,7 +8771,7 @@ ${UX_BASE}
      through acSetTheme, so the snapshot pane reads the SAME pair - one terminal
      look, both surfaces - and the same JetBrains Mono the captain's Warp runs. */
   .chiefp .cterm{ flex:1 1 auto; overflow-y:auto; overflow-x:hidden; margin:0; padding:10px 12px; background:var(--term-bg, var(--canvas)); color:var(--term-fg, var(--fg));
-    font:12px/1.45 'JetBrains Mono', var(--mono); white-space:pre-wrap; word-break:break-word;
+    font:12px/1.45 'JetBrains Mono', 'Hack Nerd Font Mono', var(--mono); white-space:pre-wrap; word-break:break-word;
     /* Same white stripe the web terminal had: the UA's light scrollbar track
        against a dark pane. Wheel still scrolls; only the bar is gone. */
     scrollbar-width:none; -ms-overflow-style:none; }
@@ -8378,6 +8816,77 @@ ${UX_BASE}
   .tbtitle{ font-size:11px; color:var(--muted); font-weight:700; }
   .tbsp{ flex:1 1 auto; }
   .tbfs{ font-size:11px; color:var(--fg2); min-width:2ch; text-align:center; }
+  /* Terminal dock (every route except the Terminal page - tdRouteOk owns
+     the rule): split-right / fullscreen-with-header. */
+  .termdock{ position:fixed; top:0; right:0; bottom:0; width:var(--tdw,480px); z-index:60; display:flex;
+    background:var(--panel); border-left:1px solid var(--line); box-shadow:-6px 0 22px rgba(0,0,0,.18); }
+  /* display:flex above outranks the UA's [hidden]{display:none} - without
+     this, a "closed" dock stands as an empty shell on EVERY page (captain
+     screenshot: blank dock on the Search route). */
+  .termdock[hidden]{ display:none; }
+  .termdock.full{ width:100vw; border-left:0; }
+  .termdock.full .tdgrip{ display:none; }
+  .tdgrip{ flex:0 0 6px; cursor:col-resize; background:transparent; }
+  .tdgrip:hover{ background:var(--accent-soft); }
+  .tdcol{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+  /* Same surface language as the pill: quiet chrome, the pulsing accent dot
+     as the live signal; controls are ghost icons that only grow chrome on
+     hover, the font pair fused into one segmented control. */
+  .tdbar{ flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:7px 12px;
+    border-bottom:1px solid var(--line); background:var(--surface); }
+  .tddot{ width:7px; height:7px; border-radius:50%; background:var(--accent); flex:0 0 auto;
+    animation:tdpulse 1.6s ease-in-out infinite; }
+  .tdtitle{ font-size:11.5px; color:var(--muted); display:flex; align-items:baseline; gap:6px; }
+  .tdtitle b{ color:var(--accent); font-weight:700; }
+  .tdtitle i{ font-style:normal; opacity:.7; }
+  .tdsp{ flex:1 1 auto; }
+  .tdseg{ display:flex; align-items:center; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .tdseg button{ font:600 11px var(--mono); padding:4px 9px; border:0; background:transparent;
+    color:var(--muted); cursor:pointer; }
+  .tdseg button:hover{ color:var(--ink); background:var(--elev); }
+  .tdfs{ font-size:11px; color:var(--fg2); min-width:3ch; text-align:center;
+    padding:0 2px; border-left:1px solid var(--line); border-right:1px solid var(--line); align-self:stretch; display:flex; align-items:center; justify-content:center; }
+  .tdico{ font:600 12px var(--mono); width:26px; height:24px; display:flex; align-items:center; justify-content:center;
+    border:1px solid transparent; border-radius:6px; background:transparent; color:var(--muted); cursor:pointer; }
+  .tdico:hover{ color:var(--ink); background:var(--elev); border-color:var(--line); }
+  .tdico[aria-pressed="true"]{ color:var(--accent); border-color:var(--accent); }
+  #td-close:hover{ color:var(--error); border-color:var(--error); }
+  .tdbody{ flex:1 1 auto; min-height:0; position:relative; }
+  .tdbody iframe{ width:100%; height:100%; border:0; background:var(--term-bg, var(--canvas)); }
+  .tdbody .cdead{ padding:16px; color:var(--muted); }
+  /* Connecting overlay: the dock is never a silent blank - this sits over the
+     iframe until the frame reports its first pty byte (acTermLive). */
+  .tdload{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--muted); font:12px var(--mono); background:var(--term-bg, var(--canvas)); pointer-events:none; }
+  .tdload span{ animation:tdpulse 1.2s ease-in-out infinite; }
+  @keyframes tdpulse{ 0%,100%{ opacity:.35; } 50%{ opacity:1; } }
+  body.term-docked .shell{ margin-right:var(--tdw,480px); }
+  /* HIDDEN state (chat-widget shape): the dock slides fully off-screen - the iframe STAYS
+     MOUNTED so the terminal session survives the hide - and what remains is
+     a chat-widget-style floating pill at the bottom-right corner. The pill
+     lives OUTSIDE .termdock: a transformed ancestor becomes position:fixed's
+     containing block, so a pill inside would slide off with the dock. */
+  .termdock.hid{ transform:translateX(100%); box-shadow:none; }
+  .termdock.hid .tdgrip{ display:none; }
+  .tdrail{ position:fixed; right:18px; bottom:18px; z-index:59; display:flex; align-items:center; gap:7px;
+    padding:9px 15px; border-radius:999px; background:var(--panel); border:1px solid var(--line);
+    box-shadow:0 4px 16px rgba(0,0,0,.3); cursor:pointer; font:700 12px var(--mono); color:var(--accent); }
+  /* Quiet chrome, loud signal: the panel-dark pill keeps the app's surface
+     language and the pulsing accent dot is what draws the eye. */
+  .tdrail::before{ content:''; width:7px; height:7px; border-radius:50%; background:var(--accent);
+    animation:tdpulse 1.6s ease-in-out infinite; }
+  .tdrail:hover{ border-color:var(--accent); transform:translateY(-1px); box-shadow:0 6px 20px rgba(0,0,0,.35); }
+  .tdrail[hidden]{ display:none; }
+  /* Phone (<=720px, the app's one breakpoint): the dock IS the viewport -
+     a 480px split on a ~390px screen leaves neither side usable. The grip
+     dies with it (nothing to drag), the app never shifts (the dock covers),
+     and the desktop width survives untouched in localStorage because the
+     override lives here in CSS, not in tdW. */
+  @media (max-width:720px){
+    .termdock{ width:100vw; border-left:0; }
+    .tdgrip{ display:none; }
+    body.term-docked .shell{ margin-right:0; }
+  }
   /* Pressed state is DELIBERATE accent styling (fullscreen active), never a
      leftover focus ring - clicks blur the button after acting. */
   .termbar .btn[aria-pressed="true"]{ color:var(--accent); border-color:var(--accent); }
@@ -8400,7 +8909,7 @@ ${UX_BASE}
   .ovroom .rets{ color:var(--fg2); font-size:11px; }
   .ovroom .rea{ color:var(--fg2); font-size:11px; }
   .ovstories, .ovsubs{ margin-top:14px; }
-  /* Each story is a bordered card row, not a ruled text list (captain 2026-08-17). */
+  /* Each story is a bordered card row, not a ruled text list. */
   .ovstories .strow, .ovsubs .strow{ display:flex; align-items:center; gap:10px; padding:9px 12px; margin:6px 0;
     background:var(--surface); border:1px solid var(--border); border-radius:8px; color:var(--fg); min-width:0; }
   .ovstories .strow:hover, .ovsubs .strow:hover{ border-color:var(--border-strong); background:var(--elev); text-decoration:none; }
@@ -8547,8 +9056,6 @@ ${UX_BASE}
       <div class="actions">
         <span id="live" class="live" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="live-text">connecting&hellip;</span></span>
         <button id="theme-btn" class="btn sm" type="button" aria-label="Cycle theme: auto, light, dark" title="Cycle theme: auto, light, dark">&#127765;</button>
-        <button id="palette-btn" class="btn sm" type="button" aria-label="Cycle accent palette: cyan, teal, navy" title="Cycle accent palette: cyan, teal, navy">Cyan</button>
-        <button id="bg-btn" class="btn sm" type="button" aria-label="Background: custom canvas color or wallpaper (default follows the theme)" title="Background: custom canvas color or wallpaper (default follows the theme)">&#128444;&#65039;</button>
         <button id="refresh-btn" class="btn sm" type="button">&#8635; Refresh</button>
       </div>
     </header>
@@ -8557,6 +9064,32 @@ ${UX_BASE}
     </div>
   </main>
 </div>
+<!-- Terminal dock (every route except
+     the Terminal page, whose own full client made the v2 global dock lag
+     with two clients at once - tdRouteOk owns the rule). Lives OUTSIDE #page
+     so route morphs never remount the iframe; only entering the Terminal
+     page closes the dock and ends its session. Fullscreen KEEPS this header
+     (v1's one real defect: header covered, controls lost). -->
+<div id="term-dock" class="termdock" hidden>
+  <div class="tdgrip" id="td-grip" title="Drag to resize (min 320px, max 72% of the window)"></div>
+  <div class="tdcol">
+    <div class="tdbar">
+      <span class="tddot" aria-hidden="true"></span>
+      <span class="tdtitle mono"><b>herdr</b><i>dock</i></span>
+      <span class="tdsp"></span>
+      <span class="tdseg" role="group" aria-label="Terminal font size">
+        <button type="button" id="td-fminus" title="Smaller terminal font">A-</button>
+        <span id="td-fsize" class="tdfs mono">12</span>
+        <button type="button" id="td-fplus" title="Larger terminal font">A+</button>
+      </span>
+      <button type="button" class="tdico" id="td-min" title="Hide to the edge - the session keeps running">&#8677;</button>
+      <button type="button" class="tdico" id="td-full" aria-pressed="false" title="Fullscreen (header stays; press again or Esc outside the terminal to return to split)">&#x2922;</button>
+      <button type="button" class="tdico" id="td-close" title="Close the dock - the terminal session ends (Ctrl+&#96; reopens)">&#10005;</button>
+    </div>
+    <div class="tdbody" id="td-body"></div>
+  </div>
+</div>
+<button type="button" class="tdrail" id="td-rail" title="Show the terminal dock" hidden>&gt;_ herdr</button>
 <div id="dialog-root"></div>
 <script>
 "use strict";
@@ -8918,10 +9451,24 @@ function applyRoute(isPop){
   var prev=S.route;
   var r=parseRoute(location.pathname);
   if(r.name==='root'){ navigate('/fleets', {replace:true}); return; }
+  // The chat route is retired - old links land on the board with the dock up
+  // (the dock is where chat lives now).
+  if(r.name==='chat' && r.fleet){
+    navigate('/fleets/'+enc(r.fleet)+'/board', {replace:true});
+    if(typeof tdOpen==='function' && tdMode==='closed') tdOpen('split');
+    return;
+  }
   if(r.fleet){ r.home=fleetByName(S.snap, r.fleet); rememberFleet(r.fleet); }
   var changed = !prev || prev.name!==r.name || prev.fleet!==r.fleet;
   if(changed){ pollGen++; if(pageCtrl){ try{pageCtrl.abort();}catch(e){} } pageInFlight=false; S.page=null; S.pageFail=false; toolClose(); }
   S.route=r;
+  // Leaving the dock-carrying screens closes the dock and ends its session -
+  // this is what keeps it structurally unable to coexist with the /terminal
+  // page's own client (the v2 two-clients lag).
+  if(typeof tdMode!=='undefined' && tdMode!=='closed' && !tdRouteOk()) tdClose();
+  if(typeof tdApply==='function') tdApply(); // pill visibility follows the route
+  // (Answering happens IN PLACE on the amber card/detail - the dock never
+  // auto-moves; superseded the short-lived auto-aim.)
   if(r.name==='config' && !S.cfgSection) S.cfgSection=CFG_SECTIONS[0].id;
   syncViewer(r);
   renderNav(); renderHead(); renderPage();
@@ -9134,7 +9681,7 @@ function renderNav(){
   // (menu-dedup): Board and Backlog told the same ledger twice; /backlog
   // deep links stay alive as a parseRoute alias onto the Board.
   var groups=[
-    ['Monitor', [['board','Board'],['processes','Processes'],['chat','Chat']]],
+    ['Monitor', [['board','Board'],['processes','Processes']]],
     ['Work',    [['reports','Reports'],['reviews','Reviews'],['whiteboards','Whiteboards']]],
     ['Knowledge',[['records','Records'],['brain','Brain'],['learning','Learning'],['domains','Domains']]],
     ['System',  [['config','Config']]]
@@ -9343,7 +9890,8 @@ function pageProcesses(){
   s+=chip('all','All',ui.filter);
   s+=chip('attention','Attention',ui.filter);
   s+=chip('blocked','Blocked',ui.filter);
-  s+='<a class="chip" style="margin-left:auto" href="/fleets/'+enc(S.route.fleet)+'/chat" data-link title="Watch and message this fleet\u2019s crewchief session">\uD83D\uDCAC Crewchief</a>';
+  // Opens the dock IN PLACE - never a route hop; the dock is where chat lives.
+  s+='<button type="button" class="chip" style="margin-left:auto" data-td-open data-td-fleet title="Watch and message this fleet\u2019s crewchief session in the terminal dock">\uD83D\uDCAC Crewchief</button>';
   s+='</div>';
 
   var poolBy={}; var pools=(S.page&&S.page.pools)||[];
@@ -9396,15 +9944,19 @@ function pageProcesses(){
     var stCls = isBlockedStatus(row.state)?'badge err':isWaitStatus(row.state)?'badge warn':(row.state==='armed'||row.kind==='crew')?'badge ok':'badge';
     s+='<tr'+(open?' class="exp-open"':'')+'>';
     s+='<td class="id">';
-    if(expandable){ s+='<button class="rowdisc" data-exprow="'+esc(rid)+'" aria-expanded="'+(open?'true':'false')+'"><span class="caret">'+(open?'&#9662;':'&#9656;')+'</span>'+esc(row.id)+'</button>'; }
+    // A roomchief's NAME goes to its family's board detail; the caret alone
+    // keeps the inline expand. Other expandable rows keep name+caret as one
+    // expander.
+    var famHref=(row.work==='roomchief'&&/-chief$/.test(row.id))
+      ? '/fleets/'+enc(S.route.fleet)+'/board/'+enc(row.id.replace(/-chief$/,'')) : null;
+    if(expandable && famHref){
+      s+='<button class="rowdisc co" data-exprow="'+esc(rid)+'" aria-expanded="'+(open?'true':'false')+'" title="Expand"><span class="caret">'+(open?'&#9662;':'&#9656;')+'</span></button>'
+        +'<a href="'+famHref+'" data-link title="Open this family&#39;s board detail">'+esc(row.id)+'</a>';
+    }
+    else if(expandable){ s+='<button class="rowdisc" data-exprow="'+esc(rid)+'" aria-expanded="'+(open?'true':'false')+'"><span class="caret">'+(open?'&#9662;':'&#9656;')+'</span>'+esc(row.id)+'</button>'; }
     else { s+=esc(row.id); }
     s+='</td>';
-    s+='<td class="mono">'+esc(row.work)
-      // Chief chat entry (room-chat slice C): a roomchief row opens its
-      // family's detail - room, artifacts, and the live chief panel - right
-      // here on Processes (the overlay lives in the shell, not the Board page).
-      +(row.work==='roomchief'&&/-chief$/.test(row.id)?' <a class="fopen" href="/fleets/'+enc(S.route.fleet)+'/chat/'+enc(row.id.replace(/-chief$/,''))+'" data-link title="Chat with this roomchief">💬</a>':'')
-      +'</td><td class="mono">'+esc(row.project)+'</td>';
+    s+='<td class="mono">'+esc(row.work)+'</td><td class="mono">'+esc(row.project)+'</td>';
     s+='<td><span class="'+stCls+'">'+esc(row.state||'—')+'</span> <span class="muted" style="font-size:11px">'+(row.live?'live':'file')+'</span></td>';
     s+='<td class="mono">'+esc(row.age||'—')+'</td></tr>';
     if(open && expandable){ s+='<tr class="exp-row"><td colspan="5">'+processExpand(row, roomOf, famKnown)+'</td></tr>'; }
@@ -9554,11 +10106,40 @@ function loadBoardKpi(hp){
   if(c && c.ts && (Date.now()-c.ts)<12000) return;
   boardKpiC[hp]={ ts:(c&&c.ts)||0, pending:(c&&c.pending), loading:true };
   fetch('/api/processes?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
-    var rooms=(j&&j.rooms)||[], n=0;
-    for(var i=0;i<rooms.length;i++){ if(rooms[i].pending||rooms[i].handback) n++; }
-    boardKpiC[hp]={ ts:Date.now(), pending:n, loading:false };
+    var rooms=(j&&j.rooms)||[], n=0, fams=[], asks={};
+    for(var i=0;i<rooms.length;i++){ if(rooms[i].pending||rooms[i].handback){ n++; fams.push(rooms[i].family); asks[rooms[i].family]=rooms[i].last||''; } }
+    boardKpiC[hp]={ ts:Date.now(), pending:n, fams:fams, asks:asks, loading:false };
     if(S.route && S.route.name==='board') renderPage();
-  }).catch(function(){ boardKpiC[hp]={ ts:Date.now(), pending:(c&&c.pending), loading:false }; });
+  }).catch(function(){ boardKpiC[hp]={ ts:Date.now(), pending:(c&&c.pending), fams:(c&&c.fams), loading:false }; });
+}
+// A family WAITING ON THE CAPTAIN is highlighted in place, in the same amber
+// language as the awaiting-captain KPI tile: an open GATE/ASK/handback in its
+// room (the KPI's own source), or a captain-held row. The held check is
+// display-only (the scheduler's strict grammar stays in ac-ready).
+function boardWaits(fam, line){
+  if(line && line.indexOf('[@held]')>=0 && line.indexOf(String.fromCharCode(96)+'[@held]')<0) return true;
+  var hp=S.route&&S.route.home?S.route.home.path:'';
+  var c=hp&&boardKpiC[hp];
+  return !!(c&&c.fams&&c.fams.indexOf(fam)>=0);
+}
+// Answer-in-place: the pending question (the room list's own preview line -
+// the same source the KPI counts) plus a reply box, right where the amber
+// is. The reply rides the EXISTING gated /api/room/send (ac-send into the
+// roomchief session); the roomchief records the DECIDED - this box only
+// delivers the captain's words. Rendered OUTSIDE the card anchor: a form
+// inside an <a> is invalid and every click would fight navigation.
+function boardAnswerHtml(fam){
+  var hp=S.route&&S.route.home?S.route.home.path:'';
+  var c=hp&&boardKpiC[hp];
+  var ask=(c&&c.asks&&c.asks[fam])||'';
+  ask=ask.replace(/^-\\s*\\[[^\\]]*\\]\\s*/,'');
+  // data-preserve: the reply box is a morph island - a poll re-render must
+  // never wipe the captain's half-typed answer or steal the caret.
+  return '<div class="bans" data-preserve="ans-'+esc(fam)+'">'
+    +(ask?'<div class="q">'+esc(ask)+'</div>':'')
+    +'<div class="row"><textarea id="ans-'+esc(fam)+'" rows="2" placeholder="Answer the roomchief… (sent whole via ac-send)"></textarea>'
+    +'<button type="button" class="btn sm primary" data-ans="'+esc(fam)+'">Send</button></div>'
+    +'<div class="note" id="ansn-'+esc(fam)+'"></div></div>';
 }
 function boardKpis(hp, b, bd, sysCount){
   loadBoardKpi(hp);
@@ -9618,8 +10199,8 @@ function boardLiveModes(home, known){
   }
   return map;
 }
-// The delivery-contract chip row (dashboard shows the MODES a task runs -
-// captain ruling). SOLID chip (.cpin) = a token pinned on the row,
+// The delivery-contract chip row (dashboard shows the MODES a task runs).
+// SOLID chip (.cpin) = a token pinned on the row,
 // the captain's recorded word; HOLLOW chip (.cauto) = the mode the live task
 // actually runs with when the row pins none - the chief's own choice, shown
 // so a wrong call is visible while it still runs. One builder, board card +
@@ -9635,7 +10216,7 @@ function contractChips(contract, liveMode){
   return s;
 }
 
-// A family's detail IN the page (captain: "load trong page như board"), not a
+// A family's detail IN the page (board-style, no route hop), not a
 // modal over it. It rides morph's preserved-island rule: the whole detail
 // carries one data-preserve key, so a poll re-render never re-diffs the
 // artifact selection, the viewer's mounted iframe, or the chief terminal - the
@@ -9743,26 +10324,33 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode){
   // A LINK, so the detail is reachable by url, middle-click and back button -
   // it was a button only because the detail used to be a modal.
   var cchips=contractChips(d.contract, liveMode);
-  return '<a class="bcard st-'+d.state+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(f.id)+'" data-link>'
-    +'<div class="cid">'+esc(f.id)+badges+'</div>'
+  var wait=boardWaits(f.id, line);
+  var waitChip=wait?' <span class="chipm wait">⏳ waiting on captain</span>':'';
+  return (wait?'<div class="bunit">':'')+'<a class="bcard st-'+d.state+(wait?' wait':'')+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(f.id)+'" data-link>'
+    +'<div class="cid">'+esc(f.id)+badges+waitChip+'</div>'
     +'<div class="ct">'+esc(d.text||f.id)+'</div>'
     +(cchips?'<div class="brow">'+cchips+'</div>':'')
     +(chips?'<div class="brow">'+chips+'</div>':'')
     +prog
     +'<div class="brow"><span class="chipm">repo: '+esc(d.repo||'—')+'</span>'+right+'</div>'
-    +roll+subs+'</a>';
+    +roll+subs+'</a>'+(wait?boardAnswerHtml(f.id)+'</div>':'');
 }
 
-// A live system/paned task with no backlog row (board-live-panes): a muted,
-// dashed, non-clickable card - no /api/family detail exists for machinery - with
-// its kind as a badge and its live status line. Transient: gone when the pane is
-// reaped and its meta disappears from the snapshot.
+// A live system/paned task with no backlog row (board-live-panes): styled like
+// any in-flight card (it IS running work), with its kind as a badge and its
+// live status line. Transient: gone when the pane is reaped and its meta
+// disappears from the snapshot.
 function boardSysCard(p){
-  return '<div class="bcard sys">'
-    +'<div class="cid">'+esc(p.id)+' <span class="badgeb sys">'+esc(p.kind)+'</span></div>'
+  // A system pane's FAMILY detail is reachable like any card's: a roomchief
+  // id maps to its family (room + data dir exist even with no backlog row -
+  // the brainstorm shape), any other id is its own family.
+  var fam=(p.kind==='roomchief' && /-chief$/.test(p.id)) ? p.id.replace(/-chief$/,'') : p.id;
+  var wait=boardWaits(fam,'');
+  return (wait?'<div class="bunit">':'')+'<a class="bcard sys'+(wait?' wait':'')+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(fam)+'" data-link>'
+    +'<div class="cid">'+esc(p.id)+' <span class="badgeb sys">'+esc(p.kind)+'</span>'+(wait?' <span class="chipm wait">⏳ waiting on captain</span>':'')+'</div>'
     +'<div class="brow"><span class="chipm">repo: '+esc(p.project||'—')+'</span>'
     +'<span class="chipm a live">'+esc(p.status||'—')+'</span></div>'
-    +'</div>';
+    +'</a>'+(wait?boardAnswerHtml(fam)+'</div>':'');
 }
 
 // ---- Task detail, fetched from /api/family. Same FamilyDetail shape the
@@ -9772,7 +10360,7 @@ function boardSysCard(p){
 function boardSyncFamily(r){
   var fam=(r && r.name==='board' && r.fam) ? r.fam : null;
   if(fam!==boardOpenFam){ boardOpenFam=fam; boardArtReq++; }
-  if(!fam){ chiefPollStop(); return; }
+  if(!fam) return;
   var hp=r.home?r.home.path:''; if(!hp) return;   // home not resolved yet - the next render retries
   var ck=hp+'|'+fam;
   if(!(ck in familyCache) && !familyLoading[ck]){
@@ -9782,9 +10370,7 @@ function boardSyncFamily(r){
       .then(function(j){ done(j||{error:'empty'}); })
       .catch(function(){ done({error:'failed to load'}); });
   }
-  var d=familyCache[ck];
-  if(d && (d.chiefLive || famHasLiveCrew(d))){ chiefNoChief=!d.chiefLive; chiefPollStart(fam); }
-  else chiefPollStop();
+  // The snapshot chief panel is retired - no poll to arm here any more.
 }
 
 // ---- Full-screen master-detail (dashboard-board-v2) ---------------------------
@@ -9889,7 +10475,7 @@ function boardOverview(d){
         +(ch.pr?'<span class="spr" role="link" tabindex="0" data-ext="'+esc(ch.pr)+'" title="'+esc(ch.pr)+'">PR '+esc(prNum(ch.pr)||'\u2197')+'</span>'
           // Many rows record a PR as prose ('LANDED: PR #5 merged ...') with
           // no URL - still worth a (non-clickable) chip so the captain sees
-          // which stories raised one (captain 2026-08-17 'k co PR?').
+          // which stories raised one.
           :(function(){ var pm=/\bPR #(\d+)\b/.exec(ch.text||''); return pm?'<span class="spr" title="PR number recorded on the row; no URL to open">PR '+pm[1]+'</span>':''; })())
         +(ch.repo?'<span class="srepo" title="'+esc(ch.repo)+'">'+esc(ch.repo)+'</span>':'')
         +'<span class="badge '+(STORY_BADGE[ch.state]||'')+'">'+STORY_ICON[ch.state]+' '+esc(ch.state)+'</span></a>'; }
@@ -9978,6 +10564,7 @@ function boardDetailRail(d, fleet){
     segs='<i class="'+(d.state==='failed'?'err':(d.state==='abandoned'?'stale':''))+'" style="width:'+d.progress.pct+'%"></i>';
   }
   var s='<div class="rail">'
+    +'<button class="railtg" type="button" data-rail-toggle title="'+(railCut()?'Expand the rail':'Collapse the rail')+'">'+(railCut()?'⇥':'⇤')+'</button>'
     +'<h4>Progress</h4><div class="'+segCls+'">'+segs+'</div><div class="plabel">'+esc(d.progress.label||'—')+'</div>';
   if(d.timeline && d.timeline.length)
     s+='<button class="tlbtn" type="button" data-board-timeline>🕑 Timeline <span class="n">('+d.timeline.length+')</span></button>';
@@ -9996,6 +10583,16 @@ function boardDetailRail(d, fleet){
     +'<div class="repotxt">'+boardRepoList(d)+'</div>';
   if(d.roomCount) s+='<button class="roombtn" type="button" data-board-room>💬 Room ('+d.roomCount+')</button>';
   return s+'</div>';
+}
+// Rail collapse: render-time class so a
+// remount keeps the choice, imperative toggle so a poll never fights it.
+function railCut(){ try{ return localStorage.getItem('ac_dash_brail')==='1'; }catch(e){ return false; } }
+function railToggle(){
+  var on=!railCut();
+  try{ localStorage.setItem('ac_dash_brail', on?'1':'0'); }catch(e){}
+  var fb=document.querySelector('.bdetail .fbody'); if(fb) fb.classList.toggle('railcut', on);
+  var b=document.querySelector('.bdetail .railtg');
+  if(b){ b.textContent=on?'⇥':'⇤'; b.title=on?'Expand the rail':'Collapse the rail'; }
 }
 // The right viewer: a toolbar whose ids the artifact loader writes into, over a
 // body that starts on the overview.
@@ -10016,16 +10613,13 @@ function famHasLiveCrew(d){
 function familyDetailHtml(d){
   var fleet=S.route.fleet;
   if(d.error) return boardDetailHead(boardOpenFam, null)+'<div style="padding:20px 18px">'+stateBox('Detail unavailable', d.error, 'err')+'</div>';
-  // Chief panel (room-chat slice A; widened by task-terminal-mount): mounted
-  // for a live roomchief OR a direct-flow family with live crew panes - the
-  // task view answers "what is the terminal doing" either way. Without a
-  // chief the panel auto-watches the first family pane, read-only.
-  var live=d.chiefLive||famHasLiveCrew(d);
-  var chief=live?chiefPanelHtml(d.chiefLive?(d.id+'-chief'):(d.id+' crew')):'';
-  var grip=live?'<div class="cgrip" id="chief-grip" title="Drag to resize the chief panel"></div>':'';
+  // The snapshot chief panel is retired - the terminal dock (the herdr pill)
+  // is the one live-terminal surface, so the detail keeps the full width.
+  var hp=S.route.home?S.route.home.path:''; if(hp) loadBoardKpi(hp);
   return boardDetailHead(d.id, d)
-    +'<div class="fbody'+(live?' haschief':'')+'"'+(live?chiefWStyle():'')+'>'
-    +boardDetailRail(d, fleet)+boardDetailViewer(d)+grip+chief+'</div>';
+    +(boardWaits(d.id,'')?boardAnswerHtml(d.id):'')
+    +'<div class="fbody'+(railCut()?' railcut':'')+'">'
+    +boardDetailRail(d, fleet)+boardDetailViewer(d)+'</div>';
 }
 // ---- Chief panel input (room-chat slice B/C) ------------------------------
 // ONE live target at a time: a family overlay's roomchief, or the fleet
@@ -10136,8 +10730,8 @@ function termFit(){
   var r=tp.getBoundingClientRect();
   tp.style.height=Math.max(420, Math.floor(window.innerHeight - r.top) - 1)+'px';
 }
-// Paint the terminal frame in the page's OWN theme (captain: nền webterm phải
-// khớp nền theme). The frame is same-origin, so this is a direct call into the
+// Paint the terminal frame in the page's OWN theme (the webterm background
+// must match the page). The frame is same-origin, so this is a direct call into the
 // function it exposes - never a remount, which would kill the herdr client.
 // Deduped on the pair, so the per-poll renderPage never repaints for nothing.
 // The mapping itself lives in the shared termThemeCore (interpolated below) -
@@ -10145,12 +10739,121 @@ function termFit(){
 ${termThemeCore.toString()}
 var termBg='';
 function termTheme(){
-  var f=document.querySelector('.termpage iframe'); if(!f) return;
+  // Every terminal surface present (the Terminal tab AND the dock) gets the
+  // page theme; the dedupe sig only advances when all took the paint, so a
+  // dock mounted later still gets its coat.
+  var fs=document.querySelectorAll('.termpage iframe, #td-body iframe'); if(!fs.length) return;
   var r=termThemeCore(getComputedStyle(document.documentElement));
   if(!r || r.sig===termBg) return;
-  var w=f.contentWindow;
-  if(w && typeof w.acSetTheme==='function'){ w.acSetTheme(r.theme); termBg=r.sig; }
+  var ok=true;
+  for(var i=0;i<fs.length;i++){
+    var w=fs[i].contentWindow;
+    if(w && typeof w.acSetTheme==='function') w.acSetTheme(r.theme); else ok=false;
+  }
+  if(ok) termBg=r.sig;
 }
+// ---- Terminal dock (every route except the Terminal page). OUR backend untouched: the iframe is the same
+// /term-frame client the Terminal tab mounts. The one exclusion is BY
+// CONSTRUCTION: tdRouteOk() gates open, and applyRoute closes the dock on
+// entering 'term' - so the dock can never coexist with the /terminal page's
+// own client (the two-full-clients lag that reverted the v2 GLOBAL dock).
+var tdMode='closed', tdW=480;
+try{ var tds=JSON.parse(localStorage.getItem('ac_term_dock')||'{}'); if(tds.w) tdW=tds.w; }catch(e){}
+// Every route carries the dock EXCEPT the Terminal page - that page mounts its own full client, and dock
+// + page together is the measured two-clients lag that reverted the v2
+// global dock. Entering 'term' closes the dock; the page shows the same
+// herdr session anyway.
+function tdRouteOk(){ return !!(S.route && S.route.name!=='term'); }
+function tdApply(){
+  var d=el('term-dock'); if(!d) return;
+  d.hidden = tdMode==='closed';
+  d.classList.toggle('full', tdMode==='full');
+  d.classList.toggle('hid', tdMode==='hidden');
+  // The pill is the dock's ONLY entry point (the header button is gone): it
+  // shows on every carrying route whenever the dock itself is not on screen -
+  // closed (click opens a fresh session) or hidden (click restores the live
+  // one).
+  var rl=el('td-rail'); if(rl) rl.hidden = !((tdMode==='closed'||tdMode==='hidden') && tdRouteOk());
+  document.documentElement.style.setProperty('--tdw', tdW+'px');
+  document.body.classList.toggle('term-docked', tdMode==='split');
+  var fb=el('td-full'); if(fb) fb.setAttribute('aria-pressed', tdMode==='full'?'true':'false');
+}
+function tdFrameWin(){ var f=document.querySelector('#td-body iframe'); return f?f.contentWindow:null; }
+function tdMount(){
+  var b=el('td-body'); if(!b||b.firstChild) return;
+  var hp=S.route&&S.route.home?S.route.home.path:'';
+  if(!hp){ var th=fleetByName(S.snap, currentFleet()); hp=th?th.path:''; }
+  if(!hp){
+    // Boot race: the dock can open before the first snapshot resolves a home
+    // (retired-chat redirect does exactly this). The placeholder must not
+    // satisfy the firstChild mount guard forever - clear it and retry.
+    b.innerHTML='<div class="cdead">resolving fleet home&hellip;</div>';
+    setTimeout(function(){
+      var bb=el('td-body');
+      if(bb && tdMode!=='closed' && !bb.querySelector('iframe')){ bb.innerHTML=''; tdMount(); }
+    }, 900);
+    return;
+  }
+  fetch('/api/term/status?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
+    var bb=el('td-body'); if(!bb||bb.firstChild) return;
+    if(j.running&&j.url){
+      var f=document.createElement('iframe'); f.src=j.url+tdScope; f.title='herdr terminal';
+      bb.appendChild(f);
+      // Never a silent blank: the overlay stands until the frame's first pty
+      // byte (acTermLive below) - the frame's own watchdog respawns a silent
+      // connection, so this converges to a live terminal, not a spinner.
+      var ov=document.createElement('div'); ov.className='tdload'; ov.id='td-load';
+      ov.innerHTML='<span>connecting to herdr&hellip;</span>';
+      bb.appendChild(ov);
+      termBg=''; setTimeout(function(){ termTheme(); tdFontLabel(); }, 800);
+    } else bb.innerHTML='<div class="cdead">'+esc(j.why||j.error||'terminal unavailable')+'</div>';
+  }).catch(function(){ var bb=el('td-body'); if(bb&&!bb.firstChild) bb.innerHTML='<div class="cdead">terminal unreachable</div>'; });
+}
+function tdOpen(mode){ tdMode=mode; tdApply(); tdMount(); }
+// Workspace scope for the dock's client: '' = plain, '&fleet=1' = the
+// crewchief's workspace, '&family=<f>' = that family's workspace (the
+// /term-frame scope machinery types the picker chord itself). A scope CHANGE
+// remounts the iframe so the new client opens at the right workspace; the
+// same scope just re-raises the running session.
+var tdScope='';
+function tdOpenScoped(sc){
+  if(sc!==tdScope){ tdScope=sc; var b=el('td-body'); if(b) b.innerHTML=''; }
+  tdOpen('split');
+}
+// The frame's first pty byte lands here (same-origin direct call): drop the
+// dock's connecting overlay. The Terminal tab calls it too - harmless no-op.
+window.acTermLive=function(){ var o=el('td-load'); if(o) o.remove(); };
+function tdClose(){ tdMode='closed'; tdApply(); var b=el('td-body'); if(b) b.innerHTML=''; }
+function tdFont(d){
+  var w=tdFrameWin();
+  if(w && typeof w.acSetFont==='function'){ var v=w.acSetFont(d); var sp=el('td-fsize'); if(sp) sp.textContent=String(v); }
+}
+function tdFontLabel(){
+  var w=tdFrameWin(); var sp=el('td-fsize');
+  if(w && sp && typeof w.acGetFont==='function'){ try{ sp.textContent=String(w.acGetFont()); }catch(e){} }
+}
+(function(){
+  var g=el('td-grip'); if(!g) return;
+  var drag=false, sx=0, sw=0;
+  g.addEventListener('mousedown', function(e){ drag=true; sx=e.clientX; sw=tdW; e.preventDefault(); document.body.style.userSelect='none'; });
+  addEventListener('mousemove', function(e){
+    if(!drag) return;
+    tdW=Math.max(320, Math.min(Math.floor(innerWidth*0.72), sw+(sx-e.clientX)));
+    tdApply();
+  });
+  addEventListener('mouseup', function(){
+    if(!drag) return;
+    drag=false; document.body.style.userSelect='';
+    try{ localStorage.setItem('ac_term_dock', JSON.stringify({w:tdW})); }catch(e){}
+  });
+})();
+// Ctrl+backtick toggles the dock on the screens that carry it; Esc drops
+// fullscreen to split. Both fire only with focus OUTSIDE the terminal frame -
+// inside it, every key belongs to the pty.
+addEventListener('keydown', function(e){
+  if(e.ctrlKey && e.key==='\u0060' && tdRouteOk()){ e.preventDefault(); (tdMode==='closed'||tdMode==='hidden')?tdOpen('split'):tdClose(); return; }
+  if(e.key==='Escape' && tdMode==='full') tdOpen('split');
+});
 function termPoll(){
   // Top-level /terminal has no fleet in the route: herdr is one session
   // machine-wide, so any known home path satisfies the server's gate.
@@ -10165,14 +10868,9 @@ function termPoll(){
   }).catch(function(){ termT=setTimeout(termPoll, 3000); });
 }
 
-// The dedicated chat tab (room-chat slice C, captain: "tab riêng"): a full
-// page whose whole body is the chief panel; /fleets/:fleet/chat targets the
-// crewchief, /fleets/:fleet/chat/:family that family's roomchief.
-function pageChat(){
-  var cr=chatRoute(); if(!cr) return '';
-  var title=cr.fam?cr.fam+'-chief':'crewchief · '+(cr.fleet||'');
-  return '<div class="chatpage">'+chiefPanelHtml(title, '/fleets/'+enc(cr.fleet)+'/processes')+'</div>';
-}
+// The chat route is retired (applyRoute/boot redirect it to the board with
+// the dock up); this stub only covers a render squeezed in before redirect.
+function pageChat(){ return ''; }
 function chiefNote(t, err){ var n=el('chief-note'); if(n){ n.textContent=t||''; n.className='cnote'+(err?' err':''); } }
 function chiefSendMsg(){
   var ta=el('chief-msg'); if(!ta) return;
@@ -10578,7 +11276,7 @@ function pageWhiteboards(){
 // pollGen and abort pageCtrl - so an in-flight per-fleet fetch can never
 // resolve and render under the new flag (a stale response's gen check would
 // otherwise still match).
-// Active-only view filter (captain 2026-08-18: per-fleet only, no all-homes
+// Active-only view filter (per-fleet only, no all-homes
 // toggle in the UI - /api/reviews?all=1 stays for shims). Pure client filter.
 function reviewsActiveOnly(){ try{ return localStorage.getItem('ac_dash_reviews_active')==='1'; }catch(e){ return false; } }
 function toggleReviewsActive(){
@@ -10696,7 +11394,7 @@ function treeDefOpen(d, r, i, depth){
   var sel=r.sel;
   return !!sel && (sel===d.key || sel.indexOf(d.key+'/')===0);
 }
-// Material-icon-theme style tree icons (captain 2026-08-18), self-contained:
+// Material-icon-theme style tree icons, self-contained:
 // files render as the theme's flat colored rounded-square glyph (no icon
 // font, no network - a CSS chip carries color + white glyph), folders as the
 // theme's filled blue-grey folder SVG with a lighter open flap.
@@ -11058,6 +11756,9 @@ function runSearch(){
 
 // ---- Config ----
 var CFG_SECTIONS=[
+  // Client-side appearance (accent palette + background) lives here rather
+  // than in the page header - the header keeps only the theme toggle.
+  {id:'appearance', title:'Appearance', keys:[]},
   {id:'runtime', title:'Runtime', keys:['flow','promote','backend']},
   {id:'models', title:'Models', keys:['crew-harness','model','effort','codereview-agent','codereview-model','codereview-effort','qa-agent','qa-model','qa-effort','gate-agent','gate-model','gate-effort']},
   {id:'parallelism', title:'Parallelism', keys:['room-parallel']},
@@ -11065,6 +11766,17 @@ var CFG_SECTIONS=[
   {id:'remote', title:'Remote', keys:['remote-mirror','remote-poll-interval','slack-channel','slack-captain-id']},
   {id:'identity', title:'Identity', keys:['captain']}
 ];
+// Browser-local appearance controls (palette cycle + background dialog);
+// the ids keep their existing click delegation and label sync.
+function appearancePanel(){
+  var p=currentPalette();
+  return '<div class="cfg-field"><div class="fname">Accent palette'
+    +'<div class="fdesc">Cycle the accent: cyan, teal, navy. Applies instantly, stored in this browser.</div></div>'
+    +'<div class="cfg-val"><button id="palette-btn" class="btn sm" type="button" title="Cycle accent palette: cyan, teal, navy">'+esc(p.charAt(0).toUpperCase()+p.slice(1))+'</button></div></div>'
+    +'<div class="cfg-field"><div class="fname">Background'
+    +'<div class="fdesc">Custom canvas color or wallpaper; the default follows the theme.</div></div>'
+    +'<div class="cfg-val"><button id="bg-btn" class="btn sm" type="button" title="Background: custom canvas color or wallpaper">&#128444;&#65039; Background&hellip;</button></div></div>';
+}
 function pageConfig(){
   var r=S.route;
   if(!S.page){ return S.pageFail?stateBox('Config unavailable','Could not load the config knobs. Retrying.','err'):skeleton(); }
@@ -11088,6 +11800,7 @@ function pageConfig(){
   if(S.cfgMsg){ s+='<div class="'+(S.cfgMsg.ok?'badge ok':'badge err')+'" style="margin-bottom:10px">'+esc(S.cfgMsg.text)+'</div>'; }
   if(chosen.id==='dispatch'){ s+=dispatchPanel(); }
   else if(chosen.id==='providers'){ s+=providersPanel(); }
+  else if(chosen.id==='appearance'){ s+=appearancePanel(); }
   else {
   for(var f=0;f<chosen.keys.length;f++){ var name=chosen.keys[f]; var row=byName[name]||{}; var val=row.value; var editing=S.cfgEdit&&S.cfgEdit.name===name;
     s+='<div class="cfg-field"><div class="fname">'+esc(name)
@@ -11483,13 +12196,52 @@ function onClick(e){
   var n;
   if(t.closest('#refresh-btn')){ tick(true); return; }
   // Terminal toolbar: blur the clicked button so the focus ring never sticks
-  // as a phantom highlight after the action (captain: "button highlight lỗi").
+  // as a phantom highlight after the action.
   var tpb=t.closest('#tp-fminus,#tp-fplus,#tp-side');
   if(tpb){
     tpb.blur();
     if(tpb.id==='tp-fminus') termFont(-1);
     else if(tpb.id==='tp-fplus') termFont(1);
     else { var cb=el('collapse-btn'); if(cb) cb.click(); }
+    return;
+  }
+  // Answer-in-place send: the captain's words go whole into the roomchief
+  // session over the existing gated room-send; the roomchief records the
+  // DECIDED. Failures land in the box's own note line, never a dialog.
+  if((n=t.closest('[data-ans]'))){
+    n.blur();
+    var afam=n.getAttribute('data-ans');
+    var ta=el('ans-'+afam), note=el('ansn-'+afam);
+    var msg=ta?ta.value.replace(/\\r/g,'').trim():'';
+    if(!msg){ if(note){ note.textContent='type an answer first'; note.className='note err'; } return; }
+    n.disabled=true; if(note){ note.textContent='sending…'; note.className='note'; }
+    var ahp=S.route.home?S.route.home.path:'';
+    fetch('/api/room/send?path='+enc(ahp)+'&family='+enc(afam), {method:'POST', headers:{'content-type':'text/plain'}, body:msg})
+      .then(function(r){ return r.json(); }).then(function(j){
+        n.disabled=false;
+        if(j&&j.ok){ if(ta) ta.value=''; if(note){ note.textContent='✓ sent — the roomchief records the DECIDED'; note.className='note okk'; } delete boardKpiC[ahp]; }
+        else if(note){ note.textContent=(j&&j.error)||'send failed'; note.className='note err'; }
+      }).catch(function(){ n.disabled=false; if(note){ note.textContent='send failed'; note.className='note err'; } });
+    return;
+  }
+  // Any [data-td-open] control raises the dock IN PLACE - never a route hop;
+  // data-td-family / data-td-fleet aim the client at a workspace.
+  if((n=t.closest('[data-td-open]'))){
+    n.blur();
+    var tf=n.getAttribute('data-td-family');
+    tdOpenScoped(tf ? '&family='+enc(tf) : (n.hasAttribute('data-td-fleet') ? '&fleet=1' : tdScope));
+    return;
+  }
+  // Dock controls (blur after acting - the focus-ring lesson).
+  var tdb=t.closest('#td-fminus,#td-fplus,#td-min,#td-full,#td-close,#td-rail');
+  if(tdb){
+    tdb.blur();
+    if(tdb.id==='td-rail') tdOpen('split');
+    else if(tdb.id==='td-min'){ tdMode='hidden'; tdApply(); }
+    else if(tdb.id==='td-fminus') tdFont(-0.5);
+    else if(tdb.id==='td-fplus') tdFont(0.5);
+    else if(tdb.id==='td-full') tdOpen(tdMode==='full'?'split':'full');
+    else tdClose();
     return;
   }
   if((n=t.closest('[data-chief-key]'))){ chiefKey(n.getAttribute('data-chief-key')); return; }
@@ -11554,6 +12306,7 @@ function onClick(e){
   if((n=t.closest('[data-review-reopen]'))){ reviewRowEnd(n.getAttribute('data-review-reopen'), n.getAttribute('data-review-reopen-file'), true); return; }
   if((n=t.closest('[data-stop-share]'))){ stopShare(n.getAttribute('data-stop-share'), n.getAttribute('data-stop-share-file')); return; }
   if((n=t.closest('[data-reveal]'))){ fetch('/api/reveal?path='+enc(n.getAttribute('data-reveal'))+'&file='+enc(n.getAttribute('data-reveal-file')),{method:'POST'}).catch(function(){}); return; }
+  if((n=t.closest('[data-rail-toggle]'))){ railToggle(); return; }             // collapse/expand the detail's left rail
   if((n=t.closest('[data-board-timeline]'))){ boardShowTimeline(); return; }   // render the lifecycle timeline in the viewer
   if((n=t.closest('[data-board-room]'))){ boardShowRoom(); return; }           // render the family room in the viewer (room-in-viewer)
   if((n=t.closest('[data-board-overview]'))){ boardShowOverview(); return; }   // back from room/timeline/artifact to the overview
@@ -11674,9 +12427,15 @@ function boot(){
 
   S.route=parseRoute(location.pathname);
   if(S.route.name==='root'){ history.replaceState({}, '', '/fleets'); S.route=parseRoute('/fleets'); }
+  if(S.route.name==='chat' && S.route.fleet){ // retired route - board + dock instead
+    history.replaceState({}, '', '/fleets/'+enc(S.route.fleet)+'/board');
+    S.route=parseRoute(location.pathname);
+    setTimeout(function(){ if(tdMode==='closed') tdOpen('split'); }, 0);
+  }
   if(S.route.name==='config' && !S.cfgSection) S.cfgSection=CFG_SECTIONS[0].id;
   syncViewer(S.route);
   renderNav(); renderHead(); renderPage();
+  tdApply(); // boot sets S.route without applyRoute - the pill needs its route pass here too
   tick(true);
   setInterval(function(){ tick(false); if(S.route && S.route.name==='search') runSearch(); }, POLL_MS);
 }
