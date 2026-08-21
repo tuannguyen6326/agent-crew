@@ -485,9 +485,7 @@ const THEME_INIT = `<script>(function(){try{var t=localStorage.getItem('ac_dash_
 export function readerCss(scope: string): string {
   const s = scope ? scope + " " : "";
   const self = scope || "body";
-  return `${s}.mmdview{ margin:12px 0; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:8px; overflow-x:auto; }
-  ${s}.mmdview svg{ max-width:100%; height:auto; }
-  ${self}{ font-size:15px; line-height:1.6; max-width:82ch; }
+  return `${self}{ font-size:15px; line-height:1.6; max-width:82ch; }
   ${s}h1,${s}h2,${s}h3,${s}h4,${s}h5,${s}h6{ color:var(--fg); margin:20px 0 8px; line-height:1.3; }
   ${s}h1{ font-size:1.6em; } ${s}h2{ font-size:1.3em; } ${s}h3{ font-size:1.12em; }
   ${s}p{ margin:8px 0; }
@@ -4653,6 +4651,69 @@ export async function mermaidImportWithFallback(
   }
 }
 
+/** Mermaid render pass for a markdown reader, shared verbatim (toString()) by
+ * /review's iframe overlay AND the SPA's markdown readers (Reports, Records,
+ * Board) - reports-mermaid: the SPA readers used to leave a ```mermaid fence
+ * as escaped source text, and the review iframe had its own copy of this same
+ * pass. ONE implementation now, not two: renders the SVG INSIDE the existing
+ * element (a fence's <pre>, or a self-mermaid pre/div) so anything else
+ * already riding on it - a review pin anchor, renderMarkdown's data-srcline -
+ * moves with it for free, never needing to be copied onto a replacement node.
+ * class=mermaid blocks get the same treatment ONLY when the artifact ships no
+ * mermaid of its own (foreign-script sniff below; data-acrv marks the review
+ * overlay's own <script> so it never counts as foreign) - a self-rendering
+ * HTML artifact keeps its own theme/config. renderMarkdown never emits
+ * pre.mermaid/div.mermaid, so `blocks` is always empty for the SPA readers;
+ * the sniff itself may false-trigger there too (the SPA's own bundle mentions
+ * "mermaid" many times, including in this very function's injected source),
+ * which is harmless since it can only ever suppress an always-empty set.
+ * data-mmd claims an element before its render starts and data-processed
+ * marks it done, so a second call over the same DOM (a poll re-render, a
+ * fresh boot()) is a query pass that touches nothing already rendered - and
+ * costs nothing on markdown with no fences (the early return below, before
+ * any CDN load). Never rejects, so a CDN failure still resolves and never
+ * blocks a caller awaiting it (dash-review-polish-scroll r1: the review
+ * overlay's boot() awaits this before signaling ready).
+ * `loadMermaid` stays a parameter rather than a literal import() of the CDN
+ * URL here - the same DI mermaidImportWithFallback above already uses for its
+ * `parse` callback - so this shared function needs no live module resolution
+ * of its own; each interpolation site (the review iframe's <script>, the
+ * SPA's page script) owns its own CDN specifier as plain text, same as today.
+ * `theme`/`paperStyle` are ALSO parameters, not hardcoded, for the same
+ * readerCss-precedent reason (scope is a parameter, the rules are not): the
+ * review iframe's diagrams sit on a hardcoded white card regardless of the
+ * dashboard's own theme (matching the auto-embedded whiteboard cards' own
+ * white paper, review-page-missing-markdown-table-css), while the SPA's own
+ * readers (Reports/Records/Board) want the diagram to follow the dashboard's
+ * live theme - `mm.render`'s theme and the paper background it sits on are
+ * coupled (a light-theme SVG's dark text is illegible on a dark paper), so
+ * both travel together as one pair a caller supplies, never guessed here. */
+export function mermaidPass(loadMermaid: () => Promise<any>, theme: string, paperStyle: string): Promise<void> {
+  const fences = document.querySelectorAll("pre > code[class*=language-mermaid]");
+  const foreign = Array.prototype.some.call(document.querySelectorAll("script"), (s: any) =>
+    !s.hasAttribute("data-acrv") && ((s.src || "").indexOf("mermaid") >= 0 || (s.textContent || "").indexOf("mermaid") >= 0));
+  const blocks = foreign ? [] : Array.prototype.filter.call(
+    document.querySelectorAll("pre.mermaid, div.mermaid"),
+    (el: Element) => !el.querySelector("svg") && !el.getAttribute("data-processed"));
+  if (!fences.length && !blocks.length) return Promise.resolve();
+  return loadMermaid().then((mm: any) => {
+    mm.initialize({ startOnLoad: false, theme });
+    const draw = (el: Element, src: string, i: number) => {
+      if (el.getAttribute("data-mmd")) return Promise.resolve();
+      el.setAttribute("data-mmd", "1");
+      return mm.render("rvmmd" + i, src).then((r: any) => {
+        el.innerHTML = r.svg;
+        el.setAttribute("data-processed", "true");
+        (el as HTMLElement).style.cssText = paperStyle;
+      }).catch(() => { el.setAttribute("data-mmd", "err"); });
+    };
+    const draws: Promise<void>[] = [];
+    fences.forEach((code, i) => { const pre = code.closest("pre"); if (pre) draws.push(draw(pre, code.textContent || "", i)); });
+    blocks.forEach((el: Element, i: number) => draws.push(draw(el, el.textContent || "", fences.length + i)));
+    return Promise.all(draws).then(() => undefined);
+  }).catch(() => undefined);
+}
+
 /** Scene name for an artifact's Nth diagram: derived from the basename,
  * squeezed into isSceneName's grammar so the hand-off URL is always valid. */
 export function diagramSceneName(file: string, n: number): string {
@@ -6700,55 +6761,19 @@ const OVERLAY = \`<script data-acrv>
     document.querySelectorAll("pre.mermaid, div.mermaid").forEach((el, i) => attach(el, "block", i, ++n));
     document.querySelectorAll("code[class*=language-mermaid]").forEach((el, i) => attach(el, "fence", i, ++n));
   }
-  // Mermaid pass for md artifacts: the rendered
-  // markdown ships fences as escaped code with no script of its own, so the
-  // Diagram view read as source text. Render the SVG INSIDE the existing
-  // element - the one the card wrapped, the switch toggles, the pin
-  // anchors, and data-srcline rides on - so nothing else moves.
-  // class=mermaid blocks get the same treatment ONLY when the artifact ships
-  // no mermaid of its own (script sniff below; data-acrv marks this overlay
-  // so it never counts as the artifact's) - a self-rendering artifact keeps
-  // its own theme/config, and data-processed guards the race both ways.
-  // Returns a promise that resolves once every matched diagram has actually
-  // rendered (or immediately when there is nothing to render) - never
-  // rejects, so a CDN failure still resolves and never blocks a caller
-  // waiting on it (dash-review-polish-scroll r1: boot() awaits this before
-  // signaling ready, since an SVG replacing a <pre> placeholder changes
-  // layout height and firing ready any earlier restores scroll into a
-  // document whose layout has not settled yet).
-  function mermaidPass(){
-    const fences = document.querySelectorAll("pre > code[class*=language-mermaid]");
-    const foreign = Array.prototype.some.call(document.querySelectorAll("script"), (s) =>
-      !s.hasAttribute("data-acrv") && ((s.src || "").indexOf("mermaid") >= 0 || (s.textContent || "").indexOf("mermaid") >= 0));
-    const blocks = foreign ? [] : Array.prototype.filter.call(
-      document.querySelectorAll("pre.mermaid, div.mermaid"),
-      (el) => !el.querySelector("svg") && !el.getAttribute("data-processed"));
-    if (!fences.length && !blocks.length) return Promise.resolve();
-    return import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs").then((m) => {
-      const mm = m.default;
-      mm.initialize({ startOnLoad: false, theme: "neutral" });
-      const draw = (el, src, i) => {
-        if (el.getAttribute("data-mmd")) return Promise.resolve();
-        el.setAttribute("data-mmd", "1");
-        return mm.render("rvmmd" + i, src).then((r) => {
-          el.innerHTML = r.svg;
-          el.setAttribute("data-processed", "true");
-          el.style.cssText = "background:#fff;border:0;margin:0;padding:10px;overflow-x:auto";
-        }).catch(() => { el.setAttribute("data-mmd", "err"); });
-      };
-      const draws = [];
-      fences.forEach((code, i) => { const pre = code.closest("pre"); if (pre) draws.push(draw(pre, code.textContent, i)); });
-      blocks.forEach((el, i) => draws.push(draw(el, el.textContent, fences.length + i)));
-      return Promise.all(draws);
-    }).catch(() => {});
-  }
+  // Mermaid render pass - reports-mermaid: extracted top-level (mermaidPass,
+  // above THEME_INIT/readerCss) and interpolated here verbatim, the same
+  // toString() sharing readerCss itself established, so this overlay and the
+  // SPA's markdown readers (Reports/Records/Board) run the one implementation
+  // instead of two independently-maintained copies.
+${mermaidPass.toString()}
   function boot(){
     tagDiagrams();
     // Scroll-restore readiness (dash-review-polish-scroll defect 2, r1 fix):
     // fires only once mermaidPass()'s own layout-affecting async work has
     // actually settled, so the review page never restores a scroll position
     // into a document whose diagrams have not finished rendering yet.
-    mermaidPass().then(() => {
+    mermaidPass(() => import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs").then((m) => m.default), "neutral", "background:#fff;border:0;margin:0;padding:10px;overflow-x:auto").then(() => {
       parent.postMessage({ lavishNative: true, ready: true }, "*");
     });
   }
@@ -10503,6 +10528,12 @@ function boardApplyArt(j, kind){
   if(j.kind==='bin'){ vb.innerHTML='<div class="vmd"><div class="state"><div class="st-title">Binary file</div><div>'+esc(j.note||'Cannot preview this file.')+'</div></div></div>'; return; }
   // md (default): renderMarkdown already produced XSS-safe html server-side.
   vb.innerHTML='<div class="vmd reader">'+(j.html||'')+'</div>';
+  // This content lands outside renderPage()'s morph/postFrames cycle (a direct
+  // fetch().then() innerHTML set), so a mermaid fence here would otherwise
+  // sit unrendered until the next POLL_MS tick catches it via postFrames -
+  // fire the pass immediately instead, same as the Reports viewer already
+  // gets via loadViewerBody's own explicit renderPage() call.
+  postMermaid();
 }
 
 // ---- Reports / Records (master-detail) ----
@@ -11358,36 +11389,30 @@ function dlgKeydown(e){
 // ===========================================================================
 // Post-render passes: iframe identity, input value/caret, scroll restore.
 // ===========================================================================
-// Mermaid pass for the md reader: our renderer emits
-// language-mermaid fences as escaped code; this pass lazy-loads mermaid from
-// the CDN ONCE and swaps each fence for its rendered SVG. Safe because the
-// source text ran through the escaping renderer - the only script here is
-// the one we import. The vbody is a data-preserve island, so rendered SVGs
-// survive polling; a new selection re-runs the pass on fresh content.
-var mermaidMod=null, mermaidLoading=false;
+// Mermaid render pass, shared with /review's iframe overlay - reports-mermaid:
+// extracted top-level (mermaidPass, dashboard.ts, alongside readerCss) and
+// interpolated here verbatim, the same toString() sharing readerCss itself
+// established, so a report's mermaid fence renders here the identical way
+// it already does on /review - one implementation, not a second hand-copied
+// engine. Runs unconditionally every postFrames() tick (cheap: an early
+// return before any CDN load when the current DOM has no fence/block left to
+// claim) rather than gated to S.viewer, so it reaches every .reader surface
+// the SPA renders markdown into - Reports/Records via viewerHtml AND the
+// Board family detail's artifact viewer (boardApplyArt calls it directly too,
+// since that content lands outside the render/postFrames cycle entirely).
+// The data-mmd/data-processed guards mermaidPass carries make this idempotent
+// against the poll's DOM-diff, which deliberately never re-diffs a
+// data-preserve island (renderPage's morphInto) - a rendered SVG is never
+// re-rendered or lost, and a fresh selection's un-rendered fences get caught
+// on the same tick that mounts them.
+${mermaidPass.toString()}
 function postMermaid(){
-  var v=S.viewer; if(!v || v.kind!=='md') return;
-  var blocks=document.querySelectorAll('.reader pre > code[class*=language-mermaid]');
-  if(!blocks.length) return;
-  if(!mermaidMod){
-    if(mermaidLoading) return;
-    mermaidLoading=true;
-    import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs').then(function(m){
-      mermaidMod=m.default; mermaidMod.initialize({ startOnLoad:false, theme:'dark' });
-      mermaidLoading=false; postMermaid();
-    }).catch(function(){ mermaidLoading=false; });
-    return;
-  }
-  for(var i=0;i<blocks.length;i++){ (function(code, i){
-    var pre=code.closest('pre'); if(!pre || pre.getAttribute('data-mmd')) return;
-    pre.setAttribute('data-mmd','1');
-    mermaidMod.render('mmd'+String(Math.abs(('' + code.textContent).length))+'x'+i+'g'+(S.viewer&&S.viewer.gen||0), code.textContent).then(function(r){
-      var d=document.createElement('div');
-      d.className='mmdview'; d.innerHTML=r.svg;
-      var keep=pre.getAttribute('data-srcline'); if(keep) d.setAttribute('data-srcline', keep);
-      if(pre.parentNode) pre.replaceWith(d);
-    }).catch(function(){ pre.setAttribute('data-mmd','err'); });
-  })(blocks[i], i); }
+  // theme:'dark' + a --surface paper (not /review's hardcoded white) - this
+  // reader lives inside the dashboard's own live-themeable chrome, unlike the
+  // review iframe's standalone document, so the diagram follows suit instead
+  // of sitting as a fixed white card in a dark UI.
+  mermaidPass(function(){ return import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs').then(function(m){ return m.default; }); },
+    'dark', 'background:var(--surface);border:1px solid var(--border);border-radius:8px;margin:12px 0;padding:10px;overflow-x:auto');
 }
 
 function postFrames(){

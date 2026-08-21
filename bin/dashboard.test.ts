@@ -10,7 +10,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback } from "./dashboard.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass } from "./dashboard.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -2494,6 +2494,54 @@ test("mermaidImportWithFallback surfaces the ORIGINAL error, never one about the
   const both = async (s: string) => { throw new Error(/box/.test(s) ? "original failure" : "rewrite failure"); };
   await expect(mermaidImportWithFallback(both, "sequenceDiagram\n  box G\n  participant A\n  end\n  A->>B: hi"))
     .rejects.toThrow("original failure");
+});
+
+// --- mermaid render pass, shared between /review and the SPA readers
+// (reports-mermaid) - mermaidPass is DOM- and CDN-coupled (querySelectorAll,
+// innerHTML, a dynamic import of the mermaid ESM build), so it has no pure
+// input/output surface a bun test can drive without a browser; acceptance
+// 1/2/5 are proved live (see the report). What IS a real, checkable claim
+// about its SOURCE: it takes the CDN loader as a parameter rather than
+// embedding a literal import() of its own - the same DI mermaidImportWithFallback
+// already uses for its `parse` callback, so the shared function stays free of
+// any live module resolution the two very different interpolation sites (the
+// review iframe's own <script>, the SPA's page script) would otherwise have to
+// agree on identically.
+test("mermaidPass: takes an injected loader, no literal import() baked into the shared function", () => {
+  const src = mermaidPass.toString();
+  expect(src).not.toContain("import(");
+  expect(src).toContain("loadMermaid");
+});
+
+// The review iframe's diagrams sit on a hardcoded white card regardless of
+// theme (matching the auto-embedded whiteboard cards); the SPA's own readers
+// (Reports/Records/Board) live inside the dashboard's live-themeable chrome
+// and want the diagram to follow suit - theme/paperStyle stay parameters
+// here for exactly that reason (a shared function that baked in ONE surface's
+// presentation would regress the other's), the same DI shape as the loader.
+test("mermaidPass: theme and paper background are parameters too, not one surface's hardcoded choice baked into the shared function", () => {
+  const src = mermaidPass.toString();
+  expect(src).toContain("theme");
+  expect(src).not.toContain('"neutral"');
+  expect(src).not.toContain("background:#fff");
+});
+
+test("mermaidPass: fence/foreign-block selectors and the data-mmd/data-processed guards survive toString() - the exact contract both interpolation sites rely on", () => {
+  const src = mermaidPass.toString();
+  expect(src).toContain("pre > code[class*=language-mermaid]");
+  expect(src).toContain("pre.mermaid, div.mermaid");
+  expect(src).toContain("data-acrv");
+  expect(src).toContain("data-mmd");
+  expect(src).toContain("data-processed");
+});
+
+// The .mmdview wrapper div was the SPA-only reader's OWN second render path
+// (replaceWith a new div, vs. mermaidPass's in-place innerHTML on the
+// existing element) - now retired in favor of the one shared implementation,
+// so its dedicated CSS is dead weight readerCss must not still carry.
+test("readerCss: no leftover .mmdview rule now that the SPA reader shares mermaidPass's in-place render", () => {
+  expect(readerCss(".reader")).not.toContain("mmdview");
+  expect(readerCss("")).not.toContain("mmdview");
 });
 
 test("reviewWakeParts squeezes the id to the record charset and folds the payload", () => {
