@@ -1565,19 +1565,26 @@ export function mermaidPass(loadMermaid: () => Promise<any>, theme: string, pape
 /** Paint-guard predicate (dash-review-polish-paint): true iff the frame
  * rendered something the captain can actually see, not merely non-empty
  * bytes. innerText already excludes display:none/visibility:hidden text -
- * the exact false-positive class this guard exists to catch - so a
- * length check on it alone is enough for prose artifacts; the img/svg/
- * canvas/video fallback covers a diagram-only page, since mermaidPass
- * REPLACES a .mermaid block's source text with an <svg> (a page whose
- * only content is a settled diagram has empty innerText from source text
- * but a real rendered element with area). A body-level background-image
- * check was tried and dropped (roundchief r1): no artifact on disk in this
- * fleet paints solely through one, and it trades a loud false-positive
- * (visible, self-correcting - the captain sees the contradiction) for a
- * silent false-negative (a genuinely blank page carrying any body
- * background-image gets no banner - the exact bug this guard exists to
- * kill, restored). Two checks only, both driven by real elements the
- * artifact itself puts on screen. */
+ * the exact false-positive class this guard exists to catch - so a length
+ * check on it alone is enough for prose artifacts, AND for a mermaid
+ * diagram (verified live, roomchief r1: a settled diagram's own rendered
+ * SVG <text> node labels feed innerText, and the review page's own
+ * tagDiagrams() wraps every .mermaid/pre.mermaid block in a whiteboard
+ * card - "Queue feedback"/"Fullscreen"/"Click to edit" - real visible text
+ * present before mermaid even runs; either alone already makes this check
+ * true for a real mermaid page, no fallback needed). The img/svg/canvas/
+ * video fallback below is for the case innerText genuinely CANNOT catch: a
+ * text-free graphic artifact - a markdown/HTML report that is just an
+ * embedded image with no caption, or a hand-authored SVG icon with no
+ * <text> node (verified live with an img-only fixture: empty innerText,
+ * this fallback the only thing that trips true). A body-level
+ * background-image check was tried and dropped (roomchief r1): no artifact
+ * on disk in this fleet paints solely through one, and it trades a loud
+ * false-positive (visible, self-correcting - the captain sees the
+ * contradiction) for a silent false-negative (a genuinely blank page
+ * carrying any body background-image gets no banner - the exact bug this
+ * guard exists to kill, restored). Two checks only, both driven by real
+ * elements the artifact itself puts on screen. */
 export function artifactPainted(root: Document): boolean {
   const body = root.body;
   if (!body) return false;

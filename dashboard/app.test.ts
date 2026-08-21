@@ -2557,13 +2557,17 @@ test("mermaidPass: fence/foreign-block selectors and the data-mmd/data-processed
 // .getBoundingClientRect(). None of that requires a real DOM (bun has no
 // `document`/`getComputedStyle`, but a plain stub object satisfies every
 // property this function reads), so this is a real BEHAVIOUR test of the
-// predicate itself (roundchief r1: dropping the getComputedStyle-only
+// predicate itself (roomchief r1: dropping the getComputedStyle-only
 // background-image check made this possible), not a source-string proxy for
-// one. The diagram-only case (async content replacing a mermaid block's
-// source text with an <svg>, per mermaidPass) is proved live in the report -
-// the real DOM layout (getBoundingClientRect returning a non-zero rect only
-// once mermaid has actually rendered) is exactly what a stub cannot stand in
-// for.
+// one. A real mermaid page is proved live in the report to be caught by the
+// innerText check below, not the graphic-element fallback (a settled
+// diagram's own SVG <text> labels feed innerText, and the review page's
+// tagDiagrams() wraps every mermaid block in its own visible card chrome
+// before mermaid even runs) - the fallback's real, live-proved case is a
+// text-free graphic artifact (an image-only report). The real DOM layout
+// (getBoundingClientRect returning a non-zero rect) that fallback reads is
+// exactly what a stub cannot stand in for beyond asserting the branch logic
+// itself.
 function stubBody(innerText: string, els: { w: number; h: number }[] = []) {
   return {
     body: {
@@ -2589,7 +2593,7 @@ test("artifactPainted: prose body - true, never needs to reach the graphic fallb
   expect(artifactPainted(stubBody("hello"))).toBe(true);
 });
 
-test("artifactPainted: empty text but a real-area graphic element - true (the diagram-only case)", () => {
+test("artifactPainted: empty text but a real-area graphic element - true (the text-free image/svg case, e.g. an image-only report)", () => {
   expect(artifactPainted(stubBody("", [{ w: 100, h: 100 }]))).toBe(true);
 });
 
