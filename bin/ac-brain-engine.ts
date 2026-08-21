@@ -266,6 +266,9 @@ const PROVIDERS: Record<string, { base_url: string; env: string; key?: boolean }
   "opencode-go": { base_url: "https://opencode.ai/zen/go/v1", env: "OPENCODE_API_KEY" },
   anthropic: { base_url: "https://api.anthropic.com/v1", env: "ANTHROPIC_API_KEY" },
   ollama: { base_url: "http://127.0.0.1:11434/v1", env: "", key: false },
+  // CLIProxyAPI: local OpenAI-compatible proxy over CLI-plan auth; the key is
+  // one of its own configured api-keys (env or the providers.json store).
+  cliproxy: { base_url: "http://127.0.0.1:8317/v1", env: "CLIPROXY_API_KEY" },
   stub: { base_url: "", env: "", key: false },
 };
 function providersStore(): Record<string, { api_key?: string }> {
@@ -1242,6 +1245,31 @@ async function cmdSynthesize() {
       } catch {}
       if (!answer) status = "llm_error";
     }
+  }
+  // Keyless default: with no usable key for the configured provider (or no
+  // synthesize api at all, or an API failure), a LOCAL ollama answers before
+  // the harness/extractive rungs - the model is whatever the daemon actually
+  // serves, and a closed port falls through in one refused connect.
+  if (!answer) {
+    try {
+      const base = PROVIDERS.ollama.base_url;
+      const ms = await fetch(base + "/models", { signal: AbortSignal.timeout(1500) });
+      if (ms.ok) {
+        const model = ((await ms.json()) as any).data?.[0]?.id;
+        if (model) {
+          const r = await fetch(base + "/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], max_tokens: 1500 }),
+            signal: AbortSignal.timeout(120000),
+          });
+          if (r.ok) {
+            const text = (((await r.json()) as any).choices?.[0]?.message?.content || "").trim();
+            if (text) { answer = text; status = "ok"; }
+          }
+        }
+      }
+    } catch { /* no local daemon - the ladder continues */ }
   }
   if (!answer && cmdline) {
     try {

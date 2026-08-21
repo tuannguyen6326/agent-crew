@@ -3266,6 +3266,10 @@ const LLM_PROVIDERS: Array<{ name: string; base_url: string; env: string; noKey?
   { name: "opencode-go", base_url: "https://opencode.ai/zen/go/v1", env: "OPENCODE_API_KEY", caps: "chat" },
   { name: "anthropic", base_url: "https://api.anthropic.com/v1", env: "ANTHROPIC_API_KEY", caps: "chat" },
   { name: "ollama", base_url: "http://127.0.0.1:11434/v1", env: "", noKey: true, caps: "local model, no key - semantic search + synthesize" },
+  // CLIProxyAPI: a local OpenAI-compatible proxy over CLI-plan auth (claude
+  // /gemini/codex subscriptions). The key is whatever its own config lists
+  // under api-keys - store any matching string here.
+  { name: "cliproxy", base_url: "http://127.0.0.1:8317/v1", env: "CLIPROXY_API_KEY", caps: "local proxy over CLI subscriptions - synthesize" },
 ];
 function providersFile(home: string) { return home + "/config/providers.json"; }
 function providersRead(home: string): Record<string, { api_key?: string }> {
@@ -3291,6 +3295,9 @@ export const PROVIDER_LANES: {
     openai: { dflt: "gpt-4o-mini" },
     ollama: { dflt: "llama3.1" },
     "opencode-go": { dflt: "kimi-k2.7-code" },
+    // Synthesize-only: CLIProxyAPI fronts chat models from CLI-plan auth;
+    // it serves no embedding surface, and embedding dims are load-bearing.
+    cliproxy: { dflt: "gpt-5.6" },
   },
 };
 export function applyProviderLane(
@@ -8454,12 +8461,12 @@ ${UX_BASE}
   .fico.m{ border-radius:3px; font:700 7.5px/15px var(--mono); text-align:center; letter-spacing:0; }
   .fico.dir svg{ width:14px; height:14px; }
   /* brain-ui: readable answer + block hit cards */
-  .brainans{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin:10px 0; max-width:920px; }
+  .brainans{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin:10px 0; }
   .brainans .atext{ white-space:pre-wrap; margin-top:6px; line-height:1.55; }
   .brainans .asrc{ display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
   .srcchip{ font-family:var(--mono); font-size:11px; border:1px solid var(--border); border-radius:5px; padding:1px 7px;
     max-width:38ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .brainhit{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:9px 13px; margin:6px 0; max-width:920px; }
+  .brainhit{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:9px 13px; margin:6px 0; }
   .brainhit .bh1{ display:flex; align-items:center; gap:8px; min-width:0; }
   .brainhit .bh1 a{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .brainhit .bh1 .ts{ flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg2); }
@@ -11579,6 +11586,13 @@ function brainSearch(){
     brainRes=j; brainBusy=false; if(S.route&&S.route.name==='brain') renderPage();
   }).catch(function(){ brainBusy=false; });
 }
+// The engine stamps last_sync in UTC; the captain reads a wall clock.
+function brainLocalTs(iso){
+  var d=new Date(String(iso).replace(' ','T').replace(/Z?$/,'Z'));
+  if(isNaN(d)) return String(iso).slice(0,16).replace('T',' ');
+  var p=function(n){ return (n<10?'0':'')+n; };
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
 function pageBrain(){
   var st=S.page;
   if(!st){ return S.pageFail?stateBox('Brain unavailable','Could not read this home\u2019s brain.','err'):skeleton(); }
@@ -11589,7 +11603,7 @@ function pageBrain(){
   var s='<div class="kpis">'
     +'<div class="kpi"><b>'+esc(String(st.pages))+'</b><span>pages</span></div>'
     +'<div class="kpi"><b>'+esc(String(st.facts))+'</b><span>active facts</span></div>'
-    +'<div class="kpi"><b>'+esc(st.last_sync?String(st.last_sync).slice(0,16).replace('T',' '):'never')+'</b><span>last sync</span></div>'
+    +'<div class="kpi"><b>'+esc(st.last_sync?brainLocalTs(st.last_sync):'never')+'</b><span>last sync</span></div>'
     +'</div>'
     +'<div class="cfg-note">Semantic search / synthesize keys: <a href="/fleets/'+enc(S.route.fleet)+'/config" data-link>Config \u2192 Brain LLM providers</a></div>';
   s+='<div style="margin:10px 0"><input class="search-in" type="search" data-brain-q placeholder="Ask the brain\u2026" aria-label="Ask the brain" autocomplete="off" spellcheck="false" value="'+esc(brainQ[hp]||'')+'" style="width:60%;max-width:520px"> '
@@ -11601,7 +11615,7 @@ function pageBrain(){
     // The synthesized answer arrives as light markdown - render bold and code
     // spans over ESCAPED text (never raw HTML), keep paragraphs (brain-ui).
     var ans=esc(brainAns.answer||'')
-      .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+      .replace(/\\*\\*([^*]+)\\*\\*/g,'<b>$1</b>')
       .replace(/\`([^\`]+)\`/g,'<code class="mono" style="background:var(--elev);border-radius:4px;padding:0 4px;font-size:12px">$1</code>');
     s+='<div class="brainans"><div class="fname">Answer <span class="badge">'+esc(brainAns.synthesis_status||'')+'</span></div>'
       +'<div class="atext">'+ans+'</div>';
