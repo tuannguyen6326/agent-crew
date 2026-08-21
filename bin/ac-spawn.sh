@@ -724,7 +724,10 @@ if [ -z "$roomchief_family" ]; then
   [ -f "$brief" ] || ac_die "no brief at $brief; run ac-brief.sh first"
 fi
 if [ "$crewdeputy" = 0 ] && [ "$scout" = 0 ] && [ -z "$roomchief_family" ]; then
-  review="$(sed -n 's/^Review: //p' "$brief" | head -n 1)"
+  # ac-brief.sh's Review: line carries a parenthesized authority annotation on
+  # three of its four branches (e.g. "yes (pinned on the backlog row)") - only
+  # the bare first token is the obligation this guard validates.
+  review="$(sed -n 's/^Review: //p' "$brief" | head -n 1 | awk '{print $1}')"
   case "$review" in
     yes|no) ;;
     *) ac_die "execution brief must carry exactly one Review: yes|no obligation: $brief" ;;
