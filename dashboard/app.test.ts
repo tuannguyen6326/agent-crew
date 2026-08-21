@@ -3111,3 +3111,49 @@ test("parseBacklogLine: domain token is position-pinned, epic coexists, prose in
   const d = parseBacklogLine("- [ ] p - mentions domain:payments mid-prose (repo: alpha)");
   expect(d.domain).toBe("");
 });
+
+// ---- diffHtml (worktree diff-review: the board viewer's colorizer) --------
+import { diffHtml } from "./app.ts";
+
+const SAMPLE_DIFF = [
+  "diff --git a/src/a.ts b/src/a.ts",
+  "index 111..222 100644",
+  "--- a/src/a.ts",
+  "+++ b/src/a.ts",
+  "@@ -1,3 +1,4 @@",
+  " keep",
+  "-old <line>",
+  "+new & better",
+  "+added",
+  "diff --git a/docs/b.md b/docs/b.md",
+  "new file mode 100644",
+  "--- /dev/null",
+  "+++ b/docs/b.md",
+  "@@ -0,0 +1 @@",
+  "+hello",
+].join("\n");
+
+test("diffHtml groups per file with +/- counts and classified lines", () => {
+  const h = diffHtml(SAMPLE_DIFF);
+  expect(h).toContain("src/a.ts");
+  expect(h).toContain("docs/b.md");
+  expect((h.match(/<details class="df"/g) || []).length).toBe(2);
+  expect(h).toContain('<span class="n">+2</span>');       // a.ts adds
+  expect(h).toContain('<span class="n">-1</span>');
+  expect(h).toContain('<span class="n">+1</span>');       // b.md adds
+  expect(h).toContain('class="dl add"');
+  expect(h).toContain('class="dl del"');
+  expect(h).toContain('class="dl hunk"');
+});
+
+test("diffHtml escapes payload HTML so a diffed <script> never runs", () => {
+  const h = diffHtml(SAMPLE_DIFF);
+  expect(h).toContain("old &lt;line&gt;");
+  expect(h).toContain("new &amp; better");
+  expect(h).not.toContain("old <line>");
+});
+
+test("diffHtml on an empty diff returns the empty string (the caller renders the empty state)", () => {
+  expect(diffHtml("")).toBe("");
+  expect(diffHtml("   \n")).toBe("");
+});

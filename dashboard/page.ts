@@ -9,6 +9,7 @@ import {
   groupArtifacts, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
   parseBacklogLine, parseTimeline, readerCss, resolvePalette,
   reviewableArtifact, stemRegroup, storyState, termThemeCore, verifyProcessRows,
+  diffHtml,
 } from "./lib.ts";
 
 // ---------------------------------------------------------------------------
@@ -737,6 +738,18 @@ ${UX_BASE}
   .bdetail .tlbtn{ display:flex; align-items:center; gap:6px; margin-top:10px; width:100%; text-align:left; background:var(--accent-soft); color:var(--accent); border:1px solid var(--line); border-radius:9px; padding:8px 12px; font-size:12.5px; font-weight:600; cursor:pointer; }
   .bdetail .tlbtn:hover{ background:var(--accent); color:var(--accent-ink); }
   .bdetail .tlbtn .n{ color:inherit; opacity:.75; font-weight:400; font-size:11px; }
+  /* Worktree diff viewer (diff-review): one collapsible card per file. */
+  .dfwrap{ padding:16px 20px; }
+  .df{ border:1px solid var(--line); border-radius:9px; margin:0 0 12px; overflow:hidden; background:var(--surface); }
+  .df>summary{ cursor:pointer; padding:8px 12px; font:600 12.5px/1.4 var(--mono); border-bottom:1px solid var(--line); list-style-position:inside; }
+  .df>summary .n{ font-weight:400; font-size:11px; color:var(--muted); margin-left:2px; }
+  .df pre{ margin:0; padding:8px 0; overflow-x:auto; font:12px/1.55 var(--mono); }
+  .df .dl{ display:block; padding:0 12px; white-space:pre; min-height:1.55em; }
+  .df .dl.add{ color:var(--success); background:color-mix(in srgb, var(--success) 9%, transparent); }
+  .df .dl.del{ color:var(--error); background:color-mix(in srgb, var(--error) 9%, transparent); }
+  .df .dl.hunk{ color:var(--accent); }
+  .df .dl.meta{ color:var(--muted); }
+  .dfnote{ color:var(--warning); font-size:12px; padding:4px 2px; }
   .bdetail .tl{ padding:20px 26px; }
   .bdetail .tlrow{ display:flex; gap:12px; padding-bottom:16px; position:relative; }
   .bdetail .tlrow:not(:last-child)::before{ content:''; position:absolute; left:5px; top:14px; bottom:0; width:2px; background:var(--line); }
@@ -886,6 +899,7 @@ ${familyRepos.toString()}
 ${familyStages.toString()}
 ${parseTimeline.toString()}
 ${composeFamily.toString()}
+${diffHtml.toString()}
 // Theme + palette toggles (theme-revamp, theme-revamp-presets): the SAME
 // resolvers the bun test proves. resolveTheme itself is not interpolated here
 // - the browser never resolves "auto" in JS, the CSS :root default + the
@@ -2334,7 +2348,22 @@ function boardDetailRail(d, fleet){
     +'<h4>Repo'+boardCount(d.repos?d.repos.length:0)+'</h4>'
     +'<div class="repotxt">'+boardRepoList(d)+'</div>';
   if(d.roomCount) s+='<button class="roombtn" type="button" data-board-room>💬 Room ('+d.roomCount+')</button>';
+  var dIds=boardDiffIds(d);
+  for(var di=0;di<dIds.length;di++)
+    s+='<button class="tlbtn" type="button" data-board-diff="'+esc(dIds[di])+'">± Diff <span class="n">'+esc(dIds[di])+'</span></button>';
   return s+'</div>';
+}
+// The family's LIVE task ids (snapshot crew list) - each holds a worktree the
+// Diff button can render; a chief pane has no project diff and is skipped.
+function boardDiffIds(d){
+  var fam=d.family||d.id||boardOpenFam, home=S.route.home;
+  var tasks=(home&&home.crew&&home.crew.tasks)||[], ids=[];
+  for(var i=0;i<tasks.length;i++){
+    var t=tasks[i].id||'';
+    if(!t||t.slice(-6)==='-chief') continue;
+    if(t===fam||t.indexOf(fam+'-')===0) ids.push(t);
+  }
+  return ids;
 }
 // Rail collapse: render-time class so a
 // remount keeps the choice, imperative toggle so a poll never fights it.
@@ -2916,6 +2945,27 @@ function boardShowRoom(){
   for(var i=0;i<evs.length;i++) s+='<div class="re">'+roomEntryHtml(evs[i])+'</div>';
   s+='</div>';
   vbody.innerHTML=s;
+}
+// Diff in the viewer (worktree diff-review): the rail's per-live-task Diff
+// button fetches /api/diff and renders it through the bun-tested diffHtml.
+function boardShowDiff(id){
+  var box=document.querySelector('.bdetail'); if(!box) return;
+  var prev=box.querySelector('.art.on'); if(prev) prev.classList.remove('on');
+  var hp=S.route.home?S.route.home.path:'';
+  var vpath=el('board-vpath'), vkind=el('board-vkind'), vbody=el('board-vbody');
+  if(vpath) vpath.textContent='diff: '+id;
+  if(vkind) vkind.hidden=true;
+  var ob=el('board-ovbtn'); if(ob) ob.hidden=false;
+  boardSetReviewBtn(null);
+  if(!vbody) return;
+  vbody.innerHTML=skeleton();
+  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)).then(function(x){ return x.json(); }).then(function(j){
+    var vb=el('board-vbody'); if(!vb) return;
+    if(j.error){ vb.innerHTML=stateBox('No diff', j.error, ''); return; }
+    if(!j.diff||!j.diff.trim()){ vb.innerHTML=stateBox('Empty diff','the worktree carries no change against its base',''); return; }
+    vb.innerHTML='<div class="dfwrap">'+diffHtml(j.diff)
+      +(j.truncated?'<div class="dfnote">diff truncated at 400KB - read the rest with bin/ac-review-diff.sh '+esc(id)+'</div>':'')+'</div>';
+  }).catch(function(){ var vb=el('board-vbody'); if(vb) vb.innerHTML=stateBox('Diff unavailable','request failed',''); });
 }
 function boardShowTimeline(){
   var box=document.querySelector('.bdetail'); if(!box) return;   // the detail lives in #page now, not under a modal id
@@ -4047,6 +4097,7 @@ function onClick(e){
   if((n=t.closest('[data-rail-toggle]'))){ railToggle(); return; }             // collapse/expand the detail's left rail
   if((n=t.closest('[data-board-timeline]'))){ boardShowTimeline(); return; }   // render the lifecycle timeline in the viewer
   if((n=t.closest('[data-board-room]'))){ boardShowRoom(); return; }           // render the family room in the viewer (room-in-viewer)
+  if((n=t.closest('[data-board-diff]'))){ boardShowDiff(n.getAttribute('data-board-diff')); return; }  // render a live task's worktree diff
   if((n=t.closest('[data-board-overview]'))){ boardShowOverview(); return; }   // back from room/timeline/artifact to the overview
   if((n=t.closest('[data-board-art]'))){ boardOpenArt(n); return; }   // load artifact inline (detail viewer)
   if((n=t.closest('[data-stage-toggle]'))){ var box2=n.closest('.stage,.story'); if(box2) box2.classList.toggle('collapsed'); return; }

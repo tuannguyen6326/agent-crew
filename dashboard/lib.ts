@@ -1570,3 +1570,49 @@ export function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+/** Unified-diff colorizer for the board viewer (worktree diff-review): one
+ * collapsible <details class="df"> per file with +/- counts, each line span-
+ * classed add/del/hunk/meta. Self-contained ES5 (own escaping, no helpers) -
+ * PAGE interpolates its toString(), so the browser runs this exact code. */
+export function diffHtml(text: string): string {
+  var src = String(text || "");
+  if (!src.replace(/\s/g, "")) return "";
+  var lines = src.split("\n");
+  var files: { name: string; lines: string[]; add: number; del: number }[] = [];
+  var cur: { name: string; lines: string[]; add: number; del: number } | null = null;
+  function escd(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    if (l.indexOf("diff --git ") === 0) {
+      // The b/ side names the file after the change (renames, new files).
+      var m = /\sb\/(.+)$/.exec(l);
+      cur = { name: m ? m[1] : l.slice(11), lines: [], add: 0, del: 0 };
+      files.push(cur);
+    }
+    if (!cur) { cur = { name: "(diff)", lines: [], add: 0, del: 0 }; files.push(cur); }
+    var cls = "meta";
+    if (l.indexOf("@@") === 0) cls = "hunk";
+    else if (l.indexOf("+++") === 0 || l.indexOf("---") === 0 || l.indexOf("diff --git") === 0
+      || l.indexOf("index ") === 0 || l.indexOf("new file") === 0 || l.indexOf("deleted file") === 0
+      || l.indexOf("similarity ") === 0 || l.indexOf("rename ") === 0 || l.indexOf("Binary files") === 0
+      || l.indexOf("old mode") === 0 || l.indexOf("new mode") === 0) cls = "meta";
+    else if (l.charAt(0) === "+") { cls = "add"; cur.add++; }
+    else if (l.charAt(0) === "-") { cls = "del"; cur.del++; }
+    else cls = "ctx";
+    cur.lines.push('<span class="dl ' + cls + '">' + (escd(l) || " ") + "</span>");
+  }
+  var out = "";
+  for (var f = 0; f < files.length; f++) {
+    var fl = files[f];
+    out += '<details class="df" open><summary><span class="fn">' + escd(fl.name) + "</span>"
+      + ' <span class="n">+' + fl.add + "</span>"
+      + ' <span class="n">-' + fl.del + "</span></summary><pre>"
+      // Each .dl is display:block - a \n separator would render a second,
+      // empty line inside the white-space:pre parent.
+      + fl.lines.join("") + "</pre></details>";
+  }
+  return out;
+}

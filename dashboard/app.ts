@@ -3110,6 +3110,24 @@ export function collectFamilyTasks(
  * joiner. Every PR is read off disk (a meta field or a regex-linkified backlog
  * line): no `gh`, no network.
  */
+/** A live task's change as a unified diff (worktree diff-review): shells out
+ * to bin/ac-review-diff.sh, the one authority on the diff base (merge-base
+ * with the LOCAL-ONLY-aware default branch, epic-branch aware). The id gate +
+ * home allowlist are the whole surface - the script itself refuses an id with
+ * no meta or a gone worktree, which the client renders as the empty state. */
+async function diffShow(homePath: string, id: string): Promise<Response> {
+  if (!(await allowedHomePaths()).has(homePath))
+    return json({ error: "unknown home" }, 404);
+  if (!/^[a-zA-Z0-9_-]+$/.test(id))
+    return json({ error: "bad id" }, 400);
+  const { code, out } = await run([`${BIN}/ac-review-diff.sh`, id], { AC_HOME: homePath });
+  if (code !== 0)
+    return json({ error: `no diff for ${id} - no live worktree (torn down, or a stage id?)` }, 404);
+  // 400KB keeps a runaway diff from freezing the viewer; the cut is stated.
+  const MAX = 400 * 1024;
+  return json({ id, diff: out.slice(0, MAX), truncated: out.length > MAX });
+}
+
 async function familyDetail(homePath: string, family: string): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
@@ -6487,6 +6505,11 @@ export function dashboardMain() {
         return p && fam
           ? familyDetail(p, fam)
           : json({ error: "path and family required" }, 400);
+      }
+      if (url.pathname === "/api/diff") {
+        const p = url.searchParams.get("path");
+        const id = url.searchParams.get("id");
+        return p && id ? diffShow(p, id) : json({ error: "path and id required" }, 400);
       }
       if (url.pathname === "/api/artifact") {
         const p = url.searchParams.get("path");
