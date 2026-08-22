@@ -5255,7 +5255,7 @@ ${UX_BASE}
   ${guest ? "" : `<span id="sharewrap"><button id="sharebtn" title="Mint a token link a VPN teammate can open (pin + comment only). Stop revokes it.">Share</button><span id="sharepop"><input id="sharepw" type="password" placeholder="Password (empty = open link)" autocomplete="new-password"><button id="sharego" class="primary">Share</button><button id="sharecancel">Cancel</button></span></span><span id="sharelnk"></span><span id="viewers"></span>`}
   <span id="status"><span id="dot"></span><span id="stxt"></span></span>
 </div>
-<div id="paintguard">&#9888;&#65039; Không phát hiện nội dung hiển thị nào trong artifact này &mdash; trang có thể đang trống hoặc bị lỗi.</div>
+<div id="paintguard">&#9888;&#65039; No visible content detected in this artifact &mdash; the page may be blank or broken.</div>
 <div id="main">
   <iframe id="frame" sandbox="allow-scripts"></iframe>
   <div id="panel">

@@ -2742,7 +2742,7 @@ addEventListener('paste', function(e){
           { method:'POST', headers:{'content-type': f.type}, body: buf })
           .then(function(r){ return r.json(); })
           .then(function(j){
-            if(j.ok) chiefNote('ảnh đã lưu + path đã gõ vào pane — thêm lời nhắn rồi Enter để gửi');
+            if(j.ok) chiefNote('image saved + path typed into pane — add a message then Enter to send');
             else chiefNote('refused: '+(j.error||'attach failed'), true);
           });
       }).catch(function(){ chiefNote('unreachable — image not sent', true); });
