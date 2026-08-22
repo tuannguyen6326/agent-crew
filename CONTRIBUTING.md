@@ -51,7 +51,7 @@ bin/ac-lint.sh                     # opt-in: bash -n + shellcheck over changed f
 ```
 
 Every behavior change lands with a colocated `tests/*.test.sh` (or an update to one).
-For dashboard UI changes, also lint the served page's inline scripts: `curl` the page, extract the `<script>` blocks, and run `bun build --no-bundle` over them.
+For dashboard UI changes, also run `bin/ac-page-lint.sh` - it lints every served page's inline scripts end-to-end.
 
 ## Pull requests
 
