@@ -1585,6 +1585,26 @@ printf '# Room: victim\n' >"$rdata/archive/2026/victim/room.md"
 assert_eq "$(lib "ac_room_file '*'")" "$rdata/*/room.md" \
   "an unsafe family name never globs into some other family's archived room"
 
+# a fan-out sub-task id (data/<family>/tasks/<slug>/, no room of its own)
+# resolves to the FAMILY's live room, not the dead data/<id>/room.md path
+mkdir -p "$rdata/fanfam/tasks/paint" "$rdata/fanfam"
+printf 'brief\n' >"$rdata/fanfam/tasks/paint/brief.md"
+printf '# Room: fanfam\n' >"$rdata/fanfam/room.md"
+assert_eq "$(lib "ac_room_file fanfam-paint")" "$rdata/fanfam/room.md" \
+  "a fan-out sub-task id resolves to its family's live room"
+
+# the same walk applies when the family's room is archived, not live
+mkdir -p "$rdata/oldfan/tasks/slice" "$rdata/archive/2026/oldfan"
+printf 'brief\n' >"$rdata/oldfan/tasks/slice/brief.md"
+printf '# Room: oldfan\n' >"$rdata/archive/2026/oldfan/room.md"
+assert_eq "$(lib "ac_room_file oldfan-slice")" "$rdata/archive/2026/oldfan/room.md" \
+  "a fan-out sub-task id of an archived family resolves to the archived room"
+
+# a normal (non-fan-out) unknown family with hyphens still falls back to its
+# own live path - the base/slug walk must never hijack an ordinary id
+assert_eq "$(lib "ac_room_file plain-unknown-family")" "$rdata/plain-unknown-family/room.md" \
+  "a hyphenated id with no matching tasks/<slug>/brief.md stays on its own live path"
+
 # --- ac_domain_tally: fleet-ledger token census (crewdomain-token) -----------
 # done means REAL done, not Done-section membership: a [failed]/[abandoned]
 # row must not inflate the field (same-done-miscount-in-three-more-surfaces,

@@ -909,11 +909,11 @@ ac_task_dir() {
 }
 
 ac_room_file() {
-  # ac_room_file <family> - the room path a HISTORY read must use: the live
-  # data/<family>/room.md when it exists, else the archived copy that
-  # bin/ac-archive.sh (that script's header owns the archive layout) moved to
-  # data/archive/<year>/<family>/room.md. Neither existing prints the LIVE
-  # path, so a caller that CREATES a room still writes it live.
+  # ac_room_file <family|fan-out-sub-task-id> - the room path a HISTORY read
+  # must use: the live data/<family>/room.md when it exists, else the archived
+  # copy that bin/ac-archive.sh (that script's header owns the archive layout)
+  # moved to data/archive/<year>/<family>/room.md. Neither existing prints the
+  # LIVE path, so a caller that CREATES a room still writes it live.
   #
   # READ side only, deliberately. ac-room.sh's own room_file() stays the live
   # path for `post`/`close`: appending into an archived room would hide a
@@ -926,7 +926,16 @@ ac_room_file() {
   # The charset guard is ac-room.sh cmd_post's, verbatim: an unsafe family name
   # would otherwise reach the archive GLOB below, where a `*` matches some other
   # family's archived room and answers confidently with the wrong file.
-  local fam="$1" live archived
+  #
+  # A caller may pass a fan-out sub-task id (data/<family>/tasks/<slug>/,
+  # ac_task_dir's layout above) instead of the family id - that dir holds only
+  # brief.md/report.md, never its own room.md, because rooms live at the family
+  # ROOT. When $1 resolves to neither a live nor an archived room directly, the
+  # same longest-prefix walk ac_task_dir uses recovers the real family from
+  # what EXISTS, and resolution restarts on that family - never on the sub-task
+  # id itself, which would otherwise answer with a room path that can never
+  # exist.
+  local fam="$1" live archived base slug
   live="$(ac_data_dir)/$fam/room.md"
   [ -f "$live" ] && { printf '%s\n' "$live"; return 0; }
   case "$fam" in *[!a-zA-Z0-9_-]*) printf '%s\n' "$live"; return 0 ;; esac
@@ -934,6 +943,15 @@ ac_room_file() {
     [ -f "$archived" ] || continue
     printf '%s\n' "$archived"
     return 0
+  done
+  base="$fam"
+  while [ "${base%-*}" != "$base" ]; do
+    base="${base%-*}"
+    slug="${fam#"$base"-}"
+    if [ -f "$(ac_data_dir)/$base/tasks/$slug/brief.md" ]; then
+      ac_room_file "$base"
+      return 0
+    fi
   done
   printf '%s\n' "$live"
 }
