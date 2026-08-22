@@ -741,7 +741,6 @@ ${UX_BASE}
   .bdetail .tlbtn .n{ color:inherit; opacity:.75; font-weight:400; font-size:11px; }
   /* Worktree diff viewer (diff-review), GitHub-shaped: one collapsible card
      per file, a line-number gutter pair, full-row add/del tints. */
-  .dfwrap{ padding:16px 20px; }
   .df{ border:1px solid var(--line); border-radius:9px; margin:0 0 12px; overflow:hidden; background:var(--surface); }
   .df>summary{ cursor:pointer; padding:8px 12px; font:600 12.5px/1.4 var(--mono); border-bottom:1px solid var(--line); list-style-position:inside; }
   .df>summary .n{ font-weight:600; font-size:11px; margin-left:2px; }
@@ -1590,12 +1589,6 @@ function renderPage(){
   else if(r.name==='config') html=pageConfig();
   else html=pageNotFound(r);
   morphInto(el('page'), html, 'page');
-  // Pool-table diff hop: fire once the detail's viewer exists (the detail body
-  // renders only after its /api/family lands); leaving the board drops it.
-  if(boardDiffPending){
-    if(!(r&&r.name==='board'&&r.fam)) boardDiffPending=null;
-    else if(el('board-vbody')){ var pdi=boardDiffPending; boardDiffPending=null; boardShowDiff(pdi.id, pdi.tree); }
-  }
   // Chat tab: the panel polls its own pane API; renderPage runs every poll
   // tick, so chiefPollStart's same-target guard keeps this idempotent. On the
   // board, boardSyncFamily owns the same poll for the open family's chief.
@@ -1879,9 +1872,7 @@ function poolTable(pools){
     for(var i=0;i<list.length;i++){ var p=list[i];
       r+='<tr><td class="mono">'+esc(p.repo)+'</td><td class="mono">'+esc(p.slot)+'</td>';
       r+='<td><span class="badge '+(p.state==='leased'?'ok':(p.state==='available'?'':'warn'))+'">'+esc(p.state)+'</span></td>';
-      var dchip=(p.state==='leased'&&p.task&&p.worktree&&p.task.slice(-6)!=='-chief')
-        ?' <button type="button" class="fopen mono" data-pool-diff="'+esc(p.task)+'" data-pool-tree="'+esc(p.worktree)+'" title="Review this worktree&#39;s diff">± diff</button>':'';
-      r+='<td class="mono">'+esc(p.task||'—')+dchip+'</td><td class="ts">'+esc(p.leased_at||'—')+'</td><td class="mono" style="font-size:11px">'+esc(p.worktree||'—')+'</td></tr>';
+      r+='<td class="mono">'+esc(p.task||'—')+'</td><td class="ts">'+esc(p.leased_at||'—')+'</td><td class="mono" style="font-size:11px">'+esc(p.worktree||'—')+'</td></tr>';
     }
     return r;
   }
@@ -1904,7 +1895,6 @@ function poolTable(pools){
 var boardArt={};                       // per-home reports cache: { ts, arts, loading }
 var familyCache={}, familyLoading={};  // per "home|family" detail cache (overlay)
 var boardOpenFam=null;                 // family id whose detail overlay is open
-var boardDiffPending=null;             // task id to open in the diff viewer once its board detail mounts (pool-table hop)
 var boardArtReq=0;                      // monotonic guard: a newer inline-artifact fetch wins
 
 // Fetch the home's artifact list once (12s TTL); a board re-render refreshes it.
@@ -2390,22 +2380,7 @@ function boardDetailRail(d, fleet){
     +'<h4>Repo'+boardCount(d.repos?d.repos.length:0)+'</h4>'
     +'<div class="repotxt">'+boardRepoList(d)+'</div>';
   if(d.roomCount) s+='<button class="roombtn" type="button" data-board-room>💬 Room ('+d.roomCount+')</button>';
-  var dIds=boardDiffIds(d);
-  for(var di=0;di<dIds.length;di++)
-    s+='<button class="tlbtn" type="button" data-board-diff="'+esc(dIds[di])+'">± Diff <span class="n">'+esc(dIds[di])+'</span></button>';
   return s+'</div>';
-}
-// The family's LIVE task ids (snapshot crew list) - each holds a worktree the
-// Diff button can render; a chief pane has no project diff and is skipped.
-function boardDiffIds(d){
-  var fam=d.family||d.id||boardOpenFam, home=S.route.home;
-  var tasks=(home&&home.crew&&home.crew.tasks)||[], ids=[];
-  for(var i=0;i<tasks.length;i++){
-    var t=tasks[i].id||'';
-    if(!t||t.slice(-6)==='-chief') continue;
-    if(t===fam||t.indexOf(fam+'-')===0) ids.push(t);
-  }
-  return ids;
 }
 // Rail collapse: render-time class so a
 // remount keeps the choice, imperative toggle so a poll never fights it.
@@ -2988,26 +2963,6 @@ function boardShowRoom(){
   s+='</div>';
   vbody.innerHTML=s;
 }
-// Diff in the viewer (worktree diff-review): the rail's per-live-task Diff
-// button fetches /api/diff and renders it through the bun-tested diffHtml.
-function boardShowDiff(id, tree){
-  var box=document.querySelector('.bdetail'); if(!box) return;
-  var prev=box.querySelector('.art.on'); if(prev) prev.classList.remove('on');
-  var hp=S.route.home?S.route.home.path:'';
-  var vpath=el('board-vpath'), vkind=el('board-vkind'), vbody=el('board-vbody');
-  if(vpath) vpath.textContent='diff: '+id;
-  if(vkind) vkind.hidden=true;
-  var ob=el('board-ovbtn'); if(ob) ob.hidden=false;
-  boardSetReviewBtn(null);
-  if(!vbody) return;
-  vbody.innerHTML=skeleton();
-  diffLoad(hp, id, tree||'', 'live', false, function(d){
-    var vb=el('board-vbody'); if(!vb) return;
-    if(d.error){ vb.innerHTML=stateBox('No diff', d.error, ''); return; }
-    if(d.empty){ vb.innerHTML=stateBox('Empty diff','the worktree carries no change against its base',''); return; }
-    vb.innerHTML='<div class="dfwrap"><div class="dflive">live worktree - uncommitted changes included</div>'+d.html+'</div>';
-  });
-}
 // ---- Source Control (dash-source-control): the ac-tree POOL is the truth of
 // worktrees - one collapsible section per leased slot (a multi-repo task
 // shows each of its trees; a lease that outlived its task meta still shows).
@@ -3015,22 +2970,18 @@ function boardShowDiff(id, tree){
 // on branch), file cards closed until clicked. A loaded section is a
 // preserved island keyed on its load states, so toggles survive polling.
 var SC_GROUPS=[['uncommitted','Changes'],['untracked','Untracked files'],['committed','Committed on branch']];
-// Fetch + classify ONE /api/diff answer - the shape both diff consumers (the
-// board viewer and the Source Control sections) render from.
-function diffLoad(hp,id,tree,mode,closed,cb){
-  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+'&mode='+enc(mode)+(tree?'&tree='+enc(tree):'')).then(function(x){ return x.json(); }).then(function(j){
-    if(j.error) return cb({error:j.error});
-    if(!j.diff||!j.diff.trim()) return cb({empty:1});
-    var st=diffStats(j.diff);
-    cb({html:diffHtml(j.diff,closed)+(j.truncated?'<div class="dfnote">diff truncated at 400KB - read the rest with bin/ac-review-diff.sh '+esc(id)+'</div>':''),
-        add:st.add, del:st.del, files:st.files});
-  }).catch(function(){ cb({error:'request failed'}); });
-}
 var scDiff={};   // hp|id|tree|mode -> {loading} | {error} | {empty:1} | {html,add,del,files}
 function scLoad(hp,id,tree,mode){
   var ck=hp+'|'+id+'|'+tree+'|'+mode; if(scDiff[ck]) return;
   scDiff[ck]={loading:1};
-  diffLoad(hp,id,tree,mode,true,function(e){ scDiff[ck]=e; if(S.route&&S.route.name==='changes') renderPage(); });
+  var settle=function(e){ scDiff[ck]=e; if(S.route&&S.route.name==='changes') renderPage(); };
+  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+'&mode='+enc(mode)+(tree?'&tree='+enc(tree):'')).then(function(x){ return x.json(); }).then(function(j){
+    if(j.error) return settle({error:j.error});
+    if(!j.diff||!j.diff.trim()) return settle({empty:1});
+    var st=diffStats(j.diff);
+    settle({html:diffHtml(j.diff,true)+(j.truncated?'<div class="dfnote">diff truncated at 400KB - read the rest with bin/ac-review-diff.sh '+esc(id)+'</div>':''),
+        add:st.add, del:st.del, files:st.files});
+  }).catch(function(){ settle({error:'request failed'}); });
 }
 function scState(d){ return !d||d.loading?'l':(d.error?'x':(d.empty?'0':'k')); }
 function pageChanges(){
@@ -4199,19 +4150,6 @@ function onClick(e){
   if((n=t.closest('[data-rail-toggle]'))){ railToggle(); return; }             // collapse/expand the detail's left rail
   if((n=t.closest('[data-board-timeline]'))){ boardShowTimeline(); return; }   // render the lifecycle timeline in the viewer
   if((n=t.closest('[data-board-room]'))){ boardShowRoom(); return; }           // render the family room in the viewer (room-in-viewer)
-  if((n=t.closest('[data-board-diff]'))){ boardShowDiff(n.getAttribute('data-board-diff')); return; }  // render a live task's worktree diff
-  if((n=t.closest('[data-pool-diff]'))){
-    // Worktree-pool hop: resolve the task's family by longest known-family
-    // prefix (the processes payload carries the ledger's ids), fall back to
-    // the id itself - the detail page renders headless families fine.
-    var pdid=n.getAttribute('data-pool-diff'), pfam=pdid;
-    var kn=(S.page&&S.page.families)||[], best='';
-    for(var kj=0;kj<kn.length;kj++){ if((pdid===kn[kj]||pdid.indexOf(kn[kj]+'-')===0)&&kn[kj].length>best.length) best=kn[kj]; }
-    if(best) pfam=best;
-    boardDiffPending={id:pdid, tree:n.getAttribute('data-pool-tree')||''};
-    navigate('/fleets/'+enc(S.route.fleet)+'/board/'+enc(pfam));
-    return;
-  }
   if((n=t.closest('[data-board-overview]'))){ boardShowOverview(); return; }   // back from room/timeline/artifact to the overview
   if((n=t.closest('[data-board-art]'))){ boardOpenArt(n); return; }   // load artifact inline (detail viewer)
   if((n=t.closest('[data-stage-toggle]'))){ var box2=n.closest('.stage,.story'); if(box2) box2.classList.toggle('collapsed'); return; }
