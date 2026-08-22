@@ -1604,6 +1604,22 @@ export function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Totals for a unified diff - the Source Control section badges. Same
+ * line-walk discipline as diffHtml (meta lines never count), self-contained
+ * ES5 so PAGE interpolates its toString() beside it. */
+export function diffStats(text: string): { add: number; del: number; files: number } {
+  var lines = String(text || "").split("\n");
+  var add = 0, del = 0, files = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    if (l.indexOf("diff --git ") === 0) { files++; continue; }
+    if (l.indexOf("+++") === 0 || l.indexOf("---") === 0) continue;
+    if (l.charAt(0) === "+") add++;
+    else if (l.charAt(0) === "-") del++;
+  }
+  return { add: add, del: del, files: files };
+}
+
 /** Unified-diff renderer for the board viewer (worktree diff-review),
  * GitHub-shaped: one collapsible <details class="df"> per file with colored
  * +/- counts and a state badge (added/deleted/renamed/binary), the body a

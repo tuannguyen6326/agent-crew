@@ -9,7 +9,7 @@ import {
   groupArtifacts, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
   parseBacklogLine, parseTimeline, readerCss, resolvePalette,
   reviewableArtifact, stemRegroup, storyState, termThemeCore, verifyProcessRows,
-  diffHtml,
+  diffHtml, diffStats,
 } from "./lib.ts";
 
 // ---------------------------------------------------------------------------
@@ -926,6 +926,7 @@ ${familyStages.toString()}
 ${parseTimeline.toString()}
 ${composeFamily.toString()}
 ${diffHtml.toString()}
+${diffStats.toString()}
 // Theme + palette toggles (theme-revamp, theme-revamp-presets): the SAME
 // resolvers the bun test proves. resolveTheme itself is not interpolated here
 // - the browser never resolves "auto" in JS, the CSS :root default + the
@@ -3000,13 +3001,12 @@ function boardShowDiff(id, tree){
   boardSetReviewBtn(null);
   if(!vbody) return;
   vbody.innerHTML=skeleton();
-  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+(tree?'&tree='+enc(tree):'')).then(function(x){ return x.json(); }).then(function(j){
+  diffLoad(hp, id, tree||'', 'live', false, function(d){
     var vb=el('board-vbody'); if(!vb) return;
-    if(j.error){ vb.innerHTML=stateBox('No diff', j.error, ''); return; }
-    if(!j.diff||!j.diff.trim()){ vb.innerHTML=stateBox('Empty diff','the worktree carries no change against its base',''); return; }
-    vb.innerHTML='<div class="dfwrap"><div class="dflive">live worktree - uncommitted changes included</div>'+diffHtml(j.diff)
-      +(j.truncated?'<div class="dfnote">diff truncated at 400KB - read the rest with bin/ac-review-diff.sh '+esc(id)+' --live</div>':'')+'</div>';
-  }).catch(function(){ var vb=el('board-vbody'); if(vb) vb.innerHTML=stateBox('Diff unavailable','request failed',''); });
+    if(d.error){ vb.innerHTML=stateBox('No diff', d.error, ''); return; }
+    if(d.empty){ vb.innerHTML=stateBox('Empty diff','the worktree carries no change against its base',''); return; }
+    vb.innerHTML='<div class="dfwrap"><div class="dflive">live worktree - uncommitted changes included</div>'+d.html+'</div>';
+  });
 }
 // ---- Source Control (dash-source-control): the ac-tree POOL is the truth of
 // worktrees - one collapsible section per leased slot (a multi-repo task
@@ -3015,22 +3015,22 @@ function boardShowDiff(id, tree){
 // on branch), file cards closed until clicked. A loaded section is a
 // preserved island keyed on its load states, so toggles survive polling.
 var SC_GROUPS=[['uncommitted','Changes'],['untracked','Untracked files'],['committed','Committed on branch']];
+// Fetch + classify ONE /api/diff answer - the shape both diff consumers (the
+// board viewer and the Source Control sections) render from.
+function diffLoad(hp,id,tree,mode,closed,cb){
+  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+'&mode='+enc(mode)+(tree?'&tree='+enc(tree):'')).then(function(x){ return x.json(); }).then(function(j){
+    if(j.error) return cb({error:j.error});
+    if(!j.diff||!j.diff.trim()) return cb({empty:1});
+    var st=diffStats(j.diff);
+    cb({html:diffHtml(j.diff,closed)+(j.truncated?'<div class="dfnote">diff truncated at 400KB - read the rest with bin/ac-review-diff.sh '+esc(id)+'</div>':''),
+        add:st.add, del:st.del, files:st.files});
+  }).catch(function(){ cb({error:'request failed'}); });
+}
 var scDiff={};   // hp|id|tree|mode -> {loading} | {error} | {empty:1} | {html,add,del,files}
 function scLoad(hp,id,tree,mode){
   var ck=hp+'|'+id+'|'+tree+'|'+mode; if(scDiff[ck]) return;
   scDiff[ck]={loading:1};
-  var settle=function(e){ scDiff[ck]=e; if(S.route&&S.route.name==='changes') renderPage(); };
-  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+'&mode='+enc(mode)+(tree?'&tree='+enc(tree):'')).then(function(x){ return x.json(); }).then(function(j){
-    if(j.error) return settle({error:j.error});
-    if(!j.diff||!j.diff.trim()) return settle({empty:1});
-    var add=0, del=0, files=0, lines=j.diff.split(String.fromCharCode(10));
-    for(var i=0;i<lines.length;i++){ var l=lines[i];
-      if(l.indexOf('diff --git ')===0){ files++; continue; }
-      if(l.indexOf('+++')===0||l.indexOf('---')===0) continue;
-      if(l.charAt(0)==='+') add++; else if(l.charAt(0)==='-') del++;
-    }
-    settle({html:diffHtml(j.diff,true)+(j.truncated?'<div class="dfnote">diff truncated at 400KB</div>':''), add:add, del:del, files:files});
-  }).catch(function(){ settle({error:'request failed'}); });
+  diffLoad(hp,id,tree,mode,true,function(e){ scDiff[ck]=e; if(S.route&&S.route.name==='changes') renderPage(); });
 }
 function scState(d){ return !d||d.loading?'l':(d.error?'x':(d.empty?'0':'k')); }
 function pageChanges(){

@@ -3235,3 +3235,11 @@ test("diffHtml closed=true collapses every file card (the SCM file-list shape)",
   expect(diffHtml(SAMPLE_DIFF, true)).not.toContain('<details class="df" open>');
   expect(diffHtml(SAMPLE_DIFF)).toContain('<details class="df" open>');
 });
+
+// ---- diffStats (the client's section totals - one counter, not a re-walk) --
+import { diffStats } from "./app.ts";
+
+test("diffStats totals a unified diff without counting meta lines", () => {
+  expect(diffStats(SAMPLE_DIFF)).toEqual({ add: 3, del: 1, files: 2 });
+  expect(diffStats("")).toEqual({ add: 0, del: 0, files: 0 });
+});

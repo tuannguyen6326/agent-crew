@@ -42,6 +42,7 @@
 //   GET  /api/config-list?path=<home> -> {editable,log,dispatch} for the Config route (dispatch = crew-dispatch.json view)
 //   GET  /api/room?path=<home>&family=<fam> -> full room narrative (viewer detail)
 //   GET  /api/family?path=<home>&family=<fam> -> composed per-family detail: backlog line + stages + design html + progress + PR link + room + epic rollup + reused-data pointers (Board drill-down, dashboard-board)
+//   GET  /api/diff?path=<home>&id=<task>[&mode=live|committed|uncommitted|untracked][&tree=<worktree>] -> that task's unified diff via bin/ac-review-diff.sh (mode default live; tree must be a pool-listed worktree - the Source Control tab and the board Diff viewer)
 //   GET  /api/artifact?path=<home>&file=<f> -> ONE artifact rendered read-only (viewer detail)
 //   POST /api/reveal?path=<home>&file=<f> -> reveal the artifact in Finder (`open -R`, same path gate as /api/artifact; Reports viewer button)
 //   GET  /api/records?path=<home>&file=<ledger> -> ONE records/ ledger rendered read-only (viewer detail)
