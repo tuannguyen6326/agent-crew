@@ -3188,9 +3188,12 @@ const SAMPLE_DIFF = [
 
 test("diffHtml groups per file with +/- counts and classified rows", () => {
   const h = diffHtml(SAMPLE_DIFF);
-  // File-list summary, SCM-panel shape: basename first, dir de-emphasized.
-  expect(h).toContain('<span class="fn">a.ts</span> <span class="fp">src</span>');
-  expect(h).toContain('<span class="fn">b.md</span> <span class="fp">docs</span>');
+  // The repo's code tree, not a flat list: folder nodes wrap the file cards,
+  // so the card summary carries only the basename.
+  expect(h).toContain('<details class="dfd" open><summary>src</summary>');
+  expect(h).toContain('<details class="dfd" open><summary>docs</summary>');
+  expect(h).toContain('<span class="fn">a.ts</span>');
+  expect(h).toContain('<span class="fn">b.md</span>');
   expect((h.match(/<details class="df"/g) || []).length).toBe(2);
   expect(h).toContain('<span class="n na">+2</span>');    // a.ts adds
   expect(h).toContain('<span class="n nd">-1</span>');
@@ -3231,6 +3234,21 @@ test("diffHtml on an empty diff returns the empty string (the caller renders the
   expect(diffHtml("   \n")).toBe("");
 });
 
+test("diffHtml compacts single-child folder chains (the VS Code tree shape)", () => {
+  const deep = [
+    "diff --git a/apps/svc/src/adapter/x.ts b/apps/svc/src/adapter/x.ts",
+    "index 1..2 100644",
+    "--- a/apps/svc/src/adapter/x.ts",
+    "+++ b/apps/svc/src/adapter/x.ts",
+    "@@ -1 +1 @@",
+    "-a",
+    "+b",
+  ].join("\n");
+  const h = diffHtml(deep);
+  expect(h).toContain("<summary>apps/svc/src/adapter</summary>");   // one compacted node, not four
+  expect((h.match(/<details class="dfd"/g) || []).length).toBe(1);
+});
+
 test("diffHtml closed=true collapses every file card (the SCM file-list shape)", () => {
   expect(diffHtml(SAMPLE_DIFF, true)).not.toContain('<details class="df" open>');
   expect(diffHtml(SAMPLE_DIFF)).toContain('<details class="df" open>');
@@ -3242,4 +3260,100 @@ import { diffStats } from "./app.ts";
 test("diffStats totals a unified diff without counting meta lines", () => {
   expect(diffStats(SAMPLE_DIFF)).toEqual({ add: 3, del: 1, files: 2 });
   expect(diffStats("")).toEqual({ add: 0, del: 0, files: 0 });
+});
+
+// ---- graphHtml (the Worktrees lane graph, GitLens-shaped) -----------------
+import { graphHtml } from "./app.ts";
+
+// newest first: tip merges crew lane (c4) with main lane (c3); both descend
+// from c2 -> the classic fork/merge diamond over a linear root.
+const GRAPH_TSV = [
+  "c5\tc4 c3\tHEAD -> crew/x, origin/main\ttip merge",
+  "c4\tc2\t\tcrew work",
+  "c3\tc2\tmain\tmain work",
+  "c2\tc1\t\tshared base",
+  "c1\t\t\troot",
+  "#base\tc2",
+].join("\n");
+
+test("graphHtml draws one node row per commit with lane-colored dots", () => {
+  const h = graphHtml(GRAPH_TSV);
+  expect((h.match(/<circle /g) || []).length).toBe(5);
+  expect((h.match(/class="ggrow/g) || []).length).toBe(5);
+  expect(h).toContain("tip merge");
+  expect(h).toContain("shared base");
+});
+
+test("graphHtml speaks the GitLens node grammar: merges are hollow and de-emphasized", () => {
+  const h = graphHtml(GRAPH_TSV);
+  expect((h.match(/class="ggrow mg"/g) || []).length).toBe(1);          // only c5 merges
+  expect((h.match(/fill="var\(--canvas\)"/g) || []).length).toBe(1);    // its node is hollow
+});
+
+test("graphHtml renders merge and fork curves between lanes", () => {
+  const h = graphHtml(GRAPH_TSV);
+  expect((h.match(/<path /g) || []).length).toBeGreaterThanOrEqual(2); // c5's fork out, c2's merge in
+});
+
+test("graphHtml chips the refs and escapes payload text", () => {
+  const h = graphHtml(GRAPH_TSV);
+  expect(h).toContain('<span class="ggref head">HEAD</span>');
+  expect(h).toContain('<span class="ggref crew">crew/x</span>');   // the crew branch reads apart
+  expect(h).toContain('<span class="ggref">origin/main</span>');
+  const evil = "x1\t\t\t<script>alert(1)</script>";
+  expect(graphHtml(evil)).not.toContain("<script>");
+});
+
+test("graphHtml rows carry their sha and strokes their lane (click-through wiring)", () => {
+  const h = graphHtml(GRAPH_TSV);
+  expect(h).toContain('data-sha="c5"');
+  expect(h).toContain('data-sha="c1"');
+  expect(h).toContain('data-lane="0"');
+  expect((h.match(/class="glh"/g) || []).length).toBeGreaterThanOrEqual(4); // fat invisible hit twins
+});
+
+test("graphHtml carries no branch bar - the picker owns branch navigation", () => {
+  expect(graphHtml(GRAPH_TSV)).not.toContain("ggbar");
+});
+
+test("graphHtml marks the #base row - where the crew branch checked out from", () => {
+  const h = graphHtml(GRAPH_TSV);
+  expect((h.match(/<span class="ggref base">base<\/span>/g) || []).length).toBe(1);
+  const baseRow = h.split('class="ggrow').filter((s) => s.indexOf("shared base") >= 0)[0];
+  expect(baseRow).toContain('<span class="ggref base">base</span>');
+});
+
+test("graphHtml on empty input returns the empty string", () => {
+  expect(graphHtml("")).toBe("");
+});
+
+// ---- readLocalBranches (worktrees tab: parked crew work + the branch picker)
+import { readLocalBranches } from "./app.ts";
+import { mkdtempSync as mkdt2 } from "node:fs";
+
+test("readLocalBranches reads loose and packed refs recursively, loose wins", () => {
+  const home = mkdt2(`${tmpdir()}/ac-cb-`);
+  const root = `${home}/projects/alpha`;
+  mkdirSync(`${root}/.git/refs/heads/crew`, { recursive: true });
+  writeFileSync(`${root}/.git/refs/heads/crew/loose-task`, "a".repeat(40) + "\n");
+  writeFileSync(`${root}/.git/refs/heads/main`, "e".repeat(40) + "\n");
+  writeFileSync(`${root}/.git/HEAD`, "ref: refs/heads/main\n");
+  writeFileSync(`${root}/.git/packed-refs`, [
+    "# pack-refs with: peeled fully-peeled sorted",
+    "b".repeat(40) + " refs/heads/crew/packed-task",
+    "c".repeat(40) + " refs/heads/crew/loose-task",   // stale packed copy - loose wins
+    "d".repeat(40) + " refs/heads/fix/deep/name",
+  ].join("\n") + "\n");
+  const out = readLocalBranches(home);
+  const byName = Object.fromEntries(out.map((b) => [b.branch, b]));
+  expect(byName["crew/loose-task"].sha.slice(0, 4)).toBe("aaaa");
+  expect(byName["crew/packed-task"].sha.slice(0, 4)).toBe("bbbb");
+  expect(byName["main"].sha.slice(0, 4)).toBe("eeee");
+  expect(byName["fix/deep/name"].sha.slice(0, 4)).toBe("dddd");
+  // The clone's own HEAD names the default branch - the picker's default.
+  expect(byName["main"].def).toBe(true);
+  expect(byName["crew/loose-task"].def).toBeFalsy();
+  expect(out.every((b) => b.repo === "alpha" && b.root.endsWith("/projects/alpha"))).toBe(true);
+  expect(out.length).toBe(4);
+  rmSync(home, { recursive: true, force: true });
 });

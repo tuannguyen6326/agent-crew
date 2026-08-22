@@ -1675,18 +1675,143 @@ export function diffHtml(text: string, closed?: boolean): string {
       oldN++; newN++;
     }
   }
-  var out = "";
-  for (var f = 0; f < files.length; f++) {
-    var fl = files[f];
-    // SCM-panel file row: basename first, its directory de-emphasized after.
+  // The repo's CODE TREE, not a flat list: nest folder nodes, compact
+  // single-child chains (the VS Code tree shape), file cards at the leaves.
+  function fileCard(fl: { name: string; rows: string[]; add: number; del: number; badge: string }): string {
     var cut = fl.name.lastIndexOf("/");
     var bn = cut >= 0 ? fl.name.slice(cut + 1) : fl.name;
-    var dir = cut >= 0 ? fl.name.slice(0, cut) : "";
-    out += '<details class="df"' + (closed ? "" : " open") + '><summary><span class="fn">' + escd(bn) + "</span>"
-      + (dir ? ' <span class="fp">' + escd(dir) + "</span>" : "")
+    return '<details class="df"' + (closed ? "" : " open") + '><summary><span class="fn">' + escd(bn) + "</span>"
       + (fl.badge ? ' <span class="fb ' + fl.badge + '">' + fl.badge + "</span>" : "")
       + ' <span class="n na">+' + fl.add + '</span> <span class="n nd">-' + fl.del + "</span></summary>"
       + '<div class="dfx"><table class="dft"><tbody>' + fl.rows.join("") + "</tbody></table></div></details>";
   }
-  return out;
+  var root: any = { d: {}, f: [] };
+  for (var f = 0; f < files.length; f++) {
+    var segs = files[f].name.split("/"), node = root;
+    for (var s = 0; s < segs.length - 1; s++) {
+      if (!node.d[segs[s]]) node.d[segs[s]] = { d: {}, f: [] };
+      node = node.d[segs[s]];
+    }
+    node.f.push(files[f]);
+  }
+  function rdir(node: any, name: string): string {
+    var keys = Object.keys(node.d);
+    while (keys.length === 1 && node.f.length === 0) {   // compact a/b/c chains
+      name = name ? name + "/" + keys[0] : keys[0];
+      node = node.d[keys[0]];
+      keys = Object.keys(node.d);
+    }
+    var inner = "";
+    for (var k = 0; k < keys.length; k++) inner += rdir(node.d[keys[k]], keys[k]);
+    for (var x = 0; x < node.f.length; x++) inner += fileCard(node.f[x]);
+    return name ? '<details class="dfd" open><summary>' + escd(name) + "</summary><div class=\"dfdc\">" + inner + "</div></details>" : inner;
+  }
+  return rdir(root, "");
+}
+
+/** Lane graph for the Worktrees tab (GitLens-shaped): parse --graph-data rows
+ * (hash<TAB>parents<TAB>refs<TAB>subject, newest first), assign each commit a
+ * COLUMN with the classic pass-through algorithm (a lane waits for the hash
+ * that continues it; extra parents fork new lanes, converging lanes merge
+ * into the node's), then draw one fixed-height SVG cell per row - straight
+ * pass-through lines, quadratic curves for fork/merge - beside the subject
+ * and its ref chips. Colors are --ansi-N theme tokens keyed by lane, so the
+ * graph follows the dashboard theme. Self-contained ES5 - PAGE interpolates
+ * its toString(). */
+export function graphHtml(text: string): string {
+  var src = String(text || "");
+  if (!src.replace(/\s/g, "")) return "";
+  function escg(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  // The crew branch is the ref the reader came to find - it wears its own tint.
+  function refChip(name: string): string {
+    return '<span class="ggref' + (name.indexOf("crew/") === 0 ? " crew" : "") + '">' + escg(name) + "</span>";
+  }
+  // BRIGHT --ansi-N slots first: the graph sits on the canvas and the dim
+  // palette read as murk there (captain-verified on a real repo).
+  var LANE_COLORS = [12, 10, 13, 11, 14, 9, 4, 2, 5, 3];
+  function laneColor(i: number): string { return "var(--ansi-" + LANE_COLORS[i % LANE_COLORS.length] + ")"; }
+  var lines = src.split("\n");
+  var lanes: (string | null)[] = [];
+  var rows: { lane: number; merged: number[]; extra: number[]; top: number[]; bottom: number[]; merge: boolean; hash: string; refs: string; subject: string }[] = [];
+  var maxLanes = 1, baseHash = "";
+  for (var i = 0; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    if (lines[i].indexOf("#base\t") === 0) { baseHash = lines[i].split("\t")[1] || ""; continue; }
+    var f = lines[i].split("\t");
+    var hash = f[0] || "", parents = (f[1] || "").split(" ").filter(function (x) { return !!x; });
+    var lane = -1, j;
+    for (j = 0; j < lanes.length; j++) if (lanes[j] === hash) { lane = j; break; }
+    if (lane < 0) { for (j = 0; j < lanes.length; j++) if (lanes[j] === null) { lane = j; break; } }
+    if (lane < 0) { lane = lanes.length; lanes.push(null); }
+    var top: number[] = [];
+    for (j = 0; j < lanes.length; j++) if (lanes[j] !== null || j === lane) top.push(j);
+    var merged: number[] = [];
+    for (j = 0; j < lanes.length; j++) if (j !== lane && lanes[j] === hash) { merged.push(j); lanes[j] = null; }
+    lanes[lane] = parents.length ? parents[0] : null;
+    var extra: number[] = [];
+    for (var p = 1; p < parents.length; p++) {
+      var k = -1;
+      for (j = 0; j < lanes.length; j++) if (lanes[j] === parents[p]) { k = j; break; }
+      if (k < 0) { for (j = 0; j < lanes.length; j++) if (lanes[j] === null) { k = j; break; } }
+      if (k < 0) { k = lanes.length; lanes.push(null); }
+      lanes[k] = parents[p];
+      extra.push(k);
+    }
+    var bottom: number[] = [];
+    for (j = 0; j < lanes.length; j++) if (lanes[j] !== null) bottom.push(j);
+    if (lanes.length > maxLanes) maxLanes = lanes.length;
+    rows.push({ lane: lane, merged: merged, extra: extra, top: top, bottom: bottom, merge: parents.length > 1, hash: hash, refs: f[2] || "", subject: f[3] || "" });
+  }
+  var CW = 16, H = 26, MID = 13, R = 4.5;
+  var W = maxLanes * CW;
+  function cx(l: number): number { return l * CW + CW / 2; }
+  // Every stroke ships with a FAT INVISIBLE TWIN (.glh) carrying the same
+  // lane: a 2px line is unclickable, the 10px twin is the lane's hit area.
+  function seg(x1: number, y1: number, x2: number, y2: number, l: number): string {
+    var c = ' x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" data-lane="' + l + '"';
+    return "<line" + c + ' class="gl" stroke="' + laneColor(l) + '"/><line' + c + ' class="glh"/>';
+  }
+  function curve(x1: number, y1: number, qx: number, qy: number, x2: number, y2: number, l: number): string {
+    var d = ' d="M' + x1 + " " + y1 + " Q " + qx + " " + qy + " " + x2 + " " + y2 + '" fill="none" data-lane="' + l + '"';
+    return "<path" + d + ' class="gl" stroke="' + laneColor(l) + '"/><path' + d + ' class="glh"/>';
+  }
+  var out = "";
+  for (i = 0; i < rows.length; i++) {
+    var r = rows[i], svg = "";
+    for (j = 0; j < r.top.length; j++) { var t = r.top[j];
+      if (t === r.lane || r.merged.indexOf(t) >= 0) svg += seg(cx(t), 0, cx(t), MID, t);
+      else if (r.bottom.indexOf(t) >= 0) svg += seg(cx(t), 0, cx(t), H, t);
+    }
+    if (i === 0) svg = "";   // the tip has no history above it
+    for (j = 0; j < r.merged.length; j++) { var m = r.merged[j];
+      svg += curve(cx(m), 0, cx(m), MID, cx(r.lane), MID, m);
+    }
+    if (r.bottom.indexOf(r.lane) >= 0 && i < rows.length - 1)
+      svg += seg(cx(r.lane), MID, cx(r.lane), H, r.lane);
+    for (j = 0; j < r.extra.length; j++) { var e = r.extra[j];
+      svg += curve(cx(r.lane), MID, cx(e), MID, cx(e), H, e);
+    }
+    // GitLens node grammar: a merge is a HOLLOW ring, a real commit a solid
+    // dot - the topology's noise and its substance read apart at a glance.
+    svg += r.merge
+      ? '<circle cx="' + cx(r.lane) + '" cy="' + MID + '" r="' + R + '" fill="var(--canvas)" stroke="' + laneColor(r.lane) + '" stroke-width="1.8"/>'
+      : '<circle cx="' + cx(r.lane) + '" cy="' + MID + '" r="' + R + '" fill="' + laneColor(r.lane) + '"/>';
+    var chips = "";
+    if (r.refs) {
+      var parts = r.refs.split(", ");
+      for (j = 0; j < parts.length; j++) { var ref = parts[j];
+        if (ref.indexOf("HEAD -> ") === 0) ref = '<span class="ggref head">HEAD</span>' + refChip(ref.slice(8));
+        else if (ref === "HEAD") ref = '<span class="ggref head">HEAD</span>';
+        else ref = refChip(ref);
+        chips += ref;
+      }
+    }
+    if (baseHash && r.hash === baseHash) chips += '<span class="ggref base">base</span>';
+    out += '<div class="ggrow' + (r.merge ? " mg" : "") + '" data-sha="' + escg(r.hash) + '" title="click for this commit&#39;s diff"><svg width="' + W + '" height="' + H + '" aria-hidden="true">' + svg + "</svg>"
+      + '<span class="gghash">' + escg(r.hash) + "</span>" + chips
+      + '<span class="ggmsg">' + escg(r.subject) + "</span></div>";
+  }
+  return '<div class="gg">' + out + "</div>";
 }

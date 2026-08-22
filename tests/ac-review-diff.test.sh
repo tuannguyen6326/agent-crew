@@ -203,4 +203,79 @@ out7="$("$BIN/ac-review-diff.sh" c7)" || fail "orphan-history committed view die
 live7="$("$BIN/ac-review-diff.sh" c7 --live)"
 assert_contains "$live7" "wip.txt" "orphan-history --live still shows the working tree"
 
+# ---- Case 8: --graph prints the branch topology (git's own text graph, the
+#      dashboard Worktrees tab's Graph group). Reuses case 4's r4: crew/c4
+#      carries "committed delta" on top of genesis.
+gr="$("$BIN/ac-review-diff.sh" c4 --graph)"
+assert_contains "$gr" "committed delta" "--graph shows the crew branch's commit"
+assert_contains "$gr" "genesis" "--graph keeps surrounding topology context"
+case "$gr" in \**) : ;; *) fail "--graph output does not look like a git graph (no * node)" ;; esac
+
+# ---- Case 9: --graph-data prints the machine-readable topology the dashboard
+#      draws its lane graph from: hash<TAB>parents<TAB>refs<TAB>subject, one
+#      commit per line, newest first.
+gd="$("$BIN/ac-review-diff.sh" c4 --graph-data)"
+first="$(printf '%s\n' "$gd" | head -1)"
+assert_contains "$first" "committed delta" "--graph-data leads with the tree's tip"
+[ "$(printf '%s' "$first" | awk -F'\t' '{print NF}')" = 4 ] \
+  || fail "--graph-data rows are not 4 tab-separated fields"
+assert_contains "$gd" "genesis" "--graph-data reaches the surrounding topology"
+# The trailer names the BASE the crew branch grew from, so the dashboard can
+# mark where the checkout happened.
+gbase="$(git -C "$r4" rev-parse --short main)"
+assert_contains "$gd" "#base	$gbase" "--graph-data trails the merge-base marker"
+
+# ---- Case 9b: the graph traverses PARKED crew/* branches too - code waiting
+#      to land must be visible in the topology, not only where HEAD stands.
+r9="$TMP/parked-graph"
+git init -q -b main "$r9"; git_id "$r9"
+commit "$r9" file.txt genesis >/dev/null
+git -C "$r9" checkout -q -b crew/parked
+commit "$r9" parked.txt "parked delta" >/dev/null
+git -C "$r9" checkout -q main
+mk_meta c9 "$r9"
+g9="$("$BIN/ac-review-diff.sh" c9 --graph-data)"
+assert_contains "$g9" "parked delta" "--graph-data reaches a parked crew branch off HEAD"
+assert_contains "$g9" "crew/parked" "--graph-data decorates the parked branch tip"
+g9t="$("$BIN/ac-review-diff.sh" c9 --graph)"
+assert_contains "$g9t" "parked delta" "--graph reaches the parked branch too"
+# ...even when the default branch has out-scrolled the 40-commit window: an
+# old parked tip must still ride the data (its own slice is fetched per ref).
+# Filler commits get strictly NEWER dates - same-second ties would let the
+# parked tip sneak into the window and pass vacuously.
+for i in $(seq 1 45); do
+  GIT_COMMITTER_DATE="@$((1900000000+i)) +0000" GIT_AUTHOR_DATE="@$((1900000000+i)) +0000" \
+    commit "$r9" "f$i.txt" "filler $i" >/dev/null
+done
+g9w="$("$BIN/ac-review-diff.sh" c9 --graph-data)"
+assert_contains "$g9w" "parked delta" "--graph-data keeps an out-of-window parked branch visible"
+# Non-crew LOCAL branches (an epic integration branch) are unlanded work too.
+git -C "$r9" checkout -q -b epic-integration "$(git -C "$r9" rev-parse main~40)"
+GIT_COMMITTER_DATE='@1899000000 +0000' GIT_AUTHOR_DATE='@1899000000 +0000' \
+  commit "$r9" epicfile.txt "epic integration delta" >/dev/null
+git -C "$r9" checkout -q main
+g9e="$("$BIN/ac-review-diff.sh" c9 --graph-data)"
+assert_contains "$g9e" "epic integration delta" "--graph-data reaches a non-crew local branch"
+assert_contains "$g9e" "epic-integration" "--graph-data decorates the local branch tip"
+# --ref <branch> FOCUSES the graph on that branch (the GitLens branch picker):
+# its own history only - other branches' work stays out.
+g9r="$("$BIN/ac-review-diff.sh" c9 --graph-data --ref epic-integration)"
+assert_contains "$g9r" "epic integration delta" "--ref shows the chosen branch's history"
+case "$g9r" in *"parked delta"*)
+  fail "--ref leaked another branch's commits into a focused graph" ;;
+esac
+if "$BIN/ac-review-diff.sh" c9 --graph-data --ref '-evil' >/dev/null 2>&1; then
+  fail "--ref accepted a flag-shaped name"
+fi
+
+# ---- Case 10: --commit <sha> shows ONE commit's own change (the graph's
+#      click-through). Bad shas refuse.
+csha="$(git -C "$r4" rev-parse --short crew/c4)"
+cm="$("$BIN/ac-review-diff.sh" c4 --commit "$csha")"
+assert_contains "$cm" "committed delta" "--commit shows that commit's own diff"
+assert_contains "$cm" "+++ b/committed.txt" "--commit output is a unified diff"
+if "$BIN/ac-review-diff.sh" c4 --commit 'evil;rm' >/dev/null 2>&1; then
+  fail "--commit accepted a non-sha argument"
+fi
+
 pass

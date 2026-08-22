@@ -42,7 +42,8 @@
 //   GET  /api/config-list?path=<home> -> {editable,log,dispatch} for the Config route (dispatch = crew-dispatch.json view)
 //   GET  /api/room?path=<home>&family=<fam> -> full room narrative (viewer detail)
 //   GET  /api/family?path=<home>&family=<fam> -> composed per-family detail: backlog line + stages + design html + progress + PR link + room + epic rollup + reused-data pointers (Board drill-down, dashboard-board)
-//   GET  /api/diff?path=<home>&id=<task>[&mode=live|committed|uncommitted|untracked][&tree=<worktree>] -> that task's unified diff via bin/ac-review-diff.sh (mode default live; tree must be a pool-listed worktree - the Source Control tab and the board Diff viewer)
+//   GET  /api/diff?path=<home>&id=<task>[&mode=live|committed|uncommitted|untracked|graph|commit][&tree=<worktree>][&ref=<branch>][&sha=<sha>] -> that task's unified diff / graph data via bin/ac-review-diff.sh (mode default live; tree must be pool-listed or a project root; ref must be a local branch - the Worktrees tab)
+//   POST /api/repo/pull?path=<home>&repo=<name> -> fetch + FF-ONLY sync of that project clone via bin/ac-repo-pull.sh (captain-ordered; the one repo-mutating control)
 //   GET  /api/artifact?path=<home>&file=<f> -> ONE artifact rendered read-only (viewer detail)
 //   POST /api/reveal?path=<home>&file=<f> -> reveal the artifact in Finder (`open -R`, same path gate as /api/artifact; Reports viewer button)
 //   GET  /api/records?path=<home>&file=<ledger> -> ONE records/ ledger rendered read-only (viewer detail)
@@ -892,6 +893,8 @@ export interface PoolSlot {
   holder: string | null;
   leased_at: string | null;
   worktree: string | null;
+  head: string | null;   // "<branch>" | "detached @ <sha7>" | null (no tree)
+  used_at: number;       // slot-meta mtime (ms) - every lease/return touches it
 }
 
 /**
@@ -900,6 +903,50 @@ export interface PoolSlot {
  * SYMLINK out of the container (drydock/projects/agent-crew -> ~/Work/agent-crew),
  * so the real repo root is resolved before reading .crew/slots.
  */
+/** Every LOCAL branch across the home's project clones: the crew/* subset is
+ * code a finished task parked in the repo (the pool resets trees on return),
+ * and the full set feeds the graph's branch picker. FILE reads only (loose
+ * refs win over a stale packed-refs copy), never a git spawn - this rides
+ * the poll path. */
+export function readLocalBranches(homePath: string): { repo: string; root: string; branch: string; sha: string; def?: boolean }[] {
+  const out: { repo: string; root: string; branch: string; sha: string; def?: boolean }[] = [];
+  let repos: string[];
+  try { repos = readdirSync(`${homePath}/projects`); } catch { return out; }
+  for (const repo of repos.sort()) {
+    let root: string;
+    try { root = realpathSync(`${homePath}/projects/${repo}`); } catch { continue; }
+    const seen: Record<string, string> = {};
+    try {
+      const packed = readFileSync(`${root}/.git/packed-refs`, "utf8");
+      for (const line of packed.split("\n")) {
+        const m = /^([0-9a-f]{40}) refs\/heads\/(.+)$/.exec(line);
+        if (m) seen[m[2]] = m[1];
+      }
+    } catch { /* no packed-refs */ }
+    const walk = (dir: string, prefix: string): void => {
+      let names: string[];
+      try { names = readdirSync(`${dir}`); } catch { return; }
+      for (const f of names) {
+        const p = `${dir}/${f}`;
+        try {
+          if (statSync(p).isDirectory()) { walk(p, `${prefix}${f}/`); continue; }
+          seen[`${prefix}${f}`] = readFileSync(p, "utf8").trim();
+        } catch { /* raced */ }
+      }
+    };
+    walk(`${root}/.git/refs/heads`, "");
+    // The clone's own HEAD names the default branch - the picker's default.
+    let def = "";
+    try {
+      const hm = /^ref: refs\/heads\/(.+)$/m.exec(readFileSync(`${root}/.git/HEAD`, "utf8"));
+      if (hm) def = hm[1].trim();
+    } catch { /* detached or unreadable - no default flagged */ }
+    for (const branch of Object.keys(seen).sort())
+      out.push({ repo, root, branch, sha: seen[branch], ...(branch === def ? { def: true } : {}) });
+  }
+  return out;
+}
+
 function readPools(homePath: string): PoolSlot[] {
   const pools: PoolSlot[] = [];
   const projectsDir = `${homePath}/projects`;
@@ -935,14 +982,32 @@ function readPools(homePath: string): PoolSlot[] {
       // task showed none at all.
       const slot = f.replace(/\.meta$/, "");
       const slotTree = `${root}/.crew/worktrees/${slot}`;
+      // HEAD state from FILES, never a git spawn - this runs on every
+      // /api/processes poll. A worktree's .git is a "gitdir: <path>" pointer;
+      // its HEAD is either "ref: refs/heads/<branch>" or a bare sha.
+      let head: string | null = null;
+      try {
+        const gitFile = readFileSync(`${slotTree}/.git`, "utf8");
+        const gm = /^gitdir: (.+)$/m.exec(gitFile);
+        if (gm) {
+          const gdir = gm[1].startsWith("/") ? gm[1] : `${slotTree}/${gm[1]}`;
+          const h = readFileSync(`${gdir.trim()}/HEAD`, "utf8").trim();
+          head = h.startsWith("ref: refs/heads/") ? h.slice(16) : `detached @ ${h.slice(0, 7)}`;
+        }
+      } catch { /* no tree, or a plain repo dir - the chip just stays off */ }
       pools.push({
         repo,
         slot,
         state: leased ? "leased" : "available",
-        task: leased && task ? task : null,
+        // An available slot keeps its LAST task and its tree on purpose -
+        // ac-tree.sh list shows both, and an available-but-dirty tree is
+        // exactly what the Worktrees tab exists to surface.
+        task: task || null,
         holder: leased ? metaGet(meta, "holder") || null : null,
         leased_at: leased ? metaGet(meta, "leased_at") || null : null,
-        worktree: leased && existsSync(slotTree) ? slotTree : null,
+        worktree: existsSync(slotTree) ? slotTree : null,
+        head,
+        used_at: (() => { try { return statSync(meta).mtimeMs; } catch { return 0; } })(),
       });
     }
   }
@@ -1954,6 +2019,7 @@ async function processesDetail(homePath: string): Promise<Response> {
   return json({
     rooms: await roomList(homePath),
     pools: readPools(homePath),
+    branches: readLocalBranches(homePath),
     remote: readRemote(homePath),
     // The KNOWN-FAMILY set for this route's task links, and the reason it is
     // served here rather than derived client-side: `familyOfTaskId` strips a
@@ -3121,21 +3187,35 @@ export function collectFamilyTasks(
  * no meta or a gone worktree, which the client renders as the empty state. */
 const DIFF_MODES: Record<string, string> = {
   live: "--live", committed: "", uncommitted: "--uncommitted", untracked: "--untracked",
+  // graph serves the machine-readable rows; the client draws the lane SVG
+  // from them (graphHtml). commit is one commit's own change - the graph's
+  // click-through (its sha rides the `sha` param).
+  graph: "--graph-data", commit: "",
 };
-async function diffShow(homePath: string, id: string, mode: string, tree: string): Promise<Response> {
+async function diffShow(homePath: string, id: string, mode: string, tree: string, sha: string, ref: string): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
   if (!/^[a-zA-Z0-9_-]+$/.test(id))
     return json({ error: "bad id" }, 400);
   if (!(mode in DIFF_MODES)) return json({ error: "bad mode" }, 400);
-  // A client-supplied tree must be one the ac-tree pool actually lists for
-  // this home - the pool is the truth of leased trees, and this gate is what
-  // lets the script itself stay path-trusting for its CLI operator.
-  if (tree && !readPools(homePath).some((p) => p.worktree === tree))
+  // A client-supplied tree must be one the ac-tree pool lists for this home,
+  // OR a project clone's own root (the crew-branch sections diff parked
+  // branches there) - this gate is what lets the script itself stay
+  // path-trusting for its CLI operator.
+  if (tree && !readPools(homePath).some((p) => p.worktree === tree)
+    && !readLocalBranches(homePath).some((b) => b.root === tree))
     return json({ error: "worktree not in this home's pool" }, 404);
+  // The branch picker: a ref must be a branch this home's clones actually
+  // carry - never a free-form rev expression.
+  if (ref && !readLocalBranches(homePath).some((b) => b.branch === ref))
+    return json({ error: "unknown branch" }, 404);
   const args = [`${BIN}/ac-review-diff.sh`, id];
-  if (DIFF_MODES[mode]) args.push(DIFF_MODES[mode]);
+  if (mode === "commit") {
+    if (!/^[0-9a-f]{4,40}$/.test(sha)) return json({ error: "bad sha" }, 400);
+    args.push("--commit", sha);
+  } else if (DIFF_MODES[mode]) args.push(DIFF_MODES[mode]);
   if (tree) args.push("--tree", tree);
+  if (ref) args.push("--ref", ref);
   const { code, out } = await run(args, { AC_HOME: homePath });
   if (code !== 0)
     return json({ error: `no diff for ${id} - no live worktree (torn down, or a stage id?)` }, 404);
@@ -6530,12 +6610,27 @@ export function dashboardMain() {
           ? familyDetail(p, fam)
           : json({ error: "path and family required" }, 400);
       }
+      if (url.pathname === "/api/repo/pull") {
+        // The ONE repo-mutating control (captain-ordered): fetch + ff-only
+        // sync via bin/ac-repo-pull.sh - never a merge, never a forced move.
+        if (req.method !== "POST") return json({ error: "POST required" }, 405);
+        const p = url.searchParams.get("path") ?? "";
+        const repo = url.searchParams.get("repo") ?? "";
+        if (!(await allowedHomePaths()).has(p)) return json({ error: "unknown home" }, 404);
+        if (!/^[a-zA-Z0-9._-]+$/.test(repo)) return json({ error: "bad repo" }, 400);
+        let rroot: string;
+        try { rroot = realpathSync(`${p}/projects/${repo}`); } catch { return json({ error: "unknown repo" }, 404); }
+        const pr = await run([`${BIN}/ac-repo-pull.sh`, rroot], { AC_HOME: p });
+        return pr.code === 0 ? json({ result: pr.out.trim() }) : json({ error: pr.out.trim() || "pull failed" }, 502);
+      }
       if (url.pathname === "/api/diff") {
         const p = url.searchParams.get("path");
         const id = url.searchParams.get("id");
         const mode = url.searchParams.get("mode") ?? "live";
         const tree = url.searchParams.get("tree") ?? "";
-        return p && id ? diffShow(p, id, mode, tree) : json({ error: "path and id required" }, 400);
+        const sha = url.searchParams.get("sha") ?? "";
+        const ref = url.searchParams.get("ref") ?? "";
+        return p && id ? diffShow(p, id, mode, tree, sha, ref) : json({ error: "path and id required" }, 400);
       }
       if (url.pathname === "/api/artifact") {
         const p = url.searchParams.get("path");

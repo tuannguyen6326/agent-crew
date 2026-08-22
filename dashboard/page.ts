@@ -9,7 +9,7 @@ import {
   groupArtifacts, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
   parseBacklogLine, parseTimeline, readerCss, resolvePalette,
   reviewableArtifact, stemRegroup, storyState, termThemeCore, verifyProcessRows,
-  diffHtml, diffStats,
+  diffHtml, diffStats, graphHtml,
 } from "./lib.ts";
 
 // ---------------------------------------------------------------------------
@@ -593,6 +593,10 @@ ${UX_BASE}
   .termdock.full .tdgrip{ display:none; }
   .tdgrip{ flex:0 0 6px; cursor:col-resize; background:transparent; }
   .tdgrip:hover{ background:var(--accent-soft); }
+  /* Mid-drag: iframes EAT mousemove the instant the pointer crosses them
+     (the classic stuck-drag), so they go pointer-inert until mouseup. */
+  body.td-dragging iframe{ pointer-events:none; }
+  body.td-dragging{ cursor:col-resize; user-select:none; }
   .tdcol{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
   /* Same surface language as the pill: quiet chrome, the pulsing accent dot
      as the live signal; controls are ghost icons that only grow chrome on
@@ -742,6 +746,10 @@ ${UX_BASE}
   /* Worktree diff viewer (diff-review), GitHub-shaped: one collapsible card
      per file, a line-number gutter pair, full-row add/del tints. */
   .df{ border:1px solid var(--line); border-radius:9px; margin:0 0 12px; overflow:hidden; background:var(--surface); }
+  /* Code-tree folder nodes wrapping the file cards (view-as-tree). */
+  .dfd{ margin:0 0 6px; }
+  .dfd>summary{ cursor:pointer; font:600 12px var(--mono); color:var(--fg2); padding:4px 2px; list-style-position:inside; }
+  .dfdc{ margin-left:13px; border-left:1px solid var(--line); padding-left:11px; }
   .df>summary{ cursor:pointer; padding:8px 12px; font:600 12.5px/1.4 var(--mono); border-bottom:1px solid var(--line); list-style-position:inside; }
   .df>summary .n{ font-weight:600; font-size:11px; margin-left:2px; }
   .df>summary .na{ color:var(--success); }
@@ -761,8 +769,8 @@ ${UX_BASE}
   .dft tr.hunk td{ background:color-mix(in srgb, var(--accent) 10%, transparent); color:var(--accent); padding-top:3px; padding-bottom:3px; }
   .dfnote{ color:var(--warning); font-size:12px; padding:4px 2px; }
   .dflive{ color:var(--muted); font-size:11px; margin:0 0 8px; }
-  /* Source Control tab: one collapsible section per live worktree. */
-  .scwrap{ padding:16px 20px; max-width:1200px; }
+  /* Worktrees tab: one collapsible section per leased pool worktree. */
+  .scwrap{ padding:16px 20px; }
   .sctask{ border:1px solid var(--line); border-radius:9px; margin:0 0 14px; background:var(--surface); }
   .sctask>summary{ cursor:pointer; padding:9px 14px; display:flex; align-items:center; gap:10px; list-style-position:inside; }
   .sctask>summary .scid{ font-weight:600; font-size:13px; }
@@ -774,6 +782,44 @@ ${UX_BASE}
   .scgroup{ margin:12px 0 6px; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
   .scgroup:first-child{ margin-top:2px; }
   .scgroup .scgn{ color:var(--fg2); font-weight:600; }
+  .scgraph{ margin:12px 0 4px; }
+  .scgraph>summary{ cursor:pointer; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); list-style-position:inside; }
+  .scgraph.srepo{ margin:2px 0 14px; }
+  .scgbody{ margin-top:6px; }
+  .ggsel{ margin:0 0 8px; background:var(--elev); color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:4px 8px; font:12px var(--mono); max-width:340px; }
+  .ggselbtn{ cursor:pointer; }
+  .ggpick{ position:relative; display:inline-block; }
+  .ggpanel{ position:absolute; top:100%; left:0; z-index:40; min-width:300px; max-width:420px; background:var(--panel); border:1px solid var(--line); border-radius:9px; box-shadow:0 10px 28px rgba(0,0,0,.28); padding:8px; }
+  .ggsearch{ width:100%; box-sizing:border-box; background:var(--elev); color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:5px 9px; font:12px var(--mono); margin-bottom:6px; }
+  .ggopts{ max-height:300px; overflow-y:auto; }
+  .ggopt{ padding:5px 9px; border-radius:6px; cursor:pointer; font:12px var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ggopt:hover{ background:var(--accent-soft); color:var(--accent); }
+  .ggopt.crew{ color:var(--success); }
+  /* Each repo is one CARD: header (name + pull) over the trees and graph. */
+  .screpogrp{ border:1px solid var(--line); border-radius:11px; background:var(--surface); margin:0 0 18px; overflow:hidden; }
+  .screpo{ display:flex; align-items:center; gap:10px; padding:10px 16px; font:600 13px var(--mono); color:var(--fg); border-bottom:1px solid var(--line); background:color-mix(in srgb, var(--elev) 55%, transparent); }
+  .screpo .srtools{ margin-left:auto; display:flex; align-items:center; gap:8px; }
+  .screpob{ padding:12px 16px 6px; }
+  .screpob .sctask{ background:var(--canvas); }
+  .screpob .scbody .df{ background:var(--surface); }
+  .screpob .btn.sm{ margin-right:6px; }
+  .gghead{ font:500 10.5px var(--mono); padding:1px 7px; border-radius:9px; border:1px solid var(--accent); color:var(--accent); }
+  .gghead.det{ border-color:var(--warning); color:var(--warning); }
+  .gg{ margin:8px 0 0; padding:6px 4px; overflow-x:auto; border:1px solid var(--line); border-radius:9px; background:var(--canvas); }
+  .ggrow{ display:flex; align-items:center; gap:8px; white-space:nowrap; padding:0 8px; border-radius:6px; cursor:pointer; }
+  .ggrow:hover{ background:color-mix(in srgb, var(--accent) 8%, transparent); }
+  .ggrow svg{ flex:none; display:block; }
+  .ggrow svg line, .ggrow svg path{ stroke-width:2; stroke-linecap:round; }
+  .gghash{ font:11.5px var(--mono); color:var(--muted); min-width:60px; }
+  .ggref{ font:500 10.5px var(--mono); padding:0 7px; border-radius:8px; border:1px solid var(--accent); color:var(--accent); }
+  .ggref.head{ background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  .ggref.crew{ border-color:var(--success); color:var(--success); }
+  .ggref.base{ border-color:var(--warning); color:var(--warning); }
+  .ggmsg{ font-size:12.5px; overflow:hidden; text-overflow:ellipsis; }
+  .ggrow.mg .ggmsg, .ggrow.mg .gghash{ color:var(--muted); font-size:11.5px; }
+  .gg .glh{ stroke:transparent; stroke-width:11; fill:none; pointer-events:stroke; cursor:pointer; }
+  .gg .gl.dim{ opacity:.18; }
+  .ggdiff{ padding:4px 8px 10px 34px; cursor:default; }
   .df>summary .fp{ color:var(--muted); font-size:11px; font-weight:400; }
   .bdetail .tl{ padding:20px 26px; }
   .bdetail .tlrow{ display:flex; gap:12px; padding-bottom:16px; position:relative; }
@@ -926,6 +972,7 @@ ${parseTimeline.toString()}
 ${composeFamily.toString()}
 ${diffHtml.toString()}
 ${diffStats.toString()}
+${graphHtml.toString()}
 // Theme + palette toggles (theme-revamp, theme-revamp-presets): the SAME
 // resolvers the bun test proves. resolveTheme itself is not interpolated here
 // - the browser never resolves "auto" in JS, the CSS :root default + the
@@ -1219,7 +1266,8 @@ function parseRoute(path){
   if(parts[0]==='fleets' && parts.length>=3){
     var fleet=dec(parts[1]); var pg=parts[2];
     if(pg==='processes' && parts.length===3) return { name:'processes', fleet:fleet };
-    if(pg==='changes' && parts.length===3) return { name:'changes', fleet:fleet };
+    if(pg==='worktrees' && parts.length===3) return { name:'worktrees', fleet:fleet };
+    if(pg==='changes' && parts.length===3) return { name:'worktrees', fleet:fleet };   // pre-rename deep links stay alive (the backlog->board precedent)
     if(pg==='board' && parts.length===3) return { name:'board', fleet:fleet, fam:null };
     // A family's detail is a ROUTE, not a modal: same page, deep-linkable,
     // back/forward walks in and out of it like every other view here.
@@ -1328,7 +1376,7 @@ function routeEndpoint(r){
   if(!r || !r.home) return null;
   var p=enc(r.home.path);
   if(r.name==='processes') return '/api/processes?path='+p;
-  if(r.name==='changes') return '/api/processes?path='+p;   // the pool list IS this page's data
+  if(r.name==='worktrees') return '/api/processes?path='+p;   // the pool list IS this page's data
   if(r.name==='board') return '/api/backlog?path='+p;
   if(r.name==='backlog') return '/api/backlog?path='+p;
   if(r.name==='reports'){ var ru=uiFor(routeKey(r)); return '/api/reports?path='+p+((ru.showAll||ru.query)?'':'&limit=20'); }
@@ -1489,7 +1537,7 @@ function renderNav(){
   // (menu-dedup): Board and Backlog told the same ledger twice; /backlog
   // deep links stay alive as a parseRoute alias onto the Board.
   var groups=[
-    ['Monitor', [['board','Board'],['processes','Processes'],['changes','Source Control']]],
+    ['Monitor', [['board','Board'],['processes','Processes'],['worktrees','Worktrees']]],
     ['Work',    [['reports','Reports'],['reviews','Reviews'],['whiteboards','Whiteboards']]],
     ['Knowledge',[['records','Records'],['brain','Brain'],['learning','Learning'],['domains','Domains']]],
     ['System',  [['config','Config']]]
@@ -1525,7 +1573,7 @@ function renderHealth(){
 
 function renderHead(){
   var r=S.route||{name:'fleets'};
-  var titles={fleets:'Fleets', processes:'Processes', changes:'Source Control', board:'Board', chat:'Chat', term:'Terminal', brain:'Brain', reports:'Reports', reviews:'Reviews', whiteboards:'Whiteboards', records:'Records', domains:'Domains', learning:'Learning', search:'Search', config:'Config', notfound:'Not found', root:'Fleets'};
+  var titles={fleets:'Fleets', processes:'Processes', worktrees:'Worktrees', board:'Board', chat:'Chat', term:'Terminal', brain:'Brain', reports:'Reports', reviews:'Reviews', whiteboards:'Whiteboards', records:'Records', domains:'Domains', learning:'Learning', search:'Search', config:'Config', notfound:'Not found', root:'Fleets'};
   el('page-title').textContent = titles[r.name]||'Dashboard';
   var crumb='';
   if(r.fleet) crumb='<b>'+esc(r.fleet)+'</b>';
@@ -1545,7 +1593,7 @@ function headMeta(r){
     return '<span>'+(r.home.crew?r.home.crew.count:0)+' active</span>'
       +(cad?'<span class="cadence'+(cad.due?' due':'')+'">'+esc(cad.text)+'</span>':''); }
   if(r.name==='board' && S.page && S.page.backlog){ var bb=S.page.backlog; return '<span>'+bb.in_flight.length+' in flight &middot; '+bb.queued.length+' queued &middot; '+realDoneCount(bb.done)+' done</span>'; }
-  if(r.name==='changes' && S.page && S.page.pools){ var cp=S.page.pools, cn=0;
+  if(r.name==='worktrees' && S.page && S.page.pools){ var cp=S.page.pools, cn=0;
     for(var ci=0;ci<cp.length;ci++){ if(cp[ci].state==='leased') cn++; }
     return '<span>'+cn+' leased worktree'+(cn===1?'':'s')+'</span>'; }
   if(r.name==='reports' && S.page && S.page.artifacts){ return '<span>'+(S.page.total||S.page.artifacts.length)+' artifacts</span>'; }
@@ -1575,7 +1623,7 @@ function renderPage(){
   else if(r.fleet && S.snap && !r.home) html=stateBox('Fleet not found', 'No fleet named "'+r.fleet+'" in the current survey.', 'err');
   else if(r.fleet && !r.home) html=skeleton();
   else if(r.name==='processes') html=pageProcesses();
-  else if(r.name==='changes') html=pageChanges();
+  else if(r.name==='worktrees') html=pageWorktrees();
   else if(r.name==='board') html=pageBoard();
   else if(r.name==='chat') html=pageChat();
   else if(r.name==='term') html=pageTerm();
@@ -2630,16 +2678,23 @@ function tdFontLabel(){
 }
 (function(){
   var g=el('td-grip'); if(!g) return;
-  var drag=false, sx=0, sw=0;
-  g.addEventListener('mousedown', function(e){ drag=true; sx=e.clientX; sw=tdW; e.preventDefault(); document.body.style.userSelect='none'; });
+  var drag=false, sx=0, sw=0, raf=0;
+  g.addEventListener('mousedown', function(e){
+    drag=true; sx=e.clientX; sw=tdW; e.preventDefault();
+    document.body.classList.add('td-dragging');
+  });
   addEventListener('mousemove', function(e){
     if(!drag) return;
     tdW=Math.max(320, Math.min(Math.floor(innerWidth*0.72), sw+(sx-e.clientX)));
-    tdApply();
+    // One CSS-var write per FRAME, and only the var: the full tdApply pass
+    // (class toggles, pill state) at mousemove rate is what made this janky.
+    if(!raf) raf=requestAnimationFrame(function(){ raf=0; document.documentElement.style.setProperty('--tdw', tdW+'px'); });
   });
   addEventListener('mouseup', function(){
     if(!drag) return;
-    drag=false; document.body.style.userSelect='';
+    drag=false; document.body.classList.remove('td-dragging');
+    if(raf){ cancelAnimationFrame(raf); raf=0; }
+    tdApply();
     try{ localStorage.setItem('ac_term_dock', JSON.stringify({w:tdW})); }catch(e){}
   });
 })();
@@ -2963,7 +3018,7 @@ function boardShowRoom(){
   s+='</div>';
   vbody.innerHTML=s;
 }
-// ---- Source Control (dash-source-control): the ac-tree POOL is the truth of
+// ---- Worktrees tab (dash-source-control): the ac-tree POOL is the truth of
 // worktrees - one collapsible section per leased slot (a multi-repo task
 // shows each of its trees; a lease that outlived its task meta still shows).
 // Each section renders the three SCM groups (changes / untracked / committed
@@ -2971,52 +3026,224 @@ function boardShowRoom(){
 // preserved island keyed on its load states, so toggles survive polling.
 var SC_GROUPS=[['uncommitted','Changes'],['untracked','Untracked files'],['committed','Committed on branch']];
 var scDiff={};   // hp|id|tree|mode -> {loading} | {error} | {empty:1} | {html,add,del,files}
-function scLoad(hp,id,tree,mode){
-  var ck=hp+'|'+id+'|'+tree+'|'+mode; if(scDiff[ck]) return;
+function scLoad(hp,id,tree,mode,ref){
+  var ck=hp+'|'+id+'|'+tree+'|'+mode+'|'+(ref||''); if(scDiff[ck]) return;
   scDiff[ck]={loading:1};
-  var settle=function(e){ scDiff[ck]=e; if(S.route&&S.route.name==='changes') renderPage(); };
-  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+'&mode='+enc(mode)+(tree?'&tree='+enc(tree):'')).then(function(x){ return x.json(); }).then(function(j){
+  var settle=function(e){ scDiff[ck]=e; if(S.route&&S.route.name==='worktrees') renderPage(); };
+  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+'&mode='+enc(mode)+(tree?'&tree='+enc(tree):'')+(ref?'&ref='+enc(ref):'')).then(function(x){ return x.json(); }).then(function(j){
     if(j.error) return settle({error:j.error});
     if(!j.diff||!j.diff.trim()) return settle({empty:1});
+    if(mode==='graph') return settle({html:graphHtml(j.diff), add:0, del:0, files:0, graph:1});
     var st=diffStats(j.diff);
     settle({html:diffHtml(j.diff,true)+(j.truncated?'<div class="dfnote">diff truncated at 400KB - read the rest with bin/ac-review-diff.sh '+esc(id)+'</div>':''),
         add:st.add, del:st.del, files:st.files});
   }).catch(function(){ settle({error:'request failed'}); });
 }
 function scState(d){ return !d||d.loading?'l':(d.error?'x':(d.empty?'0':'k')); }
-function pageChanges(){
-  var r=S.route, hp=r.home?r.home.path:'';
-  var pools=(S.page&&S.page.pools)||[], rows=[];
-  for(var i=0;i<pools.length;i++){ var p=pools[i]; if(p.state==='leased'&&p.worktree) rows.push(p); }
-  if(!rows.length) return S.page?stateBox('No leased worktrees','the ac-tree pool has nothing leased - changes appear here while crew work is in flight',''):skeleton();
-  var s='<div class="scwrap"><div class="dflive">the ac-tree worktree pool - every leased tree, uncommitted work included</div>';
-  for(var k=0;k<rows.length;k++){ var pl=rows[k], id=pl.task||'', tree=pl.worktree;
-    var ds={}, states='', tAdd=0, tDel=0, tFiles=0, loading=false;
-    for(var g=0;g<SC_GROUPS.length;g++){ var mk=SC_GROUPS[g][0], d=scDiff[hp+'|'+id+'|'+tree+'|'+mk];
-      if(!d) scLoad(hp, id, tree, mk);
-      d=scDiff[hp+'|'+id+'|'+tree+'|'+mk]; ds[mk]=d; states+=scState(d);
-      if(!d||d.loading) loading=true;
-      else if(d.html){ tAdd+=d.add; tDel+=d.del; tFiles+=d.files; }
+var scWanted={};   // hp|tree -> 1 once an AVAILABLE section was opened (its loads are click-driven, never eager)
+var scGraphRef={}; // hp|repo -> the branch picker's choice ('' = all branches)
+var scPull={};     // hp|repo -> 'busy' | last result line (the Pull button's state)
+function scPullRun(hp, repo){
+  var k=hp+'|'+repo; if(scPull[k]==='busy') return;
+  scPull[k]='busy'; renderPage();
+  fetch('/api/repo/pull?path='+enc(hp)+'&repo='+enc(repo), {method:'POST'}).then(function(x){ return x.json(); }).then(function(j){
+    scPull[k]=j.error?('error: '+j.error):j.result;
+    scDiff={};   // every cached diff/graph may be stale after a sync
+    renderPage();
+  }).catch(function(){ scPull[k]='error: request failed'; renderPage(); });
+}
+// Graph click-through: a row toggles that commit's own diff inline under it.
+function ggToggleCommit(row){
+  var next=row.nextElementSibling;
+  if(next&&next.className==='ggdiff'){ next.parentNode.removeChild(next); return; }
+  var sec=row.closest('[data-sc-tree]'); if(!sec) return;
+  var hp=sec.getAttribute('data-sc-hp')||'', id=sec.getAttribute('data-sc-id')||'', tree=sec.getAttribute('data-sc-tree')||'', sha=row.getAttribute('data-sha')||'';
+  var box=document.createElement('div'); box.className='ggdiff'; box.innerHTML=skeleton();
+  row.parentNode.insertBefore(box, row.nextSibling);
+  fetch('/api/diff?path='+enc(hp)+'&id='+enc(id)+'&mode=commit&sha='+enc(sha)+(tree?'&tree='+enc(tree):'')).then(function(x){ return x.json(); }).then(function(j){
+    if(!box.parentNode) return;
+    box.innerHTML=j.error?stateBox('No diff', j.error, ''):(j.diff&&j.diff.trim()?diffHtml(j.diff):stateBox('Empty commit','no textual change',''));
+  }).catch(function(){ if(box.parentNode) box.innerHTML=stateBox('Diff unavailable','request failed',''); });
+}
+// Branch picker (the GitKraken shape): a searchable dropdown, built
+// imperatively INSIDE the graph's preserved island so typing survives the
+// poll re-render. Picking a branch re-renders; picking again toggles closed.
+function ggPickerOpen(btn){
+  var host=btn.closest('.ggpick'); if(!host) return;
+  var ex=host.querySelector('.ggpanel'); if(ex){ ex.parentNode.removeChild(ex); return; }
+  var gkey=btn.getAttribute('data-gg-pick');
+  var repo=gkey.slice(gkey.indexOf('|')+1);
+  var brs=(S.page&&S.page.branches)||[], names=[''];
+  for(var i=0;i<brs.length;i++) if(brs[i].repo===repo) names.push(brs[i].branch);
+  var p=document.createElement('div'); p.className='ggpanel';
+  var inp=document.createElement('input'); inp.className='ggsearch'; inp.type='text'; inp.placeholder='Search branches'; p.appendChild(inp);
+  var listEl=document.createElement('div'); listEl.className='ggopts'; p.appendChild(listEl);
+  function fill(q){
+    listEl.innerHTML='';
+    for(var k=0;k<names.length;k++){ var nm=names[k], lbl=nm||'All branches';
+      if(q && lbl.toLowerCase().indexOf(q)<0) continue;
+      var o=document.createElement('div');
+      o.className='ggopt'+(nm.indexOf('crew/')===0?' crew':'');
+      o.textContent=lbl;
+      (function(v){ o.addEventListener('click', function(){ scGraphRef[gkey]=v; renderPage(); }); })(nm);
+      listEl.appendChild(o);
     }
-    var badge = loading ? '<span class="muted">loading&hellip;</span>'
-      : ds.committed&&ds.committed.error ? '<span class="badge warn">no diff</span>'
-      : !tFiles ? '<span class="muted">clean</span>'
-      : '<span class="n na">+'+tAdd+'</span> <span class="n nd">-'+tDel+'</span> <span class="muted">'+tFiles+' file'+(tFiles===1?'':'s')+'</span>';
-    var body='';
-    if(ds.committed&&ds.committed.error){ body=stateBox('No diff', ds.committed.error, ''); }
-    else if(loading){ body=skeleton(); }
-    else if(!tFiles){ body='<div class="muted" style="padding:6px 0 2px">worktree clean - no change against its base</div>'; }
-    else{
-      for(var g2=0;g2<SC_GROUPS.length;g2++){ var mk2=SC_GROUPS[g2][0], d2=ds[mk2];
-        if(!d2||!d2.html) continue;
-        body+='<div class="scgroup"><span class="scgh">'+SC_GROUPS[g2][1]+'</span> <span class="scgn">'+d2.files+'</span></div>'+d2.html;
+    if(!listEl.firstChild){ var z=document.createElement('div'); z.className='ggopt muted'; z.textContent='no match'; listEl.appendChild(z); }
+  }
+  fill('');
+  inp.addEventListener('input', function(){ fill(inp.value.toLowerCase()); });
+  host.appendChild(p); inp.focus();
+}
+// Lane click: spotlight that branch line through the whole graph; same lane
+// again clears it.
+function ggFocusLane(hit){
+  var gg=hit.closest('.gg'); if(!gg) return;
+  var lane=hit.getAttribute('data-lane'), cur=gg.getAttribute('data-flane');
+  var els=gg.querySelectorAll('.gl'), i;
+  if(cur===lane){ gg.removeAttribute('data-flane'); for(i=0;i<els.length;i++) els[i].classList.remove('dim'); return; }
+  gg.setAttribute('data-flane', lane);
+  for(i=0;i<els.length;i++) els[i].classList.toggle('dim', els[i].getAttribute('data-lane')!==lane);
+}
+function scSection(hp, pl){
+  // An available slot's LAST task still names the crew branch its tree may
+  // hold; a slot that never leased falls back to the slot name (same charset).
+  var id=pl.task||pl.slot, tree=pl.worktree;
+  var ds={}, states='', tAdd=0, tDel=0, tFiles=0, loading=false;
+  for(var g=0;g<SC_GROUPS.length;g++){ var mk=SC_GROUPS[g][0], d=scDiff[hp+'|'+id+'|'+tree+'|'+mk+'|'];
+    if(!d) scLoad(hp, id, tree, mk);
+    d=scDiff[hp+'|'+id+'|'+tree+'|'+mk+'|']; ds[mk]=d; states+=scState(d);
+    if(!d||d.loading) loading=true;
+    else if(d.html){ tAdd+=d.add; tDel+=d.del; tFiles+=d.files; }
+  }
+  var badge = loading ? '<span class="muted">loading&hellip;</span>'
+    : ds.committed&&ds.committed.error ? '<span class="badge warn">no diff</span>'
+    : !tFiles ? '<span class="muted">clean</span>'
+    : '<span class="n na">+'+tAdd+'</span> <span class="n nd">-'+tDel+'</span> <span class="muted">'+tFiles+' file'+(tFiles===1?'':'s')+'</span>';
+  var body='';
+  if(ds.committed&&ds.committed.error){ body=stateBox('No diff', ds.committed.error, ''); }
+  else if(loading){ body=skeleton(); }
+  else if(!tFiles){ body='<div class="muted" style="padding:6px 0 2px">worktree clean - no change against its base</div>'; }
+  else{
+    for(var g2=0;g2<SC_GROUPS.length;g2++){ var mk2=SC_GROUPS[g2][0], d2=ds[mk2];
+      if(!d2||!d2.html) continue;
+      body+='<div class="scgroup"><span class="scgh">'+SC_GROUPS[g2][1]+'</span> <span class="scgn">'+d2.files+'</span></div>'+d2.html;
+    }
+  }
+  var avail=pl.state!=='leased'?' <span class="badge">available</span>':'';
+  var headChip=pl.head?' <span class="gghead'+(pl.head.indexOf('detached')===0?' det':'')+'">'+esc(pl.head)+'</span>':'';
+  // Title = the WORKTREE (slot) + its branch chip; the task is context, not
+  // identity - the repo is already the group heading above.
+  return '<details class="sctask" open data-preserve="sc|'+esc(hp)+'|'+esc(id)+'|'+esc(tree)+'|'+states+'">'
+    +'<summary><span class="mono scid">'+esc(pl.slot)+'</span>'+headChip
+    +(pl.task?' <span class="muted" style="font-size:11px">'+esc(pl.task)+'</span>':'')+avail
+    +'<span class="scmeta">'+badge+'</span></summary>'
+    +'<div class="scbody">'+body+'</div></details>';
+}
+// A crew/* branch no worktree is standing on: a finished task's code parked
+// in the repo, waiting to land. Committed diff only - there is no working
+// tree to read.
+function scBranchSection(hp, cb){
+  var id=cb.branch.slice(5), tree=cb.root;
+  var ck=hp+'|'+id+'|'+tree+'|committed|', d=scDiff[ck];
+  if(!d) scLoad(hp, id, tree, 'committed');
+  d=scDiff[ck];
+  var badge=!d||d.loading?'<span class="muted">loading&hellip;</span>'
+    : d.error?'<span class="badge warn">no diff</span>'
+    : d.empty?'<span class="muted">tip equals base</span>'
+    : '<span class="n na">+'+d.add+'</span> <span class="n nd">-'+d.del+'</span> <span class="muted">'+d.files+' file'+(d.files===1?'':'s')+'</span>';
+  var body=d&&d.html?d.html:(d&&d.error?stateBox('No diff', d.error, ''):(d&&d.empty?'<div class="muted" style="padding:6px 0 2px">branch tip equals its base - nothing unlanded</div>':skeleton()));
+  return '<details class="sctask" open data-preserve="scb|'+esc(hp)+'|'+esc(id)+'|'+esc(tree)+'|'+scState(d)+'">'
+    +'<summary><span class="ggref crew">'+esc(cb.branch)+'</span>'
+    +' <span class="muted" style="font-size:11px">'+esc(cb.sha.slice(0,7))+' &middot; parked, waiting to land</span>'
+    +'<span class="scmeta">'+badge+'</span></summary>'
+    +'<div class="scbody">'+body+'</div></details>';
+}
+function pageWorktrees(){
+  var r=S.route, hp=r.home?r.home.path:'';
+  var pools=(S.page&&S.page.pools)||[], rows=[], idle=[];
+  for(var i=0;i<pools.length;i++){ var p=pools[i]; if(!p.worktree) continue; (p.state==='leased'?rows:idle).push(p); }
+  if(!rows.length&&!idle.length) return S.page?stateBox('No pooled worktrees','the ac-tree pool is empty - trees appear here once crew work leases them',''):skeleton();
+  // Grouped BY REPO (the workspace-panel shape): one heading per repo, its
+  // leased trees open under it, its available trees folded per repo.
+  var repos={}, order=[];
+  for(var g0=0;g0<rows.length;g0++){ var rp=rows[g0].repo; if(!repos[rp]){ repos[rp]={leased:[],idle:[],used:0}; order.push(rp); } repos[rp].leased.push(rows[g0]); }
+  for(var g1=0;g1<idle.length;g1++){ var ip0=idle[g1]; if(!repos[ip0.repo]){ repos[ip0.repo]={leased:[],idle:[],used:0}; order.push(ip0.repo); } repos[ip0.repo].idle.push(ip0); }
+  // Recency order, never alphabetical: the repo you are WORKING comes first.
+  // used_at is the slot-meta mtime, which every lease/return touches.
+  function byUsed(a,b){ return (b.used_at||0)-(a.used_at||0); }
+  for(var g5=0;g5<order.length;g5++){ var gg=repos[order[g5]];
+    gg.leased.sort(byUsed); gg.idle.sort(byUsed);
+    gg.used=Math.max(gg.leased.length?gg.leased[0].used_at||0:0, gg.idle.length?gg.idle[0].used_at||0:0);
+  }
+  order.sort(function(a,b){ return repos[b].used-repos[a].used; });
+  var ui=uiFor(routeKey(r));
+  var s='<div class="scwrap"><div class="dflive">the ac-tree worktree pool - every leased tree, uncommitted work included</div>';
+  for(var g2=0;g2<order.length;g2++){ var rp2=order[g2], grp=repos[rp2];
+    var pk=hp+'|'+rp2, pst=scPull[pk]||'';
+    s+='<section class="screpogrp"><div class="screpo"><span class="srname">'+esc(rp2)+'</span>'
+      +'<span class="srtools">'
+      +(pst&&pst!=='busy'?'<span class="muted" style="font-size:11px">'+esc(pst)+'</span>':'')
+      +'<button type="button" class="fopen mono" data-repo-pull="'+esc(rp2)+'"'+(pst==='busy'?' disabled':'')+' title="git fetch + fast-forward-only sync">'+(pst==='busy'?'pulling&hellip;':'&#8635; pull')+'</button>'
+      +'</span></div><div class="screpob">';
+    for(var k=0;k<grp.leased.length;k++) s+=scSection(hp, grp.leased[k]);
+    // Available slots fold per repo, and each section fetches only once
+    // OPENED - an idle pool must cost zero requests.
+    if(grp.idle.length){
+      var dk='scavail:'+rp2, showIdle=!!ui.exp[dk];
+      s+='<button class="btn sm" data-disc="'+esc(dk)+'" aria-expanded="'+(showIdle?'true':'false')+'" style="margin:2px 0 8px">'+(showIdle?'Hide':'Show')+' '+grp.idle.length+' available</button>';
+      if(showIdle) for(var k2=0;k2<grp.idle.length;k2++){ var ip=grp.idle[k2], wk=hp+'|'+ip.worktree;
+        if(scWanted[wk]) s+=scSection(hp, ip);
+        else s+='<details class="sctask" data-preserve="sc|'+esc(hp)+'|'+esc(ip.worktree)+'|idle"><summary data-sc-want="'+esc(wk)+'"><span class="mono scid">'+esc(ip.slot)+'</span>'
+          +(ip.head?' <span class="gghead'+(ip.head.indexOf('detached')===0?' det':'')+'">'+esc(ip.head)+'</span>':'')
+          +(ip.task?' <span class="muted" style="font-size:11px">'+esc(ip.task)+'</span>':'')
+          +' <span class="badge">available</span>'
+          +'<span class="scmeta"><span class="muted">open to inspect</span></span></summary></details>';
       }
     }
-    s+='<details class="sctask" open data-preserve="sc|'+esc(hp)+'|'+esc(id)+'|'+esc(tree)+'|'+states+'">'
-      +'<summary><span class="mono scid">'+esc(id||'(unattributed)')+'</span>'
-      +' <span class="muted" style="font-size:11px">'+esc(pl.repo)+' &middot; '+esc(pl.slot)+'</span>'
-      +'<span class="scmeta">'+badge+'</span></summary>'
-      +'<div class="scbody">'+body+'</div></details>';
+    // Code parked on crew/* branches no tree is standing on (the pool resets
+    // trees on return, but the branch keeps the unlanded work). Folded, and
+    // each loads only when opened.
+    var allbrs=(S.page&&S.page.branches)||[], rbrs=[], heads={}, parked=[];
+    for(var h1=0;h1<grp.leased.length;h1++) if(grp.leased[h1].head) heads[grp.leased[h1].head]=1;
+    for(var h2=0;h2<grp.idle.length;h2++) if(grp.idle[h2].head) heads[grp.idle[h2].head]=1;
+    for(var cb1=0;cb1<allbrs.length;cb1++){ var cb=allbrs[cb1];
+      if(cb.repo!==rp2) continue;
+      rbrs.push(cb);
+      if(cb.branch.indexOf('crew/')===0&&!heads[cb.branch]) parked.push(cb);
+    }
+    if(parked.length){
+      var bk='scbr:'+rp2, showBr=!!ui.exp[bk];
+      s+='<button class="btn sm" data-disc="'+esc(bk)+'" aria-expanded="'+(showBr?'true':'false')+'" style="margin:2px 0 8px">'+(showBr?'Hide':'Show')+' '+parked.length+' parked crew branch'+(parked.length>1?'es':'')+'</button>';
+      if(showBr) for(var cb2=0;cb2<parked.length;cb2++){ var pb=parked[cb2], wk3=hp+'|'+pb.root+'|'+pb.branch;
+        if(scWanted[wk3]) s+=scBranchSection(hp, pb);
+        else s+='<details class="sctask" data-preserve="scb|'+esc(hp)+'|'+esc(pb.branch)+'|idle"><summary data-sc-want="'+esc(wk3)+'"><span class="ggref crew">'+esc(pb.branch)+'</span>'
+          +' <span class="muted" style="font-size:11px">'+esc(pb.sha.slice(0,7))+' &middot; parked, waiting to land</span>'
+          +'<span class="scmeta"><span class="muted">open to inspect</span></span></summary></details>';
+      }
+    }
+    // ONE graph per repo (the GitLens/GitKraken shape), with a branch picker:
+    // All branches by default, or one branch's own history. Loads only when
+    // opened - ten repos of eager topology is poll poison.
+    if(rbrs.length){
+      // Default focus = the repo's default branch (its clone HEAD); the ''
+      // All-branches view stays one pick away. The in-operator check keeps a
+      // deliberate All choice distinct from never-picked.
+      var gdef=''; for(var gd0=0;gd0<rbrs.length;gd0++) if(rbrs[gd0].def){ gdef=rbrs[gd0].branch; break; }
+      var gkey=hp+'|'+rp2, gref=(gkey in scGraphRef)?scGraphRef[gkey]:gdef, gwant=scWanted['g:'+gkey];
+      if(!gwant){
+        s+='<details class="scgraph srepo" data-preserve="scg|'+esc(hp)+'|'+esc(rp2)+'|idle"><summary data-sc-want="g:'+esc(gkey)+'">Graph</summary></details>';
+      } else {
+        var groot=rbrs[0].root, gid=rp2, gck=hp+'|'+gid+'|'+groot+'|graph|'+gref, gd=scDiff[gck];
+        if(!gd) scLoad(hp, gid, groot, 'graph', gref);
+        gd=scDiff[gck];
+        var gbody=gd&&gd.html?gd.html:(gd&&gd.error?stateBox('No graph', gd.error, ''):(gd&&gd.empty?'<div class="muted" style="padding:6px 0 2px">no commits</div>':skeleton()));
+        s+='<details class="scgraph srepo" open data-preserve="scg|'+esc(hp)+'|'+esc(rp2)+'|'+esc(gref)+'|'+scState(gd)+'"'
+          +' data-sc-hp="'+esc(hp)+'" data-sc-id="'+esc(gid)+'" data-sc-tree="'+esc(groot)+'">'
+          +'<summary>Graph</summary>'
+          +'<div class="scgbody"><div class="ggpick"><button type="button" class="ggsel ggselbtn" data-gg-pick="'+esc(gkey)+'">'+esc(gref||'All branches')+' <span class="muted">&#9662;</span></button></div>'+gbody+'</div></details>';
+      }
+    }
+    s+='</div></section>';
   }
   return s+'</div>';
 }
@@ -4206,6 +4433,12 @@ function onClick(e){
   if((n=t.closest('[data-learning-view]'))){ var uv=uiFor(routeKey(S.route)); uv.sec.learning=n.getAttribute('data-learning-view'); renderPage(); return; }
   if((n=t.closest('[data-sort]'))){ var sk=n.getAttribute('data-sort'); var us=uiFor(routeKey(S.route));
     if(us.sort===sk) us.sortDir=(us.sortDir||1)*-1; else { us.sort=sk; us.sortDir=1; } renderPage(); return; }
+  if((n=t.closest('[data-sc-want]'))){ scWanted[n.getAttribute('data-sc-want')]=1; e.preventDefault(); renderPage(); return; }  // available worktree: first open triggers its loads
+  if((n=t.closest('[data-repo-pull]'))){ scPullRun(S.route.home?S.route.home.path:'', n.getAttribute('data-repo-pull')); return; }  // fetch + ff-only sync
+  if((n=t.closest('[data-gg-pick]'))){ ggPickerOpen(n); return; }               // branch picker: searchable dropdown
+  if((n=t.closest('.ggpanel'))){ return; }                                      // clicks inside the picker panel are its own
+  if((n=t.closest('.glh'))){ ggFocusLane(n); return; }                          // graph lane: spotlight the branch line
+  if((n=t.closest('.ggrow'))){ ggToggleCommit(n); return; }                     // graph row: that commit's diff inline
   if((n=t.closest('[data-disc]'))){ toggleDisc(n.getAttribute('data-disc')); return; }
   if((n=t.closest('[data-exprow]'))){ var rk=n.getAttribute('data-exprow'); var ui2=uiFor(routeKey(S.route));
     ui2.exp[rk]=!ui2.exp[rk]; if(ui2.exp[rk] && rk.indexOf('room:')===0) loadRoom(rk.slice(5)); renderPage(); return; }
