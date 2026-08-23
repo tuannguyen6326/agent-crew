@@ -150,6 +150,14 @@ unset AC_TASK_LOCK_TIMEOUT
 rm -rf "$lock"
 grep -q lockedout "$ledger" && fail "a lock-refused add must not touch the file"
 
+# ---- the atomic publish keeps the ledger's MODE: mktemp makes a 0600 file and
+#      `mv` carries that mode onto the target, so a plain tmp+rename silently
+#      tightens a world-readable record to owner-only (measured on the live
+#      drydock ledger: 0644 -> 0600 on the first real landing).
+chmod 644 "$ledger"
+"$BIN/ac-task.sh" add modeprobe 'a row to publish' >/dev/null
+assert_eq "$(ls -l "$ledger" | cut -c1-10)" "-rw-r--r--" "the atomic publish preserves the ledger's mode"
+
 # ---- unknown id refuses.
 assert_fails "$BIN/ac-task.sh" start ghost
 assert_fails "$BIN/ac-task.sh" update-note ghost 'x'

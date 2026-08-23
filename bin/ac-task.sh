@@ -69,6 +69,12 @@ load() {
 save() {
   local tmp
   tmp="$(mktemp "$ledger.XXXXXX")"
+  # mktemp makes the tmp 0600 and `mv` carries THAT mode onto the ledger, so a
+  # bare tmp+rename silently tightens a world-readable record to owner-only
+  # (measured: the live drydock ledger went 0644 -> 0600 on the first landing).
+  # `cp -p` clones the real file's mode onto the tmp; `>` then rewrites the
+  # content in place without touching it.
+  cp -p "$ledger" "$tmp"
   printf '%s\n' "${L[@]+"${L[@]}"}" >"$tmp"
   mv "$tmp" "$ledger"
 }
