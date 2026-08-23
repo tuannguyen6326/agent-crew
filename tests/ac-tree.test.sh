@@ -361,4 +361,117 @@ assert_no_file "$AC_HOME/state/fam-verify-codereview.meta" "no stray meta for a 
 "$BIN/ac-tree.sh" get --repo "$repoM" --id fam-verify-qa-e2e --holder verify >/dev/null 2>&1
 assert_no_file "$AC_HOME/state/fam-verify-qa-e2e.meta" "no stray meta for a verifier -e2e id"
 
+# --- destructive-path hardening ----------------------------------------------
+
+nolsof_path() {
+  # The current PATH with EVERY directory that holds an executable lsof
+  # replaced, in place, by a mirror of itself without it - so `command -v lsof`
+  # genuinely fails while every other tool the pool shells out to still
+  # resolves. Two things this shape is deliberate about: dropping only the one
+  # directory `command -v` named is not enough, because a merged-/usr Linux
+  # carries both /usr/bin and /bin on PATH pointing at the same real directory
+  # and the twin would keep resolving lsof; and mirrors are keyed by RESOLVED
+  # path, so those twins share one mirror instead of symlinking it twice.
+  # Stripping the whole PATH would test the harness, not the pool.
+  local dirs d f b key mirror out=""
+  IFS=: read -r -a dirs <<<"$PATH"
+  for d in "${dirs[@]}"; do
+    [ -n "$d" ] || continue
+    if [ -x "$d/lsof" ]; then
+      key="$(cd "$d" && pwd -P)"
+      mirror="$TMP/nolsof$(printf '%s' "$key" | tr -c 'A-Za-z0-9' '_')"
+      if [ ! -d "$mirror" ]; then
+        mkdir -p "$mirror"
+        for f in "$key"/*; do
+          b="$(basename "$f")"
+          [ "$b" = lsof ] || ln -sf "$f" "$mirror/$b" 2>/dev/null || true
+        done
+      fi
+      d="$mirror"
+    fi
+    out="${out:+$out:}$d"
+  done
+  printf '%s\n' "$out"
+}
+
+# A process walk that COULD NOT RUN must never arrive at a destructive gate
+# looking like "nothing is there". prune's in-use guard reads live_procs, and
+# live_procs cannot run at all without lsof - so on a host without it the
+# guard never fired and prune fell straight through to drop_slot
+# (git worktree remove --force + rm -rf) on a tree with a live process in it.
+repoP="$(make_repo nolsof)"
+wtP="$("$BIN/ac-tree.sh" get --repo "$repoP" --id np1 2>/dev/null)"
+"$BIN/ac-tree.sh" return "$wtP" 2>/dev/null
+# disowned: nothing here signals it, and a tracked job would print a notice.
+( cd "$wtP" && exec sleep 30 ) &
+holderP=$!
+disown "$holderP"
+sleep 0.5
+outP="$(PATH="$(nolsof_path)" "$BIN/ac-tree.sh" prune --repo "$repoP" --yes 2>&1 || true)"
+kill "$holderP" 2>/dev/null || true
+assert_contains "$outP" "skip slot 1-nolsof: cannot check for live processes" \
+  "a process walk that could not run must not read as 'no live processes'"
+assert_file "$wtP/file.txt" "prune must not destroy a slot whose in-use state it could not check"
+assert_file "$repoP/.crew/slots/1-nolsof.meta" "the unchecked slot keeps its meta"
+
+# return's dirty-check runs under the pool lock; the reset it authorizes runs
+# deliberately UNLOCKED, after an lsof walk of the whole tree and a 2s kill
+# grace. Work written into the tree inside that window used to be destroyed by
+# a reset whose only authority was a check that had gone stale.
+# lsof is what opens the grace; without it there is no window to write into.
+if command -v lsof >/dev/null 2>&1; then
+  repoT="$(make_repo toctou)"
+  wtT="$("$BIN/ac-tree.sh" get --repo "$repoT" --id tc1 2>/dev/null)"
+  ( cd "$wtT" && exec sleep 30 ) &
+  holderT=$!
+  disown "$holderT"
+  sleep 0.5
+  "$BIN/ac-tree.sh" return "$wtT" >"$TMP/toctou.out" 2>&1 &
+  returnerT=$!
+  sleep 1
+  printf 'written after the check\n' >"$wtT/late-work.txt"
+  wait "$returnerT" && fail "a return whose verified state moved under it must refuse"
+  kill "$holderT" 2>/dev/null || true
+  assert_file "$wtT/late-work.txt" "work written after the dirty-check must survive the return"
+  assert_contains "$(cat "$TMP/toctou.out")" "changed after it was verified clean" \
+    "the refusal names the check that went stale"
+  assert_contains "$("$BIN/ac-tree.sh" list --repo "$repoT" 2>/dev/null)" "leased" \
+    "a refused return must not release the slot"
+fi
+
+# SIGKILL is not synchronous, and both kill callers run a git command straight
+# afterwards. The kill must WAIT - bounded - for the pids it killed to leave
+# the process table. A child whose parent never reaps it is the deterministic
+# stand-in for "killed but still present" (helpers.sh stands in for a live
+# foreign pid the same way); kill -0 answers for it exactly as it does for a
+# process that has not finished dying.
+if command -v lsof >/dev/null 2>&1; then
+  repoK="$(make_repo reap)"
+  wtK="$("$BIN/ac-tree.sh" get --repo "$repoK" --id rp1 2>/dev/null)"
+  mkfifo "$TMP/reap-gate"
+  cat >"$TMP/reap-holder.sh" <<'EOF'
+# $1 worktree, $2 gate fifo. The CHILD keeps its cwd inside the worktree (so
+# the pool's lsof walk finds it) and ignores SIGTERM (so it survives to the
+# SIGKILL leg). The PARENT leaves the tree and execs `sleep`, a process that
+# never wait()s - so the SIGKILLed child stays in the process table as an
+# unreaped pid (measured stat=Z, answering kill -0) until the parent is
+# killed. `bash` is no good as that parent: it reaps on SIGCHLD, and the
+# child was gone within 300ms - measured, which is why this exec is here.
+cd "$1" || exit 1
+bash -c 'trap "" TERM; exec 3<>"$1"; read -t 60 _ <&3' _ "$2" &
+cd /
+exec sleep 60
+EOF
+  bash "$TMP/reap-holder.sh" "$wtK" "$TMP/reap-gate" >/dev/null 2>&1 &
+  parentK=$!
+  disown "$parentK"
+  sleep 0.5
+  outK="$("$BIN/ac-tree.sh" return "$wtK" 2>&1 || true)"
+  kill "$parentK" 2>/dev/null || true
+  assert_contains "$outK" "still present after SIGKILL" \
+    "the kill must wait for its pids instead of racing the next git command"
+  assert_contains "$outK" "returned to pool" \
+    "the wait is BOUNDED - a pid that can never be reaped must not hang the pool"
+fi
+
 pass

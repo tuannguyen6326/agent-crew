@@ -44,10 +44,10 @@ to make the exclusion permanent for every clone).
 - **Locked mutations**: get, prune, remove and list run under the pool lock;
   `return` CLAIMS its slot under that same lock first - re-owning the lease to
   the returning process - because its proc-kill and tree reset are too long to
-  hold a 30s lock across (an `lsof` of the whole tree, a 2s kill grace, a full
-  reset). Either way the slot is off limits to everything else: prune can never
-  delete a slot a concurrent get just leased, and no acquire can re-lease a
-  slot a return is resetting.
+  hold a 30s lock across (an `lsof` of the whole tree, a kill grace of up to
+  4s, a full reset). Either way the slot is off limits to everything else:
+  prune can never delete a slot a concurrent get just leased, and no acquire
+  can re-lease a slot a return is resetting.
 - **Leases with self-healing owners**: `get --id <task> --holder <label>`
   marks the slot leased; `--owner <pid>` optionally records a liveness token,
   and a lease whose owner pid is provably dead is reclaimed on the next
@@ -66,6 +66,14 @@ to make the exclusion permanent for every clone).
   (a half-written file) is skipped, never handed out.
 - **Dirty protection**: dirty slots are never silently reset - acquire skips
   them, prune skips them, `return` and `remove` demand `--force` to discard.
+- **Resets pinned to the check that authorized them**: the HEAD and porcelain
+  read at check time are re-read immediately before the reset, and a tree that
+  moved in between is SKIPPED, not destroyed - so work written while a return
+  is in its unlocked kill grace, or by a process still alive in a slot being
+  reclaimed, survives. An un-forced `return` on such a tree refuses with
+  `changed after it was verified clean` and resets nothing; `--force` is
+  pinned to nothing, since its authority is the caller's own word to discard
+  whatever is there.
 - **Landed-work protection**: `remove` also refuses a LEASED slot without
   `--include-leased`, and without `--force` both a clean slot whose HEAD is
   not merged into the default branch and a broken slot whose contents git
@@ -76,10 +84,15 @@ to make the exclusion permanent for every clone).
   idle, clean, process-free slots whose HEAD is merged into the default ref
   as verified against the LIVE remote - a failed fetch or a stale
   `origin/<branch>` tracking ref means "cannot verify", and the slot is
-  skipped rather than guessed at.
+  skipped rather than guessed at. The same rule covers the process check
+  itself: `lsof` missing means prune cannot look, which is not the same answer
+  as "nobody is there", so the slot is skipped instead of removed.
 - **Process hygiene**: return, prune and remove terminate (or, for prune,
   refuse to touch) processes still running inside the worktree, so detached
-  servers never keep working in a recycled tree.
+  servers never keep working in a recycled tree. A kill then WAITS, bounded at
+  2s, for the pids it SIGKILLed to leave the process table before the next git
+  command runs - SIGKILL is asynchronous, and the next command takes
+  `index.lock`.
 - **Self-healing pool**: worktrees whose directory vanished, and orphan dirs
   from partial creates, are healed by get/list/prune, and `git worktree prune`
   keeps git's own bookkeeping in sync. A slot whose dir survives with a dead
@@ -93,6 +106,6 @@ to make the exclusion permanent for every clone).
 |---|---|
 | `get --repo <p> [--id <task>] [--holder <l>] [--owner <pid>]` | Acquire (reuse or grow, cap `max_trees`/`AC_MAX_TREES`); prints ONLY the path on stdout. |
 | `list --repo <p>` | `slot  state[ dirty]  task  path` per slot (heals vanished slots first). |
-| `return <path> [--force]` | Reset to the freshest default ref + release; `--force` discards dirty work. |
+| `return <path> [--force]` | Reset to the freshest default ref + release; refuses without resetting when the tree changed after it was verified clean; `--force` discards dirty work and skips that check. |
 | `prune --repo <p> [--yes]` | Remove idle, clean, merged (remote-verified), process-free slots (dry-run default). |
 | `remove <path> [--force] [--include-leased]` | Deliberate removal of one slot; `--force` discards dirty/unmerged/broken work, `--include-leased` takes a leased slot. |

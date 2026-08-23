@@ -52,14 +52,23 @@
 # - every mutating operation holds the slot exclusively: pool state changes
 #   run under the pool lock, and the one section that cannot (return's
 #   proc-kill and tree reset would hold it across an lsof of the whole tree, a
-#   2s kill grace and a full checkout/reset/clean, against the 30s timeout
-#   every other caller waits on) CLAIMS the slot under that lock first, which
-#   re-owns the lease to the returning process - see claim_return;
+#   kill grace of up to 4s and a full checkout/reset/clean, against the 30s
+#   timeout every other caller waits on) CLAIMS the slot under that lock
+#   first, which re-owns the lease to the returning process - see claim_return;
 # - a lease with a dead --owner pid self-heals to available;
 # - dirty slots are never silently reset (return needs --force to discard);
+# - every reset is PINNED to the state that authorized it: the HEAD and
+#   porcelain read at check time are re-read immediately before the reset, and
+#   a tree that moved in between is skipped, not destroyed - see
+#   reset_if_unchanged. --force is pinned to nothing: its authority is the
+#   caller's own word to discard whatever is there;
 # - a return naming a lease id the slot no longer holds is refused;
-# - prune only removes clean, merged, unleased, process-free slots, and
-#   refuses to verify "merged" against a stale or unreachable origin;
+# - a proc-kill waits, bounded, for the pids it SIGKILLed to leave the process
+#   table before the next git command runs - see reap_pids;
+# - prune only removes clean, merged, unleased, process-free slots, refuses to
+#   verify "merged" against a stale or unreachable origin, and refuses a slot
+#   whose live processes it could not CHECK for at all (no lsof) - "could not
+#   look" must never reach a destructive gate as "nobody is there";
 # - remove refuses leased slots without --include-leased and refuses
 #   dirty, clean-but-unmerged, or unreadable-because-broken work without
 #   --force - it is the deliberate exit for a slot heal declines to touch;
@@ -362,21 +371,85 @@ fetch_origin() {
 is_dirty() { [ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]; }
 
 live_procs() {
-  # live_procs <wt> - pids with cwd/open files under the worktree.
+  # live_procs <wt> - pids with cwd/open files under the worktree. STATUS is
+  # the answer's authority: non-zero means the walk COULD NOT BE MADE, and an
+  # empty list with status 0 means it was made and found nothing. A caller
+  # gating destruction must never let those two arrive as the same answer -
+  # `lsof -t +D` exits 1 for "no matches" AND for its own errors, so absence
+  # from PATH is the only failure this can name, and swallowing it turns "I
+  # could not look" into "there is nobody there".
   command -v lsof >/dev/null 2>&1 || return 1
   lsof -t +D "$1" 2>/dev/null | sort -u | grep -v "^$$\$" || true
 }
 
+verified_state() {
+  # verified_state <wt> - the tree state a destructive gate verifies, as one
+  # comparable blob: the HEAD a reset would move off, and the porcelain
+  # is_dirty judged. A git failure contributes its own token rather than
+  # nothing, so a tree that went unreadable between two reads cannot compare
+  # equal to the clean one it was verified as.
+  git -C "$1" rev-parse HEAD 2>/dev/null || printf 'head-unreadable\n'
+  git -C "$1" status --porcelain 2>/dev/null || printf 'status-unreadable\n'
+}
+
+reset_if_unchanged() {
+  # reset_if_unchanged <repo> <wt> <ref> <verified> - re-read the state the
+  # caller verified and REFUSE the reset (status 2) when it moved.
+  #
+  # The check that authorizes destruction and the destruction itself are not
+  # the same moment: return's dirty-check runs under the pool lock while its
+  # reset deliberately runs outside it, across a whole-tree lsof walk and a 2s
+  # kill grace; acquire's runs under a lock that excludes other pool
+  # operations but not a process still alive inside the slot it is reclaiming.
+  # Pinning the reset to the state that authorized it is what keeps the two
+  # from disagreeing. Widening a lock over either window is not the
+  # alternative: with_pool_lock is not re-entrant, so a lock around a block
+  # that already contains one spins its full timeout and fails.
+  # Refusing costs a wedged slot the pool already knows how to report;
+  # resetting live work is unrecoverable.
+  local repo="$1" wt="$2" ref="$3" verified="$4"
+  [ "$(verified_state "$wt")" = "$verified" ] || return 2
+  reset_worktree "$repo" "$wt" "$ref" || return 1
+}
+
+reap_pids() {
+  # reap_pids <pids> - wait, BOUNDED, for SIGKILLed pids to leave the process
+  # table. SIGKILL is delivered asynchronously and both kill callers run a git
+  # command straight afterwards that takes index.lock, so a killed writer that
+  # has not finished dying races it. The bound is what keeps a pid that will
+  # never go (a zombie whose parent is alive, one we may not signal) from
+  # hanging the pool: it names the survivors and lets the caller continue.
+  local pids="$1" waited=0 pid left
+  while [ "$waited" -lt 20 ]; do
+    left=""
+    for pid in $pids; do
+      if kill -0 "$pid" 2>/dev/null; then left="$left $pid"; fi
+    done
+    [ -n "$left" ] || return 0
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  ac_warn "processes still present after SIGKILL:$left - continuing (git may contend on index.lock)"
+  return 1
+}
+
 kill_worktree_procs() {
-  # SIGTERM, short grace, SIGKILL survivors (detached servers ignore SIGHUP).
+  # SIGTERM, short grace, SIGKILL survivors (detached servers ignore SIGHUP),
+  # then wait for the survivors to actually go - see reap_pids.
   local wt="$1" pids
-  pids="$(live_procs "$wt" || true)"
+  if ! pids="$(live_procs "$wt")"; then
+    ac_warn "cannot enumerate processes inside $wt (lsof unavailable) - none killed"
+    return 0
+  fi
   [ -n "$pids" ] || return 0
   ac_warn "terminating processes still inside $wt"
   printf '%s\n' "$pids" | xargs kill 2>/dev/null || true
   sleep 2
   pids="$(live_procs "$wt" || true)"
-  [ -n "$pids" ] && printf '%s\n' "$pids" | xargs kill -9 2>/dev/null || true
+  if [ -n "$pids" ]; then
+    printf '%s\n' "$pids" | xargs kill -9 2>/dev/null || true
+    reap_pids "$pids" || true
+  fi
   return 0
 }
 
@@ -507,7 +580,7 @@ cmd_get() {
 acquire_slot() {
   # Runs under the pool lock; set -e may be suppressed by the caller, so
   # every git outcome is checked explicitly.
-  local repo="$1" id="$2" holder="$3" owner="$4" prefer="${5:-}" base_ref="${6:-}" meta wt n free="" leased prefer_why=""
+  local repo="$1" id="$2" holder="$3" owner="$4" prefer="${5:-}" base_ref="${6:-}" meta wt n free="" leased prefer_why="" verified reset_rc
   git -C "$repo" worktree prune >/dev/null 2>&1 || true
   heal_slots "$repo"
 
@@ -534,12 +607,19 @@ acquire_slot() {
         *) prefer_why="lease state unknown (half-written meta?)" ;;
       esac
       if [ -z "$prefer_why" ]; then
+        # Pinned BEFORE the check it authorizes: a write landing between the
+        # two would otherwise be read INTO the pin and blessed by it.
+        verified="$(verified_state "$wt")"
         if is_dirty "$wt"; then
           prefer_why="dirty (unlanded work)"
-        elif ! reset_worktree "$repo" "$wt" "$base_ref"; then
-          prefer_why="reset failed"
         else
-          free="$prefer"
+          reset_rc=0
+          reset_if_unchanged "$repo" "$wt" "$base_ref" "$verified" || reset_rc=$?
+          case "$reset_rc" in
+            0) free="$prefer" ;;
+            2) prefer_why="changed under the check (a process still alive in the slot?)" ;;
+            *) prefer_why="reset failed" ;;
+          esac
         fi
       fi
     fi
@@ -564,14 +644,18 @@ acquire_slot() {
           ;;
         *) ac_warn "skip slot $n: lease state unknown (half-written meta?)"; continue ;;
       esac
+      verified="$(verified_state "$wt")"
       if is_dirty "$wt"; then
         ac_warn "skip slot $n: dirty (unlanded work; inspect or remove --force)"
         continue
       fi
-      if ! reset_worktree "$repo" "$wt" "$base_ref"; then
-        ac_warn "skip slot $n: reset failed"
-        continue
-      fi
+      reset_rc=0
+      reset_if_unchanged "$repo" "$wt" "$base_ref" "$verified" || reset_rc=$?
+      case "$reset_rc" in
+        0) : ;;
+        2) ac_warn "skip slot $n: changed under the check (a process still alive in the slot?)"; continue ;;
+        *) ac_warn "skip slot $n: reset failed"; continue ;;
+      esac
       free="$n"
       break
     done
@@ -780,11 +864,24 @@ cmd_return() {
   n="$(basename "$wt")"
   meta="$(slot_meta "$repo" "$n")"
   [ -f "$meta" ] || ac_die "return: unmanaged slot: $wt"
+  local claimed_state=""
   with_pool_lock "$repo" claim_return "$meta" "$n" "$wt" "$want_lease" "$force"
   # Destructive section, deliberately UNLOCKED - see claim_return for what
-  # makes that safe, and why the lock cannot simply be held across it.
+  # makes that safe, and why the lock cannot simply be held across it. The
+  # reset is pinned to the state claim_return verified, because this section
+  # is exactly the window that state can go stale in.
   kill_worktree_procs "$wt"
-  reset_worktree "$repo" "$wt" || ac_die "return: reset failed for $wt"
+  local rc=0
+  if [ "$force" = 1 ]; then
+    reset_worktree "$repo" "$wt" || rc=1
+  else
+    reset_if_unchanged "$repo" "$wt" "" "$claimed_state" || rc=$?
+  fi
+  case "$rc" in
+    0) : ;;
+    2) ac_die "return: worktree changed after it was verified clean, so nothing was reset - inspect it, then return --force to discard: $wt" ;;
+    *) ac_die "return: reset failed for $wt" ;;
+  esac
   with_pool_lock "$repo" release_slot "$meta"
   write_workspace "$repo"
   ac_warn "worktree slot $n returned to pool"
@@ -807,8 +904,8 @@ claim_return() {
   # gate on lease_reclaimable - so the section below runs unlocked with the
   # slot provably off limits to every other pool operation. Holding the lock
   # itself across that section is what we cannot do: it spans an `lsof +D` of
-  # the whole tree, a 2s kill grace and a full checkout/reset/clean, and every
-  # other caller waits on that lock for 30s before dying.
+  # the whole tree, a kill grace of up to 4s and a full checkout/reset/clean,
+  # and every other caller waits on that lock for 30s before dying.
   # Dying mid-reset leaves the lease owned by a dead pid, which is the pool's
   # existing self-heal shape: the next acquire reclaims the slot, re-checks it
   # and skips it if the reset left it dirty.
@@ -818,8 +915,16 @@ claim_return() {
     [ "$want_lease" = "$have_lease" ] \
       || ac_die "return: slot $n holds lease ${have_lease:-none}, not $want_lease - refusing (the slot was re-leased; nothing was reset)"
   fi
-  if [ "$force" = 0 ] && is_dirty "$wt"; then
-    ac_die "return: worktree is dirty; land the work or pass --force to discard: $wt"
+  # The state the unlocked section re-reads (claimed_state is cmd_return's,
+  # declared before the lock), pinned BEFORE the check it authorizes so a write
+  # landing between the two is not read INTO the pin and blessed by it.
+  # --force is pinned to nothing: its authority is the caller's own word to
+  # discard whatever is there, which a later read of the tree cannot refute.
+  if [ "$force" = 0 ]; then
+    claimed_state="$(verified_state "$wt")"
+    if is_dirty "$wt"; then
+      ac_die "return: worktree is dirty; land the work or pass --force to discard: $wt"
+    fi
   fi
   ac_meta_set "$meta" owner_pid "$$"
 }
@@ -850,7 +955,7 @@ cmd_prune() {
 }
 
 prune_pass() {
-  local repo="$1" yes="$2" meta n wt ref verify_ok=1 reason=""
+  local repo="$1" yes="$2" meta n wt ref verify_ok=1 reason="" procs
   heal_slots "$repo"
 
   # Merged-proof must hold against the LIVE remote: a failed fetch or a
@@ -882,7 +987,14 @@ prune_pass() {
       printf 'skip slot %s: dirty\n' "$n"
       continue
     fi
-    if [ -n "$(live_procs "$wt" || true)" ]; then
+    # Skipping is the only safe answer when the walk could not be made: the
+    # step past this guard is drop_slot, i.e. worktree remove --force + rm -rf
+    # on a tree someone may be working in.
+    if ! procs="$(live_procs "$wt")"; then
+      printf 'skip slot %s: cannot check for live processes (lsof unavailable)\n' "$n"
+      continue
+    fi
+    if [ -n "$procs" ]; then
       printf 'skip slot %s: in-use (live processes)\n' "$n"
       continue
     fi
