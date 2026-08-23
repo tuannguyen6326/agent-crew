@@ -120,6 +120,34 @@ assert_contains "$out" "-- fleet --" "the digest still completes"
 rm -f "$dstub/docker"
 unset AC_SESSION_QA_TIMEOUT
 
+# (3) Toolchain digest: a diagnostic-only INERT: line (ac-bootstrap.sh
+# never fails rc for one) must not be followed by the all-clear
+# "(all required tools present)" reassurance - printing both together
+# reads as a contradiction (found live, 2026-08-23, developing the
+# PATH-shadow probe: this host's own real jq shadow tripped it). Fixed
+# jq copies, not the ambient host's, so this is host-independent - a
+# guaranteed-newer fake sits at the very end of PATH regardless of what
+# the real host has installed.
+mkdir -p "$dstub/jq-old" "$dstub/jq-new"
+cat >"$dstub/jq-old/jq" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = --version ] && { printf 'jq-1.2\n'; exit 0; }
+exit 0
+EOF
+cat >"$dstub/jq-new/jq" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = --version ] && { printf 'jq-9.9\n'; exit 0; }
+exit 0
+EOF
+chmod +x "$dstub/jq-old/jq" "$dstub/jq-new/jq"
+tc_out="$(PATH="$dstub/jq-old:$PATH:$dstub/jq-new" "$BIN/ac-session-start.sh" 2>&1)"
+tc_section="$(printf '%s\n' "$tc_out" | awk '/^-- toolchain --$/{f=1;next} /^-- /{f=0} f')"
+assert_contains "$tc_section" "INERT: jq installed but inert" "the inert jq is diagnosed in the digest"
+case "$tc_section" in
+  *"all required tools present"*) fail "the all-clear line must not print alongside an INERT: warning: $tc_section" ;;
+esac
+rm -rf "$dstub/jq-old" "$dstub/jq-new"
+
 # ac-session-start.test.sh - the crewdeputy config-converge ride-along
 # (bin/ac-session-start.sh:72-83) must resolve its PARENT config dir from the
 # LIVE AC_HOME by walking `$home/../../config` - tests/ac-config-converge.test.sh

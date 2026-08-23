@@ -121,7 +121,17 @@ if ac_is_crewdeputy_home; then
 fi
 
 printf -- '-- toolchain --\n'
-if "$bin_dir/ac-bootstrap.sh" --quiet; then
+# Captured, not just gated on exit code: an INERT:/CHECK-FAILED: line is
+# diagnostic-only (bin/ac-bootstrap.sh never fails rc for one), so on exit
+# 0 the doctor can still have printed a real warning. Streaming its stdout
+# through unconditionally while ALSO printing the all-clear reassurance
+# read as a contradiction - the reassurance now fires only when the doctor
+# said nothing at all.
+tc_rc=0
+tc_out="$("$bin_dir/ac-bootstrap.sh" --quiet)" || tc_rc=$?
+if [ -n "$tc_out" ]; then
+  printf '%s\n' "$tc_out"
+elif [ "$tc_rc" -eq 0 ]; then
   printf '(all required tools present)\n'
 fi
 

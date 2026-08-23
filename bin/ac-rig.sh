@@ -10,7 +10,7 @@
 # behaviour would be a config file, and this is a record.
 #
 # JSON, not the records/*.md line grammar its neighbours use, for two reasons.
-# jq is a hard dependency (bin/ac-bootstrap.sh:44 is `need jq`, not `opt`), so
+# jq is a hard dependency (bin/ac-bootstrap.sh has `need jq`, not `opt`), so
 # parsing costs one `jq -r` and cannot drift; and the *.md grammars are
 # hand-rolled sed that mis-parses free text - fed a value containing its own
 # delimiter words, bin/ac-standing-jobs.sh:49-50 returns the wrong cadence and
