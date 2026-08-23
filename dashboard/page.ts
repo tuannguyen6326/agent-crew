@@ -4285,11 +4285,11 @@ function onClick(e){
   if(t.closest('#refresh-btn')){ tick(true); return; }
   // Terminal toolbar: blur the clicked button so the focus ring never sticks
   // as a phantom highlight after the action.
-  var tpb=t.closest('#tp-fminus,#tp-fplus,#tp-side');
-  if(tpb){
-    tpb.blur();
-    if(tpb.id==='tp-fminus') termFont(-1);
-    else if(tpb.id==='tp-fplus') termFont(1);
+  var tbtn=t.closest('#tp-fminus,#tp-fplus,#tp-side');
+  if(tbtn){
+    tbtn.blur();
+    if(tbtn.id==='tp-fminus') termFont(-1);
+    else if(tbtn.id==='tp-fplus') termFont(1);
     else { var cb=el('collapse-btn'); if(cb) cb.click(); }
     return;
   }

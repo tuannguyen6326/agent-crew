@@ -79,14 +79,51 @@ save() {
   mv "$tmp" "$ledger"
 }
 
-line_id() {
-  local l="$1" rest
-  case "$l" in
-    '- [ ] '*) rest="${l#"- [ ] "}" ;;
-    '- [x] '*) rest="${l#"- [x] "}" ;;
-    *) return 1 ;;
-  esac
-  printf '%s\n' "${rest%% *}"
+# hold_fields <line> - the row's hold state as THE grammar reads it, never a
+# substring scan: fills HF_HOLD/HF_UNTIL/HF_MALFORMED from AC_DONELINE_AWK, so
+# a prose quotation of the token (`[@held]` in a code span) is an ordinary row
+# here exactly as it is to the scheduler.
+hold_fields() {
+  local out
+  out="$(printf '%s\n' "$1" | awk "$AC_DONELINE_AWK"'
+    { ac_doneline($0, o); printf "%s\t%s\t%s\n", o["hold"], o["hold_until"], o["hold_malformed"] }')"
+  HF_HOLD="${out%%$'\t'*}"
+  out="${out#*$'\t'}"
+  HF_UNTIL="${out%%$'\t'*}"
+  HF_MALFORMED="${out#*$'\t'}"
+}
+
+# split_hold <line> - the surgery half of what hold_fields judges: locate the
+# AUTHORITATIVE hold token by walking the leading run of [...] groups after
+# the id (a quoted or out-of-run shape is never found here, matching the
+# parser's position rule), and split the line around it into SH_PRE/SH_GRP/
+# SH_POST for a caller that strips or replaces it.
+split_hold() {
+  local l="$1" id rest scan grp
+  case "$l" in '- [ ] '*) ;; *) return 1 ;; esac
+  rest="${l#"- [ ] "}"
+  id="${rest%% *}"
+  [ "$id" != "$rest" ] || return 1
+  scan="- [ ] $id"
+  rest="${rest#"$id"}"
+  while :; do
+    case "$rest" in
+      ' '*) scan="$scan "; rest="${rest# }"; continue ;;
+      '['*) ;;
+      *) return 1 ;;
+    esac
+    case "$rest" in *']'*) ;; *) return 1 ;; esac
+    grp="${rest%%]*}]"
+    case "$grp" in
+      '[@held]'|'[@held until '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]']')
+        SH_PRE="${scan% }"
+        SH_GRP="$grp"
+        SH_POST="${rest#"$grp"}"
+        return 0 ;;
+    esac
+    scan="$scan$grp"
+    rest="${rest#"$grp"}"
+  done
 }
 
 # find_row <id> -> ROW_I (bullet), ROW_END (last body line), ROW_SEC
@@ -155,20 +192,6 @@ stamp_since() {
   esac
 }
 
-hold_group() {
-  local l="$1" rest
-  case "$l" in *"[@held"*) rest="${l#*"[@held"}" ;; *) return 1 ;; esac
-  case "$rest" in *']'*) ;; *) return 1 ;; esac
-  printf '[@held%s]\n' "${rest%%]*}"
-}
-
-strip_group() {
-  local l="$1" g="$2" pre post
-  pre="${l%%"$g"*}"
-  post="${l#*"$g"}"
-  printf '%s%s\n' "${pre% }" "$post"
-}
-
 # --- archives -----------------------------------------------------------------
 
 archive_body() {
@@ -208,20 +231,32 @@ cmd_add() {
 }
 
 cmd_start() {
-  local id="${1:-}" i block=()
+  local id="${1:-}" i block=() spent=""
   [ -n "$id" ] || ac_die "usage: ac-task.sh start <id>"
   load
   find_row "$id" || ac_die "no row for '$id'"
   [ "$ROW_SEC" = queued ] || { printf 'already: %s is in %s\n' "$id" "$ROW_SEC"; return 0; }
-  if hold_group "${L[$ROW_I]}" >/dev/null; then
-    ac_die "$id is held ($(hold_group "${L[$ROW_I]}")) - release it before starting (AGENTS.md section 9)"
+  hold_fields "${L[$ROW_I]}"
+  [ -z "$HF_MALFORMED" ] || ac_die "$id carries a malformed hold-shaped group - fix the line by hand (AGENTS.md section 9)"
+  if [ -n "$HF_HOLD" ]; then
+    # An EXPIRED dated hold is exactly what ac-ready offers as READY, so start
+    # must take it; the spent token is stripped - the date WAS the release,
+    # and a leftover [@held...] on an In-flight line would still read as
+    # waiting-on-captain in every display.
+    if [ -n "$HF_UNTIL" ] && [ ! "$HF_UNTIL" \> "$today" ]; then
+      split_hold "${L[$ROW_I]}" || ac_die "internal: parser saw a hold that the leading-run walk cannot find on: ${L[$ROW_I]}"
+      L[$ROW_I]="${SH_PRE}${SH_POST}"
+      spent=" (hold until $HF_UNTIL expired - token stripped)"
+    else
+      ac_die "$id is held - release it before starting (AGENTS.md section 9)"
+    fi
   fi
   for ((i = ROW_I; i <= ROW_END; i++)); do block+=("${L[$i]}"); done
   block[0]="$(stamp_since "${block[0]}")"
   splice_out "$ROW_I" $((ROW_END - ROW_I + 1))
   splice_in "$(section_tail inflight)" "${block[@]}"
   save
-  printf 'ok: started %s (since %s)\n' "$id" "$today"
+  printf 'ok: started %s (since %s)%s\n' "$id" "$today" "$spent"
 }
 
 cmd_done() {
@@ -247,7 +282,7 @@ cmd_done() {
 }
 
 cmd_hold() {
-  local id="${1:-}" until="" why="" token grp line
+  local id="${1:-}" until="" why="" token line
   [ -n "$id" ] || ac_die "usage: ac-task.sh hold <id> [--until <YYYY-MM-DD>] [--why <text>]"
   shift
   while [ "$#" -gt 0 ]; do
@@ -269,8 +304,10 @@ cmd_hold() {
   load
   find_row "$id" || ac_die "no row for '$id'"
   [ "$ROW_SEC" != done ] || ac_die "$id is Done - a hold schedules nothing"
+  hold_fields "${L[$ROW_I]}"
+  [ -z "$HF_MALFORMED" ] || ac_die "$id carries a malformed hold-shaped group - fix the line by hand before re-holding (AGENTS.md section 9)"
   line="${L[$ROW_I]}"
-  if grp="$(hold_group "$line")"; then line="$(strip_group "$line" "$grp")"; else grp=""; fi
+  if split_hold "$line"; then line="${SH_PRE}${SH_POST}"; fi
   line="- [ ] $id $token${line#"- [ ] $id"}"
   case "$line" in *" - $why"*) ;; *) [ -n "$why" ] && line="$line - $why" ;; esac
   [ "$line" != "${L[$ROW_I]}" ] || { printf 'already: %s holds %s\n' "$id" "$token"; return 0; }
@@ -280,14 +317,17 @@ cmd_hold() {
 }
 
 cmd_unhold() {
-  local id="${1:-}" grp
+  local id="${1:-}"
   [ -n "$id" ] || ac_die "usage: ac-task.sh unhold <id>"
   load
   find_row "$id" || ac_die "no row for '$id'"
-  grp="$(hold_group "${L[$ROW_I]}")" || { printf 'already: %s carries no hold\n' "$id"; return 0; }
-  L[$ROW_I]="$(strip_group "${L[$ROW_I]}" "$grp")"
+  hold_fields "${L[$ROW_I]}"
+  [ -z "$HF_MALFORMED" ] || ac_die "$id carries a malformed hold-shaped group - fix the line by hand (AGENTS.md section 9)"
+  if [ -z "$HF_HOLD" ]; then printf 'already: %s carries no hold\n' "$id"; return 0; fi
+  split_hold "${L[$ROW_I]}" || ac_die "internal: parser saw a hold that the leading-run walk cannot find on: ${L[$ROW_I]}"
+  L[$ROW_I]="${SH_PRE}${SH_POST}"
   save
-  printf 'ok: released %s from %s\n' "$id" "$grp"
+  printf 'ok: released %s from %s\n' "$id" "$SH_GRP"
 }
 
 cmd_update_note() {
@@ -299,8 +339,9 @@ cmd_update_note() {
   while IFS= read -r line; do
     # A body line is opaque to the awk parsers (they anchor at column 0), but
     # the dashboard's parseBacklog matches `^\s*-\s+\[[ xX]\]` - an indented
-    # checkbox would show up there as a PHANTOM ROW the scheduler cannot see.
-    case "$line" in '- ['*|'-['*) ac_die "a body line may not start like a row ('$line') - the dashboard would read it as one" ;; esac
+    # checkbox AT ANY DEPTH would show up there as a PHANTOM ROW the scheduler
+    # cannot see, so the check runs on the line with its own indent stripped.
+    case "${line#"${line%%[![:space:]]*}"}" in '- ['*) ac_die "a body line may not start like a row ('$line') - the dashboard would read it as one" ;; esac
     new+=("  $line")
   done <<<"$text"
   if [ "${#old[@]}" = "${#new[@]}" ] && [ "${old[*]+"${old[*]}"}" = "${new[*]}" ]; then
@@ -325,7 +366,14 @@ cmd_prune() {
   load
   head="$(section_head done)"
   n=${#L[@]}
+  # end = one past the Done section: the grammar puts Done last, but
+  # hand-editing stays legal, so a section someone added after it must
+  # survive a prune untouched rather than being swept into the archive.
+  local end=$n
   for ((i = head + 1; i < n; i++)); do
+    case "${L[$i]}" in '## '*) end=$i; break ;; esac
+  done
+  for ((i = head + 1; i < end; i++)); do
     case "${L[$i]}" in '- ['*) ;; *) continue ;; esac
     seen=$((seen + 1))
     if [ "$seen" -gt "$keep" ]; then cut=$i; break; fi
@@ -333,11 +381,11 @@ cmd_prune() {
   [ "$cut" -ge 0 ] || { printf 'already: Done holds %s row(s), keep is %s\n' "$seen" "$keep"; return 0; }
   arc="$(ac_records_dir)/backlog-archive-$today.md"
   [ -f "$arc" ] || printf '# backlog Done rows pruned %s\n' "$today" >"$arc"
-  for ((i = cut; i < n; i++)); do
+  for ((i = cut; i < end; i++)); do
     case "${L[$i]}" in '- ['*) moved=$((moved + 1)) ;; esac
     printf '%s\n' "${L[$i]}" >>"$arc"
   done
-  splice_out "$cut" $((n - cut))
+  splice_out "$cut" $((end - cut))
   save
   printf 'ok: pruned %s Done row(s) into %s\n' "$moved" "$arc"
 }

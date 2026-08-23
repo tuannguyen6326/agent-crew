@@ -67,8 +67,10 @@ assert_contains "$(cat "$arc")" "the long narrative that used to bloat the line"
 assert_contains "$(cat "$arc")" "first" "archive names the row id"
 
 # A body line shaped like a row is refused: the dashboard's parseBacklog
-# matches an INDENTED checkbox, so it would render as a phantom row.
+# matches an INDENTED checkbox, so it would render as a phantom row - and it
+# matches it at ANY indent, so leading whitespace must not slip past the guard.
 assert_fails_with "start like a row" -- "$BIN/ac-task.sh" update-note first '- [ ] sneaky - a phantom'
+assert_fails_with "start like a row" -- "$BIN/ac-task.sh" update-note first '   - [ ] sneaky - an indented phantom'
 
 # ---- start: moves the row (WITH its body) to In flight and stamps since.
 out="$("$BIN/ac-task.sh" start first)"
@@ -119,6 +121,36 @@ out="$("$BIN/ac-task.sh" unhold heldrow)"
 assert_contains "$out" "already" "re-unholding reports already"
 assert_fails_with "date" -- "$BIN/ac-task.sh" hold heldrow --until soon
 
+# ---- hold state is read by THE grammar (AC_DONELINE_AWK), never a substring
+#      scan: a row whose prose QUOTES the token in a code span is not held, so
+#      every verb must treat it as an ordinary row - and hold/unhold must
+#      never cut the quotation out of the prose.
+"$BIN/ac-task.sh" add quoterow 'documenting the grammar, the hold token is `[@held]` (section 9)' --repo shop >/dev/null
+"$BIN/ac-task.sh" start quoterow >/dev/null || fail "a quoted hold mention must not refuse start"
+"$BIN/ac-task.sh" done quoterow 'x' >/dev/null
+"$BIN/ac-task.sh" add quoterow2 'the token is `[@held]` when the captain says so' --repo shop >/dev/null
+out="$("$BIN/ac-task.sh" unhold quoterow2)"
+assert_contains "$out" "already" "unhold on a quoted mention reports no hold"
+grep -qF -- 'the token is `[@held]` when the captain says so' "$ledger" \
+  || fail "unhold cut a quoted mention out of the prose"
+"$BIN/ac-task.sh" hold quoterow2 >/dev/null
+grep -qF -- '- [ ] quoterow2 [@held] - the token is `[@held]` when the captain says so' "$ledger" \
+  || fail "hold on a quoting row must insert the token and leave the prose alone"
+"$BIN/ac-task.sh" unhold quoterow2 >/dev/null
+grep -qF -- '- [ ] quoterow2 - the token is `[@held]` when the captain says so' "$ledger" \
+  || fail "unhold must strip ONLY the leading-run token, never the quotation"
+
+# ---- an EXPIRED dated hold is startable: ac-ready offers it, so start must
+#      take it - and the spent token is stripped (the date was the release).
+"$BIN/ac-task.sh" add expiredrow 'work the captain dated' --repo shop >/dev/null
+"$BIN/ac-task.sh" hold expiredrow --until "$yesterday" >/dev/null
+"$BIN/ac-ready.sh" queued | grep -qx expiredrow || fail "fixture: expired hold must be offered"
+out="$("$BIN/ac-task.sh" start expiredrow)"
+assert_contains "$out" "ok:" "start takes the row the scheduler offers"
+grep -F -- 'expiredrow' "$ledger" | grep -qF -- '[@held' \
+  && fail "the spent dated token must be stripped when the row starts"
+"$BIN/ac-task.sh" done expiredrow 'x' >/dev/null
+
 # ---- a HAND-WRITTEN malformed until date fails CLOSED (HELD, never READY):
 #      hand-editing stays legal and a slip may not read as no-hold.
 awk '{ print } /^## Queued/ { print "- [ ] badhold [@held until soon] - hand-edited slip (repo: shop)" }' \
@@ -133,13 +165,22 @@ case "$ready" in *"READY  badhold"*) fail "a malformed until must never be READY
 out="$("$BIN/ac-task.sh" prune --keep 1)"
 assert_contains "$out" "ok:" "prune prints an ok receipt"
 grep -q "^- \[x\] landed" "$ledger" && fail "prune kept more than N rows"
-grep -q "^- \[x\] first" "$ledger" || fail "prune must keep the newest row"
+grep -q "^- \[x\] expiredrow" "$ledger" || fail "prune must keep the newest row"
+grep -q "^- \[x\] first" "$ledger" && fail "prune must move every row past keep"
 parc="$AC_HOME/records/backlog-archive-$today.md"
 assert_file "$parc" "prune wrote the dated archive"
 assert_contains "$(cat "$parc")" "landed" "archive holds the pruned row"
 assert_contains "$(cat "$parc")" "body of the oldest done row" "archive holds the pruned body"
 out="$("$BIN/ac-task.sh" prune --keep 1)"
 assert_contains "$out" "already" "a second prune has nothing to move"
+# Hand-editing stays legal: a section someone added AFTER Done survives a
+# prune untouched instead of being swept into the archive.
+printf '\n## Notes\nhand-written, not a task row\n' >>"$ledger"
+"$BIN/ac-task.sh" done quoterow2 'x' >/dev/null
+"$BIN/ac-task.sh" prune --keep 1 >/dev/null
+grep -qxF -- '## Notes' "$ledger" || fail "prune swept a trailing hand-written section"
+grep -qxF -- 'hand-written, not a task row' "$ledger" || fail "prune swept trailing hand-written content"
+grep -qxF -- '## Notes' "$parc" && fail "the archive must not receive the trailing section"
 
 # ---- locked: a live holder refuses the write instead of corrupting it.
 lock="$AC_HOME/records/.backlog.md.lock"

@@ -1139,7 +1139,10 @@ code-span exemption, and the same fail-closed direction for a slip - a date
 that is not exactly `YYYY-MM-DD` is not a dated hold at all but a mis-typed
 one, reported `hold malformed`, never an accidental release. The parser
 extracts the date (`AC_DONELINE_AWK`'s `f["hold_until"]`), `bin/ac-ready.sh`
-is the one that compares it to today.
+is the one that compares it to today. When an expired-dated row STARTS,
+`bin/ac-task.sh start` strips the spent token - the date was the captain's
+own release, and a leftover hold token on an In-flight line would still read
+as waiting-on-captain in every display.
 Detection scans every top-level `[...]` group on the line and matches on the
 `@` SENTINEL, not the bare word: a live ledger row measurably false-positived
 on an earlier bracket-syntax-only design, because this grammar's OTHER
