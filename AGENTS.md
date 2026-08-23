@@ -1128,7 +1128,18 @@ recognized as a hold attempt, because a one-word group can never be a
 free-text tag's prose). It is not the dependency token (no blocker id, no
 STUCK semantics) and not terminal (nothing lands to clear it). Releasing it is
 a CAPTAIN act: no tooling strips `[@held]` automatically, so a chief removes it
-from the line by hand only on the captain's word.
+from the line by hand only on the captain's word - `bin/ac-task.sh unhold` is
+that hand, never a scheduler's.
+The DATED arm `[@held until <YYYY-MM-DD>]` is the one hold that releases
+ITSELF: `bin/ac-ready.sh` reports it HELD before that date and READY on and
+after it, so a hold the captain meant to be time-bound ("not before the
+migration lands, 2026-09-01") costs no later hand-edit. Everything else about
+it is the bare token's: same leading-run position, same sentinel, same
+code-span exemption, and the same fail-closed direction for a slip - a date
+that is not exactly `YYYY-MM-DD` is not a dated hold at all but a mis-typed
+one, reported `hold malformed`, never an accidental release. The parser
+extracts the date (`AC_DONELINE_AWK`'s `f["hold_until"]`), `bin/ac-ready.sh`
+is the one that compares it to today.
 Detection scans every top-level `[...]` group on the line and matches on the
 `@` SENTINEL, not the bare word: a live ledger row measurably false-positived
 on an earlier bracket-syntax-only design, because this grammar's OTHER
@@ -1217,6 +1228,19 @@ through. It carries no delivery-contract group: no flow, mode or review was
 ever chosen for it.
 
 Keep it current: spawn moves an item to In flight; teardown moves it to Done or back to Queued.
+
+Make those routine moves with `bin/ac-task.sh` (its header is the authoritative
+spec) rather than by re-generating markdown: `add`, `start`, `done`, `hold`,
+`unhold`, `update-note` and `prune` each touch ONLY the targeted row, take an
+advisory lock and publish by tmp+rename, and are idempotent with a one-line
+`ok:`/`already:` receipt. Two of its properties change how a row is WRITTEN,
+not just edited: a row's narrative belongs in its BODY - indented lines
+directly under the bullet, which every parser here ignores, so the LINE stays
+the index it is defined to be and a replaced body is archived rather than
+rewritten in place - and a Done section that has outgrown the file is pruned
+into a dated archive (`prune --keep <n>`) instead of being trimmed by hand.
+Hand-editing stays fully legal: the CLI owns no state, re-reads the file on
+every verb, and tolerates rows nobody typed through it.
 
 ## 10. Validation (crew-ship)
 

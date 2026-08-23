@@ -274,6 +274,12 @@ cat >"$B" <<'EOF'
 - [ ] quoteexact - documenting the grammar, the hold token is `[@held]` (AGENTS.md section 9); an ordinary queued row (repo: shop)
 - [ ] quotebare - documenting the grammar, the sentinel-forgotten slip looks like `[held]`; an ordinary queued row (repo: shop)
 - [ ] wrongplace - forgot to put the token up front, so it sits deep in the reason instead: [@held] misplaced, no backticks (repo: shop)
+- [ ] datedfuture [@held until 2099-01-01] - the dated arm, not yet expired (repo: shop)
+- [ ] datedpast [@held until 2000-01-01] - the dated arm, expired long ago (repo: shop)
+- [ ] datedbad [@held until soon] - a dated hold whose date is not a date (repo: shop)
+- [ ] datedslash [@held until 2099/01/01] - a dated hold with the wrong separator (repo: shop)
+- [ ] datedwrongplace - the dated token deep in the reason instead: [@held until 2099-01-01], no backticks (repo: shop)
+- [ ] datedquote - documenting the dated arm, which is written `[@held until 2099-01-01]`; an ordinary queued row (repo: shop)
 
 ## Done
 EOF
@@ -317,6 +323,24 @@ case "$out" in *"HELD   quoteexact"*) fail "(round 5, B1) quoting the exact toke
 case "$out" in *"HELD   quotebare"*) fail "(round 5, B2) quoting a mis-typed shape in a code span must never read as malformed" ;; esac
 case "$out" in *"READY  wrongplace"*) fail "(round 5, residual) an out-of-position bare token must never silently read READY" ;; esac
 case "$out" in *"STUCK  wrongplace"*) fail "(round 5, residual) an out-of-position hold-shaped group is not the dependency token - never STUCK" ;; esac
+# The DATED arm (AGENTS.md section 9): the ONE hold that releases itself. It
+# inherits every property of the bare token - leading-run position, sentinel,
+# code-span exemption - and adds exactly one: the date decides, and a date
+# that is not a date is a mis-typed hold, never an accidental release.
+assert_contains "$out" "HELD   datedfuture - captain hold until 2099-01-01; it releases itself on that date (AGENTS.md section 9)" "an unexpired dated hold is HELD, and the line names the date so the captain need not open the ledger"
+assert_contains "$out" "READY  datedpast" "a dated hold whose date has passed is READY again, with no hand-edit"
+assert_contains "$out" "HELD   datedbad hold malformed" "a dated hold whose date is not a date falls to malformed, never READY"
+assert_contains "$out" "HELD   datedslash hold malformed" "a dated hold with the wrong date separator falls to malformed, never READY"
+assert_contains "$out" "HELD   datedwrongplace hold malformed" "a dated token outside the leading run falls to malformed, exactly like the bare one"
+assert_contains "$out" "READY  datedquote" "a code-span quotation of the dated arm never holds the row that documents it"
+case "$out" in *"READY  datedfuture"*) fail "an unexpired dated hold must never read READY" ;; esac
+case "$out" in *"HELD   datedpast"*) fail "an expired dated hold must not stay HELD - the date IS the release" ;; esac
+case "$out" in *"READY  datedbad"*) fail "a malformed dated hold must never read READY" ;; esac
+case "$out" in *"HELD   datedquote"*) fail "quoting the dated arm in a code span must never enact a hold" ;; esac
+qout="$("$BIN/ac-ready.sh" queued)"
+printf '%s\n' "$qout" | grep -qx datedpast || fail "an expired dated hold must be OFFERED by queued, not just reported READY"
+printf '%s\n' "$qout" | grep -qx datedfuture && fail "an unexpired dated hold must never be offered by queued"
+printf '%s\n' "$qout" | grep -qx datedbad && fail "a malformed dated hold must never be offered by queued"
 
 queued_out="$("$BIN/ac-ready.sh" queued)"
 case "$queued_out" in *heldcampaign*) fail "the queued selector must never offer a held row" ;; esac

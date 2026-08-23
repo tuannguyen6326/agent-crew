@@ -115,7 +115,16 @@
 #                           `[...]` group. Release is a CAPTAIN act: no
 #                           script here or elsewhere clears `[@held]`; a
 #                           chief removes it from the line by hand on the
-#                           captain's word.
+#                           captain's word - EXCEPT the dated arm
+#                           `[@held until <YYYY-MM-DD>]`, which releases
+#                           ITSELF: HELD before that date, READY on and after
+#                           it, so a time-bound hold needs no hand-edit. The
+#                           parser extracts the date (AC_DONELINE_AWK's
+#                           f["hold_until"]), this file is the one that
+#                           compares it to today. A hold whose date shape is
+#                           anything else is not a dated hold: it reads
+#                           `hold malformed`, the same fail-closed direction
+#                           as every other slip, never an accidental release.
 # Backlog grammar (AGENTS.md section 9): story lines carry `epic:<id>`;
 # `blocked-by: id1,id2 - reason` (comma-joined, no spaces, one space after the
 # colon, lowercase). Done lines marked `[failed]`/`[abandoned]` are terminal
@@ -132,7 +141,7 @@ cap="$(ac_config_read epic-parallel 2)"
 case "$cap" in ''|*[!0-9]*) cap=2 ;; esac
 
 # TSV snapshot of the ledger: section, id, marker, epic, blockers, malformed,
-# hold, hold_malformed
+# hold, hold_malformed, contract, domain, hold_until
 snapshot() {
   # Field extraction is the ONE shared Done-line parser (AC_DONELINE_AWK in
   # ac-lib.sh); the marker is keyed on the FIXED grammar position (token after
@@ -152,7 +161,7 @@ snapshot() {
       ac_doneline($0, o)
       d = o["domain"]
       if (d == "" && o["epic"] != "") d = dm[o["epic"]]
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, o["id"], o["terminal"], o["epic"], o["blockers"], o["blockers_malformed"], o["hold"], o["hold_malformed"], o["contract"], d
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, o["id"], o["terminal"], o["epic"], o["blockers"], o["blockers_malformed"], o["hold"], o["hold_malformed"], o["contract"], d, o["hold_until"]
     }
   ' "$backlog" "$backlog"
 }
@@ -173,14 +182,17 @@ report_lint() {
 
 cmd_report() {
   report_lint
-  snapshot | awk -v cap="$cap" '
+  snapshot | awk -v cap="$cap" -v today="$(date +%Y-%m-%d)" '
     BEGIN { FS = "\t" }
     {
       sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; dom = $10; contract = $9
+      # A DATED hold releases itself: HELD before its date, READY on and after
+      # it (AGENTS.md section 9). ISO dates compare correctly as strings.
+      if (hold != "" && $11 != "" && $11 <= today) hold = ""
       state[id] = sec
       mark[id] = marker
       if (sec == "inflight" && epic != "" && marker != "epic") flying[epic]++
-      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad; qcon[id] = contract; qdom[id] = dom }
+      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad; qcon[id] = contract; qdom[id] = dom; quntil[id] = $11 }
     }
     END {
       for (i = 1; i <= n; i++) {
@@ -203,7 +215,10 @@ cmd_report() {
           continue
         }
         if (qhold[id] != "") {
-          printf "HELD   %s - captain hold; release is a captain act (AGENTS.md section 9)\n", id
+          if (quntil[id] != "")
+            printf "HELD   %s - captain hold until %s; it releases itself on that date (AGENTS.md section 9)\n", id, quntil[id]
+          else
+            printf "HELD   %s - captain hold; release is a captain act (AGENTS.md section 9)\n", id
           continue
         }
         # An item with no blockers and no epic is trivially READY - it has no
@@ -248,10 +263,11 @@ cmd_queued() {
   # BARE IDS a consumer can pipe, so it must never emit a STUCK line -
   # ac-teardown.sh takes `head -n1` and would name a never-startable family as
   # the next promote candidate.
-  snapshot | awk -v cap="$cap" '
+  snapshot | awk -v cap="$cap" -v today="$(date +%Y-%m-%d)" '
     BEGIN { FS = "\t" }
     {
       sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; dom = $10
+      if (hold != "" && $11 != "" && $11 <= today) hold = ""
       state[id] = sec
       mark[id] = marker
       if (sec == "inflight" && epic != "" && marker != "epic") flying[epic]++

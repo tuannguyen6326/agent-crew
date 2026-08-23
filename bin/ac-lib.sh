@@ -989,8 +989,9 @@ ac_room_file() {
 #                   else "". A token check, NEVER a substring match against the
 #                   whole line: a prose mention of [failed] is not a terminal
 #                   state (the ready-marker-matches-prose-not-position incident).
-#   f["hold"]     - "1" when the row carries the captain-hold token `[@held]`
-#                   as one of the line's top-level `[...]` groups AND that
+#   f["hold"]     - "1" when the row carries the captain-hold token `[@held]`,
+#                   or its DATED arm `[@held until <YYYY-MM-DD>]`, as one of
+#                   the line's top-level `[...]` groups AND that
 #                   group sits in the LEADING RUN - the contiguous run of
 #                   `[...]` groups starting immediately after the id, nothing
 #                   but whitespace between them - else "". A hold is not a
@@ -1029,6 +1030,13 @@ ac_room_file() {
 #                   with the CODE-SPAN rule below; between them, a `[@held]`
 #                   outside the leading run is never authoritative, and one
 #                   wrapped in backticks is never authoritative even inside it.
+#   f["hold_until"] - the `<YYYY-MM-DD>` of a dated hold, else "". EXPIRY is
+#                   not judged here - the parser extracts, `bin/ac-ready.sh`
+#                   compares against today, the same extract/judge split
+#                   `contract`/`ac_contract_lint` already take. A hold whose
+#                   date shape is anything else is not a dated hold at all:
+#                   it falls to hold_malformed below, so a mis-typed date is
+#                   HELD (fail-closed), never an accidental release.
 #   f["hold_malformed"] - "1" when a `[...]` group is a mis-typed hold
 #                   attempt and is NOT wrapped in a code span (see QUOTATION
 #                   below), by EITHER of two rules, each catching a different
@@ -1111,7 +1119,7 @@ ac_room_file() {
 # terminal in {failed,abandoned} ? terminal : verb.
 read -r -d '' AC_DONELINE_AWK <<'ACAWK' || true
 function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv, dauth) {
-  f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_malformed"] = ""; f["epic"] = ""
+  f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_until"] = ""; f["hold_malformed"] = ""; f["epic"] = ""
   f["blockers"] = ""; f["blockers_malformed"] = ""; f["date"] = ""; f["verb"] = ""; f["contract"] = ""
   f["domain"] = ""; f["domain_malformed"] = ""
   rest = line
@@ -1170,8 +1178,10 @@ function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, f
       f["contract"] = hcontent
     } else if (quoted) {
       # a documentation mention - never a token, never an attempt
-    } else if (positional && hgrp == "[@held]") {
+    } else if (positional && hgrp ~ /^\[@held( until [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])?\]$/) {
       f["hold"] = "1"
+      if (match(hgrp, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
+        f["hold_until"] = substr(hgrp, RSTART, RLENGTH)
     } else if (tolower(hgrp) ~ /@held|@hold/) {
       f["hold_malformed"] = "1"
     } else {

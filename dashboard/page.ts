@@ -1977,9 +1977,10 @@ function loadBoardKpi(hp){
 // A family WAITING ON THE CAPTAIN is highlighted in place, in the same amber
 // language as the awaiting-captain KPI tile: an open GATE/ASK/handback in its
 // room (the KPI's own source), or a captain-held row. The held check is
-// display-only (the scheduler's strict grammar stays in ac-ready).
+// display-only (the scheduler's strict grammar stays in ac-ready) and matches
+// the token PREFIX so the dated arm [@held until YYYY-MM-DD] highlights too.
 function boardWaits(fam, line){
-  if(line && line.indexOf('[@held]')>=0 && line.indexOf(String.fromCharCode(96)+'[@held]')<0) return true;
+  if(line && line.indexOf('[@held')>=0 && line.indexOf(String.fromCharCode(96)+'[@held')<0) return true;
   var hp=S.route&&S.route.home?S.route.home.path:'';
   var c=hp&&boardKpiC[hp];
   return !!(c&&c.fams&&c.fams.indexOf(fam)>=0);
