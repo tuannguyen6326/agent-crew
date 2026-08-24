@@ -130,3 +130,45 @@ if "$FT" verify checkoutux proj2 2>/dev/null; then
 fi
 # un-retire for the later slices (retire prepends one marker line)
 sed -i '' '1d' "$AC_HOME/data/checkoutux/branches"
+
+# --- slice 3: the push=deferred fence arm in ac-tree get -------------------------
+# proj2 HAS an origin, but a feature branch lives only locally until ship: the
+# fence must cut the lease from the LOCAL ref instead of demanding origin.
+cat >>"$AC_HOME/records/backlog.md" <<'BEOF'
+- [ ] checkoutux-s1 - story; feature:checkoutux (repo: proj2)
+- [ ] ghostux-s1 - story; feature:ghostux (repo: proj2)
+BEOF
+feat_tip="$(git -C "$AC_HOME/projects/proj2" rev-parse refs/heads/feat/checkoutux)"
+wt="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj2" --id checkoutux-s1 --holder t 2>/dev/null)"
+assert_eq "$(git -C "$wt" rev-parse HEAD)" "$feat_tip" \
+  "a member lease is cut from the LOCAL feature branch (origin never consulted)"
+
+# recorded-but-never-created refuses with the feature remedy, never fall-through
+mkdir -p "$AC_HOME/data/ghostux"
+printf 'proj2 feat/ghostux push=deferred\n' >"$AC_HOME/data/ghostux/branches"
+out="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj2" --id ghostux-s1 --holder t 2>&1 || true)"
+assert_contains "$out" "ac-feature.sh create" \
+  "a recorded-but-missing feature branch refuses the lease with the feature remedy"
+
+# --- slice 3: the landing - local ff, NO push, qa deferred to the ship gate -----
+git -C "$wt" checkout -q -b crew/checkoutux-s1
+printf 'member work\n' >"$wt/member.txt"
+git -C "$wt" add -A; git -C "$wt" commit -qm "member work"
+member_head="$(git -C "$wt" rev-parse HEAD)"
+printf 'project_dir=%s\nworktree=%s\n' "$AC_HOME/projects/proj2" "$wt" >"$AC_HOME/state/checkoutux-s1.meta"
+out="$("$BIN/ac-merge-local.sh" checkoutux-s1)"
+assert_contains "$out" "ref-only" "the feature landing is a ref-only ff"
+assert_contains "$out" "feature ship gate" \
+  "qa.require_for_ship defers to the feature ship gate on a feature landing"
+assert_eq "$(git -C "$AC_HOME/projects/proj2" rev-parse refs/heads/feat/checkoutux)" "$member_head" \
+  "the LOCAL feature branch fast-forwarded to the member head"
+if git -C "$up2" show-ref --verify --quiet refs/heads/feat/checkoutux; then
+  fail "a feature landing must NOT push (push=deferred, publication happens at ship)"
+fi
+"$BIN/ac-tree.sh" return "$wt" --force >/dev/null 2>&1
+
+# a missing feature target at land time names the feature remedy
+printf 'project_dir=%s\nworktree=%s\n' "$AC_HOME/projects/proj2" "$wt" >"$AC_HOME/state/ghostux-s1.meta"
+out="$("$BIN/ac-merge-local.sh" ghostux-s1 2>&1 || true)"
+assert_contains "$out" "ac-feature.sh create" \
+  "a landing onto a never-created feature branch names the feature remedy"

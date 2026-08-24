@@ -559,11 +559,18 @@ cmd_get() {
   # base. It lives HERE (not in ac-spawn) so the documented mid-task
   # second-lease path a crewmate takes itself, and the --prefer resume lease,
   # ride the same fence. ac_epic_base_for (ac-lib.sh) owns the resolution.
-  local base_ref="" eb ebranch rname
+  local base_ref="" eb ebranch rname eb_deferred
   rname="$(basename "$repo")"
   if [ -n "$id" ] && eb="$(ac_epic_base_for "$id" "$rname")"; then
     ebranch="${eb%% *}"
-    if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+    case " ${eb#"$ebranch"} " in *" push=deferred "*) eb_deferred=1 ;; *) eb_deferred=0 ;; esac
+    if [ "$eb_deferred" = 1 ]; then
+      # push=deferred marks a FEATURE entry (feature-branch-mech): the branch
+      # is LOCAL until ship, so origin is never the judge here.
+      git -C "$repo" show-ref --verify --quiet "refs/heads/$ebranch" \
+        || ac_die "get: feature branch $ebranch does not exist in $rname - cut it first: ac-feature.sh create <feature> $rname"
+      base_ref="$ebranch"
+    elif git -C "$repo" remote get-url origin >/dev/null 2>&1; then
       git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$ebranch" \
         || ac_die "get: epic branch $ebranch is not on origin of $rname - cut it first: ac-epic-branch.sh create <epic> $rname"
       base_ref="origin/$ebranch"

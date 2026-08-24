@@ -87,12 +87,18 @@ default="$(ac_default_branch "$project_dir")"
 # invariant and the commit guard stay untouched and a SCOPED chief can land
 # (the live epic practice). --no-ff onto an epic target is refused here: a
 # genuine merge commit belongs in a leased worktree, not the primary.
-target="$default"; epic_mode=0; epic_push=0
+target="$default"; epic_mode=0; epic_push=0; eb_deferred=0
 if eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")")"; then
   target="${eb_entry%% *}"
   epic_mode=1
   case " ${eb_entry#"$target"} " in *" push=yes "*) epic_push=1 ;; esac
+  # push=deferred marks a FEATURE entry (feature-branch-mech): local until
+  # ship, so the landing never pushes and origin never substitutes for the
+  # missing local branch.
+  case " ${eb_entry#"$target"} " in *" push=deferred "*) eb_deferred=1 ;; esac
   if ! git -C "$project_dir" rev-parse --verify --quiet "refs/heads/$target" >/dev/null; then
+    [ "$eb_deferred" = 0 ] \
+      || ac_die "feature target $target does not exist locally - cut it first: ac-feature.sh create <feature> $(basename "$project_dir")"
     git -C "$project_dir" rev-parse --verify --quiet "refs/remotes/origin/$target" >/dev/null \
       || ac_die "epic target $target exists neither locally nor on origin - cut it first: ac-epic-branch.sh create <epic> $(basename "$project_dir")"
     git -C "$project_dir" branch "$target" "refs/remotes/origin/$target"
@@ -126,10 +132,15 @@ git -C "$project_dir" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null
 # declared one - EVERY required profile must have a passing attestation at this
 # head, not merely any one pair (ac_qa_gate_ok / ac_qa_gate_matrix).
 if [ "$epic_mode" = 1 ]; then
-  # qa.require_for_ship guards the PRODUCTION merge; an epic-branch landing
-  # is integration, not production - the epic gate's own QA round owns it
-  # (epic-branch-mech proposal, captain ruling 2026-08-19).
-  printf 'qa.require_for_ship: deferred to the epic gate (epic-branch landing)\n'
+  # qa.require_for_ship guards the PRODUCTION merge; an integration-branch
+  # landing is integration, not production - the epic gate's own QA round
+  # owns it (captain ruling 2026-08-19), and a feature's ship gate owns its
+  # (feature-branch-mech, captain ruling 2026-08-24).
+  if [ "$eb_deferred" = 1 ]; then
+    printf 'qa.require_for_ship: deferred to the feature ship gate (feature-branch landing)\n'
+  else
+    printf 'qa.require_for_ship: deferred to the epic gate (epic-branch landing)\n'
+  fi
 else
   ac_qa_gate_ok "$project_dir" "$(git -C "$project_dir" rev-parse "refs/heads/$branch")" "$id" \
     || ac_die "local merge blocked by qa.require_for_ship (see message above)"
