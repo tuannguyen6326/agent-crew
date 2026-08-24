@@ -78,6 +78,7 @@ assert_eq "$(ac_contract_lint 'src:cap flow:direct mode:local-only rev:no qa:no'
 assert_contains "$(ac_contract_lint 'src:boss')" "src:boss invalid" "src vocabulary is closed"
 assert_contains "$(ac_contract_lint 'flow:agile')" "flow:agile invalid" "flow vocabulary is closed"
 assert_contains "$(ac_contract_lint 'mode:ship')" "mode:ship invalid" "mode wants the FULL registry names"
+assert_eq "$(ac_contract_lint 'mode:feature-pr')" "" "mode:feature-pr is a legal mode (feature-branch-mech)"
 assert_contains "$(ac_contract_lint 'rev:maybe')" "rev:maybe invalid" "rev is yes|no"
 assert_contains "$(ac_contract_lint 'qa:auto')" "qa:auto invalid" \
   "qa:auto is deliberately NOT a value - delegation-by-click was dropped when the captain named chief judgment as the error source"

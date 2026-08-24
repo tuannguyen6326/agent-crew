@@ -1086,6 +1086,13 @@ ac_room_file() {
 #                   write `` `[@held]` `` or `` `[held]` `` without holding or
 #                   flagging itself.
 #   f["epic"]     - the id in an `epic:<id>` token anywhere on the line, else "".
+#   f["feature"]  - the name in a `feature:<name>` token anywhere on the line,
+#                   else "" (feature-branch-mech). A MEMBERSHIP token exactly
+#                   like epic: - same anywhere-match, same charset. A row
+#                   carrying BOTH names two integration targets, a ledger
+#                   defect: ac_epic_base_for resolves epic first,
+#                   deterministically, and ac-feature.sh ship refuses such a
+#                   member row.
 #   f["domain"]   - the name in a `domain:<name>` CREWDOMAIN assignment token
 #                   (crewdomain-token) - authoritative ONLY at the two grammar
 #                   positions the old `assigned:crewchief` slot defined:
@@ -1119,7 +1126,7 @@ ac_room_file() {
 # terminal in {failed,abandoned} ? terminal : verb.
 read -r -d '' AC_DONELINE_AWK <<'ACAWK' || true
 function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv, dauth) {
-  f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_until"] = ""; f["hold_malformed"] = ""; f["epic"] = ""
+  f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_until"] = ""; f["hold_malformed"] = ""; f["epic"] = ""; f["feature"] = ""
   f["blockers"] = ""; f["blockers_malformed"] = ""; f["date"] = ""; f["verb"] = ""; f["contract"] = ""
   f["domain"] = ""; f["domain_malformed"] = ""
   rest = line
@@ -1192,6 +1199,8 @@ function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, f
   }
   if (match(line, /epic:[a-zA-Z0-9_-]+/))
     f["epic"] = substr(line, RSTART + 5, RLENGTH - 5)
+  if (match(line, /feature:[a-zA-Z0-9_-]+/))
+    f["feature"] = substr(line, RSTART + 8, RLENGTH - 8)
   # domain:<name> (crewdomain-token) - see the field notes above. Two-arm
   # position rule inherited from the retired domain_row_tokened; every other
   # occurrence is malformed unless backtick-quoted.
@@ -1315,7 +1324,7 @@ ac_contract_lint() {
         case "$val" in direct|staged) ;; *) printf 'flow:%s invalid - want direct|staged\n' "$val" ;; esac ;;
       mode)
         mode="$val"
-        case "$val" in crew-ship|direct-pr|local-only) ;; *) printf 'mode:%s invalid - want crew-ship|direct-pr|local-only\n' "$val" ;; esac ;;
+        case "$val" in crew-ship|direct-pr|local-only|feature-pr) ;; *) printf 'mode:%s invalid - want crew-ship|direct-pr|local-only|feature-pr\n' "$val" ;; esac ;;
       rev)
         rev="$val"
         case "$val" in yes|no) ;; *) printf 'rev:%s invalid - want yes|no\n' "$val" ;; esac ;;
@@ -2185,14 +2194,16 @@ ac_default_ref() {
 }
 
 ac_freshest_ref() {
-  # ac_freshest_ref <repo> - the freshest default-branch ref: whichever of
+  # ac_freshest_ref <repo> [<branch>] - the freshest ref of the default branch
+  # (no second argument) or of the NAMED branch (feature-branch-mech: a
+  # feature branch cuts at its TARGET's tip, not the default's): whichever of
   # local vs origin is AHEAD (origin wins on true divergence). THE one
-  # freshest-tip resolver: ac-tree.sh's pool reset and ac-epic-branch.sh's
-  # create both cut here, so the two can never disagree about "the tip"
+  # freshest-tip resolver: ac-tree.sh's pool reset and the epic/feature create
+  # verbs all cut here, so they can never disagree about "the tip"
   # (ac_default_ref above is the cruder origin-if-it-exists rule and stays
   # for callers that want exactly that).
-  local repo="$1" branch have_l=0 have_o=0
-  branch="$(ac_default_branch "$repo")"
+  local repo="$1" branch="${2:-}" have_l=0 have_o=0
+  [ -n "$branch" ] || branch="$(ac_default_branch "$repo")"
   git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" && have_l=1
   git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch" && have_o=1
   if [ "$have_l" = 1 ] && [ "$have_o" = 1 ]; then
@@ -2236,24 +2247,29 @@ ac_epic_base_for() {
   # ac_epic_base_for <id> <repo-name> - the integration-branch entry a lease
   # for <id> on <repo-name> must honor. Resolves <id>'s ledger row by LONGEST
   # id-prefix (an intra-family fan-out sub-task carries no row of its own),
-  # then tries the row's `epic:<e>` token AND the row id itself (an epic's own
-  # scouts integrate on the epic's branch too) against the branch record.
+  # then tries the row's `epic:<e>` token, its `feature:<f>` token
+  # (feature-branch-mech - epic FIRST when a defective row carries both, so
+  # the answer is deterministic; ac-feature.sh ship refuses such a member)
+  # AND the row id itself (an epic's/feature's own scouts integrate on its
+  # branch too) against the branch record.
   # Prints `<branch> [key=value ...]`; rc 1 = no fence (no row, no record, or
   # a retired record - retirement is the DELIBERATE end of the fence).
-  local id="$1" repo="$2" ledger row_id="" row_epic="" cand entry base
+  local id="$1" repo="$2" ledger row_id="" row_tok="" row_epic="" row_feature="" cand entry base
   ledger="$(ac_records_dir)/backlog.md"
   [ -f "$ledger" ] || return 1
   base="$id"
   while :; do
-    if row_epic="$(awk -v want="$base" "$AC_DONELINE_AWK"'
-      /^- \[/ { ac_doneline($0, f); if (f["id"] == want) { print f["epic"]; found = 1; exit } }
+    if row_tok="$(awk -v want="$base" "$AC_DONELINE_AWK"'
+      /^- \[/ { ac_doneline($0, f); if (f["id"] == want) { print f["epic"] "\t" f["feature"]; found = 1; exit } }
       END { if (!found) exit 1 }' "$ledger")"; then
       row_id="$base"
       break
     fi
     case "$base" in *-*) base="${base%-*}" ;; *) return 1 ;; esac
   done
-  for cand in "$row_epic" "$row_id"; do
+  row_epic="${row_tok%%$'\t'*}"
+  row_feature="${row_tok#*$'\t'}"
+  for cand in "$row_epic" "$row_feature" "$row_id"; do
     [ -n "$cand" ] || continue
     if entry="$(ac_epic_branch_entry "$cand" "$repo")"; then
       printf '%s\n' "$entry"

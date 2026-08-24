@@ -182,3 +182,18 @@ dv="$(awk "$AC_DONELINE_AWK"'
   /^- \[x\] payland/ { ac_doneline($0, o); printf "%s|%s\n", o["verb"], o["date"] }
 ' "$DFX")"
 assert_eq "$dv" "merged|2026-08-18" "date/verb parse is inert to a trailing domain token"
+
+# --- feature:<name> membership token (feature-branch-mech) ---------------------
+# Anywhere-matched exactly like epic: - both are membership tokens; absent -> "".
+FFX="$TMP/featshapes.md"
+cat >"$FFX" <<'FEOF'
+- [ ] fs1 - story one; feature:pay-ux (repo: proj)
+- [ ] fs2 - defective row carrying both; epic:payv2 feature:pay-ux (repo: proj)
+- [ ] plainrow - no membership token at all (repo: proj)
+FEOF
+fgot="$(awk "$AC_DONELINE_AWK"'
+  /^- \[[ x]\] / { ac_doneline($0, o); printf "%s|%s|%s\n", o["id"], o["feature"], o["epic"] }
+' "$FFX")"
+assert_contains "$fgot" "fs1|pay-ux|" "feature:<name> is extracted anywhere on the line"
+assert_contains "$fgot" "fs2|pay-ux|payv2" "feature: and epic: are both extracted from one row"
+assert_contains "$fgot" "plainrow||" "no token reads as empty"
