@@ -187,3 +187,101 @@ assert_contains "$b2" "Review: no" "feature-pr defaults review=no (the ship gate
 out="$("$BIN/ac-brief.sh" loneworks proj2 2>&1 || true)"
 assert_contains "$out" "no integration-branch record" \
   "feature-pr with no resolvable record refuses at scaffold time"
+
+# --- slice 5: ac-feature.sh ship - the gated single-PR exit ----------------------
+# a fresh feature cut at the CURRENT target tip (no drift), plus one open member
+git -C "$AC_HOME/projects/proj2" fetch -q origin
+cat >>"$AC_HOME/records/backlog.md" <<'BEOF'
+- [ ] shipux - feature container (repo: proj2)
+- [ ] shipux-s1 - open member; feature:shipux (repo: proj2)
+BEOF
+mkdir -p "$AC_HOME/data/shipux"
+printf 'proj2 feat/shipux target=release push=deferred\n' >"$AC_HOME/data/shipux/branches"
+"$FT" create shipux proj2 >/dev/null
+
+out="$(AC_SCOPE=shipux "$FT" ship shipux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "CREWCHIEF" "ship is chief-only"
+out="$("$FT" ship shipux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "non-terminal members: shipux-s1" "an open member refuses the exit and is named"
+
+# members terminal, one abandoned -> the partial receipt gate; an epic-poisoned
+# member refuses outright (two integration targets is a ledger defect)
+python3 - "$AC_HOME/records/backlog.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("- [ ] shipux-s1 - open member; feature:shipux (repo: proj2)",
+  "- [x] shipux-s1 - landed member; feature:shipux (repo: proj2)\n- [x] shipux-s2 [abandoned] - died mid-feature; feature:shipux (repo: proj2)\n- [x] shipux-s3 - poisoned member; epic:eppyx feature:shipux (repo: proj2)")
+open(p, "w").write(s)
+PYEOF
+out="$("$FT" ship shipux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "shipux-s3" "a member also carrying epic: refuses the exit"
+python3 - "$AC_HOME/records/backlog.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("\n- [x] shipux-s3 - poisoned member; epic:eppyx feature:shipux (repo: proj2)", "")
+open(p, "w").write(s)
+PYEOF
+out="$("$FT" ship shipux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "partial feature" "an abandoned member without a captain receipt refuses"
+assert_contains "$out" "shipux-s2" "and names it"
+printf -- '- [2026-08-24T12:00:00Z] crewchief> DECIDED: feature-ship partial - shipux-s2 keep (captain word)\n' >>"$AC_HOME/data/shipux/room.md"
+
+# review round at the LOCAL tip: absent -> refuse with the exact command;
+# stale ref and open fix findings refuse too
+out="$("$FT" ship shipux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "no feature review round on record" "a missing review round refuses"
+assert_contains "$out" "ac-verify.sh codereview" "and prints the exact round command"
+tipf="$(git -C "$AC_HOME/projects/proj2" rev-parse refs/heads/feat/shipux)"
+mkdir -p "$AC_HOME/data/shipux/gate"
+printf '{"findings":[{"action":"fix","summary":"x"}],"reviewed_ref":"%s"}\n' "$tipf" >"$AC_HOME/data/shipux/gate/review.json"
+out="$("$FT" ship shipux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "open fix finding" "an open fix finding refuses the exit"
+printf '{"findings":[],"reviewed_ref":"%s"}\n' "$tipf" >"$AC_HOME/data/shipux/gate/review.json"
+
+# gates green -> dry-run prints the deferred push and the SINGLE PR to target
+out="$("$FT" ship shipux proj2 --dry-run)"
+assert_contains "$out" "DRY-RUN: git -C" "the deferred push rides the ship (dry-printed)"
+assert_contains "$out" -- "--base release" "the single PR targets the recorded target branch"
+
+# idempotent: a recorded PR is reported, never re-opened
+printf 'pr_url=https://example.test/pr/1\n' >"$AC_HOME/data/shipux/gate/ships.env"
+out="$("$FT" ship shipux proj2 --dry-run)"
+assert_contains "$out" "already recorded" "a recorded PR is reported, not re-opened"
+rm "$AC_HOME/data/shipux/gate/ships.env"
+
+# qa pin on the CONTAINER row gates the tip
+python3 - "$AC_HOME/records/backlog.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("- [ ] shipux - feature container (repo: proj2)",
+              "- [ ] shipux [src:cap flow:direct mode:feature-pr rev:no qa:yes] - feature container (repo: proj2)")
+open(p, "w").write(s)
+PYEOF
+out="$("$FT" ship shipux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "no crew-qa pass attestation" "a qa:yes feature refuses without an attestation at the tip"
+mkdir -p "$AC_HOME/projects/proj2/.crew/qa/passed"
+: >"$AC_HOME/projects/proj2/.crew/qa/passed/$tipf"
+out="$("$FT" ship shipux proj2 --dry-run)"
+assert_contains "$out" -- "--base release" "the attestation at the tip satisfies the qa gate"
+
+# --- slice 5: target drift refuses the ship --------------------------------------
+# advance checkoutux's target (release) PAST its cut - the ship refuses with
+# the rebase advice instead of opening a conflict-bearing PR
+git -C "$up2" checkout -q release
+printf 'drift\n' >>"$up2/file.txt"; git -C "$up2" add -A; git -C "$up2" commit -qm drift
+git -C "$up2" checkout -q main
+python3 - "$AC_HOME/records/backlog.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("- [ ] checkoutux-s1 - story; feature:checkoutux (repo: proj2)",
+              "- [x] checkoutux-s1 - landed; feature:checkoutux (repo: proj2)")
+s = s.replace("- [ ] checkoutux-s2 [src:cap flow:direct mode:feature-pr rev:no qa:no] - member two; feature:checkoutux (repo: proj2)",
+              "- [x] checkoutux-s2 [src:cap flow:direct mode:feature-pr rev:no qa:no] - member two; feature:checkoutux (repo: proj2)")
+open(p, "w").write(s)
+PYEOF
+out="$("$FT" ship checkoutux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "behind its target" "a drifted feature refuses the ship with the rebase advice"
