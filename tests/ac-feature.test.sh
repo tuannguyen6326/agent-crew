@@ -62,3 +62,71 @@ assert_eq "$(ac_freshest_ref "$up" release)" "release" \
   "a no-origin repo's target resolves locally"
 assert_eq "$(ac_freshest_ref "$up")" "main" \
   "the no-branch-argument arm still answers the default branch"
+
+# --- slice 2: bin/ac-feature.sh record verbs -------------------------------------
+FT="$BIN/ac-feature.sh"
+up2="$(make_repo up2)"
+git -C "$up2" branch release
+mkdir -p "$AC_HOME/projects"
+git clone -q "$up2" "$AC_HOME/projects/proj2"
+git -C "$AC_HOME/projects/proj2" config user.email test@test
+git -C "$AC_HOME/projects/proj2" config user.name test
+mkdir -p "$AC_HOME/data/checkoutux"
+printf 'proj2 feat/checkoutux target=release push=deferred\n' >"$AC_HOME/data/checkoutux/branches"
+
+# advance origin's release AFTER the clone: create must fetch and cut at the
+# TARGET's freshest tip, not the default's and not a stale mirror
+git -C "$up2" checkout -q release
+printf 'rel work\n' >>"$up2/file.txt"; git -C "$up2" add -A; git -C "$up2" commit -qm rel
+git -C "$up2" checkout -q main
+rel_tip="$(git -C "$up2" rev-parse release)"
+
+"$FT" create checkoutux proj2 >/dev/null
+assert_eq "$(git -C "$AC_HOME/projects/proj2" rev-parse refs/heads/feat/checkoutux)" "$rel_tip" \
+  "create cuts a LOCAL branch at the TARGET's freshest tip"
+if git -C "$up2" show-ref --verify --quiet refs/heads/feat/checkoutux; then
+  fail "create must NOT publish the branch (deferred push is the mode)"
+fi
+
+# idempotent + never-clobber
+git -C "$up2" checkout -q release
+printf 'more rel\n' >>"$up2/file.txt"; git -C "$up2" add -A; git -C "$up2" commit -qm rel2
+git -C "$up2" checkout -q main
+"$FT" create checkoutux proj2 >/dev/null
+assert_eq "$(git -C "$AC_HOME/projects/proj2" rev-parse refs/heads/feat/checkoutux)" "$rel_tip" \
+  "a second create never moves the existing branch"
+
+# verify judges the LOCAL ref
+"$FT" verify checkoutux proj2 || fail "verify green on the local branch"
+git -C "$AC_HOME/projects/proj2" branch -q -D feat/checkoutux
+if "$FT" verify checkoutux proj2 2>/dev/null; then
+  fail "verify must fail once the LOCAL branch is gone"
+fi
+"$FT" create checkoutux proj2 >/dev/null
+
+# target defaults to the repo default branch when the key is absent
+mkdir -p "$AC_HOME/data/defux"
+printf 'proj2 feat/defux push=deferred\n' >"$AC_HOME/data/defux/branches"
+"$FT" create defux proj2 >/dev/null
+assert_eq "$(git -C "$AC_HOME/projects/proj2" rev-parse refs/heads/feat/defux)" \
+  "$(git -C "$AC_HOME/projects/proj2" rev-parse refs/remotes/origin/main)" \
+  "an absent target= key cuts at the default branch's tip"
+
+# an entry without push=deferred is an EPIC-shaped record, not a feature entry
+mkdir -p "$AC_HOME/data/notfeat"
+printf 'proj2 feat/notfeat target=release\n' >"$AC_HOME/data/notfeat/branches"
+out="$("$FT" create notfeat proj2 2>&1 || true)"
+assert_contains "$out" "push=deferred" "a non-deferred entry refuses the feature verbs"
+
+# chief-only on the mutating verb; show/retire delegate to the record verbs
+out="$(AC_SCOPE=checkoutux "$FT" create checkoutux proj2 2>&1 || true)"
+assert_contains "$out" "CREWCHIEF" "a scoped chief cannot create"
+out="$("$FT" show checkoutux)"
+assert_contains "$out" "proj2 feat/checkoutux target=release push=deferred" \
+  "show prints the record verbatim"
+"$FT" retire checkoutux >/dev/null
+if "$FT" verify checkoutux proj2 2>/dev/null; then
+  fail "verify must refuse a retired record"
+fi
+# un-retire for the later slices (retire prepends one marker line)
+sed -i '' '1d' "$AC_HOME/data/checkoutux/branches"
