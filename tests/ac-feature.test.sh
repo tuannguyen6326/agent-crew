@@ -172,3 +172,18 @@ printf 'project_dir=%s\nworktree=%s\n' "$AC_HOME/projects/proj2" "$wt" >"$AC_HOM
 out="$("$BIN/ac-merge-local.sh" ghostux-s1 2>&1 || true)"
 assert_contains "$out" "ac-feature.sh create" \
   "a landing onto a never-created feature branch names the feature remedy"
+
+# --- slice 4: mode feature-pr in ac-brief -----------------------------------------
+cat >>"$AC_HOME/records/backlog.md" <<'BEOF'
+- [ ] checkoutux-s2 [src:cap flow:direct mode:feature-pr rev:no qa:no] - member two; feature:checkoutux (repo: proj2)
+- [ ] loneworks [src:cap flow:direct mode:feature-pr rev:no qa:no] - tokenless feature-pr row (repo: proj2)
+BEOF
+"$BIN/ac-brief.sh" checkoutux-s2 proj2 >/dev/null
+b2="$(cat "$AC_HOME/data/checkoutux-s2/brief.md")"
+assert_contains "$b2" "Mode: feature-pr" "the brief records the mode"
+assert_contains "$b2" "feat/checkoutux" "the delivery contract names the feature branch"
+assert_contains "$b2" "Never push" "a feature-pr crewmate never publishes"
+assert_contains "$b2" "Review: no" "feature-pr defaults review=no (the ship gate owns the round)"
+out="$("$BIN/ac-brief.sh" loneworks proj2 2>&1 || true)"
+assert_contains "$out" "no integration-branch record" \
+  "feature-pr with no resolvable record refuses at scaffold time"

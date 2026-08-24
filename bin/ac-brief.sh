@@ -2,7 +2,7 @@
 # ac-brief.sh - scaffold a crewmate brief.
 #
 # Usage: ac-brief.sh <id> <project-name> [--scout | --stage <spec|architecture|plan|implement|design|qa>]
-#                    [--mode <crew-ship|direct-pr|local-only>] [--review <yes|no>]
+#                    [--mode <crew-ship|direct-pr|local-only|feature-pr>] [--review <yes|no>]
 #                    [--captain-requested <ref>] [--reason <one line>]
 #                    [--qa-required-profile <project/scope/app>]...
 #
@@ -197,8 +197,8 @@ if [ "$stage" != scout ]; then
   fi
   if [ -n "$mode_flag" ]; then
     case "$mode_flag" in
-      crew-ship|direct-pr|local-only) ;; 
-      *) ac_die "invalid --mode: $mode_flag (want crew-ship|direct-pr|local-only)" ;;
+      crew-ship|direct-pr|local-only|feature-pr) ;;
+      *) ac_die "invalid --mode: $mode_flag (want crew-ship|direct-pr|local-only|feature-pr)" ;;
     esac
     if [ -n "$_early_pin_mode" ] && [ "$_early_pin_mode" != "$mode_flag" ]; then
       ac_die "--mode $mode_flag contradicts the row's pinned mode:$_early_pin_mode - the pin is the captain's recorded word; change the row (a captain act) or drop the flag (nothing scaffolded)"
@@ -207,7 +207,7 @@ if [ "$stage" != scout ]; then
   elif [ -n "$_early_pin_mode" ]; then
     mode="$_early_pin_mode"
   else
-    ac_die "mode unspecified for '$id': pass --mode <crew-ship|direct-pr|local-only> (your triage - the time-expensive crew-ship will still ask the captain), or pin it on the backlog row's contract group. There is no registry default any more (captain order: mode is per-task)"
+    ac_die "mode unspecified for '$id': pass --mode <crew-ship|direct-pr|local-only|feature-pr> (your triage - the time-expensive crew-ship will still ask the captain), or pin it on the backlog row's contract group. There is no registry default any more (captain order: mode is per-task)"
   fi
 fi
 
@@ -229,6 +229,12 @@ if epic_eb_entry="$(ac_epic_base_for "$id" "$project" 2>/dev/null)"; then
 fi
 pr_base_phrase="the target branch"
 [ -z "$epic_eb_branch" ] || pr_base_phrase="the epic integration branch \`$epic_eb_branch\`"
+# mode:feature-pr binds a task to a RECORDED feature branch - a member with no
+# resolvable entry has no landing target, so refuse at scaffold time
+# (fail-closed) instead of failing later at the lease or the land.
+if [ "$mode" = feature-pr ] && [ -z "$epic_eb_branch" ]; then
+  ac_die "mode:feature-pr for '$id' resolves no integration-branch record - token the row 'feature:<name>', write data/<name>/branches ('$project <branch> [target=<t>] push=deferred', the captain's word receipted DECIDED: to the room), and cut it with ac-feature.sh create <name> $project"
+fi
 if [ "$staged" = 1 ] && [ -n "$epic_eb_branch" ]; then
   review="${review_flag:-no}"
   if [ "$review" = yes ]; then
@@ -762,6 +768,9 @@ EOF
       if [ "$mode" = direct-pr ]; then
         delivery_mode="- Mode direct-pr: after the ordered review/check/doc loop below, push \`$crew_branch\` and open a PR against $pr_base_phrase. The PR body covers intent, changes, and verification evidence."
         signals_suffix=" (include the PR URL)"
+      elif [ "$mode" = feature-pr ]; then
+        delivery_mode="- Mode feature-pr: after the ordered review/check/doc loop below, leave \`$crew_branch\` clean and fully committed - it lands onto the feature integration branch \`$epic_eb_branch\` (the chief runs ac-merge-local). Never push or open a PR; publication happens ONCE at the feature ship."
+        signals_suffix=""
       else
         delivery_mode="- Mode local-only: after the ordered review/check/doc loop below, leave \`$crew_branch\` clean and fully committed. Never push or open a PR."
         signals_suffix=""
@@ -771,6 +780,9 @@ EOF
       if [ "$mode" = direct-pr ]; then
         delivery_mode="- Mode direct-pr: after the ordered check/doc loop below, push \`$crew_branch\` and open a PR against $pr_base_phrase. The PR body covers intent, changes, and verification evidence."
         signals_suffix=" (include the PR URL)"
+      elif [ "$mode" = feature-pr ]; then
+        delivery_mode="- Mode feature-pr: after the ordered check/doc loop below, leave \`$crew_branch\` clean and fully committed - it lands onto the feature integration branch \`$epic_eb_branch\` (the chief runs ac-merge-local). Never push or open a PR; publication happens ONCE at the feature ship."
+        signals_suffix=""
       else
         delivery_mode="- Mode local-only: after the ordered check/doc loop below, leave \`$crew_branch\` clean and fully committed. Never push or open a PR."
         signals_suffix=""

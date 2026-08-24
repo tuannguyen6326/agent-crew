@@ -1497,8 +1497,8 @@ fi
 mode="$(sed -n 's/^Mode: //p' "$brief" 2>/dev/null | head -n 1)"
 if [ -n "$mode_flag" ]; then
   case "$mode_flag" in
-    crew-ship|direct-pr|local-only) ;;
-    *) ac_die "invalid --mode: $mode_flag (want crew-ship|direct-pr|local-only)" ;;
+    crew-ship|direct-pr|local-only|feature-pr) ;;
+    *) ac_die "invalid --mode: $mode_flag (want crew-ship|direct-pr|local-only|feature-pr)" ;;
   esac
   if [ -n "$mode" ] && [ "$mode" != "$mode_flag" ]; then
     ac_die "--mode $mode_flag contradicts the brief's recorded Mode: $mode - re-scaffold the brief (the mode record) rather than spawning a different contract than the crewmate was briefed on"
