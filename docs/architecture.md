@@ -25,7 +25,7 @@ epic:    story map (gated artifact) ─► stories, each intaken as its own
 
 - design merges the admitted spec/architecture/plan stages into one crewmate (`--stage design`); admission is receipted per stage (`STAGE-ADMISSION:`, AGENTS.md section 5) and gates stay per report.
 - execution owns TDD, code, self-review, commits, review fixes, checks, docs, and delivery on one branch/session. Self-review gives the full diff to an applicable code-review plugin first (project-provided first); only when none exists does the implementer manually review the full diff, and it never runs both passes.
-- there is no normal code-review or ship crewmate. Review is a derived `yes|no` obligation: staged and crew-ship always yes; direct direct-pr/local-only default no and may opt in.
+- there is no normal code-review or ship crewmate. Review is a derived `yes|no` obligation: staged and crew-ship always yes; direct direct-pr/local-only default no and may opt in; feature-pr defaults no because its ONE round runs at the feature ship gate.
 - `crew-ship` is an 8-step engine inside execution and fulfills review once. Required review outside that engine calls `ac-verify codereview` directly. Every review round is a fresh exact-ref pane with structured history only.
 - qa is OPTIONAL behavioral proof AFTER delivery, decided at intake; it gates the MERGE, not the push, and execution calls the `ac-qa.sh agent` adapter over `ac-verify qa` instead of spawning a qa crewmate.
 - epics: story membership is registry-based (`epic:<id>` token on backlog lines, never id prefixes); blockers satisfy only on Done (merged); `[failed]`/`[abandoned]` are terminal non-satisfying, so dependents go STUCK and raise one ASK; at most `config/epic-parallel` (default 2) stories fly at once; every landing runs the file-overlap backstop; law in `AGENTS.md` sections 5 and 9, intake mechanics in the `epic-intake` skill, scheduler primitive in the `bin/ac-ready.sh` header.
@@ -50,6 +50,14 @@ local-only (review optional; staged makes it required)
              -> ac-verify codereview? -> fix loop
              -> test? -> document -> lint? -> local handover
              -> QA? -> captain merge
+
+feature-pr (one review round at the feature tip, inside the ship gate)
+  execution: implement -> self-review -> commit -> prepare
+             -> test? -> document -> lint? -> local handover
+  chief:     ac-merge-local (local ff onto the feature branch), x N members
+             -> ac-feature.sh ship [members terminal -> review at tip -> QA?
+                                    -> deferred push -> ONE PR to the target]
+             -> captain merge
 ```
 
 `?` means intake/policy-controlled. A ref-changing fix always returns to a fresh
@@ -68,7 +76,7 @@ chief or roomchief to the captain.
 - hold-and-fix: a failing step HOLDS the run and re-runs on the fix diff, never restarting from intent; `ac-ship.sh fix-report <step>` renders the fixer's markdown contract when the fix goes to a different crewmate.
 - independent review: `ac-ship.sh review-agent` is a thin adapter to `ac-verify codereview`, the facade that owns the isolated exact-ref lease, the one review pass, and the safe reap (`bin/ac-verify.sh` header). Its final object binds `reviewed_ref`; advisory risk reaches the PR body. The reviewer never fixes: a `fix` finding returns to execution, then the next round verifies the previous findings and reviews `previous reviewed_ref..current ref`. What the verifier may and may not do is `AGENTS.md` section 5.
 - live dashboard: `bin/ac-ship-watch.sh` (colored step table, findings summary, log tail, flicker-free repaint) is auto-opened at start and on every active step, self-closes when the run truly finishes or idles, and `finish` retires it via `<run>/watch.pane`.
-- delivery mode is per-task: the registry line is only the project default, overridden with `ac-brief.sh`/`ac-spawn.sh --mode` (modes: `crew-ship`, `direct-pr`, `local-only`).
+- delivery mode is per-task: the registry line is only the project default, overridden with `ac-brief.sh`/`ac-spawn.sh --mode` (modes: `crew-ship`, `direct-pr`, `local-only`, `feature-pr`).
 
 ## QA pipeline (crew-qa)
 

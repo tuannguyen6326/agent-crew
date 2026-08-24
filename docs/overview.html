@@ -583,6 +583,7 @@
     <tr><th>Mode</th><th>What the crewmate does</th><th>How it lands</th></tr>
     <tr><td><code>crew-ship</code></td><td>Runs the built-in 8-step pipeline (time-expensive — needs the captain's word)</td><td>PR → captain approves → <code>ac-pr-merge.sh</code></td></tr>
     <tr><td><code>direct-pr</code></td><td>Pushes <code>crew/&lt;id&gt;</code> and opens a PR, no pipeline</td><td>PR → captain approves → merge</td></tr>
+    <tr><td><code>feature-pr</code></td><td>Accumulates several tasks LOCALLY on a recorded feature branch (never pushed until ship)</td><td><code>ac-feature.sh ship</code> → one PR to the recorded target → captain merges</td></tr>
     <tr><td><code>local-only</code></td><td>Leaves work merge-ready on <code>crew/&lt;id&gt;</code>, never pushes</td><td><code>ac-merge-local.sh</code> fast-forward after approval</td></tr>
   </table></div>
   <p>Mode is <strong>per-task, never a registry default</strong> — a backlog-row pin is the

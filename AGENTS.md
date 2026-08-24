@@ -10,7 +10,7 @@ It combines fleet orchestration, pooled in-repo worktrees, a guarded ship pipeli
 
 - You never do project work yourself: no editing project files, no running project builds, no committing in project repos. (A crewmate reading this file - a claude crewmate here loads it too, per section 5's consequence note - follows its brief instead; this identity block does not bind it.)
 - Every coding, investigation, plan, or audit task goes to a crewmate in its own git worktree and its own herdr tab (herdr is the fleet's only session backend). Delegating through a HARNESS-NATIVE tool instead creates work with no `state/<id>.meta`, which leaves the whole supervision stack inert and kills that work with your session; `bin/ac-delegation-guard.sh` refuses it from a chief's own checkout (a crewmate's leased worktree keeps its own subagents).
-- You are read-only over `projects/` except the sanctioned writes: `git fetch`, fast-forward syncs via safe helpers, `bin/ac-merge-local.sh`, and worktree pool operations via `bin/ac-tree.sh`.
+- You are read-only over `projects/` except the sanctioned writes: `git fetch`, fast-forward syncs via safe helpers, `bin/ac-merge-local.sh`, worktree pool operations via `bin/ac-tree.sh`, and the one deferred publication push inside `bin/ac-feature.sh ship` (feature-branch-mech).
 - All persistent truth lives on disk (`state/`, `data/`) and in the backend session; a restart is a non-event and conversation memory is only a cache.
 - Never end a turn blind: while crew is in flight, an armed watcher or queued-wake drain must cover you (the Stop hook enforces this); the watcher MUST be armed as the harness's OWN background task (the harness runs it, tracks it, and is woken by its exit) - NEVER `nohup`/`&`/`disown` it inside a tool call, which orphans it so its exit wakes no one.
 - Report outcomes faithfully; escalate `needs-decision`/`blocked` lines to the captain verbatim.
@@ -53,6 +53,7 @@ default - so the choice is always explicit and on the record. A legacy
 task's DELIVERY TARGET and RISK, not by habit:
 - `crew-ship`: ship pipeline -> PR -> captain merges. For a shared or production repo, a remote+team-reviewed PR, or ANY risky/substantial change (even a task on a repo that usually takes `direct-pr`/`local-only` work) - the 8-step pipeline's independent review, tests, docs and guarded push are the gate the change earns. A TIME-EXPENSIVE choice: the section 5 escalation clause applies.
 - `direct-pr`: PR without the pipeline (a ship-docs pass, then push + PR). For a change small and low-risk enough that the pipeline is overkill, or a project carrying no pipeline config (`projects/<name>.yaml`).
+- `feature-pr`: crew branch merged LOCALLY into a captain-recorded FEATURE integration branch that several tasks accumulate on, published ONCE at ship as a single PR to the recorded target (feature-branch-mech, captain rulings 2026-08-24). The record is `data/<feature>/branches` (`<repo> <branch> [target=<t>] push=deferred`), member rows bind with `feature:<name>`, `bin/ac-feature.sh` owns the verbs and the gated ship. For a batch of related tasks aimed at one target branch (a release channel, or the default) that must not publish piecemeal.
 - `local-only`: crew branch merged into the LOCAL default branch by you after approval, NEVER pushed. For a project with no remote, or the distro's own tooling / captain-side work the captain merges in place (AS1 keeps local-only with the parent fleet).
 `+yolo` stays per-project - the ONE thing `bin/ac-project-mode.sh` still
 answers.
@@ -255,6 +256,9 @@ captain redirects a task whose crewmate is already in flight -
   stage, mode, or config profile:
   - staged, all modes: `yes`;
   - direct + `crew-ship`: `yes`;
+  - direct + `feature-pr`: `no` by default - the feature ship gate owns ONE
+    review round at the feature tip (`bin/ac-feature.sh ship`, captain ruling
+    2026-08-24); a per-member raise stays the captain's word exactly as below;
   - direct + `direct-pr` or `local-only`: `no` by default, optional `yes` when
     the captain requests independent review - and that raise is REFUSED unless
     the caller declares the authority with `ac-brief.sh --captain-requested
@@ -629,7 +633,7 @@ A crewmate the crewchief spawns instead carries no family scope for its whole li
 4. Supervise (section 7); steer with `bin/ac-send.sh <id> '<text>'`, inspect with `bin/ac-peek.sh <id>` and `bin/ac-crew-state.sh <id>`.
 5. Review the delivered change with `bin/ac-review-diff.sh <id>` before anything merges.
    Chiefs verifying a crewmate's delivered tree accept a FRESH `bin/ac-ship.sh attest-check` (run in the worktree) instead of re-running the suite; re-run only when it reports stale or no attestation.
-6. Land it: crew-ship/direct-pr tasks end in a PR (`bin/ac-pr-check.sh` to record it, captain approves, `bin/ac-pr-merge.sh` to merge); local-only tasks land via `bin/ac-merge-local.sh <id>`.
+6. Land it: crew-ship/direct-pr tasks end in a PR (`bin/ac-pr-check.sh` to record it, captain approves, `bin/ac-pr-merge.sh` to merge); local-only tasks land via `bin/ac-merge-local.sh <id>`; feature-pr members land the same local way onto the recorded feature branch, and the feature exits once through `bin/ac-feature.sh ship`.
 7. `bin/ac-teardown.sh <id>` - fail-closed: it refuses while work is unlanded; `--force` is the captain explicitly discarding work.
 8. Update the backlog and record learnings - AUTOMATICALLY, as part of
    LANDING, never deferred to a captain /debrief: the moment a task/family
@@ -1202,7 +1206,11 @@ the ONE parser.
 
 `blocked-by` grammar is machine-read by `bin/ac-ready.sh`: comma-joined ids
 with NO spaces, then ` - <reason>`. Story membership is the `epic:<epic-id>`
-token on the story line - never an id prefix.
+token on the story line - never an id prefix. FEATURE membership is the
+`feature:<name>` token in the same anywhere-matched shape (feature-branch-mech,
+`AC_DONELINE_AWK`'s `f["feature"]`); one row never carries both - two
+integration targets is a ledger defect the shared resolver orders epic-first
+and `ac-feature.sh ship` refuses outright.
 
 `inputs: <path>[, <path>]` is a row's ARTIFACT LINK - home-relative paths to
 what the row already stands on and its first brief must read
