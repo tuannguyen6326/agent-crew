@@ -1354,6 +1354,16 @@ out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:rf-t1" "a beacon stale past the grace is covered directly"
 assert_file "$state/.skip-revoked-rf" "the revoke is marked once"
 assert_contains "$(cat "$state/.watcher-arm.log")" "skip revoked: rf" "the takeover is logged"
+# A revoke must WAKE, not merely log - measured: a live-but-asleep roomchief
+# slept 101 minutes on piled family-spool wakes because the revoke was a log
+# line and nothing else. Two explicit channels: a durable coverage record on
+# the FLEET spool (the chief that drains it is told the family is down), and
+# one line typed into the roomchief pane (a keystroke starts a real turn on a
+# live-but-asleep chief; a dead pane swallows it harmlessly).
+grep -rq "coverage" "$state/.wake-spool" 2>/dev/null \
+  || fail "the revoke must publish a coverage wake to the fleet spool"
+assert_contains "$(cat "$(fake_pane_buf rf-chief)")" "scoped watcher" \
+  "the revoke nudges the roomchief pane with a drain-and-re-arm order"
 
 # Coverage back (fresh beacon) -> skip honored again, both trackers cleared.
 date +%s >"$state/.last-watcher-beat.rf"

@@ -1351,6 +1351,20 @@ check_fleet() {
         if [ ! -e "$state_dir/.skip-revoked-$skip_fam" ]; then
           touch "$state_dir/.skip-revoked-$skip_fam"
           watch_log "skip revoked: $skip_fam scoped coverage down (roomchief gone or beacon stale past re-arm grace) - fleet watcher covering its panes directly"
+          # A revoke must WAKE, not merely log - measured: a live-but-asleep
+          # roomchief slept 101 minutes on piled family-spool wakes (its
+          # hook-held scoped watcher died without a rewake) until the captain
+          # poked it by hand. Two explicit channels, once per episode: a
+          # durable coverage record on the FLEET spool so the chief that
+          # drains it is told the family is down, and one line typed into the
+          # roomchief pane - a keystroke starts a real turn on a
+          # live-but-asleep chief, and a dead pane swallows it harmlessly.
+          ac_wake_publish "$state_dir" '' coverage "$skip_fam-chief" \
+            "scoped coverage down for $skip_fam - fleet watcher covering its panes; the roomchief must drain and re-arm (or be recovered)" || true
+          ( AC_BACKEND="$(ac_task_backend "$skip_fam-chief")"; export AC_BACKEND
+            backend_send_line "$skip_fam-chief" \
+              "wake: your scoped watcher for $skip_fam is down and wakes may be pending - run bin/ac-wake-drain.sh, act on each, then re-arm bin/ac-watch.sh as your own background task" \
+          ) >/dev/null 2>&1 || true
         fi
       fi
     fi
