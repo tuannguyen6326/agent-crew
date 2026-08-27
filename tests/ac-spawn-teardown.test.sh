@@ -97,11 +97,12 @@ assert_file "$AC_HOME/state/.pane-t1" "pane handle recorded (window alive)"
 assert_contains "$("$BIN/ac-tree.sh" list --repo "$repo")" "leased" "lease recorded"
 
 # AC3: the kickoff prompt lands as its OWN typed line (literal spaces), after
-# the bare launch line. The launch line only carries the escaped AC_PROMPT=
-# value (backslash-escaped spaces), so a real-spaces match can only be the
-# separately delivered prompt line.
+# the bare launch line. The pane receives the short kickoff POINTER as its
+# own line; the full prompt is durable in the task dir's kickoff.md.
 assert_contains "$(cat "$(fake_pane_buf t1)")" \
-  "You are an agent-crew crewmate. Read and follow the brief" "kickoff prompt delivered as its own line"
+  "kickoff order at" "kickoff pointer delivered as its own line"
+assert_contains "$(cat "$AC_HOME/data/t1/kickoff.md")" \
+  "You are an agent-crew crewmate. Read and follow the brief" "the kickoff FILE carries the full prompt"
 
 assert_fails "$BIN/ac-spawn.sh" t1 "$repo" --harness fake
 
@@ -387,28 +388,28 @@ assert_file "$AC_HOME/state/archive/t22/meta"
 n="$(cat "$FAKE_HERDR/.n")"; kpane="p$((n + 1))"
 # 3 drops: send_line burns its two verified submits (plain + focused), the
 # kickoff's first resubmit still strands, its second lands.
-printf '3 crewmate\n' >"$FAKE_HERDR/panes/$kpane.drop-enters"
+printf '3 kickoff\n' >"$FAKE_HERDR/panes/$kpane.drop-enters"
 "$BIN/ac-brief.sh" t7 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" t7 "$repo" --harness claude 2>&1)"
 assert_contains "$out" "spawned t7" "spawn survives dropped kickoff Enters"
 case "$out" in *"NOT acknowledged"*) fail "a recovered kickoff must not warn" ;; esac
-assert_eq "$(grep -c "You are an agent-crew crewmate" "$(fake_pane_buf t7)")" "1" \
-  "kickoff resubmit lands the prompt exactly once (no re-type, no garble)"
+assert_eq "$(grep -c "kickoff order at" "$(fake_pane_buf t7)")" "1" \
+  "kickoff resubmit lands the pointer exactly once (no re-type, no garble)"
 "$BIN/ac-teardown.sh" t7 --force >/dev/null 2>&1
 
 # never acknowledged: spawn still completes, warns LOUDLY, names the ac-send
 # fallback - and the prompt honestly sits in the composer, not in the transcript.
 n="$(cat "$FAKE_HERDR/.n")"; kpane="p$((n + 1))"
-printf '99 crewmate\n' >"$FAKE_HERDR/panes/$kpane.drop-enters"
+printf '99 kickoff\n' >"$FAKE_HERDR/panes/$kpane.drop-enters"
 "$BIN/ac-brief.sh" t8 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" t8 "$repo" --harness claude 2>&1)"
 assert_contains "$out" "spawned t8" "spawn must not die on an unacknowledged kickoff"
-assert_contains "$out" "kickoff prompt NOT acknowledged" "unacknowledged kickoff warns loudly"
+assert_contains "$out" "kickoff pointer NOT acknowledged" "unacknowledged kickoff warns loudly"
 assert_contains "$out" "ac-send.sh t8" "warning names the manual fallback"
-assert_contains "$(cat "$FAKE_HERDR/panes/$kpane.in")" "You are an agent-crew crewmate" \
-  "prompt sits stranded in the composer, reported not hidden"
-case "$(cat "$(fake_pane_buf t8)")" in *"You are an agent-crew crewmate"*) \
-  fail "an unacknowledged prompt must not appear submitted" ;; esac
+assert_contains "$(cat "$FAKE_HERDR/panes/$kpane.in")" "kickoff order at" \
+  "pointer sits stranded in the composer, reported not hidden"
+case "$(cat "$(fake_pane_buf t8)")" in *"kickoff order at"*) \
+  fail "an unacknowledged pointer must not appear submitted" ;; esac
 "$BIN/ac-teardown.sh" t8 --force >/dev/null 2>&1
 
 # The UNSUFFIXED staged implement id resolves through the existence probe:
@@ -509,20 +510,23 @@ assert_fails "$BIN/ac-spawn.sh" t11 "$repo" --harness fake --recover
 
 "$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake >/dev/null 2>&1
 assert_file "$AC_HOME/state/dep1.meta" "the crewdeputy spawned"
-# The pane's CWD is the distro checkout (ac_root()), not the deputy home: the
-# home holds no bin/, so a cwd there stranded the charter's own relative
-# `bin/ac-session-start.sh` (bin/ac-spawn.sh crewdeputy path, was $home_dir).
-# AC_HOME on the launch line still names the home unchanged - only the tab's
-# cwd moves.
-assert_contains "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" "--cwd $ROOT " \
-  "the crewdeputy pane opens with its cwd at the distro checkout, which holds bin/"
+# workspace = home: the deputy pane opens AT its home - ac-home-seed links the
+# executable core there (bin/ CLAUDE.md .claude/ AGENTS.md), so the charter's
+# relative `bin/ac-session-start.sh` resolves from the home itself.
+assert_contains "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" "--cwd $dhome " \
+  "the crewdeputy pane opens with its cwd at the deputy home"
 case "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" in
-  *"--cwd $dhome"*) fail "the crewdeputy pane must not open with its cwd at the home (no bin/ there)" ;;
+  *"--cwd $ROOT "*) fail "the crewdeputy pane must not open at the distro checkout - workspace is the home" ;;
 esac
-assert_contains "$(cat "$(fake_pane_buf dep1)")" "IDLE BY DEFAULT" \
-  "the kickoff carries the idle contract, so it travels with the live deputy"
-assert_contains "$(cat "$(fake_pane_buf dep1)")" "ac-deputy.sh report" \
-  "the kickoff carries the return channel, so an answer never lives only in chat"
+# FILE-DELIVERED KICKOFF: the prompt lands on disk and the pane receives only
+# a short pointer - a typed multi-KB prompt measurably lost its head on the
+# orca backend, and a file has no length limit on any backend.
+assert_contains "$(cat "$AC_HOME/data/dep1/kickoff.md")" "IDLE BY DEFAULT" \
+  "the kickoff FILE carries the idle contract, so it travels with the live deputy"
+assert_contains "$(cat "$AC_HOME/data/dep1/kickoff.md")" "ac-deputy.sh report" \
+  "the kickoff FILE carries the return channel, so an answer never lives only in chat"
+assert_contains "$(cat "$(fake_pane_buf dep1)")" "$AC_HOME/data/dep1/kickoff.md" \
+  "the pane receives the short pointer naming the kickoff file"
 # The codegraph prompt-hook kill-switch rides EVERY crew launch line, deputy
 # included - its kickoff is structural too, so it pays the same whole-tree query.
 assert_contains "$(cat "$(fake_pane_buf dep1)")" "CODEGRAPH_NO_PROMPT_HOOK=1" \
@@ -1347,7 +1351,7 @@ rm -f "$AC_HOME/config/room-parallel"
 dom_seed payments dfam6
 room_seed dfam6
 "$BIN/ac-spawn.sh" --roomchief dfam6 --harness fake >/dev/null 2>&1
-kick="$(cat "$(fake_pane_buf dfam6-chief)")"
+kick="$(cat "$AC_HOME/data/dfam6/chief/kickoff.md")"
 
 # (1) standing rules - the FLEET captain file, plus the prefix convention. The
 # domain has no captain.md of its own; asserting its ABSENCE is the regression
@@ -1400,7 +1404,7 @@ assert_contains "$kick" "ONLY per-domain memory write path" "(8) and why it is l
 
 # (9) ABSENCE - a promote with no domain emits none of it. dfam2 above is that
 # promote; its buffer must carry no domain section at all.
-nodom="$(cat "$(fake_pane_buf dfam2-chief)")"
+nodom="$(cat "$AC_HOME/data/dfam2/chief/kickoff.md")"
 for needle in 'DOMAINCHIEF' 'STANDING (domain:' 'crewdomains/'; do
   case "$nodom" in
     *"$needle"*) fail "(9) an ordinary roomchief's kickoff must not carry '$needle'" ;;
@@ -1482,5 +1486,42 @@ rm -f "$(dom_pkg bare)/projects/$(basename "$repo")"
 "$BIN/ac-brief.sh" outsider2 vproj --mode local-only >/dev/null 2>&1 || true
 err="$("$BIN/ac-spawn.sh" outsider2 "$vproj" --harness fake 2>&1 || true)"
 case "$err" in *"project view"*) fail "AC-12.2: a spawn with no AC_DOMAIN must not meet the view guard" ;; esac
+
+# --- orca fleet: the crewmate worktree is ORCA-MANAGED ---------------------------
+# Captain ruling: an orca-backend fleet leases through `orca worktree create`
+# (one per task, sidebar-native) instead of the crew-tree pool; the checkout
+# lands on crew/<id> from the LOCAL default branch, and teardown removes the
+# worktree through the same CLI.
+make_fake_orca
+# Panes must read as a came-up idle TUI (the orca driver proves UP by the
+# idle glyph title) - the orca twin of .pane-idle-by-default above.
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
+printf 'orca\n' >"$AC_HOME/config/backend"
+"$BIN/ac-brief.sh" ow1 proj --mode local-only >/dev/null
+mkdir -p "$repo/node_modules/dep"
+printf 'marker\n' >"$repo/node_modules/dep/marker.js"
+"$BIN/ac-spawn.sh" ow1 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn must succeed on the fake orca"
+owt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/ow1.meta" | head -1)"
+case "$owt" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "the worktree must be orca-managed (got: $owt)" ;; esac
+grep -q -- 'worktree create.*--setup run' "$FAKE_ORCA/log" \
+  || fail "the lease must run the repo-defined Orca setup hooks (--setup run)"
+# The primary checkout's node_modules is carried into the fresh worktree (git
+# brings only tracked files) as a real COPY - a symlink would let a crewmate's
+# own install mutate the primary's deps.
+[ -f "$owt/node_modules/dep/marker.js" ] || fail "primary node_modules must be carried into the orca worktree"
+[ ! -L "$owt/node_modules" ] || fail "carried node_modules must be a copy, never a symlink"
+printf 'x\n' >"$owt/node_modules/dep/local.js"
+[ ! -e "$repo/node_modules/dep/local.js" ] || fail "a worktree-side write must not reach the primary node_modules"
+assert_eq "$(sed -n 's/^worktree_backend=//p' "$AC_HOME/state/ow1.meta")" "orca" \
+  "the meta records the orca worktree provenance for teardown"
+assert_eq "$(git -C "$owt" branch --show-current)" "crew/ow1" \
+  "the orca worktree sits on the crew contract branch"
+git -C "$owt" show-ref --verify -q refs/heads/fakeuser/crew-ow1 \
+  && fail "the CLI-minted branch name must be dropped after the switch"
+"$BIN/ac-teardown.sh" ow1 --force >/dev/null 2>&1
+[ ! -d "$owt" ] || fail "teardown must remove the orca-managed worktree"
+rm -rf "$repo/node_modules"
+printf 'herdr\n' >"$AC_HOME/config/backend"
 
 pass

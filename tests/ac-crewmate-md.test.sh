@@ -103,6 +103,17 @@ assert_eq "$(cat "$wt/.claude/settings.json")" '{"enabledPlugins":{"fleet":true}
 printf '{"repo":true}\n' >"$wt/.claude/settings.json"
 seed_settings "$wt"
 assert_eq "$(cat "$wt/.claude/settings.json")" '{"repo":true}' "existing settings preserved"
+# A home whose .claude is the core-4 runtime symlink into the distro checkout
+# must NOT serve the distro's settings.json (chief-session hook wiring) as the
+# fleet layer - the seed falls through to the container crew settings.
+rm -f "$wt/.claude/settings.json"
+rm -rf "$AC_HOME/.claude"
+ln -s "$(dirname "$BIN")/.claude" "$AC_HOME/.claude"
+seed_settings "$wt"
+assert_eq "$(cat "$wt/.claude/settings.json")" '{"enabledPlugins":{"container":true}}' \
+  "a distro-symlinked home .claude falls through to container settings"
+rm -f "$wt/.claude/settings.json" "$AC_HOME/.claude"
+mkdir -p "$AC_HOME/.claude"
 rm -f "$AC_HOME/.claude/settings.json" "$(dirname "$AC_HOME")/.claude/settings.json"
 
 # Crewmate-facing skills are symlinked into the worktree: container source
@@ -538,9 +549,9 @@ git -C "$law_repo" add AGENTS.md
 git -C "$law_repo" commit -qm law
 "$BIN/ac-brief.sh" sx2 lawproj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" sx2 "$law_repo" --harness codex --mode local-only >/dev/null 2>&1
-assert_contains "$(cat "$(fake_pane_buf sx2)")" ".claude/CREWMATE.md" \
-  "a shipped-law repo's crewmate is pointed at the fleet layer"
-case "$(cat "$(fake_pane_buf sx1)")" in
+assert_contains "$(cat "$AC_HOME/data/sx2/kickoff.md")" ".claude/CREWMATE.md" \
+  "a shipped-law repo's crewmate is pointed at the fleet layer (kickoff file)"
+case "$(cat "$AC_HOME/data/sx1/kickoff.md")" in
   *CREWMATE.md*) fail "a repo shipping no instruction file gets no extra prompt clause" ;;
 esac
 

@@ -141,10 +141,15 @@ meta="$(ac_task_meta "$id")"
 
 kind="$(ac_meta_get "$meta" kind)"
 worktree="$(ac_meta_get "$meta" worktree)"
+wt_backend="$(ac_meta_get "$meta" worktree_backend)"
 # Every lease the task took (grammar: the LEASES block in ac-spawn.sh). Read
 # here, with the rest of the meta - it is archived long before the return.
 leases="$(ac_meta_get "$meta" leases)"
 [ -n "$leases" ] || leases="$worktree"   # pre-leases meta: worktree= is the list
+# An orca-managed worktree (orca fleets lease through the Orca CLI) is not a
+# pool slot: keep it out of the return loop - its removal has its own arm
+# after that loop.
+[ "$wt_backend" != orca ] || leases=""
 # One acquisition identity per lease, same order (grammar: the LEASES block in
 # ac-spawn.sh). Empty for a meta or a pool that predates it, and then the
 # return stays unconditional exactly as before.
@@ -664,6 +669,12 @@ if [ "$kind" != crewdeputy ] && [ "$kind" != roomchief ]; then
   done <<EOF
 $(printf '%s\n' "$leases" | tr ':' '\n')
 EOF
+
+  if [ "$wt_backend" = orca ] && [ -n "$worktree" ] && [ -d "$worktree" ]; then
+    sweep_pane_agents "$worktree"
+    orca_worktree_release "$worktree" \
+      || ac_warn "could not remove orca worktree $worktree (remove by hand: orca worktree rm --worktree path:$worktree --force)"
+  fi
 
   # Drop a fully-landed crew branch from the project repo (keep if unmerged).
   # -d's merge check is NOT the landed proof above (that one also accepts

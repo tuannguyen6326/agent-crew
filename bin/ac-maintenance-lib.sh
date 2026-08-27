@@ -16,10 +16,33 @@
 # ac_maintenance_path_plain / ac_maintenance_move_source /
 # ac_maintenance_plan_validate / ac_maintenance_incomplete_other /
 # ac_maintenance_incomplete / ac_maintenance_receipt_field /
+# ac_maintenance_evidence_value / ac_maintenance_read_evidence /
 # ac_maintenance_receipt_validate / _ac_maintenance_hold / ac_maintenance_apply
 # - the closed, hash-bound plan Learning and Curate mutate fleet-local
 # knowledge through: one fleet-wide writer lock, a pre-mutation backup, an
 # action journal, and atomic file replacement).
+#
+# ac_maintenance_receipt_validate is the AUTHORIZATION BOUNDARY both callers
+# share, and it trusts no writer: it re-derives every hash and, for any receipt
+# whose `authority` is not `repository-policy`, re-runs the read-evidence check
+# below on the settled bytes. `repository-policy` is the one exemption, and its
+# MINTERS ARE NAMED HERE because there are three of them and only one makes the
+# exemption load-bearing - an auditor who finds the other two has to re-derive
+# that they do not matter:
+#   - curate_policy_receipt (bin/ac-curate.sh:676) mints `continue` for the
+#     deterministic-records plan, and that receipt IS validated here
+#     (bin/ac-curate.sh:1387, which ac_dies the whole pass unless the answer is
+#     `continue`). THIS is the one the exemption exists for: Curate built those
+#     files itself, deterministically, with no judge in the loop to be blind.
+#   - curate_ask_receipt (bin/ac-curate.sh:775) and learn_policy_ask_receipt
+#     (bin/ac-learn.sh:1903) mint `ask-captain` for a gate that was unavailable
+#     and for a captain-owned `kind: rule`. Neither receipt ever reaches this
+#     function - both callers escalate and return first - so the exemption
+#     carries them nowhere; they take the value to keep one receipt shape.
+# A fourth receipt written beside them is not this exemption at all:
+# bin/ac-learn.sh:1779 mints `agentcrew.captain-decision/v1` for the legacy
+# manual land, and the schema check rejects it before `authority` is read.
+# Every other authority, recognised or not, owes its proof.
 #
 # LAYERING: depends only on ac-lib.sh core (ac_state_dir, ac_home, ac_now,
 # ac_meta_get, ac_meta_set, ac_lock_acquire, ac_lock_release, ac_records_dir,
@@ -563,11 +586,112 @@ ac_maintenance_receipt_field() {
   printf '%s\n' "$value"
 }
 
+# --- READ-EVIDENCE: the judge must prove it OPENED the inputs -----------------
+# The gate prompt inlines no candidate content - it hands the judge two absolute
+# paths and the two SHA-256 values the receipt is later checked against - so a
+# judge that never opened either file can echo those hashes back and mint a
+# valid authorization over Learning's and Curate's own mutations. The counter-
+# check is the falsifiable property that already costs nothing: content of the
+# inputs that the prompt never carried is something only a reader has.
+#
+# The two inputs are different in kind, so the proof they can carry is too. The
+# manifest is free-form candidate evidence, and the only thing a reader of it
+# provably holds is a VERBATIM excerpt. The action plan is generated JSON whose
+# every header field is prompt-supplied - only `.actions` is not - and its
+# `new_sha256` values are the exact bytes the plan authorizes to be written:
+# unguessable, unambiguous to copy, and an exact set membership to check, with
+# no length heuristic an honest engine could fail. A heuristic that rejects an
+# honest judge would switch the maintenance loop off silently, which is worse
+# than the hole it replaces, so each side takes the strictest EXACT check it can
+# bear rather than one uniform approximate one. The action hash is the lock that
+# cannot be forged; the quote is the second one, and it is tuned to never reject
+# an honest reader rather than to carry the proof alone.
+#
+# THE FLOOR HAS TO SIT INSIDE A MEASURED WINDOW, which is the whole reason it is
+# 12 and not a rounder number. Above it: what a prompt-supplied value leaves
+# behind once deleted is its bare key, and the longest of those is `subject` at
+# 7 significant characters. Below it: the shortest genuine content line a
+# generated manifest emits, measured across the real ones - a curate subject
+# manifest's `"path": "projects/<name>",` at 13 for a one-character name, 15 for
+# `projects/lab`, 21 for `records/projects.md`. A floor of 24 sat above that
+# lower edge and rejected the very lines the prompt tells the judge to pick.
+AC_MAINTENANCE_QUOTE_MIN=12
+
+ac_maintenance_evidence_value() {
+  # ac_maintenance_evidence_value <label> - stdin = the receipt, or the raw judge
+  # body before it becomes one. Print the whitespace-trimmed value of the one
+  # `- <label>: <value>` line inside `## Inputs Read`; return 1 unless exactly
+  # one such line exists there.
+  local raw
+  raw="$(awk -v want="- $1: " '
+    /^## Inputs Read[[:space:]]*$/ { insec = 1; next }
+    insec && /^## / { insec = 0 }
+    insec && index($0, want) == 1 { line = substr($0, length(want) + 1); n++ }
+    END { if (n != 1) exit 1; print line }
+  ')" || return 1
+  printf '%s' "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+ac_maintenance_read_evidence() {
+  # ac_maintenance_read_evidence <manifest> <plan.json> - stdin = the receipt, or
+  # the raw judge body before it becomes one. 0 when `## Inputs Read` proves the
+  # judge opened BOTH inputs:
+  #   - INPUT MANIFEST QUOTE: one line that occurs verbatim in the manifest and
+  #     still holds AC_MAINTENANCE_QUOTE_MIN significant characters - punctuation
+  #     and whitespace excluded - once the run id, the subject and the mode are
+  #     deleted from it. Significant rather than raw length because a manifest
+  #     may be JSON, where quoting and bracing would otherwise pad an excerpt of
+  #     nothing but prompt-supplied values past any plausible raw threshold; the
+  #     three deletions run most-specific-first, since the run id embeds the mode.
+  #   - ACTION PLAN NEW SHA-256: one of the plan's own `.actions[].new_sha256`,
+  #     and never a prompt-printed hash. That exclusion is not theoretical: a
+  #     plan may stage a byte-identical copy of its own manifest, and then its
+  #     action hash IS the manifest hash the prompt printed, so membership alone
+  #     would accept the one value a judge gets for free. The quote needs no
+  #     such exclusion - a manifest is written and hashed before its plan
+  #     exists, so it can carry neither hash and the verbatim check already
+  #     denies both. A plan with no actions has no value that can satisfy this,
+  #     and fails closed.
+  local manifest="$1" plan="$2"
+  local body quote bare form rest ex new_sha input_sha plan_sha mode subject run_id
+  body="$(cat)"
+  input_sha="$(ac_sha256_file "$manifest")" || return 1
+  plan_sha="$(ac_sha256_file "$plan")" || return 1
+  mode="$(jq -r '.mode' "$plan")" || return 1
+  subject="$(jq -r '.subject' "$plan")" || return 1
+  run_id="$(jq -r '.run_id' "$plan")" || return 1
+
+  new_sha="$(printf '%s\n' "$body" | ac_maintenance_evidence_value 'ACTION PLAN NEW SHA-256')" \
+    || return 1
+  new_sha="${new_sha//\`/}"
+  case "$new_sha" in "$input_sha" | "$plan_sha") return 1 ;; esac
+  jq -e --arg s "$new_sha" 'any(.actions[]; .new_sha256 == $s)' "$plan" >/dev/null 2>&1 \
+    || return 1
+
+  quote="$(printf '%s\n' "$body" | ac_maintenance_evidence_value 'INPUT MANIFEST QUOTE')" \
+    || return 1
+  bare="$quote"
+  case "$bare" in \`*\`) bare="${bare#\`}"; bare="${bare%\`}" ;; esac
+  for form in "$quote" "$bare"; do
+    [ -n "$form" ] || continue
+    grep -qF -- "$form" "$manifest" || continue
+    rest="$form"
+    for ex in "$run_id" "$subject" "$mode"; do
+      [ -n "$ex" ] || continue
+      rest="${rest//"$ex"/}"
+    done
+    rest="$(printf '%s' "$rest" | tr -d '[:punct:][:space:]')"
+    [ "${#rest}" -ge "$AC_MAINTENANCE_QUOTE_MIN" ] && return 0
+  done
+  return 1
+}
+
 ac_maintenance_receipt_validate() {
   # ac_maintenance_receipt_validate <receipt.md> <plan.json> <manifest>
   # Print the validated decision. This is the authorization boundary shared by
   # Learning and Curate; an `approved:` candidate header never reaches it.
   local receipt="$1" plan="$2" manifest="$3" mode subject decision input_sha plan_sha run
+  local authority
   [ -f "$receipt" ] && [ ! -L "$receipt" ] && [ -f "$manifest" ] \
     && [ ! -L "$manifest" ] || return 1
   run="$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P)" || return 1
@@ -615,6 +739,13 @@ ac_maintenance_receipt_validate() {
     section == "process" && /[^[:space:]]/ { process = 1 }
     END { exit(grounds && process ? 0 : 1) }
   ' "$receipt" || return 1
+  # A `repository-policy` receipt is minted by the caller that just BUILT these
+  # files, with no engine in the loop and so nothing that could be blind; every
+  # other authority is a judge and owes its proof, unrecognised ones included.
+  authority="$(ac_maintenance_receipt_field "$receipt" authority)" || return 1
+  if [ "$authority" != repository-policy ]; then
+    ac_maintenance_read_evidence "$manifest" "$plan" <"$receipt" || return 1
+  fi
   printf '%s\n' "$decision"
 }
 

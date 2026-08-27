@@ -40,6 +40,26 @@
 # complete only when both retro.md and report.md are non-empty and the report
 # declares status ok; an incomplete scout cannot advance either cadence.
 #
+# EXAMINED accounting - the second, independent condition on top of scout
+# completeness: the DISTILL cycle (and the retro-window anchor `last_run`)
+# resets only when every gated candidate also settled with a genuine
+# judgment. `continue`, `revise` (even when its free-text grounds happen to
+# name an environment problem - the token layer cannot tell a masked
+# environment failure apart from a content verdict, so this is a deliberate
+# residual, not a defect this file closes), and the deterministic local
+# escalations that never reach the gate at all (`kind: rule`; a malformed
+# candidate/plan) are each a rendered judgment and count as examined. A gate
+# that could not even run (non-zero exit), a receipt that fails hash/schema
+# validation, and a gate that honestly answers `ask-captain` are each an
+# ABSENCE of judgment - indistinguishable from each other at this layer - and
+# withhold the cycle instead: any one such subject holds the WHOLE run's
+# cadence due and leaves `last_run` unmoved, so the next drain re-fires the
+# DISTILL rather than silently burning a window nothing was actually read for.
+# This is paid even by a perfectly healthy gate raising a genuine
+# captain-owned `ask-captain` question - DISTILL keeps re-firing at every
+# drain on that same subject, by design, until the captain answers or
+# otherwise resolves it and a later run finally settles the cycle.
+#
 # Each skill/patch/crewmate candidate is converted to one immutable closed action plan
 # plus input manifest. The independent explicit maintenance gate
 # (`ac-gate.sh maintenance --mode learning`) binds its receipt to both hashes.
@@ -377,7 +397,7 @@ learn_retro_snapshot() {
 cmd_run() {
   ac_require jq
   local ts rundir records captain helper out done_line status transcript ledger
-  local backup retro_members examined scout_ok learn_generation
+  local backup retro_members examined scout_ok scout_complete learn_generation
   local kickoff verify_id verify_meta verify_status verify_handle pane_early
   local pane raw_tab out_tmp pane_pid start_deadline
   learn_generation="$(ac_learn_generation)"
@@ -840,12 +860,14 @@ EOF
   printf '  candidates: %s\n' "$n"
   find "$rundir" -maxdepth 1 -name 'candidate-*.md' -print | sed 's/^/    /'
   if [ "$scout_ok" = 1 ] && [ -s "$rundir/report.md" ] && [ -s "$rundir/retro.md" ]; then
+    scout_complete=1
     examined=1
     if ! learn_auto_apply_candidates "$rundir"; then
       examined=0
       ac_warn "one or more Learning subjects could not reach a settled receipt/apply state; cadence remains due"
     fi
   else
+    scout_complete=0
     examined=0
     printf 'AUTO-MAINTENANCE WITHHELD: a complete ok report + retro is required before gating or apply.\n'
   fi
@@ -896,6 +918,8 @@ EOF
     if ! ac_learn_reset "$learn_generation"; then
       ac_warn "Learning completed, but a newer cadence generation exists; late debriefs remain due instead of being erased"
     fi
+  elif [ "$scout_complete" = 1 ]; then
+    ac_warn "a maintenance gate could not judge one or more subjects - the DISTILL cycle is NOT consumed and the retro window is PRESERVED (still due; re-run after inspecting $rundir)"
   else
     ac_warn "the scout did not produce a complete ok report + retro - the DISTILL cycle is NOT consumed and the retro window is PRESERVED (still due; re-run after inspecting $rundir)"
   fi
@@ -1914,6 +1938,12 @@ learn_auto_apply_candidates() {
   # learn_auto_apply_candidates <learning-run> - gate every candidate
   # independently, apply only hash-matched continue receipts, and leave revise /
   # ask-captain sources in Pending. No QA or unit-test command exists here.
+  # Non-zero return means the run did NOT settle every subject with a genuine
+  # judgment - the caller must not count the cycle as examined (see the
+  # EXAMINED accounting paragraph in this file's header): a gate that could
+  # not even run, a receipt that fails hash/schema validation, or a gate that
+  # honestly answers ask-captain are each an absence of judgment, not a
+  # rendered one, and are indistinguishable from each other at this layer.
   local run="$1" cand kind subject prepared plan manifest receipt gate gate_out
   local decision prep_err rc=0 reason
   local found=0
@@ -1961,6 +1991,7 @@ EOF
       reason="The selected maintenance gate was disabled, unavailable, invalid, or timed out."
       learn_captain_escalate "$run" "$subject" "$plan" "$manifest" "$reason"
       printf '  ask-captain: %s (gate unavailable; no mutation)\n' "$subject"
+      rc=1
       continue
     fi
 
@@ -1968,6 +1999,7 @@ EOF
       reason="The gate receipt did not match the immutable manifest and action-plan hashes."
       learn_captain_escalate "$run" "$subject" "$plan" "$manifest" "$reason"
       printf '  ask-captain: %s (invalid gate receipt; no mutation)\n' "$subject"
+      rc=1
       continue
     fi
     case "$decision" in
@@ -1983,7 +2015,8 @@ EOF
       ask-captain)
         learn_captain_escalate "$run" "$subject" "$plan" "$manifest" \
           "The maintenance gate returned ask-captain for this exact subject."
-        printf '  ask-captain: %s (gate could not decide; no mutation)\n' "$subject" ;;
+        printf '  ask-captain: %s (gate could not decide; no mutation)\n' "$subject"
+        rc=1 ;;
     esac
   done
   [ "$found" = 1 ] || printf '  AUTO-MAINTENANCE: no candidates; the examined cycle is settled without mutation.\n'

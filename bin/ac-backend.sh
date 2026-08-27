@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# ac-backend.sh - session backend primitives over herdr (the ONLY supported
-# backend). Sourced, not an entrypoint.
+# ac-backend.sh - session backend primitives: ONE contract, two drivers
+# (herdr here, orca in ac-backend-orca.sh), routed per call at the end of
+# this file. Sourced, not an entrypoint.
 #
 # Backend selection: $AC_BACKEND (consumers export it from the task meta's
 # `backend=` key), else config/backend, else herdr - and every value other
-# than `herdr` is refused. tmux and wezterm support was removed 2026-07-17
-# by captain order: one backend, one contract, one test surface.
+# than `herdr`/`orca` is refused. tmux and wezterm support was removed
+# 2026-07-17 by captain order: one contract, one test surface - both survive
+# the orca driver (per-fleet config/backend picks the driver; the contract
+# below and its tests stay singular).
 #
 # Surface (all keyed by crewmate id):
 #   backend_window_new <id> <dir>     create the pane/window, default shell
@@ -286,20 +289,31 @@
 # (tests/helpers.sh ships it) - no live server needed.
 
 ac_backend() {
-  local b="${AC_BACKEND:-$(ac_config_read backend herdr)}"
+  # AC_BACKEND (per-call/per-task pin) > $AC_HOME/config/backend > the fleet
+  # config derived from AC_FLEET_STATE > herdr. The third rung exists because
+  # a crewmate pane deliberately carries NO AC_HOME - only the AC_FLEET_*
+  # channel (ac-spawn fleet_env) - so a verifier it calls would otherwise
+  # resolve the herdr default on an orca fleet and lease from the wrong pool.
+  local b="${AC_BACKEND:-$(ac_config_read backend '')}" f
+  if [ -z "$b" ] && [ -n "${AC_FLEET_STATE:-}" ]; then
+    f="${AC_FLEET_STATE%/}/../config/backend"
+    [ ! -f "$f" ] || { b="$(head -n1 "$f")"; b="${b%%[[:space:]]*}"; }
+  fi
+  b="${b:-herdr}"
   case "$b" in
-    herdr) printf '%s\n' "$b" ;;
-    *) ac_die "unsupported backend '$b' (herdr is the only backend; tmux/wezterm were removed 2026-07-17)" ;;
+    herdr|orca) printf '%s\n' "$b" ;;
+    *) ac_die "unsupported backend '$b' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" ;;
   esac
 }
-# herdr is the only backend, so the backend_* primitives below ARE the herdr
-# implementation - there is no per-call dispatch and no config re-read on every
-# primitive. The backend name is validated TWICE, both for free: once here at
-# source time (a bad config/backend or inherited AC_BACKEND refuses before any
-# primitive runs), and per-RPC by the fork-free env case in herdr_cli, which
-# catches a caller that flips AC_BACKEND per TASK after sourcing (ac-spawn.sh's
-# --recover probe) - the one refusal the retired per-call dispatch provided
-# that source-time validation cannot.
+# The backend_* primitives defined in THIS file are the herdr driver (renamed
+# backend_*_herdr); the dispatch block at the end of the file routes each
+# public backend_* verb per call on AC_BACKEND, because a consumer may flip it
+# per TASK after sourcing (ac_task_backend: one teardown/send/watch process
+# can serve herdr and orca tasks in one run). The name is still validated at
+# source time too, so a bad config/backend or inherited AC_BACKEND refuses
+# before any primitive runs; herdr_cli's fork-free env case additionally
+# refuses a herdr RPC issued while AC_BACKEND names another driver - the leak
+# detector for a herdr-only code path reached under orca.
 ac_backend >/dev/null
 
 # --- shared harness launch -------------------------------------------------------
@@ -531,7 +545,8 @@ herdr_cli() {
   # refuses at the primitive, exactly as the retired per-call dispatch did.
   case "${AC_BACKEND:-herdr}" in
     herdr) ;;
-    *) ac_die "unsupported backend '${AC_BACKEND}' (herdr is the only backend; tmux/wezterm were removed 2026-07-17)" ;;
+    orca) ac_die "herdr RPC reached under the orca backend - a herdr-only code path leaked past the per-call dispatch" ;;
+    *) ac_die "unsupported backend '${AC_BACKEND}' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" ;;
   esac
   local s
   s="${AC_HERDR_SESSION:-$(ac_config_read herdr-session "")}"
@@ -545,7 +560,7 @@ herdr_cli() {
 herdr_pane() { ac_pane_field "$1" 1; }
 herdr_tab() { ac_pane_field "$1" 2; }
 
-backend_target() { printf 'herdr:pane-%s\n' "$(herdr_pane "$1")"; }
+backend_target_herdr() { printf 'herdr:pane-%s\n' "$(herdr_pane "$1")"; }
 
 herdr_tab_create() {
   # herdr_tab_create <workspace-or-empty> <dir> <id>
@@ -655,7 +670,7 @@ herdr_sweep_legacy_groups() {
   return 0
 }
 
-backend_window_new() {
+backend_window_new_herdr() {
   ac_require herdr jq
   # FAMILY WORKSPACE GROUPING (header contract): the new tab lands in its
   # family's workspace - AC_WINDOW_FAMILY set non-empty names the family, set
@@ -679,7 +694,7 @@ backend_window_new() {
   printf '%s %s\n' "$pane" "$tab" >"$(ac_pane_file "$id")"
 }
 
-backend_window_alive() {
+backend_window_alive_herdr() {
   # THREE-STATE (header: WINDOW LIVENESS, which owns why). The `pane get` fast
   # path answers ALIVE and costs one call; its FAILURE is not a verdict, so a
   # `gone` needs a definite answer from a reachable backend - one control call
@@ -781,21 +796,21 @@ herdr_submit_verified_pane() {
   # (header: delivery verification). The Enter is pressed either way, so an
   # unreadable pane loses no delivery attempt - only the verdict.
   local pane="$1" pre post i=0 tries=7 readable=1
-  pre="$(backend_capture_pane "$pane" 15 2>/dev/null)" || readable=0
+  pre="$(backend_capture_pane_herdr "$pane" 15 2>/dev/null)" || readable=0
   herdr_submit_pane "$pane"
   [ "$readable" = 1 ] || return 2
   while [ "$i" -lt "$tries" ]; do
     sleep "${AC_SEND_SETTLE:-0.4}"
-    post="$(backend_capture_pane "$pane" 15 2>/dev/null)" || return 2
+    post="$(backend_capture_pane_herdr "$pane" 15 2>/dev/null)" || return 2
     [ "$post" != "$pre" ] && return 0
     i=$((i + 1))
   done
   return 1
 }
 
-backend_submit_verified() { herdr_submit_verified_pane "$(herdr_pane "$1")"; }
+backend_submit_verified_herdr() { herdr_submit_verified_pane "$(herdr_pane "$1")"; }
 
-backend_send_line() {
+backend_send_line_herdr() {
   # herdr's `pane send-text` does NOT auto-submit; Enter goes separately and
   # is VERIFIED (header: delivery verification). On a strand: focus the tab
   # (send-keys needs focus) and retry ONCE, verified again - never blind.
@@ -807,21 +822,21 @@ backend_send_line() {
   local text="$*" rc=0
   herdr_cli pane send-text "$(herdr_pane "$id")" "$text" >/dev/null 2>&1
   sleep "${AC_SEND_SETTLE:-0.4}"
-  backend_submit_verified "$id" && return 0
-  backend_focus "$id"
-  backend_submit_verified "$id" || rc=$?
+  backend_submit_verified_herdr "$id" && return 0
+  backend_focus_herdr "$id"
+  backend_submit_verified_herdr "$id" || rc=$?
   [ "$rc" = 0 ] && return 0
   if [ "$rc" = 2 ]; then
     printf 'ac-backend: could not read the pane of %s - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh %s)\n' \
-      "$(backend_target "$id")" "$id" >&2
+      "$(backend_target_herdr "$id")" "$id" >&2
     return 2
   fi
   printf 'ac-backend: submit not acknowledged by %s - text likely stranded unsubmitted in the composer (peek, then resubmit: ac-send.sh %s --key Enter)\n' \
-    "$(backend_target "$id")" "$id" >&2
+    "$(backend_target_herdr "$id")" "$id" >&2
   return 1
 }
 
-backend_send_line_pane() {
+backend_send_line_pane_herdr() {
   # RAW-pane twin of backend_send_line (header: backend_send_line_pane), for a
   # pane with no state/.pane-<id> handle. Same shape - type, settle, verified
   # Enter, focus + ONE verified retry - and silent: the caller prints the
@@ -861,16 +876,16 @@ herdr_key_name() {
   esac
 }
 
-backend_send_key() {
+backend_send_key_herdr() {
   # `pane send-keys` needs FOCUS (header: delivery verification), so focus the
   # tab FIRST - a blind key press no-ops on an unfocused pane at exit 0. The
   # press itself is NOT probed: a bare key may legitimately redraw nothing, so
   # an identical render is no evidence of a drop (header, same block).
-  backend_focus "$1"
+  backend_focus_herdr "$1"
   herdr_cli pane send-keys "$(herdr_pane "$1")" "$(herdr_key_name "$2")" >/dev/null 2>&1
 }
 
-backend_send_key_pane() {
+backend_send_key_pane_herdr() {
   # RAW-pane twin of backend_send_key (header: backend_send_key_pane), for a pane
   # with no state/.pane-<id> handle - the pane-agent mechanism's own panes. Same
   # focus-then-press shape, with the tab resolved from herdr itself; the focus is
@@ -880,7 +895,7 @@ backend_send_key_pane() {
   herdr_cli pane send-keys "$1" "$(herdr_key_name "$2")" >/dev/null 2>&1
 }
 
-backend_capture_pane() {
+backend_capture_pane_herdr() {
   # Read BY RAW PANE ID (header: the backend_capture_pane surface).
   # herdr quirk: `pane read --lines N` returns EMPTY when N is below the
   # viewport height; fetch generously and trim ourselves.
@@ -892,12 +907,12 @@ backend_capture_pane() {
   printf '%s\n' "$out" | tail -n "$lines"
 }
 
-backend_capture() {
+backend_capture_herdr() {
   # By crewmate id: resolve the persisted handle, then the raw-pane read above.
-  backend_capture_pane "$(herdr_pane "$1")" "${2:-40}"
+  backend_capture_pane_herdr "$(herdr_pane "$1")" "${2:-40}"
 }
 
-backend_kill_window() {
+backend_kill_window_herdr() {
   # KILL OWNERSHIP PROOF (header contract): close the tab only while it still
   # carries this task's crew:<id> label. Refusal is a warning, never fatal.
   # LAST-TAB FALLBACK (header contract): herdr refuses to close a workspace's
@@ -940,9 +955,9 @@ backend_kill_window() {
   rm -f "$(ac_pane_file "$id")" "$(ac_wait_file "$id")"
 }
 
-backend_focus() { herdr_cli tab focus "$(herdr_tab "$1")" >/dev/null 2>&1; }
+backend_focus_herdr() { herdr_cli tab focus "$(herdr_tab "$1")" >/dev/null 2>&1; }
 
-backend_agent_blocked() {
+backend_agent_blocked_herdr() {
   # True when the pane's agent sits BLOCKED on a prompt only a human can
   # answer - the human-prompt silent-stall signal.
   # A fleet CAPTAIN-WAIT STAMP masks the pane view with our own blocked
@@ -958,7 +973,7 @@ backend_agent_blocked() {
   [ "$status" = "blocked" ]
 }
 
-backend_agent_idle_pane() {
+backend_agent_idle_pane_herdr() {
   # Raw-pane addressing for callers that own no state/.pane-<id> handle.
   # Herdr's status enum is idle|working|blocked|unknown. Only `idle` answers
   # true; an unreadable pane and every other status answer false. The meaning is
@@ -974,15 +989,28 @@ backend_agent_idle_pane() {
   [ "$status" = "idle" ]
 }
 
-backend_agent_idle() {
-  # Existing id-keyed turn-end predicate; a captain-wait stamp reports blocked,
-  # never idle, so it cannot be read back as a completed turn.
-  backend_agent_idle_pane "$(herdr_pane "$1")"
+backend_agent_status_pane_herdr() {
+  # Raw status enum for callers that need the VALUE, not a boolean (the
+  # canonical reader is backend_agent_idle_pane's deep jq search; the old
+  # sed-over-raw-JSON copies in ac-pane-agent drifted - one consumed a
+  # `done` value the documented enum never carried). Prints the pane's
+  # agent_status or `unknown`, always exits 0.
+  local pane="$1" out status
+  [ -n "$pane" ] || { printf 'unknown\n'; return 0; }
+  out="$(herdr_cli pane get "$pane" 2>/dev/null)" || { printf 'unknown\n'; return 0; }
+  status="$(jq -r '[.. | .agent_status? // empty] | map(select(. != "")) | first // empty' <<<"$out" 2>/dev/null)"
+  printf '%s\n' "${status:-unknown}"
 }
 
-backend_harness_up() { backend_harness_up_pane "$(herdr_pane "$1")"; }
+backend_agent_idle_herdr() {
+  # Existing id-keyed turn-end predicate; a captain-wait stamp reports blocked,
+  # never idle, so it cannot be read back as a completed turn.
+  backend_agent_idle_pane_herdr "$(herdr_pane "$1")"
+}
 
-backend_harness_up_pane() {
+backend_harness_up_herdr() { backend_harness_up_pane_herdr "$(herdr_pane "$1")"; }
+
+backend_harness_up_pane_herdr() {
   # RAW-pane twin of backend_harness_up (header: backend_harness_up_pane).
   # Is a harness running in the pane, or is it back at a shell prompt?
   # (header: HARNESS CAME-UP PROBE, which owns the three states and why the
@@ -1001,7 +1029,7 @@ backend_harness_up_pane() {
   return 1
 }
 
-backend_mark_wait() {
+backend_mark_wait_herdr() {
   # backend_mark_wait <id> [<msg>] - CAPTAIN-WAIT STAMP (header contract): show
   # the pane BLOCKED in the herdr UI while its task waits on the captain.
   local id="$1" msg="${2:-awaiting captain decision}" pane
@@ -1012,7 +1040,7 @@ backend_mark_wait() {
   touch "$(ac_wait_file "$id")"
 }
 
-backend_clear_wait() {
+backend_clear_wait_herdr() {
   # backend_clear_wait <id> - release the CAPTAIN-WAIT STAMP; no-op without one
   # (never releases a state the fleet does not own). herdr's own detection
   # re-asserts on the agent's next state-change event.
@@ -1023,3 +1051,42 @@ backend_clear_wait() {
   [ -z "$pane" ] || herdr_cli pane release-agent "$pane" --source ac-fleet --agent crew >/dev/null 2>&1 || true
   rm -f "$wf"
 }
+
+# --- per-call dispatch -----------------------------------------------------------
+# One contract, two drivers. The route is decided PER CALL on AC_BACKEND
+# because a consumer may flip it per task after sourcing (ac_task_backend: one
+# teardown/send/watch process can serve herdr and orca tasks in one run).
+# Unknown names refuse here with the same message ac_backend gives at source
+# time.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ac-backend-orca.sh"
+
+ac_backend_route() {
+  local fn="$1"
+  shift
+  case "${AC_BACKEND:-herdr}" in
+    herdr) "backend_${fn}_herdr" "$@" ;;
+    orca) "backend_${fn}_orca" "$@" ;;
+    *) ac_die "unsupported backend '${AC_BACKEND}' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" ;;
+  esac
+}
+
+backend_target()          { ac_backend_route target "$@"; }
+backend_window_new()      { ac_backend_route window_new "$@"; }
+backend_window_alive()    { ac_backend_route window_alive "$@"; }
+backend_submit_verified() { ac_backend_route submit_verified "$@"; }
+backend_send_line()       { ac_backend_route send_line "$@"; }
+backend_send_line_pane()  { ac_backend_route send_line_pane "$@"; }
+backend_send_key()        { ac_backend_route send_key "$@"; }
+backend_send_key_pane()   { ac_backend_route send_key_pane "$@"; }
+backend_capture()         { ac_backend_route capture "$@"; }
+backend_capture_pane()    { ac_backend_route capture_pane "$@"; }
+backend_kill_window()     { ac_backend_route kill_window "$@"; }
+backend_focus()           { ac_backend_route focus "$@"; }
+backend_agent_blocked()   { ac_backend_route agent_blocked "$@"; }
+backend_agent_idle()      { ac_backend_route agent_idle "$@"; }
+backend_agent_idle_pane() { ac_backend_route agent_idle_pane "$@"; }
+backend_agent_status_pane() { ac_backend_route agent_status_pane "$@"; }
+backend_harness_up()      { ac_backend_route harness_up "$@"; }
+backend_harness_up_pane() { ac_backend_route harness_up_pane "$@"; }
+backend_mark_wait()       { ac_backend_route mark_wait "$@"; }
+backend_clear_wait()      { ac_backend_route clear_wait "$@"; }

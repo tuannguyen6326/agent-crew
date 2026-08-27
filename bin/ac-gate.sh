@@ -34,6 +34,19 @@
 # `continue` can authorize the caller's shared maintenance transaction. The gate
 # never applies files, runs QA/tests, routes work, or contacts the captain.
 #
+# HASH AGREEMENT DOES NOT AUTHORIZE, because this prompt PRINTS both hashes the
+# receipt is later checked against: a judge that never opened the manifest or
+# the plan could echo them back with `continue`. So the body must also carry a
+# `## Inputs Read` section proving it OPENED both - the rule and its rationale
+# are owned by `bin/ac-maintenance-lib.sh`'s READ-EVIDENCE block, the prompt
+# below states it to the judge, and `ac_maintenance_read_evidence` is called
+# TWICE: here at write time, so a blind judge never gets a receipt written and
+# the round is not consumed, and again by Learning and Curate on the settled
+# receipt, which is the boundary that actually authorizes and trusts nothing
+# this script wrote. It binds EVERY decision value, not only `continue`: a
+# judge that cannot read its inputs now fails the gate outright, and its caller
+# escalates to the captain instead of discarding a blind `revise` in silence.
+#
 # ONE ENGINE, NO FALLBACK (contract, section 4.2/8): a run selects exactly ONE
 # LLM profile and runs it ONCE. There is no cross-engine fallback chain: a
 # failure (error/quota/timeout/empty/invalid) from the selected engine is a GATE
@@ -122,14 +135,18 @@
 # whether the run succeeds or fails.
 #
 # VALIDATION (section 6): before writing, the body must carry the required H1
-# and each required H2 exactly once (# Second-Chief Decision, ## Summary,
-# ## What Looks Solid, ## Concerns,
+# and each required H2 exactly once - staged (# Second-Chief Decision,
+# ## Summary, ## What Looks Solid, ## Concerns,
 # ## Decision, ## Proposed Process, ## Grounds, ## Required Changes,
-# ## Questions for the Owning Chief); ## Decision must hold exactly one token in
+# ## Questions for the Owning Chief), maintenance (# Maintenance Gate Decision,
+# ## Decision, ## Grounds, ## Inputs Read, ## Proposed Process), each in that
+# order; ## Decision must hold exactly one token in
 # {continue,revise,ask-captain,chief-decide}; R1 and maintenance mechanically
 # reject `chief-decide`; R2 mechanically rejects `revise` because it is terminal
 # and has no R3. ## Proposed Process and ## Grounds must be non-empty; the body
-# must be non-empty. R1 `revise` must include at least one numbered required
+# must be non-empty; a maintenance ## Inputs Read must satisfy
+# `ac_maintenance_read_evidence` against the manifest and the plan themselves.
+# R1 `revise` must include at least one numbered required
 # change with Problem, Evidence, Required change, and Closure condition labels,
 # numbered as a clean 1..N - those ids are what the roomchief's R1-DISPOSITION
 # partitions and R2 closes against, and both reject a duplicate, gapped, or
@@ -302,12 +319,12 @@ validate_body() {
   body="$(cat)"
   [ -n "${body//[[:space:]]/}" ] || return 1
   if [ "$gate_kind" = maintenance ]; then
-    for h in "# Maintenance Gate Decision" "## Decision" "## Grounds" "## Proposed Process"; do
+    for h in "# Maintenance Gate Decision" "## Decision" "## Grounds" "## Inputs Read" "## Proposed Process"; do
       count="$(grep -cE "^${h}[[:space:]]*$" <<<"$body" || true)"
       [ "$count" = 1 ] || return 1
     done
     headings_ok="$(awk '
-      /^(# Maintenance Gate Decision|## Decision|## Grounds|## Proposed Process)[[:space:]]*$/ {
+      /^(# Maintenance Gate Decision|## Decision|## Grounds|## Inputs Read|## Proposed Process)[[:space:]]*$/ {
         line=$0
         sub(/[[:space:]]+$/, "", line)
         n++
@@ -317,7 +334,8 @@ validate_body() {
         print (order["# Maintenance Gate Decision"] == 1 &&
           order["## Decision"] == 2 &&
           order["## Grounds"] == 3 &&
-          order["## Proposed Process"] == 4 ? "yes" : "no")
+          order["## Inputs Read"] == 4 &&
+          order["## Proposed Process"] == 5 ? "yes" : "no")
       }' <<<"$body")"
   else
     for h in "# Second-Chief Decision" "## Summary" "## What Looks Solid" "## Concerns" "## Decision" "## Proposed Process" "## Grounds" "## Required Changes" "## Questions for the Owning Chief"; do
@@ -372,6 +390,10 @@ validate_body() {
     [ "$dec" != chief-decide ] || return 1
   fi
   if [ "$gate_kind" = maintenance ]; then
+    # The same boundary Learning and Curate re-run on the settled receipt, run
+    # here so a judge that never opened the inputs never gets one written: the
+    # round is not consumed and fail_gate preserves the body that failed.
+    printf '%s\n' "$body" | ac_maintenance_read_evidence "$manifest" "$plan" || return 1
     printf '%s\n' "$body"
     return 0
   fi
@@ -867,10 +889,16 @@ Write your review as Markdown with these headings, each EXACTLY ONCE and in this
 # Maintenance Gate Decision
 ## Decision
 ## Grounds
+## Inputs Read
 ## Proposed Process
 
 Under ## Decision put ONLY one token: continue, revise, or ask-captain.
 Grounds and Proposed Process must both be non-empty.
+Under ## Inputs Read put EXACTLY these two lines and nothing else:
+- INPUT MANIFEST QUOTE: <one whole line of substance copied character-for-character out of the input manifest>
+- ACTION PLAN NEW SHA-256: <one \"new_sha256\" value copied out of the action plan's own actions>
+Both are checked against the files themselves, so neither can be reasoned out: the quote must occur in the manifest verbatim - one line, no ellipsis, no code fence - and still carry at least $AC_MAINTENANCE_QUOTE_MIN letters or digits once the MODE, the SUBJECT and the run id in the paths below are removed from it, so pick a line with real content rather than a heading; and the SHA-256 must be one an action in the plan actually carries. Neither may be one of the two SHA-256 values printed below: those are what this prompt already gave you, and material this prompt gave you cannot prove you opened anything.
+If you cannot open either file, say so in plain prose instead of returning a decision document - a maintenance receipt without both lines is refused, and the caller escalates to the captain rather than applying anything.
 Output ONLY that Markdown document - no preamble and no code fences.
 
 == IMMUTABLE INPUTS TO READ FROM DISK ==
@@ -1132,7 +1160,12 @@ transcript="$(printf '%s\n' "$done_line" | jq -r '.transcript')"
 text="$(ac_transcript_final "$transcript")"
 [ -n "$text" ] || fail_gate "empty final message"
 
-body="$(printf '%s' "$text" | validate_body)" || fail_gate "response failed the second-chief.md contract (headings/decision/process/grounds/required-changes)"
+if [ "$gate_kind" = maintenance ]; then
+  body_contract="response failed the maintenance decision.md contract (headings/decision/grounds/process, and the '## Inputs Read' proof that the manifest and the plan were actually opened)"
+else
+  body_contract="response failed the second-chief.md contract (headings/decision/process/grounds/required-changes)"
+fi
+body="$(printf '%s' "$text" | validate_body)" || fail_gate "$body_contract"
 
 # The inputs are fed as PATHS the judge reads itself, for as long as the turn
 # lasts, so the hashes taken before the pane opened are a CLAIM about what was

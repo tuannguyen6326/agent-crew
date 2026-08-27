@@ -1359,15 +1359,17 @@ check_fleet() {
 
     alive_rc=0
     backend_window_alive "$id" || alive_rc=$?
-    if [ "$alive_rc" = 2 ]; then
-      # UNOBSERVABLE (contract: ac-backend.sh WINDOW LIVENESS): the backend could
-      # not be read, which is no evidence about the pane - stamping a death here
-      # is what made a herdr protocol mismatch read as two dead agents. So: no
-      # failure state, no `gone` marker (a real death after the outage is still
-      # news), one wake and one status line per outage episode - the outage is
-      # fleet-wide and only a human clears it, but re-waking every poll for every
-      # pane would bury the chief. KEEP POLLING: recovery needs no re-arm, and the
-      # readable pass below clears the marker so the NEXT outage wakes again.
+    if [ "$alive_rc" != 0 ] && [ "$alive_rc" != 1 ]; then
+      # UNOBSERVABLE (contract: ac-backend.sh WINDOW LIVENESS): only a DEFINITE
+      # `1` may become gone - everything else (2, or a driver-load failure like
+      # bash's own 127 from ac_backend_route's per-call dispatch) is no evidence
+      # about the pane, which is what made a herdr protocol mismatch read as two
+      # dead agents. So: no failure state, no `gone` marker (a real death after
+      # the outage is still news), one wake and one status line per outage
+      # episode - the outage is fleet-wide and only a human clears it, but
+      # re-waking every poll for every pane would bury the chief. KEEP POLLING:
+      # recovery needs no re-arm, and the readable pass below clears the marker
+      # so the NEXT outage wakes again.
       if [ ! -e "$state_dir/.unobservable-$id" ]; then
         touch "$state_dir/.unobservable-$id"
         ac_status_append "$id" "unobservable: backend could not be read for $(backend_target "$id") - NOT a death; the pane may well be alive (check the backend itself)"
@@ -1379,7 +1381,7 @@ check_fleet() {
     fi
     rm -f "$state_dir/.unobservable-$id"
 
-    if [ "$alive_rc" != 0 ]; then
+    if [ "$alive_rc" = 1 ]; then
       if [ ! -e "$state_dir/.gone-$id" ]; then
         touch "$state_dir/.gone-$id"
         ac_status_append "$id" "failed: window gone"

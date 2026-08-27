@@ -245,8 +245,8 @@ out="$("$FT" ship shipux proj2 --dry-run)"
 assert_contains "$out" "DRY-RUN: git -C" "the deferred push rides the ship (dry-printed)"
 assert_contains "$out" -- "--base release" "the single PR targets the recorded target branch"
 
-# idempotent: a recorded PR is reported, never re-opened
-printf 'pr_url=https://example.test/pr/1\n' >"$AC_HOME/data/shipux/gate/ships.env"
+# idempotent: this repo's recorded PR is reported, never re-opened
+printf 'pr_url_proj2=https://example.test/pr/1\n' >"$AC_HOME/data/shipux/gate/ships.env"
 out="$("$FT" ship shipux proj2 --dry-run)"
 assert_contains "$out" "already recorded" "a recorded PR is reported, not re-opened"
 rm "$AC_HOME/data/shipux/gate/ships.env"
@@ -285,3 +285,34 @@ open(p, "w").write(s)
 PYEOF
 out="$("$FT" ship checkoutux proj2 --dry-run 2>&1 || true)"
 assert_contains "$out" "behind its target" "a drifted feature refuses the ship with the rebase advice"
+
+# --- feature-ship-single-pr-slot (lab-measured defect): the PR record is ONE
+# SLOT PER REPO. Repo one's recorded url short-circuited repo two's ship into
+# "PR already recorded: <repo ONE's url>" + rc 0 - a silent success that opened
+# nothing. The record key is now pr_url_<repo>; a pre-fix bare pr_url= is dead
+# legacy the reader ignores (gh itself refuses a duplicate head PR loudly, so
+# ignoring it can never silently double-open).
+up3="$(make_repo up3)"
+git -C "$up3" branch release
+git clone -q "$up3" "$AC_HOME/projects/proj3"
+git -C "$AC_HOME/projects/proj3" config user.email test@test
+git -C "$AC_HOME/projects/proj3" config user.name test
+printf 'proj3 feat/shipux target=release push=deferred\n' >>"$AC_HOME/data/shipux/branches"
+"$FT" create shipux proj3 >/dev/null
+tip3="$(git -C "$AC_HOME/projects/proj3" rev-parse refs/heads/feat/shipux)"
+printf '{"findings":[],"reviewed_ref":"%s"}\n' "$tip3" >"$AC_HOME/data/shipux/gate/review.json"
+mkdir -p "$AC_HOME/projects/proj3/.crew/qa/passed"
+: >"$AC_HOME/projects/proj3/.crew/qa/passed/$tip3"
+printf 'pr_url=https://example.test/pr/1\n' >"$AC_HOME/data/shipux/gate/ships.env"
+out="$("$FT" ship shipux proj3 --dry-run)"
+assert_contains "$out" "gh pr create" \
+  "repo two still opens ITS OWN PR past repo one's bare legacy key"
+printf 'pr_url_proj3=https://example.test/pr/3\n' >>"$AC_HOME/data/shipux/gate/ships.env"
+out="$("$FT" ship shipux proj3 --dry-run)"
+assert_contains "$out" "already recorded: https://example.test/pr/3" \
+  "the repo's OWN key is what reports already-recorded, with its own url"
+printf 'pr_url_proj2=https://example.test/pr/2\n' >"$AC_HOME/data/shipux/gate/ships.env"
+out="$("$FT" ship shipux proj3 --dry-run)"
+assert_contains "$out" "gh pr create" \
+  "a sibling repo's key never records THIS repo's PR"
+rm "$AC_HOME/data/shipux/gate/ships.env"

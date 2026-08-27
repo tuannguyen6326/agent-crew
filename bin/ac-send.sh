@@ -101,8 +101,8 @@ alive_rc=0
 backend_window_alive "$id" || alive_rc=$?
 case "$alive_rc" in
   0) ;;
-  2) ac_die "the BACKEND could not be read for $id - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself (herdr status server), then send again" ;;
-  *) ac_die "window gone for $id" ;;
+  1) ac_die "window gone for $id" ;;
+  *) ac_die "the BACKEND could not be read for $id - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself (herdr status server), then send again" ;;
 esac
 
 if [ "${1:-}" = "--key" ]; then

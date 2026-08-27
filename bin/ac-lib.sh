@@ -34,9 +34,12 @@
 # empty answer - never ac_home.
 
 ac_root() {
-  # Directory of the agent-crew checkout that owns this bin/.
+  # Directory of the agent-crew checkout that owns this bin/. cd -P, because
+  # a fleet home symlinks this bin/ (workspace = home, repo = code): a
+  # logical `..` walked from the symlink path would name the HOME as the
+  # checkout, and every "$(ac_root)/bin/..." reference would break.
   local src="${BASH_SOURCE[0]}"
-  cd "$(dirname "$src")/.." && pwd -P
+  cd -P "$(dirname "$src")/.." && pwd -P
 }
 
 ac_home() {
@@ -105,6 +108,22 @@ ac_projects_dir() { local h; h="$(ac_home)" || return 1; mkdir -p "$h/projects";
 # ac_seed_root_pointer, called by bin/ac-remote.sh on every invocation (poll
 # cadence, reply, thread-post, ack all run through it) so an existing home
 # self-heals the pointer with no manual bootstrap step.
+ac_seed_runtime_links() {
+  # ac_seed_runtime_links <home> - symlink the EXECUTABLE core into <home> so
+  # a chief session runs with cwd = home (workspace = home, repo = code):
+  # bin/ tooling, the CLAUDE.md chief law, .claude/ (settings/hooks/skills),
+  # AGENTS.md. Nothing else: docs/ and tests/ are repo material read through
+  # "$(ac_root)/..." when needed, and machine paths already resolve that way.
+  # A REAL (non-symlink) entry is left alone - a per-home override wins; a
+  # stale symlink is repointed.
+  local home="$1" root f
+  root="$(ac_root)"
+  for f in bin CLAUDE.md .claude AGENTS.md; do
+    if [ -e "$home/$f" ] && [ ! -L "$home/$f" ]; then continue; fi
+    ln -sfn "$root/$f" "$home/$f"
+  done
+}
+
 ac_root_pointer_path() { printf '%s/.ac-root\n' "$(ac_state_dir)"; }
 ac_seed_root_pointer() {
   [ -n "${AC_HOME:-}" ] || return 0
@@ -1989,7 +2008,16 @@ ac_seed_crew_settings() {
   # source moves on. Kept out of git status via info/exclude.
   local wt="$1" src
   src="$(ac_home)/.claude/settings.json"
-  [ -f "$src" ] || src="$(dirname "$(ac_home)")/.claude/settings.json"
+  # A home .claude that is the core-4 runtime symlink into the distro
+  # checkout (ac_seed_runtime_links) holds the distro's settings.json -
+  # chief-session hook wiring, not fleet crew settings - so it is not a
+  # fleet layer and the container copy stays the crew source.
+  if [ -f "$src" ]; then
+    case "$(cd -P "$(dirname "$src")" 2>/dev/null && pwd -P)" in
+      "$(ac_root)"|"$(ac_root)"/*) src="" ;;
+    esac
+  fi
+  [ -n "$src" ] && [ -f "$src" ] || src="$(dirname "$(ac_home)")/.claude/settings.json"
   [ -f "$src" ] || return 0
   ac_seed_install "$wt" '.claude/settings.json' "$src" || return 0
 }

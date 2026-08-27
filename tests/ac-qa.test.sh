@@ -1835,7 +1835,7 @@ assert_eq "$("$QA" store-dir)" "$sdir" "store-dir is stable across calls"
 # its sourced siblings alongside it.
 fake="$TMP/fakecheckout"
 mkdir -p "$fake/bin"
-cp "$BIN/ac-qa.sh" "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-pipeline-lib.sh" "$BIN/ac-qa-lib.sh" "$BIN/ac-backend.sh" "$fake/bin/"
+cp "$BIN/ac-qa.sh" "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-pipeline-lib.sh" "$BIN/ac-qa-lib.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$fake/bin/"
 fake_qa="$fake/bin/ac-qa.sh"
 
 # Zero-writes proof (ac-fleets.test.sh style), scoped to the dirs this defect

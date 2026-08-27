@@ -869,6 +869,21 @@ kickoff_acked() {
   return 1
 }
 
+kickoff_unverified() {
+  # kickoff_unverified <id> <what> - the DURABLE half of a fail-open
+  # delivery. The three unobservable-probe WARNs used to live only on
+  # spawn's stderr, so an agent whose kickoff was swallowed looked exactly
+  # like a working one until somebody happened to peek. Every fail-open
+  # point stamps the status log with its OWN reason; the wake is published
+  # ONCE per spawn (kickoff_unverified_waked), best-effort - a chief is
+  # TOLD, never left to discover.
+  ac_status_append "$1" "warn: kickoff $2 - delivery unverified; peek (bin/ac-peek.sh $1) and resubmit with bin/ac-send.sh $1 --key Enter if the pane sits idle"
+  if [ "${kickoff_unverified_waked:-0}" = 0 ]; then
+    kickoff_unverified_waked=1
+    ac_wake_publish "$(ac_state_dir)" "${AC_SCOPE:-}" kickoff-unverified "$1" "kickoff $2 - delivery unverified" 2>/dev/null || true
+  fi
+}
+
 kickoff_wait_input_ready() {
   # kickoff_wait_input_ready <id> <harness> - id-scoped twin of
   # ac-pane-agent.sh's crewmate_wait_input_ready (header: THE COMPOSER-READY
@@ -913,6 +928,7 @@ $(backend_capture "$wkid" 15)"
     if [ "$ready_waited" -ge "$kickoff_ready_budget" ]; then
       if [ "$w_up" = 2 ]; then
         ac_warn "could not read $(backend_target "$wkid") to verify $wharness's input surface became ready - delivering the kickoff anyway (peek it: bin/ac-peek.sh $wkid)"
+        kickoff_unverified "$wkid" "input-surface readiness unverifiable (backend unreadable)"
         return 0
       fi
       ac_status_append "$wkid" "failed: $wharness's input surface never became ready - kickoff withheld, spawn refused"
@@ -929,7 +945,8 @@ deliver_kickoff() {
   # answer a built-in codex pane's startup dialog, VERIFY the harness is up,
   # wait for its input surface to become ready (kickoff_wait_input_ready),
   # optionally flip the claude session into the ultracode preset,
-  # then type the kickoff prompt as its own line, acknowledgement-checked via
+  # then write the kickoff prompt to <task-dir>/kickoff.md and type a SHORT
+  # pointer line, acknowledgement-checked via
   # kickoff_acked, and VERIFY the harness survived it
   # (header: kickoff-prompt delivery; a lost line ends in a loud
   # warning naming the manual fallback, a DEAD pane kills the spawn - the
@@ -940,7 +957,8 @@ deliver_kickoff() {
   # (same contract as build_launch), while a --resume always uses the built-in
   # line so it still gets it. Reads globals $settle, $ultracode,
   # $ultracode_settle, $resume_sid.
-  local kid="$1" kharness="$2" kprompt="$3" up=0
+  local kid="$1" kharness="$2" kprompt="$3" up=0 kickoff_file
+  kickoff_unverified_waked=0
   sleep "$settle"
   # THE STARTUP-DIALOG ANSWER (header: kickoff-prompt delivery). The registry
   # names the key per harness (ac_harness_startup_key: codex's bare Enter,
@@ -969,6 +987,7 @@ deliver_kickoff() {
 $(backend_capture "$kid" 15)"
   elif [ "$up" = 2 ]; then
     ac_warn "could not read $(backend_target "$kid") to verify $kharness came up - delivering the kickoff anyway (peek it: bin/ac-peek.sh $kid)"
+    kickoff_unverified "$kid" "came-up unverifiable (backend unreadable)"
   fi
   # THE COMPOSER-READY OBSERVATION (header: THE COMPOSER-READY OBSERVATION).
   # Runs for every harness/launch-template combination, mirroring the sibling
@@ -985,9 +1004,19 @@ $(backend_capture "$kid" 15)"
     fi
     sleep "$ultracode_settle"
   fi
-  kickoff_acked "$kid" "$kprompt" \
-    || printf 'WARNING: kickoff prompt NOT acknowledged by %s - it may sit unsubmitted in the composer; peek (bin/ac-peek.sh %s), then resubmit manually with bin/ac-send.sh %s --key Enter\n' \
-      "$(backend_target "$kid")" "$kid" "$kid" >&2
+  # FILE-DELIVERED KICKOFF: the full prompt lands on disk and the pane
+  # receives only a short pointer line. A typed multi-KB prompt measurably
+  # lost its head in transit (orca backend, 2026-08-26: a ~4.7KB kickoff
+  # arrived as its last 723 bytes), and a file has no length limit on any
+  # backend - the pointer stays under every composer's comfort zone.
+  kickoff_file="$(ac_task_dir "$kid")/kickoff.md"
+  mkdir -p "$(dirname "$kickoff_file")"
+  printf '%s\n' "$kprompt" >"$kickoff_file"
+  if ! kickoff_acked "$kid" "Read and follow your kickoff order at $kickoff_file NOW - it is this session's contract. Start by reading that file in full."; then
+    printf 'WARNING: kickoff pointer NOT acknowledged by %s - it may sit unsubmitted in the composer; peek (bin/ac-peek.sh %s), then resubmit manually with bin/ac-send.sh %s --key Enter (the kickoff itself is durable at %s)\n' \
+      "$(backend_target "$kid")" "$kid" "$kid" "$kickoff_file" >&2
+    kickoff_unverified "$kid" "pointer not acknowledged (may sit unsubmitted in the composer)"
+  fi
   # THE POST-KICKOFF RE-CHECK (header: kickoff-prompt delivery). The SAME probe
   # again, because the gate above answers "was the harness up before I typed"
   # and a harness can die ON the kickoff. Its three states keep their meanings -
@@ -1000,6 +1029,7 @@ $(backend_capture "$kid" 15)"
 $(backend_capture "$kid" 15)"
   elif [ "$up" = 2 ]; then
     ac_warn "could not read $(backend_target "$kid") to verify $kharness survived the kickoff - the spawn stands (peek it: bin/ac-peek.sh $kid)"
+    kickoff_unverified "$kid" "post-delivery survival unverifiable (backend unreadable)"
   fi
 }
 
@@ -1220,9 +1250,11 @@ if [ -n "$roomchief_family" ]; then
   reap_orphan_window
   # The roomchief's tab anchors its FAMILY's workspace (FAMILY WORKSPACE
   # GROUPING, ac-backend.sh header) - every crewmate and verification pane
-  # of the family lands beside it.
+  # of the family lands beside it. Its cwd is the FLEET HOME (workspace =
+  # home, repo = code): the home carries the executable core symlinks, so
+  # the kickoff's relative bin/ac-session-start.sh resolves from there.
   export AC_WINDOW_FAMILY="$fam"
-  backend_window_new "$id" "$root"
+  backend_window_new "$id" "$(ac_home)"
   unset AC_WINDOW_FAMILY
   window="$(backend_target "$id")"
   trap spawn_orphan_cleanup EXIT
@@ -1266,7 +1298,7 @@ HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there i
 
   ac_meta_set "$meta" backend "$backend"
   ac_meta_set "$meta" window "$window"
-  ac_meta_set "$meta" worktree "$root"
+  ac_meta_set "$meta" worktree "$(ac_home)"
   ac_meta_set "$meta" project "$fam"
   ac_meta_set "$meta" project_dir "$root"
   ac_meta_set "$meta" harness "$harness"
@@ -1393,15 +1425,12 @@ if [ "$crewdeputy" = 1 ]; then
   # A crewdeputy is fleet-level, not a family: its tab lives in the fleet
   # ROOT workspace (AC_WINDOW_FAMILY set EMPTY = deliberately the root;
   # ac-backend.sh FAMILY WORKSPACE GROUPING).
-  # The pane's CWD is the distro checkout (ac_root()), not the deputy home:
-  # the home holds no bin/ (config CREWMATE.md data projects records state
-  # only), while the charter below tells the pane to run a RELATIVE
-  # bin/ac-session-start.sh - exactly the roomchief path's own resolution at
-  # :1174/:1213. AC_HOME stays $home_dir on the launch line below and
-  # ac_meta_set worktree stays $home_dir (teardown reads that) - only the
-  # cwd moves.
+  # The pane's CWD is the deputy HOME (workspace = home, repo = code):
+  # ac-home-seed links the executable core there (bin/ CLAUDE.md .claude/
+  # AGENTS.md), so the charter's relative bin/ac-session-start.sh resolves
+  # from the home itself, same as the roomchief path.
   export AC_WINDOW_FAMILY=""
-  backend_window_new "$id" "$(ac_root)"
+  backend_window_new "$id" "$home_dir"
   unset AC_WINDOW_FAMILY
   window="$(backend_target "$id")"
   trap spawn_orphan_cleanup EXIT
@@ -1562,7 +1591,17 @@ command -v "${launch%% *}" >/dev/null 2>&1 || ac_die "harness binary not found: 
 # From here until the meta is fully written, any failure must give the
 # lease back - a spawn that dies mid-way must not leak a leased slot with
 # no crewmate meta.
-if [ -n "$resume_wt" ]; then
+if [ "$backend" = orca ]; then
+  # Orca fleets lease through the Orca CLI (orca_worktree_lease: one
+  # worktree per task, sidebar-native, crew/<id> from the local default);
+  # the crew-tree pool stays the herdr fleets'. No slot affinity exists
+  # here - a respawn re-creates the path, so a resume is warned the same
+  # way a changed pool slot is.
+  worktree="$(orca_worktree_lease "$id" "$project_dir")" \
+    || ac_die "orca worktree create failed for $id (is the Orca runtime running, and the repo registered? orca repo add --path $project_dir)"
+  [ -z "$resume_wt" ] || [ "$worktree" = "$resume_wt" ] \
+    || ac_warn "resume may not find the old session (cwd changed: $resume_wt -> $worktree)"
+elif [ -n "$resume_wt" ]; then
   worktree="$("$bin_dir/ac-tree.sh" get --repo "$project_dir" --id "$id" --holder "crew:$id" --prefer "$resume_wt")"
   [ "$worktree" = "$resume_wt" ] \
     || ac_warn "resume may not find the old session (cwd changed: $resume_wt -> $worktree)"
@@ -1571,7 +1610,11 @@ else
 fi
 ac_codegraph_worktree "$project_dir" "$worktree"
 spawn_failed_cleanup() {
-  "$bin_dir/ac-tree.sh" return "$worktree" --force >/dev/null 2>&1 || true
+  if [ "$backend" = orca ]; then
+    orca_worktree_release "$worktree" || true
+  else
+    "$bin_dir/ac-tree.sh" return "$worktree" --force >/dev/null 2>&1 || true
+  fi
   rm -f "$meta"
   # ...and the window, once this spawn has opened one ($window is set only then,
   # so the collision refusal below still dies on a window this spawn does not
@@ -1706,6 +1749,7 @@ deliver_kickoff "$id" "$harness" "$prompt"
 ac_meta_set "$meta" backend "$backend"
 ac_meta_set "$meta" window "$window"
 ac_meta_set "$meta" worktree "$worktree"
+[ "$backend" != orca ] || ac_meta_set "$meta" worktree_backend orca
 ac_meta_set "$meta" leases "$worktree"
 # lease_ids: the per-ACQUISITION identity of each entry in leases=, same order.
 # It is what teardown passes back as `ac-tree.sh return --if-lease-id`, so a

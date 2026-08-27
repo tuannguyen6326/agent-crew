@@ -40,7 +40,7 @@ assert_contains "$desc" "never guess" "description flags the do-not-guess invari
 assert_contains "$skill" "claude" "supported harness: claude"
 assert_contains "$skill" "codex" "supported harness: codex"
 assert_contains "$skill" "opencode" "supported harness: opencode"
-assert_contains "$skill" "herdr session backend remains the only" "herdr is the only backend"
+assert_contains "$skill" "herdr session backend is the DEFAULT backend" "herdr is the default backend and the verification surface"
 
 # --- read-from-meta + fail-closed invariants ---------------------------------
 assert_contains "$skill" "Read the target harness from the task meta" "read harness from meta"

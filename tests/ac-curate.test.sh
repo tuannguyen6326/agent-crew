@@ -329,6 +329,9 @@ reviewed_at: "2026-07-26T00:00:00Z"
 $decision
 ## Grounds
 The targeted fixture proves the exact recoverable action plan.
+## Inputs Read
+- INPUT MANIFEST QUOTE: $(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$manifest")
+- ACTION PLAN NEW SHA-256: $(jq -r '.actions[0].new_sha256' "$plan")
 ## Proposed Process
 Apply or preserve only the hash-bound subject.
 EOF

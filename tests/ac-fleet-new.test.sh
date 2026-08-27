@@ -30,7 +30,18 @@ assert_eq "$home" "$container/alpha" "prints the home path on stdout"
 for d in state data records config projects; do
   [ -d "$container/alpha/$d" ] || fail "missing $d/ in the seeded fleet"
 done
-assert_eq "$(cat "$container/alpha/config/backend")" "herdr" "backend seeded unasked - herdr is the fleet's only backend"
+assert_eq "$(cat "$container/alpha/config/backend")" "herdr" "backend seeded unasked - herdr is the default backend"
+
+# Runtime symlinks: the chief runs with cwd = home (workspace = home, repo =
+# code), so the seed links the distro runtime set into the new home.
+for f in bin CLAUDE.md .claude AGENTS.md; do
+  [ -L "$container/alpha/$f" ] || fail "runtime link missing: alpha/$f"
+done
+for f in docs tests; do
+  [ ! -e "$container/alpha/$f" ] || fail "$f/ must not be seeded - repo material reads through ac_root"
+done
+assert_eq "$(cd "$container/alpha/bin" && pwd -P)" "$(cd "$BIN" && pwd -P)" \
+  "the bin link resolves to the distro checkout's bin"
 assert_eq "$(cat "$container/alpha/config/captain")" "TN" "captain knob"
 assert_eq "$(cat "$container/alpha/config/model")" "opus" "model knob"
 assert_eq "$(cat "$container/alpha/config/effort")" "ultracode" "effort knob"

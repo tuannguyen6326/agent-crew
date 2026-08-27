@@ -2680,6 +2680,28 @@ out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "gone:ub1" "a SECOND death after recovery wakes again"
 assert_contains "$(fleet_spool)" "gone	ub1" "the second gone wake is published durably"
 
+# --- exit 127 (a driver failed to LOAD) is UNOBSERVABLE, never gone ------------------
+# Contract: ac-backend.sh WINDOW LIVENESS is THREE-STATE; ac_backend_route's
+# PER-CALL dispatch ("backend_${fn}_herdr") means a driver function that
+# failed to load - the production shape, not a hand-picked sentinel - makes
+# bash itself return 127 from the very call being classified. The watcher's
+# `if [ "$alive_rc" = 2 ]` gate was the ONLY door into the unobservable
+# branch; anything else (127 included) fell through into the death path.
+reset_state
+rm -f "$state"/*.status
+make_loadfail_bin
+printf 'window=crew:lf1\nbackend=herdr\n' >"$state/lf1.meta"
+seed_pane lf1 pLF1 tLF1
+out="$(bash "$LOADFAIL_BIN/ac-watch.sh" --once)"
+assert_contains "$out" "unobservable:lf1" "a driver-load failure (127) wakes the chief as UNOBSERVABLE"
+case "$out" in *gone:lf1*) \
+  fail "THE REGRESSION: exit 127 (loadable-driver failure) must never be reported as a gone pane" ;; esac
+assert_contains "$(cat "$state/lf1.status")" "unobservable:" "the status records what actually happened"
+case "$(cat "$state/lf1.status")" in *"failed:"*) \
+  fail "THE REGRESSION: a driver-load failure must write no death record" ;; esac
+assert_contains "$(fleet_spool)" "unobservable	lf1" "the wake is published durably like every other"
+assert_no_file "$state/.gone-lf1" "the gone dedup marker is untouched - a real death is still news"
+
 reset_state
 rm -f "$state"/*.status
 

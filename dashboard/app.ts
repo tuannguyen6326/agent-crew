@@ -90,10 +90,10 @@ import {
   TimelineEvent, UX_BASE, artifactKind, artifactPainted, backlogFamilyIds, boardSystemPanes, buildReviewSrcdoc, 
   cadenceLabel, chiefFitPx, clampBgDim, composeFamily, contractTokens, deriveProgress, 
   familyOfTaskId, familyRepos, familyStages, fleetAttnItems, groupArtifacts, isHtmlArtifact, 
-  matchBacklog, mermaidPass, nextPalette, nextTheme, normalizeBgColor, parseArtifactPath, 
-  parseBacklog, parseBacklogLine, parseLearningLedger, parseRoomList, parseTimeline, readerCss, 
-  renderMarkdown, resolvePalette, resolveTheme, reviewableArtifact, stemRegroup, storyState, 
-  termThemeCore, verifyProcessRows, escapeHtml,
+  matchBacklog, mermaidPass, nextPalette, nextTheme, normalizeBgColor, parseAgentList, agentStatusMap, parseArtifactPath,
+  parseBacklog, parseBacklogLine, parseLearningLedger, parseRoomList, parseTimeline, readerCss,
+  renderMarkdown, resolvePalette, resolveTheme, reviewableArtifact, stemRegroup, storyState,
+  termThemeCore, usageFromJsonl, verifyProcessRows, escapeHtml,
 } from "./lib.ts";
 export * from "./lib.ts";
 import { PAGE } from "./page.ts";
@@ -1376,7 +1376,7 @@ export const CONFIG_KNOB_META: Record<(typeof EDITABLE_CONFIG)[number], KnobMeta
   "gate-agent": { desc: "Second-chief engine for design gates - one engine, no fallback; off = the chief self-judges (receipted).", options: ["codex", "claude", "opencode", "pi", "cursor", "off"] },
   "gate-effort": { desc: "Reasoning effort for the gate judge; empty = the engine's own default.", options: EFFORTS },
   "gate-model": { desc: "Model for the gate judge; empty = the engine's own default." },
-  backend: { desc: "Session backend for new crewmates; herdr is the only supported value.", options: ["herdr"] },
+  backend: { desc: "Session backend for new crewmates: herdr (default) or orca.", options: ["herdr", "orca"] },
   "remote-poll-interval": { desc: "Seconds between the fleet watcher's remote-order polls (default 300; 0 = slot off).", numeric: true },
   captain: { desc: "How the fleet addresses the human (e.g. TN); absent = captain." },
   "slack-captain-id": { desc: "Slack member id the remote channel treats as the captain." },
@@ -2012,12 +2012,55 @@ function brainStat(home: string) {
   } catch { return json({ present: false }); }
 }
 
+/** Per-task token usage (dash-usage-panel): every live meta that records a
+ *  session_id + worktree resolves to its claude transcript
+ *  (~/.claude/projects/<slug>/<session_id>.jsonl - the ac-follow.sh rule:
+ *  / and . slug to -) and is summed by the bun-tested usageFromJsonl.
+ *  KNOWN CAP, stated in the UI note: the MAIN session file only - a
+ *  crewmate's own subagents write sibling files this does not attribute.
+ *  RAW tokens by design, never dollars (price tables drift). Transcripts are
+ *  big and Processes polls fast, so the walk is ttlMemo'd per home. */
+type UsageRow = {
+  id: string; models: string[];
+  today: ReturnType<typeof usageFromJsonl>["total"];
+  total: ReturnType<typeof usageFromJsonl>["total"];
+};
+const usageMemos = new Map<string, () => Promise<UsageRow[]>>();
+function usageRowsLoader(homePath: string): () => Promise<UsageRow[]> {
+  return async () => {
+    const rows: UsageRow[] = [];
+    const today = new Date().toISOString().slice(0, 10);
+    let metas: string[] = [];
+    try { metas = readdirSync(`${homePath}/state`).filter((f) => f.endsWith(".meta")); } catch { return rows; }
+    for (const f of metas) {
+      let metaText = "";
+      try { metaText = readFileSync(`${homePath}/state/${f}`, "utf8"); } catch { continue; }
+      const sid = (/^session_id=([A-Za-z0-9-]+)$/m.exec(metaText) || [])[1];
+      const wt = (/^worktree=(.+)$/m.exec(metaText) || [])[1];
+      if (!sid || !wt) continue;
+      const slug = wt.trim().replace(/[/.]/g, "-");
+      let text = "";
+      try { text = readFileSync(`${process.env.HOME}/.claude/projects/${slug}/${sid}.jsonl`, "utf8"); } catch { continue; }
+      const u = usageFromJsonl(text);
+      rows.push({ id: f.slice(0, -".meta".length), models: u.models,
+        today: u.days[today] || { inp: 0, out: 0, cr: 0, cw: 0 }, total: u.total });
+    }
+    return rows;
+  };
+}
+function usageFor(homePath: string): Promise<UsageRow[]> {
+  let m = usageMemos.get(homePath);
+  if (!m) { m = ttlMemo(20000, usageRowsLoader(homePath)); usageMemos.set(homePath, m); }
+  return m();
+}
+
 async function processesDetail(homePath: string): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
   const backlogFile = `${homePath}/records/backlog.md`;
   return json({
     rooms: await roomList(homePath),
+    usage: await usageFor(homePath),
     pools: readPools(homePath),
     branches: readLocalBranches(homePath),
     remote: readRemote(homePath),
@@ -2052,7 +2095,37 @@ async function backlogDetail(homePath: string): Promise<Response> {
   const own = existsSync(backlogFile)
     ? parseBacklog(readFileSync(backlogFile, "utf8"))
     : { in_flight: [], queued: [], done: [] };
-  return json({ backlog: own });
+  return json({ backlog: own, agents: await agentStatusesFor(homePath) });
+}
+
+/** One `herdr agent list` serves every home and every polling client inside
+ *  the window - herdr derives agent state fleet-wide, the per-home filter is
+ *  the pane join below. */
+const herdrAgents = ttlMemo(2500, async (): Promise<ReturnType<typeof parseAgentList>> => {
+  const { code, out } = await run(["herdr", "agent", "list"], {});
+  return code === 0 ? parseAgentList(out) : [];
+});
+
+/** Task id -> live agent state (idle|working|blocked|done|unknown) for one
+ *  home: herdr's own 5-state detection joined to state/*.meta pane handles.
+ *  Read-only; any failure is an empty map - the board renders no chip rather
+ *  than a guessed one. */
+async function agentStatusesFor(homePath: string): Promise<Record<string, string>> {
+  let entries: ReturnType<typeof parseAgentList>;
+  try { entries = await herdrAgents(); } catch { return {}; }
+  if (entries.length === 0) return {};
+  const panes: { id: string; pane: string }[] = [];
+  try {
+    for (const f of readdirSync(`${homePath}/state`)) {
+      if (!f.endsWith(".meta")) continue;
+      const id = f.slice(0, -".meta".length);
+      try {
+        const h = paneHandleByMeta(homePath, id, readFileSync(`${homePath}/state/${f}`, "utf8"));
+        if (h) panes.push({ id, pane: h.pane });
+      } catch { /* unreadable meta - no chip for it */ }
+    }
+  } catch { return {}; }
+  return agentStatusMap(entries, panes);
 }
 
 /** Reports route (§7.4): the discovered artifact master list (viewer bodies load
@@ -2282,6 +2355,12 @@ export function termSize(colsRaw: string | null, rowsRaw: string | null): { cols
 async function termStatus(homePath: string): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
+  // An orca-backed home has no herdr surface to embed: the dock renders an
+  // open-Orca affordance (via /api/orca/focus) instead of an empty client.
+  try {
+    if (readFileSync(`${homePath}/config/backend`, "utf8").trim() === "orca")
+      return json({ enabled: false, running: false, why: "this fleet runs on the Orca app", orca: true });
+  } catch { /* no knob - herdr default */ }
   return json({ enabled: true, running: true, url: "/term-frame?path=" + encodeURIComponent(homePath) });
 }
 
@@ -2977,7 +3056,7 @@ async function paneCols(homePath: string, pane: string): Promise<number | undefi
  * by the snapshot read (roomPane) and the native attach ws, so both surfaces
  * hold the same membership gate: a watch id only counts when the family
  * really owns it, and a crewmate id can never be read as a chief. */
-async function panelPaneOf(homePath: string, family: string, watchId: string): Promise<{ pane: string; readonly: boolean } | { why: string }> {
+async function panelPaneOf(homePath: string, family: string, watchId: string): Promise<{ pane: string; readonly: boolean } | { why: string } | { orcaId: string }> {
   if (watchId) {
     let metas: { id: string; text: string }[] = [];
     try {
@@ -2988,6 +3067,7 @@ async function panelPaneOf(homePath: string, family: string, watchId: string): P
     const member = familyPaneIds(metas, family).find((x) => x.id === watchId);
     if (!member) return { why: "not a pane of this family" };
     const meta = metas.find((x) => x.id === watchId);
+    if (meta && orcaWindowOf(meta.text)) return { orcaId: watchId };
     const h = paneHandleByMeta(homePath, watchId, meta ? meta.text : "");
     if (!h) return { why: "pane handle unresolvable" };
     return { pane: h.pane, readonly: true };
@@ -3004,6 +3084,7 @@ async function panelPaneOf(homePath: string, family: string, watchId: string): P
   } catch {
     return { why: "no roomchief for this family" };
   }
+  if (orcaWindowOf(metaText)) return { orcaId: `${family}-chief` };
   let pane = chiefPaneOf(metaText);
   if (!pane) return { why: "chief meta carries no readable pane" };
   // The handle FILE is what the backend itself reads (backend_capture): panes
@@ -3029,6 +3110,7 @@ async function roomPane(homePath: string, family: string, watchId = "", lines = 
   if (watchId && (family === "" || !/^[a-zA-Z0-9_.-]+$/.test(watchId)))
     return json({ error: "bad watch id" }, 400);
   const t = await panelPaneOf(homePath, family, watchId);
+  if ("orcaId" in t) return json({ live: false, why: "runs on the Orca app", orca: t.orcaId });
   if ("why" in t) return json({ live: false, why: t.why });
   const r = await run(
     ["herdr", "pane", "read", t.pane, "--source", "recent-unwrapped", "--format", "ansi", "--lines", String(Math.max(lines, 200))],
@@ -3774,6 +3856,16 @@ export function chiefPaneOf(metaText: string): string | null {
   return m ? `${m[1]}:${m[2]}` : null;
 }
 
+/** Orca-backed task handle from its meta: `backend=orca` + `window=orca:<h>`.
+ * The dashboard cannot render these panes (they live in the Orca app), so the
+ * affordance is a FOCUS JUMP (/api/orca/focus) - only the handle is needed.
+ * Null for any other backend or shape. */
+export function orcaWindowOf(metaText: string): string | null {
+  if (!/^backend=orca$/m.test(metaText)) return null;
+  const m = /^window=orca:(\S+)$/m.exec(metaText);
+  return m ? m[1] : null;
+}
+
 /** Minimal ANSI-SGR -> HTML for the pane view: 16/bright colors, 256-color
  * (38;5/48;5), bold/dim/italic/underline/inverse, reset. Every other escape
  * (cursor moves, OSC titles) is STRIPPED - the capture is a finished frame,
@@ -4476,9 +4568,10 @@ export interface ReviewAnnotation {
   at: string;
   anchor: { selector: string; fingerprint: string; line?: number | null } | null;
   text: string;
-  /** Absolute path to a PNG snapshot of the edited scene, when queue-feedback
-   * captured one (dash-review-polish slice 3). Set only when the scene was
-   * actually saved to disk - see resolveAnnotationSnapshot. */
+  /** Absolute path to a PNG image attached to this annotation: a queue-feedback
+   * auto-snapshot of an edited whiteboard scene (dash-review-polish slice 3),
+   * or a captain's direct reference-image paste into the composer (slice
+   * refimg) - see resolveAnnotationSnapshot for which. */
   image?: string;
   /** Author when NOT the captain: the share listener stamps the guest's
    * given name ("guest" when anonymous) on every annotation a token link
@@ -4517,11 +4610,12 @@ export function emptyReviewSession(artifact: string): ReviewSession {
 
 /** Validate one incoming annotation body from the viewer: text required,
  * anchor optional but well-shaped when present. The one gate body->store.
- * scene/snapshot are optional (dash-review-polish slice 3 queue-feedback):
- * scene names the diagram's whiteboard scene, snapshot is raw base64 PNG
- * bytes the frame captured - neither is trusted yet, only carried through to
- * the route handler, which is the one place that can check the scene file on
- * disk (see resolveAnnotationSnapshot). */
+ * scene/snapshot are optional and independent: scene names the diagram's
+ * whiteboard scene when snapshot is an auto-captured queue-feedback edit
+ * (slice 3); a composer's direct reference-image paste (slice refimg) sends
+ * snapshot alone, with no scene. Neither is trusted yet, only carried
+ * through to the route handler, which is the one place that decides whether
+ * an image gets written at all (see resolveAnnotationSnapshot). */
 export function normalizeAnnotation(
   text: string,
 ): { anchor: ReviewAnnotation["anchor"]; text: string; scene?: string; snapshot?: string } | null {
@@ -4585,17 +4679,21 @@ export function reviewSnapshotPath(id: string, n: number): string {
   return `${id}.review-${n}.png`;
 }
 
-/** The one decision of "WHEN is there an image" (dash-review-polish slice 3):
- * a snapshot is only ever attached when the scene was actually saved to disk
- * (sceneFileExists - proven by the caller stat-ing the scene file under
- * whiteboards/, never by trusting the client's claim) AND the client handed
- * over bytes that decode to a real PNG. An embedded-but-never-saved editor
- * (seed import only, or opened-and-untouched) has no scene file, so this
- * returns null even if the client sent bytes - no junk image, no dead path. */
+/** The one decision of "WHEN is there an image", for every source that can
+ * offer one: a queue-feedback auto-snapshot (slice 3) is only ever attached
+ * when its scene was actually saved to disk (sourceVerified - proven by the
+ * caller stat-ing the scene file under whiteboards/, never by trusting the
+ * client's claim); a composer's direct reference-image paste (slice refimg)
+ * carries no scene to stat, so the caller passes sourceVerified=true and the
+ * PNG-magic check below is the whole trust boundary. Either way, an image is
+ * attached only when the source checks out AND the client handed over bytes
+ * that decode to a real PNG - an embedded-but-never-saved scene editor (seed
+ * import only, or opened-and-untouched) returns null even if the client sent
+ * bytes, no junk image, no dead path. */
 export function resolveAnnotationSnapshot(
   id: string,
   seq: number,
-  sceneFileExists: boolean,
+  sourceVerified: boolean,
   snapshotBase64: string | undefined,
   sessionEnded: boolean,
 ): { path: string; buffer: Buffer } | null {
@@ -4603,7 +4701,7 @@ export function resolveAnnotationSnapshot(
   // the PNG before that check would leave an orphan file no record ever
   // points to, so the ended-check lives HERE, in the same one decision of
   // "when is there an image", not as a separate guard in the route.
-  if (sessionEnded || !sceneFileExists || !snapshotBase64) return null;
+  if (sessionEnded || !sourceVerified || !snapshotBase64) return null;
   const buffer = decodePngSnapshot(snapshotBase64);
   if (!buffer) return null;
   return { path: reviewSnapshotPath(id, seq + 1), buffer };
@@ -5223,6 +5321,23 @@ export function reviewShouldRemount(mountedContent: string | null | undefined, f
   return mountedContent !== freshContent;
 }
 
+/** The ONE gate between a composer paste and an attach (dash-review-polish
+ * slice: annotation reference images): PNG only, per the row's boundary -
+ * any other MIME, a non-file item, or an empty clipboard returns null so the
+ * caller's paste handler falls through to the textarea's normal text paste
+ * untouched, never swallowing the keystroke. */
+export function pastedPngFile(
+  items: { kind?: string; type?: string; getAsFile?: () => unknown }[] | null | undefined,
+): unknown | null {
+  for (const item of items || []) {
+    if (item && item.kind === "file" && item.type === "image/png" && typeof item.getAsFile === "function") {
+      const f = item.getAsFile();
+      if (f) return f;
+    }
+  }
+  return null;
+}
+
 /** The review page: artifact in a sandboxed srcdoc iframe (content via the
  * existing path-safe /api/artifact route) with an injected overlay - hover
  * highlight, click-to-pin - and a side panel fed from the session file.
@@ -5306,6 +5421,11 @@ ${UX_BASE}
   #chatin textarea{resize:vertical;height:64px;background:var(--canvas);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font:13px var(--ui)}
   #chatin textarea:focus{outline:none;border-color:var(--accent)}
   .crow{display:flex;justify-content:flex-end;gap:14px;align-items:center}
+  .imgprev{display:none;align-items:center;gap:8px}
+  .imgprev.on{display:flex}
+  .imgprev img{max-height:60px;max-width:110px;border-radius:6px;border:1px solid var(--border);object-fit:cover}
+  .imgprev button{font:12px var(--ui);color:var(--fg2);background:var(--elev);border:1px solid var(--border);border-radius:5px;padding:2px 8px;cursor:pointer}
+  .imgprev button:hover{color:var(--fg);border-color:var(--border-strong)}
   #csendend{background:none;border:none;color:var(--error);font:600 13px var(--ui);cursor:pointer;padding:6px 4px}
   #csendend:hover{text-decoration:underline}
   #csendmsg{background:var(--accent);color:var(--accent-ink);border:none;border-radius:8px;padding:8px 16px;font:600 13px var(--ui);cursor:pointer}
@@ -5347,12 +5467,13 @@ ${UX_BASE}
       <div id="nolisten">No agent is polling this review - your message is saved and the owning
       chief is waked; the crew resumes with <span class="mono">ac-review.sh poll</span>.</div>
       <div id="chatin"><textarea id="cmsg" placeholder="Write a message for the agent..."></textarea>
+      ${guest ? "" : `<div id="mimgprev" class="imgprev"><img id="mimgpic"><button id="mimgx" type="button">Remove</button></div>`}
       <div class="crow">${guest ? "" : `<button id="csendend">&#8594; Send &amp; End</button>`}<button id="csendmsg">Send to Agent</button></div></div>
     </div>
   </div>
 </div>
 <div id="wboverlay"><iframe id="wbo-frame"></iframe></div>
-<div id="composer"><div class="chead"><span class="cava">${guest ? "G" : "C"}</span><span class="cwho">${guest ? "Guest" : "Captain"}</span></div><textarea id="ctext" placeholder="Add a comment\u2026"></textarea><div class="row"><span class="ckey">\u2318\u23ce to comment</span><button id="ccancel">Cancel</button><button class="primary" id="csend">Comment</button></div></div>
+<div id="composer"><div class="chead"><span class="cava">${guest ? "G" : "C"}</span><span class="cwho">${guest ? "Guest" : "Captain"}</span></div><textarea id="ctext" placeholder="${guest ? "Add a comment\u2026" : "Add a comment\u2026 (paste a PNG to attach it)"}"></textarea>${guest ? "" : `<div id="cimgprev" class="imgprev"><img id="cimgpic"><button id="cimgx" type="button">Remove</button></div>`}<div class="row"><span class="ckey">\u2318\u23ce to comment</span><button id="ccancel">Cancel</button><button class="primary" id="csend">Comment</button></div></div>
 <script>
 const GUEST = ${guest ? "true" : "false"};
 const q = new URLSearchParams(location.search);
@@ -5390,9 +5511,10 @@ if (GUEST) {
   }
 }
 const api = (p, opt) => fetch(p + (GUEST ? "?t=" + encodeURIComponent(TOKEN) + (WHO ? "&who=" + encodeURIComponent(WHO) : "") : "?path=" + encodeURIComponent(home) + "&file=" + encodeURIComponent(file)) + (opt && opt.extra ? opt.extra : ""), opt);
-let pendingAnchor = null, lastMtime = 0, anchorState = {}, lastSig = "", DIAGRAMS = [], lastScrollY = 0, pendingScrollRestore = null, frameReady = false, embedRoundDone = true, diagramsReady = false;
+let pendingAnchor = null, lastMtime = 0, anchorState = {}, lastSig = "", DIAGRAMS = [], lastScrollY = 0, pendingScrollRestore = null, frameReady = false, embedRoundDone = true, diagramsReady = false, pendingCImage = null, pendingMImage = null;
 ${reviewShouldRemount.toString()}
 ${buildReviewSrcdoc.toString()}
+${pastedPngFile.toString()}
 // The iframe's own reader stylesheet, baked once server-side (review-page-missing-markdown-table-css):
 // THEME_VARS for the color tokens, a base body reset mirroring PAGE's own
 // plain body rule (the iframe has no ancestor document to inherit one from),
@@ -5599,7 +5721,10 @@ const OVERLAY = \`<script data-acrv>
       q.addEventListener("click", (ev) => {
         ev.stopPropagation();
         requestQueueFeedback(kind, idx, note.value.trim(), card);
-        note.value = ""; note.placeholder = "queued - the agent will see it";
+        // Not "queued" yet - the POST it just triggered has not answered.
+        // The diagramNoteResult handler below turns this into the real
+        // claim, or restores the text on a refusal.
+        note.value = ""; note.placeholder = "sending...";
       });
       const fs = document.createElement("button");
       fs.className = "__wbbtn"; fs.textContent = "Fullscreen";
@@ -5672,6 +5797,24 @@ ${artifactPainted.toString()}
     if (d.wbf === "snapshotResult" && d.scene) {
       const finish = pendingSnap[d.scene];
       if (finish) finish(d.ok && d.data ? { scene: d.scene, data: d.data } : null);
+      return;
+    }
+    if (d.diagramNoteResult) {
+      // Identity lookup by data-wbcard, same idiom as d.lavishInline below -
+      // the card's own DOM element is never held onto across the round trip.
+      const r = d.diagramNoteResult;
+      const card = document.querySelector('.__wbcard[data-wbcard="' + r.kind + ":" + r.idx + '"]');
+      const input = card && card.querySelector(".__wbhdr input");
+      if (input) {
+        if (r.ok) { input.placeholder = "queued - the agent will see it"; }
+        else {
+          // Only restore into a still-empty box - never clobber text the
+          // captain already typed again while this round trip was pending
+          // (r1 finding).
+          if (!input.value) input.value = r.text || "";
+          input.placeholder = "Optional note for the agent about these edits...";
+        }
+      }
       return;
     }
     if (d.lavishInline) {
@@ -5858,6 +6001,10 @@ addEventListener("message", (e) => {
   }
   if (d.anchor) {
     pendingAnchor = d.anchor;
+    // A fresh pin discards whatever the previous, possibly-abandoned
+    // composer had pasted - an unsent image must never silently ride along
+    // onto an unrelated pin.
+    pendingCImage = null; renderImgPreview("cimgprev", "cimgpic", null);
     composer.style.display = "block";
     composer.style.left = Math.min(d.x + 60, innerWidth - 330) + "px";
     composer.style.top = Math.min(d.y + 60, innerHeight - 160) + "px";
@@ -5922,31 +6069,113 @@ addEventListener("message", (e) => {
       body.scene = g.scene;
       body.snapshot = d.diagramNote.snapshot;
     }
+    // The overlay set the card's note to "sending..." optimistically but
+    // never claimed delivery - the verdict travels back down to it over the
+    // same wire the card's message already arrived on (e.source), keyed by
+    // kind/idx like the existing lavishInline card lookup (dash-review-polish
+    // slice refusal: a refusal must restore the captain's note, not just say so).
+    const src = e.source;
+    const { kind, idx, text: rawText } = d.diagramNote;
     api("/api/review/annotate", { method: "POST", body: JSON.stringify(body) })
-      .then(() => refresh(true));
+      .then(async (r) => {
+        if (r.ok) {
+          if (src) src.postMessage({ lavishNative: true, diagramNoteResult: { kind, idx, ok: true } }, "*");
+          refresh(true);
+          return;
+        }
+        const b = await r.json().catch(() => ({}));
+        document.getElementById("stxt").textContent = "send refused: " + (b.error ?? r.status);
+        if (src) src.postMessage({ lavishNative: true, diagramNoteResult: { kind, idx, ok: false, text: rawText } }, "*");
+      })
+      // A network-level rejection (not a non-ok HTTP status) never reaches the
+      // .then above - without this the card would sit on "sending..." forever
+      // with the captain's note already gone (r1 finding).
+      .catch(() => {
+        document.getElementById("stxt").textContent = "send failed: network error";
+        if (src) src.postMessage({ lavishNative: true, diagramNoteResult: { kind, idx, ok: false, text: rawText } }, "*");
+      });
   }
 });
-document.getElementById("ccancel").addEventListener("click", () => { composer.style.display = "none"; });
+// Composer reference-image paste (dash-review-polish slice refimg): a
+// compose-time preview so the captain SEES what they attached before
+// sending - pendingCImage/pendingMImage hold the raw base64, the img tag
+// holds the same bytes for display, both cleared once the composer empties.
+function renderImgPreview(wrapId, imgId, base64){
+  const wrap = document.getElementById(wrapId);
+  if (!wrap) return; // guest page renders no preview slot at all - captain-only
+  wrap.classList.toggle("on", !!base64);
+  document.getElementById(imgId).src = base64 ? "data:image/png;base64," + base64 : "";
+}
+function fileToBase64(file){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] || "");
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+// A paste carrying no PNG must still fall through to the textarea's normal
+// text paste - only a real image item calls preventDefault.
+function wirePasteAttach(textareaId, wrapId, imgId, setPending){
+  document.getElementById(textareaId).addEventListener("paste", async (e) => {
+    const file = pastedPngFile(e.clipboardData && e.clipboardData.items);
+    if (!file) return;
+    e.preventDefault();
+    const b64 = await fileToBase64(file);
+    setPending(b64);
+    renderImgPreview(wrapId, imgId, b64);
+  });
+}
+// Captain-only, like csendend/endbtn/sharebtn below: the server-side guest
+// listener (shareFetch) never reads scene/snapshot off the body, so wiring
+// paste for a guest would show an attach preview that vanishes silently on
+// send - a promise the server cannot keep. #cimgprev/#mimgprev/#cimgx/#mimgx
+// are absent from the guest markup, so getElementById(...).addEventListener
+// would throw here without this gate (renderImgPreview elsewhere no-ops on
+// the same absence instead, since it only reads, never attaches a listener).
+if (!GUEST) {
+  wirePasteAttach("ctext", "cimgprev", "cimgpic", (b64) => { pendingCImage = b64; });
+  wirePasteAttach("cmsg", "mimgprev", "mimgpic", (b64) => { pendingMImage = b64; });
+  document.getElementById("cimgx").addEventListener("click", () => { pendingCImage = null; renderImgPreview("cimgprev", "cimgpic", null); });
+  document.getElementById("mimgx").addEventListener("click", () => { pendingMImage = null; renderImgPreview("mimgprev", "mimgpic", null); });
+}
+document.getElementById("ccancel").addEventListener("click", () => {
+  composer.style.display = "none";
+  pendingCImage = null; renderImgPreview("cimgprev", "cimgpic", null);
+});
 document.getElementById("ctext").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); document.getElementById("csend").click(); }
   if (e.key === "Escape") composer.style.display = "none";
 });
 document.getElementById("csend").addEventListener("click", async () => {
   const text = document.getElementById("ctext").value.trim();
-  if (text) await api("/api/review/annotate", { method: "POST", body: JSON.stringify({ anchor: pendingAnchor, text }) });
+  if (text) {
+    const body = { anchor: pendingAnchor, text };
+    if (pendingCImage) body.snapshot = pendingCImage;
+    const res = await api("/api/review/annotate", { method: "POST", body: JSON.stringify(body) });
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      document.getElementById("stxt").textContent = "send refused: " + (b.error ?? res.status);
+      return; // keep the text and the pending image - nothing is lost
+    }
+  }
   document.getElementById("ctext").value = ""; composer.style.display = "none"; refresh(true);
+  pendingCImage = null; renderImgPreview("cimgprev", "cimgpic", null);
 });
 async function sendChat(){
   const box = document.getElementById("cmsg");
   const text = box.value.trim();
   if (!text) return;
-  const res = await api("/api/review/annotate", { method: "POST", body: JSON.stringify({ anchor: null, text }) });
+  const body = { anchor: null, text };
+  if (pendingMImage) body.snapshot = pendingMImage;
+  const res = await api("/api/review/annotate", { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     document.getElementById("stxt").textContent = "send refused: " + (b.error ?? res.status);
     return; // keep the text in the box - nothing is lost
   }
   box.value = "";
+  pendingMImage = null; renderImgPreview("mimgprev", "mimgpic", null);
   refresh(true);
 }
 document.getElementById("csendmsg").addEventListener("click", sendChat);
@@ -6085,7 +6314,7 @@ async function refresh(force){
   if (endbtn) endbtn.textContent = ended ? "Reopen" : "End session";
   const box = document.getElementById("cmsg");
   box.disabled = ended;
-  box.placeholder = ended ? "session ended - Reopen to continue" : "Write a message for the agent... (Enter to send)";
+  box.placeholder = ended ? "session ended - Reopen to continue" : "Write a message for the agent... (Enter to send" + (GUEST ? "" : ", paste a PNG to attach it") + ")";
   if (csendend) csendend.disabled = ended;
   document.getElementById("nolisten").style.display = (!ended && s.polling === false) ? "block" : "none";
   if (!force && sig === lastSig) return;
@@ -6246,10 +6475,11 @@ export function dashboardMain() {
           ptyCount++;
           void (async () => {
             const t = await panelPaneOf(d.home, d.fam, d.watch);
-            if ("why" in t) {
+            if ("why" in t || "orcaId" in t) {
               // {closed} FIRST so the frame latches "pane gone" instead of
               // treating the bare close as transient and reconnect-looping.
-              try { ws.send(JSON.stringify({ closed: true, why: t.why })); } catch { /* ws gone */ }
+              const why = "why" in t ? t.why : "runs on the Orca app";
+              try { ws.send(JSON.stringify({ closed: true, why })); } catch { /* ws gone */ }
               try { ws.close(1008, "no pane"); } catch { /* already closed */ }
               return;
             }
@@ -6418,7 +6648,7 @@ export function dashboardMain() {
         const famT = url.searchParams.get("fleet") === "1" ? "" : url.searchParams.get("family");
         if (famT !== null) {
           const t = await panelPaneOf(p, famT, "");
-          if (!("why" in t)) {
+          if (!("why" in t) && !("orcaId" in t)) {
             const wl = await run(["herdr", "workspace", "list"], { AC_HOME: p });
             try {
               const wss = (JSON.parse(wl.out) as { result?: { workspaces?: { workspace_id: string; number: number }[] } }).result?.workspaces ?? [];
@@ -6561,6 +6791,30 @@ export function dashboardMain() {
         const p = url.searchParams.get("path") ?? "";
         if (!(await allowedHomePaths()).has(p)) return json({ error: "unknown home" }, 404);
         return attachFramePage();
+      }
+      if (url.pathname === "/api/orca/focus") {
+        // Focus jump into the Orca app: bring the app forward and, when a task
+        // id is named, switch its terminal to the foreground first. The handle
+        // is resolved server-side from the task's own meta/handle file - the
+        // client can never name an arbitrary terminal.
+        const p = url.searchParams.get("path") ?? "";
+        if (!(await allowedHomePaths()).has(p)) return json({ error: "unknown home" }, 404);
+        const id = url.searchParams.get("id") ?? "";
+        if (id && !/^[a-zA-Z0-9_.-]+$/.test(id)) return json({ error: "bad id" }, 400);
+        let handle = "";
+        if (id) {
+          let metaText = "";
+          try { metaText = readFileSync(`${p}/state/${id}.meta`, "utf8"); } catch { return json({ error: "no such task" }, 404); }
+          handle = orcaWindowOf(metaText) ?? "";
+          try {
+            const tok = readFileSync(`${p}/state/.pane-${id}`, "utf8").trim().split(/\s+/)[0];
+            if (tok && /^term_[A-Za-z0-9-]+$/.test(tok)) handle = tok;
+          } catch { /* no handle file - keep the meta echo */ }
+          if (!handle) return json({ error: "task is not orca-backed" }, 400);
+          await run(["orca", "terminal", "switch", "--terminal", handle, "--json"], {});
+        }
+        await run(["open", "-a", "Orca"], {});
+        return json({ ok: true, handle: handle || null });
       }
       if (url.pathname === "/api/term/status") {
         const p = url.searchParams.get("path");
@@ -6737,18 +6991,24 @@ export function dashboardMain() {
             if (req.method !== "POST") return json({ error: "POST required" }, 405);
             const a = normalizeAnnotation(await req.text());
             if (!a) return json({ error: "text required; anchor needs selector+fingerprint" }, 400);
-            // Queue-feedback snapshot (dash-review-polish slice 3): the ONLY
-            // proof a scene was actually edited is its file existing under
-            // whiteboards/ - never the client's say-so. Stat it here, then
-            // let resolveAnnotationSnapshot make the one call on whether an
-            // image gets written at all - including the ended-session check
+            // ONE call site for every image source (dash-review-polish slice
+            // 3 queue-feedback, and slice refimg's direct composer paste) -
+            // resolveAnnotationSnapshot makes the one call on whether an
+            // image gets written at all, including the ended-session check
             // (r1 finding: writing the PNG before reviewApply's own ended
-            // refusal left an orphan file no record ever pointed to).
+            // refusal left an orphan file no record ever pointed to). A
+            // scene-linked snapshot is verified against disk - the ONLY proof
+            // a scene was actually edited is its file existing under
+            // whiteboards/, never the client's say-so; a direct paste names
+            // no scene to stat, so the paste itself is the source and the
+            // PNG-magic check inside resolveAnnotationSnapshot is the gate.
             let image: string | undefined;
-            if (a.scene && isSceneName(a.scene)) {
+            if (a.snapshot) {
               const cur = reviewLoad(p, id);
-              const sceneFile = `${whiteboardDir(p)}/${a.scene}.excalidraw.json`;
-              const snap = resolveAnnotationSnapshot(id, cur.seq, existsSync(sceneFile), a.snapshot, cur.state === "ended");
+              const sourceVerified = a.scene && isSceneName(a.scene)
+                ? existsSync(`${whiteboardDir(p)}/${a.scene}.excalidraw.json`)
+                : !a.scene;
+              const snap = resolveAnnotationSnapshot(id, cur.seq, sourceVerified, a.snapshot, cur.state === "ended");
               if (snap) {
                 writeFileSync(snap.path, snap.buffer);
                 image = snap.path;

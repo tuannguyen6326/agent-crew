@@ -400,7 +400,11 @@ if [ "${1:-}" = close ]; then
   shift
   CP=""
   while [ $# -gt 0 ]; do case "$1" in --pane) CP=${2:?}; shift ;; esac; shift; done
-  [ -n "$CP" ] && herdr --session "$SES" pane close "$CP" >/dev/null 2>&1
+  if [ "$(ac_backend 2>/dev/null || printf herdr)" = orca ]; then
+    [ -n "$CP" ] && orca_json terminal close --terminal "$CP" >/dev/null 2>&1
+  else
+    [ -n "$CP" ] && herdr --session "$SES" pane close "$CP" >/dev/null 2>&1
+  fi
   exit 0
 fi
 
@@ -502,6 +506,25 @@ if [ "${1:-}" = reap-pane ]; then
   RP=""
   while [ $# -gt 0 ]; do case "$1" in --pane) RP=${2:?}; shift ;; esac; shift; done
   [ -n "$RP" ] || { emit '{"event":"reap-pane","note":"no pane id"}'; exit 0; }
+  if [ "$(ac_backend 2>/dev/null || printf herdr)" = orca ]; then
+    # An orca pane closes ALONE - the family tab dies with its last pane by
+    # itself (driver contract), so there is no tab/workspace cascade to plan.
+    orca_json terminal close --terminal "$RP" >/dev/null 2>&1 || true
+    i=0
+    while [ "$i" -lt 8 ]; do
+      if orca_json terminal show --terminal "$RP" 2>/dev/null \
+          | jq -e '.result.terminal.connected == true' >/dev/null 2>&1; then
+        i=$((i + 1)); sleep 0.25
+      else
+        break
+      fi
+    done
+    rclosed=true
+    orca_json terminal show --terminal "$RP" 2>/dev/null \
+      | jq -e '.result.terminal.connected == true' >/dev/null 2>&1 && rclosed=false
+    emit "{\"event\":\"reap-pane-done\",\"pane\":\"$RP\",\"closed\":$rclosed}"
+    exit 0
+  fi
   command -v herdr >/dev/null 2>&1 || { emit '{"event":"reap-pane","note":"herdr not on PATH"}'; exit 0; }
   plan="$(printf '%s\n===AC-SPLIT===\n%s\n' \
       "$(herdr --session "$SES" tab list 2>/dev/null || true)" \
@@ -567,6 +590,12 @@ fi
 # cwd exists, so it is never a candidate.
 if [ "${1:-}" = reap ]; then
   shift
+  if [ "$(ac_backend 2>/dev/null || printf herdr)" = orca ]; then
+    # The dead-cwd sweep reads pane cwds, which the orca CLI does not list;
+    # orca panes are reaped by handle (reap-pane) at teardown instead.
+    emit '{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}'
+    exit 0
+  fi
   dry=0
   while [ $# -gt 0 ]; do case "$1" in --dry-run) dry=1 ;; *) fail "unknown arg $1" ;; esac; shift; done
   command -v herdr >/dev/null 2>&1 || { emit '{"event":"reap","panes":0,"tabs":0,"note":"herdr not on PATH"}'; exit 0; }
@@ -855,7 +884,12 @@ fi
   && fail "the crewmate arm runs '$HARNESS', which Agent Crew cannot resume: there is no session to --resume"
 [ -d "$CWD" ] || fail "cwd missing: $CWD"
 [ -f "$PF" ] || fail "prompt file missing: $PF"
-command -v herdr >/dev/null 2>&1 || fail "herdr not on PATH"
+PA_BACKEND="$(ac_backend 2>/dev/null || printf herdr)"
+if [ "$PA_BACKEND" = orca ]; then
+  command -v orca >/dev/null 2>&1 || fail "orca not on PATH"
+else
+  command -v herdr >/dev/null 2>&1 || fail "herdr not on PATH"
+fi
 
 SLUG=$(printf '%s' "$CWD" | sed 's/[/.]/-/g')
 PROJ="$HOME/.claude/projects/$SLUG"
@@ -1039,77 +1073,6 @@ tab_create_in_ws() {
   [ -n "$TAB" ] && [ -n "$P" ]
 }
 
-# 4. pane: adopt this family+branch's agent tab IN THE FAMILY WORKSPACE, else
-# create it there. The workspace is resolved FIRST and scopes the adoption:
-# a tab carrying the right label in the WRONG workspace (a pre-family-label
-# leftover, a label collision) is never adopted, so the pane PROVABLY lands
-# in its family's group (the codereview pane must
-# sit with its family - the label fix alone only made collisions unlikely,
-# this makes placement structural). WS unresolvable (herdr degraded) falls
-# back to label-only adoption - the same degrade direction the create path
-# already takes.
-agents_ws_create
-TAB=$(herdr --session "$SES" tab list 2>/dev/null | TL="$TABLABEL" WSID="${WS:-}" python3 -c "
-import sys, json, os
-try:
-    for t in json.load(sys.stdin)['result']['tabs']:
-        if t.get('label') != os.environ['TL']: continue
-        if os.environ['WSID'] and t.get('workspace_id') != os.environ['WSID']: continue
-        print(t['tab_id']); break
-except Exception:
-    pass
-" 2>/dev/null)
-if [ -n "$TAB" ]; then
-  OUT=$(herdr --session "$SES" pane list 2>/dev/null | TB="$TAB" python3 -c "
-import sys, json, os
-try:
-    for p in json.load(sys.stdin)['result']['panes']:
-        if p.get('tab_id') == os.environ['TB']:
-            print(p['pane_id']); break
-except Exception:
-    pass
-" 2>/dev/null)
-  P=$(herdr --session "$SES" pane split "${OUT:-}" --direction right --no-focus 2>/dev/null \
-      | sed -n 's/.*"pane_id":"\([^"]*\)".*/\1/p' | head -1)
-else
-  P=""
-  [ -z "$WS" ] || tab_create_in_ws || true
-  if [ -z "$P" ]; then
-    agents_ws_create
-    [ -z "$WS" ] || tab_create_in_ws || true
-  fi
-fi
-[ -n "$P" ] || fail "could not create herdr pane"
-[ -n "$TAB" ] || fail "could not resolve herdr tab for pane $P"
-herdr --session "$SES" pane rename "$P" "ac-$KIND-agent:$LABEL" >/dev/null 2>&1
-# Retire the workspace's default "1" tab once a real tab lives there -
-# herdr spawns it with the workspace and it lingers as sidebar junk.
-[ -n "$WS" ] && herdr --session "$SES" tab list 2>/dev/null | WSID="$WS" python3 -c "
-import sys, json, os
-try:
-    for t in json.load(sys.stdin)['result']['tabs']:
-        if t.get('workspace_id') == os.environ['WSID'] and t.get('label') == '1':
-            print(t['tab_id'])
-except Exception:
-    pass
-" 2>/dev/null | while read -r jt; do
-  herdr --session "$SES" tab close "$jt" >/dev/null 2>&1
-done
-
-# Publish the live backend identity before the agent is launched. The verifier
-# facade uses this to register supervision without racing a terminal done
-# event; existing callers observe no new file or protocol event.
-if [ -n "$PANEFILE" ]; then
-  pane_dir=${PANEFILE%/*}
-  [ "$pane_dir" != "$PANEFILE" ] || pane_dir=.
-  [ -d "$pane_dir" ] || fail "pane-file directory does not exist: $pane_dir"
-  pane_tmp="$PANEFILE.tmp.$$"
-  if ! printf '%s %s\n' "$P" "$TAB" >"$pane_tmp" || ! mv "$pane_tmp" "$PANEFILE"; then
-    rm -f "$pane_tmp"
-    fail "could not publish pane identity: $PANEFILE"
-  fi
-fi
-
 # 5. launch: prompt via argv from the prompt file (pane shell expands the cat)
 # Pin the caller's fleet home onto the pane shell: a fresh pane inherits
 # NOTHING, so without this every ac-*.sh the pane claude runs (qa start's
@@ -1173,6 +1136,89 @@ case "$ARM" in
   *)
     RUNCMD="cd '$CWD' && ${ENVPIN}$(ac_build_launch "$HARNESS" "$MODEL" "$EFFORT_FLAG" "$SID") \"\$(cat '$PF')\"" ;;
 esac
+# 4. pane placement, backend-branched. The herdr arm below is verbatim; the
+# orca arm places create-or-split into the FAMILY TAB (orca_place_pane) with
+# RUNCMD as the pane's OWN command - the agent starts WITH the pane, so
+# nothing is ever typed into a booting surface and step 5's herdr `pane run`
+# has no orca counterpart to need.
+if [ "$PA_BACKEND" = orca ]; then
+  placed="$(orca_place_pane "$CWD" "$RUNCMD" "ac-$KIND")" \
+    || fail "could not place orca pane"
+  P="${placed%% *}"
+  TAB="${placed#* }"
+else
+# 4. pane: adopt this family+branch's agent tab IN THE FAMILY WORKSPACE, else
+# create it there. The workspace is resolved FIRST and scopes the adoption:
+# a tab carrying the right label in the WRONG workspace (a pre-family-label
+# leftover, a label collision) is never adopted, so the pane PROVABLY lands
+# in its family's group (the codereview pane must
+# sit with its family - the label fix alone only made collisions unlikely,
+# this makes placement structural). WS unresolvable (herdr degraded) falls
+# back to label-only adoption - the same degrade direction the create path
+# already takes.
+agents_ws_create
+TAB=$(herdr --session "$SES" tab list 2>/dev/null | TL="$TABLABEL" WSID="${WS:-}" python3 -c "
+import sys, json, os
+try:
+    for t in json.load(sys.stdin)['result']['tabs']:
+        if t.get('label') != os.environ['TL']: continue
+        if os.environ['WSID'] and t.get('workspace_id') != os.environ['WSID']: continue
+        print(t['tab_id']); break
+except Exception:
+    pass
+" 2>/dev/null)
+if [ -n "$TAB" ]; then
+  OUT=$(herdr --session "$SES" pane list 2>/dev/null | TB="$TAB" python3 -c "
+import sys, json, os
+try:
+    for p in json.load(sys.stdin)['result']['panes']:
+        if p.get('tab_id') == os.environ['TB']:
+            print(p['pane_id']); break
+except Exception:
+    pass
+" 2>/dev/null)
+  P=$(herdr --session "$SES" pane split "${OUT:-}" --direction right --no-focus 2>/dev/null \
+      | sed -n 's/.*"pane_id":"\([^"]*\)".*/\1/p' | head -1)
+else
+  P=""
+  [ -z "$WS" ] || tab_create_in_ws || true
+  if [ -z "$P" ]; then
+    agents_ws_create
+    [ -z "$WS" ] || tab_create_in_ws || true
+  fi
+fi
+[ -n "$P" ] || fail "could not create herdr pane"
+[ -n "$TAB" ] || fail "could not resolve herdr tab for pane $P"
+herdr --session "$SES" pane rename "$P" "ac-$KIND-agent:$LABEL" >/dev/null 2>&1
+# Retire the workspace's default "1" tab once a real tab lives there -
+# herdr spawns it with the workspace and it lingers as sidebar junk.
+[ -n "$WS" ] && herdr --session "$SES" tab list 2>/dev/null | WSID="$WS" python3 -c "
+import sys, json, os
+try:
+    for t in json.load(sys.stdin)['result']['tabs']:
+        if t.get('workspace_id') == os.environ['WSID'] and t.get('label') == '1':
+            print(t['tab_id'])
+except Exception:
+    pass
+" 2>/dev/null | while read -r jt; do
+  herdr --session "$SES" tab close "$jt" >/dev/null 2>&1
+done
+fi
+
+# Publish the live backend identity before the agent is launched. The verifier
+# facade uses this to register supervision without racing a terminal done
+# event; existing callers observe no new file or protocol event.
+if [ -n "$PANEFILE" ]; then
+  pane_dir=${PANEFILE%/*}
+  [ "$pane_dir" != "$PANEFILE" ] || pane_dir=.
+  [ -d "$pane_dir" ] || fail "pane-file directory does not exist: $pane_dir"
+  pane_tmp="$PANEFILE.tmp.$$"
+  if ! printf '%s %s\n' "$P" "$TAB" >"$pane_tmp" || ! mv "$pane_tmp" "$PANEFILE"; then
+    rm -f "$pane_tmp"
+    fail "could not publish pane identity: $PANEFILE"
+  fi
+fi
+
 # --observe seam (oneshot ONLY): publish the read-only observation descriptor -
 # pane/tab identity + the real prompt/stdout/stderr paths this run uses - BEFORE
 # launching the harness, so ac-gate-watch can tail the ACTIVE run. Atomic
@@ -1184,7 +1230,7 @@ if [ -n "$OBSERVE" ] && [ "$ARM" = oneshot ]; then
     "$P" "$TAB" "$HARNESS" "$PF" "$OUTF" "$ERRF" >"$_obs_tmp" 2>/dev/null \
     && mv -f "$_obs_tmp" "$OBSERVE" 2>/dev/null || true
 fi
-herdr --session "$SES" pane run "$P" "$RUNCMD" >/dev/null 2>&1
+[ "$PA_BACKEND" = orca ] || herdr --session "$SES" pane run "$P" "$RUNCMD" >/dev/null 2>&1
 
 # 6. retire the previous turn's pane once the new one is up. Best-effort and
 # never fatal - the new pane is already placed - but the outcome is REPORTED the
@@ -1192,9 +1238,16 @@ herdr --session "$SES" pane run "$P" "$RUNCMD" >/dev/null 2>&1
 # agent alive against the same task-scoped resources is visible to the caller
 # instead of vanishing into the redirect.
 if [ -n "$REPLACE" ]; then
-  herdr --session "$SES" pane close "$REPLACE" >/dev/null 2>&1
-  rclosed=true
-  herdr --session "$SES" pane get "$REPLACE" >/dev/null 2>&1 && rclosed=false
+  if [ "$PA_BACKEND" = orca ]; then
+    orca_json terminal close --terminal "$REPLACE" >/dev/null 2>&1 || true
+    rclosed=true
+    orca_json terminal show --terminal "$REPLACE" 2>/dev/null \
+      | jq -e '.result.terminal.connected == true' >/dev/null 2>&1 && rclosed=false
+  else
+    herdr --session "$SES" pane close "$REPLACE" >/dev/null 2>&1
+    rclosed=true
+    herdr --session "$SES" pane get "$REPLACE" >/dev/null 2>&1 && rclosed=false
+  fi
   emit "{\"event\":\"replace-pane\",\"pane\":\"$REPLACE\",\"closed\":$rclosed}"
 fi
 
@@ -1426,9 +1479,18 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   if [ "$ARM" = crewmate ] && [ -f "$EXITMARK" ]; then
     fail "harness '$HARNESS' exited (status $(cat "$CRCF" 2>/dev/null || printf 'unrecorded')) without announcing a verdict - $( [ -s "$VERDICT" ] && printf 'it did leave one at %s' "$VERDICT" || printf 'and wrote none' )"
   fi
-  if [ $((i % 5)) -eq 4 ] && ! herdr --session "$SES" pane get "$P" >/dev/null 2>&1; then
-    emit "{\"event\":\"done\",\"status\":\"pane_closed\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"pane closed while turn in flight\"}"
-    exit 1
+  if [ $((i % 5)) -eq 4 ]; then
+    pane_live=1
+    if [ "$PA_BACKEND" = orca ]; then
+      orca_json terminal show --terminal "$P" 2>/dev/null \
+        | jq -e '.result.terminal.connected == true' >/dev/null 2>&1 || pane_live=0
+    else
+      herdr --session "$SES" pane get "$P" >/dev/null 2>&1 || pane_live=0
+    fi
+    if [ "$pane_live" = 0 ]; then
+      emit "{\"event\":\"done\",\"status\":\"pane_closed\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"pane closed while turn in flight\"}"
+      exit 1
+    fi
   fi
   # idle fallback (Stop hook failed to fire): ONLY when herdr also reports the
   # pane's agent as idle/done - long xhigh-thinking stretches write nothing to
@@ -1437,7 +1499,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   if [ -n "$TRANSCRIPT" ] && [ $i -gt 45 ]; then
     mt=$(stat -f %m "$TRANSCRIPT" 2>/dev/null || echo 0)
     if [ $(( $(date +%s) - mt )) -gt 120 ]; then
-      ag=$(herdr --session "$SES" pane get "$P" 2>/dev/null | sed -n 's/.*"agent_status":"\([^"]*\)".*/\1/p' | head -1)
+      ag=$(backend_agent_status_pane "$P")
       if { [ "$ag" = idle ] || [ "$ag" = "done" ]; } && has_final_text; then
         # DELIVERABLE GATE (contract: IDLE FALLBACK in the header). None of the
         # three questions above asks whether the agent's WORK was produced, and
@@ -1478,7 +1540,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     mt=$(stat -f %m "$TRANSCRIPT" 2>/dev/null || echo 0)
     [ "$mt" -ge "$wait_start" ] || mt=$wait_start
     if [ $(( $(date +%s) - mt )) -gt "${AC_PANE_STALL_MAX:-2700}" ]; then
-      ag=$(herdr --session "$SES" pane get "$P" 2>/dev/null | sed -n 's/.*"agent_status":"\([^"]*\)".*/\1/p' | head -1)
+      ag=$(backend_agent_status_pane "$P")
       emit "{\"event\":\"done\",\"status\":\"error\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"no transcript progress for over ${AC_PANE_STALL_MAX:-2700}s (agent_status=${ag:-unreadable}) - the turn is stalled inside a single call, escalating instead of burning the caller's timeout\"}"
       exit 1
     fi

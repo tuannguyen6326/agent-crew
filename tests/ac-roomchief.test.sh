@@ -81,6 +81,12 @@ room_seed og3 "CHARTER: room og3 carries the captain standing order"
 "$BIN/ac-spawn.sh" --roomchief og3 --harness fake >/dev/null 2>&1 \
   || fail "the charter-first promote must pass the gate"
 assert_file "$AC_HOME/state/og3-chief.meta" "the charter-first promote writes its meta"
+# workspace = home: the chief pane opens AT the fleet home (it carries the
+# executable core symlinks), and the meta records the same dir.
+assert_contains "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" "--cwd $AC_HOME " \
+  "the roomchief pane opens with its cwd at the fleet home"
+assert_contains "$(cat "$AC_HOME/state/og3-chief.meta")" "worktree=$AC_HOME" \
+  "the roomchief meta records the home as its dir"
 "$BIN/ac-teardown.sh" og3-chief >/dev/null 2>&1
 
 # (4) the HOT-ROOM UPGRADE - `--roomchief`'s original use case - passes for the
@@ -190,12 +196,12 @@ assert_eq "$(awk -F= '$1=="kind"{print $2}' "$AC_HOME/state/fam1-chief.meta")" "
 assert_contains "$(cat "$AC_HOME/data/fam1/room.md")" "PROMOTED" "room receipt"
 [ -d "$AC_HOME/projects" ] && [ -z "$(ls "$AC_HOME/projects" 2>/dev/null)" ] || true
 
-# The fake pane is a file the spawn wrote SYNCHRONOUSLY: launch line and
-# kickoff prompt sit in the buffer verbatim, so content asserts read it
-# directly. (The old tmux backend needed a 30s render poll and could only
-# capture the %q-escaped launch-line copy - both were pty races, gone with
-# the backend.)
-buf="$(cat "$(fake_pane_buf fam1-chief)")"
+# FILE-DELIVERED KICKOFF: the pane buffer carries the launch line plus a
+# short pointer; the full charter sits in the task dir's kickoff.md, so
+# content asserts read THAT file.
+buf="$(cat "$AC_HOME/data/fam1/chief/kickoff.md")"
+assert_contains "$(cat "$(fake_pane_buf fam1-chief)")" \
+  "$AC_HOME/data/fam1/chief/kickoff.md" "the pane receives the kickoff-file pointer"
 assert_contains "$buf" \
   "You are the ROOMCHIEF of family fam1" "kickoff prompt content"
 # The Slack narrative duty rides the per-fleet flag (default off): no flag,
@@ -204,9 +210,9 @@ case "$buf" in *"thread-post fam1"*) fail "the Slack duty must stay out of the c
 printf 'chief\n' >"$AC_HOME/config/remote-mirror"
 room_seed fam9
 "$BIN/ac-spawn.sh" --roomchief fam9 --harness fake >/dev/null 2>&1
-assert_contains "$(cat "$(fake_pane_buf fam9-chief)")" \
+assert_contains "$(cat "$AC_HOME/data/fam9/chief/kickoff.md")" \
   "thread-post fam9" "remote-mirror=chief puts the Slack duty into the charter"
-assert_contains "$(cat "$(fake_pane_buf fam9-chief)")" \
+assert_contains "$(cat "$AC_HOME/data/fam9/chief/kickoff.md")" \
   "done-stamp fam9" "the charter wires the landing done-stamp so the guard is a backstop, not the path"
 rm -f "$AC_HOME/config/remote-mirror"
 assert_contains "$buf" \
@@ -224,13 +230,14 @@ assert_contains "$buf" \
   "kickoff prompt arms the watcher with the computed story set"
 # The launch line pins the home: a fresh pane shell inherits nothing from the
 # crewchief, and without AC_HOME a roomchief resolves NO data/ at all -
-# ac_home refuses an unset AC_HOME (ac-lib.sh, ac_home).
-assert_contains "$buf" \
+# ac_home refuses an unset AC_HOME (ac-lib.sh, ac_home). Launch-line asserts
+# read the PANE buffer - the kickoff file carries only the charter.
+assert_contains "$(cat "$(fake_pane_buf fam1-chief)")" \
   "AC_HOME=" "launch line pins AC_HOME for the fresh shell"
 # The codegraph front-load prompt-hook kill-switch: the roomchief kickoff mandate
 # is the fleet prompt that actually pays the hook's whole-tree query (measured
 # 161.72s against Claude Code's 30s hook budget), so the pane must launch with it.
-assert_contains "$buf" \
+assert_contains "$(cat "$(fake_pane_buf fam1-chief)")" \
   "CODEGRAPH_NO_PROMPT_HOOK=1" "launch line disarms the codegraph prompt hook"
 
 # --- crew-dispatch panes.roomchief: harness resolution -------------------------

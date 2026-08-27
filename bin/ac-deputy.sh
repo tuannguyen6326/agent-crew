@@ -106,8 +106,7 @@
 #      refused (history stays where it was made);
 #   3. the line carries no `epic:<id>` token and the id is named in no other
 #      line's `blocked-by:` - moving it would strand a dependent in a ledger
-#      that can never see it satisfied;
-#   4. the AS1 guard below.
+#      that can never see it satisfied.
 # Then: ac_records_backup (the reversibility floor every mutating records path
 # respects), remove the lines from the parent ledger, append them BYTE-
 # IDENTICALLY at the END of the deputy's `## Queued` section - no re-writing, no
@@ -284,31 +283,6 @@ cmd_handoff() {
         for (i = 1; i <= n; i++) if (a[i] == id) exit 1
       }
     ' "$backlog" || ac_die "'$item' is named in another line's blocked-by: - moving it would strand that dependent"
-    # AS1 GUARD (the one mechanical call site; grep AS1 to find it). A deputy
-    # home holds its OWN clone, so a `local-only` landing merges into that
-    # clone's local default branch and the parent's clone - the fleet's working
-    # copy - never sees it. Delete this block, the AGENTS.md sentence, and the
-    # matching test case to veto the rule; nothing else branches on mode.
-    repo="$(printf '%s' "$line" | sed -n 's/.*(repo: \([^,)]*\).*/\1/p')"
-    # FAIL CLOSED on an unresolvable repo: this guard is the single mechanical
-    # enforcement of AS1, so an unknown input must refuse like every other
-    # precondition in this loop, never wave the item through.
-    [ -n "$repo" ] \
-      || ac_die "'$item' carries no (repo: <name>) token, so its delivery mode cannot be resolved for the AS1 check - fix the backlog line: $line"
-    # Mode is PER-TASK: the registry no longer
-    # answers, so the ONLY thing this guard can read is the row's own
-    # contract pin. An unpinned row is unresolvable - refuse and ask for the
-    # pin, exactly like the missing repo token above: after the handoff the
-    # deputy's chief picks the mode autonomously, and local-only is on its
-    # cheap path, so the boundary here is the last point AS1 is enforceable.
-    pin_mode="$(printf '%s\n' "$line" | awk "$AC_DONELINE_AWK"'
-      /^- \[[ x]\] / { ac_doneline($0, o); print o["contract"]; exit }
-    ' | tr " " "\n" | sed -n "s/^mode://p")"
-    [ -n "$pin_mode" ] \
-      || ac_die "'$item' pins no mode on its row, so the AS1 check cannot resolve its delivery mode (the registry no longer answers - mode is per-task). Pin it in the row's contract group (e.g. [mode:direct-pr]) before the handoff: $line"
-    case "$pin_mode" in
-      local-only) ac_die "'$item' is local-only work (repo: $repo) - it stays with the parent fleet, whose clone is the one a local landing reaches" ;;
-    esac
     moving="$moving$line
 "
     ids="${ids:+$ids,}$item"

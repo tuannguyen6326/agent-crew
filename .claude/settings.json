@@ -4,7 +4,7 @@
       {
         "matcher": "startup|resume|clear",
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/ac-sessionstart-nudge.sh" }
+          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-sessionstart-nudge.sh; [ -x \"$h\" ] && \"$h\" || :" }
         ]
       }
     ],
@@ -12,34 +12,34 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/ac-watch-policy-hook.sh" }
+          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-watch-policy-hook.sh; [ -x \"$h\" ] && \"$h\" || :" }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/ac-delegation-guard.sh" }
+          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-delegation-guard.sh; [ -x \"$h\" ] && \"$h\" || :" }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/ac-ledger-guard.sh" }
+          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-ledger-guard.sh; [ -x \"$h\" ] && \"$h\" || :" }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/ac-primary-guard.sh" }
+          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-primary-guard.sh; [ -x \"$h\" ] && \"$h\" || :" }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/ac-turnend-guard.sh" }
+          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-turnend-guard.sh; [ -x \"$h\" ] && \"$h\" || :" }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/bin/ac-watch-autoarm.sh", "asyncRewake": true, "timeout": 3600 }
+          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-watch-autoarm.sh; [ -x \"$h\" ] && \"$h\" || :", "asyncRewake": true, "timeout": 3600 }
         ]
       }
     ]

@@ -53,8 +53,8 @@ default - so the choice is always explicit and on the record. A legacy
 task's DELIVERY TARGET and RISK, not by habit:
 - `crew-ship`: ship pipeline -> PR -> captain merges. For a shared or production repo, a remote+team-reviewed PR, or ANY risky/substantial change (even a task on a repo that usually takes `direct-pr`/`local-only` work) - the 8-step pipeline's independent review, tests, docs and guarded push are the gate the change earns. A TIME-EXPENSIVE choice: the section 5 escalation clause applies.
 - `direct-pr`: PR without the pipeline (a ship-docs pass, then push + PR). For a change small and low-risk enough that the pipeline is overkill, or a project carrying no pipeline config (`projects/<name>.yaml`).
-- `feature-pr`: crew branch merged LOCALLY into a captain-recorded FEATURE integration branch that several tasks accumulate on, published ONCE at ship as a single PR to the recorded target (feature-branch-mech, captain rulings 2026-08-24). The record is `data/<feature>/branches` (`<repo> <branch> [target=<t>] push=deferred`), member rows bind with `feature:<name>`, `bin/ac-feature.sh` owns the verbs and the gated ship. For a batch of related tasks aimed at one target branch (a release channel, or the default) that must not publish piecemeal.
-- `local-only`: crew branch merged into the LOCAL default branch by you after approval, NEVER pushed. For a project with no remote, or the distro's own tooling / captain-side work the captain merges in place (AS1 keeps local-only with the parent fleet).
+- `feature-pr`: crew branch merged LOCALLY into a captain-recorded FEATURE integration branch that several tasks accumulate on, published ONCE at ship as one PR PER REPO to the recorded target (feature-branch-mech; "single PR" means no staging chain - a multi-repo feature ships one PR per repo, recorded per repo). The record is `data/<feature>/branches` (`<repo> <branch> [target=<t>] push=deferred`), member rows bind with `feature:<name>`, `bin/ac-feature.sh` owns the verbs and the gated ship. For a batch of related tasks aimed at one target branch (a release channel, or the default) that must not publish piecemeal.
+- `local-only`: crew branch merged into the LOCAL default branch by you after approval, NEVER pushed. For a project with no remote, or the distro's own tooling / captain-side work the captain merges in place.
 `+yolo` stays per-project - the ONE thing `bin/ac-project-mode.sh` still
 answers.
 Clone projects into `projects/<name>` yourself when the captain adds one.
@@ -257,8 +257,8 @@ captain redirects a task whose crewmate is already in flight -
   - staged, all modes: `yes`;
   - direct + `crew-ship`: `yes`;
   - direct + `feature-pr`: `no` by default - the feature ship gate owns ONE
-    review round at the feature tip (`bin/ac-feature.sh ship`, captain ruling
-    2026-08-24); a per-member raise stays the captain's word exactly as below;
+    review round at the feature tip (`bin/ac-feature.sh ship`); a per-member
+    raise stays the captain's word exactly as below;
   - direct + `direct-pr` or `local-only`: `no` by default, optional `yes` when
     the captain requests independent review - and that raise is REFUSED unless
     the caller declares the authority with `ac-brief.sh --captain-requested
@@ -306,7 +306,11 @@ captain redirects a task whose crewmate is already in flight -
   - AXIS 2's no-lease / no-repo - the codereview/qa verifiers DO hold a
     short-lived isolated worktree lease and DO require a git repo (the exact-ref
     isolation itself); no-lease/no-repo survives only for the learning scout,
-    which runs on the chief's own path.
+    which runs on the chief's own path. The lease follows the fleet backend the
+    same way the crew lease does: a herdr fleet leases from the crew-tree pool,
+    an orca fleet leases an Orca-managed worktree released at harvest with no
+    crew/<id> branch left behind (`bin/ac-verify.sh` verify_lease owns the
+    contract).
 - `qa` - OPTIONAL behavioral proof, always AFTER delivery (it gates the
   MERGE, not the push). Whether a task carries a `<family>-qa` stage is
   YOUR triage, decided AT INTAKE like flow/mode/promote, same precedence:
@@ -624,7 +628,7 @@ A crewmate the crewchief spawns instead carries no family scope for its whole li
 
 1. Record the task in `records/backlog.md` (section 9) and pick a short id (`[a-z0-9-]`).
 2. `bin/ac-brief.sh <id> <project> [--scout | --stage <spec|architecture|plan|design|implement|qa>] [--mode <m>] [--review yes|no] [--captain-requested <ref>]` scaffolds the brief (flat `data/<id>/brief.md`, or nested `data/<family>/<stage>/brief.md` for staged flows), resolves the mode (row pin > `--mode`; REQUIRED for non-scout work - the registry default is gone), runs the escalation gate (a heavy value needs a row pin, or `--captain-requested` + `--reason`, section 5 clause above), derives and records the review obligation, and refuses normal `code-review`/`ship` stages; edit it with the real task, constraints, acceptance criteria, and stage inputs before spawning. `ac-spawn.sh` reads the brief's recorded `Mode:` - ONE resolver; a contradicting spawn flag refuses.
-3. `bin/ac-spawn.sh <id> <project> [--scout] [--harness <h>] [--model <m>] [--effort <e>] [--backend <b>]` leases a pooled worktree INSIDE the project repo (`<repo>/.crew/worktrees/<n>`), opens a herdr tab (the only session backend) in the task FAMILY's workspace - every pane of one family (chief, crewmates, verification panes, watch tabs) co-tenants one `<fleet> · <family>` workspace, fleet-level panes the root `<fleet>` one (`bin/ac-backend.sh` FAMILY WORKSPACE GROUPING owns the contract) - and launches the harness on the brief.
+3. `bin/ac-spawn.sh <id> <project> [--scout] [--harness <h>] [--model <m>] [--effort <e>] [--backend <b>]` leases the task's worktree and opens its pane, both per the fleet's session backend (`config/backend`): a herdr fleet leases a pooled worktree INSIDE the project repo (`<repo>/.crew/worktrees/<n>`) and opens a herdr tab in the task FAMILY's workspace - every pane of one family (chief, crewmates, verification panes, watch tabs) co-tenants one `<fleet> · <family>` workspace, fleet-level panes the root `<fleet>` one (`bin/ac-backend.sh` FAMILY WORKSPACE GROUPING owns the contract) - while an orca fleet leases an Orca-managed worktree per task on `crew/<id>` from the local default branch (`bin/ac-backend-orca.sh` orca_worktree_lease; removed at teardown) and opens an Orca terminal (chief-kind panes under the home's node, worker panes under their worktree's node). Either way the harness launches on the brief.
    Model and effort are fleet-wide defaults: absent `--model`/`--effort` fall back to `config/model` and `config/effort`; the `--effort` FLAG (`low|medium|high|xhigh|max|ultracode`) is claude-only, while the effort VALUE also reaches codex as its `-c model_reasoning_effort=<tier>` config override and pi as `--thinking <tier>` (verified pi 0.84.2), and opencode ignores it.
    `--effort ultracode` launches claude at `xhigh` and types `/effort ultracode` into the built-in claude TUI to add the workflow-orchestration layer (claude built-in only; `AC_ULTRACODE_SETTLE` gates the pause before the kickoff prompt).
    When `config/crew-dispatch.json` exists, spawn refuses to guess: read `bin/ac-dispatch-select.sh --list`, judge which `when` clause matches the task, resolve it with `--rule <n>`, and pass the profile explicitly.
@@ -781,10 +785,10 @@ misrouted order runs in the wrong home against the wrong clone. An entry with no
 may not invent scope text for it. A captain redirect wins in both directions at
 any time, except that a redirect naming an INVALID or HOME-MISSING deputy is
 refused with its digest state - fail-closed outranks the redirect when the
-target physically cannot receive work. **AS1**: `local-only` work STAYS with the
-parent fleet even when a scope fits, because a local landing merges into the
-local default branch of whichever clone did the work, and the parent's clone -
-the fleet's working copy - would never see it.
+target physically cannot receive work. `local-only` work follows the scope like
+every other mode: a deputy's clone is where its own local landings belong, and
+a landing the PARENT's clone must carry is routed by keeping the work with the
+parent at intake - a judgment call, not a mode rule.
 
 A routed order goes out on the MARKED channel: `bin/ac-send.sh <deputy-id>
 '<order>'` prefixes it with the chief-order marker for `kind=crewdeputy` targets
@@ -843,7 +847,7 @@ which you reconcile by `unassign`-ing the token or re-`new`-ing the domain.
 
 ## 6. Worktrees (in-repo pool)
 
-`bin/ac-tree.sh` pools detached-HEAD worktrees inside each project repo under `.crew/worktrees/<n>`, auto-gitignored.
+`bin/ac-tree.sh` pools detached-HEAD worktrees inside each project repo under `.crew/worktrees/<n>`, auto-gitignored - the HERDR fleets' lease mechanism; an orca fleet leases Orca-managed worktrees instead (section 5 step 3).
 Worktrees are reused, not deleted: `return` resets to the freshest default branch and releases; ignored caches survive.
 `get --repo <p> --id <task> --holder crew:<id>` is what spawn uses; leases live in `.crew/slots/<n>.meta`, are durable, and survive restarts.
 An available-but-dirty slot is never silently reset: acquire and prune skip it, and only `remove --force` discards it.

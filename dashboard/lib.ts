@@ -1815,3 +1815,126 @@ export function graphHtml(text: string): string {
   }
   return '<div class="gg">' + out + "</div>";
 }
+
+// ===========================================================================
+// Agent-status chips (dash-agent-status-chips): the live 5-state machine
+// herdr already derives per pane (idle|working|blocked|done|unknown), joined
+// to task ids so the Board answers "what is each agent DOING right now"
+// without opening a terminal. Read-only over `herdr agent list` output; the
+// recorded status line (boardLive) stays the lifecycle view - this is the
+// real-time one.
+// ===========================================================================
+
+export type AgentPaneStatus = { pane: string; status: string };
+
+/** `herdr agent list` JSON -> [{pane, status}]. Tolerant: anything that is
+ *  not the expected shape contributes nothing (a chip that cannot be derived
+ *  is absent, never guessed - the boardLive fallback still renders). */
+export function parseAgentList(out: string): AgentPaneStatus[] {
+  let j: unknown;
+  try { j = JSON.parse(out); } catch { return []; }
+  const agents = (j as { result?: { agents?: unknown[] } })?.result?.agents;
+  if (!Array.isArray(agents)) return [];
+  const res: AgentPaneStatus[] = [];
+  for (const a of agents) {
+    const pane = (a as { pane_id?: unknown }).pane_id;
+    const status = (a as { agent_status?: unknown }).agent_status;
+    if (typeof pane === "string" && pane && typeof status === "string" && status)
+      res.push({ pane, status });
+  }
+  return res;
+}
+
+/** Join task pane handles to agent states. A pane herdr does not report is
+ *  ABSENT from the map - the caller renders nothing rather than a stale or
+ *  invented state. */
+export function agentStatusMap(
+  entries: AgentPaneStatus[],
+  panes: { id: string; pane: string }[],
+): Record<string, string> {
+  const byPane = new Map(entries.map((e) => [e.pane, e.status]));
+  const out: Record<string, string> = {};
+  for (const p of panes) {
+    const s = byPane.get(p.pane);
+    if (s) out[p.id] = s;
+  }
+  return out;
+}
+
+// ===========================================================================
+// Family inbox badges (dash-family-inbox): the snapshot's per-home captain
+// inbox (ac-room.sh accounting via ac-fleets.sh, {status,family,last})
+// folded per family so the BOARD carries the same truth the fleets-overview
+// attention queue does - a family with an unanswered GATE:/ASK: or a
+// HANDBACK is flagged on its own card. Pure and ES5-plain: PAGE interpolates
+// its toString(), the bun test proves the same code the browser runs.
+// ===========================================================================
+
+export function familyInbox(entries: any): Record<string, { pending: number; handback: boolean; last: string }> {
+  var out: Record<string, { pending: number; handback: boolean; last: string }> = {};
+  var list = Array.isArray(entries) ? entries : [];
+  for (var i = 0; i < list.length; i++) {
+    var en = list[i] || {};
+    var fam = String(en.family || "");
+    if (!fam) continue;
+    var st = String(en.status || "");
+    var pending = 0, handback = false;
+    if (st.indexOf("PENDING-CAPTAIN(") === 0) {
+      var n = parseInt(st.slice("PENDING-CAPTAIN(".length), 10);
+      pending = isNaN(n) ? 0 : n;
+      if (st.indexOf("+HANDBACK") >= 0) handback = true;
+    } else if (st.indexOf("HANDBACK") === 0) {
+      handback = true;
+    }
+    if (pending === 0 && !handback) continue;
+    out[fam] = { pending: pending, handback: handback, last: String(en.last || "") };
+  }
+  return out;
+}
+
+// ===========================================================================
+// Usage panel (dash-usage-panel): token sums straight from a claude
+// transcript jsonl - RAW TOKENS by design, never a dollar estimate (price
+// tables drift; the token is the durable unit). Dedup is by message id with
+// the LAST snapshot winning, because a streamed response can be rewritten
+// into the transcript more than once and summing snapshots double-counts.
+// Day keys are the timestamp's UTC date.
+// ===========================================================================
+
+export type UsageTotals = { inp: number; out: number; cr: number; cw: number };
+
+export function usageFromJsonl(text: string): {
+  total: UsageTotals; days: Record<string, UsageTotals>; models: string[];
+} {
+  const byId = new Map<string, { day: string; model: string; u: UsageTotals }>();
+  let anon = 0;
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    let d: any;
+    try { d = JSON.parse(line); } catch { continue; }
+    const usage = d?.message?.usage;
+    if (!usage || typeof usage !== "object") continue;
+    const u: UsageTotals = {
+      inp: Number(usage.input_tokens) || 0,
+      out: Number(usage.output_tokens) || 0,
+      cr: Number(usage.cache_read_input_tokens) || 0,
+      cw: Number(usage.cache_creation_input_tokens) || 0,
+    };
+    const day = String(d.timestamp || "").slice(0, 10);
+    const model = String(d.message.model || "");
+    const id = typeof d.message.id === "string" && d.message.id ? d.message.id : `anon-${anon++}`;
+    byId.set(id, { day, model, u });
+  }
+  const total: UsageTotals = { inp: 0, out: 0, cr: 0, cw: 0 };
+  const days: Record<string, UsageTotals> = {};
+  const models: string[] = [];
+  for (const { day, model, u } of byId.values()) {
+    total.inp += u.inp; total.out += u.out; total.cr += u.cr; total.cw += u.cw;
+    if (day) {
+      if (!days[day]) days[day] = { inp: 0, out: 0, cr: 0, cw: 0 };
+      days[day].inp += u.inp; days[day].out += u.out; days[day].cr += u.cr; days[day].cw += u.cw;
+    }
+    if (model && models.indexOf(model) < 0) models.push(model);
+  }
+  return { total, days, models };
+}

@@ -5,7 +5,7 @@
 import {
   THEME_INIT, THEME_VARS, UX_BASE,
   boardSystemPanes, cadenceLabel, chiefFitPx, composeFamily, contractTokens,
-  deriveProgress, familyOfTaskId, familyRepos, familyStages, fleetAttnItems,
+  deriveProgress, familyInbox, familyOfTaskId, familyRepos, familyStages, fleetAttnItems,
   groupArtifacts, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
   parseBacklogLine, parseTimeline, readerCss, resolvePalette,
   reviewableArtifact, stemRegroup, storyState, termThemeCore, verifyProcessRows,
@@ -387,8 +387,15 @@ ${UX_BASE}
      below already use: the sidebar's fixed 224px rail is what overflows a
      phone viewport, so it leaves flex flow and becomes a drawer instead. */
   @media (max-width:720px){
-    .navtoggle{ display:inline-flex; }
+    .navtoggle{ display:inline-flex; min-height:40px; min-width:40px; }
     #collapse-btn{ display:none; } /* icon-rail density has no effect once the sidebar is off-canvas by default */
+    /* Touch ergonomics (dash-mobile-responsive, measured 13-30px on a 390px
+       viewport): interactive rows/controls meet a finger-sized target on the
+       one phone breakpoint; desktop density stays untouched. */
+    .navitem, .fleetlist a, .pagenav a{ min-height:40px; }
+    .attnq-it{ min-height:44px; }
+    .chipm.wait, .btoggle, .btn.sm{ min-height:34px; display:inline-flex; align-items:center; }
+    .bch .eye{ min-height:34px; min-width:34px; }
     .sidebar{ position:fixed; top:0; left:0; z-index:70; height:100vh;
       transform:translateX(-100%); transition:transform .18s ease; box-shadow:var(--shadow-pop); }
     body.nav-open .sidebar{ transform:translateX(0); }
@@ -450,6 +457,13 @@ ${UX_BASE}
   /* The wait chip doubles as the approve shortcut (opens the dock at the
      family's pane), so it reads as pressable. */
   .chipm.wait{ cursor:pointer; }
+  .chipm.ag-working{ color:var(--good); border-color:var(--good); background:var(--good-soft); }
+  .chipm.ag-idle{ color:var(--warning); border-color:var(--warning); background:var(--warn-soft); }
+  .chipm.ag-blocked{ color:var(--error); border-color:var(--error); font-weight:700; }
+  .chipm.ag-done{ color:var(--muted); }
+  .chipm.ag-unknown{ color:var(--muted); border-style:dashed; }
+  .chipm.inbx{ color:var(--warning); border-color:var(--warning); background:var(--warn-soft); }
+  .chipm.inbx.p{ color:var(--error); border-color:var(--error); background:none; font-weight:700; }
   .chipm.wait:hover{ filter:brightness(1.25); }
   .chipm.shared{ color:var(--success); border-color:var(--success); }
   .chipm.g{ background:var(--good-soft); color:var(--good); border-color:transparent; } .chipm.a{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
@@ -956,6 +970,7 @@ ${isHtmlArtifact.toString()}
 ${reviewableArtifact.toString()}
 ${cadenceLabel.toString()}
 ${fleetAttnItems.toString()}
+${familyInbox.toString()}
 ${verifyProcessRows.toString()}
 ${chiefFitPx.toString()}
 // Board (dashboard-board): the card join runs the SAME bun-tested joiners the
@@ -1320,7 +1335,11 @@ function applyRoute(isPop){
   // Leaving the dock-carrying screens closes the dock and ends its session -
   // this is what keeps it structurally unable to coexist with the /terminal
   // page's own client (the v2 two-clients lag).
-  if(typeof tdMode!=='undefined' && tdMode!=='closed' && !tdRouteOk()) tdClose();
+  if(typeof tdMode!=='undefined' && tdMode!=='closed' && !tdRouteOk()) tdClose(false);
+  // The standing intent reopens the dock on every carrying route - boot after
+  // a reload included - so the terminal is ALWAYS loaded once the captain
+  // opened it, until their own X says otherwise.
+  if(typeof tdMode!=='undefined' && tdMode==='closed' && tdIntent && tdRouteOk()) tdOpen(tdIntent);
   if(typeof tdApply==='function') tdApply(); // pill visibility follows the route
   // (Answering happens IN PLACE on the amber card/detail - the dock never
   // auto-moves; superseded the short-lived auto-aim.)
@@ -1852,7 +1871,34 @@ function pageProcesses(){
       +'<div class="muted mono" style="margin-top:6px;font-size:12px">'+nm.join('<br>')+'</div></details>';
   }
   s+='</div>';
+
+  // Token usage (dash-usage-panel): raw token sums per LIVE task, straight
+  // from each session's transcript. Main-session file only - a crewmate's
+  // subagent spend is not attributed (the note says so; no silent caps).
+  var us=(S.page&&S.page.usage)||[];
+  s+='<h2 style="font-size:14px;margin:18px 0 8px;color:var(--fg2)">Token usage <span class="muted" style="font-weight:400;font-size:11px">live tasks &middot; main session only &middot; raw tokens, no $ estimate</span></h2>';
+  if(!us.length){ s+='<div class="muted">no live task transcripts</div>'; }
+  else{
+    var tt={inp:0,out:0,cr:0,cw:0}, td={inp:0,out:0,cr:0,cw:0};
+    var ur='';
+    for(var uu=0;uu<us.length;uu++){ var u1=us[uu];
+      tt.inp+=u1.total.inp; tt.out+=u1.total.out; tt.cr+=u1.total.cr; tt.cw+=u1.total.cw;
+      td.inp+=u1.today.inp; td.out+=u1.today.out; td.cr+=u1.today.cr; td.cw+=u1.today.cw;
+      ur+='<tr><td class="mono">'+esc(u1.id)+'</td><td class="mono" style="font-size:11px">'+esc((u1.models||[]).join(', ')||'—')+'</td>'
+        +'<td class="mono">'+fmtTok(u1.today.out)+'</td>'
+        +'<td class="mono">'+fmtTok(u1.total.out)+'</td><td class="mono">'+fmtTok(u1.total.inp)+'</td><td class="mono">'+fmtTok(u1.total.cr)+'</td></tr>';
+    }
+    ur+='<tr style="font-weight:700"><td>total</td><td></td><td class="mono">'+fmtTok(td.out)+'</td><td class="mono">'+fmtTok(tt.out)+'</td><td class="mono">'+fmtTok(tt.inp)+'</td><td class="mono">'+fmtTok(tt.cr)+'</td></tr>';
+    s+='<div class="tblwrap"><table class="tbl"><thead><tr><th>Task</th><th>Model</th><th>Out today</th><th>Out total</th><th>In total</th><th>Cache read</th></tr></thead><tbody>'+ur+'</tbody></table></div>';
+  }
   return s;
+}
+// Humanized token count: 1234 -> 1.2k, 5300000 -> 5.3M (raw below 1000).
+function fmtTok(n){
+  n=n||0;
+  if(n>=1000000) return (n/1000000).toFixed(1)+'M';
+  if(n>=1000) return (n/1000).toFixed(1)+'k';
+  return String(n);
 }
 function processExpand(row, roomOf, known){
   var s='<div class="expbox"><div class="mono" style="font-size:12px">'+esc(row.state||'')+'</div>';
@@ -2033,6 +2079,32 @@ function boardLive(home, known){
   for(var i=0;i<tasks.length;i++){ var fam=familyOfTaskId(tasks[i].id, known); if(!(fam in map)) map[fam]=tasks[i].status||''; }
   return map;
 }
+// family -> live agent state (dash-agent-status-chips): herdr's own 5-state
+// detection per task id, folded per family WORST-FIRST - a family with one
+// blocked pane reads blocked, whatever its siblings do. Absent = no chip.
+var AG_RANK={blocked:0, idle:1, working:2, unknown:3, done:4};
+function famAgentStates(agents, known){
+  var map={};
+  for(var id in agents){ if(!Object.prototype.hasOwnProperty.call(agents,id)) continue;
+    var fam=familyOfTaskId(id, known), st=agents[id], cur=map[fam];
+    if(cur===undefined || (AG_RANK[st]||9)<(AG_RANK[cur]||9)) map[fam]=st;
+  }
+  return map;
+}
+function agentChip(st){
+  if(!st) return '';
+  return '<span class="chipm ag-'+esc(st)+'" title="live agent state (herdr agent detection)">'+esc(st)+'</span> ';
+}
+// Room-inbox badge (dash-family-inbox): the same pending/handback truth the
+// fleets-overview attention queue shows, on the family's own card. The badge
+// title carries the room's last entry so hover answers "waiting on WHAT".
+function inboxChips(it){
+  if(!it) return '';
+  var s='';
+  if(it.pending>0) s+=' <span class="chipm inbx p" title="'+esc(it.last||'')+'">⚑ '+it.pending+' gate/ask</span>';
+  if(it.handback) s+=' <span class="chipm inbx" title="'+esc(it.last||'')+'">HANDBACK</span>';
+  return s;
+}
 // family -> the live task's RECORDED mode (state/<id>.meta via the snapshot).
 // "-" and "" both mean "no mode" (roomchief/scout metas record "-").
 function boardLiveModes(home, known){
@@ -2084,6 +2156,9 @@ function pageBoard(){
   var bd=boardData(b);
   var live=boardLive(r.home, bd.known);
   var liveModes=boardLiveModes(r.home, bd.known);
+  var agents=(S.page&&S.page.agents)||{};
+  var agFam=famAgentStates(agents, bd.known);
+  var inbox=familyInbox(r.home&&r.home.inbox?r.home.inbox.entries:[]);
   var q=(ui.query||'').toLowerCase();
   var hideDone=boardHideDone();
   // Live system/paned tasks (board-live-panes): panes running with a meta but no
@@ -2106,11 +2181,12 @@ function pageBoard(){
     for(var i=0;i<lines.length;i++){ var f=parseBacklogLine(lines[i]); if(!f.id) continue;
       if(f.epic && bd.known.indexOf(f.epic)>=0) continue;    // nests inside its epic card (unless the epic has no card -> show standalone)
       if(q && lines[i].toLowerCase().indexOf(q)<0) continue;
-      shown++; cards+=boardCard(f, lines[i], key, arts, bd, live[f.id], liveModes[f.id]);
+      shown++; cards+=boardCard(f, lines[i], key, arts, bd, live[f.id], liveModes[f.id], agFam[f.id], inbox[f.id]);
     }
     if(key==='in_flight'){ for(var sp=0;sp<sysPanes.length;sp++){ var pn=sysPanes[sp];
       if(q && (pn.id+' '+pn.kind+' '+pn.status).toLowerCase().indexOf(q)<0) continue;
-      shown++; cards+=boardSysCard(pn); } }
+      var pfam=(pn.kind==='roomchief' && /-chief$/.test(pn.id)) ? pn.id.replace(/-chief$/,'') : pn.id;
+      shown++; cards+=boardSysCard(pn, agents[pn.id], inbox[pfam]); } }
     // Eye on the Done header hides the column (same toggle as the toolbar switch).
     var eye=key==='done'?' <button class="eye" type="button" data-board-hidedone title="Hide Done column" aria-label="Hide Done column">👁</button>':'';
     s+='<div class="bcol '+cls+'"><div class="bch"><span class="bar"></span>'+esc(label)+'<span class="cnt">'+shown+'</span>'+eye+'</div>';
@@ -2131,7 +2207,7 @@ function toggleHideDone(){ var v=!boardHideDone(); try{ localStorage.setItem('ac
 // state ITSELF is derived by the bun-tested storyState, not here).
 var STORY_ICON={done:'✓',in_flight:'●',queued:'○',failed:'✗',abandoned:'⊘'};
 var STORY_BADGE={done:'ok',in_flight:'accent',queued:'',failed:'err',abandoned:'stale'};
-function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode){
+function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode, agState, inboxIt){
   var d=composeFamily({ family:f.id, line:line, section:sectionKey, project:'', artifacts:arts, roomEntries:[], children:(bd.childrenOf[f.id]||[]), knowledgeRepos:[], learningsCiteFamily:false });
   // A standalone (non-epic) family's own card carried no state marker at all,
   // so a [failed]/[abandoned] row was indistinguishable from a real success
@@ -2151,7 +2227,7 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode){
   // Same d.state, same err/stale vocabulary as the badge - never re-derived.
   var barCls=d.state==='failed'?'err':(d.state==='abandoned'?'stale':'');
   var prog=d.progress.pct>0?'<div class="bprog"><i class="'+barCls+'" style="width:'+d.progress.pct+'%"></i></div>':'';
-  var right = liveStatus ? '<span class="chipm a live">'+esc(liveStatus)+'</span>' : '<span class="live" style="margin-left:auto;color:var(--muted);font-size:10.5px">'+esc(d.progress.label)+'</span>';
+  var right = agentChip(agState) + (liveStatus ? '<span class="chipm a live">'+esc(liveStatus)+'</span>' : '<span class="live" style="margin-left:auto;color:var(--muted);font-size:10.5px">'+esc(d.progress.label)+'</span>');
   var roll=d.rollup?'<div class="broll">rollup '+d.rollup.done+'/'+d.rollup.total+' done</div>':'';
   var subs='';
   if(d.rollup && d.children.length){
@@ -2174,7 +2250,7 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode){
   // enough to decide on).
   var waitChip=wait?' <span class="chipm wait" data-td-open data-td-family="'+esc(f.id)+'" title="Open the dock at this roomchief&#39;s pane to answer">⏳ waiting on captain</span>':'';
   return '<a class="bcard st-'+d.state+(wait?' wait':'')+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(f.id)+'" data-link>'
-    +'<div class="cid">'+esc(f.id)+badges+waitChip+'</div>'
+    +'<div class="cid">'+esc(f.id)+badges+waitChip+inboxChips(inboxIt)+'</div>'
     +'<div class="ct">'+esc(d.text||f.id)+'</div>'
     +(cchips?'<div class="brow">'+cchips+'</div>':'')
     +(chips?'<div class="brow">'+chips+'</div>':'')
@@ -2187,15 +2263,16 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode){
 // any in-flight card (it IS running work), with its kind as a badge and its
 // live status line. Transient: gone when the pane is reaped and its meta
 // disappears from the snapshot.
-function boardSysCard(p){
+function boardSysCard(p, agState, inboxIt){
   // A system pane's FAMILY detail is reachable like any card's: a roomchief
   // id maps to its family (room + data dir exist even with no backlog row -
   // the brainstorm shape), any other id is its own family.
   var fam=(p.kind==='roomchief' && /-chief$/.test(p.id)) ? p.id.replace(/-chief$/,'') : p.id;
   var wait=boardWaits(fam,'');
   return '<a class="bcard sys'+(wait?' wait':'')+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(fam)+'" data-link>'
-    +'<div class="cid">'+esc(p.id)+' <span class="badgeb sys">'+esc(p.kind)+'</span>'+(wait?' <span class="chipm wait" data-td-open data-td-family="'+esc(fam)+'" title="Open the dock at this roomchief&#39;s pane to answer">⏳ waiting on captain</span>':'')+'</div>'
+    +'<div class="cid">'+esc(p.id)+' <span class="badgeb sys">'+esc(p.kind)+'</span>'+(wait?' <span class="chipm wait" data-td-open data-td-family="'+esc(fam)+'" title="Open the dock at this roomchief&#39;s pane to answer">⏳ waiting on captain</span>':'')+inboxChips(inboxIt)+'</div>'
     +'<div class="brow"><span class="chipm">repo: '+esc(p.project||'—')+'</span>'
+    +agentChip(agState)
     +'<span class="chipm a live">'+esc(p.status||'—')+'</span></div>'
     +'</a>';
 }
@@ -2602,8 +2679,13 @@ function termTheme(){
 // CONSTRUCTION: tdRouteOk() gates open, and applyRoute closes the dock on
 // entering 'term' - so the dock can never coexist with the /terminal page's
 // own client (the two-full-clients lag that reverted the v2 GLOBAL dock).
-var tdMode='closed', tdW=480;
-try{ var tds=JSON.parse(localStorage.getItem('ac_term_dock')||'{}'); if(tds.w) tdW=tds.w; }catch(e){}
+var tdMode='closed', tdW=480, tdIntent='';
+// tdIntent is the CAPTAIN'S standing choice (open as split/full, or ''), kept
+// apart from tdMode because route exclusions close the dock without the
+// captain asking - the intent is what survives a reload and what reopens the
+// dock after the /terminal page's structural close.
+try{ var tds=JSON.parse(localStorage.getItem('ac_term_dock')||'{}'); if(tds.w) tdW=tds.w; if(tds.mode==='split'||tds.mode==='full') tdIntent=tds.mode; }catch(e){}
+function tdPersist(){ try{ localStorage.setItem('ac_term_dock', JSON.stringify({w:tdW, mode:tdIntent})); }catch(e){} }
 // Every route carries the dock EXCEPT the Terminal page - that page mounts its own full client, and dock
 // + page together is the measured two-clients lag that reverted the v2
 // global dock. Entering 'term' closes the dock; the page shows the same
@@ -2651,10 +2733,12 @@ function tdMount(){
       ov.innerHTML='<span>connecting to herdr&hellip;</span>';
       bb.appendChild(ov);
       termBg=''; setTimeout(function(){ termTheme(); tdFontLabel(); }, 800);
+    } else if(j.orca){
+      bb.innerHTML='<div class="cdead">'+esc(j.why||'this fleet runs on the Orca app')+' · <a href="#" onclick="return acOrcaOpen()">open Orca</a></div>';
     } else bb.innerHTML='<div class="cdead">'+esc(j.why||j.error||'terminal unavailable')+'</div>';
   }).catch(function(){ var bb=el('td-body'); if(bb&&!bb.firstChild) bb.innerHTML='<div class="cdead">terminal unreachable</div>'; });
 }
-function tdOpen(mode){ tdMode=mode; tdApply(); tdMount(); }
+function tdOpen(mode){ tdMode=mode; tdIntent=mode; tdPersist(); tdApply(); tdMount(); }
 // Workspace scope for the dock's client: '' = plain, '&fleet=1' = the
 // crewchief's workspace, '&family=<f>' = that family's workspace (the
 // /term-frame scope machinery types the picker chord itself). A scope CHANGE
@@ -2668,7 +2752,10 @@ function tdOpenScoped(sc){
 // The frame's first pty byte lands here (same-origin direct call): drop the
 // dock's connecting overlay. The Terminal tab calls it too - harmless no-op.
 window.acTermLive=function(){ var o=el('td-load'); if(o) o.remove(); };
-function tdClose(){ tdMode='closed'; tdApply(); var b=el('td-body'); if(b) b.innerHTML=''; }
+// user=false is a STRUCTURAL close (route exclusion) - the captain's intent
+// stands and the next carrying route reopens; only the captain's own X
+// clears it.
+function tdClose(user){ tdMode='closed'; tdApply(); var b=el('td-body'); if(b) b.innerHTML=''; if(user!==false){ tdIntent=''; tdPersist(); } }
 function tdFont(d){
   var w=tdFrameWin();
   if(w && typeof w.acSetFont==='function'){ var v=w.acSetFont(d); var sp=el('td-fsize'); if(sp) sp.textContent=String(v); }
@@ -2696,7 +2783,7 @@ function tdFontLabel(){
     drag=false; document.body.classList.remove('td-dragging');
     if(raf){ cancelAnimationFrame(raf); raf=0; }
     tdApply();
-    try{ localStorage.setItem('ac_term_dock', JSON.stringify({w:tdW})); }catch(e){}
+    tdPersist();
   });
 })();
 // Ctrl+backtick toggles the dock on the screens that carry it; Esc drops
@@ -2846,10 +2933,16 @@ function chiefComposeToggle(){
   var b=el('chief-compose'); if(b) b.setAttribute('aria-pressed', chiefComposerOpen?'true':'false');
   if(chiefComposerOpen){ chiefKb=false; chiefNote(''); var ta=el('chief-msg'); if(ta) try{ ta.focus(); }catch(e){} }
 }
+function acOrcaOpen(id){
+  fetch('/api/orca/focus?path='+enc(hp)+(id?'&id='+enc(id):''), {method:'POST'}).catch(function(){});
+  return false;
+}
 function chiefFrame(j){
   var t=el('chief-term'), st=el('chief-state'); if(!t||!st) return;
   if(j.inputError){ chiefNote('refused: '+j.inputError, true); return; }
-  if(!j.live){ st.textContent=j.why||'not live'; return; }
+  if(!j.live){
+    if(j.orca){ st.innerHTML=esc(j.why||'runs on the Orca app')+' · <a href="#" data-orca="'+esc(j.orca)+'" onclick="return acOrcaOpen(this.dataset.orca)">open in Orca</a>'; return; }
+    st.textContent=j.why||'not live'; return; }
   st.textContent=(j.readonly?'live · watching '+chiefWatch:'live · type here')+' · stream';
   var htmlChanged = t._h!==j.html;
   // A pure resize (server's true cols moved, pane text did not) still needs a
@@ -4508,6 +4601,11 @@ function boot(){
     setTimeout(function(){ if(tdMode==='closed') tdOpen('split'); }, 0);
   }
   if(S.route.name==='config' && !S.cfgSection) S.cfgSection=CFG_SECTIONS[0].id;
+  // The standing dock intent applies at BOOT too: boot sets S.route without
+  // applyRoute, so the reopen hook there never sees a reload (the retired-chat
+  // redirect's own setTimeout precedent; tdMount retries until the home
+  // resolves).
+  if(tdIntent && tdRouteOk()) setTimeout(function(){ if(tdMode==='closed') tdOpen(tdIntent); }, 0);
   syncViewer(S.route);
   renderNav(); renderHead(); renderPage();
   tdApply(); // boot sets S.route without applyRoute - the pill needs its route pass here too

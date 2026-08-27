@@ -1437,4 +1437,50 @@ assert_eq "$(jq -r .verdict "$TMP/bp-noship.json")" "passed" "the verdict rests 
 assert_contains "$(cat "$TMP/bp-stage-noship/report.md")" "not-qualifies" \
   "the report still surfaces the unqualified ship receipt state"
 
+# --- codereview: explicit --harness forwards to the pane -------------------------
+# Same pane-profile shape qa's routed profile uses; the caller (a chief, or a
+# dispatch-resolved rule) picks the reviewer's engine explicitly.
+cr_h_family="crhrn"
+export VERIFY_EXPECT_ID="$cr_h_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/cr-h-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/cr-h-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/cr-h-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/cr-h-transcript.jsonl"
+"$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$cr_h_family" --caller "$caller" --intent "$intent" \
+  --output "$TMP/cr-h.json" --harness codex --model gpt-5.6-sol --effort high >/dev/null
+assert_contains "$(grep '^run ' "$pane_log" | tail -n 1)" \
+  "--harness codex --model gpt-5.6-sol --effort high" \
+  "codereview forwards the explicit harness/model/effort to the pane"
+# --model/--effort still require the harness, mirroring qa's rule.
+assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$cr_h_family-x" --caller "$caller" --intent "$intent" \
+  --output "$TMP/cr-h-x.json" --model opus
+
+# --- codereview on an ORCA fleet: the verifier lease is an Orca worktree --------
+# Backend rule: an orca fleet leases Orca-managed worktrees for EVERY isolated
+# checkout - verifier rounds included, not only the crew lease - and a round
+# leaves no worktree and no crew/<id> branch behind.
+make_fake_orca
+printf 'orca\n' >"$AC_HOME/config/backend"
+ocr_family="ocr"
+export VERIFY_EXPECT_ID="$ocr_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/ocr-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/ocr-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/ocr-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/ocr-transcript.jsonl"
+tree_log_before="$(grep -c . "$tree_log" 2>/dev/null || true)"
+"$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$ocr_family" --caller "$caller" --intent "$intent" \
+  --output "$TMP/ocr.json" >/dev/null \
+  || fail "an orca-backend codereview round must succeed on the fake orca"
+ocr_wt="$(cat "$VERIFY_CWD_CAPTURE")"
+case "$ocr_wt" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "orca-backend verifier must lease an Orca worktree (got: $ocr_wt)" ;; esac
+assert_eq "$(grep -c . "$tree_log" 2>/dev/null || true)" "$tree_log_before" \
+  "an orca verifier round never touches the crew-tree pool"
+[ ! -d "$ocr_wt" ] || fail "the orca verifier worktree must be released after the round"
+git -C "$repo" show-ref --verify -q "refs/heads/crew/$ocr_family-verify-codereview" \
+  && fail "a verifier round must leave no crew/<id> branch behind"
+printf 'herdr\n' >"$AC_HOME/config/backend"
+
 pass

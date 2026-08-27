@@ -150,19 +150,21 @@ refuses "In flight" pay flying
 refuses "Done" pay donetask
 refuses "epic" pay qepic
 refuses "blocked-by" pay q1
-# AS1: a local landing in a deputy clone never reaches the parent's clone.
-refuses "local-only" pay qlocal
-# ...and with the registry out of the mode business (mode is per-task), an
-# UNPINNED row is unresolvable: the boundary is the last point AS1 can be
-# enforced, so it refuses and asks for the pin instead of waving it through.
-refuses "pins no mode" pay qnopin
-# AS1 is the single mechanical enforcement of the assumption most likely to be
-# vetoed, so an input it cannot resolve must REFUSE, not wave the item through.
-refuses "(repo: <name>) token" pay qnorepo
 refuses "no line" pay nosuchitem
 refuses "no line" pay qkeep nosuchitem
-# All-or-nothing across a mixed set: the good id must not move either.
-refuses "local-only" pay qkeep qlocal
+
+# The AS1 guard is VETOED: local-only work follows the domain like any other
+# mode - a deputy's clone is where its own local landings belong. Unpinned
+# and repo-token-less rows move too: resolving the mode was AS1's only need,
+# so the handoff no longer branches on it at all.
+out="$("$BIN/ac-deputy.sh" handoff pay qlocal qnopin qnorepo)"
+assert_contains "$out" "$qlocal" "local-only moves with the domain"
+assert_eq "$(grep -F -- "$qlocal" "$dep/records/backlog.md")" "$qlocal" \
+  "the local-only row lands in the deputy ledger byte-identically"
+grep -qF -- "$qnopin" "$dep/records/backlog.md" \
+  || fail "an unpinned row moves - mode resolution was AS1's only need here"
+grep -qF -- "qnorepo" "$dep/records/backlog.md" \
+  || fail "a repo-token-less row moves - the token fed only the AS1 check"
 
 # Unknown deputy, and a run from inside a deputy home, are refused too.
 refuses "no crewdeputy" nosuchdeputy qkeep

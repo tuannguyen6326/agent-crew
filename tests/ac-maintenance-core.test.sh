@@ -44,7 +44,13 @@ run="$AC_HOME/data/learning-1"
 mkdir -p "$run/staged/skills/example"
 printf 'skill\n' >"$run/staged/skills/example/SKILL.md"
 sha="$(ac_sha256_file "$run/staged/skills/example/SKILL.md")"
-manifest_sha="$(printf 'manifest\n' | shasum -a 256 | awk '{print $1}')"
+cat >"$run/manifest" <<'EOF'
+kind: skill
+name: example
+===skill===
+A candidate line that exists nowhere but inside this manifest.
+EOF
+manifest_sha="$(ac_sha256_file "$run/manifest")"
 cat >"$run/plan.json" <<EOF
 {"schema":"agentcrew.maintenance-plan/v1","mode":"learning","run_id":"learning-1","subject":"example","input_manifest_sha256":"$manifest_sha","actions":[{"op":"write-skill","target":"skills/example/SKILL.md","old_sha256":"-","new_sha256":"$sha","staged":"staged/skills/example/SKILL.md"}]}
 EOF
@@ -84,16 +90,151 @@ reviewed_at: "2026-07-26T00:00:00Z"
 continue
 ## Grounds
 The exact action is recoverable and supported.
+## Inputs Read
+- INPUT MANIFEST QUOTE: A candidate line that exists nowhere but inside this manifest.
+- ACTION PLAN NEW SHA-256: $sha
 ## Proposed Process
 Apply the hash-bound maintenance plan.
 EOF
-printf 'manifest\n' >"$run/manifest"
 assert_eq "$(ac_maintenance_receipt_validate "$run/decision.md" "$run/plan.json" "$run/manifest")" \
   "continue" "hash-bound maintenance receipt validates"
 sed 's/action_plan_sha256: \".*\"/action_plan_sha256: \"bad\"/' \
   "$run/decision.md" >"$run/bad-decision.md"
 if ac_maintenance_receipt_validate "$run/bad-decision.md" "$run/plan.json" "$run/manifest" >/dev/null 2>&1; then
   fail "a receipt with a mismatched action-plan hash must not authorize apply"
+fi
+
+# Hash agreement alone never authorizes: the gate prompt PRINTS both hashes, so
+# a judge that never opened either input can echo them back. The receipt has to
+# carry content of the inputs that the prompt never handed out.
+receipt_variant() {
+  # receipt_variant <out> <decision> <manifest-quote> <plan-sha> [<authority>]
+  {
+    printf -- '---\nschema: "agentcrew.maintenance-gate/v1"\n'
+    printf 'mode: "learning"\nsubject: "example"\ndecision: "%s"\n' "$2"
+    printf 'authority: "%s"\nengine: "codex"\nmodel: "gate-model"\n' "${5:-second-chief}"
+    printf 'input_manifest_sha256: "%s"\naction_plan_sha256: "%s"\n' "$manifest_sha" "$plan_sha"
+    printf 'reviewed_at: "2026-07-26T00:00:00Z"\n---\n'
+    printf '# Maintenance Gate Decision\n## Decision\n%s\n' "$2"
+    printf '## Grounds\nThe exact action is recoverable and supported.\n'
+    if [ -n "$3$4" ]; then
+      printf '## Inputs Read\n- INPUT MANIFEST QUOTE: %s\n- ACTION PLAN NEW SHA-256: %s\n' "$3" "$4"
+    fi
+    printf '## Proposed Process\nApply the hash-bound maintenance plan.\n'
+  } >"$1"
+}
+good_quote='A candidate line that exists nowhere but inside this manifest.'
+
+receipt_variant "$run/blind.md" continue "" ""
+if ac_maintenance_receipt_validate "$run/blind.md" "$run/plan.json" "$run/manifest" >/dev/null 2>&1; then
+  fail "correct hashes with no read-evidence must not authorize apply"
+fi
+
+for blind_decision in revise ask-captain; do
+  receipt_variant "$run/blind-$blind_decision.md" "$blind_decision" "" ""
+  if ac_maintenance_receipt_validate "$run/blind-$blind_decision.md" "$run/plan.json" \
+    "$run/manifest" >/dev/null 2>&1; then
+    fail "read-evidence binds every decision value, not only continue ($blind_decision)"
+  fi
+done
+
+receipt_variant "$run/invented.md" continue \
+  'A candidate line no reader of that manifest ever saw.' "$sha"
+if ac_maintenance_receipt_validate "$run/invented.md" "$run/plan.json" "$run/manifest" >/dev/null 2>&1; then
+  fail "a quote absent from the input it claims must not count as read-evidence"
+fi
+
+receipt_variant "$run/short.md" continue 'name: example' "$sha"
+if ac_maintenance_receipt_validate "$run/short.md" "$run/plan.json" "$run/manifest" >/dev/null 2>&1; then
+  fail "a quote whose only content is the prompt-supplied subject must not count as read-evidence"
+fi
+
+receipt_variant "$run/foreign-sha.md" continue "$good_quote" \
+  "$(printf 'not this plan\n' | shasum -a 256 | awk '{print $1}')"
+if ac_maintenance_receipt_validate "$run/foreign-sha.md" "$run/plan.json" "$run/manifest" >/dev/null 2>&1; then
+  fail "a hash no action in the plan carries must not count as read-evidence"
+fi
+
+# An engine that wraps its evidence in backticks still read the files.
+receipt_variant "$run/fenced.md" continue "\`$good_quote\`" "\`$sha\`"
+assert_eq "$(ac_maintenance_receipt_validate "$run/fenced.md" "$run/plan.json" "$run/manifest")" \
+  "continue" "backtick-wrapped read-evidence is still read-evidence"
+
+# A repository-policy receipt has no engine to be blind: Curate mints it from
+# the very files it just built, so it carries no engine read-evidence.
+receipt_variant "$run/policy.md" continue "" "" repository-policy
+assert_eq "$(ac_maintenance_receipt_validate "$run/policy.md" "$run/plan.json" "$run/manifest")" \
+  "continue" "an engine-less repository-policy receipt needs no read-evidence"
+receipt_variant "$run/unknown-authority.md" continue "" "" chief
+if ac_maintenance_receipt_validate "$run/unknown-authority.md" "$run/plan.json" \
+  "$run/manifest" >/dev/null 2>&1; then
+  fail "only repository-policy is exempt; an unrecognised authority still owes read-evidence"
+fi
+
+# A plan that stages a byte-identical copy of its own manifest carries the
+# prompt-printed manifest hash as one of its action hashes, so set membership
+# alone would accept the one value the judge got for free.
+selfrun="$AC_HOME/data/learning-self"
+mkdir -p "$selfrun/staged"
+cat >"$selfrun/manifest" <<'EOF'
+kind: patch
+name: example
+===patch===
+## A line long enough to prove someone opened this file.
+EOF
+cp "$selfrun/manifest" "$selfrun/staged/copy.md"
+self_sha="$(ac_sha256_file "$selfrun/manifest")"
+cat >"$selfrun/plan.json" <<EOF
+{"schema":"agentcrew.maintenance-plan/v1","mode":"learning","run_id":"learning-self","subject":"example","input_manifest_sha256":"$self_sha","actions":[{"op":"append-archive","target":"records/learnings-archive/example.md","old_sha256":"-","new_sha256":"$self_sha","staged":"staged/copy.md"}]}
+EOF
+self_receipt() {
+  {
+    printf -- '---\nschema: "agentcrew.maintenance-gate/v1"\n'
+    printf 'mode: "learning"\nsubject: "example"\ndecision: "continue"\n'
+    printf 'authority: "second-chief"\nengine: "codex"\nmodel: "gate-model"\n'
+    printf 'input_manifest_sha256: "%s"\naction_plan_sha256: "%s"\n' \
+      "$self_sha" "$(ac_sha256_file "$selfrun/plan.json")"
+    printf 'reviewed_at: "2026-07-26T00:00:00Z"\n---\n'
+    printf '# Maintenance Gate Decision\n## Decision\ncontinue\n'
+    printf '## Grounds\nThe exact action is recoverable and supported.\n'
+    printf '## Inputs Read\n- INPUT MANIFEST QUOTE: %s\n- ACTION PLAN NEW SHA-256: %s\n' \
+      '## A line long enough to prove someone opened this file.' "$1"
+    printf '## Proposed Process\nApply the hash-bound maintenance plan.\n'
+  } >"$selfrun/decision.md"
+}
+self_receipt "$self_sha"
+if ac_maintenance_receipt_validate "$selfrun/decision.md" "$selfrun/plan.json" \
+  "$selfrun/manifest" >/dev/null 2>&1; then
+  fail "an action hash that equals the prompt-printed manifest hash proves nothing and must be refused"
+fi
+
+# The shortest content line a generated manifest emits still has to count: a
+# floor above it would reject the very line the prompt tells the judge to pick.
+jsonrun="$AC_HOME/data/curate-json"
+mkdir -p "$jsonrun/staged"
+cat >"$jsonrun/manifest.json" <<'EOF'
+{
+  "schema": "agentcrew.curate-subject-input/v1",
+  "subject": "project-lab",
+  "files": [
+    {
+      "path": "projects/lab",
+      "sha256": "-"
+    }
+  ]
+}
+EOF
+printf 'archived\n' >"$jsonrun/staged/projects.md"
+json_new="$(ac_sha256_file "$jsonrun/staged/projects.md")"
+cat >"$jsonrun/plan.json" <<EOF
+{"schema":"agentcrew.maintenance-plan/v1","mode":"curate","run_id":"curate-json","subject":"project-lab","input_manifest_sha256":"$(ac_sha256_file "$jsonrun/manifest.json")","actions":[{"op":"rewrite-registry","target":"records/projects.md","old_sha256":"-","new_sha256":"$json_new","staged":"staged/projects.md"}]}
+EOF
+printf '## Inputs Read\n- INPUT MANIFEST QUOTE: "path": "projects/lab",\n- ACTION PLAN NEW SHA-256: %s\n' \
+  "$json_new" | ac_maintenance_read_evidence "$jsonrun/manifest.json" "$jsonrun/plan.json" \
+  || fail "a real path line of a JSON subject manifest must count as read-evidence"
+if printf '## Inputs Read\n- INPUT MANIFEST QUOTE: "subject": "project-lab",\n- ACTION PLAN NEW SHA-256: %s\n' \
+  "$json_new" | ac_maintenance_read_evidence "$jsonrun/manifest.json" "$jsonrun/plan.json"; then
+  fail "the subject line of a JSON subject manifest is prompt-supplied and must not count"
 fi
 
 # Applying a validated plan is backup-first, journaled, atomic, and idempotent.

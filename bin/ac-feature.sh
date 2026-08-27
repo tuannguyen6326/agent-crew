@@ -6,10 +6,10 @@
 # never pushes; member rows bind with the `feature:<name>` ledger token
 # (AC_DONELINE_AWK's f["feature"]) and land onto the branch through the
 # ordinary ac-merge-local path via the shared resolver (ac_epic_base_for);
-# `ship` publishes the branch ONCE and opens the single PR to the recorded
-# target (captain rulings 2026-08-24, receipted in the feature-branch-mech
-# room: standalone mechanism reusable by epic-branch-mech; many tasks per
-# feature; one review/QA gate at the tip before push; target captain-recorded).
+# `ship` publishes the branch ONCE and opens one PR per repo to the recorded
+# target. The design pins: a standalone mechanism reusable by
+# epic-branch-mech; many tasks per feature; one review/QA gate at the tip
+# before push; the target is captain-recorded.
 #
 # The RECORD is data/<feature>/branches - `<repo> <branch> [target=<branch>]
 # push=deferred`, one line per repo - chief-written on the captain's word and
@@ -124,8 +124,8 @@ cmd_verify() {
 }
 
 cmd_ship() {
-  # SHIP - the gated exit (captain ruling R3: ONE review/QA gate at the tip,
-  # before push). Preconditions, all fail-closed, checked in order - the verb
+  # SHIP - the gated exit: ONE review/QA gate at the tip, before push.
+  # Preconditions, all fail-closed, checked in order - the verb
   # REFUSES with the exact remedy instead of doing a lesser thing:
   #   1. RECORD: an unretired push=deferred entry, and the LOCAL branch
   #      verifies.
@@ -149,10 +149,16 @@ cmd_ship() {
   #      crew-qa pass attestation for the exact tip
   #      (<repo>/.crew/qa/passed/<tip>*).
   # Then, in order: push origin <branch> (the ONE deferred publication - an
-  # AGENTS.md section-1 sanctioned write), the SINGLE `gh pr create --base
-  # <target>`, the url recorded in data/<feature>/gate/ships.env (pr_url=)
-  # and receipted SHIPS: to the room. Re-runs are idempotent - a recorded PR
-  # is reported, not re-opened. This verb NEVER merges - the captain does.
+  # AGENTS.md section-1 sanctioned write), ONE `gh pr create --base <target>`
+  # PER REPO ("single PR" means no 2-PR staging chain, never one PR for a
+  # multi-repo feature - two repos cannot share a PR), the url recorded in
+  # data/<feature>/gate/ships.env under the PER-REPO key pr_url_<repo> and
+  # receipted SHIPS: to the room. Re-runs are idempotent - a recorded PR is
+  # reported, not re-opened. This verb NEVER merges - the captain does.
+  # KNOWN RESIDUAL on a multi-repo feature: gate/review.json is one slot for
+  # the whole feature, so each repo's ship needs the review round re-run at
+  # ITS tip before its exit - loud (the ref-mismatch refusal names it), never
+  # silent, but a per-repo receipt is its own slice if the friction earns it.
   local feature="$1" repo="$2" dry="${3:-}"
   local entry branch dir target tip target_tip base ledger room
   local gate_dir ships review review_cmd r_ref n_fix pr_url url
@@ -233,12 +239,20 @@ cmd_ship() {
       ;;
   esac
 
-  # --- the exit: deferred push, then the single PR ------------------------------
+  # --- the exit: deferred push, then this repo's ONE PR -------------------------
+  # The record slot is PER REPO (feature-ship-single-pr-slot, lab-measured):
+  # ships.env keys pr_url_<repo> (non-alnum -> _), because a multi-repo
+  # feature ships one PR per repo and a single shared key let repo one's url
+  # short-circuit every later repo into a silent rc-0 no-op. A pre-fix bare
+  # pr_url= is dead legacy the reader ignores - it cannot be attributed to a
+  # repo from the file alone, and gh itself refuses a duplicate head PR
+  # loudly, so ignoring it can never silently double-open.
   git -C "$dir" remote get-url origin >/dev/null 2>&1 \
     || ac_die "feature-ship needs an origin remote on $repo - a local-only repo has no PR to open (land it by captain merge instead)"
   mkdir -p "$gate_dir"
   ships="$gate_dir/ships.env"
-  pr_url="$(ac_meta_get "$ships" pr_url 2>/dev/null || printf '')"
+  repo_key="pr_url_${repo//[^a-zA-Z0-9]/_}"
+  pr_url="$(ac_meta_get "$ships" "$repo_key" 2>/dev/null || printf '')"
   if [ -n "$pr_url" ]; then
     printf 'PR already recorded: %s\n' "$pr_url"
     return 0
@@ -253,8 +267,8 @@ cmd_ship() {
     --title "feature($feature): $branch -> $target" \
     --body "Feature branch \`$branch\` of \`$feature\` -> \`$target\`. Opened by ac-feature.sh ship after the feature gate (members terminal, review round clean at $tip). The captain merges.")" \
     || ac_die "gh pr create failed for $branch -> $target"
-  printf 'pr_url=%s\n' "$url" >>"$ships"
-  "$(dirname "${BASH_SOURCE[0]}")/ac-room.sh" post "$feature" crewchief "SHIPS: pr $url (feature-ship)" >/dev/null 2>&1 || true
+  printf '%s=%s\n' "$repo_key" "$url" >>"$ships"
+  "$(dirname "${BASH_SOURCE[0]}")/ac-room.sh" post "$feature" crewchief "SHIPS: pr $url ($repo, feature-ship)" >/dev/null 2>&1 || true
   printf 'opened pr: %s\n' "$url"
 }
 

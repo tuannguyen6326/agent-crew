@@ -29,7 +29,8 @@
 #   gate-effort  the judge's reasoning effort     (ac-gate.sh)
 #   promote      roomchief promotion policy       (AGENTS.md section 8)
 #   flow         direct/staged pin                (AGENTS.md section 5)
-# config/backend is written as `herdr` unasked - it is the fleet's only backend.
+# config/backend is written as `herdr` unasked - the default backend (orca is
+# the per-fleet opt-in).
 #
 # No workspace ids are seeded: the retired herdr-workspace* knobs are never
 # read - ac-backend.sh (FAMILY WORKSPACE GROUPING) resolves every workspace
@@ -182,6 +183,8 @@ write_knob flow "$flow"
 
 printf '# Projects\n\n' >"$records/projects.md"
 printf '# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n' >"$records/backlog.md"
+
+ac_seed_runtime_links "$home"
 
 # A per-fleet CREWMATE.md WINS over the container-wide .claude/CLAUDE.md that
 # every fleet otherwise shares (ac-spawn.sh owns that resolution order), so it

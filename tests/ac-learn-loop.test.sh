@@ -848,6 +848,169 @@ STUB4
     "a scout that produced no report.md leaves the retro window anchor untouched"
   assert_contains "$(cat "$TMP/noreport.err")" 'retro window is PRESERVED' \
     "the withheld cadence is said out loud, not left for a chief to notice by hand"
+
+  # --- a gate that CANNOT JUDGE must not consume the cycle ---------------------
+  # (learn-envfail-burns-retro-window) A complete ok report+retro used to still
+  # burn the cycle and advance the retro-window anchor when the ONE thing that
+  # failed was the maintenance gate itself - not because the gate looked at the
+  # candidate and refused it, but because it could not render a judgment at
+  # all. A scout stub that proposes exactly one candidate, gated three
+  # different ways that each fall short of a real judgment.
+  cat >"$TMP/stub-pane-envfail.sh" <<'STUB5'
+#!/usr/bin/env bash
+if [ "${1:-}" = reap-pane ]; then exit 0; fi
+cwd=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cwd) cwd="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '# Retro\n\nno cross-family pattern found (smoke).\n' >"$cwd/retro.md"
+printf '## Retro\n\nsee ./retro.md.\n\none candidate proposed (smoke).\n' >"$cwd/report.md"
+{
+  printf 'kind: skill\nname: envfail-skill\n'
+  printf 'description: Apply when the gate could not judge this candidate.\n'
+  printf '===sources===\n'
+  printf '2026-08-26\tauto\t- LESSON: the gate cannot read this source today.\n'
+  printf '===skill===\n# envfail-skill\n\nDo the thing.\n'
+} >"$cwd/candidate-envfail-skill.md"
+printf '{"event":"transcript","path":"/dev/null","session_id":"s1"}\n'
+printf '{"event":"done","status":"ok","session_id":"s1","transcript":"/dev/null","pane":"p1"}\n'
+STUB5
+  chmod +x "$TMP/stub-pane-envfail.sh"
+  printf '## 2026-08-26 - envfail (chief)\n- LESSON: the gate cannot read this source today.\n' \
+    >"$AC_HOME/records/learnings.md"
+
+  # A: the gate binary itself is disabled/unavailable/timed out (non-zero exit).
+  cat >"$TMP/gate-unavailable.sh" <<'GATE1'
+#!/usr/bin/env bash
+exit 1
+GATE1
+  chmod +x "$TMP/gate-unavailable.sh"
+  printf 'debriefs=9\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  envfail_out="$(AC_PANE_AGENT="$TMP/stub-pane-envfail.sh" AC_GATE="$TMP/gate-unavailable.sh" \
+    "$BIN/ac-learn.sh" run)"
+  assert_contains "$envfail_out" 'ask-captain: envfail-skill (gate unavailable; no mutation)' \
+    "an unavailable gate still escalates the exact subject"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" \
+    "a gate that could not run at all leaves the DISTILL cadence DUE"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
+    "a gate that could not run at all leaves the retro window anchor UNMOVED"
+
+  # B: the gate ran (exit 0) but its receipt fails the hash/schema check - the
+  # gate's OWN output cannot be trusted as a rendered judgment either.
+  cat >"$TMP/gate-badreceipt.sh" <<'GATE2'
+#!/usr/bin/env bash
+mode=""; run=""; subject=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    maintenance) shift ;;
+    --mode) mode="$2"; shift 2 ;;
+    --run) run="$2"; shift 2 ;;
+    --subject) subject="$2"; shift 2 ;;
+    --manifest) shift 2 ;;
+    --plan) shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$run/gates/$subject"
+cat >"$run/gates/$subject/decision.md" <<EOF
+---
+schema: "agentcrew.maintenance-gate/v1"
+mode: "$mode"
+subject: "$subject"
+decision: "continue"
+authority: "second-chief"
+engine: "stub"
+model: "targeted-test"
+input_manifest_sha256: "deadbeef"
+action_plan_sha256: "deadbeef"
+reviewed_at: "2026-08-26T00:00:00Z"
+---
+# Maintenance Gate Decision
+## Decision
+continue
+## Grounds
+Fixture: the receipt hashes do not match the manifest/plan actually gated.
+## Proposed Process
+Apply only this hash-bound plan through the maintenance transaction.
+EOF
+GATE2
+  chmod +x "$TMP/gate-badreceipt.sh"
+  printf 'debriefs=9\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  envfail_out="$(AC_PANE_AGENT="$TMP/stub-pane-envfail.sh" AC_GATE="$TMP/gate-badreceipt.sh" \
+    "$BIN/ac-learn.sh" run)"
+  assert_contains "$envfail_out" 'ask-captain: envfail-skill (invalid gate receipt; no mutation)' \
+    "a hash-mismatched receipt still escalates the exact subject"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" \
+    "a receipt that fails hash validation leaves the DISTILL cadence DUE"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
+    "a receipt that fails hash validation leaves the retro window anchor UNMOVED"
+  assert_no_file "$AC_HOME/skills/envfail-skill/SKILL.md" \
+    "an unverifiable receipt must never authorize an apply"
+
+  # C: the gate ran, READ both inputs, and rendered ask-captain on what it
+  # read. Reading is what separates this from B: a judge that never opened the
+  # manifest and the plan cannot mint a valid receipt at all (the `## Inputs
+  # Read` proof, bin/ac-maintenance-lib.sh), so it lands in B's arm instead -
+  # which this file's own header already calls indistinguishable from this one
+  # at the cadence layer.
+  cat >"$TMP/gate-askcaptain.sh" <<'GATE3'
+#!/usr/bin/env bash
+mode=""; run=""; subject=""; manifest=""; plan=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    maintenance) shift ;;
+    --mode) mode="$2"; shift 2 ;;
+    --run) run="$2"; shift 2 ;;
+    --subject) subject="$2"; shift 2 ;;
+    --manifest) manifest="$2"; shift 2 ;;
+    --plan) plan="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$run/gates/$subject"
+input_sha="$(shasum -a 256 <"$manifest" | awk '{print $1}')"
+plan_sha="$(shasum -a 256 <"$plan" | awk '{print $1}')"
+cat >"$run/gates/$subject/decision.md" <<EOF
+---
+schema: "agentcrew.maintenance-gate/v1"
+mode: "$mode"
+subject: "$subject"
+decision: "ask-captain"
+authority: "second-chief"
+engine: "stub"
+model: "targeted-test"
+input_manifest_sha256: "$input_sha"
+action_plan_sha256: "$plan_sha"
+reviewed_at: "2026-08-26T00:00:00Z"
+---
+# Maintenance Gate Decision
+## Decision
+ask-captain
+## Grounds
+Fixture: what this candidate asks for is a captain-owned call.
+## Inputs Read
+- INPUT MANIFEST QUOTE: $(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$manifest")
+- ACTION PLAN NEW SHA-256: $(jq -r '.actions[0].new_sha256' "$plan")
+## Proposed Process
+Ask the captain before any mutation.
+EOF
+GATE3
+  chmod +x "$TMP/gate-askcaptain.sh"
+  printf 'debriefs=9\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  envfail_out="$(AC_PANE_AGENT="$TMP/stub-pane-envfail.sh" AC_GATE="$TMP/gate-askcaptain.sh" \
+    "$BIN/ac-learn.sh" run)"
+  assert_contains "$envfail_out" 'ask-captain: envfail-skill (gate could not decide; no mutation)' \
+    "a gate honestly saying ask-captain still escalates the exact subject"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" \
+    "a gate that honestly could not decide leaves the DISTILL cadence DUE"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
+    "a gate that honestly could not decide leaves the retro window anchor UNMOVED"
 else
   printf 'SKIP: jq not available - run + gate learning-rejection smoke skipped\n'
 fi

@@ -232,7 +232,7 @@ assert_eq "$(awk -F= '$1=="effort"{print $2}' "$AC_HOME/state/u1.meta")" ultraco
 # turn has no TUI, so ac-pane-agent.sh renders it as --effort xhigh).
 assert_contains "$line" "AC_FLEET_EFFORT=ultracode" "the raw fleet effort travels in the scalar"
 u_ln="$(printf '%s\n' "$line" | grep -n '/effort ultracode' | head -1 | cut -d: -f1)"
-p_ln="$(printf '%s\n' "$line" | grep -n 'You are an agent-crew crewmate' | head -1 | cut -d: -f1)"
+p_ln="$(printf '%s\n' "$line" | grep -n 'kickoff order at' | head -1 | cut -d: -f1)"
 [ -n "$u_ln" ] || fail "'/effort ultracode' not typed into the pane"
 [ -n "$p_ln" ] && [ "$u_ln" -lt "$p_ln" ] || fail "'/effort ultracode' must precede the kickoff prompt"
 "$BIN/ac-teardown.sh" u1 --force >/dev/null 2>&1
@@ -241,7 +241,7 @@ p_ln="$(printf '%s\n' "$line" | grep -n 'You are an agent-crew crewmate' | head 
 "$BIN/ac-brief.sh" uc proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" uc "$repo" --harness codex --effort ultracode >/dev/null 2>&1
 line="$(launch_line uc)"
-assert_contains "$line" "You are an agent-crew crewmate" "codex ultracode spawn is live (kickoff delivered)"
+assert_contains "$line" "kickoff order at" "codex ultracode spawn is live (kickoff delivered)"
 case "$line" in *"/effort ultracode"*) fail "codex must not get the ultracode slash line" ;; esac
 # ultracode is a claude PRESET, not an effort token any CLI accepts: ac-spawn
 # maps it to xhigh before the launch mote, so codex receives the reasoning tier
@@ -259,7 +259,7 @@ printf 'sleep 300\n' >"$AC_HOME/config/launch-claude"
 "$BIN/ac-brief.sh" uct proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" uct "$repo" --harness claude --effort ultracode >/dev/null 2>&1
 line="$(launch_line uct)"
-assert_contains "$line" "You are an agent-crew crewmate" "custom-template ultracode spawn is live (kickoff delivered)"
+assert_contains "$line" "kickoff order at" "custom-template ultracode spawn is live (kickoff delivered)"
 case "$line" in *"/effort ultracode"*) fail "custom launch-claude must not get the ultracode slash line" ;; esac
 "$BIN/ac-teardown.sh" uct --force >/dev/null 2>&1
 rm -f "$AC_HOME/config/launch-claude"
@@ -282,7 +282,7 @@ assert_contains "$out" "spawned u2" "spawn survives the stranded slash line"
 assert_contains "$out" "'/effort ultracode' NOT acknowledged" "stranded '/effort ultracode' warns loudly"
 assert_contains "$out" "ac-send.sh u2" "warning names the manual fallback"
 assert_contains "$(cat "$FAKE_HERDR/panes/$upane.in")" "/effort ultracode" "slash line sits stranded in the composer"
-case "$(cat "$FAKE_HERDR/panes/$upane.in")" in *"You are an agent-crew crewmate"*) \
+case "$(cat "$FAKE_HERDR/panes/$upane.in")" in *"kickoff order at"*) \
   fail "the kickoff prompt must be WITHHELD after a stranded slash line" ;; esac
 "$BIN/ac-teardown.sh" u2 --force >/dev/null 2>&1
 

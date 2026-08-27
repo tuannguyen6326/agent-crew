@@ -205,19 +205,22 @@ need jq "brew install jq (worktree pool state, herdr backend)"
 # Session backend: the configured one is required, the others stay optional.
 backend="$(ac_config_read backend herdr)"
 case "$backend" in
-  herdr) : ;;
+  herdr|orca) : ;;
   *)
-    printf 'MISSING: config/backend names unsupported backend %s (herdr is the only backend)\n' "$backend"
+    printf 'MISSING: config/backend names unsupported backend %s (valid backends: herdr, orca)\n' "$backend"
     rc=1
     backend=herdr
     ;;
 esac
-# The hint names herdr outright rather than "$backend": the case above already
-# forced any other value back to herdr, so this can only ever report herdr - and
-# "MISSING: herdr - configured session backend (config/backend)" told an
-# operator the one thing they already knew, while withholding the one thing they
-# needed. It is the fleet's only backend; nothing runs without it.
-need "$backend" "brew install herdr (the fleet's session backend; nothing spawns without it)"
+# The hint names the binary outright rather than "$backend": the case above
+# already forced any unknown value back to herdr, so the name is fixed per
+# branch - and "MISSING: <backend> - configured session backend" told an
+# operator the one thing they already knew, while withholding the one thing
+# they needed. Nothing spawns without the configured backend's CLI.
+case "$backend" in
+  orca) need orca "install the Orca app - its CLI ships with it (the fleet's session backend; nothing spawns without it)" ;;
+  *) need herdr "brew install herdr (the fleet's session backend; nothing spawns without it)" ;;
+esac
 
 # Present is not enough: a client/server PROTOCOL mismatch (brew upgrades the CLI
 # while the old server keeps running - herdr's README: a running server keeps its
@@ -230,10 +233,20 @@ need "$backend" "brew install herdr (the fleet's session backend; nothing spawns
 # on EMPTY input (silence would read as a mismatch), and `// empty` swallows the
 # very value being looked for (jq's alternative operator fires on false as well as
 # null). So the field is printed raw and compared here - "" or "null" is silence.
-compat="$(herdr status server --json 2>/dev/null | jq -r '.compatible' 2>/dev/null || true)"
-if [ "$compat" = false ]; then
-  printf 'MISSING: herdr protocol compat - the running server disagrees with the client (herdr status server: compatible false), so EVERY socket call fails and no pane can be spawned, read or steered; restart the herdr server (it exits every pane, the captain owns that call)\n'
-  rc=1
+if [ "$backend" = herdr ]; then
+  compat="$(herdr status server --json 2>/dev/null | jq -r '.compatible' 2>/dev/null || true)"
+  if [ "$compat" = false ]; then
+    printf 'MISSING: herdr protocol compat - the running server disagrees with the client (herdr status server: compatible false), so EVERY socket call fails and no pane can be spawned, read or steered; restart the herdr server (it exits every pane, the captain owns that call)\n'
+    rc=1
+  fi
+else
+  # Same flag-only-explicit-false philosophy for the orca runtime: silence
+  # (no binary, no --json, unparseable) says nothing about reachability.
+  reachable="$(orca status --json 2>/dev/null | jq -r '.result.runtime.reachable' 2>/dev/null || true)"
+  if [ "$reachable" = false ]; then
+    printf 'MISSING: orca runtime not reachable - no terminal can be spawned, read or steered; start it (orca open, or orca serve for headless)\n'
+    rc=1
+  fi
 fi
 
 if command -v gh >/dev/null 2>&1; then

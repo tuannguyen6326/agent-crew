@@ -5,6 +5,7 @@
 # Usage:
 #   ac-verify.sh codereview --repo DIR --ref REF --family ID --caller ID
 #     --base REF --intent FILE --output FILE [--history FILE] [--owner ID]
+#     [--harness H [--model M] [--effort E]]
 #   ac-verify.sh qa --repo DIR --ref REF --family ID --caller ID
 #     --brief FILE --output FILE --evidence-dir DIR --report ABS
 #     [--history FILE] [--owner ID] [--profile FILE]
@@ -141,9 +142,28 @@ bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$bin_dir/ac-pipeline-lib.sh"
 . "$bin_dir/ac-wake-lib.sh"
 . "$bin_dir/ac-qa-lib.sh"
+. "$bin_dir/ac-backend.sh"
 
 tree_bin="${AC_VERIFY_TREE_BIN:-$bin_dir/ac-tree.sh}"
 pane_bin="${AC_VERIFY_PANE_BIN:-$bin_dir/ac-pane-agent.sh}"
+
+# Verifier worktree isolation follows the fleet backend the same way the crew
+# lease does: an orca fleet leases Orca-managed worktrees, a herdr fleet the
+# crew-tree pool. The caller detaches to its exact ref either way; on orca the
+# minted crew/<id> branch is dropped right after that detach (verify_drop_branch)
+# so a verifier round leaves no branch behind - unlike a crewmate's, its branch
+# is never a deliverable.
+verify_lease() {
+  if [ "$(ac_backend)" = orca ]; then
+    orca_worktree_lease "$2" "$1"
+  else
+    "$tree_bin" get --repo "$1" --id "$2" --holder verify | tail -n 1
+  fi
+}
+verify_drop_branch() {
+  [ "$(ac_backend)" != orca ] \
+    || git -C "$1" branch -D "crew/$2" >/dev/null 2>&1 || true
+}
 qa_relay_bin="${AC_VERIFY_QA_RELAY_BIN:-$bin_dir/ac-qa.sh}"
 qa_report_armed=0
 qa_facade_complete=0
@@ -273,8 +293,11 @@ case "$kind" in
     [ -n "$base" ] && [ -f "$intent" ] \
       || ac_die "codereview requires --base REF and an existing --intent FILE"
     [ -z "$brief" ] && [ -z "$evidence_dir" ] && [ -z "$profile" ] && [ -z "$report" ] \
-      && [ -z "$harness" ] && [ -z "$model" ] && [ -z "$effort" ] \
-      || ac_die "codereview does not accept QA-only options" ;;
+      || ac_die "codereview does not accept QA-only options"
+    if [ -n "$model" ] || [ -n "$effort" ]; then
+      [ -n "$harness" ] \
+        || ac_die "codereview --model/--effort require an explicit --harness"
+    fi ;;
   qa)
     [ -f "$brief" ] && [ -n "$evidence_dir" ] && [ -n "$report" ] \
       || ac_die "qa requires an existing --brief FILE, --evidence-dir DIR, and --report ABS"
@@ -407,8 +430,12 @@ return_leases() {
   while [ -n "$rest" ]; do
     case "$rest" in *:*) lease=${rest%%:*}; rest=${rest#*:} ;; *) lease=$rest; rest="" ;; esac
     [ -n "$lease" ] || continue
-    "$tree_bin" return "$lease" --force >/dev/null \
-      || return 1
+    if [ "$(ac_backend)" = orca ]; then
+      orca_worktree_release "$lease" || return 1
+    else
+      "$tree_bin" return "$lease" --force >/dev/null \
+        || return 1
+    fi
   done
 }
 
@@ -946,7 +973,7 @@ esac
 
 lease=""
 qa_phase="source-lease"
-lease="$($tree_bin get --repo "$main_repo" --id "$id" --holder verify | tail -n 1)" \
+lease="$(verify_lease "$main_repo" "$id")" \
   || ac_die "could not lease verifier worktree for $id"
 [ -n "$lease" ] && [ -d "$lease" ] || ac_die "tree allocator returned no verifier worktree for $id"
 if ! git -C "$lease" checkout --detach --force --quiet "$sha" \
@@ -954,6 +981,7 @@ if ! git -C "$lease" checkout --detach --force --quiet "$sha" \
   return_leases "$lease" || true
   ac_die "could not bind verifier worktree to $sha"
 fi
+verify_drop_branch "$lease" "$id"
 
 # CONTEXT NEUTRALIZATION: the verifier
 # harness launches INSIDE this project worktree, so the repo's own instruction
@@ -993,7 +1021,7 @@ if [ "$kind" = qa ] && [ -n "$profile" ]; then
     e2e_repo_root="$(ac_repo_root "$e2e_repo_path" 2>/dev/null || true)"
     [ -n "$e2e_repo_root" ] \
       || { return_leases "$all_leases" || true; ac_die "qa profile e2e.repo_path is not a git repository: $e2e_repo_path"; }
-    e2e_lease="$($tree_bin get --repo "$e2e_repo_root" --id "$id-e2e" --holder verify | tail -n 1)" \
+    e2e_lease="$(verify_lease "$e2e_repo_root" "$id-e2e")" \
       || { return_leases "$all_leases" || true; ac_die "could not lease E2E verifier worktree for $id"; }
     [ -n "$e2e_lease" ] && [ -d "$e2e_lease" ] \
       || { return_leases "$all_leases" || true; ac_die "tree allocator returned no E2E worktree for $id"; }
@@ -1003,6 +1031,7 @@ if [ "$kind" = qa ] && [ -n "$profile" ]; then
       return_leases "$all_leases" || true
       ac_die "could not bind E2E verifier worktree to $e2e_ref_prof"
     fi
+    verify_drop_branch "$e2e_lease" "$id-e2e"
     e2e_worktree="$e2e_lease"
     cat >>"$prompt" <<EOF
 
@@ -1047,7 +1076,7 @@ publish_meta() {
   {
     printf 'kind=verify-%s\n' "$kind"
     printf 'family=%s\ncaller=%s\nowner=%s\n' "$family" "$caller" "$owner"
-    printf 'project=%s\nbackend=herdr\nwindow=%s\n' "$(basename "$main_repo")" "$pane"
+    printf 'project=%s\nbackend=%s\nwindow=%s\n' "$(basename "$main_repo")" "$(ac_backend)" "$pane"
     printf 'worktree=%s\nleases=%s\nref=%s\n' "$lease" "$all_leases" "$sha"
     printf 'output=%s\npane_result=%s\n' "$output" "$pane_result"
     [ "$kind" != qa ] || printf 'evidence=%s\n' "$evidence_dir"
@@ -1084,7 +1113,7 @@ export AC_WINDOW_FAMILY="$(ac_window_family "$family")"
 pane_early="$round_dir/pane.handle"
 pane_args=(run --cwd "$lease" --prompt-file "$prompt" --kind "$kind"
   --label "$id" --timeout "${AC_VERIFY_TIMEOUT:-7200}" --pane-file "$pane_early")
-if [ "$kind" = qa ] && [ -n "$harness" ]; then
+if [ -n "$harness" ]; then
   pane_args+=(--harness "$harness")
   [ -z "$model" ] || pane_args+=(--model "$model")
   [ -z "$effort" ] || pane_args+=(--effort "$effort")

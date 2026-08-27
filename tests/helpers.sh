@@ -654,6 +654,199 @@ FAKE
   case ":$PATH:" in *":$TMP/stubbin:"*) ;; *) export PATH="$TMP/stubbin:$PATH" ;; esac
 }
 
+make_loadfail_bin() {
+  # make_loadfail_bin - a scratch copy of bin/ with the herdr window-alive
+  # DRIVER function renamed out from under ac_backend_route's dynamic dispatch
+  # ("backend_${fn}_herdr"). Running a target script from $LOADFAIL_BIN drives
+  # backend_window_alive to a REAL bash 127 (command not found) - the
+  # production failure mode (a driver file that failed to load) - rather than
+  # a hand-picked sentinel return code.
+  LOADFAIL_BIN="$TMP/loadfail-bin"
+  [ -d "$LOADFAIL_BIN" ] && return 0
+  cp -R "$BIN" "$LOADFAIL_BIN"
+  chmod -R u+w "$LOADFAIL_BIN"
+  sed -i.bak 's/^backend_window_alive_herdr() {/backend_window_alive_herdr_MISSING_DRIVER() {/' \
+    "$LOADFAIL_BIN/ac-backend.sh"
+  rm -f "$LOADFAIL_BIN/ac-backend.sh.bak"
+  export LOADFAIL_BIN
+}
+
+make_fake_orca() {
+  # File-backed fake `orca` CLI - the orca driver's test double, sibling of
+  # make_fake_herdr above. Terminals are files under $FAKE_ORCA/terminals:
+  #   <h>.buf         transcript; `terminal read` serves its tail as lines
+  #   <h>.in          composer - `send --text` appends, only `--enter` submits
+  #   <h>.tab         the tabId minted with the terminal
+  #   <h>.title       what `terminal show` reports (the real CLI's title
+  #                   tracks the foreground process - a bare shell reports
+  #                   its own name; default zsh, .default-title overrides)
+  #   <h>.exited      present = connected:false; `read` still succeeds and
+  #                   `send` fails terminal_not_writable (both measured on
+  #                   orca CLI 1.4.188 - a closed terminal keeps serving its
+  #                   retained scrollback)
+  #   <h>.idle        present = `wait --for tui-idle` satisfied immediately
+  #   <h>.agentwait   present = show reports agentWait non-null
+  #   <h>.drop-enters "<count>" - swallow N `--enter` submits (strand knob)
+  # Root knobs: .unreachable (every call fails with an error envelope),
+  # .default-title (title newly created terminals report).
+  # Every call appends one line to $FAKE_ORCA/log.
+  export FAKE_ORCA="$TMP/fake-orca"
+  mkdir -p "$FAKE_ORCA/terminals" "$TMP/stubbin"
+  cat >"$TMP/stubbin/orca" <<'FAKE'
+#!/usr/bin/env bash
+d="$FAKE_ORCA"
+printf 'orca %s\n' "$*" >>"$d/log"
+if [ -f "$d/.unreachable" ]; then
+  printf '{"ok":false,"error":{"message":"runtime unreachable"}}\n'; exit 1
+fi
+term="" text="" has_text=0 enter=0 interrupt=0 limit=40 wt="" cond="" title_flag=""
+args=("$@"); i=0
+while [ $i -lt ${#args[@]} ]; do
+  case "${args[$i]}" in
+    --terminal) i=$((i+1)); term="${args[$i]}" ;;
+    --text) i=$((i+1)); text="${args[$i]}"; has_text=1 ;;
+    --enter) enter=1 ;;
+    --interrupt) interrupt=1 ;;
+    --limit) i=$((i+1)); limit="${args[$i]}" ;;
+    --worktree) i=$((i+1)); wt="${args[$i]}" ;;
+    --for) i=$((i+1)); cond="${args[$i]}" ;;
+    --title) i=$((i+1)); title_flag="${args[$i]}" ;;
+  esac
+  i=$((i+1))
+done
+next() { local f="$d/.n" n; n="$(cat "$f" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$f"; printf '%s\n' "$n"; }
+tail_json() {
+  { tail -n "$2" "$d/terminals/$1.buf" 2>/dev/null
+    [ -s "$d/terminals/$1.in" ] && printf '> %s\n' "$(cat "$d/terminals/$1.in")"
+  } | awk 'BEGIN{printf "["} {gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); printf "%s\"%s\"", (NR>1?",":""), $0} END{printf "]"}'
+}
+case "${1:-}" in
+  status)
+    printf '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true}}}\n'; exit 0 ;;
+  worktree)
+    # `worktree show` is the driver's cheap selector probe (every path
+    # resolves); `worktree create`/`rm` mint and remove REAL git worktrees so
+    # the orca-fleet lease flow runs end to end in tests. create mirrors the
+    # real CLI (measured): path under a workspaces dir, branch named
+    # fakeuser/<name>, base ref honored.
+    case "${2:-}" in
+      create)
+        wrepo="" wname="" wbase=""
+        j=0
+        while [ $j -lt ${#args[@]} ]; do
+          case "${args[$j]}" in
+            --repo) j=$((j+1)); wrepo="${args[$j]#path:}" ;;
+            --name) j=$((j+1)); wname="${args[$j]}" ;;
+            --base-branch) j=$((j+1)); wbase="${args[$j]}" ;;
+          esac
+          j=$((j+1))
+        done
+        [ -d "$wrepo/.git" ] || { printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1; }
+        wpath="$d/orca-wt/$wname"
+        mkdir -p "$d/orca-wt"
+        git -C "$wrepo" worktree add -q -b "fakeuser/$wname" "$wpath" "${wbase:-HEAD}" 2>/dev/null           || { printf '{"ok":false,"error":{"message":"worktree_create_failed"}}\n'; exit 1; }
+        printf '{"ok":true,"result":{"worktree":{"path":"%s","branch":"refs/heads/fakeuser/%s"}}}\n' "$wpath" "$wname"
+        exit 0 ;;
+      rm)
+        wpath=""
+        j=0
+        while [ $j -lt ${#args[@]} ]; do
+          case "${args[$j]}" in --worktree) j=$((j+1)); wpath="${args[$j]#path:}" ;; esac
+          j=$((j+1))
+        done
+        [ -d "$wpath" ] || { printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1; }
+        wrepo="$(git -C "$wpath" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+        wrepo="${wrepo%/.git}"
+        git -C "$wrepo" worktree remove --force "$wpath" 2>/dev/null || rm -rf "$wpath"
+        printf '{"ok":true,"result":{}}\n'; exit 0 ;;
+      *)
+        printf '{"ok":true,"result":{"worktree":{}}}\n'; exit 0 ;;
+    esac ;;
+  terminal) ;;
+  *) printf 'fake-orca: unmodeled verb %s\n' "$*" >&2; exit 2 ;;
+esac
+case "${2:-}" in
+  create)
+    n="$(next)"
+    : >"$d/terminals/term$n.buf"; : >"$d/terminals/term$n.in"
+    printf 'tab%s\n' "$n" >"$d/terminals/term$n.tab"
+    cat "$d/.default-title" 2>/dev/null >"$d/terminals/term$n.title" \
+      || printf 'zsh\n' >"$d/terminals/term$n.title"
+    printf '{"ok":true,"result":{"terminal":{"handle":"term%s","tabId":"tab%s"}}}\n' "$n" "$n"; exit 0 ;;
+  show)
+    [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
+    conn=true; [ -e "$d/terminals/$term.exited" ] && conn=false
+    aw='null'; [ -e "$d/terminals/$term.agentwait" ] && aw='{"evidence":"prompt-text"}'
+    printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":%s,"writable":%s,"title":"%s","agentWait":%s}}}\n' \
+      "$term" "$conn" "$conn" "$(head -1 "$d/terminals/$term.title" 2>/dev/null)" "$aw"; exit 0 ;;
+  read)
+    [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
+    st=running; [ -e "$d/terminals/$term.exited" ] && st=exited
+    printf '{"ok":true,"result":{"terminal":{"status":"%s","tail":%s}}}\n' "$st" "$(tail_json "$term" "$limit")"; exit 0 ;;
+  send)
+    [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
+    [ -e "$d/terminals/$term.exited" ] && { printf '{"ok":false,"error":{"message":"terminal_not_writable"}}\n'; exit 1; }
+    [ "$interrupt" = 1 ] && { printf '{"ok":true,"result":{}}\n'; exit 0; }
+    [ "$has_text" = 1 ] && printf '%s' "$text" >>"$d/terminals/$term.in"
+    if [ "$enter" = 1 ]; then
+      if [ -f "$d/terminals/$term.drop-enters" ]; then
+        cnt="$(cat "$d/terminals/$term.drop-enters")"
+        if [ "${cnt:-0}" -gt 0 ] 2>/dev/null; then
+          printf '%s\n' "$((cnt - 1))" >"$d/terminals/$term.drop-enters"
+          printf '{"ok":true,"result":{}}\n'; exit 0
+        fi
+      fi
+      if [ -s "$d/terminals/$term.in" ]; then
+        cat "$d/terminals/$term.in" >>"$d/terminals/$term.buf"
+        printf '\n' >>"$d/terminals/$term.buf"
+        : >"$d/terminals/$term.in"
+      else
+        printf '\n' >>"$d/terminals/$term.buf"
+      fi
+    fi
+    printf '{"ok":true,"result":{}}\n'; exit 0 ;;
+  wait)
+    [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
+    if [ "$cond" = tui-idle ] && [ -e "$d/terminals/$term.idle" ]; then
+      printf '{"ok":true,"result":{"terminal":{"wait":{"satisfied":true}}}}\n'; exit 0
+    fi
+    printf '{"ok":false,"error":{"message":"timeout"}}\n'; exit 1 ;;
+  list)
+    sep=""; printf '{"ok":true,"result":{"terminals":['
+    for f in "$d"/terminals/*.tab; do
+      [ -e "$f" ] || continue
+      h="${f##*/}"; h="${h%.tab}"
+      [ -f "$d/terminals/$h.buf" ] || continue
+      printf '%s{"handle":"%s","tabId":"%s","title":"%s"}' \
+        "$sep" "$h" "$(cat "$f")" "$(head -1 "$d/terminals/$h.title" 2>/dev/null)"
+      sep=","
+    done
+    printf ']}}\n'; exit 0 ;;
+  split)
+    # Mirrors the real CLI (measured): inherits the base terminal's tab,
+    # takes --command, and returns NO handle - callers discover by diffing
+    # `terminal list`.
+    [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
+    n="$(next)"
+    : >"$d/terminals/term$n.buf"; : >"$d/terminals/term$n.in"
+    cp "$d/terminals/$term.tab" "$d/terminals/term$n.tab"
+    cat "$d/.default-title" 2>/dev/null >"$d/terminals/term$n.title" \
+      || printf 'zsh\n' >"$d/terminals/term$n.title"
+    printf '{"ok":true,"result":{}}\n'; exit 0 ;;
+  switch|focus)
+    printf '%s\n' "$term" >"$d/focused"
+    printf '{"ok":true,"result":{}}\n'; exit 0 ;;
+  close)
+    [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
+    rm -f "$d/terminals/$term".*
+    printf '{"ok":true,"result":{}}\n'; exit 0 ;;
+  *) printf 'fake-orca: unmodeled verb %s\n' "$*" >&2; exit 2 ;;
+esac
+FAKE
+  chmod +x "$TMP/stubbin/orca"
+  case ":$PATH:" in *":$TMP/stubbin:"*) ;; *) export PATH="$TMP/stubbin:$PATH" ;; esac
+}
+
 fake_pane() {
   # fake_pane <task-id> - the fake pane id behind a spawned task.
   awk '{print $1; exit}' "$AC_HOME/state/.pane-$1"

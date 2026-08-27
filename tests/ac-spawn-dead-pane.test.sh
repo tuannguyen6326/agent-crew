@@ -44,7 +44,9 @@ printf 'echo crew __ID__ reading __BRIEF__; sleep 300\n' >"$AC_HOME/config/launc
 out="$("$BIN/ac-spawn.sh" up1 "$repo" --harness fake --mode local-only 2>/dev/null)"
 assert_contains "$out" "spawned up1" "a live harness still spawns"
 assert_contains "$(cat "$(fake_pane_buf up1)")" \
-  "You are an agent-crew crewmate. Read and follow the brief" "a live harness still gets its kickoff"
+  "kickoff order at" "a live harness still gets its kickoff pointer"
+assert_contains "$(cat "$AC_HOME/data/up1/kickoff.md")" \
+  "You are an agent-crew crewmate. Read and follow the brief" "the kickoff FILE carries the full prompt"
 
 # --- a pane that fell back to a shell: fail closed -----------------------------
 
@@ -62,7 +64,7 @@ assert_contains "$(cat "$AC_HOME/state/dead1.status")" "failed:" "the status log
 sends="$(grep -c 'pane send-text' "$FAKE_HERDR/log" || true)"
 assert_eq "$sends" "1" "only the launch line was typed - nothing was typed into the shell"
 case "$(cat "$FAKE_HERDR/log")" in
-  *"You are an agent-crew crewmate. Read and follow"*) fail "the kickoff prompt was typed into a bare shell" ;;
+  *"kickoff order at"*) fail "the kickoff pointer was typed into a bare shell" ;;
 esac
 
 # --- a pane that could not be read: today's delivery, plus a warning -----------
@@ -77,7 +79,7 @@ assert_contains "$err" "could not read" "the unverified probe warns"
 assert_contains "$err" "survived the kickoff" \
   "the post-kickoff re-check keeps state 2 distinct too: it warns, it never refuses"
 assert_contains "$(cat "$(fake_pane_buf blind1)")" \
-  "You are an agent-crew crewmate. Read and follow the brief" "an unreadable probe still delivers the kickoff"
+  "kickoff order at" "an unreadable probe still delivers the kickoff pointer"
 rm -f "$FAKE_HERDR/.probe-unreadable"
 
 # --- a harness that came up and then DIED ON THE KICKOFF: fail closed ----------
@@ -86,7 +88,7 @@ rm -f "$FAKE_HERDR/.probe-unreadable"
 # delivered kickoff line and NOT the %q-escaped copy on the custom template's
 # launch line - the death has to land after the gate to be this case at all.
 
-printf 'agent-crew crewmate. Read and follow' >"$FAKE_HERDR/.die-on-text"
+printf 'kickoff order at' >"$FAKE_HERDR/.die-on-text"
 "$BIN/ac-brief.sh" died1 proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" died1 "$repo" --harness fake --mode local-only 2>&1)" || rc=$?
@@ -109,7 +111,7 @@ rm -f "$FAKE_HERDR/.die-on-text"
 # distinguishes "answered the dialog first" from "typed into it".
 
 enters_before_kickoff() {
-  awk '/pane send-text/ && /crewmate\. Read and follow/ { exit }
+  awk '/pane send-text/ && /kickoff order at/ { exit }
        /pane send-keys/ && /enter/ { n++ }
        END { print n + 0 }' "$FAKE_HERDR/log"
 }
@@ -120,7 +122,7 @@ enters_before_kickoff() {
 assert_eq "$(enters_before_kickoff)" "2" \
   "codex gets a bare Enter (the dialog answer) on top of the launch-line submit"
 assert_contains "$(cat "$(fake_pane_buf cx1)")" \
-  "You are an agent-crew crewmate. Read and follow the brief" "codex still gets its kickoff"
+  "kickoff order at" "codex still gets its kickoff pointer"
 "$BIN/ac-teardown.sh" cx1 --force >/dev/null 2>&1
 
 : >"$FAKE_HERDR/log"
@@ -145,7 +147,7 @@ err="$("$BIN/ac-spawn.sh" cxdead "$repo" --harness codex --mode local-only 2>&1)
 assert_contains "$err" "did NOT come up" "the gate, not the post-kickoff re-check, is what caught it"
 assert_contains "$err" "WITHHELD" "the kickoff was withheld from the shell the Enter left behind"
 case "$(cat "$FAKE_HERDR/log")" in
-  *"You are an agent-crew crewmate. Read and follow"*) fail "the kickoff prompt was typed into a bare shell" ;;
+  *"kickoff order at"*) fail "the kickoff pointer was typed into a bare shell" ;;
 esac
 rm -f "$FAKE_HERDR/.die-on-bare-enter"
 
@@ -161,7 +163,7 @@ printf 'echo crew __ID__ reading __BRIEF__; sleep 300\n' >"$AC_HOME/config/launc
 assert_eq "$(enters_before_kickoff)" "1" \
   "a custom launch-codex template gets no dialog answer - only its own launch-line submit"
 assert_contains "$(cat "$(fake_pane_buf cx2)")" \
-  "You are an agent-crew crewmate. Read and follow the brief" "it still gets its kickoff"
+  "kickoff order at" "it still gets its kickoff pointer"
 rm -f "$AC_HOME/config/launch-codex"
 "$BIN/ac-teardown.sh" cx2 --force >/dev/null 2>&1
 

@@ -14,6 +14,9 @@
 #   the crewdeputy's captain-facing prose matches the fleet voice - one-time,
 #   deputy-owned afterward, unlike the converged config knobs);
 # - drops the .ac-crewdeputy-home marker (the turn-end guard skips crewdeputy homes);
+# - symlinks the executable core into the home (ac_seed_runtime_links:
+#   bin/ CLAUDE.md .claude/ AGENTS.md) so the chief runs with
+#   cwd = home (workspace = home, repo = code);
 # - seeds records/projects.md and records/backlog.md skeletons;
 # - clones each requested project FROM the parent's clone (origin re-pointed
 #   at the parent's origin URL, so the crewdeputy pushes to the real remote);
@@ -67,6 +70,7 @@ fi
 
 mkdir -p "$home_dir/state" "$home_dir/data" "$home_dir/records" "$home_dir/config" "$home_dir/projects"
 : >"$home_dir/.ac-crewdeputy-home"
+ac_seed_runtime_links "$home_dir"
 
 # Inherit config knobs. Workspace ids are deliberately absent from the list:
 # the retired herdr-workspace* knobs are never read (ac-backend.sh FAMILY

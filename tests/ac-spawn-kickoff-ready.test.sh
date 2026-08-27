@@ -38,8 +38,8 @@ printf '2\n' >"$FAKE_HERDR/panes/$p.delay-ready-secs"
 out="$("$BIN/ac-spawn.sh" ready1 "$repo" --harness claude --mode local-only 2>&1)"
 assert_contains "$out" "spawned ready1" "a delayed-ready composer still spawns once ready"
 assert_contains "$(cat "$(fake_pane_buf ready1)")" \
-  "You are an agent-crew crewmate. Read and follow the brief" \
-  "the kickoff reaches the transcript once the composer surface is confirmed ready - not before"
+  "kickoff order at" \
+  "the kickoff pointer reaches the transcript once the composer surface is confirmed ready - not before"
 "$BIN/ac-teardown.sh" ready1 --force >/dev/null 2>&1
 
 # --- a composer that never becomes ready: FAILS LOUDLY, nothing typed --------
@@ -62,8 +62,8 @@ assert_contains "$err" "REFUSED" "the failure says the spawn is refused"
 assert_no_file "$AC_HOME/state/never1.meta" "a refused spawn leaves no task in flight"
 assert_contains "$(cat "$AC_HOME/state/never1.status")" "failed:" "the status log records the failure"
 case "$(cat "$FAKE_HERDR/log")" in
-  *"You are an agent-crew crewmate. Read and follow"*)
-    fail "the kickoff prompt must never be typed into a composer that was never confirmed ready" ;;
+  *"kickoff order at"*)
+    fail "the kickoff pointer must never be typed into a composer that was never confirmed ready" ;;
 esac
 
 # --- an UNOBSERVABLE composer (herdr cannot be read at all): warns, proceeds -
@@ -81,6 +81,15 @@ assert_eq "$rc" "0" "an unobservable input-surface probe is not evidence of a fr
 assert_contains "$err" "input surface became ready" "the readiness gate names what it could not verify"
 rm -f "$FAKE_HERDR/.probe-unreadable"
 assert_contains "$(cat "$(fake_pane_buf blind2)")" \
-  "You are an agent-crew crewmate. Read and follow the brief" "an unobservable probe still delivers the kickoff"
+  "kickoff order at" "an unobservable probe still delivers the kickoff pointer"
+# The fail-open delivery leaves a DURABLE trail, not only stderr WARNs: a
+# status stamp the chief can read back, and ONE wake so the chief is TOLD
+# instead of discovering an idle agent by accident.
+assert_contains "$(cat "$AC_HOME/state/blind2.status")" "warn: kickoff" \
+  "an unverified delivery stamps the status log"
+grep -rq 'kickoff-unverified' "$AC_HOME/state/.wake-spool" 2>/dev/null \
+  || fail "an unverified delivery publishes a kickoff-unverified wake"
+assert_eq "$(grep -rl 'kickoff-unverified' "$AC_HOME/state/.wake-spool" 2>/dev/null | wc -l | tr -d ' ')" "1" \
+  "exactly ONE wake per spawn, however many probes went unobservable"
 
 pass

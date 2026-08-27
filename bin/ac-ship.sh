@@ -217,14 +217,19 @@
 # before, and the rejection reason is logged when an attestation file
 # exists. Hold-and-fix stays consistent by construction: a fix commit
 # moves HEAD, the attestation goes STALE, and the reopened test step RUNS
-# the suite. `finish` retires the file; a leftover from an abandoned
-# (never-finished) run is honored only while branch/HEAD/tree/cmd still
-# match. TRUST BOUNDARY: the attestation lives in the implementer's own
+# the suite. Its LIFETIME is the TREE it describes, not the run that
+# consumed it: `finish` leaves the file in place, and a leftover from any
+# run - finished or abandoned - is honored only while branch/HEAD/tree/cmd
+# still match. Retiring it at `finish` would make the chief-verify query
+# below structurally dead, since the chief reads it after the run ends.
+# TRUST BOUNDARY: the attestation lives in the implementer's own
 # worktree - an actor who could forge it has strictly easier lies
 # available already; the independent reviewer and crew-qa remain the
 # cross-checks.
 # `attest-check` is the VERIFIER's freshness query (run-independent, like
-# attest-test): it validates the existing attest-test.json against the
+# attest-test - including which config it reads: the INSTALLED project
+# config, never a run's frozen snapshot, since a query outlives the run):
+# it validates the existing attest-test.json against the
 # CURRENT tree using the exact acceptance conditions above (ONE
 # implementation, attest_conditions, shared with `cmd test`) and prints
 # `attested: fresh @<short-sha> (<cmd>)` exit 0, `stale: <why>` exit 1,
@@ -869,9 +874,13 @@ cmd_attest_check() {
   # The verifier's freshness query - spec in the header (TDD ATTESTATION).
   # Run-independent, and deliberately NOT gated by test.attestation: a
   # query skips nothing by itself.
+  # Run-independent in its CONFIG too, and for the same reason attest-test is:
+  # `finish` leaves `current` pointing at the finished run, so config_file
+  # would judge the attestation against a dead run's frozen snapshot and
+  # answer `fresh` for a command the project no longer configures.
   local af="$vdir/attest-test.json" cf c="" why head
   [ -f "$af" ] || { printf 'no attestation\n'; exit 2; }
-  if cf="$(config_file)"; then c="$(ac_yaml_get "$cf" commands.test)"; fi
+  if cf="$(ac_project_config_file "$repo")"; then c="$(ac_yaml_get "$cf" commands.test)"; fi
   why="$(attest_conditions "$af" "$c")"
   if [ -n "$why" ]; then
     printf 'stale: %s\n' "$why"
@@ -1777,8 +1786,9 @@ cmd_finish() {
       pane close "$(cat "$rd/watch.pane")" >/dev/null 2>&1 || true
     rm -f "$rd/watch.pane"
   fi
-  # Retire the TDD attestation with the run - a new run must attest afresh.
-  rm -f "$vdir/attest-test.json" "$vdir/attest-test.log"
+  # The TDD attestation is deliberately NOT retired with the run: it
+  # describes a TREE, and the chief's attest-check reads it after finish
+  # (header: TDD ATTESTATION).
   printf 'outcome=%s\n' "$outcome" >>"$rd/run.meta"
   printf 'finished_at=%s\n' "$(ac_iso)" >>"$rd/run.meta"
   printf 'run %s: %s\n' "$(basename "$rd")" "$outcome"

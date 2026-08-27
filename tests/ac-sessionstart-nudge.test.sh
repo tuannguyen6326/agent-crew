@@ -34,11 +34,18 @@ run "$g"
 assert_contains "$out" "$line" "a stale lock still nudges - the prior session is gone"
 rm -f "$g/state/.session-lock"
 
-# 3. Crewdeputy home: its spawn kickoff already orders session-start -> silent.
+# 3. Crewdeputy home, unowned: NUDGED. The `ac <deputy>` launcher opens a
+#    plain chief session there with no kickoff to order session-start; a
+#    SPAWNED deputy holds a live lock or eats one redundant line - harmless.
 d="$TMP/deputy"; mkdir -p "$d/state"; : >"$d/.ac-crewdeputy-home"
 run "$d"
 assert_eq "$rc" 0 "crewdeputy home: exit 0"
-[ -z "$out" ] || fail "a crewdeputy home must not be nudged (got: $out)"
+assert_contains "$out" "$line" "an unowned crewdeputy home is nudged - a plain session has no kickoff to say it"
+# ... and under a LIVE lock it goes silent like any owned home.
+printf 'pid=%s\nsince=2026-07-18T00:00:00Z\n' "$$" >"$d/state/.session-lock"
+run "$d"
+[ -z "$out" ] || fail "a crewdeputy home under a LIVE lock must not be nudged (got: $out)"
+rm -f "$d/state/.session-lock"
 
 # 4. Linked worktree = a crewmate checkout (the self-hosting footgun): silent.
 #    A real git worktree is the only faithful way to make git-dir != common-dir.

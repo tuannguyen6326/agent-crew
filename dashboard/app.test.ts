@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile } from "./app.ts";
 
 // PNG signature (89 50 4E 47 0D 0A 1A 0A) - test-local copy of the same
 // 8-byte magic decodePngSnapshot validates against.
@@ -2639,6 +2639,14 @@ test("chiefPaneOf: only a roomchief meta with a herdr window yields a pane id", 
   expect(chiefPaneOf("kind=roomchief\nwindow=tmux:0:1\n")).toBeNull(); // not herdr
 });
 
+test("orcaWindowOf: backend=orca meta yields the terminal handle, anything else null", () => {
+  expect(orcaWindowOf("backend=orca\nwindow=orca:term_ab12-cd\nkind=crewdeputy\n")).toBe("term_ab12-cd");
+  // a herdr task never routes to the Orca focus jump
+  expect(orcaWindowOf("backend=herdr\nwindow=herdr:pane-w1D:p3F\n")).toBeNull();
+  expect(orcaWindowOf("backend=orca\n")).toBeNull(); // no window recorded
+  expect(orcaWindowOf("window=orca:term_x\n")).toBeNull(); // backend not declared orca
+});
+
 test("isChiefPaste: printable multi-char in, control bytes and runaway length out", () => {
   expect(isChiefPaste("xin chao thuyen truong \u1ec1")).toBe(true); // composed Vietnamese
   expect(isChiefPaste("line1\nline2\ttabbed")).toBe(true);          // newline and tab are typing
@@ -3027,6 +3035,34 @@ test("normalizeAnnotation carries an optional scene+snapshot pair for queue-feed
   expect(c!.snapshot).toBeUndefined();
 });
 
+// dash-review-polish-refimg: a captain reference-image paste carries
+// snapshot with NO scene - normalizeAnnotation already treats the two
+// fields independently, so this locks in the shape the new composer path
+// relies on.
+test("normalizeAnnotation carries a snapshot with no scene (a direct composer paste, not a queue-feedback edit)", () => {
+  const a = normalizeAnnotation(JSON.stringify({ text: "t", snapshot: "QUJD" }));
+  expect(a!.scene).toBeUndefined();
+  expect(a!.snapshot).toBe("QUJD");
+});
+
+// pastedPngFile is the ONE gate between a composer paste and an attach: PNG
+// only (the row's boundary), and any other MIME or empty clipboard must fall
+// through to the textarea's normal text paste untouched, never swallow the
+// keystroke.
+test("pastedPngFile picks the first image/png clipboard item and returns its File", () => {
+  const png = { name: "shot.png" };
+  const items = [{ kind: "string", type: "text/plain" }, { kind: "file", type: "image/png", getAsFile: () => png }];
+  expect(pastedPngFile(items)).toBe(png);
+});
+
+test("pastedPngFile returns null for a non-PNG image, a non-file item, or an empty/missing clipboard", () => {
+  expect(pastedPngFile([{ kind: "file", type: "image/jpeg", getAsFile: () => ({}) }])).toBeNull();
+  expect(pastedPngFile([{ kind: "string", type: "image/png" }])).toBeNull();
+  expect(pastedPngFile([])).toBeNull();
+  expect(pastedPngFile(null)).toBeNull();
+  expect(pastedPngFile(undefined)).toBeNull();
+});
+
 test("reviewApply attaches an image field to the queued record only when the action carries one", () => {
   const s0 = emptyReviewSession("/a/b.html");
   const withImage = reviewApply(s0, { type: "annotate", anchor: null, text: "t", at: "T", image: "/a/b.html.review-1.png" }) as ReturnType<typeof emptyReviewSession>;
@@ -3356,4 +3392,83 @@ test("readLocalBranches reads loose and packed refs recursively, loose wins", ()
   expect(out.every((b) => b.repo === "alpha" && b.root.endsWith("/projects/alpha"))).toBe(true);
   expect(out.length).toBe(4);
   rmSync(home, { recursive: true, force: true });
+});
+
+// ---- agent-status chips (dash-agent-status-chips): herdr agent list -> per-task state
+import { parseAgentList, agentStatusMap } from "./app.ts";
+
+test("parseAgentList extracts pane_id + agent_status from herdr JSON, tolerant of junk", () => {
+  const out = JSON.stringify({
+    id: "cli:agent:list",
+    result: { type: "agent_list", agents: [
+      { agent: "claude", agent_status: "working", pane_id: "w8K:p2", cwd: "/x" },
+      { agent: "claude", agent_status: "idle", pane_id: "w7A:p1", cwd: "/y" },
+      { agent: "codex", pane_id: "w9Z:p3" },              // no status -> dropped
+      { agent: "claude", agent_status: "blocked" },        // no pane -> dropped
+    ] },
+  });
+  expect(parseAgentList(out)).toEqual([
+    { pane: "w8K:p2", status: "working" },
+    { pane: "w7A:p1", status: "idle" },
+  ]);
+  expect(parseAgentList("not json")).toEqual([]);
+  expect(parseAgentList(JSON.stringify({ result: {} }))).toEqual([]);
+});
+
+test("agentStatusMap joins task panes to agent states; unknown panes are absent, never guessed", () => {
+  const entries = [
+    { pane: "w8K:p2", status: "working" },
+    { pane: "w7A:p1", status: "blocked" },
+  ];
+  const panes = [
+    { id: "taskA", pane: "w8K:p2" },
+    { id: "taskB", pane: "w7A:p1" },
+    { id: "ghost", pane: "wZZ:p9" },  // pane herdr does not report -> absent
+  ];
+  expect(agentStatusMap(entries, panes)).toEqual({ taskA: "working", taskB: "blocked" });
+});
+
+// ---- family inbox badges (dash-family-inbox): room pending/handback per family
+import { familyInbox } from "./app.ts";
+
+test("familyInbox folds snapshot inbox entries into per-family badge data", () => {
+  const entries = [
+    { status: "PENDING-CAPTAIN(2)", family: "payux", last: "GATE: approve spec" },
+    { status: "PENDING-CAPTAIN(1)+HANDBACK", family: "relnotes", last: "HANDBACK: done" },
+    { status: "HANDBACK", family: "cleanup", last: "HANDBACK: landed" },
+    { status: "PENDING-CAPTAIN(x)", family: "weird", last: "" }, // unparsable count -> 0, dropped
+    { status: "PENDING-CAPTAIN(3)", family: "", last: "no family" }, // no family -> dropped
+  ];
+  expect(familyInbox(entries)).toEqual({
+    payux: { pending: 2, handback: false, last: "GATE: approve spec" },
+    relnotes: { pending: 1, handback: true, last: "HANDBACK: done" },
+    cleanup: { pending: 0, handback: true, last: "HANDBACK: landed" },
+  });
+  expect(familyInbox([])).toEqual({});
+  expect(familyInbox(null)).toEqual({});
+});
+
+// ---- usage panel (dash-usage-panel): transcript jsonl -> token sums
+import { usageFromJsonl } from "./app.ts";
+
+test("usageFromJsonl sums assistant usage per day, dedupes by message id (last wins), lists models", () => {
+  const L = (o: unknown) => JSON.stringify(o);
+  const text = [
+    L({ type: "assistant", timestamp: "2026-08-24T09:00:00Z",
+        message: { id: "m1", model: "claude-opus-5", usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 1000, cache_creation_input_tokens: 20 } } }),
+    // streaming rewrite of the SAME message id - later snapshot replaces, never adds
+    L({ type: "assistant", timestamp: "2026-08-24T09:00:01Z",
+        message: { id: "m1", model: "claude-opus-5", usage: { input_tokens: 100, output_tokens: 80, cache_read_input_tokens: 1000, cache_creation_input_tokens: 20 } } }),
+    L({ type: "assistant", timestamp: "2026-08-25T02:00:00Z",
+        message: { id: "m2", model: "claude-fable-5", usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 200, cache_creation_input_tokens: 0 } } }),
+    L({ type: "user", timestamp: "2026-08-25T02:01:00Z", message: { content: "hi" } }),
+    "not json at all",
+    L({ type: "assistant", message: { id: "m3", model: "claude-fable-5" } }), // no usage -> ignored
+  ].join(String.fromCharCode(10));
+  const u = usageFromJsonl(text);
+  expect(u.total).toEqual({ inp: 110, out: 85, cr: 1200, cw: 20 });
+  expect(u.days["2026-08-24"]).toEqual({ inp: 100, out: 80, cr: 1000, cw: 20 });
+  expect(u.days["2026-08-25"]).toEqual({ inp: 10, out: 5, cr: 200, cw: 0 });
+  expect(u.models).toEqual(["claude-opus-5", "claude-fable-5"]);
+  expect(usageFromJsonl("").total).toEqual({ inp: 0, out: 0, cr: 0, cw: 0 });
 });

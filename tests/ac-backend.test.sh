@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# ac-backend.test.sh - backend dispatch: the herdr adapter (the only backend)
+# ac-backend.test.sh - backend dispatch: the herdr driver (the default backend)
 # against a stub CLI (pane handle persistence, alive, capture, send, kill,
 # focus), and rejection of removed (tmux/wezterm) and unknown backend names.
+# The orca driver's own leg is tests/ac-backend-orca.test.sh.
 # shellcheck disable=SC2016  # script bodies are deliberately unexpanded here
 
 # Fail-closed sourcing: unsourced (suite run outside tests/), errexit is never
@@ -634,14 +635,14 @@ case "$out" in *CLAUDE_CONFIG_DIR*) fail "no CLAUDE_CONFIG_DIR emitted when the 
 out="$(CLAUDE_CONFIG_DIR=/tmp/cfg run_backend herdr 'ac_claude_config_env')"
 assert_contains "$out" "CLAUDE_CONFIG_DIR=/tmp/cfg" "chief's config dir rides the launch line"
 
-# --- dispatch validation: herdr is the ONLY backend ----------------------------------
+# --- dispatch validation: herdr and orca are the valid backends ----------------------
 
 # tmux and wezterm were removed (2026-07-17); their names must be refused,
-# and the error must name herdr as the only backend.
+# and the error must name the valid backend set.
 assert_fails run_backend tmux 'backend_target x1'
 assert_fails run_backend wezterm 'backend_target x1'
 err="$(run_backend tmux 'backend_target x1' 2>&1 || true)"
-assert_contains "$err" "herdr is the only backend" "rejection names herdr as the only backend"
+assert_contains "$err" "valid backends: herdr, orca" "rejection names the valid backend set"
 assert_fails run_backend screen 'backend_target x1'
 
 pass

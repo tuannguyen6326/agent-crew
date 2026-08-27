@@ -1427,19 +1427,22 @@ cp "$TMP/captain.orig" "$capmd"
 # ============================================================================
 mrun="$AC_HOME/data/learning-42"
 mkdir -p "$mrun/staged/skills/example" "$mrun/gates/example"
-printf 'candidate evidence\n' >"$mrun/input-manifest.md"
+printf 'candidate evidence only a reader of this manifest can quote\n' >"$mrun/input-manifest.md"
 printf 'skill body\n' >"$mrun/staged/skills/example/SKILL.md"
 msha="$(shasum -a 256 <"$mrun/input-manifest.md" | awk '{print $1}')"
 nsha="$(shasum -a 256 <"$mrun/staged/skills/example/SKILL.md" | awk '{print $1}')"
 cat >"$mrun/plan.json" <<EOF
 {"schema":"agentcrew.maintenance-plan/v1","mode":"learning","run_id":"learning-42","subject":"example","input_manifest_sha256":"$msha","actions":[{"op":"write-skill","target":"skills/example/SKILL.md","old_sha256":"-","new_sha256":"$nsha","staged":"staged/skills/example/SKILL.md"}]}
 EOF
-cat >"$TMP/maintenance-body.md" <<'EOF'
+cat >"$TMP/maintenance-body.md" <<EOF
 # Maintenance Gate Decision
 ## Decision
 continue
 ## Grounds
 The exact recoverable action matches the immutable candidate evidence.
+## Inputs Read
+- INPUT MANIFEST QUOTE: candidate evidence only a reader of this manifest can quote
+- ACTION PLAN NEW SHA-256: $nsha
 ## Proposed Process
 Apply this hash-bound plan through the maintenance transaction.
 EOF
@@ -1463,12 +1466,46 @@ assert_contains "$mprompt" "$mrun/input-manifest.md" "maintenance judge reads th
 assert_contains "$mprompt" "$mrun/plan.json" "maintenance judge reads the plan by path"
 assert_contains "$mprompt" "recoverable maintenance action" "maintenance rubric is not the staged-design rubric"
 
-cat >"$TMP/maintenance-chief-decide.md" <<'EOF'
+assert_contains "$mprompt" "ACTION PLAN NEW SHA-256" \
+  "the prompt states the read-evidence the receipt must carry"
+assert_contains "$(cat "$mreceipt")" "- ACTION PLAN NEW SHA-256: $nsha" \
+  "the settled receipt carries the judge's own read-evidence"
+
+# The whole point of the row: the prompt PRINTS both hashes the receipt is
+# checked against, so echoing them back must not buy a written receipt.
+cat >"$TMP/maintenance-blind.md" <<EOF
+# Maintenance Gate Decision
+## Decision
+continue
+## Grounds
+Both hashes in the prompt match the plan I was pointed at.
+## Inputs Read
+- INPUT MANIFEST QUOTE: $msha
+- ACTION PLAN NEW SHA-256: $psha
+## Proposed Process
+Apply this hash-bound plan through the maintenance transaction.
+EOF
+rc=0
+GATE_BODY_FILE="$TMP/maintenance-blind.md" gate maintenance \
+  --mode learning --run "$mrun" --subject example \
+  --manifest "$mrun/input-manifest.md" --plan "$mrun/plan.json" \
+  >/dev/null 2>"$TMP/maintenance-blind.err" || rc=$?
+assert_eq "$rc" "3" "a receipt proving only that the judge read the prompt is refused"
+# ac-gate-engine-failure-undiagnosable, again: the operator debugging a stalled
+# Learning/Curate loop must be told WHICH contract the body missed, not handed
+# the staged-design checklist the body actually satisfied.
+assert_contains "$(cat "$TMP/maintenance-blind.err")" "## Inputs Read" \
+  "the maintenance failure names the read-evidence check, not the staged-design contract"
+
+cat >"$TMP/maintenance-chief-decide.md" <<EOF
 # Maintenance Gate Decision
 ## Decision
 chief-decide
 ## Grounds
 The plan is technical.
+## Inputs Read
+- INPUT MANIFEST QUOTE: candidate evidence only a reader of this manifest can quote
+- ACTION PLAN NEW SHA-256: $nsha
 ## Proposed Process
 Let the chief decide.
 EOF

@@ -55,7 +55,7 @@ The captain chose a DECLARATION: `ac-ship.sh start --tdd` starts the `test` step
 Stronger than `--tdd`, and used for chief-verify (`attest-check`): it also skips the test re-run, but only against real evidence.
 When the implementer worked under a required-TDD brief the suite need not run twice: `ac-ship.sh attest-test` RUNS `commands.test` in the worktree as the implementer's final green run (attestation by execution - a dirty or unreadable worktree, or a failing run, writes nothing) and records `{branch, commit, tree, cmd, at}` at `<repo>/.crew/ship/attest-test.json`.
 The test step (`cmd test`) accepts a fresh attestation - same branch, same HEAD, same tree, same configured test command, `test.attestation` not `ignore` (default accept) - and completes without re-running the suite, noting the skip in `meta test`; any condition failing runs the suite as usual and logs why.
-A fix commit moves HEAD, so a hold-and-fix round always re-runs the reopened test step; `finish` retires the file.
+A fix commit moves HEAD, so a hold-and-fix round always re-runs the reopened test step; `finish` leaves the file in place, so the chief can query it after handback.
 Authoritative spec: the `bin/ac-ship.sh` header (TDD ATTESTATION).
 
 ## Independent review
@@ -79,7 +79,7 @@ It SELF-CLOSES when the run finishes or idles (`AC_SHIP_WATCH_IDLE`, default 180
 ## State
 
 ```
-<repo>/.crew/ship/attest-test.json  # TDD attestation (beside the runs; retired by finish)
+<repo>/.crew/ship/attest-test.json  # TDD attestation (beside the runs; outlives them, never removed - a stale one is rejected)
 <repo>/.crew/ship/<run-id>/
 ├── run.meta                 # intent, branch, base-at-start, outcome
 ├── steps.tsv                # step<TAB>status<TAB>fix-rounds

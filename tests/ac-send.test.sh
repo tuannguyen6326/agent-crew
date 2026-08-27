@@ -212,6 +212,28 @@ assert_contains "$err" "window gone for u1" "a real gone window is reported exac
 err="$("$BIN/ac-peek.sh" u1 2>&1)" && fail "peek still refuses a gone window"
 assert_contains "$err" "window gone for u1" "peek reports a real gone window exactly as before"
 
+# --- exit 127 (a driver failed to LOAD) is UNOBSERVABLE, never gone ------------------
+# Contract: ac-backend.sh WINDOW LIVENESS is THREE-STATE (0 alive / 1 gone /
+# 2 unobservable); backend_window_alive_herdr never returns anything else, but
+# ac_backend_route's PER-CALL dispatch ("backend_${fn}_herdr") means a driver
+# function that failed to load - the exact production shape, not a hand-picked
+# sentinel - makes bash itself return 127 (command not found) from the very
+# call being classified. A case that enumerates 2 and defaults everything else
+# to gone reads that load failure as a dead pane.
+make_loadfail_bin
+mk_crewmate lf1 pLF1 tLF1
+err="$("$LOADFAIL_BIN/ac-send.sh" lf1 'still there?' 2>&1)" \
+  && fail "send must refuse when the backend driver fails to load"
+assert_contains "$err" "lf1" "the send refusal names the id"
+assert_contains "$err" "backend" "a 127 (driver load failure) must blame the BACKEND, not the pane"
+case "$err" in *"window gone"*) \
+  fail "THE REGRESSION: exit 127 (loadable-driver failure) must never read as a gone window" ;; esac
+err="$("$LOADFAIL_BIN/ac-peek.sh" lf1 2>&1)" \
+  && fail "peek must refuse when the backend driver fails to load"
+assert_contains "$err" "backend" "peek's 127 refusal blames the BACKEND, not the pane"
+case "$err" in *"window gone"*) \
+  fail "THE REGRESSION: peek must never call exit 127 a gone window" ;; esac
+
 # --- F13: peek must not re-emit a raw captain marker into the caller's pane ---
 # A crewmate's own captain-marker line, captured verbatim in its pane tail,
 # must not land at column 0 of whatever pane is running ac-peek.sh (a

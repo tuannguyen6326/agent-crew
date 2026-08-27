@@ -867,12 +867,32 @@ commands:
   test: "echo run >>$attlog && echo att-ok"
 EOF
 
-# finish retires the attestation (json + log) - a new run must attest afresh.
+# finish leaves the attestation in place - the chief's post-handback
+# attest-check (AGENTS.md section 5) is its reader, and only staleness may
+# take it away.
 "$BIN/ac-ship.sh" attest-test >/dev/null 2>&1 || fail "attest before finish"
-assert_file "$af" "attestation present before finish"
-"$BIN/ac-ship.sh" finish cancelled >/dev/null
-assert_no_file "$af" "finish retires the attestation"
-assert_no_file "$arepo/.crew/ship/attest-test.log" "finish retires the attestation log"
+attruns="$(grep -c run "$attlog")"
+"$BIN/ac-ship.sh" start --intent "attestation survives finish" >/dev/null
+printf '{"reviewer":"finish-survival"}' | "$BIN/ac-ship.sh" meta review >/dev/null
+for s in intent rebase review test document lint push pr; do
+  "$BIN/ac-ship.sh" step "$s" completed >/dev/null
+done
+"$BIN/ac-ship.sh" finish checks-passed >/dev/null
+out="$("$BIN/ac-ship.sh" attest-check)" || fail "attest-check must stay fresh after finish"
+assert_contains "$out" "attested: fresh @$(git -C "$arepo" rev-parse HEAD | cut -c1-12)" \
+  "the chief reads the attestation after finish"
+assert_eq "$(grep -c run "$attlog")" "$attruns" "the chief's attest-check never runs the suite"
+
+# The post-finish query is run-independent in its CONFIG too. `current` still
+# points at the finished run, so resolving that run's frozen snapshot would
+# answer `fresh` for a command the project no longer configures.
+cat >"$att_cfg" <<EOF
+commands:
+  test: "echo BRAND-NEW"
+EOF
+rc=0; out="$("$BIN/ac-ship.sh" attest-check)" || rc=$?
+assert_eq "$rc" "1" "a changed project command stales the post-finish query"
+assert_contains "$out" "commands.test changed since attestation" "the failing condition is named"
 cd "$repo" || fail "cd back from attrepo"
 
 # --- SCOPED TEST: commands.test-changed prefers changed-file runs -------------

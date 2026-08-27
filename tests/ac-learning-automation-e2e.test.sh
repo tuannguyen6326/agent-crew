@@ -58,8 +58,14 @@ CANDIDATE
   gate)
     decision="${GATE_DECISION:-continue}"
     transcript="$cwd/data/gate-transcript-$$.jsonl"
-    jq -cn --arg d "$decision" \
-      '{type:"assistant",message:{content:[{type:"text",text:("# Maintenance Gate Decision\n## Decision\n"+$d+"\n## Grounds\nThe immutable candidate and recoverable action plan agree.\n## Proposed Process\nApply only this hash-bound plan through the maintenance transaction.\n")} ]}}' \
+    # An honest judge does exactly this: take the two paths out of the prompt,
+    # open both files, and quote what only a reader of them has.
+    manifest="$(sed -n 's/^- INPUT MANIFEST: //p' "$prompt" | head -1)"
+    plan="$(sed -n 's/^- ACTION PLAN: //p' "$prompt" | head -1)"
+    quote="$(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$manifest")"
+    jq -cn --arg d "$decision" --arg q "$quote" \
+      --arg s "$(jq -r '.actions[0].new_sha256' "$plan")" \
+      '{type:"assistant",message:{content:[{type:"text",text:("# Maintenance Gate Decision\n## Decision\n"+$d+"\n## Grounds\nThe immutable candidate and recoverable action plan agree.\n## Inputs Read\n- INPUT MANIFEST QUOTE: "+$q+"\n- ACTION PLAN NEW SHA-256: "+$s+"\n## Proposed Process\nApply only this hash-bound plan through the maintenance transaction.\n")} ]}}' \
       >"$transcript"
     printf '{"event":"done","status":"ok","transcript":"%s","pane":"gate-pane"}\n' "$transcript"
     ;;

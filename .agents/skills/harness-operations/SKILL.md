@@ -19,7 +19,7 @@ Covers only the harnesses Agent Crew currently supports through `bin/ac-spawn.sh
 - `cursor` (registered 2026-08-14; the agent CLI is `cursor-agent`, never bare `cursor`; instruction file LIVE-PROBED: AGENTS.md + root CLAUDE.md, never .claude/CLAUDE.md - the references file owns the boundary);
 - a captain-provided custom launch command (`config/launch-<harness>`), which stays unverified unless separately validated.
 
-The herdr session backend remains the only supported backend.
+The herdr session backend is the DEFAULT backend, and every per-harness pane fact below was verified on it; a fleet pinned to a non-default `config/backend` keeps the same `backend_*` contract, but these harness facts have not been re-verified there.
 
 ## When to load
 

@@ -134,8 +134,7 @@ git -C "$project_dir" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null
 if [ "$epic_mode" = 1 ]; then
   # qa.require_for_ship guards the PRODUCTION merge; an integration-branch
   # landing is integration, not production - the epic gate's own QA round
-  # owns it (captain ruling 2026-08-19), and a feature's ship gate owns its
-  # (feature-branch-mech, captain ruling 2026-08-24).
+  # owns it, and a feature's ship gate owns its (feature-branch-mech).
   if [ "$eb_deferred" = 1 ]; then
     printf 'qa.require_for_ship: deferred to the feature ship gate (feature-branch landing)\n'
   else

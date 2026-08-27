@@ -88,4 +88,16 @@ assert_no_file "$AC_HOME/crewdeputies/MyDeputy" "no home created for a refused n
 "$BIN/ac-home-seed.sh" mate-four --no-projects >/dev/null 2>&1
 [ -d "$AC_HOME/crewdeputies/mate-four" ] || fail "mate-four home missing"
 
+# Runtime symlinks: a deputy chief also runs with cwd = its home, so the seed
+# links the distro runtime set there too; the seeded CREWMATE.md copy (a real
+# file) must never be replaced by a link.
+for f in bin CLAUDE.md .claude AGENTS.md; do
+  [ -L "$AC_HOME/crewdeputies/mate-four/$f" ] || fail "runtime link missing: mate-four/$f"
+done
+for f in docs tests; do
+  [ ! -e "$AC_HOME/crewdeputies/mate-four/$f" ] || fail "$f/ must not be seeded - repo material reads through ac_root"
+done
+assert_eq "$(cd "$AC_HOME/crewdeputies/mate-four/bin" && pwd -P)" "$(cd "$BIN" && pwd -P)" \
+  "the deputy bin link resolves to the distro checkout's bin"
+
 pass

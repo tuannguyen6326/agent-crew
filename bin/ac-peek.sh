@@ -19,8 +19,8 @@ alive_rc=0
 backend_window_alive "$id" || alive_rc=$?
 case "$alive_rc" in
   0) ;;
-  2) ac_die "the BACKEND could not be read for $id - the pane's liveness is UNKNOWN and no work is lost; check the backend itself (herdr status server), then peek again" ;;
-  *) ac_die "window gone for $id" ;;
+  1) ac_die "window gone for $id" ;;
+  *) ac_die "the BACKEND could not be read for $id - the pane's liveness is UNKNOWN and no work is lost; check the backend itself (herdr status server), then peek again" ;;
 esac
 # Prefixed, never merely indented: AC_CAPTAIN_RE's negated class still
 # permits whitespace, so an indent alone keeps a marker matching at line

@@ -17,18 +17,16 @@
 # on, mirroring ac-turnend-guard's own scope checks:
 #   - a linked worktree (git-dir != git-common-dir) - a crewmate follows a
 #     brief and never runs session-start;
-#   - a crewdeputy home (.ac-crewdeputy-home) - spawned with a kickoff that
-#     already tells it to run session-start;
 #   - a home whose session lock is held LIVE - session-start already ran here
 #     (mine), or another session owns the home and this one is read-only.
-# Only a genuine, unowned primary home gets the nudge.
+# Any unowned home gets the nudge, a crewdeputy home included: the `ac
+# <deputy>` launcher opens a plain chief session there with NO kickoff to
+# order session-start, and a SPAWNED deputy either holds a live lock by the
+# time it reads context or eats one redundant reminder line - harmless.
 set -u
 . "$(dirname "$0")/ac-lib.sh" 2>/dev/null || exit 0
 
 home="$(ac_home 2>/dev/null)" || exit 0
-
-# Crewdeputy home: its spawn kickoff already says to run session-start.
-[ -e "$home/.ac-crewdeputy-home" ] && exit 0
 
 # Linked worktree = a crewmate checkout (the self-hosting footgun): silent.
 gd="$(git -C "$home" rev-parse --git-dir 2>/dev/null || true)"
