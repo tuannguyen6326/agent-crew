@@ -102,8 +102,8 @@
 #     read-only` / `claude -p` / `opencode run` forms (oneshot_launch below).
 # The modes arm SEPARATELY, because a working one-shot form proves nothing about
 # the same harness's TUI (and the reverse). Refusing beats placing: a pane whose
-# harness never came up still burns the caller's whole timeout (AC_REVIEW_TIMEOUT
-# default 3600s, per fix round) and then reports status:timeout, which reads like
+# harness never came up still burns the caller's whole timeout (AC_VERIFY_TIMEOUT,
+# default 7200s, per fix round) and then reports status:timeout, which reads like
 # a slow reviewer rather than a misconfiguration.
 # The launch line itself is built in TWO places: oneshot_launch (below, local to
 # this file) composes the ONE-SHOT arm's command, while ac_build_launch
@@ -161,8 +161,8 @@
 #      (`data/codex-pane-tui-arm/room.md` 04:01Z, "chap nhan enter click nham
 #      do"); this arm inherits the acceptance because it inherits the step, and
 #      classifying dialogs here would rebuild the machinery the ruling deleted.
-#   3. FLAG-VS-PROFILE MODEL COHERENCE - an explicit --model (carrying
-#      review.model / AC_REVIEW_MODEL / AC_QA_MODEL) outranks a profile's model
+#   3. FLAG-VS-PROFILE MODEL COHERENCE - an explicit --model (carrying the
+#      caller's codereview/qa model ladder) outranks a profile's model
 #      by design, so a fleet dispatching this kind to a non-claude harness while
 #      pinning a claude model name would compose that name onto it. This hazard
 #      is LIVE on this arm - it was dormant while non-claude was refused here -

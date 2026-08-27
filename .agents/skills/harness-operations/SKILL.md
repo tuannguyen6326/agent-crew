@@ -21,6 +21,8 @@ Covers only the harnesses Agent Crew currently supports through `bin/ac-spawn.sh
 
 The herdr session backend is the DEFAULT backend, and every per-harness pane fact below was verified on it; a fleet pinned to a non-default `config/backend` keeps the same `backend_*` contract, but these harness facts have not been re-verified there.
 
+What DOES differ on the orca driver, measured rather than assumed, because it changes how a steer lands: a pane's agent starts WITH the pane (its launch command IS the pane's command), so nothing is typed into a booting surface; typed text is chunked, because one large write lost its head; the came-up probe reads the terminal TITLE, so a harness that sets no title stays UNOBSERVABLE and delivery proceeds fail-open; and a closed terminal still serves its retained scrollback, so a successful read is never proof of life. `bin/ac-backend-orca.sh` owns those mechanics - reach for them when a steer or probe behaves differently from the herdr fact below, and treat the difference as the driver's, not the harness's.
+
 ## When to load
 
 Load before a harness-specific spawn, trust-dialog response, skill invocation, interrupt, exit, resume, recovery, or adapter verification.

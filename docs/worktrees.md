@@ -1,5 +1,25 @@
 # In-repo worktree pool
 
+A task's isolated checkout is leased per the fleet's session backend
+(`config/backend`), and the two mechanisms are deliberately different shapes:
+
+- **herdr fleets** lease from the POOL this document describes - reusable
+  detached-HEAD worktrees inside the project repo, returned rather than
+  deleted, so dependency and build caches survive between tasks.
+- **orca fleets** lease an ORCA-MANAGED worktree per task instead, created
+  and removed through the Orca CLI so every task tree is a first-class node
+  in the Orca sidebar beside its diffs. `bin/ac-backend-orca.sh`
+  (`orca_worktree_lease` / `orca_worktree_release`) is that half's
+  authoritative spec: `crew/<id>` cut from the LOCAL default branch,
+  repo-defined setup hooks run, the primary checkout's `node_modules`
+  carried over as a copy-on-write clone, and the whole worktree removed at
+  teardown.
+
+Verifier rounds (`ac-verify.sh` codereview and qa) follow the same rule as
+crew leases - the isolated exact-ref checkout comes from whichever mechanism
+the fleet's backend names, and on orca the CLI-minted branch is dropped right
+after the detach, since a verifier branch is never a deliverable.
+
 `bin/ac-tree.sh` pools reusable detached-HEAD git worktrees INSIDE each
 project repo; its header comment is the authoritative spec.
 

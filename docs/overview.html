@@ -506,7 +506,7 @@
 
 <section id="worktrees">
   <h2>In-repo worktree pool</h2>
-  <p class="sub">Pooled, reusable worktrees that live inside the project itself.</p>
+  <p class="sub">Pooled, reusable worktrees that live inside the project itself — the lease mechanism of a <strong>herdr</strong> fleet. An <strong>orca</strong> fleet leases an Orca-managed worktree per task instead, so every task tree is a first-class node in the Orca sidebar; verifier rounds follow whichever mechanism the fleet's backend names.</p>
   <pre>&lt;project&gt;/.crew/
   worktrees/&lt;n&gt;/     <span class="c"># detached-HEAD worktree slots (the crewmate's cwd)</span>
   slots/&lt;n&gt;.meta     <span class="c"># per-slot lease state (key=value)</span>
@@ -566,14 +566,20 @@
 
 <section id="backends">
   <h2>Session backends</h2>
-  <p class="sub">One primitive surface — window new / alive / send / capture / kill. The backend is pinned per task, so a config flip never strands a running crewmate.</p>
+  <p class="sub">One contract, two drivers — window new / alive / send / capture / kill, routed per call. The backend is chosen per fleet (<code>config/backend</code>) and recorded per task at spawn, so a config flip never strands a running crewmate.</p>
   <div class="cards">
     <div class="card">
       <span class="tag">default backend</span>
       <h4>herdr</h4>
-      <p>One tab per crewmate. Three self-healing window groups per fleet: <code>&lt;fleet&gt; (crewchief)</code> for chiefs and deputies, <code>&lt;fleet&gt; (crewmate)</code> for work tabs, <code>&lt;fleet&gt; (pane-agent)</code> for verification agents — so the captain always tells who is who. <code>ac-relocate.sh</code> moves a live window between groups without losing its session.</p>
+      <p>One tab per crewmate, grouped by FAMILY: every pane of one task family — its chief, its crewmates, its verification panes and its ship/qa watch tabs — shares the workspace <code>&lt;fleet&gt; · &lt;family&gt;</code>, while fleet-level panes with no family share the root <code>&lt;fleet&gt;</code>, so the sidebar reads home → task. Worktrees come from the in-repo pool. <code>ac-relocate.sh</code> moves a live window between workspaces without losing its session.</p>
+    </div>
+    <div class="card">
+      <span class="tag">second backend</span>
+      <h4>orca</h4>
+      <p>Orca-native placement: chief-kind panes sit under the home's sidebar node with one self-clearing family tab per room, and crewmate and verifier panes sit under their own worktree's node, beside the diffs they are producing. Each task leases an <em>Orca-managed</em> worktree instead of a pool slot — <code>crew/&lt;id&gt;</code> cut from the local default branch, setup hooks run, removed at teardown — and the agent starts <em>with</em> its pane, so nothing is ever typed into a booting surface.</p>
     </div>
   </div>
+  <p class="sub">Both drivers answer the same three-state liveness contract, so an unreadable backend reports <code>unobservable</code> rather than a death — a pane whose liveness is unknown is never torn down.</p>
 </section>
 
 <section id="modes">
@@ -615,7 +621,7 @@
       <text class="t1" x="430" y="105" text-anchor="middle" style="font-size:15px">0 tokens while quiet</text>
       <text class="t2" x="430" y="128" text-anchor="middle">ac-done.sh pushes completion instantly — the poll is the backup</text>
     </svg>
-    <p class="cap">Every wake is published durably first (<code>state/.wake-spool[.&lt;family&gt;]/</code>, one record per file) — a crash loses nothing. A Stop hook blocks any turn that would leave crew in flight unwatched; the one captain notification (<code>config/wedge-alarm</code>) fires only when the fleet is blocked <em>by the captain</em>.</p>
+    <p class="cap">Every wake is published durably first (<code>state/.wake-spool[.&lt;family&gt;]/</code>, one record per file) — a crash loses nothing. One Stop hook blocks any turn that would leave crew in flight unwatched, and a second re-arms the watcher for the chief instead of the chief remembering to; when a promoted family's scoped coverage goes down, the fleet watcher takes over its panes, records a <code>coverage</code> wake, and types the drain-and-re-arm order straight into that roomchief's pane — a durable record nobody reads is not a delivered signal. The one captain notification (<code>config/wedge-alarm</code>) fires only when the fleet is blocked <em>by the captain</em>.</p>
   </div>
 
   <div class="tablewrap"><table>
@@ -708,6 +714,7 @@
     <tr><td><code>ac-gate.sh</code></td><td>Conditional independent second chief for reports routed by uncertainty or high consequence: one fresh pane per round, no engine fallback, hash-bound context.</td></tr>
     <tr><td><code>ac-gate-watch.sh</code></td><td>Active-gate board: follows each round's live prompt and model output, one reusable pane per fleet.</td></tr>
     <tr><td><code>ac-ready.sh</code></td><td>Epic scheduler primitive + story-map validator: READY / STUCK lines, idempotent.</td></tr>
+    <tr><td><code>ac-repo-pull.sh</code></td><td>Fetch + fast-forward-only sync of a clone's default branch (the dashboard Pull button's whole authority).</td></tr>
     <tr><td><code>ac-tree.sh</code></td><td>In-repo pooled worktrees: get / list / return / prune / remove (locked, remote-verified, self-healing).</td></tr>
     <tr><td><code>ac-ship.sh</code></td><td>crew-ship state machine + deterministic runner (guarded push, fix-round counters, fix-report, review-agent).</td></tr>
     <tr><td><code>ac-ship-watch.sh</code></td><td>Live crew-ship dashboard: step table, findings, log tail; auto-open, self-closing.</td></tr>
@@ -723,8 +730,12 @@
     <tr><td><code>ac-merge-local.sh</code></td><td>Fast-forward a local-only project to <code>crew/&lt;id&gt;</code>.</td></tr>
     <tr><td><code>ac-teardown.sh</code></td><td>Fail-closed teardown with landed-work proofs.</td></tr>
     <tr><td><code>ac-project-mode.sh</code></td><td>Resolve the project's default delivery mode + yolo from the registry.</td></tr>
+    <tr><td><code>ac-push-gate.sh</code></td><td>Pre-push privacy gate: refuse a push whose outgoing commits carry a private identifier - in a diff, a message, or an author ident.</td></tr>
+    <tr><td><code>ac-page-lint.sh</code></td><td>Page-syntax lint for a served dashboard page's inline script, which tsc and bun test cannot see.</td></tr>
+    <tr><td><code>ac-brain.sh</code></td><td>CLI for the per-home memory engine: sync, recall, remember, entity, context_pack, delta - one JSON value per verb.</td></tr>
+    <tr><td><code>ac-scene.sh</code></td><td>The L2 scene store: one consolidated, heat-tracked topic file per subject, between repo-knowledge facts and the always-loaded crewmate layer.</td></tr>
     <tr><td><code>ac-lint.sh</code></td><td>Single lint owner (bash -n + shellcheck).</td></tr>
-    <tr><td><code>ac-lib.sh</code> / <code>ac-backend.sh</code></td><td>Sourced libs: helpers, locks, git; backend dispatcher. Not entrypoints.</td></tr>
+    <tr><td><code>ac-lib.sh</code> / <code>ac-backend.sh</code> / <code>ac-backend-orca.sh</code></td><td>Sourced libs: helpers, locks, git; the backend dispatcher and its two drivers (herdr here, orca beside it). Not entrypoints.</td></tr>
   </table></div>
 </section>
 
@@ -733,7 +744,8 @@
   <p class="sub">Local knobs are single files under <code>config/</code>, gitignored.</p>
   <div class="tablewrap"><table>
     <tr><th>Knob</th><th>Meaning</th></tr>
-    <tr><td><code>config/backend</code></td><td><code>herdr</code> - the default and only supported value.</td></tr>
+    <tr><td><code>config/backend</code></td><td>Session backend for this fleet: <code>herdr</code> (the default) or <code>orca</code>. Recorded per task at spawn, so a flip never re-routes work already in flight.</td></tr>
+    <tr><td><code>config/orca-node</code></td><td>orca fleets only: the full Orca worktree selector chief-kind HOME panes attach to - needed when two Orca entries share one path, so a deputy home keeps its panes on its own sidebar node.</td></tr>
     <tr><td><code>config/crew-harness</code></td><td>Default harness: <code>claude</code> (default), <code>codex</code>, <code>opencode</code>.</td></tr>
     <tr><td><code>config/model</code> / <code>config/effort</code></td><td>Fleet-wide spawn defaults when <code>--model</code> / <code>--effort</code> are absent.</td></tr>
     <tr><td><code>config/flow</code> / <code>config/promote</code></td><td>Home-wide pins: flow <code>direct</code>/<code>staged</code> (default: per-task triage); promotion <code>auto</code>/<code>never</code> (default <code>always</code> — a thread per task).</td></tr>

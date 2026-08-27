@@ -1,47 +1,65 @@
-# agent-crew fleet launcher: `ac <fleet> [harness]` for homes under ~/Work/ac-homes
-#   ac              -> list fleets (subdirs with state/)
-#   ac lab          -> launch claude on the lab fleet
-#   ac lab codex    -> launch another harness on it
-#   ac drydock --deputy=demo -> launch on a nested CREWDEPUTY home
-#                  (crewdeputies/<name> under the fleet); NOTE this opens a
-#                  plain chief session on that home - no deputy kickoff, no
-#                  parent meta, so the registry still reads NOT-RUNNING.
-#                  `--debuty=` is accepted as a spelling alias.
+# agent-crew fleet launcher: `ac <fleet>[/<deputy>] [--backend=<b>] [--harness=<h>]`
+#   ac                  -> list fleets (subdirs with state/)
+#   ac lab              -> launch the chief on the lab fleet (harness claude)
+#   ac lab/mobile       -> launch on the nested CREWDEPUTY home
+#                          (crewdeputies/<name> under the fleet); NOTE this opens
+#                          a plain chief session on that home - no deputy kickoff,
+#                          no parent meta, so the registry still reads NOT-RUNNING
+#   ac mobile           -> bare deputy name: resolved when exactly ONE fleet
+#                          carries it; several fleets -> refused with the list
+#   --harness=<h>       -> harness to run (default claude); the bare 2nd word
+#                          form `ac lab codex` still works
+#   --backend=<b>       -> where the chief OPENS: herdr | orca. Default ladder
+#                          (same as ac-spawn): flag > the home's config/backend
+#                          > herdr. herdr attaches the "<fleet> (crewchief)"
+#                          workspace; orca runs the chief inline in the CURRENT
+#                          terminal (Orca-native when launched from an Orca
+#                          terminal - there is no herdr surface to attach)
 #   ac dashboard [--port N]   -> the READ-ONLY web dashboard (bin/ac-dashboard.sh)
 #   ac --dashboard [--port N] -> same, flag form; `dashboard`/`--dashboard` are
-#                  reserved first words, not fleet names
-#   inside herdr : run the harness in the current pane
-#   outside herdr: open the crewchief in the fleet's "<fleet> (crewchief)"
-#                  herdr workspace (beside its roomchiefs), then attach
+#                          reserved first words, not fleet names
+#   inside herdr : run the harness in the current pane (any backend)
+#   legacy       : `--deputy=<name>` (and the `--debuty=` spelling alias)
 _ac_home() {
   emulate -L zsh
-  local fleet="$1" harness="$2" deputy="${3:-}"
-  local root="$HOME/Work/agent-crew" ach="$HOME/Work/ac-homes/$fleet"
+  local fleet="$1" harness="$2" deputy="${3:-}" backend="${4:-}"
+  local ach="$HOME/Work/ac-homes/$fleet"
   [[ -d "$ach" ]] || { print -u2 "ac: no fleet at $ach"; return 1 }
   if [[ -n "$deputy" ]]; then
     ach="$ach/crewdeputies/$deputy"
     [[ -d "$ach" ]] || { print -u2 "ac: no deputy home at $ach"; return 1 }
   fi
-  if [[ -n "$HERDR_ENV" ]]; then
-    cd "$root" && AC_HOME="$ach" exec "$harness"
+  # backend ladder: --backend flag > the home's config/backend > herdr
+  [[ -n "$backend" ]] || backend="$(cat "$ach/config/backend" 2>/dev/null)"
+  backend="${backend:-herdr}"
+  case "$backend" in
+    herdr|orca) ;;
+    *) print -u2 "ac: unknown backend '$backend' (valid: herdr, orca)"; return 1 ;;
+  esac
+  # orca home, or already inside herdr: run the chief inline right here.
+  # cwd is the HOME (workspace = home, repo = code): the home symlinks the
+  # executable core (bin/ CLAUDE.md .claude/ AGENTS.md) to the repo.
+  if [[ "$backend" == orca || -n "$HERDR_ENV" ]]; then
+    cd "$ach" && AC_HOME="$ach" exec "$harness"
     return
   fi
   herdr status server >/dev/null 2>&1 || { (herdr server >/dev/null 2>&1 &); sleep 1; }
-  # the crewchief tab anchors the fleet ROOT workspace "<fleet>" (family
-  # workspaces "<fleet> · <family>" sit beside it; ac-backend.sh FAMILY
-  # WORKSPACE GROUPING)
-  local label="$fleet" ws
+  # crewchief joins the roomchiefs in the fleet's "<fleet> (crewchief)" group
+  local label="$fleet (crewchief)" ws
   ws=$(herdr workspace list 2>/dev/null | jq -r --arg l "$label" '.result.workspaces[]? | select(.label==$l) | .workspace_id' | head -1)
   if [[ -z "$ws" ]]; then
     herdr workspace create --label "$label" --no-focus >/dev/null 2>&1
     ws=$(herdr workspace list 2>/dev/null | jq -r --arg l "$label" '.result.workspaces[]? | select(.label==$l) | .workspace_id' | head -1)
   fi
-  # no knob pin: workspaces resolve adopt-by-label (ac-backend.sh FAMILY
-  # WORKSPACE GROUPING); the captain tab just opens in the fleet root group
+  # pin it as the chiefs workspace so roomchiefs/crewdeputies land beside the crewchief
+  if [[ -n "$ws" ]]; then
+    mkdir -p "$ach/config"
+    print -r -- "$ws" >| "$ach/config/herdr-workspace-chiefs"
+  fi
   local -a wsarg; [[ -n "$ws" ]] && wsarg=(--workspace "$ws")
   local pane
-  pane=$(herdr tab create "${wsarg[@]}" --label "ac-$fleet${deputy:+-$deputy}" --cwd "$root" --focus 2>/dev/null | jq -r '.result.root_pane.pane_id // empty')
-  [[ -n "$pane" ]] && herdr pane run "$pane" "cd $root && AC_HOME=$ach exec $harness" >/dev/null 2>&1
+  pane=$(herdr tab create "${wsarg[@]}" --label "ac-$fleet${deputy:+-$deputy}" --cwd "$ach" --focus 2>/dev/null | jq -r '.result.root_pane.pane_id // empty')
+  [[ -n "$pane" ]] && herdr pane run "$pane" "cd $ach && AC_HOME=$ach exec $harness" >/dev/null 2>&1
   herdr
 }
 
@@ -60,39 +78,76 @@ ac() {
     "$HOME/Work/agent-crew/bin/ac-dashboard.sh" "$@"
     return
   fi
-  local deputy="" arg
+  local deputy="" backend="" harness="" arg
   local -a rest
   for arg in "$@"; do
     case "$arg" in
       --deputy=*|--debuty=*) deputy="${arg#*=}" ;;
-      --*) print -u2 "ac: unknown flag $arg (known: --deputy=<name>)"; return 1 ;;
+      --backend=*) backend="${arg#*=}" ;;
+      --harness=*) harness="${arg#*=}" ;;
+      --*) print -u2 "ac: unknown flag $arg (known: --backend=<herdr|orca> --harness=<h> --deputy=<name>)"; return 1 ;;
       *) rest+=("$arg") ;;
     esac
   done
-  if [[ -z "${rest[1]:-}" ]]; then
+  local target="${rest[1]:-}"
+  if [[ -z "$target" ]]; then
     local -a fleets; fleets=($(_ac_fleets))
     if (( ${#fleets} )); then
-      print -u2 "usage: ac <fleet> [harness] [--deputy=<name>]   fleets: ${fleets[*]}"
+      print -u2 "usage: ac <fleet>[/<deputy>] [--backend=<herdr|orca>] [--harness=<h>]   fleets: ${fleets[*]}"
     else
-      print -u2 "usage: ac <fleet> [harness] [--deputy=<name>]   (no fleets under ~/Work/ac-homes yet - see bin/ac-home-seed.sh)"
+      print -u2 "usage: ac <fleet>[/<deputy>] [--backend=<herdr|orca>] [--harness=<h>]   (no fleets under ~/Work/ac-homes yet - see bin/ac-home-seed.sh)"
     fi
     return 1
   fi
-  _ac_home "${rest[1]}" "${rest[2]:-claude}" "$deputy"
+  local fleet="$target"
+  if [[ "$target" == */* ]]; then
+    fleet="${target%%/*}"
+    [[ -n "$deputy" ]] || deputy="${target#*/}"
+  fi
+  # A bare name that is not a fleet may be a DEPUTY: resolve it when exactly
+  # one fleet carries it, refuse with the candidates when several do.
+  if [[ ! -d "$HOME/Work/ac-homes/$fleet" && -z "$deputy" ]]; then
+    local -a hits
+    local d
+    for d in "$HOME/Work/ac-homes"/*/crewdeputies/"$fleet"(N/); do hits+=("$d"); done
+    if (( ${#hits} == 1 )); then
+      deputy="$fleet"
+      fleet="${hits[1]:h:h:t}"
+    elif (( ${#hits} > 1 )); then
+      print -u2 "ac: '$fleet' is a deputy in several fleets (${(j:, :)${(@)hits:h:h:t}}) - say ac <fleet>/$fleet"
+      return 1
+    fi
+  fi
+  [[ -n "$harness" ]] || harness="${rest[2]:-claude}"
+  _ac_home "$fleet" "$harness" "$deputy" "$backend"
 }
 
-# tab-complete fleet names (and harnesses on the 2nd word)
+# tab-complete fleet names, fleet/deputy, harnesses and the = flags
 if (( $+functions[compdef] )); then
   _ac_complete() {
-    if [[ "${words[CURRENT]}" == --deputy=* || "${words[CURRENT]}" == --debuty=* ]]; then
-      local d f="${words[2]}"
+    local cur="${words[CURRENT]}"
+    if [[ "$cur" == --deputy=* || "$cur" == --debuty=* ]]; then
+      local d f="${words[2]%%/*}"
       local -a deps
       for d in "$HOME/Work/ac-homes/$f/crewdeputies"/*(N/); do deps+=("${d:t}"); done
-      compadd -P "${words[CURRENT]%%=*}=" -- $deps
+      compadd -P "${cur%%=*}=" -- $deps
+    elif [[ "$cur" == --backend=* ]]; then
+      compadd -P "--backend=" -- herdr orca
+    elif [[ "$cur" == --harness=* ]]; then
+      compadd -P "--harness=" -- claude codex opencode pi cursor
     elif (( CURRENT == 2 )); then
-      compadd -- dashboard --dashboard $(_ac_fleets)
-    elif (( CURRENT == 3 )); then
-      compadd -- claude codex opencode --deputy=
+      if [[ "$cur" == */* ]]; then
+        local f="${cur%%/*}" d
+        local -a deps
+        for d in "$HOME/Work/ac-homes/$f/crewdeputies"/*(N/); do deps+=("$f/${d:t}"); done
+        compadd -- $deps
+      else
+        local -a bdeps
+        for d in "$HOME/Work/ac-homes"/*/crewdeputies/*(N/); do bdeps+=("${d:t}"); done
+        compadd -- dashboard --dashboard $(_ac_fleets) $bdeps
+      fi
+    else
+      compadd -- --backend= --harness= --deputy= claude codex opencode
     fi
   }
   compdef _ac_complete ac

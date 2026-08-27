@@ -69,9 +69,11 @@ lines="$(wc -l <"$dir/SKILL.md")"
 [ "$lines" -lt 500 ] || fail "SKILL.md must stay under 500 lines (got $lines)"
 
 # --- clean-room: no reference-only names/commands/dev-home paths, no rejected
-#     runtimes (Codex App / Orca / Pi / Grok adapter facts) ---------------------
+#     runtimes (Codex App / Grok adapter facts). Orca left the rejected set when
+#     it became a SHIPPED session backend with its own driver: naming it here is
+#     now a fact about this distro, not an import from a reference tree. -------
 while IFS= read -r f; do
-  bad="$(grep -niE 'fm-|/Users/|/home/|\.stow-notes|Orca|Grok|Codex App' "$f" || true)"
+  bad="$(grep -niE 'fm-|/Users/|/home/|\.stow-notes|Grok|Codex App' "$f" || true)"
   [ -z "$bad" ] || fail "clean-room/rejected-runtime leak in $f: $bad"
 done < <(find "$dir" -type f)
 

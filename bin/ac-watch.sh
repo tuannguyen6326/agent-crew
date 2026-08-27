@@ -312,7 +312,7 @@
 # could not be read, so the pane's liveness is UNKNOWN - never a death: no
 # failure is stamped, the pane keeps being polled, and one outage costs one wake
 # and one status line; contract: ac-backend.sh WINDOW LIVENESS), `ask:<id>` (agent blocked on an
-# interactive prompt - herdr backend only), `ended:<id>` (the ENDED-TURN LOUD
+# interactive prompt - herdr's pane state or Orca's agentWait), `ended:<id>` (the ENDED-TURN LOUD
 # WAKE above - a pane that finished its turn with no marker), `stale:<id>`
 # (a pane merely quiet while working). Neither of those two is ever a chief
 # supervising a live crewmate, see SUPERVISING-CHIEF QUIET above. `remote:<rid>`

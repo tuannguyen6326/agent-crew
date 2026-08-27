@@ -73,7 +73,7 @@ The final object is `{findings[], summary, risk_level, risk_rationale, reviewed_
 
 `bin/ac-ship-watch.sh` renders the run live: header, colored glyph step table with the ACTIVE step marked, fix rounds, per-step findings summaries, and the run-log tail.
 Read-only; one full screen per refresh.
-`start` auto-opens it in a herdr tab (label prefixed `ac-ship-watch`; `AC_SHIP_WATCH=off` disables), and every step transition to running/fixing/awaiting_approval re-ensures it (idempotent), so runs reopened under hold-and-fix get their pane back.
+`start` auto-opens it in a herdr tab (label prefixed `ac-ship-watch`; `AC_SHIP_WATCH=off` disables), and every step transition to running/fixing/awaiting_approval re-ensures it (idempotent), so runs reopened under hold-and-fix get their pane back. The auto-open is a herdr convenience: on an orca fleet it is skipped silently and the board stays available by running `ac-ship-watch.sh` in any terminal - the run state is on disk either way.
 It SELF-CLOSES when the run finishes or idles (`AC_SHIP_WATCH_IDLE`, default 1800s); `finish` also retires it via `<run>/watch.pane`.
 
 ## State
