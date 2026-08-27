@@ -219,6 +219,27 @@ assert_eq "$(cat "$TMP/watch.env.only")" "famA" \
 assert_eq "$(cat "$TMP/watch.env.skip")" "" \
   "... and never a skip: a scoped watcher exists to cover that family"
 
+# The scoped exit-2 handback ALSO types the wake into its own chief pane.
+# asyncRewake delivery is a harness contract (measured on Claude Code 2.1.220;
+# the host has moved on): when the rewake is swallowed the chief sleeps on a
+# durable spool (measured: 101 minutes, woken by a human). A keystroke is a
+# turn on every backend; with no backend driver beside the hook or no pane on
+# the meta the nudge skips silently - the other exit-2 cases in this suite
+# prove that fail-open by running without the driver.
+for f in ac-backend.sh ac-backend-orca.sh; do cp "$BIN/$f" "$lab/"; done
+make_fake_herdr
+printf 'kind=roomchief\nwindow=crew:famA-chief\nbackend=herdr\n' >"$AC_HOME/state/famA-chief.meta"
+printf 'pFAC tFAC\n' >"$AC_HOME/state/.pane-famA-chief"
+printf 'pFAC\n' >"$FAKE_HERDR/tabs/tFAC"
+: >"$FAKE_HERDR/panes/pFAC.buf"
+stub_watch_env 'report:t9'
+rc=0
+( cd "$AC_HOME" && printf '{}' | AC_SCOPE=famA "$hook" >/dev/null 2>&1 ) || rc=$?
+assert_eq "$rc" "2" "the nudging handback still exits 2"
+assert_contains "$(cat "$(fake_pane_buf famA-chief)")" "wake:" \
+  "the scoped handback types the wake into its own chief pane"
+rm -f "$lab/ac-backend.sh" "$lab/ac-backend-orca.sh"
+
 # A demoted family drops off the set at the very next re-arm, because the set is
 # recomputed from the live chief metas on every pass - the same reason the
 # scoped arm recomputes its watch set.

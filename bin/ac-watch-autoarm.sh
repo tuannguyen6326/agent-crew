@@ -188,6 +188,24 @@ promoted_families() {
   printf '%s\n' "$out"
 }
 
+nudge_scoped_chief() {
+  # nudge_scoped_chief <reason> - type the handback into this hook's OWN chief
+  # pane before the exit 2. asyncRewake delivery is a harness contract
+  # (measured on Claude Code 2.1.220; hosts move on): when the rewake is
+  # swallowed the chief sleeps on a durable spool - measured 101 minutes,
+  # woken by a human. A keystroke is a real turn on every backend; a scoped
+  # hook knows its own pane through the chief meta. Fail-open on every
+  # missing piece (no scope, no meta, no backend driver, dead pane) - the
+  # exit-2 handback stays the primary channel either way.
+  [ -n "$scope" ] || return 0
+  [ -f "$state_dir/$scope-chief.meta" ] || return 0
+  . "$bin_dir/ac-backend.sh" 2>/dev/null || return 0
+  ( AC_BACKEND="$(ac_task_backend "$scope-chief")"; export AC_BACKEND
+    backend_send_line "$scope-chief" \
+      "wake: $1 - run bin/ac-wake-drain.sh, act on each wake, then re-arm bin/ac-watch.sh as your own background task" \
+  ) >/dev/null 2>&1 || true
+}
+
 owed || exit 0
 
 budget="${AC_AUTOARM_BUDGET:-3000}"
@@ -247,10 +265,12 @@ while owed; do
       # No reason line at all: the watcher could not arm or died mute. Hand it
       # back rather than spinning on it.
       printf 'ac-watch-autoarm: the watcher closed with no reason line - supervision is NOT covered; arm it yourself (bin/ac-watch.sh) and check state/.watch.lock.d\n' >&2
+      nudge_scoped_chief "the watcher closed with no reason line - supervision is NOT covered"
       exit 2 ;;
     *)
       printf 'ac-watch-autoarm: %s\n' "$reason" >&2
       printf 'ac-watch-autoarm: drain it (bin/ac-wake-drain.sh); the watcher is re-armed automatically at your next turn end.\n' >&2
+      nudge_scoped_chief "$reason"
       exit 2 ;;
   esac
 done
@@ -262,6 +282,7 @@ done
 # (a chief burned two turns hunting crew that did not exist, 2026-08-01).
 if crew_in_flight; then
   printf 'ac-watch-autoarm: auto-arm budget spent with crew still in flight - coverage handed back; it re-arms at your next turn end.\n' >&2
+  nudge_scoped_chief "auto-arm budget spent with crew still in flight - coverage handed back"
   exit 2
 elif owed; then
   printf 'ac-watch-autoarm: auto-arm budget spent with standing remote-poll coverage still owed (no crew in flight) - coverage handed back; it re-arms at your next turn end.\n' >&2
