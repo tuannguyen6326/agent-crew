@@ -133,7 +133,11 @@ orca_place_pane() {
   # (cwd = a project/lease worktree) group under THAT worktree's own node,
   # one tab each - the Orca-native shape, sessions beside their diffs.
   dir_p="$(cd "$dir" 2>/dev/null && pwd -P || printf '%s' "$dir")"
-  home_p="$(cd "$(ac_home)" 2>/dev/null && pwd -P || ac_home)"
+  # A homeless caller (a crewmate-invoked verifier) has no AC_HOME and never
+  # places a chief-kind pane - resolve to empty so it takes the worker arm
+  # quietly instead of ac_home's refusal leaking into the pane-result stream.
+  home_p=""
+  [ -z "${AC_HOME:-}" ] || home_p="$(cd "$AC_HOME" 2>/dev/null && pwd -P || true)"
   if [ "$dir_p" != "$home_p" ]; then
     out="$(orca_json terminal create --worktree "path:$(orca_resolve_group "$dir_p")" --title "crew:$id" \
         --command "$cmd")" || {

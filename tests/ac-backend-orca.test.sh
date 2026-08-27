@@ -342,6 +342,28 @@ b="$(env -u AC_HOME AC_BACKEND=herdr AC_FLEET_STATE="$AC_HOME/state" bash -c "
   ac_backend
 ")"
 assert_eq "$b" "herdr" "an explicit AC_BACKEND pin still outranks the fleet-state rung"
-rm -f "$AC_HOME/config/backend"
+# The ROUTE and the herdr-RPC guard must resolve through the same ladder, not
+# the raw env default: a homeless pane agent on an orca fleet placed its pane
+# through the orca driver but READ it through herdr (capture, harness-up, the
+# ready gate all route) - the pane came up unreadable and the prompt never
+# landed.
+printf 'HOMELESS-ORCA-BUF\n' >"$FAKE_ORCA/terminals/hless.buf"
+printf 'tabH\n' >"$FAKE_ORCA/terminals/hless.tab"
+out="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
+  set -euo pipefail
+  . '$BIN/ac-lib.sh'
+  . '$BIN/ac-backend.sh'
+  backend_capture_pane hless 5
+" 2>/dev/null || true)"
+assert_contains "$out" "HOMELESS-ORCA-BUF" \
+  "routed pane reads follow the fleet-state backend, never the raw env default"
+err="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
+  . '$BIN/ac-lib.sh'
+  . '$BIN/ac-backend.sh'
+  herdr_cli pane list
+" 2>&1 || true)"
+assert_contains "$err" "leaked past the per-call dispatch" \
+  "a homeless herdr RPC on an orca fleet dies as the leak it is"
+rm -f "$AC_HOME/config/backend" "$FAKE_ORCA/terminals/hless.buf" "$FAKE_ORCA/terminals/hless.tab"
 
 pass

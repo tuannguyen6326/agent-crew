@@ -540,13 +540,16 @@ herdr_cli() {
   # PER-CALL BACKEND GUARD: a caller may flip AC_BACKEND per TASK after this
   # file was sourced (ac-spawn.sh's --recover probe exports the meta's
   # backend inside a subshell), so the source-time validation above cannot
-  # see it. Every RPC funnels through here, and this case on the env var
-  # costs no fork and no config read - an unsupported per-task backend still
-  # refuses at the primitive, exactly as the retired per-call dispatch did.
-  case "${AC_BACKEND:-herdr}" in
+  # see it. Every RPC funnels through here. Resolution is ac_backend's full
+  # ladder, never the raw env default: a homeless caller (a crewmate-invoked
+  # verifier carries no AC_HOME and no AC_BACKEND) on an orca fleet must die
+  # here as the leak it is, not fall through to a herdr RPC that cannot see
+  # the pane.
+  local acb
+  acb="$(ac_backend)" || exit 1
+  case "$acb" in
     herdr) ;;
     orca) ac_die "herdr RPC reached under the orca backend - a herdr-only code path leaked past the per-call dispatch" ;;
-    *) ac_die "unsupported backend '${AC_BACKEND}' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" ;;
   esac
   local s
   s="${AC_HERDR_SESSION:-$(ac_config_read herdr-session "")}"
@@ -1061,12 +1064,20 @@ backend_clear_wait_herdr() {
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ac-backend-orca.sh"
 
 ac_backend_route() {
-  local fn="$1"
+  # Resolution is ac_backend's full ladder (env pin > home config >
+  # fleet-state config > herdr), never the raw env default: a homeless pane
+  # agent on an orca fleet placed its pane through the orca driver but READ
+  # it through herdr - unreadable pane, blind prompt, no submit confirmation.
+  # ac_backend validates the name, so no third arm is reachable here.
+  local fn="$1" b
   shift
-  case "${AC_BACKEND:-herdr}" in
+  # Capture the resolution BEFORE the case: ac_backend's die inside $() only
+  # kills the substitution subshell, and an empty case matches no arm yet
+  # returns 0 - an unsupported backend would read as a LIVE pane.
+  b="$(ac_backend)" || exit 1
+  case "$b" in
     herdr) "backend_${fn}_herdr" "$@" ;;
     orca) "backend_${fn}_orca" "$@" ;;
-    *) ac_die "unsupported backend '${AC_BACKEND}' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" ;;
   esac
 }
 
