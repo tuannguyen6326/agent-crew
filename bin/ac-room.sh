@@ -147,6 +147,14 @@ cmd_post() {
   [ -n "$family" ] && [ -n "$actor" ] && [ -n "$text" ] \
     || ac_die "usage: ac-room.sh post <family> <actor> <text...>"
   case "$family" in *[!a-zA-Z0-9_-]*) ac_die "family must be [a-zA-Z0-9_-]: $family" ;; esac
+  # In a CREWDEPUTY home the fleet-chief actor normalizes to "crewdeputy": a
+  # deputy loads the same chief law and self-labels "crewchief", but its rooms
+  # sit beside migrated parent-fleet entries whose "crewchief" was a DIFFERENT
+  # session - the record must carry the disambiguating role. Family roomchief
+  # actors (<fam>-chief) are untouched, and no machine reader keys on the
+  # actor string (the receipt guard below reads AC_SCOPE, never the actor).
+  [ "$actor" != crewchief ] || [ ! -e "$(ac_home)/.ac-crewdeputy-home" ] \
+    || actor=crewdeputy
   # A GATE/ASK/DECIDED-opening message that does not close with the "optional
   # word, optional (parenthetical), then colon" shape ac_room_pending requires
   # settles/opens nothing - it reads as answered to a human while every

@@ -39,7 +39,7 @@ run_backend orca '
 assert_eq "$(cat "$AC_HOME/state/.pane-o1")" "term1 tab1" \
   "orca handle+tab recorded in the shared 2-field grammar"
 assert_contains "$(cat "$FAKE_ORCA/log")" \
-  "terminal create --worktree path:/tmp/wt --title crew:o1" \
+  "terminal create --worktree path:/tmp/wt --title crew:home/o1" \
   "a project-worktree pane groups under ITS OWN worktree node"
 assert_contains "$(cat "$FAKE_ORCA/log")" "cd '/tmp/wt'" \
   "window_new moves the shell to the requested dir (create has no cwd flag)"
@@ -268,13 +268,31 @@ tab_crew="$(awk '{print $2}' "$AC_HOME/state/.pane-fx-crew1")"
 tab_fy="$(awk '{print $2}' "$AC_HOME/state/.pane-fy-chief")"
 [ "$tab_fx" != "$tab_fy" ] || fail "two rooms must open two tabs under the home"
 [ "$tab_crew" != "$tab_fx" ] || fail "a worktree pane must NOT join the room tab - it lives under its worktree"
-assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree path:$AC_HOME --title crew:fx-chief" \
-  "a chief-kind pane groups under the HOME node"
-assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree path:/tmp/wt-fx --title crew:fx-crew1" \
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree path:$AC_HOME --title crew:home/fx-chief" \
+  "a chief-kind pane groups under the HOME node - creation titles carry the fleet token (crew:<fleet>/<id>, display-only) so mixed-fleet tab lists stay tellable"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree path:/tmp/wt-fx --title crew:home/fx-crew1" \
   "a crewmate pane groups under its own worktree node"
 assert_eq "$(cat "$AC_HOME/state/.orca-fam-famx")" "$tab_fx" \
   "the family record names the room's home tab"
 assert_no_file "$AC_HOME/state/.orca-fam-_root" "a worktree pane mints no family record"
+
+# config/orca-node pins the HOME node by FULL SELECTOR - measured: two Orca
+# worktree entries can share one path (a workspace-scoped entry rides an
+# `::workspace:` id suffix), and a `path:` selector always matches the main
+# entry - so a deputy home under the same container as its parent needs the
+# id selector to get its own sidebar node. Worker panes are unaffected.
+printf 'id:fake-repo::/x::workspace:w1\n' >"$AC_HOME/config/orca-node"
+run_backend orca '
+  export AC_WINDOW_FAMILY=famz
+  backend_window_new fz-chief "$AC_HOME"
+  backend_window_new fz-crew /tmp/wt-fx
+' >/dev/null
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree id:fake-repo::/x::workspace:w1 --title crew:home/fz-chief" \
+  "config/orca-node pins the home-node selector verbatim"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree path:/tmp/wt-fx --title crew:home/fz-crew" \
+  "the pin never touches worker-pane placement"
+run_backend orca 'backend_kill_window fz-chief; backend_kill_window fz-crew'
+rm -f "$AC_HOME/config/orca-node"
 
 # A second same-family pane AT THE HOME splits into the room tab.
 run_backend orca '

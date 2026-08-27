@@ -1506,6 +1506,11 @@ owt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/ow1.meta" | head -1)"
 case "$owt" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "the worktree must be orca-managed (got: $owt)" ;; esac
 grep -q -- 'worktree create.*--setup run' "$FAKE_ORCA/log" \
   || fail "the lease must run the repo-defined Orca setup hooks (--setup run)"
+# The CLI opens the worktree WITH a first terminal (a bare shell); the crew
+# pane must BE the worktree's first tab, so the lease closes that startup
+# terminal instead of leaving an orphan shell tab beside the agent.
+ls "$FAKE_ORCA/terminals/"termS*.buf >/dev/null 2>&1 \
+  && fail "the lease must close the worktree's startup terminal - the crew pane is the first tab"
 # The primary checkout's node_modules is carried into the fresh worktree (git
 # brings only tracked files) as a real COPY - a symlink would let a crewmate's
 # own install mutate the primary's deps.

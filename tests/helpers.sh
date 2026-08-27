@@ -745,6 +745,16 @@ case "${1:-}" in
         wpath="$d/orca-wt/$wname"
         mkdir -p "$d/orca-wt"
         git -C "$wrepo" worktree add -q -b "fakeuser/$wname" "$wpath" "${wbase:-HEAD}" 2>/dev/null           || { printf '{"ok":false,"error":{"message":"worktree_create_failed"}}\n'; exit 1; }
+        # The real CLI creates the worktree AND its first terminal, and the
+        # create JSON carries NO startup handle (measured 1.4.188 - the
+        # terminal is discoverable only through `terminal list` by
+        # worktreePath) - mirror both halves so the lease's discovery-based
+        # close is testable.
+        sn="$(next)"
+        : >"$d/terminals/termS$sn.buf"; : >"$d/terminals/termS$sn.in"
+        printf 'tabS%s\n' "$sn" >"$d/terminals/termS$sn.tab"
+        printf 'zsh\n' >"$d/terminals/termS$sn.title"
+        printf '%s\n' "$wpath" >"$d/terminals/termS$sn.wt"
         printf '{"ok":true,"result":{"worktree":{"path":"%s","branch":"refs/heads/fakeuser/%s"}}}\n' "$wpath" "$wname"
         exit 0 ;;
       rm)
@@ -817,8 +827,9 @@ case "${2:-}" in
       [ -e "$f" ] || continue
       h="${f##*/}"; h="${h%.tab}"
       [ -f "$d/terminals/$h.buf" ] || continue
-      printf '%s{"handle":"%s","tabId":"%s","title":"%s"}' \
-        "$sep" "$h" "$(cat "$f")" "$(head -1 "$d/terminals/$h.title" 2>/dev/null)"
+      printf '%s{"handle":"%s","tabId":"%s","title":"%s","worktreePath":"%s"}' \
+        "$sep" "$h" "$(cat "$f")" "$(head -1 "$d/terminals/$h.title" 2>/dev/null)" \
+        "$(head -1 "$d/terminals/$h.wt" 2>/dev/null)"
       sep=","
     done
     printf ']}}\n'; exit 0 ;;

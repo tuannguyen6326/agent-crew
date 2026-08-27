@@ -966,4 +966,21 @@ case "$("$BIN/ac-room.sh" list)" in
   *archive*) fail "data/archive/ must never read as a task family in list" ;;
 esac
 
+# In a CREWDEPUTY home the fleet-chief actor string normalizes to the role
+# the record can disambiguate: a deputy loads the same chief law and posts as
+# "crewchief", but its rooms sit beside migrated parent-fleet entries whose
+# "crewchief" was a DIFFERENT session - so the deputy's own posts record
+# "crewdeputy". Family roomchief actors (<fam>-chief) are untouched: a room
+# chief inside the deputy fleet is genuinely a chief of that room.
+touch "$AC_HOME/.ac-crewdeputy-home"
+"$BIN/ac-room.sh" post depfam crewchief "TRIAGE: flow=direct - why: t" >/dev/null
+assert_contains "$("$BIN/ac-room.sh" show depfam)" "] crewdeputy>" \
+  "a deputy home's crewchief actor records as crewdeputy"
+case "$("$BIN/ac-room.sh" show depfam)" in *"] crewchief>"*) \
+  fail "the ambiguous crewchief actor must not survive in a deputy home" ;; esac
+"$BIN/ac-room.sh" post depfam depfam-chief "note: roomchief actor stays" >/dev/null
+assert_contains "$("$BIN/ac-room.sh" show depfam)" "] depfam-chief>" \
+  "a family roomchief actor is untouched in a deputy home"
+rm -f "$AC_HOME/.ac-crewdeputy-home"
+
 pass

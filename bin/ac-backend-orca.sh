@@ -89,12 +89,20 @@ orca_worktree_lease() {
   # branch <git-user>/<name>; the crew contract owns crew/<id>, so the
   # checkout is switched there (adopting an existing crew/<id> on a
   # respawn) and the minted name dropped. Prints the path; 1 on failure.
-  local id="$1" repo="$2" out path obranch def
+  local id="$1" repo="$2" out path obranch def st
   def="$(ac_default_branch "$repo")"
   out="$(orca_json worktree create --repo "path:$repo" --name "crew-$id" \
       --base-branch "$def" --setup run --no-parent)" || return 1
   path="$(jq -r '.result.worktree.path // empty' <<<"$out")"
   [ -n "$path" ] && [ -d "$path" ] || return 1
+  # The CLI opens the worktree WITH a first terminal (a bare shell), and the
+  # create JSON carries no handle for it (measured 1.4.188). The crew pane
+  # must BE the worktree's first tab, so every terminal already sitting on
+  # the seconds-old worktree - all CLI-minted - is closed by discovery.
+  for st in $(orca_json terminal list 2>/dev/null \
+      | jq -r --arg p "$path" '.result.terminals[] | select(.worktreePath==$p) | .handle'); do
+    orca_json terminal close --terminal "$st" >/dev/null 2>&1 || true
+  done
   obranch="$(jq -r '.result.worktree.branch // empty' <<<"$out")"
   obranch="${obranch#refs/heads/}"
   if git -C "$path" show-ref --verify -q "refs/heads/crew/$id"; then
@@ -126,8 +134,12 @@ orca_place_pane() {
   # nothing is ever typed into a booting surface. <id> feeds the family
   # ladder and the creation title. Returns 1 on failure (prints nothing,
   # warns) so callers own their own death message.
-  local dir="$1" cmd="${2:-}" id="${3:-agent}" out handle tab fam famf base before lockdir i dir_p home_p
+  local dir="$1" cmd="${2:-}" id="${3:-agent}" out handle tab fam famf base before lockdir i dir_p home_p node_sel
   [ -n "$cmd" ] || cmd="cd '$dir' && exec \${SHELL:-/bin/zsh}"
+  # Creation titles carry the fleet token (crew:<fleet>/<id>) - display-only,
+  # parsed by nothing: two fleets under one container (a deputy beside its
+  # parent) render identical bare titles in mixed tab lists otherwise. The
+  # harness overwrites the title once it boots; the prefix covers the gap.
   # GROUPING RULE: chief-kind panes (cwd = the HOME) group under the home's
   # sidebar node with one FAMILY TAB per room; crewmate and verifier panes
   # (cwd = a project/lease worktree) group under THAT worktree's own node,
@@ -139,7 +151,7 @@ orca_place_pane() {
   home_p=""
   [ -z "${AC_HOME:-}" ] || home_p="$(cd "$AC_HOME" 2>/dev/null && pwd -P || true)"
   if [ "$dir_p" != "$home_p" ]; then
-    out="$(orca_json terminal create --worktree "path:$(orca_resolve_group "$dir_p")" --title "crew:$id" \
+    out="$(orca_json terminal create --worktree "path:$(orca_resolve_group "$dir_p")" --title "crew:$(ac_fleet_name)/$id" \
         --command "$cmd")" || {
       ac_warn "orca terminal create failed for $dir (is the Orca runtime running - orca open / orca serve - and the repo registered: orca repo add --path <repo>?)"
       return 1
@@ -187,7 +199,15 @@ orca_place_pane() {
       ac_warn "could not identify the split pane in family tab $tab"; return 1
     fi
   else
-    out="$(orca_json terminal create --worktree "path:$(orca_resolve_group "$home_p")" --title "crew:$id" \
+    # config/orca-node pins the HOME node by FULL SELECTOR. Two Orca worktree
+    # entries can share one path (a workspace-scoped entry rides an
+    # `::workspace:` id suffix - measured), and a `path:` selector always
+    # matches the main entry - so a deputy home living under the same
+    # container as its parent fleet needs the id selector to keep its panes
+    # on its own sidebar node.
+    node_sel="$(ac_config_read orca-node '')"
+    [ -n "$node_sel" ] || node_sel="path:$(orca_resolve_group "$home_p")"
+    out="$(orca_json terminal create --worktree "$node_sel" --title "crew:$(ac_fleet_name)/$id" \
         --command "$cmd")" || {
       ac_warn "orca terminal create failed for $dir (is the Orca runtime running - orca open / orca serve - and the repo registered: orca repo add --path <repo>?)"
       return 1
