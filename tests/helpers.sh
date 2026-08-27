@@ -699,7 +699,7 @@ printf 'orca %s\n' "$*" >>"$d/log"
 if [ -f "$d/.unreachable" ]; then
   printf '{"ok":false,"error":{"message":"runtime unreachable"}}\n'; exit 1
 fi
-term="" text="" has_text=0 enter=0 interrupt=0 limit=40 wt="" cond="" title_flag=""
+term="" text="" has_text=0 enter=0 interrupt=0 limit=40 wt="" cond="" title_flag="" screen=0
 args=("$@"); i=0
 while [ $i -lt ${#args[@]} ]; do
   case "${args[$i]}" in
@@ -710,13 +710,14 @@ while [ $i -lt ${#args[@]} ]; do
     --limit) i=$((i+1)); limit="${args[$i]}" ;;
     --worktree) i=$((i+1)); wt="${args[$i]}" ;;
     --for) i=$((i+1)); cond="${args[$i]}" ;;
+    --screen) screen=1 ;;
     --title) i=$((i+1)); title_flag="${args[$i]}" ;;
   esac
   i=$((i+1))
 done
 next() { local f="$d/.n" n; n="$(cat "$f" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$f"; printf '%s\n' "$n"; }
 tail_json() {
-  { tail -n "$2" "$d/terminals/$1.buf" 2>/dev/null
+  { tail -n "$2" "$d/terminals/$1.buf" 2>/dev/null || tail -n "$2" "$d/terminals/$1" 2>/dev/null
     [ -s "$d/terminals/$1.in" ] && printf '> %s\n' "$(cat "$d/terminals/$1.in")"
   } | awk 'BEGIN{printf "["} {gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); printf "%s\"%s\"", (NR>1?",":""), $0} END{printf "]"}'
 }
@@ -792,7 +793,16 @@ case "${2:-}" in
   read)
     [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
     st=running; [ -e "$d/terminals/$term.exited" ] && st=exited
-    printf '{"ok":true,"result":{"terminal":{"status":"%s","tail":%s}}}\n' "$st" "$(tail_json "$term" "$limit")"; exit 0 ;;
+    src="$term"
+    # --screen reads what the terminal RENDERS; the default reads accumulated
+    # output, which a full-screen TUI sitting still leaves empty (measured on
+    # orca CLI 1.4.188 - its own help calls the default unsuitable for
+    # verifying rendered output). <h>.screen models the rendered surface.
+    if [ "$screen" = 1 ] && [ -f "$d/terminals/$term.screen" ]; then src="$term.screen"; fi
+    if [ "$screen" != 1 ] && [ -f "$d/terminals/$term.screen" ] && [ ! -s "$d/terminals/$term.buf" ]; then
+      printf '{"ok":true,"result":{"terminal":{"status":"%s","tail":[]}}}\n' "$st"; exit 0
+    fi
+    printf '{"ok":true,"result":{"terminal":{"status":"%s","tail":%s}}}\n' "$st" "$(tail_json "$src" "$limit")"; exit 0 ;;
   send)
     [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
     [ -e "$d/terminals/$term.exited" ] && { printf '{"ok":false,"error":{"message":"terminal_not_writable"}}\n'; exit 1; }

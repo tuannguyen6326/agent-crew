@@ -80,6 +80,22 @@ out="$(run_backend orca 'backend_capture_pane term1 1')"
 assert_eq "$out" "three" "raw-pane capture addresses the handle directly"
 assert_fails run_backend orca 'backend_capture_pane "" 1'
 
+# A full-screen TUI SITTING STILL emits nothing new, so the CLI's default
+# accumulated read comes back EMPTY while the pane plainly renders a prompt -
+# its own help calls that default "unsuitable for verifying rendered output".
+# Every capture here answers a question about what the pane SHOWS (did the
+# harness come up, did the submit land, did a marker appear), so the driver
+# must read the RENDERED screen.
+: >"$FAKE_ORCA/terminals/term1.buf"
+printf '> ready for input\n' >"$FAKE_ORCA/terminals/term1.screen"
+out="$(run_backend orca 'backend_capture o1 5')"
+assert_contains "$out" "ready for input" \
+  "capture reads the RENDERED screen, not the accumulated stream an idle TUI leaves empty"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal read --terminal term1 --limit 5 --screen" \
+  "the read asks for the screen explicitly"
+rm -f "$FAKE_ORCA/terminals/term1.screen"
+printf 'one\ntwo\nthree\n' >"$FAKE_ORCA/terminals/term1.buf"
+
 # --- send_line: type, verified submit, strand, unobservable ----------------------
 
 : >"$FAKE_ORCA/log"

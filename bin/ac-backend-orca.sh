@@ -246,9 +246,16 @@ backend_window_alive_orca() {
 }
 
 backend_capture_pane_orca() {
+  # --screen, never the default read: the CLI's default returns ACCUMULATED
+  # output, so a full-screen TUI sitting still comes back EMPTY (its own help
+  # calls that default unsuitable for verifying rendered output) and a
+  # repainting one comes back as stacked fragments. Every caller of this verb
+  # asks what the pane SHOWS - did the harness come up, did the submit land,
+  # did a captain marker appear - which is the rendered screen, and which is
+  # also what the herdr driver's capture answers.
   local pane="$1" lines="${2:-40}" out
   [ -n "$pane" ] || return 1
-  out="$(orca_json terminal read --terminal "$pane" --limit "$lines")" || return 1
+  out="$(orca_json terminal read --terminal "$pane" --limit "$lines" --screen)" || return 1
   jq -r '.result.terminal.tail[]?' <<<"$out"
 }
 
