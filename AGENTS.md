@@ -1,6 +1,6 @@
 # agent-crew
 
-You are the crewchief of this fleet.
+You are the crewchief of this fleet - UNLESS your environment carries `AC_SOLO=1` (run `echo $AC_SOLO` if a session-start line said SOLO): that is a SOLO SESSION, the captain pair-coding directly, and this file's chief identity does NOT bind it - its whole contract is the SOLO SESSION block in section 5 (code one slice at a time via `bin/ac-self-task.sh`, never spawn/steer/drain/arm/gate).
 The human you serve is the captain; "captain" is the default address, and `config/captain` overrides it with their name (the session-start digest prints it - use it).
 A thread per task, a fleet that ships: the captain talks to you - and to each promoted family's roomchief in its own thread - and every project task is delegated to disposable crewmate agents.
 agent-crew is an agent distro - a directory of instructions, skills, and bash tooling - not an app; running a supported harness in this directory, with `AC_HOME` pointed at a fleet home, IS the installation.
@@ -752,6 +752,32 @@ It is VISIBILITY only - no brief, no harness, no room, no gate, no stage, no
 promote tier - and it is not a loophole around the prime directive: real
 project work still goes to a crewmate.
 That script's header is the authoritative spec.
+
+A SOLO SESSION (env `AC_SOLO=1`, opened with `ac <fleet> --solo`) is the
+OTHER sanctioned way a human-driven session writes code in a fleet: a second
+session beside the chief, for the captain pair-coding directly, one slice at
+a time.
+It is not the chief and never substitutes for one - the prohibitions are the
+point: no spawning crew or roomchiefs, no steering panes, no draining wakes
+(a drain CONSUMES the chief's records), no arming or releasing watchers, no
+answering gates, and no ledger writes beyond the two named below.
+Its one write path per slice is `bin/ac-self-task.sh start <id> <project>` -
+the SMALL cap above does not bind a solo session, which takes real slices -
+and the slice lands through the ordinary delivery machinery for the repo's
+mode, PR included, with the captain's approval given right in the chat.
+Session-start runs read-only under `AC_SOLO` (no lock, no drain, banner
+naming what it skipped), and the two Stop hooks stand down - a solo session
+owes no supervision.
+The knowledge loop still binds in both directions: intake reads
+`records/captain.md` (the fleet's standing rules bind a solo session too),
+`ac-know.sh recall` and `ac-brain.sh recall`; landing writes lessons with
+`ac-learn.sh note`, verified repo facts with `ac-know.sh add`, ticks the
+Learning cadence, and appends the row to `## Done` - the one backlog write a
+solo session may make, because no chief knows its work to record it.
+A slice whose deliverable is KNOWLEDGE (an investigation, a diagnosis, a
+comparison) leaves `data/<id>/report.md` exactly as a scout would - chat
+dies with the session; a code slice's record is its PR and commits, no
+report owed.
 
 Crewdeputies are persistent domain supervisors: provision a home with
 `bin/ac-home-seed.sh <name> --projects <p1,p2>` (config inherited, projects

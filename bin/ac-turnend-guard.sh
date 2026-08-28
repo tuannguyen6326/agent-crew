@@ -100,6 +100,10 @@
 # a STUCK line included - keeps it silent. See parked_reminder below.
 
 set -uo pipefail
+# A SOLO session (AC_SOLO=1) owes no supervision: the chief drains, arms and
+# answers hand-backs - blocking the one session that must NOT discharge those
+# obligations would nag it into role violations.
+[ "${AC_SOLO:-}" != 1 ] || exit 0
 . "$(dirname "$0")/ac-lib.sh" 2>/dev/null || exit 0
 . "$(dirname "$0")/ac-backend.sh" 2>/dev/null || exit 0
 . "$(dirname "$0")/ac-wake-lib.sh" 2>/dev/null || exit 0

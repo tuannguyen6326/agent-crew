@@ -87,6 +87,16 @@ git -C "$AC_HOME" -c user.email=t@t -c user.name=t commit -q --allow-empty -m in
 # No crew, no remote transport: the hook must not arm anything at all.
 stub_watch 'heartbeat'
 assert_eq "$(run_hook)" "0" "an idle fleet arms nothing"
+
+# A SOLO session (AC_SOLO=1) NEVER arms: supervision is the chief's obligation,
+# and a solo hook that took the watcher would steal the chief's wake channel.
+inflight_meta tsolo
+stub_watch 'report:tsolo'
+rc=0
+( cd "$AC_HOME" && printf '{}' | AC_SOLO=1 "$hook" >/dev/null 2>&1 ) || rc=$?
+assert_eq "$rc" "0" "a solo session declines silently even with crew in flight"
+assert_eq "$(calls)" "0" "...and never runs the watcher"
+rm -f "$AC_HOME"/state/tsolo.meta
 assert_eq "$(calls)" "0" "and never calls the watcher"
 
 # --- an actionable close is translated into a wake --------------------------

@@ -91,9 +91,26 @@ fi
 
 printf -- '-- session lock --\n'
 read_only=0
+# A SOLO session (AC_SOLO=1) is a second session beside the chief: it rides
+# the read-only rail WITHOUT touching the lock - acquiring would contend the
+# chief's seat, and the drain below would CONSUME the chief's wake records.
+# The digest still runs in full, so the session starts oriented.
+if [ "${AC_SOLO:-}" = 1 ]; then
+  read_only=1
+  cat <<'EOF'
+=================================================================
+== SOLO SESSION (AC_SOLO=1) - not the chief of this fleet.     ==
+== Skipped: session lock, wake-drain, qa reap, config converge.==
+== You code directly, one slice at a time, through             ==
+==   bin/ac-self-task.sh start <id> <project>                  ==
+== Never: spawn crew, steer panes, drain wakes, arm watchers,  ==
+== answer gates - those belong to the chief session.           ==
+=================================================================
+EOF
+fi
 lock_rc=0
-lock_out="$("$bin_dir/ac-lock.sh" acquire 2>&1)" || lock_rc=$?
-[ -n "$lock_out" ] && printf '%s\n' "$lock_out"
+[ "$read_only" -eq 1 ] || lock_out="$("$bin_dir/ac-lock.sh" acquire 2>&1)" || lock_rc=$?
+[ -n "${lock_out:-}" ] && printf '%s\n' "$lock_out"
 if [ "$lock_rc" -eq 2 ]; then
   read_only=1
   cat <<'EOF'

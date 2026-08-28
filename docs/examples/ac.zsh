@@ -1,14 +1,18 @@
-# agent-crew fleet launcher: `ac <fleet>[/<deputy>] [--backend=<b>] [--harness=<h>]`
+# agent-crew fleet launcher: `ac <fleet>[/<deputy>] [--backend=<b>] [--harness=<h>] [--solo]`
 #   ac                  -> list fleets (subdirs with state/)
 #   ac lab              -> launch the chief on the lab fleet (harness claude)
-#   ac lab/mobile       -> launch on the nested CREWDEPUTY home
+#   ac lab/mobile         -> launch on the nested CREWDEPUTY home
 #                          (crewdeputies/<name> under the fleet); NOTE this opens
 #                          a plain chief session on that home - no deputy kickoff,
 #                          no parent meta, so the registry still reads NOT-RUNNING
-#   ac mobile           -> bare deputy name: resolved when exactly ONE fleet
+#   ac mobile             -> bare deputy name: resolved when exactly ONE fleet
 #                          carries it; several fleets -> refused with the list
 #   --harness=<h>       -> harness to run (default claude); the bare 2nd word
 #                          form `ac lab codex` still works
+#   --solo              -> a SOLO session beside the chief (AC_SOLO=1): runs
+#                          inline in the CURRENT terminal, never takes the chief
+#                          lock, codes one slice at a time via bin/ac-self-task.sh;
+#                          session-start goes read-only under it
 #   --backend=<b>       -> where the chief OPENS: herdr | orca. Default ladder
 #                          (same as ac-spawn): flag > the home's config/backend
 #                          > herdr. herdr attaches the "<fleet> (crewchief)"
@@ -22,7 +26,7 @@
 #   legacy       : `--deputy=<name>` (and the `--debuty=` spelling alias)
 _ac_home() {
   emulate -L zsh
-  local fleet="$1" harness="$2" deputy="${3:-}" backend="${4:-}"
+  local fleet="$1" harness="$2" deputy="${3:-}" backend="${4:-}" solo="${5:-}"
   local ach="$HOME/Work/ac-homes/$fleet"
   [[ -d "$ach" ]] || { print -u2 "ac: no fleet at $ach"; return 1 }
   if [[ -n "$deputy" ]]; then
@@ -36,6 +40,13 @@ _ac_home() {
     herdr|orca) ;;
     *) print -u2 "ac: unknown backend '$backend' (valid: herdr, orca)"; return 1 ;;
   esac
+  # SOLO: a second session beside the chief - always inline in the current
+  # terminal (it owns no workspace/tab), AC_SOLO=1 makes session-start
+  # read-only and stands the supervision hooks down.
+  if [[ -n "$solo" ]]; then
+    cd "$ach" && AC_HOME="$ach" AC_SOLO=1 exec "$harness"
+    return
+  fi
   # orca home, or already inside herdr: run the chief inline right here.
   # cwd is the HOME (workspace = home, repo = code): the home symlinks the
   # executable core (bin/ CLAUDE.md .claude/ AGENTS.md) to the repo.
@@ -78,14 +89,15 @@ ac() {
     "$HOME/Work/agent-crew/bin/ac-dashboard.sh" "$@"
     return
   fi
-  local deputy="" backend="" harness="" arg
+  local deputy="" backend="" harness="" solo="" arg
   local -a rest
   for arg in "$@"; do
     case "$arg" in
       --deputy=*|--debuty=*) deputy="${arg#*=}" ;;
       --backend=*) backend="${arg#*=}" ;;
       --harness=*) harness="${arg#*=}" ;;
-      --*) print -u2 "ac: unknown flag $arg (known: --backend=<herdr|orca> --harness=<h> --deputy=<name>)"; return 1 ;;
+      --solo) solo=1 ;;
+      --*) print -u2 "ac: unknown flag $arg (known: --backend=<herdr|orca> --harness=<h> --deputy=<name> --solo)"; return 1 ;;
       *) rest+=("$arg") ;;
     esac
   done
@@ -119,7 +131,7 @@ ac() {
     fi
   fi
   [[ -n "$harness" ]] || harness="${rest[2]:-claude}"
-  _ac_home "$fleet" "$harness" "$deputy" "$backend"
+  _ac_home "$fleet" "$harness" "$deputy" "$backend" "$solo"
 }
 
 # tab-complete fleet names, fleet/deputy, harnesses and the = flags

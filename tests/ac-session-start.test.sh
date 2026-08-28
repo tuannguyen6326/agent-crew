@@ -233,4 +233,18 @@ out="$("$BIN/ac-session-start.sh" 2>&1)"
 assert_contains "$out" "DISTRO-LAG:" "an absent pointer still prints one line (fallback to ac_root())"
 case "$out" in *"DISTRO-LAG: unknown"*) fail "ac_root() fallback must succeed, not report unknown: $out" ;; esac
 
+# --- AC_SOLO=1: the read-only digest WITHOUT touching the lock ---------------
+# A solo session is a second session beside the chief: it must not take the
+# session lock and must not CONSUME wakes (a drain claims and deletes - that
+# is the chief's channel), while the digest still orients it.
+solo_home="$TMP/solo-home"
+mkdir -p "$solo_home/state/.wake-spool" "$solo_home/config" "$solo_home/data" "$solo_home/records" "$solo_home/projects"
+printf '9	report	solo-t1	done: x
+' >"$solo_home/state/.wake-spool/1.1.000000"
+rc=0; out="$(AC_SOLO=1 AC_HOME="$solo_home" "$BIN/ac-session-start.sh" 2>&1)" || rc=$?
+assert_contains "$out" "SOLO" "the digest announces the solo session"
+assert_no_file "$solo_home/state/.session-lock" "a solo session never takes the chief lock"
+[ -e "$solo_home/state/.wake-spool/1.1.000000" ] \
+  || fail "a solo session must not consume the chief's wake records"
+
 pass

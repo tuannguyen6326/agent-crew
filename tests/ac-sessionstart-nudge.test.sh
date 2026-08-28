@@ -56,6 +56,24 @@ run "$wt"
 assert_eq "$rc" 0 "linked worktree: exit 0"
 [ -z "$out" ] || fail "a crewmate's linked worktree must never be nudged (got: $out)"
 
+# A SOLO session (AC_SOLO=1) is ORIENTED, not deputized: session-start still
+# runs (it goes read-only under AC_SOLO), and the one write path is self-task.
+out="$(AC_SOLO=1 AC_HOME="$g" "$NUDGE" 2>/dev/null)"; rc=$?
+assert_eq "$rc" 0 "solo session: exit 0"
+assert_contains "$out" "SOLO" "solo session gets the solo orientation"
+assert_contains "$out" "NOT the crewchief" "the orientation denies the chief identity outright"
+assert_contains "$out" "ac-self-task.sh" "the orientation names the one write path"
+assert_contains "$out" "ac-session-start.sh" "solo still runs session-start (read-only)"
+# ...and the orientation is UNCONDITIONAL: it must survive every silence gate
+# below it - a LIVE chief session-lock (the exact solo scenario: a second
+# session beside a working chief) and even a home the gates cannot resolve.
+printf 'pid=%s\nsince=2026-08-28T00:00:00Z\n' "$$" >"$g/state/.session-lock"
+out="$(AC_SOLO=1 AC_HOME="$g" "$NUDGE" 2>/dev/null)"
+assert_contains "$out" "NOT the crewchief" "the solo orientation survives a live chief lock"
+rm -f "$g/state/.session-lock"
+out="$(AC_SOLO=1 "$NUDGE" 2>/dev/null)"
+assert_contains "$out" "NOT the crewchief" "the solo orientation survives an unresolvable home"
+
 # 5. Fail open: an unresolvable home exits 0 silently, never blocking init.
 run "$TMP/does-not-exist"
 assert_eq "$rc" 0 "a broken home fails open (exit 0), never blocks session init"

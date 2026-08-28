@@ -133,4 +133,27 @@ case "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null || true)" in
   *"self:s1"*) fail "teardown must give the self task's lease back" ;;
 esac
 
+# --- orca fleet: the self-task worktree is ORCA-MANAGED ----------------------
+# The lease follows the fleet backend like every other isolated checkout
+# (crew, verifier): an orca fleet leases through the Orca CLI, records
+# worktree_backend=orca so teardown routes to the release arm, and lands on
+# crew/<id> (the orca lease already switches there).
+make_fake_orca
+printf 'â³ fake
+' >"$FAKE_ORCA/.default-title"
+printf 'orca
+' >"$AC_HOME/config/backend"
+"$BIN/ac-self-task.sh" start so1 "$repo" >/dev/null \
+  || fail "an orca-backend self task must start on the fake orca"
+so_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/so1.meta" | head -1)"
+case "$so_wt" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "the self-task worktree must be orca-managed (got: $so_wt)" ;; esac
+assert_eq "$(sed -n 's/^worktree_backend=//p' "$AC_HOME/state/so1.meta")" "orca" \
+  "the meta records the orca worktree provenance for teardown"
+assert_eq "$(git -C "$so_wt" branch --show-current)" "crew/so1" \
+  "the orca self-task tree sits on the crew contract branch"
+"$BIN/ac-teardown.sh" so1 --force >/dev/null 2>&1
+[ ! -d "$so_wt" ] || fail "teardown must remove the orca-managed self-task worktree"
+printf 'herdr
+' >"$AC_HOME/config/backend"
+
 pass

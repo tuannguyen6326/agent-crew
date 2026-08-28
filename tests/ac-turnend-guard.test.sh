@@ -83,6 +83,17 @@ assert_contains "$out" "queued wakes" "the queued-wake reason still fires"
 assert_contains "$out" "hbqfam" "the HANDBACK line rides alongside a queued wake instead of queueing behind it"
 rm -rf "$state/.wake-spool" "$AC_HOME/data/hbqfam"
 
+# A SOLO session (AC_SOLO=1) owes no supervision: the chief drains, arms and
+# answers hand-backs - blocking a solo turn on the fleet's obligations would
+# nag the one session that must not discharge them.
+hb_room hbsolo
+mkdir -p "$state/.wake-spool"
+printf '9\treport\thbs-live\tdone: x\n' >"$state/.wake-spool/1.1.000001"
+rc=0; out="$(printf '{}' | AC_SOLO=1 "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "0" "a solo session is never blocked on the chief's obligations"
+assert_eq "$out" "" "...and silently: the obligations are not its news"
+rm -rf "$state/.wake-spool" "$AC_HOME/data/hbsolo"
+
 # (2) stale watcher beacon with crew in flight + HANDBACK, at once.
 hb_room hbwfam
 printf 'kind=ship\n' >"$state/hbw-live.meta"

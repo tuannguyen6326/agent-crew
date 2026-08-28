@@ -24,6 +24,18 @@
 # order session-start, and a SPAWNED deputy either holds a live lock by the
 # time it reads context or eats one redundant reminder line - harmless.
 set -u
+
+# THE SOLO ARM COMES BEFORE EVERY GATE. Every check below exists to keep the
+# nudge quiet in the right rooms (owned homes, unresolvable homes) - but a
+# SOLO session is the one reader whose orientation must survive ALL of them:
+# it opens beside a LIVE chief (whose session-lock is exactly what the
+# lock-silence gate keys on), and it needs no home resolution to be told what
+# it is. Measured on the first live run: the orientation sat below the gates,
+# the lock silenced it, and the session introduced itself as the chief.
+if [ "${AC_SOLO:-}" = 1 ]; then
+  printf 'agent-crew SOLO session (AC_SOLO=1): you are NOT the crewchief - the chief-law identity block does not bind you (AGENTS.md section 1 names this exception; the SOLO SESSION block in section 5 is your contract). You pair-code with the captain DIRECTLY: run `bin/ac-session-start.sh` once (read-only under AC_SOLO - no lock, no drain), then code one slice at a time via `bin/ac-self-task.sh start <id> <project>`, landing per the repo mode with the captain approving in chat. The chief session owns wakes, watchers, gates and crew - never touch them from here, and never delegate to a crewmate.\n'
+  exit 0
+fi
 . "$(dirname "$0")/ac-lib.sh" 2>/dev/null || exit 0
 
 home="$(ac_home 2>/dev/null)" || exit 0

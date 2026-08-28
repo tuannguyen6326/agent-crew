@@ -107,6 +107,11 @@
 set -uo pipefail
 cat >/dev/null 2>&1 || true          # drain the payload; nothing here reads it
 
+# A SOLO session (AC_SOLO=1) never arms: supervision is the chief's
+# obligation, and a solo hook that took the watcher would steal the chief's
+# own wake channel (the bounded arm dies with this firing, stranding it).
+[ "${AC_SOLO:-}" != 1 ] || exit 0
+
 bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$bin_dir/ac-lib.sh" 2>/dev/null || exit 0
 

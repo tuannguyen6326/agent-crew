@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # ac-self-task.sh - make a SMALL chief-side edit VISIBLE. The authoritative
-# spec for the chief-self-but-visible mechanism.
+# spec for the chief-self-but-visible mechanism. A SOLO session (AC_SOLO=1)
+# uses the SAME verb per slice with no size cap - the cap below binds the
+# CHIEF's self-exception; the solo contract is AGENTS.md section 5's SOLO
+# SESSION block.
 #
 # Usage: ac-self-task.sh start <id> <project-name-or-dir>
 #        ac-self-task.sh log <id> '<progress line>'
@@ -31,9 +34,11 @@
 #      seed, the lease and the pane, so a refusal leaves nothing half-open, and
 #      never touches the ref.
 #   1. seed state/<id>.status, the progress log (the pane needs a file to tail),
-#   2. lease a pooled worktree in the project repo (bin/ac-tree.sh get, holder
-#      self:<id>) - the same pool a crewmate leases from, so the editor
-#      workspace and `ac-tree.sh list` see it like any other task,
+#   2. lease a worktree per the fleet backend - a herdr fleet from the in-repo
+#      pool (bin/ac-tree.sh get, holder self:<id>, the same pool a crewmate
+#      leases from), an orca fleet an Orca-managed worktree on crew/<id>
+#      (orca_worktree_lease; the meta records worktree_backend=orca so
+#      teardown routes to the release arm),
 #   3. open the labelled herdr tab and run `tail -f` on the progress log in it -
 #      the pane's ONLY job is to show the chief's own progress,
 #   4. write the COMPLETE state/<id>.meta with kind=self.
@@ -132,7 +137,11 @@ backend="$(ac_backend)"
 
 window=""
 self_cleanup() {
-  "$bin_dir/ac-tree.sh" return "$worktree" --force >/dev/null 2>&1 || true
+  if [ "$backend" = orca ]; then
+    orca_worktree_release "$worktree" || true
+  else
+    "$bin_dir/ac-tree.sh" return "$worktree" --force >/dev/null 2>&1 || true
+  fi
   rm -f "$meta"
   [ -z "$window" ] || backend_kill_window "$id" || true
 }
@@ -140,8 +149,14 @@ self_cleanup() {
 # 1. The progress log, before the pane that tails it exists.
 ac_status_append "$id" "working: self task started by the chief"
 
-# 2. The lease.
-worktree="$("$bin_dir/ac-tree.sh" get --repo "$project_dir" --id "$id" --holder "self:$id")"
+# 2. The lease - per the fleet backend, like every other isolated checkout
+# (crew, verifier): an orca fleet leases through the Orca CLI, on crew/<id>.
+if [ "$backend" = orca ]; then
+  worktree="$(orca_worktree_lease "$id" "$project_dir")" \
+    || ac_die "could not lease an Orca worktree for $id"
+else
+  worktree="$("$bin_dir/ac-tree.sh" get --repo "$project_dir" --id "$id" --holder "self:$id")"
+fi
 trap self_cleanup EXIT
 
 # 3. The pane. Refused rather than doubled when the backend cannot answer for an
@@ -164,6 +179,7 @@ ac_meta_set "$meta" backend "$backend"
 ac_meta_set "$meta" window "$window"
 ac_meta_set "$meta" worktree "$worktree"
 ac_meta_set "$meta" leases "$worktree"
+[ "$backend" != orca ] || ac_meta_set "$meta" worktree_backend orca
 ac_meta_set "$meta" lease_ids \
   "$(ac_meta_get "$project_dir/.crew/slots/$(basename "$worktree").meta" lease_id)"
 ac_meta_set "$meta" project "$project_name"
