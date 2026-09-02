@@ -148,4 +148,23 @@ out="$("$BIN/ac-promote.sh" s8 --mode local-only)"
 assert_contains "$out" "notified crewmate s8" "live window gets the notice"
 assert_contains "$(cat "$(fake_pane_buf s8)")" "crew/s8" "notice names the crew branch"
 
+# The promoted crewmate gets the SAME mode-specific delivery contract a
+# briefed worker gets, not just the mode name - a free-form notice left the
+# never-push and PR rules behind, the drift one shared renderer kills.
+si="$AC_HOME/data/s8/ship-instructions.md"
+assert_file "$si" "promotion writes the full ship instructions"
+assert_contains "$(cat "$si")" "Mode local-only" "the contract names the mode"
+assert_contains "$(cat "$si")" "Never push" "local-only carries its never-push rule"
+assert_contains "$(cat "$si")" "crew/s8" "the contract names the crew branch"
+assert_contains "$(cat "$(fake_pane_buf s8)")" "ship-instructions.md" \
+  "the notice points the crewmate at the full contract"
+
+# ...and a direct-pr promotion renders that mode's PR contract (no pane needed:
+# the instructions are written either way).
+repo9="$(make_repo p9)"
+mk_meta s9 "$repo9" scout
+"$BIN/ac-promote.sh" s9 --mode direct-pr >/dev/null
+assert_contains "$(cat "$AC_HOME/data/s9/ship-instructions.md")" "open a PR" \
+  "direct-pr instructions carry the push-and-PR contract"
+
 pass

@@ -33,6 +33,8 @@ assert_eq "$(awk -F= '$1=="leases"{print $2}' "$state/s1.meta")" "$worktree" \
 assert_eq "$(awk -F= '$1=="project_dir"{print $2}' "$state/s1.meta")" "$repo" \
   "the meta records the project dir ac-merge-local.sh lands from"
 [ -n "$(awk -F= '$1=="window"{print $2}' "$state/s1.meta")" ] || fail "the meta records the pane"
+assert_eq "$(awk -F= '$1=="mode"{print $2}' "$state/s1.meta")" "local-only" \
+  "an unflagged start keeps the local-only default"
 
 # The pane tails the progress log - that is the whole of "the pane shows chief
 # progress"; no agent runs in it.
@@ -133,6 +135,72 @@ case "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null || true)" in
   *"self:s1"*) fail "teardown must give the self task's lease back" ;;
 esac
 
+# --- the leased worktree is seeded like a crewmate's -------------------------
+# The chief/solo works the tree itself (or the captain opens a session INSIDE
+# it), and work on a worktree follows the crewmate layer - so the lease seeds
+# what a crew spawn seeds: instructions, settings, skills.
+printf 'fleet crewmate law marker\n' >"$AC_HOME/CREWMATE.md"
+mkdir -p "$AC_HOME/.claude"
+printf '{"marker":true}\n' >"$AC_HOME/.claude/settings.json"
+"$BIN/ac-self-task.sh" start s7 "$repo" >/dev/null
+s7wt="$(awk -F= '$1=="worktree"{print $2}' "$state/s7.meta")"
+assert_contains "$(cat "$s7wt/.claude/CLAUDE.md" 2>/dev/null)" "fleet crewmate law marker" \
+  "the crewmate instruction layer is seeded into the chief-leased worktree"
+assert_contains "$(cat "$s7wt/.claude/settings.json" 2>/dev/null)" '"marker":true' \
+  "the fleet harness settings are seeded like a crewmate worktree"
+[ -L "$s7wt/.claude/skills/crew-ship" ] \
+  || fail "the crewmate skills must be seeded into the chief-leased worktree"
+"$BIN/ac-teardown.sh" s7 --force >/dev/null 2>&1
+
+# A solo session is not only claude (`ac <fleet> <harness> --solo`): --harness
+# routes the seed to the instruction file THAT harness actually loads, the
+# same as a crew spawn - codex reads AGENTS.md, and its skills live under
+# .agents/skills.
+"$BIN/ac-self-task.sh" start s8 "$repo" --harness codex >/dev/null
+s8wt="$(awk -F= '$1=="worktree"{print $2}' "$state/s8.meta")"
+assert_contains "$(cat "$s8wt/AGENTS.md" 2>/dev/null)" "fleet crewmate law marker" \
+  "--harness codex seeds the layer into AGENTS.md, the file codex loads"
+[ -L "$s8wt/.agents/skills/crew-ship" ] \
+  || fail "--harness codex must seed skills where codex discovers them"
+"$BIN/ac-teardown.sh" s8 --force >/dev/null 2>&1
+
+# A repo that ships its OWN instruction file forces the seed to a FALLBACK
+# path the harness never auto-loads - a fallback swallowed by >/dev/null
+# points the session at the shipped law while the real crewmate layer sits
+# unannounced. The start must SURFACE the fallback durably.
+printf 'the shipped chief law\n' >"$repo/AGENTS.md"
+git -C "$repo" add -f AGENTS.md
+git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "ship AGENTS.md"
+"$BIN/ac-self-task.sh" start s9 "$repo" --harness codex >/dev/null
+s9wt="$(awk -F= '$1=="worktree"{print $2}' "$state/s9.meta")"
+assert_contains "$(cat "$state/s9.status")" ".claude/CREWMATE.md" \
+  "the fallback path is surfaced on the status record, never swallowed"
+assert_contains "$(cat "$s9wt/.claude/CREWMATE.md" 2>/dev/null)" "fleet crewmate law marker" \
+  "the crewmate layer really sits at the surfaced fallback path"
+"$BIN/ac-teardown.sh" s9 --force >/dev/null 2>&1
+git -C "$repo" rm -qf AGENTS.md && git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "drop AGENTS.md"
+
+# --- mode: recorded, never hardcoded -----------------------------------------
+# local-only is the DEFAULT (a chief self task lands with ac-merge-local.sh),
+# not a hardcode: a SOLO session takes real slices that land per the repo's
+# mode, PR included, and the fleet views display what the meta records.
+"$BIN/ac-self-task.sh" start s5 "$repo" --mode direct-pr >/dev/null
+assert_eq "$(awk -F= '$1=="mode"{print $2}' "$state/s5.meta")" "direct-pr" \
+  "a solo slice's PR mode reaches the meta the fleet views display"
+"$BIN/ac-teardown.sh" s5 --force >/dev/null 2>&1
+err="$("$BIN/ac-self-task.sh" start s6 "$repo" --mode bogus 2>&1 1>/dev/null || true)"
+assert_contains "$err" "invalid --mode" "an unknown mode refuses rather than records nonsense"
+assert_no_file "$state/s6.meta" "the refused start writes no meta"
+
+# --base-branch only ever reaches the orca lease call site; on a herdr fleet
+# (the ambient default here) it would otherwise silently no-op instead of
+# failing loud - the exact silent-outcome defect this fleet's own
+# conventions refuse.
+err="$("$BIN/ac-self-task.sh" start s7 "$repo" --base-branch release 2>&1 1>/dev/null || true)"
+assert_contains "$err" "requires an orca-backend fleet" \
+  "--base-branch on a herdr-backend fleet must die, not silently no-op"
+assert_no_file "$state/s7.meta" "the refused start writes no meta"
+
 # --- orca fleet: the self-task worktree is ORCA-MANAGED ----------------------
 # The lease follows the fleet backend like every other isolated checkout
 # (crew, verifier): an orca fleet leases through the Orca CLI, records
@@ -151,8 +219,37 @@ assert_eq "$(sed -n 's/^worktree_backend=//p' "$AC_HOME/state/so1.meta")" "orca"
   "the meta records the orca worktree provenance for teardown"
 assert_eq "$(git -C "$so_wt" branch --show-current)" "crew/so1" \
   "the orca self-task tree sits on the crew contract branch"
+# The tail is the PANE'S OWN command - nothing is ever typed into a booting
+# shell (measured: a typed `tail -f` raced the shell's cd+exec and landed as
+# interleaved fragments; the first start died and left an orphan status line).
+grep -q "exec tail -f" "$FAKE_ORCA/log" \
+  || fail "the orca self-task pane must start WITH the tail as its command"
+case "$(cat "$FAKE_ORCA/log")" in *"--text tail"*) \
+  fail "the tail must never be typed into the pane after boot" ;; esac
+# lease_ids is a POOL concept; an orca lease has no slot meta to read it from.
+assert_eq "$(sed -n 's/^lease_ids=//p' "$AC_HOME/state/so1.meta")" "" \
+  "no pool lease_id is invented for an orca worktree"
 "$BIN/ac-teardown.sh" so1 --force >/dev/null 2>&1
 [ ! -d "$so_wt" ] || fail "teardown must remove the orca-managed self-task worktree"
+
+# --base-branch (orca-lease-cuts-from-wrong-branch): an explicit override
+# threads through to the orca lease and wins over the live checkout (main).
+repo2="$(make_repo proj2)"
+git -C "$repo2" checkout -qb release
+printf 'release marker
+' >"$repo2/release.txt"
+git -C "$repo2" add release.txt
+git -C "$repo2" commit -qm "release marker"
+release_sha="$(git -C "$repo2" rev-parse release)"
+git -C "$repo2" checkout -q main
+"$BIN/ac-self-task.sh" start so2 "$repo2" --base-branch release >/dev/null \
+  || fail "--base-branch must thread through to an orca self-task start"
+so2_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/so2.meta" | head -1)"
+assert_eq "$(git -C "$so2_wt" merge-base HEAD "$release_sha")" "$release_sha" \
+  "--base-branch release wins over the live checkout (main) end to end through ac-self-task.sh"
+[ -f "$so2_wt/release.txt" ] || fail "the leased tree must carry the release branch's content"
+"$BIN/ac-teardown.sh" so2 --force >/dev/null 2>&1
+
 printf 'herdr
 ' >"$AC_HOME/config/backend"
 

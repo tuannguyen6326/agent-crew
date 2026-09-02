@@ -27,6 +27,10 @@ mk_crewmate s1 pA1 tA1
 out="$("$BIN/ac-send.sh" s1 'hello crew')"
 assert_contains "$out" "sent to herdr:pane-pA1" "send reports the target"
 assert_contains "$(cat "$FAKE_HERDR/panes/pA1.buf")" "hello crew" "text submitted into the pane"
+# A CONFIRMED steer is recorded durably - the chief's index of what it asked,
+# so a restart is not amnesia (the crewmate leg of the deputy routed: rule).
+assert_contains "$(cat "$AC_HOME/state/s1.status")" "steered: hello crew" \
+  "a confirmed steer lands on the status record"
 
 # --- blocked pane: TEXT refused without --force -------------------------------------
 
@@ -61,6 +65,23 @@ assert_contains "$out" "sent to herdr:pane-pA2" "stamped pane accepts the answer
 assert_no_file "$AC_HOME/state/.captain-wait-s2" "delivery clears the stamp file"
 assert_no_file "$FAKE_HERDR/panes/pA2.reported" "delivery releases the reported state"
 
+# --- dead pane: the harness exited, TEXT would EXECUTE in the bare shell ------------
+# window-alive still answers true (the terminal lives, holding a shell), and
+# agent_blocked answers false (no dialog) - only the harness-up probe tells a
+# live agent composer from a shell prompt that would run the steer as commands.
+
+mk_crewmate s6 pA6 tA6
+: >"$FAKE_HERDR/panes/pA6.dead"
+err="$("$BIN/ac-send.sh" s6 'summarize the diff' 2>&1)" \
+  && fail "text into a dead-shell pane must be refused"
+assert_contains "$err" "BARE SHELL" "refusal names the dead-shell hazard"
+assert_contains "$err" "--force" "refusal names the override"
+case "$(cat "$FAKE_HERDR/log")" in *"send-text pA6"*) \
+  fail "refused text must never reach the shell" ;; esac
+out="$("$BIN/ac-send.sh" s6 --force 'true')" \
+  || fail "--force must still type into the shell deliberately"
+assert_contains "$out" "sent to" "--force overrides the dead-shell refusal"
+
 # --- --force sends text into a blocked pane deliberately ----------------------------
 
 out="$("$BIN/ac-send.sh" s1 --force 'deliberate steer')"
@@ -86,6 +107,9 @@ assert_contains "$err" "not acknowledged" "backend strand reason surfaces"
 assert_contains "$err" "delivery NOT confirmed" "ac-send names the failure"
 case "$err" in *"sent to"*) fail "a stranded send must not print sent" ;; esac
 assert_contains "$(cat "$FAKE_HERDR/panes/pA3.in")" "lost steer" "text sits in the composer, reported honestly"
+case "$(cat "$AC_HOME/state/s3.status" 2>/dev/null)" in
+  *"steered:"*) fail "an UNCONFIRMED steer must not be recorded as steered" ;;
+esac
 
 # --- the marked chief-to-deputy channel ---------------------------------------
 # A crewdeputy is a chief with its own chat. Without a marker a routed order is
@@ -130,7 +154,13 @@ for k in ship scout roomchief; do
   case "$(cat "$FAKE_HERDR/panes/p$k.buf")" in
     *chief-order*) fail "kind=$k must never carry the chief-order marker" ;;
   esac
-  assert_no_file "$AC_HOME/state/k$k.status" "kind=$k records no routed: line"
+  # The marker channel stays deputy-only; the durable record every kind DOES
+  # get is the plain steered: line, never routed:.
+  case "$(cat "$AC_HOME/state/k$k.status" 2>/dev/null)" in
+    *routed:*) fail "kind=$k records no routed: line" ;;
+  esac
+  assert_contains "$(cat "$AC_HOME/state/k$k.status")" "steered: steer the $k" \
+    "kind=$k still gets the durable steered: record"
 done
 
 # Refusal: no parseable registry entry - the answer would have nowhere to land.

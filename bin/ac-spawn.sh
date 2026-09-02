@@ -9,6 +9,7 @@
 #                    [--effort <low|medium|high|xhigh|max|ultracode>]
 #                    [--backend <herdr>]
 #                    [--resume-from <old-task-id>]
+#                    [--base-branch <b>]
 #        ac-spawn.sh <id> --crewdeputy [--recover] [--harness <h>] [--backend <b>]
 #        ac-spawn.sh --roomchief <family> [--harness <h>] [--backend <b>]
 #                    [--captain-initiated "<order ref>" | --system-initiated "<order ref>"
@@ -523,7 +524,7 @@ bin_dir="$(cd "$(dirname "$0")" && pwd -P)"
 # traps reap only a window they created (contract: ORPHAN-WINDOW SAFETY above).
 window=""
 id=""; project=""; scout=0; crewdeputy=0; recover=0; roomchief_family=""; harness=""; harness_flag=""; mode_flag=""
-model=""; effort=""; backend=""; resume_from=""; review="-"
+model=""; effort=""; backend=""; resume_from=""; review="-"; base_branch=""; base_branch_set=0
 captain_initiated=""; captain_initiated_set=0; over_cap=""; over_cap_set=0
 system_initiated=""; system_initiated_set=0
 codereview_rule=""; codereview_rule_set=0
@@ -542,6 +543,11 @@ while [ $# -gt 0 ]; do
     --backend) backend="$2"; shift 2 ;;
     --resume-from) resume_from="$2"; shift 2 ;;
     --mode) mode_flag="$2"; shift 2 ;;
+    --base-branch)
+      base_branch="${2:-}"
+      [ -n "$base_branch" ] || ac_die "--base-branch names the branch the orca lease is cut from (wins over the live checkout; orca backend only)"
+      base_branch_set=1
+      shift 2 ;;
     --codereview-rule) codereview_rule="$2"; codereview_rule_set=1; shift 2 ;;
     -*) ac_die "unknown flag: $1" ;;
     *) if [ -z "$id" ]; then id="$1"; elif [ -z "$project" ]; then project="$1"; else ac_die "unexpected arg: $1"; fi; shift ;;
@@ -564,6 +570,12 @@ done
 [ "$codereview_rule_set" = 0 ] \
   || { [ -z "$roomchief_family" ] && [ "$crewdeputy" = 0 ]; } \
   || ac_die "--codereview-rule requires a plain crew spawn (it resolves panes.codereview, which only threads to an execution crewmate)"
+# --base-branch only reaches the orca lease call site on the plain crew path
+# (roomchief/crewdeputy both exit before it); a mistyped --base-branch there
+# would otherwise silently do nothing rather than fail loud.
+[ "$base_branch_set" = 0 ] \
+  || { [ -z "$roomchief_family" ] && [ "$crewdeputy" = 0 ]; } \
+  || ac_die "--base-branch requires a plain crew spawn (it names the orca lease's base branch, which only the crew path leases)"
 if [ -n "$roomchief_family" ]; then
   # A locale whose collation interleaves case (en_US.UTF-8: a,A,b,B,...,z,Z)
   # makes a plain a-z range admit most uppercase letters through this glob -
@@ -821,6 +833,12 @@ build_launch() {
 AC_BACKEND="${backend:-$(ac_config_read backend herdr)}"
 export AC_BACKEND
 backend="$(ac_backend)"
+# --base-branch only ever reaches the orca lease call site on the plain crew
+# path (roomchief/crewdeputy already died on it above); on a herdr fleet it
+# would otherwise silently no-op (the pool lease has no base-branch concept),
+# the exact silent-outcome defect this fleet's own conventions refuse.
+[ "$base_branch_set" = 0 ] || [ "$backend" = orca ] \
+  || ac_die "--base-branch requires an orca-backend fleet (config/backend=$backend here) - a herdr fleet leases from its own worktree pool, which has no base-branch concept"
 
 # Seconds to wait after the launch line before typing the kickoff prompt as
 # its own line. Validated here (before any window/lease is created) so a bad
@@ -864,7 +882,10 @@ kickoff_acked() {
   # shellcheck disable=SC2034  # ktry is a counter, the loop body never reads it
   for ktry in 1 2; do
     sleep "$settle"
-    backend_submit_verified "$kid" && return 0
+    # The kickoff text rides the retry: a textless verify reads ANY render
+    # change as delivery, and a trust popup closing on the Enter is exactly
+    # that - the composer-pending check needs the text to prove otherwise.
+    backend_submit_verified "$kid" "$ktext" && return 0
   done
   return 1
 }
@@ -1593,11 +1614,12 @@ command -v "${launch%% *}" >/dev/null 2>&1 || ac_die "harness binary not found: 
 # no crewmate meta.
 if [ "$backend" = orca ]; then
   # Orca fleets lease through the Orca CLI (orca_worktree_lease: one
-  # worktree per task, sidebar-native, crew/<id> from the local default);
+  # worktree per task, sidebar-native, cut from the repo's live checkout
+  # branch at its freshest tip unless --base-branch names one explicitly);
   # the crew-tree pool stays the herdr fleets'. No slot affinity exists
   # here - a respawn re-creates the path, so a resume is warned the same
   # way a changed pool slot is.
-  worktree="$(orca_worktree_lease "$id" "$project_dir")" \
+  worktree="$(orca_worktree_lease "$id" "$project_dir" "$base_branch")" \
     || ac_die "orca worktree create failed for $id (is the Orca runtime running, and the repo registered? orca repo add --path $project_dir)"
   [ -z "$resume_wt" ] || [ "$worktree" = "$resume_wt" ] \
     || ac_warn "resume may not find the old session (cwd changed: $resume_wt -> $worktree)"

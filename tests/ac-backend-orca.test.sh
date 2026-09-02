@@ -128,6 +128,59 @@ assert_contains "$(cat "$FAKE_ORCA/log")" "terminal switch --terminal term1" \
 rm -f "$FAKE_ORCA/terminals/term1.drop-enters"
 : >"$FAKE_ORCA/terminals/term1.in"
 
+# A swallowed Enter that still CHANGES the render (a popup closing, an
+# argument hint filling) - the render-react check alone reads that change as
+# a submit and reports "sent" while the text sits pending. The composer
+# REGION still holding the text (between the last two rules - measured live:
+# the transcript echoes a submitted line with the same glyph, so
+# text-anywhere is no verdict) is what proves pending and buys the bounded
+# retry Enter.
+: >"$FAKE_ORCA/terminals/term1.in"
+touch "$FAKE_ORCA/terminals/term1.popup-once"
+run_backend orca 'backend_send_line o1 "steer past the popup"' >/dev/null \
+  || fail "the retry Enter must land the steer once the popup closed"
+assert_eq "$(cat "$FAKE_ORCA/terminals/term1.in")" "" \
+  "a reported sent must leave the composer EMPTY - pending text is the false-success class"
+assert_contains "$(cat "$FAKE_ORCA/terminals/term1.buf")" "steer past the popup" \
+  "the steer reaches the transcript after the retry"
+rm -f "$FAKE_ORCA/terminals/term1.popup-once"
+
+# The pending check must survive a C locale: grep intervals over the 3-byte
+# rule glyph bind to its last byte under LC_ALL=C and never match, silently
+# reviving the false-"sent" class (measured on this host).
+: >"$FAKE_ORCA/terminals/term1.in"
+touch "$FAKE_ORCA/terminals/term1.popup-once"
+LC_ALL=C LANG=C run_backend orca 'backend_send_line o1 "locale steer"' >/dev/null \
+  || fail "the locale-pinned retry must land the steer"
+assert_eq "$(cat "$FAKE_ORCA/terminals/term1.in")" "" \
+  "the pending check holds under a C locale - no silent false-sent"
+rm -f "$FAKE_ORCA/terminals/term1.popup-once"
+
+# A DIALOG owns the pane: no verified submit may press Enter into it - not
+# the first press, and never a focus-retry press (the digit options can grant
+# a permanent always-allow). The refusal names the dialog.
+printf 'dialog text\n' >"$FAKE_ORCA/terminals/term1.in"
+touch "$FAKE_ORCA/terminals/term1.agentwait"
+: >"$FAKE_ORCA/log"
+rc=0; err="$(run_backend orca 'backend_send_line o1 "into a dialog"' 2>&1 1>/dev/null)" || rc=$?
+[ "$rc" != 0 ] || fail "a dialog-owned pane must not report sent"
+assert_contains "$err" "DIALOG" "the refusal names the dialog"
+case "$(cat "$FAKE_ORCA/log")" in
+  *--enter*) fail "no Enter may be pressed into a dialog-owned pane" ;;
+esac
+rm -f "$FAKE_ORCA/terminals/term1.agentwait"
+: >"$FAKE_ORCA/terminals/term1.in"
+
+# The bare submit verb now carries the text too: the kickoff retry is its one
+# caller, and a textless verify read a trust popup closing as delivery.
+printf 'kick text' >"$FAKE_ORCA/terminals/term1.in"
+touch "$FAKE_ORCA/terminals/term1.popup-once"
+run_backend orca 'backend_submit_verified o1 "kick text"' >/dev/null \
+  || fail "the texted submit verb must land past the popup"
+assert_eq "$(cat "$FAKE_ORCA/terminals/term1.in")" "" \
+  "backend_submit_verified with text proves the composer cleared"
+rm -f "$FAKE_ORCA/terminals/term1.popup-once"
+
 touch "$FAKE_ORCA/.unreachable"
 rc=0; run_backend orca 'backend_send_line o1 "x"' 2>/dev/null || rc=$?
 assert_eq "$rc" "2" "an unreadable terminal reports UNOBSERVABLE, never a strand"
@@ -399,5 +452,146 @@ err="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
 assert_contains "$err" "leaked past the per-call dispatch" \
   "a homeless herdr RPC on an orca fleet dies as the leak it is"
 rm -f "$AC_HOME/config/backend" "$FAKE_ORCA/terminals/hless.buf" "$FAKE_ORCA/terminals/hless.tab"
+
+# --- orca_worktree_lease: branch source + freshest tip ---------------------------
+# orca-lease-cuts-from-wrong-branch: the lease must cut from the repo's LIVE
+# CHECKOUT branch (never ac_default_branch, which answers a different
+# question) and resolve that branch's FRESHEST tip via ac_freshest_ref (local
+# vs origin, origin wins on true divergence); an explicit override wins over
+# the live checkout. make_fake_orca's `worktree create` hands --base-branch
+# straight to `git worktree add` as a ref (tests/helpers.sh:734), so this runs
+# the real branch/tip resolution end to end through the fake.
+
+# A1: live checkout on a branch OTHER than default - lease cuts from THAT branch.
+a1up="$(make_repo a1up)"
+a1="$TMP/a1-clone"
+git clone -q "$a1up" "$a1"
+git -C "$a1" config user.email test@test
+git -C "$a1" config user.name test
+git -C "$a1" checkout -qb feature
+printf 'feature work\n' >>"$a1/file.txt"
+git -C "$a1" commit -qam "feature work"
+a1_feature_sha="$(git -C "$a1" rev-parse feature)"
+a1_main_sha="$(git -C "$a1" rev-parse main)"
+[ "$a1_feature_sha" != "$a1_main_sha" ] || fail "A1 fixture: feature and main must differ"
+a1_out="$(run_backend orca "orca_worktree_lease a1 '$a1'")"
+assert_eq "$(git -C "$a1_out" rev-parse HEAD)" "$a1_feature_sha" \
+  "A1: lease cuts from the live checkout branch (feature), not ac_default_branch (main)"
+
+# A2: right branch checked out, but ORIGIN holds commits local lacks (true
+# divergence) - ac_freshest_ref must pick origin, not a stale local ref.
+# Measured (this task, real orca CLI 1.4.190 + the fake): a bare branch name
+# already resolves to the LOCAL ref whenever local is ahead-or-equal (git's
+# own ref-disambiguation order checks refs/heads/<name> before
+# refs/remotes/*/<name>), so "origin behind local" never exercised the old
+# code's bug - it already landed on the local tip by coincidence. The
+# direction that actually discriminates is the mirror one: origin AHEAD,
+# where the old bare-default-branch-name code silently stayed on the stale
+# local tip with no symptom.
+a2up="$(make_repo a2up)"
+a2="$TMP/a2-clone"
+git clone -q "$a2up" "$a2"
+git -C "$a2" config user.email test@test
+git -C "$a2" config user.name test
+printf 'origin ahead\n' >>"$a2up/file.txt"
+git -C "$a2up" commit -qam "origin ahead, pushed after clone"
+git -C "$a2" fetch -q origin
+a2_local_sha="$(git -C "$a2" rev-parse main)"
+a2_origin_sha="$(git -C "$a2" rev-parse origin/main)"
+[ "$a2_local_sha" != "$a2_origin_sha" ] || fail "A2 fixture: local and origin must differ"
+a2_out="$(run_backend orca "orca_worktree_lease a2 '$a2'")"
+assert_eq "$(git -C "$a2_out" rev-parse HEAD)" "$a2_origin_sha" \
+  "A2: ac_freshest_ref picks origin's newer commit over the stale local ref"
+
+# A2b: the LITERAL FMS direction (room evidence: "origin lags local", correct
+# branch NAME but 7 commits behind) - reconciled with the A2 measurement
+# above by reading "local" as the live checkout's actual HEAD position, not
+# its branch ref. A live checkout can advance PAST its own branch ref while
+# DETACHED (the branch ref and origin's tracking ref both stay put) - the
+# branch name then resolves "correctly" by name, yet ac_freshest_ref (which
+# only ever compares refs/heads/<b> vs refs/remotes/origin/<b>) still lands
+# behind, because neither ref moved. Measured (real orca CLI 1.4.190): a raw
+# commit SHA given to --base-branch resolves to exactly that commit.
+a2bup="$(make_repo a2bup)"
+a2b="$TMP/a2b-clone"
+git clone -q "$a2bup" "$a2b"
+git -C "$a2b" config user.email test@test
+git -C "$a2b" config user.name test
+git -C "$a2b" checkout -qb feature
+printf 'feature base\n' >>"$a2b/file.txt"
+git -C "$a2b" commit -qam "feature base"
+git -C "$a2b" push -q -u origin feature
+git -C "$a2b" checkout -q --detach feature
+printf 'detached ahead\n' >>"$a2b/file.txt"
+git -C "$a2b" commit -qam "detached, ahead of the feature ref and origin - the FMS shape"
+a2b_detached_sha="$(git -C "$a2b" rev-parse HEAD)"
+a2b_feature_ref_sha="$(git -C "$a2b" rev-parse feature)"
+[ "$a2b_detached_sha" != "$a2b_feature_ref_sha" ] \
+  || fail "A2b fixture: detached HEAD must diverge from the feature branch ref"
+a2b_out="$(run_backend orca "orca_worktree_lease a2b '$a2b'")"
+assert_eq "$(git -C "$a2b_out" rev-parse HEAD)" "$a2b_detached_sha" \
+  "A2b: a detached-HEAD live checkout ahead of its own branch ref (and origin) leases at HEAD's exact position, never the stale branch ref"
+
+# A3: no divergence - no regression.
+a3up="$(make_repo a3up)"
+a3="$TMP/a3-clone"
+git clone -q "$a3up" "$a3"
+git -C "$a3" config user.email test@test
+git -C "$a3" config user.name test
+a3_same_sha="$(git -C "$a3" rev-parse main)"
+a3_out="$(run_backend orca "orca_worktree_lease a3 '$a3'")"
+assert_eq "$(git -C "$a3_out" rev-parse HEAD)" "$a3_same_sha" \
+  "A3: no divergence - the lease cuts at the shared tip, no regression"
+
+# A4: explicit override wins over the live checkout. Three distinct branches -
+# default (main), live checkout (feature), override target (release) - so the
+# assertion cannot pass by coincidentally matching ac_default_branch's own
+# answer the way a two-branch fixture would.
+a4up="$(make_repo a4up)"
+a4="$TMP/a4-clone"
+git clone -q "$a4up" "$a4"
+git -C "$a4" config user.email test@test
+git -C "$a4" config user.name test
+git -C "$a4" checkout -qb feature
+printf 'feature work\n' >>"$a4/file.txt"
+git -C "$a4" commit -qam "feature work"
+git -C "$a4" checkout -qb release main
+printf 'release work\n' >>"$a4/file.txt"
+git -C "$a4" commit -qam "release work"
+git -C "$a4" checkout -q feature
+a4_release_sha="$(git -C "$a4" rev-parse release)"
+a4_out="$(run_backend orca "orca_worktree_lease a4 '$a4' release")"
+assert_eq "$(git -C "$a4_out" rev-parse HEAD)" "$a4_release_sha" \
+  "A4: an explicit base-branch override (release) wins over the live checkout (feature)"
+
+# A5: an UNREGISTERED repo is registered by the lease itself - show-then-add,
+# never a blind add (repo add on an already-registered path fails
+# runtime_error, measured on the real CLI), so a second lease on the now-
+# registered repo must not call add again.
+a5="$(make_repo a5)"
+: >"$FAKE_ORCA/.require-repo-reg"
+a5_out="$(run_backend orca "orca_worktree_lease a5 '$a5'")" \
+  || fail "A5: the lease must register an unregistered repo itself"
+[ -d "$a5_out" ] || fail "A5: lease printed no worktree path"
+grep -qxF "$a5" "$FAKE_ORCA/repos" \
+  || fail "A5: the repo must be registered after the lease"
+: >"$FAKE_ORCA/log"
+run_backend orca "orca_worktree_lease a5b '$a5'" >/dev/null \
+  || fail "A5: a lease on the registered repo must still work"
+case "$(cat "$FAKE_ORCA/log")" in *"repo add"*) \
+  fail "A5: a registered repo must not be re-added" ;; esac
+rm -f "$FAKE_ORCA/.require-repo-reg"
+
+# A6: a create that answers ok with NO usable path still REGISTERED a
+# worktree in the runtime - the lease must release the leak by id, not
+# return 1 over a stray registration nothing will ever clean.
+a6="$(make_repo a6)"
+: >"$FAKE_ORCA/.create-no-path"
+: >"$FAKE_ORCA/log"
+rc=0; run_backend orca "orca_worktree_lease a6 '$a6'" >/dev/null 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail "A6: a pathless create must fail the lease"
+assert_contains "$(cat "$FAKE_ORCA/log")" "worktree rm --worktree id:wt-broken --force" \
+  "A6: the leaked worktree is released by its id"
+rm -f "$FAKE_ORCA/.create-no-path"
 
 pass

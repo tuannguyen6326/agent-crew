@@ -153,6 +153,14 @@ pane_bin="${AC_VERIFY_PANE_BIN:-$bin_dir/ac-pane-agent.sh}"
 # minted crew/<id> branch is dropped right after that detach (verify_drop_branch)
 # so a verifier round leaves no branch behind - unlike a crewmate's, its branch
 # is never a deliverable.
+# DECIDED (orca-lease-cuts-from-wrong-branch): no --base-branch override here.
+# Grounds: the `git checkout --detach --force --quiet "$sha"` right after this
+# lease call hard-detaches it to the caller's exact ref immediately, so
+# orca_worktree_lease's own branch/tip resolution (live checkout,
+# ac_freshest_ref) never survives into the checked-out tree either way - only
+# the transient creation base, which the detach discards. There is no
+# wrong-branch bug to fix here: the override would add a knob with nothing
+# left for it to control.
 verify_lease() {
   if [ "$(ac_backend)" = orca ]; then
     orca_worktree_lease "$2" "$1"
@@ -885,6 +893,13 @@ authority_class=internal|external plus an exact citation; missing external
 authority means action=ask-user, authority_class=none. A reproduction isolates
 one variable and labels DISPUTED and HELD-CONSTANT. suggested_fix is advisory;
 you never apply it.
+
+Bug-fix claims: judge durable fix vs authorized containment; for durable,
+reconstruct the failing sequence and check sibling paths - report inadequate
+only when source evidence proves the same failure stays reachable.
+Never infer systemic flaws from shape or duplication, demand abstractions
+without a reachable failing path, block authorized containment for a better
+fix, or promote advisories into blockers.
 
 INTENT (authoritative data):
 -----BEGIN INTENT-----

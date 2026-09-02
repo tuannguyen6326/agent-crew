@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-teardown.sh - fail-closed teardown of a finished crewmate.
 #
-# Usage: ac-teardown.sh <id> [--force]
+# Usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']
 #
 # Refuses to destroy evidence of unlanded work. Without --force it requires:
 # - scout tasks: the report exists (report.md in the task's data dir - flat
@@ -19,6 +19,14 @@
 #   the default branch (local or origin), reachable from any remote branch, or
 #   the recorded PR was merged (pr_merged=1 in the meta) - and the worktree is
 #   clean.
+# --pr-ready '<words>' is the OTHER PR proof: done does not wait for the
+# merge. When the recorded PR is ready to merge (CI green, review done), the
+# chief asks the captain, and the captain's acceptance - quoted as the flag's
+# value and made durable on the task status - lands the task; the merge stays
+# the captain's own act. It requires a recorded PR (ac-pr-check.sh), and is
+# refused while any OPEN backlog row is blocked-by this task: a dependent
+# starts from the merged tree, so a depended-on task lands only by the real
+# merge.
 # --force means "the captain explicitly discards this work".
 #
 # On success: archives the task's state files under state/archive/<id>/, kills
@@ -131,9 +139,19 @@ ac_require git
 
 bin_dir="$(cd "$(dirname "$0")" && pwd -P)"
 
-id="${1:-}"; force=0
-[ -n "$id" ] || ac_die "usage: ac-teardown.sh <id> [--force]"
-[ "${2:-}" = "--force" ] && force=1
+id="${1:-}"; force=0; pr_ready=""
+[ -n "$id" ] || ac_die "usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']"
+shift
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --force) force=1; shift ;;
+    --pr-ready)
+      pr_ready="${2:-}"
+      [ -n "$pr_ready" ] || ac_die "--pr-ready carries the captain's acceptance words - they are the proof, so an empty value is refused"
+      shift 2 ;;
+    *) ac_die "unknown argument: $1" ;;
+  esac
+done
 
 state_dir="$(ac_state_dir)"
 meta="$(ac_task_meta "$id")"
@@ -188,6 +206,25 @@ scout_report_present() {
   return 1
 }
 
+pr_ready_dependent() {
+  # First OPEN backlog row whose blocked-by list names this task. The
+  # canonical grammar is comma-joined ids with no spaces (section 9), but
+  # this scan is a FAIL-CLOSED control, so it reads WIDER than the grammar:
+  # the list is everything after blocked-by: up to the ` - <reason>` arm,
+  # split on commas AND whitespace - a hand-written `blocked-by: a, b` (which
+  # ac-ready refuses as malformed) still finds b here, where the strict match
+  # once stopped at the space and read "no dependent". Substring matching
+  # would confuse s1 with s1-r2, so tokens are compared exactly. An
+  # unreadable ledger DIES in the caller instead of answering silence.
+  awk -v id="$id" '
+    /^- \[ \]/ && (i = index($0, "blocked-by:")) {
+      s = substr($0, i + 11)
+      if ((j = index(s, " - ")) > 0) s = substr(s, 1, j - 1)
+      n = split(s, a, /[,[:space:]]+/)
+      for (k = 1; k <= n; k++) if (a[k] == id) { print $4; exit }
+    }' "$(ac_records_dir)/backlog.md"
+}
+
 head_landed() {
   # head_landed <sha> - the ONE landed-containment proof, shared by every
   # kind that can hold commits on crew/<id>: the recorded PR merged
@@ -200,8 +237,37 @@ head_landed() {
   # projects (crew-ship, direct-pr) land on origin. Checking only the
   # freshest ref (ac_default_ref: origin wins) reported a local-only
   # project's fully merged work as unlanded.
-  local head="$1" ref eb ebranch
+  local head="$1" ref eb ebranch dep dirty pr_head ledger
   [ "$(ac_meta_get "$meta" pr_merged)" = "1" ] && return 0
+  # The OTHER PR proof: done does not wait for the merge. A ready-to-merge PR
+  # the captain accepted in chat lands the task - the caller carries that
+  # acceptance as --pr-ready '<the captain's words>', and the merge stays the
+  # captain's own act. Fail-closed both ways: no recorded PR means nothing
+  # existed to accept, and a task an OPEN row still waits on lands only by the
+  # real merge - its dependent starts from the merged tree.
+  if [ -n "$pr_ready" ]; then
+    [ -n "$(ac_meta_get "$meta" pr)" ] \
+      || ac_die "--pr-ready with no recorded PR for $id - record it first (bin/ac-pr-check.sh $id <url>)"
+    # The captain accepted THE PR - not work newer than it. A dirty tree, and
+    # commits past the recorded PR head, are outside that acceptance and
+    # would be destroyed as "landed": both refuse. pr_head is enforced when
+    # recorded (ac-pr-check writes it when gh answers); absent, the clean
+    # tree is the floor.
+    dirty="$(git -C "$worktree" status --porcelain 2>/dev/null || true)"
+    [ -z "$dirty" ] \
+      || ac_die "--pr-ready refused: the worktree holds uncommitted work the accepted PR cannot contain - commit and push it (then re-record the PR head), or discard it deliberately, before the acceptance lands:
+$dirty"
+    pr_head="$(ac_meta_get "$meta" pr_head)"
+    if [ -n "$pr_head" ] && ! git -C "$worktree" merge-base --is-ancestor "$head" "$pr_head" 2>/dev/null; then
+      ac_die "--pr-ready refused: crew HEAD is newer than the recorded PR head ($pr_head) - the captain accepted the PR, not commits past it. Push and re-record (bin/ac-pr-check.sh $id <url>), then ask again"
+    fi
+    ledger="$(ac_records_dir)/backlog.md"
+    [ -r "$ledger" ] \
+      || ac_die "--pr-ready refused: cannot read $ledger to prove no open row waits on $id - an unreadable ledger must not read as 'no dependent'"
+    dep="$(pr_ready_dependent)"
+    [ -z "$dep" ] || ac_die "--pr-ready refused: open row $dep still waits on $id (blocked-by) - a dependent starts from the merged tree, so this task lands only by the real merge"
+    return 0
+  fi
   for ref in "$(ac_default_branch "$project_dir")" "$(ac_default_ref "$project_dir")"; do
     if git -C "$project_dir" merge-base --is-ancestor "$head" "$ref" 2>/dev/null; then
       return 0
@@ -614,6 +680,7 @@ prepare_task_verifiers
 # ORDER GUARANTEE). The status append and both moves are one unit.
 archive="$state_dir/archive/$id"
 mkdir -p "$archive"
+[ -z "$pr_ready" ] || ac_status_append "$id" "done: captain accepted the ready-to-merge PR - $pr_ready"
 ac_status_append "$id" "resolved: teardown$([ "$force" = 1 ] && printf ' (forced)')"
 mv "$meta" "$archive/meta"
 [ -f "$(ac_task_status "$id")" ] && mv "$(ac_task_status "$id")" "$archive/status"

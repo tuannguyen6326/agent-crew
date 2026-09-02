@@ -2550,7 +2550,7 @@ window.acSetFont = (d) => {
 try { if (parent !== window && typeof parent.termTheme === "function") parent.termTheme(); } catch { /* no parent - opened directly */ }
 connect();
 </script></body></html>`;
-  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+  return new Response(html, { headers: reviewFrameHeaders() });
 }
 
 /** Standalone native pane view (chief-pane-native-attach, re-landed as its
@@ -2785,7 +2785,7 @@ fsLabel();
 connect();
 try { if (localStorage.getItem("ac_attach_wrap") === "1") setWrap(true); } catch { }
 </script></body></html>`;
-  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+  return new Response(html, { headers: reviewFrameHeaders() });
 }
 
 /** Standalone terminal page (GET /term?path=<home>) - the captain opens the
@@ -2842,7 +2842,7 @@ function boot(){
 }
 boot();
 </script></body></html>`;
-  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+  return new Response(html, { headers: reviewFrameHeaders() });
 }
 
 /** The CREWCHIEF pane for a home (chief panel, slice C): the fleet session is
@@ -4276,9 +4276,7 @@ document.getElementById("notify-send").addEventListener("click", async () => {
   document.getElementById("notify-msg").value = "";
 });
 </script></body></html>`;
-  return new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8" },
-  });
+  return new Response(html, { headers: reviewFrameHeaders() });
 }
 
 /**
@@ -4538,6 +4536,10 @@ boot();
 document.getElementById("save").addEventListener("click", () => { doSave(true); });
 document.getElementById("wbf-keep-mine").addEventListener("click", () => { doSave(true, true); });
 </script></body></html>`;
+  // NO framing fence here ON PURPOSE: this page is framed by the ARTIFACT
+  // document, whose sandbox (allow-scripts, no same-origin) gives it an
+  // OPAQUE origin - frame-ancestors 'self' would refuse exactly that frame
+  // and break every inline whiteboard card.
   return new Response(html, {
     headers: { "content-type": "text/html; charset=utf-8" },
   });
@@ -5346,6 +5348,19 @@ export function pastedPngFile(
  * captain-only chrome (End/Reopen, Send & End, Share) not rendered at all -
  * the guest's verbs are pin and comment, and the endpoints behind the
  * missing buttons do not exist on that listener anyway. */
+export function reviewFrameHeaders(): Record<string, string> {
+  // The review chrome may be framed ONLY by its own origin: the SPA embeds
+  // /review in its #toolview iframe (same origin, the captain-confirmed
+  // shape), while a foreign page framing it could overlay and clickjack the
+  // approve/share controls. SAMEORIGIN, never DENY - DENY would break the
+  // embedded mode.
+  return {
+    "content-type": "text/html; charset=utf-8",
+    "x-frame-options": "SAMEORIGIN",
+    "content-security-policy": "frame-ancestors 'self'",
+  };
+}
+
 function reviewPage(guest = false): Response {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>agent-crew review</title>
@@ -5975,9 +5990,28 @@ function openDiagramOverlay(g){
 }
 
 const composer = document.getElementById("composer");
+// Message-shape alone is forgeable by ANY window holding a reference to this
+// one (an opener, a foreign page framing us): accept only messages whose
+// source window descends from the artifact frame or IS the whiteboard
+// overlay frame - the two windows this chrome actually talks to. The walk is
+// try-guarded: touching .parent across a died-mid-walk window throws, and a
+// throw must read as "not ours", never break the handler.
+function fromOwnFrames(src) {
+  try {
+    const roots = [document.getElementById("frame").contentWindow,
+                   document.getElementById("wbo-frame").contentWindow];
+    let w = src;
+    for (let i = 0; i < 10 && w; i++) {
+      if (roots.includes(w)) return true;
+      w = (w === w.parent) ? null : w.parent;
+    }
+  } catch (err) { /* cross-origin or dead window: not ours */ }
+  return false;
+}
 addEventListener("message", (e) => {
   const d = e.data || {};
   if (!d.lavishNative && !d.wbf && !d.wbo) return;
+  if (!fromOwnFrames(e.source)) return;
   if (typeof d.scrollY === "number") { lastScrollY = d.scrollY; return; }
   if (d.ready) {
     // Fires once per new document, after the frame's OVERLAY boot() has built
@@ -6394,9 +6428,7 @@ loadArtifact().then(() => setTimeout(checkAnchors, 600));
 refresh(); setInterval(refresh, 2000);
 setInterval(pushAnnotate, 2000);
 </script></body></html>`;
-  return new Response(html, {
-    headers: { "content-type": "text/html; charset=utf-8" },
-  });
+  return new Response(html, { headers: reviewFrameHeaders() });
 }
 
 // ---------------------------------------------------------------------------
@@ -7119,7 +7151,9 @@ export function dashboardMain() {
       if (req.method !== "GET" && req.method !== "HEAD")
         return new Response("method not allowed", { status: 405 });
       return new Response(PAGE, {
-        headers: { "content-type": "text/html; charset=utf-8" },
+        // The captain chrome (config writes, chief-pane keystrokes, Share) is
+        // exactly what a framing page could overlay - same fence as /review.
+        headers: reviewFrameHeaders(),
       });
     },
   });

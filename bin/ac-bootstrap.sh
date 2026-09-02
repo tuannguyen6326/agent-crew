@@ -85,7 +85,15 @@ ac_path_copies() {
 ac_tool_version() {
   local path="$1" secs=3 out="" pid start tmp
   tmp="$(mktemp)"
-  "$path" --version >"$tmp" 2>/dev/null &
+  # orca has NO --version (it prints usage - measured 1.4.188): its version
+  # lives in `status --json` .result.runtime.appVersion, and the generic
+  # dotted-number grep below reads it out of that JSON like any other shape.
+  # Same bounded watchdog either way.
+  if [ "${path##*/}" = orca ]; then
+    "$path" status --json >"$tmp" 2>/dev/null &
+  else
+    "$path" --version >"$tmp" 2>/dev/null &
+  fi
   pid=$!
   start=$SECONDS
   while kill -0 "$pid" 2>/dev/null; do
@@ -241,10 +249,17 @@ if [ "$backend" = herdr ]; then
   fi
 else
   # Same flag-only-explicit-false philosophy for the orca runtime: silence
-  # (no binary, no --json, unparseable) says nothing about reachability.
-  reachable="$(orca status --json 2>/dev/null | jq -r '.result.runtime.reachable' 2>/dev/null || true)"
+  # (no binary, no --json, unparseable) says nothing about reachability -
+  # and a REACHABLE runtime still starting (or errored) cannot spawn either,
+  # so an explicit non-ready state flags the same way.
+  orca_status_json="$(orca status --json 2>/dev/null || true)"
+  reachable="$(jq -r '.result.runtime.reachable' <<<"$orca_status_json" 2>/dev/null || true)"
+  orca_state="$(jq -r '.result.runtime.state // empty' <<<"$orca_status_json" 2>/dev/null || true)"
   if [ "$reachable" = false ]; then
     printf 'MISSING: orca runtime not reachable - no terminal can be spawned, read or steered; start it (orca open, or orca serve for headless)\n'
+    rc=1
+  elif [ -n "$orca_state" ] && [ "$orca_state" != ready ]; then
+    printf 'MISSING: orca runtime is %s, not ready - no terminal can be spawned until it is; wait and re-check (orca status)\n' "$orca_state"
     rc=1
   fi
 fi

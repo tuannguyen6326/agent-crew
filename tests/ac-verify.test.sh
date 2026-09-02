@@ -514,10 +514,16 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "question, options, matching t
 # is what a later round's disposition binds to); each raise is deliberate, not
 # drift.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 435 ] \
-  || fail "canonical review prompt exceeds its 435-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 500 ] \
+  || fail "canonical review prompt exceeds its 500-word scaffold budget: $scaffold_words"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Reserve action=fix" \
   "fix is reserved for delivery-blocking findings; advisory items ride as no-op"
+# Bug-fix durability + anti-overreach: a fix claim is judged durable-vs-
+# containment on source evidence, and taste never mints a blocker.
+assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "authorized containment" \
+  "the prompt carries the durable-fix-vs-containment judgment"
+assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Never infer systemic flaws" \
+  "the prompt carries the anti-overreach fence"
 # ID FORMATION belongs to the CANONICAL prompt, not only to the history block:
 # round 1's ids are the exact strings every later round must reuse, so a round-1
 # reviewer that stamps the CURRENT round into an id makes stable reuse impossible
@@ -656,8 +662,8 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $bas
 # disposition rules, resolved_ids, and the no-renumber clause the measured
 # rejections needed); the ledger payload itself stays excluded like INTENT.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 510 ] \
-  || fail "history review prompt exceeds its 510-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 570 ] \
+  || fail "history review prompt exceeds its 570-word scaffold budget: $scaffold_words"
 
 # A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
 # the interdiff scope: the previous entry's reviewed_ref
@@ -772,13 +778,13 @@ case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: C
 # no budget at all: the 510 assertion above measures the LEGACY bare-array shape,
 # which takes neither the interdiff scope nor the checklist, so it is ~75 words
 # lighter and never covered the shape ac-ship actually sends (a real stored
-# ac-ship prompt measured 542 by this same helper, unasserted). 590 = the 510
+# ac-ship prompt measured 542 by this same helper, unasserted). 650 = the 570
 # scaffold + the round-2+ interdiff scope block + the checklist prose + this
 # fixture's one id. A real round's checklist grows one word per prior open id;
 # this bounds the PROSE, which is the part that drifts.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 590 ] \
-  || fail "previous-round ledger review prompt exceeds its 590-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 650 ] \
+  || fail "previous-round ledger review prompt exceeds its 650-word scaffold budget: $scaffold_words"
 
 # PREVIOUS ROUND ONLY: resolved findings from older rounds do not require
 # re-attestation later. A round-3 history whose r1 had an open id but whose r2

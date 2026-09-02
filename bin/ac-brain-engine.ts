@@ -142,6 +142,9 @@ function migrate(db: Database) {
   db.run(`CREATE TABLE IF NOT EXISTS pages(
     slug TEXT PRIMARY KEY, title TEXT, type TEXT, family TEXT, path TEXT,
     mtime REAL, hash TEXT, updated_at TEXT, backlinks INTEGER DEFAULT 0, flags TEXT DEFAULT '')`);
+  // Soft-delete column (sync soft-delete): added in place - the ALTER is
+  // idempotent-by-catch, and sync --rebuild remains the full migration story.
+  try { db.run("ALTER TABLE pages ADD COLUMN deleted_at INTEGER"); } catch {}
   db.run(`CREATE TABLE IF NOT EXISTS shadows(path TEXT PRIMARY KEY, mtime REAL, hash TEXT, canonical_slug TEXT)`);
   db.run(`CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, slug TEXT, ord INTEGER, text TEXT,
     embedding BLOB, embedded_at TEXT)`);
@@ -498,27 +501,53 @@ function syncInner(db: Database, t0: number) {
   });
   tx(batch);
 
-  // delete-reconcile with the mass-delete valve
-  const gonePages = (db.query("SELECT slug, path FROM pages").all() as any[]).filter(r => !seenPaths.has(r.path));
-  const totalPages = (db.query("SELECT COUNT(*) c FROM pages").get() as any).c;
-  let deleted = 0, refusedReconcile = false;
+  // delete-reconcile with the mass-delete valve - SOFT: a gone file HIDES its
+  // page (the recall arms and link resolution stop seeing it) but the row
+  // survives a 72h revive window, because a branch switch or a stray mv must
+  // not cost the index its pages for good. A file returning UNCHANGED inside
+  // the window rides the mtime index (never reaching the upsert), so revival
+  // rebuilds its FTS rows from the KEPT chunks here; a CHANGED return
+  // reinserts wholesale in the tx above (INSERT OR REPLACE writes deleted_at
+  // NULL). Only a page still gone past the window is purged for good.
+  const nowMs = Date.now();
+  const SOFT_DELETE_WINDOW_MS = 72 * 3600 * 1000;
+  const gonePages = (db.query("SELECT slug, path FROM pages WHERE deleted_at IS NULL").all() as any[]).filter(r => !seenPaths.has(r.path));
+  const totalPages = (db.query("SELECT COUNT(*) c FROM pages WHERE deleted_at IS NULL").get() as any).c;
+  let deleted = 0, revived = 0, purged = 0, refusedReconcile = false;
   if (gonePages.length && totalPages > 20 && gonePages.length / totalPages > 0.5 && !flag("force-reconcile")) {
     refusedReconcile = true;
   } else {
     for (const r of gonePages) {
-      for (const [t, c] of [["pages", "slug"], ["chunks", "slug"], ["chunks_fts", "slug"], ["pages_fts", "slug"], ["links", "from_slug"], ["aliases", "slug"]])
-        db.run(`DELETE FROM ${t} WHERE ${c}=?`, [r.slug]);
+      db.run("UPDATE pages SET deleted_at=? WHERE slug=?", [nowMs, r.slug]);
+      db.run("DELETE FROM chunks_fts WHERE slug=?", [r.slug]);
+      db.run("DELETE FROM pages_fts WHERE slug=?", [r.slug]);
       deleted++;
     }
     for (const r of (db.query("SELECT path FROM shadows").all() as any[]).filter(r => !seenPaths.has(r.path)))
       db.run("DELETE FROM shadows WHERE path=?", [r.path]);
   }
+  for (const r of (db.query("SELECT slug, path, title, deleted_at FROM pages WHERE deleted_at IS NOT NULL").all() as any[])) {
+    if (seenPaths.has(r.path)) {
+      db.run("UPDATE pages SET deleted_at=NULL WHERE slug=?", [r.slug]);
+      db.run("DELETE FROM chunks_fts WHERE slug=?", [r.slug]);
+      db.run("DELETE FROM pages_fts WHERE slug=?", [r.slug]);
+      for (const c of db.query("SELECT ord, text FROM chunks WHERE slug=? ORDER BY ord").all(r.slug) as any[])
+        db.run("INSERT INTO chunks_fts(text,title,slug) VALUES(?,?,?)", [c.text, r.title, r.slug]);
+      const al = (db.query("SELECT alias FROM aliases WHERE slug=?").all(r.slug) as any[]).map(a => a.alias).join(" ");
+      db.run("INSERT INTO pages_fts(title,aliases,slug) VALUES(?,?,?)", [r.title, al, r.slug]);
+      revived++;
+    } else if (nowMs - r.deleted_at > SOFT_DELETE_WINDOW_MS) {
+      for (const [t, c] of [["pages", "slug"], ["chunks", "slug"], ["chunks_fts", "slug"], ["pages_fts", "slug"], ["links", "from_slug"], ["aliases", "slug"]])
+        db.run(`DELETE FROM ${t} WHERE ${c}=?`, [r.slug]);
+      purged++;
+    }
+  }
 
   // deterministic fixpoint dedup: canonical = fewest segments, shortest slug, lexicographic
-  const groups = db.query("SELECT hash FROM pages GROUP BY hash HAVING COUNT(*) > 1").all() as any[];
+  const groups = db.query("SELECT hash FROM pages WHERE deleted_at IS NULL GROUP BY hash HAVING COUNT(*) > 1").all() as any[];
   let deduped = 0;
   for (const g of groups) {
-    const members = (db.query("SELECT slug, path FROM pages WHERE hash=?").all(g.hash) as any[])
+    const members = (db.query("SELECT slug, path FROM pages WHERE hash=? AND deleted_at IS NULL").all(g.hash) as any[])
       .sort((a, b) => (a.slug.split("/").length - b.slug.split("/").length) || (a.slug.length - b.slug.length) || (a.slug < b.slug ? -1 : 1));
     const canon = members[0];
     for (const m of members.slice(1)) {
@@ -532,7 +561,7 @@ function syncInner(db: Database, t0: number) {
   }
 
   // link resolution: direct slug, then basename (ON by default - home slugs are unambiguous enough)
-  const slugSet = new Set((db.query("SELECT slug FROM pages").all() as any[]).map(r => r.slug));
+  const slugSet = new Set((db.query("SELECT slug FROM pages WHERE deleted_at IS NULL").all() as any[]).map(r => r.slug));
   const base = new Map<string, string[]>();
   for (const s of slugSet) {
     const b = s.split("/").pop()!;
@@ -565,9 +594,9 @@ function syncInner(db: Database, t0: number) {
   try { writeFileSync(HOME + "/state/.brain-last-sync", iso() + "\n"); } catch {}
 
   const stats = {
-    files: files.length, changed, deduped, deleted, refused_reconcile: refusedReconcile,
+    files: files.length, changed, deduped, deleted, revived, purged, refused_reconcile: refusedReconcile,
     skipped_mtime: skippedMtime, skipped_hash: skippedHash, flagged, ttl_swept: sweptTtl,
-    pages: (db.query("SELECT COUNT(*) c FROM pages").get() as any).c,
+    pages: (db.query("SELECT COUNT(*) c FROM pages WHERE deleted_at IS NULL").get() as any).c,
     chunks: (db.query("SELECT COUNT(*) c FROM chunks").get() as any).c,
     ms: Math.round(performance.now() - t0),
   };
@@ -649,7 +678,7 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
       const qv = (await embedBatch([q], ec))?.[0];
       if (!qv) degraded = "keyword_only_provider_error";
       else {
-        const rows = db.query("SELECT slug, embedding FROM chunks WHERE embedding IS NOT NULL").all() as any[];
+        const rows = db.query("SELECT slug, embedding FROM chunks WHERE embedding IS NOT NULL AND slug IN (SELECT slug FROM pages WHERE deleted_at IS NULL)").all() as any[];
         if (!rows.length) degraded = "keyword_only_unembedded_index";
         for (const r of rows) {
           const c = cosine(qv, fromBlob(r.embedding));
@@ -707,7 +736,13 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
   const ql = q.toLowerCase();
   const hits: Hit[] = [...fused.entries()].map(([slug, e]) => {
     const m = meta.get(slug) || {};
-    let score = e.score, evidence = vecScores.has(slug) && !kw.some(r => r.slug === slug) ? "vector" : "keyword";
+    // The "vector" label is earned by the REAL cosine, never by a normalized
+    // blended score: inside a weak top-60 the best of the junk normalizes to
+    // 1.0, and stamping that "vector" is dishonest evidence. Below the floor
+    // the hit still surfaces, labeled vector_weak.
+    let score = e.score, evidence = "keyword";
+    if (vecScores.has(slug) && !kw.some(r => r.slug === slug))
+      evidence = (vecScores.get(slug)! >= 0.8) ? "vector" : "vector_weak";
     if (boosts) {
       score *= 1 + 0.02 * Math.log(1 + (m.backlinks || 0));
       const days = (now - (m.mtime || now)) / 86400000;
@@ -950,9 +985,9 @@ function cmdForget() {
 function entityCard(db: Database, name: string) {
   const n = name.toLowerCase();
   const byAlias = db.query("SELECT p.* FROM aliases a JOIN pages p ON p.slug=a.slug WHERE a.alias=?").all(n) as any[];
-  const byTitle = db.query("SELECT * FROM pages WHERE lower(title)=?").all(n) as any[];
+  const byTitle = db.query("SELECT * FROM pages WHERE lower(title)=? AND deleted_at IS NULL").all(n) as any[];
   // a bare family name resolves to its room page, the family's own entity
-  const bySlug = db.query("SELECT * FROM pages WHERE slug=? OR slug=? OR slug LIKE ?").all(n, "data/" + n + "/room", "%/" + n) as any[];
+  const bySlug = db.query("SELECT * FROM pages WHERE (slug=? OR slug=? OR slug LIKE ?) AND deleted_at IS NULL").all(n, "data/" + n + "/room", "%/" + n) as any[];
   const best = byAlias[0] || byTitle[0] || bySlug[0];
   if (!best) return null;
   const edges = db.query("SELECT to_slug, type FROM links WHERE from_slug=? AND resolved=1 LIMIT 10").all(best.slug);
@@ -1054,7 +1089,7 @@ function cmdDelta() {
   const lim = 50;
   const pages = db.query(
     `SELECT slug, title, family, type, path, updated_at FROM pages
-     WHERE (updated_at > ?) OR (updated_at = ? AND slug > ?)
+     WHERE deleted_at IS NULL AND ((updated_at > ?) OR (updated_at = ? AND slug > ?))
      ORDER BY updated_at ASC, slug ASC LIMIT ?`).all(sinceUtc, sinceUtc, sinceSlug, lim + 1) as any[];
   const hasMorePages = pages.length > lim;
   const delivered = pages.slice(0, lim);
@@ -1098,7 +1133,7 @@ function cmdStats() {
   const db = openDb(true);
   const g = (q: string) => { try { return (db.query(q).get() as any).c; } catch { return 0; } };
   out({
-    pages: g("SELECT COUNT(*) c FROM pages"), chunks: g("SELECT COUNT(*) c FROM chunks"),
+    pages: g("SELECT COUNT(*) c FROM pages WHERE deleted_at IS NULL"), chunks: g("SELECT COUNT(*) c FROM chunks"),
     embedded: g("SELECT COUNT(*) c FROM chunks WHERE embedding IS NOT NULL"),
     links: g("SELECT COUNT(*) c FROM links"), resolved: g("SELECT COUNT(*) c FROM links WHERE resolved=1"),
     code_refs: g("SELECT COUNT(*) c FROM links WHERE type='cites_code'"),
@@ -1120,7 +1155,7 @@ async function cmdDoctor() {
     catch (e: any) { push("fts", false, String(e)); }
     const orphans = (db.query("SELECT COUNT(*) c FROM chunks WHERE slug NOT IN (SELECT slug FROM pages)").get() as any).c;
     push("no_orphan_chunks", orphans === 0, `${orphans} orphans`);
-    const dupGroups = (db.query("SELECT COUNT(*) c FROM (SELECT hash FROM pages GROUP BY hash HAVING COUNT(*) > 1)").get() as any).c;
+    const dupGroups = (db.query("SELECT COUNT(*) c FROM (SELECT hash FROM pages WHERE deleted_at IS NULL GROUP BY hash HAVING COUNT(*) > 1)").get() as any).c;
     push("dedup_complete", dupGroups === 0, `${dupGroups} duplicate groups`);
     const ec = embedCfg();
     const metaDims = (db.query("SELECT v FROM meta WHERE k='embed_dims'").get() as any)?.v;
@@ -1133,7 +1168,7 @@ async function cmdDoctor() {
     // Ambiguous-link census (informational, never a failure): unresolved links
     // whose basename names several pages - sync refuses to guess among them.
     const baseCount = new Map<string, number>();
-    for (const r of db.query("SELECT slug FROM pages").all() as any[]) {
+    for (const r of db.query("SELECT slug FROM pages WHERE deleted_at IS NULL").all() as any[]) {
       const b = String(r.slug).split("/").pop()!;
       baseCount.set(b, (baseCount.get(b) || 0) + 1);
     }
@@ -1148,7 +1183,7 @@ async function cmdDoctor() {
     // own opening words must rank in its top 5 - integrity_check proves the
     // file is intact, only this proves retrieval still WORKS on it.
     const sample = db.query(
-      "SELECT slug, text FROM chunks WHERE ord=0 AND LENGTH(text) > 60 ORDER BY LENGTH(text) DESC LIMIT 8").all() as any[];
+      "SELECT slug, text FROM chunks WHERE ord=0 AND LENGTH(text) > 60 AND slug IN (SELECT slug FROM pages WHERE deleted_at IS NULL) ORDER BY LENGTH(text) DESC LIMIT 8").all() as any[];
     if (sample.length) {
       let found = 0; const misses: string[] = [];
       for (const s of sample) {

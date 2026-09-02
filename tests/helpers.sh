@@ -687,8 +687,16 @@ make_fake_orca() {
   #   <h>.idle        present = `wait --for tui-idle` satisfied immediately
   #   <h>.agentwait   present = show reports agentWait non-null
   #   <h>.drop-enters "<count>" - swallow N `--enter` submits (strand knob)
+  #   <h>.popup-once  one-shot: the next `--enter` on a non-empty composer is
+  #                   CONSUMED by a popup (render changes, composer keeps its
+  #                   text) - the false-success class the pending check closes
   # Root knobs: .unreachable (every call fails with an error envelope),
-  # .default-title (title newly created terminals report).
+  # .default-title (title newly created terminals report),
+  # .require-repo-reg (worktree create and repo show resolve a path only when
+  # $FAKE_ORCA/repos lists it; repo add registers - and fails runtime_error on
+  # an already-registered path, measured on the real CLI).
+  # .create-no-path (worktree create answers ok with an id but NO path - the
+  # partial-create shape whose leak the lease must release by id).
   # Every call appends one line to $FAKE_ORCA/log.
   export FAKE_ORCA="$TMP/fake-orca"
   mkdir -p "$FAKE_ORCA/terminals" "$TMP/stubbin"
@@ -717,8 +725,16 @@ while [ $i -lt ${#args[@]} ]; do
 done
 next() { local f="$d/.n" n; n="$(cat "$f" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$f"; printf '%s\n' "$n"; }
 tail_json() {
+  # Composer render mirrors the measured claude TUI screen: the pending text
+  # sits on a glyph row BETWEEN two horizontal rules (the transcript echoes a
+  # submitted line with the SAME glyph, which is why the driver's pending
+  # check reads the between-rules region, never text-anywhere).
   { tail -n "$2" "$d/terminals/$1.buf" 2>/dev/null || tail -n "$2" "$d/terminals/$1" 2>/dev/null
-    [ -s "$d/terminals/$1.in" ] && printf '> %s\n' "$(cat "$d/terminals/$1.in")"
+    if [ -s "$d/terminals/$1.in" ]; then
+      printf '%s\n' "────────────────────────"
+      printf '❯ %s\n' "$(cat "$d/terminals/$1.in")"
+      printf '%s\n' "────────────────────────"
+    fi
   } | awk 'BEGIN{printf "["} {gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); printf "%s\"%s\"", (NR>1?",":""), $0} END{printf "]"}'
 }
 case "${1:-}" in
@@ -743,6 +759,12 @@ case "${1:-}" in
           j=$((j+1))
         done
         [ -d "$wrepo/.git" ] || { printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1; }
+        if [ -f "$d/.require-repo-reg" ] && ! grep -qxF "$wrepo" "$d/repos" 2>/dev/null; then
+          printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1
+        fi
+        if [ -f "$d/.create-no-path" ]; then
+          printf '{"ok":true,"result":{"worktree":{"id":"wt-broken"}}}\n'; exit 0
+        fi
         wpath="$d/orca-wt/$wname"
         mkdir -p "$d/orca-wt"
         git -C "$wrepo" worktree add -q -b "fakeuser/$wname" "$wpath" "${wbase:-HEAD}" 2>/dev/null           || { printf '{"ok":false,"error":{"message":"worktree_create_failed"}}\n'; exit 1; }
@@ -773,6 +795,34 @@ case "${1:-}" in
       *)
         printf '{"ok":true,"result":{"worktree":{}}}\n'; exit 0 ;;
     esac ;;
+  repo)
+    rsel="" rpath=""
+    j=0
+    while [ $j -lt ${#args[@]} ]; do
+      case "${args[$j]}" in
+        --repo) j=$((j+1)); rsel="${args[$j]#path:}" ;;
+        --path) j=$((j+1)); rpath="${args[$j]}" ;;
+      esac
+      j=$((j+1))
+    done
+    case "${2:-}" in
+      show)
+        if [ ! -f "$d/.require-repo-reg" ] || grep -qxF "$rsel" "$d/repos" 2>/dev/null; then
+          printf '{"ok":true,"result":{"repo":{"id":"r1"}}}\n'
+        else
+          printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'
+        fi
+        exit 0 ;;
+      add)
+        if grep -qxF "$rpath" "$d/repos" 2>/dev/null; then
+          printf '{"ok":false,"error":{"message":"runtime_error"}}\n'
+        else
+          printf '%s\n' "$rpath" >>"$d/repos"
+          printf '{"ok":true,"result":{"repo":{"id":"r1"}}}\n'
+        fi
+        exit 0 ;;
+    esac
+    printf '{"ok":true,"result":{}}\n'; exit 0 ;;
   terminal) ;;
   *) printf 'fake-orca: unmodeled verb %s\n' "$*" >&2; exit 2 ;;
 esac
@@ -809,6 +859,11 @@ case "${2:-}" in
     [ "$interrupt" = 1 ] && { printf '{"ok":true,"result":{}}\n'; exit 0; }
     [ "$has_text" = 1 ] && printf '%s' "$text" >>"$d/terminals/$term.in"
     if [ "$enter" = 1 ]; then
+      if [ -e "$d/terminals/$term.popup-once" ] && [ -s "$d/terminals/$term.in" ]; then
+        rm -f "$d/terminals/$term.popup-once"
+        printf 'argument hint filled\n' >>"$d/terminals/$term.buf"
+        printf '{"ok":true,"result":{}}\n'; exit 0
+      fi
       if [ -f "$d/terminals/$term.drop-enters" ]; then
         cnt="$(cat "$d/terminals/$term.drop-enters")"
         if [ "${cnt:-0}" -gt 0 ] 2>/dev/null; then

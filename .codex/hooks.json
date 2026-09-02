@@ -1,0 +1,46 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'payload=$(cat 2>/dev/null || true); [ -n \"$payload\" ] || exit 0; root=$(pwd -P) || exit 0; [ -x \"$root/bin/ac-watch-policy-hook.sh\" ] || exit 0; printf \"%s\" \"$payload\" | \"$root/bin/ac-watch-policy-hook.sh\"'",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'payload=$(cat 2>/dev/null || true); [ -n \"$payload\" ] || exit 0; root=$(pwd -P) || exit 0; [ -x \"$root/bin/ac-delegation-guard.sh\" ] || exit 0; printf \"%s\" \"$payload\" | \"$root/bin/ac-delegation-guard.sh\"'",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash -lc 'payload=$(cat 2>/dev/null || true); [ -n \"$payload\" ] || exit 0; root=$(pwd -P) || exit 0; [ -x \"$root/bin/ac-ledger-guard.sh\" ] || exit 0; printf \"%s\" \"$payload\" | \"$root/bin/ac-ledger-guard.sh\"'",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash -lc 'payload=$(cat 2>/dev/null || true); [ -n \"$payload\" ] || exit 0; root=$(pwd -P) || exit 0; [ -x \"$root/bin/ac-primary-guard.sh\" ] || exit 0; printf \"%s\" \"$payload\" | \"$root/bin/ac-primary-guard.sh\"'",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'root=$(pwd -P) || exit 0; [ -x \"$root/bin/ac-turnend-guard.sh\" ] || exit 0; \"$root/bin/ac-turnend-guard.sh\"'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

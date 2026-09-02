@@ -22,6 +22,8 @@ mkdir -p "$stub"
 export GHLOG="$TMP/gh.log"
 export GHPRFILES="$TMP/gh.prfiles"   # `gh pr diff --name-only` answer, if set
 export GHVIEW=""                     # `gh pr view --json headRefOid` behavior
+export GHMERGESTATE="MERGED"         # `gh pr view --json state` read-back ("fail" = API error)
+export GHMERGEFAIL=""                # 1 -> `gh pr merge` itself exits 1 ("already merged")
 
 # Logging gh fake: one bracketed line per argv element, so an empty-string
 # argument would show up as a bare `[]` line and break the exact match.
@@ -32,14 +34,29 @@ export GHVIEW=""                     # `gh pr view --json headRefOid` behavior
 # value is printed as the resolved head sha.
 cat >"$stub/gh" <<'EOF'
 #!/usr/bin/env bash
-: >"$GHLOG"
-for a in "$@"; do printf '[%s]\n' "$a" >>"$GHLOG"; done
+# Only `pr merge` argv is logged: the outcome read-back (`pr view --json
+# state`) runs AFTER the merge and would otherwise overwrite the very argv
+# the exact-match asserts exist for.
+if [ "$1 $2" = "pr merge" ]; then
+  : >"$GHLOG"
+  for a in "$@"; do printf '[%s]\n' "$a" >>"$GHLOG"; done
+  [ "${GHMERGEFAIL:-}" = 1 ] && { printf 'already merged\n' >&2; exit 1; }
+fi
 if [ "$1 $2" = "pr view" ]; then
-  case "${GHVIEW:-}" in
-    fail)  exit 1 ;;
-    empty) exit 0 ;;
-    *)     printf '%s\n' "$GHVIEW"; exit 0 ;;
+  case "$*" in
+    *headRefOid*)
+      case "${GHVIEW:-}" in
+        fail)  exit 1 ;;
+        empty) exit 0 ;;
+        *)     printf '%s\n' "$GHVIEW"; exit 0 ;;
+      esac ;;
+    *state*)
+      case "${GHMERGESTATE:-MERGED}" in
+        fail) exit 1 ;;
+        *)    printf '%s\n' "${GHMERGESTATE:-MERGED}"; exit 0 ;;
+      esac ;;
   esac
+  exit 0
 fi
 [ "$1 $2" = "pr diff" ] && cat "$GHPRFILES" 2>/dev/null
 exit 0
@@ -68,6 +85,42 @@ out="$(merge t1 "$url")"
 assert_contains "$out" "merged $url" "merge reported"
 assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n' "$url")" "no-tail argv"
 assert_contains "$(cat "$AC_HOME/state/t1.meta")" "pr_merged=1" "meta records merge"
+assert_contains "$(cat "$AC_HOME/state/t1.meta")" "pr=$url" "pr= rides the proven merge"
+
+# The merge OUTCOME is proven, never assumed: a zero-exit merge call whose
+# read-back does not answer MERGED (auto-merge queued on a protected branch,
+# an unreadable API) must NOT set pr_merged - teardown trusts that field as
+# landed proof, so an unproved 1 lets work be discarded before it landed.
+# And an unproven attempt must not arm teardown's OTHER proof either: pr= is
+# exactly --pr-ready's precondition, so only the ATTEMPT is recorded before
+# the merge call (pr_attempt=) and pr= is written beside the proof alone -
+# a bogus URL can neither land a task nor overwrite ac-pr-check's validated
+# record.
+printf 'backend=tmux\n' >"$AC_HOME/state/t2.meta"
+GHMERGESTATE=OPEN
+out="$(merge t2 "$url" 2>&1)" && fail "an unproven merge outcome must exit non-zero" || true
+assert_contains "$out" "NOT proven" "the refusal names the unproven outcome"
+assert_contains "$out" "state=OPEN" "quoting the forge's own answer"
+grep -q "pr_merged=1" "$AC_HOME/state/t2.meta" && fail "an unproven outcome must not mark pr_merged" || true
+grep -q "^pr=" "$AC_HOME/state/t2.meta" && fail "an unproven outcome must not record pr= - it is --pr-ready's whole precondition" || true
+assert_contains "$(cat "$AC_HOME/state/t2.meta")" "pr_attempt=$url" "the attempt is still bookkept"
+GHMERGESTATE=fail
+out="$(merge t2 "$url" 2>&1)" && fail "an unreadable outcome must exit non-zero" || true
+assert_contains "$out" "state=unreadable" "an unreadable read-back stays unproven"
+GHMERGESTATE=MERGED
+
+# RECOVERY: a re-run after transient read-after-write lag hits a merge call
+# that fails ("already merged") while the PR is provably MERGED - the proof
+# must still be recordable, or no scripted invocation can ever set
+# pr_merged=1 for that task.
+printf 'backend=tmux\n' >"$AC_HOME/state/t3.meta"
+GHMERGEFAIL=1
+out="$(merge t3 "$url" 2>&1)" || fail "a failed merge call over a MERGED PR must record the proof, not die"
+assert_contains "$out" "merged $url" "the proof is reported"
+assert_contains "$out" "earlier attempt" "the recovery names what happened"
+assert_contains "$(cat "$AC_HOME/state/t3.meta")" "pr_merged=1" "the proof reaches the meta"
+assert_contains "$(cat "$AC_HOME/state/t3.meta")" "pr=$url" "pr= rides the proof"
+GHMERGEFAIL=""
 
 # Tail passes through verbatim; a method flag in the tail is not doubled.
 merge t1 "$url" -- --squash --admin >/dev/null

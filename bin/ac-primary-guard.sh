@@ -16,13 +16,14 @@
 # it is the TIDY-UP the mistake invites: `git checkout --` / `git restore` /
 # `git reset --hard` in the primary silently destroy uncommitted captain work.
 #
-# A SECOND LAYER, NOT A REPLACEMENT. The prose stays and remains the ONLY layer
-# covering codex and opencode: a PreToolUse hook is claude-only, which is why
-# this direction was rejected on COVERAGE grounds 2026-07-25 and re-ordered by
-# accepted (direction B) with that residual EYES OPEN - it stops
-# the harness that actually failed, and claude is this fleet's default crewmate
-# harness. RESIDUAL, unchanged by this file: codex/opencode crewmates, and
-# crewmates in a project whose repo ships no .claude/settings.json, are covered
+# A SECOND LAYER, NOT A REPLACEMENT. The prose stays a layer everywhere. A
+# codex PRIMARY on this repo now gets this guard too (.codex/hooks.json
+# mirrors the claude PreToolUse wiring; live probe pending) - the direction
+# was first rejected on COVERAGE grounds 2026-07-25 as claude-only, and
+# re-ordered accepted (direction B) with that residual EYES OPEN.
+# RESIDUAL, unchanged by this file: opencode/pi worktree surfaces wire only
+# the bash-tool policy (their plugin APIs gate bash, not Edit/Write), and
+# crewmates in a project whose repo ships no hook wiring at all are covered
 # by the prose alone.
 #
 # WHERE (D1, reused from the commit guard verbatim): git-common-dir's PARENT is

@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-# ac-turnend-guard.sh - "no turn ends blind" Stop-hook predicate (Claude Code).
+# ac-turnend-guard.sh - "no turn ends blind" turn-end predicate.
 #
-# Wired as a Stop hook in .claude/settings.json. Blocks a turn end (exit 2 +
-# reason on stderr) when the session would go blind: wakes IT must drain are
-# pending, or the watcher serving it has a stale liveness beacon.
+# Wired as the claude Stop hook (.claude/settings.json) and carried to the
+# other primary harnesses by their own surfaces - .codex/hooks.json Stop,
+# .opencode/plugins/ac-primary-guards.js (session.idle),
+# .pi/extensions/ac-primary-turnend-guard.ts (agent_settled),
+# .cursor/hooks.json stop via bin/ac-turnend-guard-cursor.sh (a follow-up
+# message, never a block - cursor's stop cannot block); the
+# non-claude wirings ship shape-faithful and fail open, live probes pending
+# (tests/ac-harness-hooks.test.sh is their drift fence). Blocks a turn end
+# (exit 2 + reason on stderr) when the session would go blind: wakes IT must
+# drain are pending, or the watcher serving it has a stale liveness beacon.
 #
 # Scoped (ac-lib.sh owns the keying): a roomchief (AC_SCOPE=<fam>) is judged
 # on its OWN wake store (spool records + legacy queue file, ac_wake_pending)

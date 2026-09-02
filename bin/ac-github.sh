@@ -79,6 +79,7 @@
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-wake-lib.sh"
+. "$(dirname "$0")/ac-pipeline-lib.sh"   # ac_redact_publish: comment bodies PUBLISH
 
 usage() {
   printf 'usage: ac-github.sh poll --repo <path>\n'
@@ -202,6 +203,10 @@ cmd_comment() {
   esac
   [ -d "$repo_arg/.git" ] || ac_die "not a git repo: $repo_arg"
   command -v gh >/dev/null 2>&1 || ac_die "gh not found on PATH - cannot comment"
+  # A comment PUBLISHES: scrub home paths and URL credentials at the one
+  # boundary, BEFORE the dedup hash, so idempotency keys on the text that
+  # actually left the machine.
+  body="$(printf '%s\n' "$body" | ac_redact_publish)"
 
   local slug store hash donefile out
   slug="$(_ac_github_slug "$repo_arg")" || ac_die "could not resolve the origin remote of $repo_arg"

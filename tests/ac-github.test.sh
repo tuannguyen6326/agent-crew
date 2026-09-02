@@ -165,6 +165,7 @@ assert_contains "$out" "posted verdict" "comment reports success"
 assert_contains "$(cat "$FAKE_GH/comments.log")" "LGTM, tests pass" "the exact verdict text reached gh pr comment"
 n1="$(wc -l <"$FAKE_GH/comments.log")"
 
+
 out="$("$BIN/ac-github.sh" comment --repo "$repo" --pr 1 --body "LGTM, tests pass")"
 assert_contains "$out" "no-op" "the exact same verdict a second time is a no-op"
 n2="$(wc -l <"$FAKE_GH/comments.log")"
@@ -173,6 +174,16 @@ assert_eq "$n2" "$n1" "a duplicate verdict never calls gh pr comment again"
 "$BIN/ac-github.sh" comment --repo "$repo" --pr 1 --body "Actually, one nit to fix" >/dev/null
 n3="$(wc -l <"$FAKE_GH/comments.log")"
 [ "$n3" -gt "$n2" ] || fail "a genuinely DIFFERENT verdict on the same PR is not treated as a duplicate"
+
+# A verdict quoting a local error can carry the operator's home path or a
+# credential-bearing URL - a comment PUBLISHES, so it goes through
+# ac_redact_publish first (one boundary, ac-pipeline-lib.sh).
+"$BIN/ac-github.sh" comment --repo "$repo" --pr 1 \
+  --body "failed at /Users/operator/lab/run.log after push to https://x:tok9@github.com/a/b" >/dev/null
+redacted="$(tail -1 "$FAKE_GH/comments.log")"
+case "$redacted" in *"/Users/operator"*) fail "a published comment must not carry a home path" ;; esac
+case "$redacted" in *tok9*) fail "a published comment must not carry URL credentials" ;; esac
+assert_contains "$redacted" "~/lab/run.log" "the path is redacted to ~, the tail intact"
 
 out="$("$BIN/ac-github.sh" comment --repo "$repo" --pr abc --body "x" 2>&1)" && fail "a non-numeric PR number must be refused"
 assert_contains "$out" "unattributable" "a bad PR number is refused, never guessed"

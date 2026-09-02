@@ -29,6 +29,7 @@
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
+. "$(dirname "$0")/ac-pipeline-lib.sh"   # ac_delivery_mode_block: the promoted scout gets the briefed contract
 
 bin_dir="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -96,9 +97,28 @@ ac_status_append "$id" "promoted: scout -> ship (mode=$mode)${captain_ref:+ capt
 printf 'promoted %s: kind scout -> ship, mode=%s (ship teardown protection now applies)\n' \
   "$id" "$mode"
 
+# The promoted crewmate gets the SAME mode-specific delivery contract a
+# briefed worker gets (ac_delivery_mode_block, the one renderer both paths
+# share) - a bare mode NAME left the never-push and PR rules behind. Written
+# either way; the pane notice below is only the pointer.
+instructions="$(ac_data_dir)/$id/ship-instructions.md"
+mkdir -p "$(dirname "$instructions")"
+cat >"$instructions" <<EOF
+# Ship contract: $id (promoted from scout)
+
+This task now delivers a PROJECT CHANGE on \`crew/$id\`; a report alone no
+longer lands it. Start the ship branch from a clean base carrying only the
+intended changes - scout scratch commits and debug edits never ride along.
+
+$(ac_delivery_mode_block "$mode" "crew/$id" "the recorded target branch" "the recorded integration branch" "delivery preparation")
+
+Escalate ask-user findings and needs-decision questions through your status
+line as before; the chief relays them to the captain.
+EOF
+
 # Tell the live crewmate its contract changed (ac-send.sh fail-closes when
 # the window is gone; a recorded promotion without a notice is still valid).
-notice="NOTICE: this task was promoted to SHIP - deliver the project change on crew/$id; delivery per mode=$mode. A report alone no longer lands it."
+notice="NOTICE: this task was promoted to SHIP - deliver the project change on crew/$id; delivery per mode=$mode. Read your full contract: $instructions. A report alone no longer lands it."
 if "$bin_dir/ac-send.sh" "$id" "$notice" >/dev/null 2>&1; then
   printf 'notified crewmate %s of the ship contract\n' "$id"
 else

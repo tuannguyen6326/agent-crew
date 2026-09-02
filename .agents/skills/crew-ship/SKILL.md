@@ -286,7 +286,11 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    -> verification narrative per round). End with the signature line
    `Validated by agent-crew crew-ship`.
    Keep the body under ~63,000 bytes: drop the OLDEST `## Pipeline` rounds
-   first, then `## Testing`, and leave a `(truncated)` marker. Skip the
+   first, then `## Testing`, and leave a `(truncated)` marker.
+   The body PUBLISHES: it must carry no absolute home paths (quote run
+   paths as `~/...` or repo-relative) and no credential-bearing URLs -
+   an error message pasted verbatim often carries both, so re-read what
+   you quote. Skip the
    step when the host is not GitHub or the branch is the default.
    When the PR is up and the pipeline is green, finish `checks-passed`
    and STOP - merging and CI watching stay with the user (a red check

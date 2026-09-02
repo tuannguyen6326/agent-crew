@@ -355,4 +355,18 @@ printf '%s' "$rf_in" | lib "ac_findings_normalize '$rf0'"
 assert_eq "$(jq -r '[.[] | select(has("round_floored"))] | length' "$rf0")" "0" "absent round metadata floors nothing"
 assert_eq "$(jq -r '.[0].action' "$rf0")" "fix" "absent metadata keeps every authorized fix"
 
+# --- ac_redact_publish: published text carries no home paths or credentials --
+# One boundary for everything the fleet PUBLISHES (PR comments today): the
+# operator's home path collapses to ~ and a credential-bearing URL loses its
+# userinfo, while the rest of the text stays byte-intact.
+rp_out="$(printf 'ran %s/proj/x then /Users/operator/lab/y and /home/op2/z via https://x:tok123@example.com/repo done\n' "$HOME" \
+  | lib 'ac_redact_publish')"
+case "$rp_out" in *"$HOME"*) fail "the operator home path must not survive publication" ;; esac
+case "$rp_out" in *tok123*) fail "URL credentials must not survive publication" ;; esac
+assert_contains "$rp_out" "ran ~/proj/x" "the home collapses to ~ with the tail intact"
+assert_contains "$rp_out" "~/lab/y" "a foreign /Users/<name> home collapses too"
+assert_contains "$rp_out" "~/z" "/home/<name> collapses too"
+assert_contains "$rp_out" "https://***@example.com/repo" "userinfo is masked, the URL stays readable"
+assert_contains "$rp_out" "done" "surrounding text is untouched"
+
 pass

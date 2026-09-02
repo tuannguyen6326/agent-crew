@@ -81,6 +81,41 @@ ac_yaml_keys() {
   ' "$file"
 }
 
+ac_redact_publish() {
+  # stdin -> stdout: scrub what must never leave the operator's machine from
+  # text the fleet PUBLISHES (a PR comment quoting a local error, a body
+  # naming a run path). One boundary at the publish call, deliberately not
+  # per-source - a per-source scrub has to be complete to work. Home paths
+  # (the live $HOME first, then any /Users/<name> and /home/<name>) collapse
+  # to ~; a URL's userinfo (user:token@) is masked; everything else passes
+  # byte-intact.
+  sed -e "s|$HOME|~|g" \
+      -e 's|/Users/[A-Za-z0-9._-]\{1,\}|~|g' \
+      -e 's|/home/[A-Za-z0-9._-]\{1,\}|~|g' \
+      -e 's|://[^/@[:space:]]\{1,\}@|://***@|g'
+}
+
+ac_delivery_mode_block() {
+  # ac_delivery_mode_block <mode> <crew-branch> <pr-base-phrase>
+  #                        <integration-branch> <loop-phrase>
+  # The ONE renderer of the per-mode delivery contract: ac-brief.sh scaffolds
+  # it into every execution brief and ac-promote.sh hands it to a promoted
+  # scout - two contracts, one renderer, so they cannot drift (a promoted
+  # worker otherwise gets the mode NAME while a briefed worker gets the
+  # never-push and PR rules).
+  local mode="$1" branch="$2" base="$3" integ="$4" loop="$5"
+  case "$mode" in
+    crew-ship)
+      printf -- '- Mode crew-ship: run the `crew-ship` skill. Its `ac-ship` engine owns the guarded 8-step delivery pipeline (intent, rebase, review, test, document, lint, push, pr). Hand over only after checks pass and include the PR URL.' ;;
+    direct-pr)
+      printf -- '- Mode direct-pr: after %s, push `%s` and open a PR against %s. The PR body covers intent, changes, and verification evidence.' "$loop" "$branch" "$base" ;;
+    feature-pr)
+      printf -- '- Mode feature-pr: after %s, leave `%s` clean and fully committed - it lands onto the feature integration branch `%s` (the chief runs ac-merge-local). Never push or open a PR; publication happens ONCE at the feature ship.' "$loop" "$branch" "$integ" ;;
+    local-only)
+      printf -- '- Mode local-only: after %s, leave `%s` clean and fully committed. Never push or open a PR.' "$loop" "$branch" ;;
+  esac
+}
+
 ac_yaml_has() {
   # ac_yaml_has <file> <dotted.key> - is the key PRESENT at all? 0 yes, 1 no.
   #

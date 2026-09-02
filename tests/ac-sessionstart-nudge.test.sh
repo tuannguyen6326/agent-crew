@@ -64,6 +64,19 @@ assert_contains "$out" "SOLO" "solo session gets the solo orientation"
 assert_contains "$out" "NOT the crewchief" "the orientation denies the chief identity outright"
 assert_contains "$out" "ac-self-task.sh" "the orientation names the one write path"
 assert_contains "$out" "ac-session-start.sh" "solo still runs session-start (read-only)"
+# Subagent discipline: the seeded crewmate layer reaches a subagent only
+# through the prompt (instruction files load by the SESSION's cwd, never by
+# the tree a subagent touches), so the orientation must carry the pointer
+# rule and the one-writer rule.
+assert_contains "$out" "at the seeded crewmate instruction file" "the orientation points write-subagents at the seeded layer"
+assert_contains "$out" "one at a time" "the orientation carries the one-writer-per-worktree rule"
+# The crewmate layer is read FROM THE SEEDED TREE, per slice - self-task
+# start already seeds the full merge (container baseline, learned, fleet,
+# domain) into the worktree, so the two-file direct read at $AC_HOME is gone.
+# "Instruction file", not a hardcoded path: a solo session is not only
+# claude, and --harness routes the seed to the file that harness loads.
+assert_contains "$out" "begin each slice by reading the seeded crewmate instruction file" "the orientation sends the slice read to the seeded worktree file"
+case "$out" in *'$AC_HOME/CREWMATE.md'*) fail "the two-file direct read must be gone - the seeded tree is the one source" ;; esac
 # ...and the orientation is UNCONDITIONAL: it must survive every silence gate
 # below it - a LIVE chief session-lock (the exact solo scenario: a second
 # session beside a working chief) and even a home the gates cannot resolve.

@@ -45,6 +45,27 @@ linked="$("$BIN/ac-tree.sh" get --repo "$primary" --id dg1 --holder crew:dg1 2>/
 assert_eq "$(hook "$linked" Task)" "0" "a linked worktree (crewmate) is never fenced"
 assert_eq "$(hook "$primary" Task)" "2" "the primary checkout still is"
 
+# --- scope: a FLEET HOME cwd is fenced too -----------------------------------
+# A live fleet home is a symlink-based dir, not a git checkout, so the
+# primary-checkout predicate never sees it - yet the chief session (and a solo
+# session, AC_SOLO=1) sits exactly there. The guard closes it by the one thing
+# a crewmate never has: physical cwd == physical AC_HOME.
+mkdir -p "$AC_HOME"
+assert_eq "$(hook "$AC_HOME" Task)" "2" "a chief session at a non-git fleet home is fenced"
+# A SOLO session is worker-shaped: it keeps its own subagents exactly as a
+# crewmate's worktree does - the slice stays its responsibility, and the
+# captain is watching it live.
+rc=0
+( cd "$AC_HOME" && printf '{"tool_name":"Task"}' | AC_SOLO=1 "$guard" >/dev/null 2>&1 ) || rc=$?
+assert_eq "$rc" "0" "a solo session keeps its own subagents, like a crewmate"
+rc=0
+( cd "$primary" && printf '{"tool_name":"Task"}' | AC_SOLO=1 "$guard" >/dev/null 2>&1 ) || rc=$?
+assert_eq "$rc" "0" "the solo carve-out holds on a repo-hosted fleet too"
+assert_eq "$(hook "$AC_HOME" Read)" "0" "ordinary tools stay untouched at the home"
+rc=0
+( cd "$AC_HOME" && printf '{"tool_name":"Task"}' | AC_ALLOW_DELEGATION=1 "$guard" >/dev/null 2>&1 ) || rc=$?
+assert_eq "$rc" "0" "the deliberate override works at the home too"
+
 # --- the escape hatch, and fail-open ----------------------------------------
 rc=0
 ( cd "$primary" && printf '{"tool_name":"Task"}' \

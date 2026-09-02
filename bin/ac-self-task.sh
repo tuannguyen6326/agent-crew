@@ -5,7 +5,7 @@
 # CHIEF's self-exception; the solo contract is AGENTS.md section 5's SOLO
 # SESSION block.
 #
-# Usage: ac-self-task.sh start <id> <project-name-or-dir>
+# Usage: ac-self-task.sh start <id> <project-name-or-dir> [--mode <m>] [--harness <h>] [--base-branch <b>]
 #        ac-self-task.sh log <id> '<progress line>'
 #
 # THE RULE IT SERVES (records/captain.md, "No invisible tasks; small tasks
@@ -38,7 +38,12 @@
 #      pool (bin/ac-tree.sh get, holder self:<id>, the same pool a crewmate
 #      leases from), an orca fleet an Orca-managed worktree on crew/<id>
 #      (orca_worktree_lease; the meta records worktree_backend=orca so
-#      teardown routes to the release arm),
+#      teardown routes to the release arm) - and seed the crewmate layer
+#      (instructions, settings, skills) into it: work on a worktree follows
+#      the crewmate rules, whoever holds the hands. `--harness <h>` routes
+#      the instruction/skills seed to the file that harness loads (default
+#      claude -> .claude/CLAUDE.md; codex/opencode/pi/cursor -> AGENTS.md) -
+#      a solo session is not only claude,
 #   3. open the labelled herdr tab and run `tail -f` on the progress log in it -
 #      the pane's ONLY job is to show the chief's own progress,
 #   4. write the COMPLETE state/<id>.meta with kind=self.
@@ -61,7 +66,11 @@
 #   bin/ac-merge-local.sh <id>   (needs no kind - it reads project_dir/worktree)
 #   bin/ac-teardown.sh <id>      (kind=self takes the ordinary committing-task
 #                                 landed proof, and returns the lease)
-# Nothing in either script needed a self case.
+# Nothing in either script needed a self case. `--mode <m>` (default
+# local-only, the chief self path above) records the slice's real delivery
+# mode on the meta - a SOLO slice landing a PR is mode=direct-pr, and the
+# landed proof already accepts a merged PR the same as a local merge. The
+# meta's mode is what fleet views display; nothing schedules off it.
 #
 # SUPERVISION. The meta is EXCLUDED FROM SUPERVISION, NEVER FROM ACCOUNTING -
 # the authoritative contract is the SELF-TASK class block in bin/ac-lib.sh
@@ -107,7 +116,34 @@ if [ "$verb" = log ]; then
 fi
 
 project="${2:-}"
-[ -n "$project" ] || ac_die "usage: ac-self-task.sh start <id> <project-name-or-dir>"
+[ -n "$project" ] || ac_die "usage: ac-self-task.sh start <id> <project-name-or-dir> [--mode <m>] [--harness <h>] [--base-branch <b>]"
+shift 2
+# local-only is the DEFAULT (a chief self task lands with ac-merge-local.sh),
+# never a hardcode: a SOLO session's slice lands per the repo's mode, PR
+# included, and the fleet views display what the meta records.
+mode="local-only"
+harness=""
+base_branch=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --mode)
+      mode="${2:-}"
+      case "$mode" in
+        crew-ship|direct-pr|local-only|feature-pr) ;;
+        *) ac_die "invalid --mode: ${mode:-empty} (want crew-ship|direct-pr|local-only|feature-pr)" ;;
+      esac
+      shift 2 ;;
+    --harness)
+      harness="${2:-}"
+      [ -n "$harness" ] || ac_die "--harness names the harness working this slice (claude|codex|opencode|pi|cursor|...)"
+      shift 2 ;;
+    --base-branch)
+      base_branch="${2:-}"
+      [ -n "$base_branch" ] || ac_die "--base-branch names the branch the orca lease is cut from (wins over the live checkout; orca backend only)"
+      shift 2 ;;
+    *) ac_die "unknown argument: $1" ;;
+  esac
+done
 [ -e "$meta" ] && ac_die "task $id already exists (see $meta); tear it down first"
 project_dir="$(ac_project_dir "$project")" \
   || ac_die "project not found: $project (clone it into projects/ first)"
@@ -134,6 +170,12 @@ fi
 AC_BACKEND="$(ac_config_read backend herdr)"
 export AC_BACKEND
 backend="$(ac_backend)"
+# --base-branch only ever reaches the orca lease call below; on a herdr fleet
+# it would otherwise silently no-op (the pool lease has no base-branch
+# concept), the exact silent-outcome defect this fleet's own conventions
+# refuse.
+[ -z "$base_branch" ] || [ "$backend" = orca ] \
+  || ac_die "--base-branch requires an orca-backend fleet (config/backend=$backend here) - a herdr fleet leases from its own worktree pool, which has no base-branch concept"
 
 window=""
 self_cleanup() {
@@ -152,12 +194,30 @@ ac_status_append "$id" "working: self task started by the chief"
 # 2. The lease - per the fleet backend, like every other isolated checkout
 # (crew, verifier): an orca fleet leases through the Orca CLI, on crew/<id>.
 if [ "$backend" = orca ]; then
-  worktree="$(orca_worktree_lease "$id" "$project_dir")" \
+  worktree="$(orca_worktree_lease "$id" "$project_dir" "$base_branch")" \
     || ac_die "could not lease an Orca worktree for $id"
 else
   worktree="$("$bin_dir/ac-tree.sh" get --repo "$project_dir" --id "$id" --holder "self:$id")"
 fi
 trap self_cleanup EXIT
+
+# Work on a worktree follows the crewmate layer, whoever holds the hands - the
+# chief, a solo session, or a session the captain opens INSIDE the tree - so
+# the lease seeds exactly what a crew spawn seeds: instructions, settings,
+# skills. --harness routes the seed to the instruction file that harness
+# actually loads (empty defaults to claude), the same resolver a crew spawn
+# uses. A repo shipping its OWN instruction file forces the seed to a
+# FALLBACK path no harness auto-loads - a crew spawn rides that print into
+# its kickoff prompt; here there is no kickoff, so the status record is the
+# durable channel: swallowing it points the session at the shipped law while
+# the real crewmate layer sits unannounced.
+seed_fallback="$(ac_seed_crewmate_md "$worktree" "$harness")"
+[ -z "$seed_fallback" ] || {
+  ac_status_append "$id" "layer: crewmate layer at FALLBACK path $seed_fallback (the repo ships its own instruction file) - read THAT file, not only the shipped law"
+  printf 'crewmate layer at FALLBACK path: %s (the repo ships its own instruction file - read it)\n' "$seed_fallback"
+}
+ac_seed_crew_settings "$worktree"
+ac_seed_crew_skills "$worktree" "$harness"
 
 # 3. The pane. Refused rather than doubled when the backend cannot answer for an
 # existing one - the three states are ac-backend.sh's (WINDOW LIVENESS).
@@ -169,10 +229,20 @@ esac
 # A self task is the chief's own fleet-level work: its tail tab lives in the
 # fleet ROOT workspace (AC_WINDOW_FAMILY set EMPTY = deliberately the root;
 # ac-backend.sh FAMILY WORKSPACE GROUPING), never in a family's space.
-AC_WINDOW_FAMILY="" backend_window_new "$id" "$worktree"
+if [ "$backend" = orca ]; then
+  # The tail is the PANE'S OWN command - nothing is ever typed into a booting
+  # shell (a typed tail measurably raced the shell's cd+exec and landed as
+  # interleaved fragments, killing the first start).
+  placed="$(AC_WINDOW_FAMILY="" orca_place_pane "$worktree" \
+      "cd $(printf '%q' "$worktree") && exec tail -f $(printf '%q' "$status_file")" "$id")" \
+    || ac_die "orca pane placement failed for $id at $worktree"
+  printf '%s\n' "$placed" >"$(ac_pane_file "$id")"
+else
+  AC_WINDOW_FAMILY="" backend_window_new "$id" "$worktree"
+  backend_send_line "$id" "tail -f $(printf '%q' "$status_file")" \
+    || ac_warn "the pane may not have started tailing $status_file - peek it (bin/ac-peek.sh $id)"
+fi
 window="$(backend_target "$id")"
-backend_send_line "$id" "tail -f $(printf '%q' "$status_file")" \
-  || ac_warn "the pane may not have started tailing $status_file - peek it (bin/ac-peek.sh $id)"
 
 # 4. The complete meta.
 ac_meta_set "$meta" backend "$backend"
@@ -180,14 +250,14 @@ ac_meta_set "$meta" window "$window"
 ac_meta_set "$meta" worktree "$worktree"
 ac_meta_set "$meta" leases "$worktree"
 [ "$backend" != orca ] || ac_meta_set "$meta" worktree_backend orca
-ac_meta_set "$meta" lease_ids \
+# lease_ids is a POOL concept (the slot meta's reclaim token); an orca lease
+# has no slot to read it from, and teardown's orca arm never pops it.
+[ "$backend" = orca ] || ac_meta_set "$meta" lease_ids \
   "$(ac_meta_get "$project_dir/.crew/slots/$(basename "$worktree").meta" lease_id)"
 ac_meta_set "$meta" project "$project_name"
 ac_meta_set "$meta" project_dir "$project_dir"
 ac_meta_set "$meta" kind "self"
-# A self task lands with bin/ac-merge-local.sh, which is what local-only means;
-# the project registry's default mode describes crewmate delivery, not this.
-ac_meta_set "$meta" mode "local-only"
+ac_meta_set "$meta" mode "$mode"
 ac_meta_set "$meta" spawned_at "$(ac_iso)"
 trap - EXIT
 

@@ -10,10 +10,14 @@ A task's isolated checkout is leased per the fleet's session backend
   and removed through the Orca CLI so every task tree is a first-class node
   in the Orca sidebar beside its diffs. `bin/ac-backend-orca.sh`
   (`orca_worktree_lease` / `orca_worktree_release`) is that half's
-  authoritative spec: `crew/<id>` cut from the LOCAL default branch,
-  repo-defined setup hooks run, the primary checkout's `node_modules`
-  carried over as a copy-on-write clone, and the whole worktree removed at
-  teardown.
+  authoritative spec: `crew/<id>` cut from the repo's LIVE CHECKOUT branch
+  at its freshest tip (`ac_freshest_ref`, local vs origin) - or, when the
+  checkout is DETACHED, from HEAD's exact commit, since a detached checkout
+  can sit ahead of its own branch ref with no named ref to compare against -
+  or from an explicit `--base-branch` override when `ac-self-task.sh start` /
+  `ac-spawn.sh` name one, repo-defined setup hooks run, the primary
+  checkout's `node_modules` carried over as a copy-on-write clone, and the
+  whole worktree removed at teardown.
 
 Verifier rounds (`ac-verify.sh` codereview and qa) follow the same rule as
 crew leases - the isolated exact-ref checkout comes from whichever mechanism

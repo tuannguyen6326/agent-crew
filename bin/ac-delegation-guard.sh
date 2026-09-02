@@ -22,8 +22,16 @@
 # names are excluded outright: an MCP server's tools are the captain's own
 # integrations, not this harness's delegation surface.
 #
-# SCOPE: a genuine PRIMARY checkout only (git-dir == git-common-dir, the same
-# predicate ac-turnend-guard.sh and ac-sessionstart-nudge.sh use). A crewmate's
+# SCOPE, two arms: (1) the FLEET HOME - physical cwd == physical AC_HOME. A
+# live home is a symlink-based dir, not a git checkout, so the git predicate
+# alone left every real fleet's chief session unfenced - measured:
+# `git rev-parse` at such a home answers "not a git repository", which fails
+# open. A crewmate's cwd is never its fleet's home, so the equality is safe.
+# A SOLO session (AC_SOLO=1) is exempt from BOTH arms - see the carve-out at
+# the top: worker-shaped like a crewmate, never a chief.
+# (2) a genuine PRIMARY checkout (git-dir == git-common-dir, the same
+# predicate ac-turnend-guard.sh and ac-sessionstart-nudge.sh use) - a fleet
+# hosted on a repo itself. A crewmate's
 # leased worktree is a LINKED checkout and is never touched - a crewmate using
 # subagents inside its own worktree is a capability it legitimately has, and
 # removing it is a different decision than the one this guard makes. This is
@@ -41,6 +49,11 @@
 set -uo pipefail
 
 [ "${AC_ALLOW_DELEGATION:-}" = 1 ] && exit 0
+# A SOLO session (AC_SOLO=1) is WORKER-shaped, not chief-shaped: it keeps its
+# own subagents exactly as a crewmate's worktree does - the slice stays its
+# responsibility, its self-task meta keeps the work visible, and the captain
+# is watching it live. Same carve-out, either scope arm.
+[ "${AC_SOLO:-}" = 1 ] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 payload="$(cat 2>/dev/null || true)"
 [ -n "$payload" ] || exit 0
@@ -54,13 +67,24 @@ case "$tool" in
   *) exit 0 ;;
 esac
 
-# Scope: primary checkout only. An unreadable checkout fails OPEN.
+# Scope, two arms - either one is a session the fence covers:
+# 1. FLEET HOME: physical cwd == physical AC_HOME. A live fleet home is a
+#    symlink-based dir, not a git checkout, so the git predicate below never
+#    sees it - yet the chief session (and a solo session, AC_SOLO=1) sits
+#    exactly there, and a crewmate's cwd is never its fleet's home.
+# 2. PRIMARY CHECKOUT (git-dir == git-common-dir): a fleet hosted on a repo
+#    itself. A linked worktree (a crewmate) and an unreadable checkout fail
+#    OPEN as before.
 here="$(pwd -P 2>/dev/null || true)"
 [ -n "$here" ] || exit 0
-gd="$(git -C "$here" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
-gcd="$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-[ -n "$gd" ] && [ -n "$gcd" ] || exit 0
-[ "$gd" = "$gcd" ] || exit 0     # linked worktree: a crewmate, not a chief
+home_p=""
+[ -z "${AC_HOME:-}" ] || home_p="$(cd "$AC_HOME" 2>/dev/null && pwd -P || true)"
+if [ -z "$home_p" ] || [ "$here" != "$home_p" ]; then
+  gd="$(git -C "$here" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+  gcd="$(git -C "$here" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  [ -n "$gd" ] && [ -n "$gcd" ] || exit 0
+  [ "$gd" = "$gcd" ] || exit 0   # linked worktree: a crewmate, not a chief
+fi
 
 printf 'ac-delegation-guard: %s creates work with no state/<id>.meta, which leaves the whole supervision stack inert and dies with this session. Delegate through bin/ac-spawn.sh instead (AGENTS.md section 1). Deliberate override: launch with AC_ALLOW_DELEGATION=1.\n' "$tool" >&2
 exit 2

@@ -196,4 +196,47 @@ out="$(PATH="$shadow_path" "$BIN/ac-bootstrap.sh" --quiet)"
 assert_contains "$out" "CHECK-FAILED: jq" "an unparseable active copy is reported, not swallowed"
 case "$out" in *"jq installed but inert"*) fail "an unparseable version must never be treated as a comparison result" ;; esac
 
+# orca has NO --version (it prints usage - measured on 1.4.188): its version
+# lives in `status --json` .result.runtime.appVersion. The version probe must
+# ask THAT, so the fleet's own backend never reads CHECK-FAILED at every
+# session start (measured live, twice, before this arm existed).
+mkdir -p "$TMP/orca-bin"
+cat >"$TMP/orca-bin/orca" <<'FAKEORCA'
+#!/usr/bin/env bash
+if [ "${1:-}" = status ]; then
+  printf '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true,"appVersion":"9.9.9"}}}
+'
+  exit 0
+fi
+printf 'orca
+
+Usage: orca <command> [options]
+'
+exit 0
+FAKEORCA
+chmod +x "$TMP/orca-bin/orca"
+printf 'orca
+' >"$AC_HOME/config/backend"
+out="$(PATH="$TMP/orca-bin:$TMP/single:$TMP/stubbin" "$BIN/ac-bootstrap.sh" --quiet)"
+case "$out" in *"CHECK-FAILED: orca"*) fail "orca must not read CHECK-FAILED - its version lives in status --json" ;; esac
+
+# A REACHABLE runtime that is not READY (still starting, or errored) cannot
+# spawn either - an explicit non-ready state is flagged, same flag-only-
+# explicit philosophy as reachable=false (silence still says nothing).
+cat >"$TMP/orca-bin/orca" <<'FAKEORCA'
+#!/usr/bin/env bash
+if [ "${1:-}" = status ]; then
+  printf '{"ok":true,"result":{"runtime":{"state":"starting","reachable":true,"appVersion":"9.9.9"}}}
+'
+  exit 0
+fi
+exit 0
+FAKEORCA
+rc=0
+out="$(PATH="$TMP/orca-bin:$TMP/single:$TMP/stubbin" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+assert_contains "$out" "orca runtime is starting, not ready" "an explicit non-ready state is flagged"
+[ "$rc" != 0 ] || fail "a non-ready runtime must fail the toolchain check"
+printf 'herdr
+' >"$AC_HOME/config/backend"
+
 pass

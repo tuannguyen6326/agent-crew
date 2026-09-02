@@ -91,7 +91,34 @@ ac_knowledge_warn "$family" "$project_dir"
 merge_args=(pr merge "$url")
 if [ -n "$method" ]; then merge_args+=("$method"); fi
 if [ "${#extra[@]}" -gt 0 ]; then merge_args+=("${extra[@]}"); fi
-gh "${merge_args[@]}"
+# Only the ATTEMPT is bookkept before the merge call. pr= itself rides the
+# PROOF alone, because pr= is exactly --pr-ready's precondition in
+# ac-teardown.sh: writing it for an unproven attempt would arm that landing
+# with a URL nobody validated - and could overwrite ac-pr-check's validated
+# record with a mistyped one.
+ac_meta_set "$meta" pr_attempt "$url"
+merge_rc=0
+gh "${merge_args[@]}" || merge_rc=$?
+# The OUTCOME is proven, never assumed: a zero-exit merge call is the forge
+# ACCEPTING the request, not the merge landing - auto-merge on a protected
+# branch queues it, and pr_merged=1 is the landed proof ac-teardown.sh
+# accepts, so an unproved 1 would let a worktree be discarded before its
+# work landed. The read-back retries briefly (read-after-write lag answers
+# OPEN for a beat), and a FAILED merge call is judged by the same read-back:
+# a re-run after transient lag dies at `gh pr merge` ("already merged"), and
+# without this arm no scripted invocation could ever record the proof.
+merge_state=""
+for _try in 1 2 3; do
+  merge_state="$(gh pr view "$url" --json state -q .state 2>/dev/null || true)"
+  [ "$merge_state" = MERGED ] && break
+  sleep 1
+done
+if [ "$merge_state" != MERGED ]; then
+  ac_status_append "$id" "merge-unproven: $url state=${merge_state:-unreadable} merge_rc=$merge_rc"
+  ac_die "merge NOT proven for $url - gh pr merge exited $merge_rc and the forge answered state=${merge_state:-unreadable} across 3 reads (auto-merge queued? protected branch? unreadable API?). pr= and pr_merged stay unset so teardown keeps refusing; re-check with: gh pr view $url --json state, then re-run this command"
+fi
+[ "$merge_rc" = 0 ] \
+  || printf 'note: the merge call failed (exit %s) but the PR is MERGED - an earlier attempt landed; recording the proof.\n' "$merge_rc"
 [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
 ac_meta_set "$meta" pr "$url"
 ac_meta_set "$meta" pr_merged 1

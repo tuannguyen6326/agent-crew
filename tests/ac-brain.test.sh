@@ -178,6 +178,53 @@ fi
 assert_contains "$sd" "rebuild" "the dims error names the remedy"
 rm -f "$AC_HOME/config/brain.json"
 
+# --- sync soft-delete: gone pages hide, revive in the window, purge past it ---
+mkdir -p "$AC_HOME/data/soft"
+printf '# Ephemeral\nA page about the ephemeral lifecycle probe body.\n' >"$AC_HOME/data/soft/page.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+assert_contains "$("$BRAIN" recall --home "$AC_HOME" --query "ephemeral lifecycle probe" --limit 3 --compact)" \
+  "data/soft/page" "the page is live before deletion"
+rm "$AC_HOME/data/soft/page.md"
+sd1="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+[ "$(printf '%s' "$sd1" | j "['deleted']")" -ge 1 ] || fail "the gone page counts as deleted"
+case "$("$BRAIN" recall --home "$AC_HOME" --query "ephemeral lifecycle probe" --limit 5 --compact)" in
+  *"data/soft/page"*) fail "a soft-deleted page must not surface in recall" ;;
+esac
+assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT COUNT(*) FROM pages WHERE slug='data/soft/page' AND deleted_at IS NOT NULL")" "1" \
+  "the page row survives soft-deleted - the revive window"
+printf '# Ephemeral\nA page about the ephemeral lifecycle probe body.\n' >"$AC_HOME/data/soft/page.md"
+rv1="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+[ "$(printf '%s' "$rv1" | j "['revived']")" -ge 1 ] || fail "a returned file revives its page"
+assert_contains "$("$BRAIN" recall --home "$AC_HOME" --query "ephemeral lifecycle probe" --limit 3 --compact)" \
+  "data/soft/page" "the revived page surfaces again"
+rm "$AC_HOME/data/soft/page.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+sqlite3 "$AC_HOME/state/brain.sqlite" "UPDATE pages SET deleted_at = deleted_at - 80*3600*1000 WHERE slug='data/soft/page'"
+pg1="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+[ "$(printf '%s' "$pg1" | j "['purged']")" -ge 1 ] || fail "a page deleted past the window purges"
+assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT COUNT(*) FROM pages WHERE slug='data/soft/page'")" "0" \
+  "the purged page row is gone for good"
+rm -rf "$AC_HOME/data/soft"
+
+# --- vector evidence floor: a weak cosine never wears the vector label --------
+# A fresh one-page home makes the case deterministic: the query shares no
+# token with the page, so the keyword arm is empty and the single vector
+# candidate carries a LOW stub cosine - labeling it "vector" is the
+# blended-score dishonesty the floor closes.
+VH="$TMP/vec-home"
+mkdir -p "$VH/data/vec" "$VH/config" "$VH/state"
+printf '{"embedding":{"provider":"stub","model":"stub","dims":8}}\n' >"$VH/config/brain.json"
+printf '# Alpha Bravo\nalpha bravo tokens only in this page body.\n' >"$VH/data/vec/page.md"
+"$BRAIN" sync --home "$VH" --compact >/dev/null
+wk="$("$BRAIN" recall --home "$VH" --query "charlie delta echo foxtrot" --limit 5 --compact)"
+case "$wk" in
+  *'"evidence": "vector"'*|*'"evidence":"vector"'*) fail "a weak-cosine vector-only hit must not wear the vector label: $wk" ;;
+esac
+case "$wk" in
+  *vector_weak*) ;;
+  *) fail "the weak vector hit must still surface, honestly labeled vector_weak: $wk" ;;
+esac
+
 # --- synthesize boundaries ----------------------------------------------------
 export AC_BRAIN_SYNTH_CMD="echo synthetic-answer #"
 sy="$("$BRAIN" synthesize "widget product line" --home "$AC_HOME" --compact)"
@@ -278,8 +325,11 @@ printf '# Room: fam-viet\nMột dòng mới để sync có việc thật sự ph
 wait
 assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" 'PRAGMA integrity_check')" "ok" "integrity after racing syncs"
 fts_n="$(sqlite3 "$AC_HOME/state/brain.sqlite" 'SELECT COUNT(*) FROM chunks_fts')"
-ch_n="$(sqlite3 "$AC_HOME/state/brain.sqlite" 'SELECT COUNT(*) FROM chunks')"
-assert_eq "$fts_n" "$ch_n" "FTS stays 1:1 with chunks after racing syncs"
+# 1:1 against LIVE chunks: a soft-deleted page keeps its chunks (the revive
+# window) while its FTS rows are hidden - that asymmetry is the design, so
+# the invariant binds the searchable surface, not the raw table.
+ch_n="$(sqlite3 "$AC_HOME/state/brain.sqlite" 'SELECT COUNT(*) FROM chunks WHERE slug IN (SELECT slug FROM pages WHERE deleted_at IS NULL)')"
+assert_eq "$fts_n" "$ch_n" "FTS stays 1:1 with live chunks after racing syncs"
 
 # --- protocol honesty: errors carry the dialect version too -------------------
 # Every success shape stamps protocol_version: 1 (ac-brain's OWN dialect - the

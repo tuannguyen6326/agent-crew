@@ -74,27 +74,76 @@ orca_resolve_group() {
 }
 
 orca_worktree_lease() {
-  # orca_worktree_lease <id> <repo> - an Orca-managed worktree for an
-  # orca-backend crewmate (orca fleets lease through the Orca CLI, one
-  # worktree per task, sidebar-native; herdr fleets keep the crew-tree
-  # pool). Created from the LOCAL default branch - the CLI's own default
-  # base is origin/<default>, which lags local landings (measured) - with
-  # repo-defined setup hooks running and no lineage parent (the CLI
-  # otherwise infers the CALLER's active worktree as parent - measured).
-  # The primary checkout's node_modules rides over as a clone when the
-  # hooks have not already produced one: git carries only tracked files,
-  # and a fresh install per task is the cost the clone removes. A COPY
-  # (APFS clonefile when available), never a symlink - a crewmate's own
-  # install must not mutate the primary's deps. The CLI names the
-  # branch <git-user>/<name>; the crew contract owns crew/<id>, so the
-  # checkout is switched there (adopting an existing crew/<id> on a
-  # respawn) and the minted name dropped. Prints the path; 1 on failure.
-  local id="$1" repo="$2" out path obranch def st
-  def="$(ac_default_branch "$repo")"
+  # orca_worktree_lease <id> <repo> [<base-branch-override>] - an
+  # Orca-managed worktree for an orca-backend crewmate (orca fleets lease
+  # through the Orca CLI, one worktree per task, sidebar-native; herdr
+  # fleets keep the crew-tree pool). Cut from the repo's LIVE CHECKOUT
+  # branch, resolved to its FRESHEST tip via ac_freshest_ref (local vs
+  # origin, origin wins on true divergence) - NEVER ac_default_branch,
+  # which answers "what branch does this repo default to" and has no idea
+  # which branch the live checkout is actually on
+  # (orca-lease-cuts-from-wrong-branch: measured, a checkout on a
+  # non-default branch leased out of main entirely, missing whole
+  # directories). A DETACHED live checkout (no branch to read) is cut from
+  # its exact HEAD commit instead - never ac_default_branch's fallback,
+  # which would silently pick an unrelated branch, and never
+  # ac_freshest_ref, which has no "local vs origin" question to answer for
+  # a commit that is not on any branch. This is what a checkout can be
+  # AHEAD of its own branch ref while detached (the branch ref and
+  # origin's tracking ref both stay put) reconciles: the branch NAME
+  # resolves "correctly" yet a name-based lookup still lands behind,
+  # because neither ref moved - measured against the room's own FMS
+  # evidence (correct branch, 7 commits behind, no symptom). The optional
+  # 3rd arg (ac-self-task.sh/ac-spawn.sh's own --base-branch) names the
+  # branch explicitly and wins over the live checkout (detached or not),
+  # but still resolves through ac_freshest_ref - an override names WHICH
+  # branch, not which tip. Measured against the real orca CLI (1.4.190,
+  # `worktree create --base-branch`): a bare name resolves the LOCAL
+  # branch tip, `origin/<name>` resolves the remote-tracking tip, and a
+  # raw commit SHA resolves to exactly that commit - the first two are
+  # ac_freshest_ref's own two return shapes, so its output is passed
+  # straight through with no translation; the third is what the detached
+  # arm below uses directly. Repo-defined setup hooks running and no
+  # lineage parent (the CLI otherwise infers the CALLER's active worktree
+  # as parent - measured). The primary checkout's node_modules rides over
+  # as a clone when the hooks have not already produced one: git carries
+  # only tracked files, and a fresh install per task is the cost the
+  # clone removes. A COPY (APFS clonefile when available), never a
+  # symlink - a crewmate's own install must not mutate the primary's
+  # deps. The CLI names the branch <git-user>/<name>; the crew contract
+  # owns crew/<id>, so the checkout is switched there (adopting an
+  # existing crew/<id> on a respawn) and the minted name dropped. Prints
+  # the path; 1 on failure.
+  local id="$1" repo="$2" override="${3:-}" out path obranch base ref st
+  if [ -n "$override" ]; then
+    ref="$(ac_freshest_ref "$repo" "$override")"
+  elif base="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null)" && [ -n "$base" ]; then
+    ref="$(ac_freshest_ref "$repo" "$base")"
+  else
+    ref="$(git -C "$repo" rev-parse HEAD)"
+  fi
+  # The create's path: selector resolves only a REGISTERED repo (measured:
+  # selector_not_found after a registration was removed), so an unregistered
+  # one is registered here instead of dying with a hand-typed fix. Show-then-
+  # add, never a blind add: repo add on an already-registered path fails
+  # runtime_error (measured 1.4.x). An add failure only warns - the create
+  # below stays the error that names the fix.
+  orca_json repo show --repo "path:$repo" >/dev/null 2>&1 \
+    || orca_json repo add --path "$repo" >/dev/null 2>&1 \
+    || ac_warn "orca repo add failed for $repo"
   out="$(orca_json worktree create --repo "path:$repo" --name "crew-$id" \
-      --base-branch "$def" --setup run --no-parent)" || return 1
+      --base-branch "$ref" --setup run --no-parent)" || return 1
   path="$(jq -r '.result.worktree.path // empty' <<<"$out")"
-  [ -n "$path" ] && [ -d "$path" ] || return 1
+  if [ -z "$path" ] || [ ! -d "$path" ]; then
+    # An ok answer with no usable path still REGISTERED a worktree in the
+    # runtime - releasing it by id is the only cleanup a pathless create
+    # allows (the rm takes any terminals with it). Best-effort: the lease
+    # fails either way, but a leak nothing will ever clean must not be the
+    # default outcome.
+    wt_id="$(jq -r '.result.worktree.id // empty' <<<"$out")"
+    [ -z "$wt_id" ] || orca_json worktree rm --worktree "id:$wt_id" --force >/dev/null 2>&1 || true
+    return 1
+  fi
   # The CLI opens the worktree WITH a first terminal (a bare shell), and the
   # create JSON carries no handle for it (measured 1.4.188). The crew pane
   # must BE the worktree's first tab, so every terminal already sitting on
@@ -263,25 +312,80 @@ backend_capture_orca() { backend_capture_pane_orca "$(orca_pane "$1")" "${2:-40}
 
 orca_submit_pane() { orca_json terminal send --terminal "$1" --enter >/dev/null 2>&1; }
 
+orca_composer_pending() {
+  # orca_composer_pending <pane> <text> - is <text> still sitting UNSUBMITTED
+  # in the pane's composer? The composer is the region between the LAST TWO
+  # horizontal rules of the rendered screen (measured live on a claude TUI:
+  # the transcript echoes a submitted line with the SAME glyph the composer
+  # uses, so text-anywhere is no verdict - only the between-rules region
+  # tells pending from submitted). 0 = pending PROVEN; 1 = not proven - a
+  # screen with no rule structure (another harness's shape, an unreadable
+  # pane) never claims pending, so the caller keeps today's verdict.
+  local pane="$1" text="$2" cap r1 r2 region want
+  cap="$(backend_capture_pane_orca "$pane" 15 2>/dev/null)" || return 1
+  # LC_ALL=C + a GROUPED repeat: an interval over the bare 3-byte glyph binds
+  # to its LAST byte under a C locale and never matches (measured on this
+  # host) - a watcher or hook running with a minimal env would silently
+  # revive the false-"sent" class this function closes. The group repeats
+  # the whole byte sequence, which matches identically under any locale.
+  r2="$(printf '%s\n' "$cap" | LC_ALL=C grep -n '\(─\)\{8,\}' | tail -1 | cut -d: -f1)"
+  r1="$(printf '%s\n' "$cap" | LC_ALL=C grep -n '\(─\)\{8,\}' | tail -2 | head -1 | cut -d: -f1)"
+  [ -n "$r1" ] && [ -n "$r2" ] && [ "$r1" -lt "$r2" ] || return 1
+  # Normalize both sides (the composer soft-wraps long text) and compare a
+  # bounded head - enough to identify the steer, immune to wrap points.
+  region="$(printf '%s\n' "$cap" | sed -n "$((r1 + 1)),$((r2 - 1))p" | tr '\n' ' ' | tr -s ' ')"
+  want="$(printf '%s' "$text" | tr '\n' ' ' | tr -s ' ' | cut -c1-60)"
+  [ -n "$want" ] || return 1
+  case "$region" in *"$want"*) return 0 ;; esac
+  return 1
+}
+
 orca_submit_verified_pane() {
   # The delivery-verification contract of herdr_submit_verified_pane, on orca
   # primitives: press Enter ONCE, require the render to react, 0/1/2. The
   # press is guarded (|| true) so an unreachable runtime reaches the verdict
   # path instead of aborting the caller under errexit.
-  local pane="$1" pre post i=0 tries=7 readable=1
+  # With <text> given, a reacted render alone is NOT a submit: a popup
+  # closing on the Enter changes the render while the text sits pending
+  # (measured class), so the composer region is checked and a proven-pending
+  # text buys a bounded retry Enter - guarded per press by agentWait, so a
+  # dialog that appeared mid-send is never blind-accepted by a retry.
+  local pane="$1" text="${2:-}" pre post i=0 tries=7 retries=0
+  local readable=1
+  # A DIALOG-owned pane refuses BEFORE the first press, with its own verdict
+  # (3): every Enter into a dialog answers it, and the digit options can
+  # grant a permanent always-allow - a caller must never turn this verdict
+  # into a focus-and-retry press.
+  orca_pane_dialog "$pane" && return 3
   pre="$(backend_capture_pane_orca "$pane" 15 2>/dev/null)" || readable=0
   orca_submit_pane "$pane" || true
   [ "$readable" = 1 ] || return 2
   while [ "$i" -lt "$tries" ]; do
     sleep "${AC_SEND_SETTLE:-0.4}"
     post="$(backend_capture_pane_orca "$pane" 15 2>/dev/null)" || return 2
-    [ "$post" != "$pre" ] && return 0
+    [ "$post" != "$pre" ] && break
     i=$((i + 1))
   done
-  return 1
+  [ "$i" -lt "$tries" ] || return 1
+  [ -n "$text" ] || return 0
+  while orca_composer_pending "$pane" "$text"; do
+    [ "$retries" -lt 2 ] || return 1
+    orca_pane_dialog "$pane" && return 3
+    orca_submit_pane "$pane" || true
+    sleep "${AC_SEND_SETTLE:-0.4}"
+    retries=$((retries + 1))
+  done
+  return 0
 }
 
-backend_submit_verified_orca() { orca_submit_verified_pane "$(orca_pane "$1")"; }
+orca_pane_dialog() {
+  # 0 when the runtime reports the pane parked on a human-only prompt
+  # (agentWait non-null); any unreadable answer is NOT a dialog verdict.
+  orca_json terminal show --terminal "$1" 2>/dev/null \
+    | jq -e '.result.terminal.agentWait != null' >/dev/null 2>&1
+}
+
+backend_submit_verified_orca() { orca_submit_verified_pane "$(orca_pane "$1")" "${2:-}"; }
 
 orca_type_pane() {
   # Type WITHOUT submitting (`--text` with no `--enter` stays in the
@@ -307,10 +411,20 @@ backend_send_line_orca() {
   local text="$*" rc=0
   orca_type_pane "$(orca_pane "$id")" "$text"
   sleep "${AC_SEND_SETTLE:-0.4}"
-  backend_submit_verified_orca "$id" && return 0
-  backend_focus_orca "$id" || true
-  backend_submit_verified_orca "$id" || rc=$?
+  rc=0
+  orca_submit_verified_pane "$(orca_pane "$id")" "$text" || rc=$?
   [ "$rc" = 0 ] && return 0
+  if [ "$rc" != 3 ]; then
+    backend_focus_orca "$id" || true
+    rc=0
+    orca_submit_verified_pane "$(orca_pane "$id")" "$text" || rc=$?
+  fi
+  [ "$rc" = 0 ] && return 0
+  if [ "$rc" = 3 ]; then
+    printf 'ac-backend: a DIALOG owns the pane of %s - the text sits in the composer and no Enter was pressed (an Enter would ACCEPT the highlighted option). Peek it (ac-peek.sh %s) and answer deliberately with ac-send.sh %s --key <key>\n' \
+      "$(backend_target_orca "$id")" "$id" "$id" >&2
+    return 1
+  fi
   if [ "$rc" = 2 ]; then
     printf 'ac-backend: could not read the pane of %s - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh %s)\n' \
       "$(backend_target_orca "$id")" "$id" >&2
@@ -328,9 +442,12 @@ backend_send_line_pane_orca() {
   [ -n "$pane" ] || return 1
   orca_type_pane "$pane" "$text"
   sleep "${AC_SEND_SETTLE:-0.4}"
-  orca_submit_verified_pane "$pane" && return 0
+  local prc=0
+  orca_submit_verified_pane "$pane" "$text" || prc=$?
+  [ "$prc" = 0 ] && return 0
+  [ "$prc" = 3 ] && return 1   # dialog-owned: never a focus-retry press
   orca_focus_pane "$pane" || true
-  orca_submit_verified_pane "$pane"
+  orca_submit_verified_pane "$pane" "$text"
 }
 
 orca_send_key_pane() {

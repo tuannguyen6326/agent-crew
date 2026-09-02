@@ -9,7 +9,7 @@ It combines fleet orchestration, pooled in-repo worktrees, a guarded ship pipeli
 ## 1. Identity and prime directives
 
 - You never do project work yourself: no editing project files, no running project builds, no committing in project repos. (A crewmate reading this file - a claude crewmate here loads it too, per section 5's consequence note - follows its brief instead; this identity block does not bind it.)
-- Every coding, investigation, plan, or audit task goes to a crewmate in its own git worktree and its own backend pane (`config/backend` names the fleet's session backend: herdr or orca). Delegating through a HARNESS-NATIVE tool instead creates work with no `state/<id>.meta`, which leaves the whole supervision stack inert and kills that work with your session; `bin/ac-delegation-guard.sh` refuses it from a chief's own checkout (a crewmate's leased worktree keeps its own subagents).
+- Every coding, investigation, plan, or audit task goes to a crewmate in its own git worktree and its own backend pane (`config/backend` names the fleet's session backend: herdr or orca). Delegating through a HARNESS-NATIVE tool instead creates work with no `state/<id>.meta`, which leaves the whole supervision stack inert and kills that work with your session; `bin/ac-delegation-guard.sh` refuses it from a chief-shaped session - a fleet-home cwd or a fleet hosted on a repo's primary checkout - while the worker-shaped sessions keep their own subagents: a crewmate's leased worktree, and a solo session (`AC_SOLO=1`).
 - You are read-only over `projects/` except the sanctioned writes: `git fetch`, fast-forward syncs via safe helpers, `bin/ac-merge-local.sh`, worktree pool operations via `bin/ac-tree.sh`, and the one deferred publication push inside `bin/ac-feature.sh ship` (feature-branch-mech).
 - All persistent truth lives on disk (`state/`, `data/`) and in the backend session; a restart is a non-event and conversation memory is only a cache.
 - Never end a turn blind: while crew is in flight, an armed watcher or queued-wake drain must cover you (the Stop hook enforces this); the watcher MUST be armed as the harness's OWN background task (the harness runs it, tracks it, and is woken by its exit) - NEVER `nohup`/`&`/`disown` it inside a tool call, which orphans it so its exit wakes no one.
@@ -639,6 +639,8 @@ A crewmate the crewchief spawns instead carries no family scope for its whole li
    Chiefs verifying a crewmate's delivered tree accept a FRESH `bin/ac-ship.sh attest-check` (run in the worktree) instead of re-running the suite; re-run only when it reports stale or no attestation.
 6. Land it: crew-ship/direct-pr tasks end in a PR (`bin/ac-pr-check.sh` to record it, captain approves, `bin/ac-pr-merge.sh` to merge); local-only tasks land via `bin/ac-merge-local.sh <id>`; feature-pr members land the same local way onto the recorded feature branch, and the feature exits once through `bin/ac-feature.sh ship`.
 7. `bin/ac-teardown.sh <id>` - fail-closed: it refuses while work is unlanded; `--force` is the captain explicitly discarding work.
+   Done does not wait for the PR merge: when a PR task's PR is ready to merge (CI green, review done), ask the captain, and their acceptance lands the task via `--pr-ready '<the captain's words>'` - the merge stays the captain's own act.
+   The exception is a task other open rows are `blocked-by`: a dependent starts from the merged tree, so a depended-on task lands only by the real merge (the flag refuses it).
 8. Update the backlog and record learnings - AUTOMATICALLY, as part of
    LANDING, never deferred to a captain /debrief: the moment a task/family
    lands, exactly ONE actor appends the run's durable lessons to
@@ -743,7 +745,9 @@ Ship tasks deliver a project change; scout tasks deliver ONLY a `report.md` next
 A SMALL chief-side edit - the sanctioned no-invisible-tasks exception
 (small tasks may be chief-self but stay backend-visible) -
 goes through `bin/ac-self-task.sh start <id> <project>`, never by hand.
-It leases a worktree per the fleet's backend, opens a labelled pane tailing the
+It leases a worktree per the fleet's backend, seeds the crewmate layer into it
+(instructions, settings, skills - work on a worktree follows the crewmate
+rules, whoever holds the hands), opens a labelled pane tailing the
 task's progress log, and writes a `kind=self` meta BEFORE the first edit, so the
 task is visible on the backend and in every fleet view like any other; the chief appends
 its progress with `bin/ac-self-task.sh log <id> '<line>'` and lands on the
@@ -761,10 +765,26 @@ It is not the chief and never substitutes for one - the prohibitions are the
 point: no spawning crew or roomchiefs, no steering panes, no draining wakes
 (a drain CONSUMES the chief's records), no arming or releasing watchers, no
 answering gates, and no ledger writes beyond the two named below.
-Its one write path per slice is `bin/ac-self-task.sh start <id> <project>` -
-the SMALL cap above does not bind a solo session, which takes real slices -
-and the slice lands through the ordinary delivery machinery for the repo's
-mode, PR included, with the captain's approval given right in the chat.
+Harness-native subagents stay AVAILABLE to it: a solo session is
+worker-shaped, keeping its own subagents exactly as a crewmate's worktree
+does - the slice stays its responsibility, its self-task meta keeps the work
+visible, and the captain is watching live (the delegation guard's solo
+carve-out is this rule's enforcement shape).
+Those subagents serve the SLICE, never replace it: read-only subagents fan
+out freely, but a subagent that EDITS the leased worktree is pointed, in its
+prompt, at the seeded crewmate instruction file inside that worktree before
+it edits - the seeded crewmate layer reaches a subagent only through the
+prompt, since instruction files and hooks load by the SESSION, never by the
+tree being touched - writes go one subagent at a time per worktree, and the
+solo session reads the full diff and runs the tests itself before
+committing; work big enough to hand a subagent whole belongs on the fleet
+backlog instead.
+Its one write path per slice is `bin/ac-self-task.sh start <id> <project>
+[--mode <m>] [--harness <h>]` - the SMALL cap above does not bind a solo
+session, which takes real slices - and the slice lands through the ordinary
+delivery machinery for the mode the start recorded (default local-only; a PR
+slice passes its PR mode so the fleet views say what actually lands), PR
+included, with the captain's approval given right in the chat.
 Session-start runs read-only under `AC_SOLO` (no lock, no drain, banner
 naming what it skipped), and the two Stop hooks stand down - a solo session
 owes no supervision.
@@ -774,6 +794,20 @@ The knowledge loop still binds in both directions: intake reads
 `ac-learn.sh note`, verified repo facts with `ac-know.sh add`, ticks the
 Learning cadence, and appends the row to `## Done` - the one backlog write a
 solo session may make, because no chief knows its work to record it.
+The CREWMATE layer binds its WORK too, and the leased worktree already
+carries it: `ac-self-task.sh start` seeds the merged layer exactly as a crew
+spawn does (`--harness` routes it to the instruction file that harness
+loads - `.claude/CLAUDE.md` by default, `AGENTS.md` for an AGENTS.md-reading
+harness - since a solo session is not only claude), so each slice begins by
+reading the seeded crewmate instruction file inside that worktree - the FULL
+merge, container baseline, fleet-learned, fleet and any domain layer, the
+same file a crewmate on that tree loads - and discovers the seeded skills
+there too.
+The seed reaches the TREE, never the session (a solo session boots at the
+fleet home, and instruction files load by the booting cwd), so that read is
+the solo session's own act, once per slice - only the crewmate MECHANICS
+(brief-following, `ac-done.sh`, pane markers, the handback report format) do
+not apply, since a solo session has none of that machinery.
 A slice whose deliverable is KNOWLEDGE (an investigation, a diagnosis, a
 comparison) leaves `data/<id>/report.md` exactly as a scout would - chat
 dies with the session; a code slice's record is its PR and commits, no

@@ -147,12 +147,28 @@ The session backend is ONE contract with TWO drivers: herdr (`bin/ac-backend.sh`
 Selection is the ladder resolved on every call - `AC_BACKEND` (the per-task pin) > `$AC_HOME/config/backend` > the fleet config derived from `AC_FLEET_STATE` > herdr - and any value other than `herdr`/`orca` is refused, at source time and again per call.
 Per-call dispatch is what lets ONE teardown, send or watch process serve herdr and orca tasks in the same run; the `AC_FLEET_STATE` rung exists because a crewmate pane deliberately carries no `AC_HOME`, so a verifier it invokes would otherwise resolve the herdr default on an orca fleet and lease from the wrong pool.
 Every herdr RPC funnels through one guarded entry point that DIES when it is reached while the resolved backend is orca - the leak detector for a herdr-only code path taken under the other driver, and the reason a divergence surfaces as a refusal rather than as a call against a pane that does not exist.
+The measured per-driver facts (screen reads, key map, chunked typing, composer-cleared submit, three-state liveness) stay owned by the driver headers - the subsections below are orientation, and the headers win on any disagreement.
+
+### herdr
+
+Prerequisites: `brew install herdr` with its server running; bootstrap refuses to spawn without the CLI and flags a client/server PROTOCOL mismatch (`herdr status server` reporting `compatible` false) - present is not enough, and only an explicit false flags, because silence says nothing about compatibility.
+It is the default backend (`config/backend` absent or `herdr`).
+Panes group per family workspace (`<fleet> · <family>`; the FAMILY WORKSPACE GROUPING contract in `bin/ac-backend.sh`), and the captain-wait stamp rides herdr's own agent-report API (`pane report-agent`).
+Smoke verification: spawn a trivial task, confirm the meta records `backend=herdr` with a pooled worktree under `<repo>/.crew/worktrees/`, and `bin/ac-peek.sh <id>` reads the pane.
+
+### orca
+
+Prerequisites: the Orca app (its CLI ships with it), started and READY - bootstrap flags both an unreachable runtime and one still starting; macOS-only, explicit-only (`config/backend` names `orca`, never auto-detected), and the CLI exposes no stable version marker, so the gate keys on runtime state rather than a version floor.
+No manual repo registration is needed: the lease registers an unregistered project itself (show-then-add).
+Panes appear in the Orca app's own sidebar (chief-kind panes under the home's node, worker panes under their worktree's node); orca has no agent-report API, so the captain-wait stamp is the file alone.
+Reads never prove liveness - a closed terminal still serves its retained scrollback; `terminal show` `.connected` does, with `status` as the control call.
+Smoke verification: spawn a trivial task, confirm the meta records `backend=orca`, `worktree=` and `worktree_backend=orca`, the terminal sits under its worktree's node, and a post-landing `bin/ac-teardown.sh <id>` removes both the worktree and the sidebar entry.
 
 ## Worktree leases
 
 A task's primary tree is leased by the FLEET BACKEND, and the two mechanisms are disjoint.
 A herdr fleet leases a pooled detached-HEAD worktree INSIDE the project repo (`<repo>/.crew/worktrees/<n>`, slot lease in `.crew/slots/`), reused and returned, never deleted, so caches survive between tasks.
-An orca fleet leases an Orca-MANAGED worktree per task through the Orca CLI: created from the LOCAL default branch (the CLI's own default base is `origin/<default>`, which lags local landings), with repo-defined setup hooks run and no lineage parent, then switched to `crew/<id>` - adopting an existing `crew/<id>` on a respawn - and the CLI-minted branch name dropped.
+An orca fleet leases an Orca-MANAGED worktree per task through the Orca CLI: cut from the repo's LIVE CHECKOUT branch at its freshest tip (`ac_freshest_ref`, local vs origin, origin wins on true divergence) - never the repo's default branch, which has no notion of which branch the live checkout is on - or, when the live checkout is DETACHED, from HEAD's exact commit (a detached checkout can be ahead of its own branch ref, which `ac_freshest_ref` cannot see since it only compares named refs), with `--base-branch` an explicit override (`ac-self-task.sh start` / `ac-spawn.sh`) winning over the live checkout when named, with repo-defined setup hooks run and no lineage parent, then switched to `crew/<id>` - adopting an existing `crew/<id>` on a respawn - and the CLI-minted branch name dropped.
 The crew pane is that worktree's FIRST tab: the CLI opens every new worktree with a bare startup shell and returns no handle for it, so the lease closes what it finds sitting there rather than leaving an orphan tab beside the agent.
 The primary checkout's `node_modules` rides over as a COPY (APFS clonefile when available) when the hooks have not already produced one, never a symlink, because a crewmate's own install must not mutate the primary's deps.
 It is removed at teardown rather than returned: the meta's `worktree_backend=orca` keeps it out of the pool return loop and routes it to its own release arm.

@@ -280,6 +280,26 @@ assert_no_file "$AC_HOME/state/tcr5.meta" "--codereview-rule against an absent p
 assert_fails "$BIN/ac-spawn.sh" --roomchief tcr6 --codereview-rule 1
 assert_no_file "$AC_HOME/state/tcr6-chief.meta" "--codereview-rule on a roomchief promote must die before any meta is written"
 
+# --base-branch requires a plain crew spawn too (orca-lease-cuts-from-wrong-
+# branch): the roomchief/crewdeputy paths both exit before the orca lease
+# call site, so passing it there would otherwise silently do nothing.
+assert_fails "$BIN/ac-spawn.sh" --roomchief tbb1 --base-branch release
+assert_no_file "$AC_HOME/state/tbb1-chief.meta" "--base-branch on a roomchief promote must die before any meta is written"
+
+# --base-branch "" (empty) must die loud, not silently mean "no override" -
+# the sibling ac-self-task.sh flag already refuses this shape.
+"$BIN/ac-brief.sh" tbb2 proj --mode local-only >/dev/null
+assert_fails "$BIN/ac-spawn.sh" tbb2 "$repo" --harness claude --base-branch ""
+assert_no_file "$AC_HOME/state/tbb2.meta" "an empty --base-branch must die before any meta is written"
+
+# --base-branch only ever reaches the orca lease call site; on a herdr fleet
+# (the ambient default here) it would otherwise silently no-op instead of
+# failing loud - the exact silent-outcome defect this fleet's own
+# conventions refuse.
+"$BIN/ac-brief.sh" tbb3 proj --mode local-only >/dev/null
+assert_fails "$BIN/ac-spawn.sh" tbb3 "$repo" --harness claude --base-branch release
+assert_no_file "$AC_HOME/state/tbb3.meta" "--base-branch on a herdr-backend spawn must die before any meta is written"
+
 # A separate ship crewmate is no longer a normal execution surface. Delivery
 # stays with the execution crewmate, so the old model-ship spawn selector is
 # rejected instead of creating a third production role.
@@ -1527,6 +1547,85 @@ git -C "$owt" show-ref --verify -q refs/heads/fakeuser/crew-ow1 \
 "$BIN/ac-teardown.sh" ow1 --force >/dev/null 2>&1
 [ ! -d "$owt" ] || fail "teardown must remove the orca-managed worktree"
 rm -rf "$repo/node_modules"
+
+# --base-branch (orca-lease-cuts-from-wrong-branch): an explicit override
+# threads from ac-spawn.sh all the way to the orca lease and wins over the
+# repo's live checkout branch (main here).
+git -C "$repo" checkout -qb release
+printf 'release marker\n' >"$repo/release.txt"
+git -C "$repo" add release.txt
+git -C "$repo" commit -qm "release marker"
+release_sha="$(git -C "$repo" rev-parse release)"
+git -C "$repo" checkout -q main
+"$BIN/ac-brief.sh" obb1 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" obb1 "$repo" --harness fake --mode local-only --base-branch release >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn with --base-branch must succeed on the fake orca"
+obb_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/obb1.meta" | head -1)"
+assert_eq "$(git -C "$obb_wt" merge-base HEAD "$release_sha")" "$release_sha" \
+  "--base-branch release wins over the live checkout (main) end to end through ac-spawn.sh"
+[ -f "$obb_wt/release.txt" ] || fail "the leased tree must carry the release branch's content"
+"$BIN/ac-teardown.sh" obb1 --force >/dev/null 2>&1
+git -C "$repo" branch -D release >/dev/null 2>&1
+
 printf 'herdr\n' >"$AC_HOME/config/backend"
+
+# --- landed proof: PR merged OR the captain's pr-ready acceptance -------------
+# Done does not wait for the merge: a ready-to-merge PR the captain accepts in
+# chat lands the task via --pr-ready '<the captain's words>'; the merge stays
+# the captain's own act. Fail-closed every other way: no recorded PR refuses,
+# and a task an open row still waits on lands only by the real merge.
+"$BIN/ac-brief.sh" tpr proj --mode direct-pr >/dev/null
+"$BIN/ac-spawn.sh" tpr "$repo" --harness fake >/dev/null 2>&1
+prwt="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/tpr.meta")"
+git -C "$prwt" checkout -q -b crew/tpr
+printf 'pr work\n' >"$prwt/pr.txt"
+git -C "$prwt" add -A
+git -C "$prwt" -c user.email=t@t -c user.name=t commit -qm "pr work"
+assert_fails "$BIN/ac-teardown.sh" tpr                       # unmerged, no acceptance
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "no recorded PR" "acceptance with nothing on record refuses"
+assert_file "$AC_HOME/state/tpr.meta" "the refused acceptance tears nothing down"
+printf 'pr=https://github.com/o/r/pull/9\n' >>"$AC_HOME/state/tpr.meta"
+mkdir -p "$AC_HOME/records"
+printf -- '- [ ] dep1 - waits on tpr (repo: proj) blocked-by: tpr - needs its merge\n' \
+  >"$AC_HOME/records/backlog.md"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "dep1" "a waiting dependent forces the real merge and is named"
+assert_file "$AC_HOME/state/tpr.meta" "the dependent refusal tears nothing down"
+
+# The dependent scan fails CLOSED, not open: a blocked-by list the strict
+# grammar would refuse (a space after the comma) still finds the id, and an
+# unreadable ledger refuses outright instead of reading as "no dependent".
+printf -- '- [ ] dep2 - malformed list (repo: proj) blocked-by: other, tpr - spaced\n' \
+  >"$AC_HOME/records/backlog.md"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "dep2" "a malformed spaced blocked-by list still names its dependent"
+mv "$AC_HOME/records/backlog.md" "$AC_HOME/records/backlog.md.away"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "backlog" "an unreadable ledger refuses rather than landing blind"
+assert_file "$AC_HOME/state/tpr.meta" "the unreadable-ledger refusal tears nothing down"
+mv "$AC_HOME/records/backlog.md.away" "$AC_HOME/records/backlog.md"
+printf -- '- [x] dep1 - done elsewhere (merged 2026-08-28)\n' >"$AC_HOME/records/backlog.md"
+
+# The captain accepted THE PR - not work newer than it: a dirty tree refuses,
+# and with pr_head recorded, commits past that head refuse too.
+printf 'dirty\n' >"$prwt/uncommitted.txt"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "uncommitted" "a dirty tree is not covered by the accepted PR"
+assert_file "$AC_HOME/state/tpr.meta" "the dirty refusal tears nothing down"
+rm -f "$prwt/uncommitted.txt"
+printf 'pr_head=%s\n' "$(git -C "$prwt" rev-parse HEAD)" >>"$AC_HOME/state/tpr.meta"
+printf 'newer\n' >"$prwt/newer.txt"
+git -C "$prwt" add -A
+git -C "$prwt" -c user.email=t@t -c user.name=t commit -qm "newer than the PR"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "newer" "commits past the recorded PR head refuse the acceptance"
+git -C "$prwt" reset -q --hard HEAD~1
+
+"$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' >/dev/null \
+  || fail "a recorded PR plus the captain's acceptance must land the teardown"
+assert_no_file "$AC_HOME/state/tpr.meta" "the accepted teardown archives the meta"
+assert_contains "$(cat "$AC_HOME/state/archive/tpr/status")" "captain: ok to done" \
+  "the captain's acceptance words are durable on the task record"
 
 pass

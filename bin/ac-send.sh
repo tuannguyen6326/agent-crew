@@ -13,6 +13,12 @@
 #   options can reach a PERMANENT always-allow grant. Peek first, answer the
 #   dialog deliberately with --key, or pass --force to send anyway. Keys
 #   never need --force - --key IS the deliberate dialog answer.
+# - refuses TEXT into a DEAD-SHELL pane (backend_harness_up rc 1: the
+#   harness exited and the terminal fell back to its shell): the text plus
+#   the submit's Enter would EXECUTE as shell commands instead of reaching
+#   an agent. Only a PROVEN shell refuses; an unobservable pane (rc 2)
+#   delivers as before. --force types into the shell deliberately (a
+#   recovery relaunch is exactly that).
 # - TEXT delivery is verified (contract: ac-backend.sh delivery verification):
 #   a send whose submit is never acknowledged exits non-zero with the reason
 #   on stderr instead of reporting "sent to <target>" - and it names WHICH of
@@ -116,6 +122,20 @@ else
   if [ "$force" = 0 ] && backend_agent_blocked "$id"; then
     ac_die "$id is BLOCKED on an interactive prompt - text would feed the dialog and its Enter would ACCEPT it (digit options can grant a permanent always-allow). Peek it (bin/ac-peek.sh $id), answer deliberately with ac-send.sh $id --key <key>, or override with ac-send.sh $id --force '<text>'"
   fi
+  # DEAD-SHELL REFUSAL: a pane whose harness has exited holds a live terminal
+  # (window-alive true) with no dialog (agent_blocked false) - a BARE SHELL,
+  # where this text plus the submit's Enter would EXECUTE as commands instead
+  # of reaching an agent. Only a DEFINITE shell verdict refuses (harness_up
+  # rc 1, a proven shell name); unobservable (rc 2) delivers as before - the
+  # probe cannot prove a harness, but a false refusal would strand every
+  # steer to a themed shell title.
+  if [ "$force" = 0 ]; then
+    up_rc=0
+    backend_harness_up "$id" || up_rc=$?
+    if [ "$up_rc" = 1 ]; then
+      ac_die "$id's pane is a BARE SHELL - its harness has exited, so this text would EXECUTE as shell commands rather than reach an agent. Peek it (bin/ac-peek.sh $id), recover the session (the stuck-crewmate-recovery skill), or type into the shell deliberately with ac-send.sh $id --force '<text>'"
+    fi
+  fi
   # WRITE-SIDE MARKER GUARD (contract: the header). Warn, deliver anyway.
   if bare_markers="$(ac_bare_marker_verbs "$text")"; then
     printf 'warning: this steer carries a bare marker verb (%s) - the watcher greps the pane TAIL, so your own words can wake you and stamp the pane (a mid-sentence marker soft-wraps to visual column 0 and matches). Backtick-wrap it (`done:`) or drop the trailing colon. Delivering anyway.\n' \
@@ -145,7 +165,16 @@ else
     2) ac_die "delivery UNVERIFIED for $id - the pane could not be read, so the submit was neither confirmed nor refuted (see stderr above)" ;;
     *) ac_die "delivery NOT confirmed for $id - the text likely sits stranded in the composer (see stderr above)" ;;
   esac
-  if [ "$marked" = 1 ]; then ac_status_append "$id" "routed: $order"; fi
+  if [ "$marked" = 1 ]; then
+    ac_status_append "$id" "routed: $order"
+  else
+    # The crewmate leg of the deputy routed: rule - every CONFIRMED steer is
+    # recorded durably as the chief's own index of what it asked, so a
+    # restart is not amnesia and an unacted steer is findable on the record
+    # instead of only in a dead conversation. Newlines collapse: a status
+    # record is one line per event.
+    ac_status_append "$id" "steered: $(printf '%s' "$order" | tr '\n' ' ')"
+  fi
   verb='sent to'
 fi
 # A delivered steer answers a captain-wait: release the UI stamp HERE, which is

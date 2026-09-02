@@ -72,6 +72,7 @@
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
+. "$(dirname "$0")/ac-pipeline-lib.sh"   # ac_delivery_mode_block: the one per-mode delivery-contract renderer
 
 id="${1:-}"; project="${2:-}"
 shift 2 2>/dev/null || ac_die "usage: ac-brief.sh <id> <project-name> [--scout | --stage <s>]"
@@ -757,7 +758,7 @@ EOF
     fam="$(ac_family_of_id "$id")"
     if [ "$mode" = crew-ship ]; then
       review_block="Review is required and is fulfilled exactly once by the \`ac-ship\` review step inside the \`crew-ship\` engine. Do not invoke \`ac-verify codereview\` separately."
-      delivery_mode="- Mode crew-ship: run the \`crew-ship\` skill. Its \`ac-ship\` engine owns the guarded 8-step delivery pipeline (intent, rebase, review, test, document, lint, push, pr). Hand over only after checks pass and include the PR URL."
+      delivery_mode="$(ac_delivery_mode_block crew-ship "$crew_branch" "" "" "")"
       [ -z "$epic_eb_branch" ] \
         || delivery_mode="$delivery_mode
 - EPIC TARGET: start the engine with \`--target $epic_eb_branch\` - this story integrates on the epic branch, and the pipeline's review/base/push/PR all follow that target."
@@ -765,28 +766,12 @@ EOF
     elif [ "$review" = yes ]; then
       review_block="Review is required. After delivery preparation and a clean implementation commit, invoke the canonical independent verifier before test/document/lint. Use the exact current ref and target base with this command shape (set \`TARGET_REF\` first):
 \`$(ac_root)/bin/ac-verify.sh codereview --repo \"\$PWD\" --ref HEAD --family $fam --caller \"\$AC_CREW_ID\" --base \"\$TARGET_REF\" --intent $brief --output $task_dir/verification/review.json\`"
-      if [ "$mode" = direct-pr ]; then
-        delivery_mode="- Mode direct-pr: after the ordered review/check/doc loop below, push \`$crew_branch\` and open a PR against $pr_base_phrase. The PR body covers intent, changes, and verification evidence."
-        signals_suffix=" (include the PR URL)"
-      elif [ "$mode" = feature-pr ]; then
-        delivery_mode="- Mode feature-pr: after the ordered review/check/doc loop below, leave \`$crew_branch\` clean and fully committed - it lands onto the feature integration branch \`$epic_eb_branch\` (the chief runs ac-merge-local). Never push or open a PR; publication happens ONCE at the feature ship."
-        signals_suffix=""
-      else
-        delivery_mode="- Mode local-only: after the ordered review/check/doc loop below, leave \`$crew_branch\` clean and fully committed. Never push or open a PR."
-        signals_suffix=""
-      fi
+      delivery_mode="$(ac_delivery_mode_block "$mode" "$crew_branch" "$pr_base_phrase" "$epic_eb_branch" "the ordered review/check/doc loop below")"
+      if [ "$mode" = direct-pr ]; then signals_suffix=" (include the PR URL)"; else signals_suffix=""; fi
     else
       review_block="Review is not required for this direct task. Skip independent code review unless the captain changes the intake obligation to \`review=yes\`."
-      if [ "$mode" = direct-pr ]; then
-        delivery_mode="- Mode direct-pr: after the ordered check/doc loop below, push \`$crew_branch\` and open a PR against $pr_base_phrase. The PR body covers intent, changes, and verification evidence."
-        signals_suffix=" (include the PR URL)"
-      elif [ "$mode" = feature-pr ]; then
-        delivery_mode="- Mode feature-pr: after the ordered check/doc loop below, leave \`$crew_branch\` clean and fully committed - it lands onto the feature integration branch \`$epic_eb_branch\` (the chief runs ac-merge-local). Never push or open a PR; publication happens ONCE at the feature ship."
-        signals_suffix=""
-      else
-        delivery_mode="- Mode local-only: after the ordered check/doc loop below, leave \`$crew_branch\` clean and fully committed. Never push or open a PR."
-        signals_suffix=""
-      fi
+      delivery_mode="$(ac_delivery_mode_block "$mode" "$crew_branch" "$pr_base_phrase" "$epic_eb_branch" "the ordered check/doc loop below")"
+      if [ "$mode" = direct-pr ]; then signals_suffix=" (include the PR URL)"; else signals_suffix=""; fi
     fi
     cat >"$brief" <<EOF
 # Crew brief: $id
