@@ -57,6 +57,7 @@ AC_PLIST            env->awk ENVIRON wire (ac-spawn.sh list transport)
 AC_ROOM_PROMOTE_RECEIPT  spawn->ac-room.sh cap-gate exemption receipt declaration (one call site)
 AC_MAINTENANCE_QUOTE_MIN  measured evidence-quote floor constant (ac-maintenance-lib.sh:
                     fixed at 12 by the window its own comment derives; never a tunable)
+AC_PROMPT_RECALL_BIN  test seam: ac-prompt-recall-cursor.sh hook-path override
 AC_TURNEND_GUARD_BIN  test seam: ac-turnend-guard-cursor.sh guard-path override,
                     used only by tests/ac-harness-hooks.test.sh to stub the guard
 "

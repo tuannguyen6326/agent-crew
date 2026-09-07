@@ -790,7 +790,14 @@ naming what it skipped), and the two Stop hooks stand down - a solo session
 owes no supervision.
 The knowledge loop still binds in both directions: intake reads
 `records/captain.md` (the fleet's standing rules bind a solo session too),
-`ac-know.sh recall` and `ac-brain.sh recall`; landing writes lessons with
+`ac-know.sh recall` and `ac-brain.sh recall` - the brain read is also
+MACHINE-made on every prompt: `bin/ac-prompt-recall.sh` (the harness's
+prompt-submit hook, fired for a solo session and a chief at the fleet home,
+silent in a crewmate worktree) hands the model the top hits with trust
+labels and the brain's freshness before it reads the prompt, and fires the
+catch-up sync when the brain is stale, since a solo session never syncs
+otherwise; a hit is a pointer to open, never a fact to cite unread; landing
+writes lessons with
 `ac-learn.sh note`, verified repo facts with `ac-know.sh add`, ticks the
 Learning cadence, and appends the row to `## Done` - the one backlog write a
 solo session may make, because no chief knows its work to record it.

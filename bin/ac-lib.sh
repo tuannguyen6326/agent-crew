@@ -139,6 +139,42 @@ ac_warn() { printf 'WARN: %s\n' "$*" >&2; }
 # equivalent to a live clock read. Falls back to `date +%s` when unset
 # (bash < 5 - this host's own /bin/bash is 3.2.57 and hits this path).
 ac_now() { printf '%s\n' "${EPOCHSECONDS:-$(date +%s)}"; }
+
+ac_brain_marker_age() {
+  # ac_brain_marker_age -> seconds since the last brain sync (state/.brain-last-sync,
+  # touched by the engine on every sync), or -1 when no sync ever ran. One stat.
+  local home marker last
+  home="$(ac_home)" || return 1
+  marker="$home/state/.brain-last-sync"
+  [ -f "$marker" ] || { printf -- '-1\n'; return 0; }
+  last="$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)"
+  printf '%s\n' "$(( $(ac_now) - last ))"
+}
+
+ac_brain_freshen() {
+  # ac_brain_freshen - fire ONE fire-and-forget catch-up sync when the brain's
+  # freshness marker is older than AC_BRAIN_SYNC_IV (default 1800s). Shared by
+  # every checkpoint that can notice staleness - the fleet watcher's cycle and
+  # the prompt-time recall hook - so a home's freshness has one throttle: the
+  # attempt stamp (state/.brain-freshen-attempt) refires a sync that cannot
+  # move the marker (bad key, locked db) once per interval, never per caller.
+  # DB existence is the opt-in - a home that never built a brain never fires -
+  # and config/brain-auto-sync=off is the valve. Zero cost on the fresh path:
+  # two stats, no subprocess. Returns 0 always; prints "fired" when it did.
+  local home iv age attempt la=0
+  home="$(ac_home)" || return 0
+  [ -f "$home/state/brain.sqlite" ] || return 0
+  [ "$(ac_config_read brain-auto-sync on)" = on ] || return 0
+  iv="${AC_BRAIN_SYNC_IV:-1800}"
+  age="$(ac_brain_marker_age)"
+  [ "$age" -lt 0 ] || [ "$age" -ge "$iv" ] || return 0
+  attempt="$home/state/.brain-freshen-attempt"
+  [ -f "$attempt" ] && la="$(stat -f %m "$attempt" 2>/dev/null || stat -c %Y "$attempt" 2>/dev/null || echo 0)"
+  [ $(( $(ac_now) - la )) -ge "$iv" ] || return 0
+  : >"$attempt"
+  ("$(ac_root)/bin/ac-brain.sh" sync --home "$home" --compact >/dev/null 2>&1 &)
+  printf 'fired\n'
+}
 ac_vn_ts() {
   # Captain-display timestamp: UTC+7, YYYY-MM-DD
   # HH:mm - for Slack-facing renderings only; records keep ac_iso (UTC).

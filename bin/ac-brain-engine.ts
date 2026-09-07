@@ -52,8 +52,9 @@
 //   READ-ONLY; there is no cross-brain write path.
 // - Usage log: every verb appends one line to state/brain-usage.jsonl
 //   (home-local, never uploaded) so later demand-signal work has evidence.
-//   Each line carries `by` (who asked): --by wins, else AC_SCOPE names a
-//   scoped chief as <fam>-chief, else the unscoped default "crewchief".
+//   Each line carries `by` (who asked): --by wins, else AC_SOLO=1 names a
+//   solo session "solo", else AC_SCOPE names a scoped chief as <fam>-chief,
+//   else the unscoped default "crewchief".
 // - Scale ceiling: vector retrieval is an in-process linear cosine scan,
 //   supported to 50k embedded chunks (doctor's vector_scan_scale check fails
 //   past it). An ANN index is deliberately out until measurements demand it.
@@ -114,8 +115,11 @@ function die(code: string, message: string, suggestion: string): never {
 }
 function out(v: unknown) { console.log(JSON.stringify(v, null, flag("compact") ? 0 : 1)); }
 // Who asked: --by wins (surfaces like the dashboard name themselves), else a
-// scoped chief inherits its family from AC_SCOPE, else the unscoped crewchief.
-const USAGE_BY = opt("by") ?? (process.env.AC_SCOPE ? `${process.env.AC_SCOPE}-chief` : "crewchief");
+// solo session names itself (AC_SOLO outranks a stray AC_SCOPE in its env -
+// a solo session is never a chief), else a scoped chief inherits its family
+// from AC_SCOPE, else the unscoped crewchief.
+const USAGE_BY = opt("by") ?? (process.env.AC_SOLO === "1" ? "solo"
+  : process.env.AC_SCOPE ? `${process.env.AC_SCOPE}-chief` : "crewchief");
 function usageLog(rec: Record<string, unknown>) {
   try { appendFileSync(USAGE_LOG, JSON.stringify({ at: iso(), by: USAGE_BY, ...rec }) + "\n"); } catch {}
 }

@@ -17,6 +17,7 @@ POSTURE: this is an AVAILABLE TOOL - the section-5 intake law (tier-ranked `ac-k
 - After compaction or a fresh session: `ac-brain.sh context_pack --entities <family,...> --budget-tokens <n>`.
 - A durable session fact worth keeping but below the ledger bar: `ac-brain.sh remember '<fact>' --provenance '<source>' --agent <pane-id> [--entity <slug>] [--kind commitment|belief|preference|event|fact] [--ttl 30d]`.
 - Reverse lookup: `ac-brain.sh links-to <repo path or slug fragment>` - "which families touched this file".
+- Already done for you on every prompt: a human-driven session (solo, or a chief at the fleet home) gets `bin/ac-prompt-recall.sh`'s block before the model reads the prompt - top hits with path, trust label and snippet, plus the brain's freshness (STALE fires the catch-up sync). It is a pointer, not a read: open the path before citing it, and reach for `recall` yourself when the prompt was too short or too vague to have matched (valve: `config/brain-prompt-recall=off`).
 
 ## Boundaries that bind every caller
 

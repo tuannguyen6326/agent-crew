@@ -8,6 +8,13 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-prompt-recall.sh; [ -x \"$h\" ] && \"$h\" || :", "timeout": 15 }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
