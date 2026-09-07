@@ -219,6 +219,22 @@ seed_fallback="$(ac_seed_crewmate_md "$worktree" "$harness")"
 ac_seed_crew_settings "$worktree"
 ac_seed_crew_skills "$worktree" "$harness"
 
+# Fleet-memory read at slice open: the knowledge law names `ac-brain.sh
+# recall` at intake, and the start makes it machine-made through the same
+# prompt-time hook every harness runs (its shape gate and noise gates apply:
+# a chief at the fleet home or a solo session, a brain that exists, a query
+# with something to match). The slice id and project are the query. The hits
+# print to the session AND land on the status record - the durable channel
+# the pane tails - so the read survives the start's stdout scrolling away.
+recall="$(printf '{"prompt":"%s %s"}' "$(printf '%s' "$id" | tr '-' ' ')" "$project_name" \
+  | "$bin_dir/ac-prompt-recall.sh" 2>/dev/null || true)"
+[ -z "$recall" ] || {
+  printf '%s\n' "$recall"
+  printf '%s\n' "$recall" | sed -n 's/^- /brain: /p' | while IFS= read -r line; do
+    ac_status_append "$id" "$line" || true
+  done
+}
+
 # 3. The pane. Refused rather than doubled when the backend cannot answer for an
 # existing one - the three states are ac-backend.sh's (WINDOW LIVENESS).
 alive_rc=0; backend_window_alive "$id" || alive_rc=$?

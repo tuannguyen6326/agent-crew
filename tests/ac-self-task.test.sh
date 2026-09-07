@@ -292,4 +292,27 @@ assert_no_file "$state/lf1.meta" "the refused start leaves no task in flight"
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
   "a 127 driver failure must never reach the pane-open step - that is the fail-OPEN this closes"
 
+# --- fleet-memory read at slice open ----------------------------------------
+# The knowledge law names `ac-brain.sh recall` at intake; the start makes it
+# machine-made: the slice id and project are the query, the hits print to the
+# session AND land on the status record (the durable channel - the pane tails
+# it), through the same prompt-time hook every harness runs, so a solo
+# session's slice opens on the home's history without remembering to ask.
+if command -v bun >/dev/null 2>&1; then
+  mkdir -p "$AC_HOME/data/fam-one"
+  printf '# Room: fam-one\nA distinctive sentence about zanzibar quorum reconciliation lives here.\n' \
+    >"$AC_HOME/data/fam-one/room.md"
+  "$BIN/ac-brain.sh" sync --home "$AC_HOME" --compact >/dev/null 2>&1 || fail "fixture brain sync failed"
+  out="$(cd "$AC_HOME" && AC_SOLO=1 "$BIN/ac-self-task.sh" start zanzibar-quorum-reconciliation "$repo")"
+  assert_contains "$out" "data/fam-one/room.md" "the start prints the brain hits for the slice"
+  assert_contains "$(cat "$state/zanzibar-quorum-reconciliation.status")" "data/fam-one/room.md" \
+    "the hits land on the status record"
+  assert_contains "$(grep -o '"by":"[^"]*"' "$AC_HOME/state/brain-usage.jsonl" | tail -1)" "solo" \
+    "a solo start is attributed solo"
+  "$BIN/ac-teardown.sh" zanzibar-quorum-reconciliation --force >/dev/null 2>&1
+  out="$(cd "$AC_HOME" && AC_SOLO=1 "$BIN/ac-self-task.sh" start qqqxzv-wwwqzx "$repo")"
+  case "$out" in *"ac-brain recall"*) fail "a slice with no hits prints no recall block: $out" ;; esac
+  "$BIN/ac-teardown.sh" qqqxzv-wwwqzx --force >/dev/null 2>&1
+fi
+
 pass
