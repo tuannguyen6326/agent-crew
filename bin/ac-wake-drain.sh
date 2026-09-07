@@ -384,3 +384,25 @@ if [ -z "$scope" ]; then
       "$(printf '%s' "$bsync" | sed -n 's/.*"changed":[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)" || true
   fi
 fi
+
+# Brain delta: the wake read every session owes ITSELF - the pages and facts
+# that changed since it last looked - made by machine here because a wake
+# read left to each session's habit measurably went unread. Scoped to the
+# session that drains (a roomchief reads its family cursor, the fleet chief
+# the chief cursor), so it runs for both scopes where the sync above runs for
+# the fleet alone; deliver-before-advance is the engine's, so a delta this
+# drain printed is never repeated. Never mints a db, never fails the drain.
+if [ -f "$state_dir/brain.sqlite" ] && command -v jq >/dev/null 2>&1; then
+  if [ -n "$scope" ]; then d_agent="$scope-chief"; d_session="$scope"
+  else d_agent=crewchief; d_session=chief; fi
+  bdelta="$("$(dirname "$0")/ac-brain.sh" delta --agent "$d_agent" --session "$d_session" --compact 2>/dev/null)" \
+    && jq -r --arg who "$d_agent" '
+      if .first_wake == true then "brain-delta: cursor registered for \($who) (first wake)"
+      elif .error != null then empty
+      else
+        "brain-delta: \((.pages // []) | length) page(s), \((.facts // []) | length) fact(s) since \(.since // "?")"
+          + (if .has_more == true then " (more pending - the next drain continues)" else "" end),
+        ((.pages // [])[:8][] | "- " + (.path // .slug // "?")),
+        ((.facts // [])[:5][] | "- fact: " + ((.fact // "") | .[0:160]))
+      end' <<<"$bdelta" 2>/dev/null || true
+fi

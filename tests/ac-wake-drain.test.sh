@@ -58,7 +58,10 @@ rm -f "$fakebin/ac-brain.sh"
 cat >"$fakebin/ac-brain.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$TMP/ac-brain.calls"
-printf '{\n "files": 42,\n "changed": 1\n}\n'
+case "\${1:-}" in
+  delta) printf '{"protocol_version":1,"since":"2026-01-01T00:00:00.000Z","pages":[{"path":"data/fam1/room.md"}],"facts":[{"fact":"the widget lock moved to ac-lock.sh"}],"has_more":false}\n' ;;
+  *) printf '{\n "files": 42,\n "changed": 1\n}\n' ;;
+esac
 EOF
 chmod +x "$fakebin/ac-brain.sh"
 # The remote push ride-along only exists when the transport is configured.
@@ -531,12 +534,27 @@ assert_no_file "$TMP/ac-brain.calls" "no brain.sqlite - the drain never mints an
 : >"$state/brain.sqlite"
 publish fam1 report fam1-t1 'done: x'
 chief_live fam1
-drain fam1 >/dev/null
-assert_no_file "$TMP/ac-brain.calls" "a scoped drain never runs the fleet's brain sync"
+out="$(drain fam1)"
+nsync="$(grep -c '^sync' "$TMP/ac-brain.calls" 2>/dev/null || true)"
+assert_eq "${nsync:-0}" "0" "a scoped drain never runs the fleet's brain sync"
+# The brain DELTA is every session's own wake read, scoped to the session
+# that drains: a roomchief reads its family cursor, the fleet chief reads the
+# chief cursor. Machine-made here because a wake read left to each session's
+# habit measurably went unread.
+assert_contains "$(cat "$TMP/ac-brain.calls")" "delta --agent fam1-chief --session fam1" \
+  "a scoped drain reads its own family's brain delta"
+assert_contains "$out" "brain-delta: 1 page(s), 1 fact(s)" "the drain narrates the delta counts"
+assert_contains "$out" "data/fam1/room.md" "the drain lists the changed page paths"
+assert_contains "$out" "the widget lock moved" "the drain lists the new facts"
+rm -f "$TMP/ac-brain.calls"
 out="$(drain '')"
 assert_contains "$(cat "$TMP/ac-brain.calls")" "sync" "the fleet drain syncs the brain"
 assert_contains "$out" "brain-sync ok - 42 files, 1 changed" "the drain narrates the sync summary"
-rm -f "$state/brain.sqlite"
+assert_contains "$(cat "$TMP/ac-brain.calls")" "delta --agent crewchief --session chief" \
+  "the fleet drain reads the chief's brain delta"
+rm -f "$state/brain.sqlite" "$TMP/ac-brain.calls"
+drain '' >/dev/null
+assert_no_file "$TMP/ac-brain.calls" "no brain.sqlite - no delta either"
 
 # --- 7. scoped WATCHER-DOWN beacon ------------------------------------------
 

@@ -13,7 +13,7 @@ POSTURE: this is an AVAILABLE TOOL - the section-5 intake law (tier-ranked `ac-k
 
 - Intake, after the law's tier reads: `ac-brain.sh recall --query '<the order's question>'` - a hit is CITED into the brief under `## Inputs` (path + quote) exactly like a knowledge hit; state its absence otherwise.
 - Before minting a family or backlog row: read `create_safety` on the recall response - `exists`/`probable` means fold into the prior family instead of opening a twin.
-- On a wake: `ac-brain.sh delta --agent <your-id> --session <room-or-session>` returns only what changed since your last wake (at-least-once, never repeats a delivered item).
+- On a wake: your wake-drain already prints `brain-delta:` - the pages and facts that changed since your last look, on your own cursor (`crewchief`/`chief` for the fleet chief, `<fam>-chief`/`<fam>` for a roomchief); `ac-brain.sh delta --agent <your-id> --session <room-or-session>` replays that cursor by hand (at-least-once, never repeats a delivered item).
 - After compaction or a fresh session: `ac-brain.sh context_pack --entities <family,...> --budget-tokens <n>`.
 - A durable session fact worth keeping but below the ledger bar: `ac-brain.sh remember '<fact>' --provenance '<source>' --agent <pane-id> [--entity <slug>] [--kind commitment|belief|preference|event|fact] [--ttl 30d]`.
 - Reverse lookup: `ac-brain.sh links-to <repo path or slug fragment>` - "which families touched this file".
@@ -31,4 +31,4 @@ POSTURE: this is an AVAILABLE TOOL - the section-5 intake law (tier-ranked `ac-k
 ## Health
 
 `ac-brain.sh doctor` (exit 1 only on fail) and `ac-brain.sh stats`; `sync --break-lease` clears a dead holder only.
-The usage log (`state/brain-usage.jsonl`) is home-local evidence for later demand-signal work - never uploaded, never trimmed by hand. Every line carries `by` (who asked): an explicit `--by` wins, else `AC_SCOPE` attributes to `<fam>-chief`, else the unscoped default `crewchief`.
+The usage log (`state/brain-usage.jsonl`) is home-local evidence for later demand-signal work - never uploaded, never trimmed by hand. Every line carries `by` (who asked): an explicit `--by` wins, else `AC_SOLO=1` attributes to `solo`, else `AC_SCOPE` attributes to `<fam>-chief`, else the unscoped default `crewchief`.
