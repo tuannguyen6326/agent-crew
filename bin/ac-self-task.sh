@@ -224,7 +224,8 @@ ac_seed_crew_skills "$worktree" "$harness"
 alive_rc=0; backend_window_alive "$id" || alive_rc=$?
 case "$alive_rc" in
   0) ac_die "window $(backend_target "$id") already exists" ;;
-  2) ac_die "the BACKEND could not be READ for $id - whether $(backend_target "$id") still exists is UNKNOWN, so this is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself (herdr status server), then try again" ;;
+  1) ;;
+  *) ac_die "the BACKEND could not be READ for $id - whether $(backend_target "$id") still exists is UNKNOWN, so this is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself (herdr status server), then try again" ;;
 esac
 # A self task is the chief's own fleet-level work: its tail tab lives in the
 # fleet ROOT workspace (AC_WINDOW_FAMILY set EMPTY = deliberately the root;

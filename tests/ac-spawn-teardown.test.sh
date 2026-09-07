@@ -660,6 +660,22 @@ case "$err" in *"already exists"*) fail "an unreadable backend is not a window-a
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second deputy window was created"
 assert_file "$AC_HOME/state/.pane-dep1" "the blind recovery left the deputy's window alone"
 
+# ...and exit 127 (a driver failed to LOAD) refuses the SAME way, never
+# treated as the legitimate GONE path that would let recovery reap and
+# re-spawn onto a possibly-live deputy (contract: ac-backend.sh WINDOW
+# LIVENESS; ac_backend_route's per-call dispatch means a driver function that
+# failed to load makes bash itself return 127 from the very call being
+# classified - the real production shape, not a hand-picked sentinel). A
+# `case` with no default lets 127 fall straight through to backend_window_new
+# - fail-OPEN, the same hazard the rc=2 guard above exists for.
+make_loadfail_bin
+: >"$FAKE_HERDR/log"
+err="$("$LOADFAIL_BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
+  && fail "THE REGRESSION: --recover must refuse a 127 driver-load failure, never reap and re-spawn onto a possibly-live deputy"
+assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second deputy window was created"
+assert_file "$AC_HOME/state/.pane-dep1" "the refused recovery left the live deputy's window alone"
+
 # The crew path's own guard, same defect: reaching it PROVES no meta exists (the
 # duplicate-meta refusal above dies on one), so the orphan handle a SIGKILLed
 # spawn leaves behind is exactly what it must still resolve - and a blind backend
@@ -667,6 +683,15 @@ assert_file "$AC_HOME/state/.pane-dep1" "the blind recovery left the deputy's wi
 "$BIN/ac-brief.sh" bw1 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 rm -f "$AC_HOME/state/bw1.meta"   # the SIGKILL-mid-spawn orphan: handle, no meta
+
+# rc=0 (the orphan window is genuinely ALIVE): the case's 0) branch is
+# untouched by the 127 fix, and must keep refusing exactly as it does today.
+: >"$FAKE_HERDR/log"
+err="$("$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
+  && fail "a crew spawn must refuse a genuinely alive orphan window"
+assert_contains "$err" "already exists" "a genuinely alive orphan window still refuses as before"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
+
 touch "$FAKE_HERDR/.pane-api-down"
 : >"$FAKE_HERDR/log"
 err="$("$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
@@ -674,6 +699,17 @@ err="$("$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
 rm -f "$FAKE_HERDR/.pane-api-down"
 assert_contains "$err" "could not be READ" "the crew refusal blames the BACKEND, not the pane"
 case "$err" in *"already exists"*) fail "an unreadable backend is not a window-already-exists verdict" ;; esac
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
+assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
+
+# ...and exit 127 refuses the SAME way at the ordinary spawn path too - the
+# exact production shape a missing default branch let fall through to
+# backend_window_new.
+: >"$FAKE_HERDR/log"
+err="$("$LOADFAIL_BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
+  && fail "THE REGRESSION: a crew spawn must refuse a 127 driver-load failure, never open a second window"
+assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
+case "$err" in *"already exists"*) fail "a 127 driver failure is not a window-already-exists verdict" ;; esac
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
 assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
 

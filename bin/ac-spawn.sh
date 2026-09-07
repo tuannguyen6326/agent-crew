@@ -1438,7 +1438,8 @@ if [ "$crewdeputy" = 1 ]; then
     alive_rc=0; backend_window_alive "$id" || alive_rc=$?
     case "$alive_rc" in
       0) ac_die "window $(backend_target "$id") already exists" ;;
-      2) ac_die "the BACKEND could not be READ for $id - whether $(backend_target "$id") still exists is UNKNOWN, so this recovery is REFUSED rather than risk a second window on a LIVE deputy's home; check the backend itself (herdr status server), then recover again" ;;
+      1) ;;
+      *) ac_die "the BACKEND could not be READ for $id - whether $(backend_target "$id") still exists is UNKNOWN, so this recovery is REFUSED rather than risk a second window on a LIVE deputy's home; check the backend itself (herdr status server), then recover again" ;;
     esac
   else
     reap_orphan_window
@@ -1659,7 +1660,8 @@ ac_seed_crew_skills "$worktree" "$harness"
 alive_rc=0; backend_window_alive "$id" || alive_rc=$?
 case "$alive_rc" in
   0) ac_die "window $(backend_target "$id") already exists" ;;
-  2) ac_die "the BACKEND could not be READ for $id - whether $(backend_target "$id") still exists is UNKNOWN, so this spawn is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself (herdr status server), then spawn again" ;;
+  1) ;;
+  *) ac_die "the BACKEND could not be READ for $id - whether $(backend_target "$id") still exists is UNKNOWN, so this spawn is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself (herdr status server), then spawn again" ;;
 esac
 backend_window_new "$id" "$worktree"
 window="$(backend_target "$id")"

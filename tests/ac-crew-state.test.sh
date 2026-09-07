@@ -36,6 +36,19 @@ rm -f "$FAKE_HERDR/.unreachable"
 rm -f "$FAKE_HERDR/panes/pC1.buf" "$FAKE_HERDR/tabs/tC1"
 assert_eq "$("$BIN/ac-crew-state.sh" c1)" "gone" "a real gone window is reported exactly as before"
 
+# --- exit 127 (a driver failed to LOAD) is UNOBSERVABLE, never gone -----------
+# Contract: ac-backend.sh WINDOW LIVENESS is THREE-STATE (0 alive / 1 gone /
+# 2 unobservable); ac_backend_route's PER-CALL dispatch ("backend_${fn}_herdr")
+# means a driver function that failed to load makes bash itself return 127
+# (command not found) from the call being classified - the real production
+# shape, not a hand-picked sentinel. A `case` carrying only 0)/2) and
+# defaulting everything else to gone reads that load failure as a dead pane.
+make_loadfail_bin
+mk_crewmate lf1 pLF1 tLF1
+out="$("$LOADFAIL_BIN/ac-crew-state.sh" lf1)"
+case "$out" in gone|gone*) fail "THE REGRESSION: exit 127 (driver load failure) must never render as gone: $out" ;; esac
+assert_contains "$out" "unobservable" "a 127 (driver load failure) names itself unobservable, same as rc=2"
+
 # --- F13: the last status line must not re-emit a bare captain marker ---------
 
 mk_crewmate c2 pC2 tC2

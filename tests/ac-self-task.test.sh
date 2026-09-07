@@ -253,4 +253,43 @@ assert_eq "$(git -C "$so2_wt" merge-base HEAD "$release_sha")" "$release_sha" \
 printf 'herdr
 ' >"$AC_HOME/config/backend"
 
+# --- window-liveness contract (bin/ac-backend.sh WINDOW LIVENESS): only a ----
+# --- DEFINITE code may proceed; everything else (127 included) refuses ------
+
+# rc=0 (a genuinely alive orphan pane, the shape an interrupted start with no
+# meta yet written would leave behind) still refuses "already exists" - the
+# case's 0) branch is untouched by the 127 fix below.
+printf 'pOR1 tOR1\n' >"$state/.pane-or1"
+printf 'pOR1\n' >"$FAKE_HERDR/tabs/tOR1"
+: >"$FAKE_HERDR/panes/pOR1.buf"
+err="$("$BIN/ac-self-task.sh" start or1 "$repo" 2>&1 1>/dev/null || true)"
+assert_contains "$err" "already exists" "a genuinely alive orphan pane still refuses as before"
+assert_no_file "$state/or1.meta" "the refused start leaves no task in flight"
+rm -f "$state/.pane-or1" "$FAKE_HERDR/tabs/tOR1" "$FAKE_HERDR/panes/pOR1.buf"
+
+# rc=2 (an unreadable backend) still refuses exactly as it does today.
+printf 'pOR2 tOR2\n' >"$state/.pane-or2"
+printf 'pOR2\n' >"$FAKE_HERDR/tabs/tOR2"
+: >"$FAKE_HERDR/panes/pOR2.buf"
+touch "$FAKE_HERDR/.unreachable"
+err="$("$BIN/ac-self-task.sh" start or2 "$repo" 2>&1 1>/dev/null || true)"
+rm -f "$FAKE_HERDR/.unreachable"
+assert_contains "$err" "could not be READ" "an unreadable backend still refuses exactly as before"
+assert_no_file "$state/or2.meta" "the refused start leaves no task in flight"
+rm -f "$state/.pane-or2" "$FAKE_HERDR/tabs/tOR2" "$FAKE_HERDR/panes/pOR2.buf"
+
+# rc=127 (a driver failed to LOAD) must refuse the SAME way, never proceed to
+# open the pane (contract: ac-backend.sh WINDOW LIVENESS; ac_backend_route's
+# per-call dispatch means a missing driver function makes bash itself return
+# 127 from the very call being classified - the real production shape, not a
+# hand-picked sentinel). A `case` with only 0)/2) branches and no default lets
+# 127 fall straight through to the pane-open step below it.
+make_loadfail_bin
+: >"$FAKE_HERDR/log"
+err="$("$LOADFAIL_BIN/ac-self-task.sh" start lf1 "$repo" 2>&1 1>/dev/null || true)"
+assert_contains "$err" "could not be READ" "a 127 (driver load failure) refuses like an unreadable backend"
+assert_no_file "$state/lf1.meta" "the refused start leaves no task in flight"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
+  "a 127 driver failure must never reach the pane-open step - that is the fail-OPEN this closes"
+
 pass
