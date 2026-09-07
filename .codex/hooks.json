@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'payload=$(cat 2>/dev/null || true); [ -n \"$payload\" ] || exit 0; root=$(pwd -P) || exit 0; [ -x \"$root/bin/ac-prompt-recall.sh\" ] || exit 0; printf \"%s\" \"$payload\" | \"$root/bin/ac-prompt-recall.sh\"'",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",

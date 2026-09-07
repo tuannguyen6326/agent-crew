@@ -1,7 +1,7 @@
 // ac-primary-guards.js - the fleet guards for an opencode PRIMARY, one file.
 //
 // opencode has no Stop hook and no PreToolUse config surface; a worktree
-// plugin is the hook mechanism, and this single plugin wires BOTH duties so
+// plugin is the hook mechanism, and this single plugin wires every duty so
 // there is exactly one root resolution and one process runner:
 //
 // - tool.execute.before (bash tool): the command is wrapped in the claude
@@ -13,6 +13,11 @@
 //   would-be turn end; exit 2 injects the objection back into the session as
 //   a prompt. That injected prompt settles into another idle, and swallowIdle
 //   eats exactly that one, so the guard never argues with itself.
+// - chat.message (a user message, before the model reads it): the prompt's
+//   text goes to bin/ac-prompt-recall.sh in the claude payload shape, and a
+//   non-empty block is appended to the message as one synthetic text part,
+//   so a chief or solo session meets the fleet brain before it acts. The
+//   hook self-scopes by session shape and is silent in a crewmate worktree.
 //
 // Every path fails OPEN - a broken guard must never wedge the harness - and
 // both guard scripts self-scope, so outside a real primary checkout the
@@ -55,10 +60,31 @@ async function repoRoot(directory, worktree) {
 export const AcPrimaryGuards = async ({ client, directory, worktree }) => {
   const root = await repoRoot(directory, worktree);
   const guard = (script, stdin) =>
-    root ? sh(`${root}/bin/${script}`, [], stdin) : Promise.resolve({ code: 0, err: "" });
+    root ? sh(`${root}/bin/${script}`, [], stdin) : Promise.resolve({ code: 0, out: "", err: "" });
   let swallowIdle = false;
 
   return {
+    "chat.message": async (_input, output) => {
+      const parts = output?.parts;
+      if (!Array.isArray(parts)) return;
+      const prompt = parts
+        .filter((p) => p?.type === "text" && !p.synthetic && typeof p.text === "string")
+        .map((p) => p.text)
+        .join("\n");
+      if (!prompt) return;
+      const { out } = await guard("ac-prompt-recall.sh", JSON.stringify({ prompt }));
+      const block = (out || "").trim();
+      if (!block) return;
+      parts.push({
+        id: "prt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10),
+        sessionID: output.message?.sessionID ?? parts[0]?.sessionID ?? "",
+        messageID: output.message?.id ?? parts[0]?.messageID ?? "",
+        type: "text",
+        text: block,
+        synthetic: true,
+      });
+    },
+
     "tool.execute.before": async (input, output) => {
       const command = output?.args?.command;
       if (input?.tool !== "bash" || typeof command !== "string" || !command) return;

@@ -41,7 +41,12 @@ assert_eq "$n_timeouts" "$n_hooks" "every codex hook carries a timeout"
 cl="$root/.claude/settings.json"
 while IFS= read -r script; do
   case "$cx_cmds" in *"$script"*) ;; *) fail "claude wires $script but codex does not - the guard sets drifted" ;; esac
-done < <(jq -r '.hooks.PreToolUse[]?.hooks[]?.command' "$cl" | grep -o 'ac-[a-z-]*\.sh')
+done < <(jq -r '.hooks.PreToolUse[]?.hooks[]?.command, .hooks.UserPromptSubmit[]?.hooks[]?.command' "$cl" | grep -o 'ac-[a-z-]*\.sh')
+# The prompt-time recall rides the same claude-shaped payload on codex.
+case "$(jq -r '[.hooks.UserPromptSubmit[]?.hooks[]?.command] | .[]' "$cx")" in
+  *ac-prompt-recall.sh*) ;;
+  *) fail "codex UserPromptSubmit wiring misses ac-prompt-recall.sh" ;;
+esac
 
 # Every script referenced by ANY of the three surfaces exists and executes.
 refs="$(cat "$cx" "$root"/.opencode/plugins/*.js "$root"/.pi/extensions/*.ts 2>/dev/null \
@@ -59,6 +64,8 @@ grep -q "ac-turnend-guard.sh" "$f" \
   || fail "opencode plugin does not run the turn-end guard"
 grep -q "ac-watch-policy-hook.sh" "$f" \
   || fail "opencode plugin does not run the watch policy"
+grep -q "ac-prompt-recall.sh" "$f" \
+  || fail "opencode plugin does not run the prompt-time recall"
 
 # --- .cursor/hooks.json ------------------------------------------------------
 cu="$root/.cursor/hooks.json"
@@ -89,6 +96,13 @@ esac
 case "$(jq -r '[.hooks.sessionStart[]?.command] | .[]' "$cu")" in
   *ac-sessionstart-nudge.sh*) ;;
   *) fail "cursor sessionStart wiring misses the nudge" ;;
+esac
+# Prompt-time recall rides beforeSubmitPrompt through its own adapter: plain
+# stdout is not context on cursor, only a {"continue","additional_context"}
+# object is (bin/ac-prompt-recall-cursor.sh; contract in ac-prompt-recall.test.sh).
+case "$(jq -r '[.hooks.beforeSubmitPrompt[]?.command] | .[]' "$cu")" in
+  *ac-prompt-recall-cursor.sh*) ;;
+  *) fail "cursor beforeSubmitPrompt wiring misses the recall adapter" ;;
 esac
 # Cursor's stop hook cannot block and only a follow-up bounds the nag loop:
 # the registration MUST carry Cursor's own loop_limit ceiling (the bound that
@@ -123,6 +137,7 @@ f="$root/.pi/extensions/ac-primary-turnend-guard.ts"
 [ -f "$f" ] || fail "missing $f"
 grep -q "ac-turnend-guard.sh" "$f" || fail "pi extension does not run the turn-end guard"
 grep -q "ac-watch-policy-hook.sh" "$f" || fail "pi extension does not run the watch policy"
+grep -q "ac-prompt-recall.sh" "$f" || fail "pi extension does not run the prompt-time recall"
 
 # Syntax: every plugin/extension must transpile (bun does not typecheck, so a
 # missing pi types package cannot fail this - only real syntax errors do).

@@ -8,6 +8,13 @@
         "timeout": 10
       }
     ],
+    "beforeSubmitPrompt": [
+      {
+        "type": "command",
+        "command": "\"$CURSOR_PROJECT_DIR\"/bin/ac-prompt-recall-cursor.sh",
+        "timeout": 15
+      }
+    ],
     "beforeShellExecution": [
       {
         "type": "command",
