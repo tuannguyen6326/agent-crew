@@ -35,8 +35,8 @@ alive_rc=0
 backend_window_alive "$id" || alive_rc=$?
 case "$alive_rc" in
   0) ;;
-  2) printf 'unobservable: backend could not be read for %s\n' "$(backend_target "$id")"; exit 0 ;;
-  *) printf 'gone\n'; exit 0 ;;
+  1) printf 'gone\n'; exit 0 ;;
+  *) printf 'unobservable: backend could not be read for %s\n' "$(backend_target "$id")"; exit 0 ;;
 esac
 tail="$(backend_capture "$id" 40 | sed '/^$/d' | tail -n 25)"
 if grep -qE "$AC_BUSY_RE" <<<"$tail"; then
