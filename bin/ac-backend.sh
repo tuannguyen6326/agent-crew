@@ -63,6 +63,31 @@
 #                                     codex startup dialog with it, exactly as
 #                                     ac-spawn.sh does for a crewmate). Delivery
 #                                     stays UNVERIFIED for the same reason.
+#   backend_dialog_answer <id>        answer the STARTUP DIALOG the pane is
+#   backend_dialog_answer_pane <pane-id>
+#                                     parked on, BY NAME, where the backend
+#                                     can name it (orca: agentWait.reason).
+#                                     Four states: 0 answered one dialog
+#                                     (another may follow - call again),
+#                                     1 nothing pending, 2 a dialog the
+#                                     driver cannot name (the caller falls
+#                                     back to the registry's blind key),
+#                                     3 unobservable (herdr always: it names
+#                                     none, so the blind key stays). Exists
+#                                     because the blind key is WRONG on some
+#                                     dialogs: codex's update prompt takes
+#                                     Enter as "Update now" and runs the
+#                                     upgrade (measured incident).
+#   backend_startup_dialogs <id> <harness>
+#   backend_startup_dialogs_pane <pane-id> <harness>
+#                                     the startup sequence every launcher
+#                                     runs before its composer-ready wait:
+#                                     answer named dialogs as they appear,
+#                                     press the registry's blind key once
+#                                     for an unnamed one (or right away on a
+#                                     backend that names none), stop once
+#                                     the harness is observed up or down,
+#                                     bounded by AC_STARTUP_DIALOG_BUDGET.
 #   backend_harness_up <id>           did a harness actually COME UP in the
 #                                     pane, or did it exit and leave a bare
 #                                     shell? Three-state, like the submit
@@ -1011,6 +1036,15 @@ backend_agent_idle_herdr() {
   backend_agent_idle_pane_herdr "$(herdr_pane "$1")"
 }
 
+backend_dialog_answer_herdr()      { return 3; }
+backend_dialog_answer_pane_herdr() {
+  # herdr names no dialog (pane get carries agent_status only, and a
+  # startup dialog reads as a working TUI there), so every call is
+  # UNOBSERVABLE (3): the caller keeps the registry's blind key, exactly
+  # the pre-contract behaviour on this backend.
+  return 3
+}
+
 backend_harness_up_herdr() { backend_harness_up_pane_herdr "$(herdr_pane "$1")"; }
 
 backend_harness_up_pane_herdr() {
@@ -1097,7 +1131,46 @@ backend_agent_blocked()   { ac_backend_route agent_blocked "$@"; }
 backend_agent_idle()      { ac_backend_route agent_idle "$@"; }
 backend_agent_idle_pane() { ac_backend_route agent_idle_pane "$@"; }
 backend_agent_status_pane() { ac_backend_route agent_status_pane "$@"; }
+backend_dialog_answer()   { ac_backend_route dialog_answer "$@"; }
+backend_dialog_answer_pane() { ac_backend_route dialog_answer_pane "$@"; }
 backend_harness_up()      { ac_backend_route harness_up "$@"; }
 backend_harness_up_pane() { ac_backend_route harness_up_pane "$@"; }
+
+backend_startup_dialogs()      { ac_startup_dialogs backend_dialog_answer backend_send_key backend_harness_up "$@"; }
+backend_startup_dialogs_pane() { ac_startup_dialogs backend_dialog_answer_pane backend_send_key_pane backend_harness_up_pane "$@"; }
+ac_startup_dialogs() {
+  # ac_startup_dialogs <answer-fn> <key-fn> <up-fn> <handle> <harness>
+  # The one startup sequence both launchers (ac-spawn.sh deliver_kickoff,
+  # ac-pane-agent.sh's crewmate arm) run between the launch line and their
+  # composer-ready wait. Observation-driven where the backend observes:
+  # a named dialog is answered and the loop looks again at once (codex's
+  # update prompt is followed by its hooks-review prompt); an unnamed one
+  # gets the registry's blind key exactly once (ac_harness_startup_key -
+  # codex's trust dialog wants Enter); nothing pending ends the sequence as
+  # soon as the harness is observed UP or SHELL (the came-up and ready gates
+  # own what follows), and only an UNOBSERVABLE pane keeps it polling, to
+  # the budget. A backend that names no dialog (herdr) answers 3 on the
+  # first call: the blind key, once, and out - the pre-contract behaviour.
+  local answer="$1" send="$2" upfn="$3" h="$4" harness="$5"
+  local key rc up i=0 pressed=0 budget="${AC_STARTUP_DIALOG_BUDGET:-15}"
+  key="$(ac_harness_startup_key "$harness")"
+  while :; do
+    rc=0; "$answer" "$h" || rc=$?
+    case "$rc" in
+      0) sleep 1; continue ;;
+      1) up=0; "$upfn" "$h" || up=$?
+         [ "$up" = 2 ] || return 0 ;;
+      2) if [ -n "$key" ] && [ "$pressed" = 0 ]; then
+           "$send" "$h" "$key" || true
+           pressed=1; sleep 1; continue
+         fi
+         return 0 ;;
+      *) [ -z "$key" ] || "$send" "$h" "$key" || true
+         return 0 ;;
+    esac
+    [ "$i" -lt "$budget" ] || return 0
+    sleep 1; i=$((i + 1))
+  done
+}
 backend_mark_wait()       { ac_backend_route mark_wait "$@"; }
 backend_clear_wait()      { ac_backend_route clear_wait "$@"; }

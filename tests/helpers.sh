@@ -37,6 +37,9 @@ export AC_GATE_WATCH=off
 # Verified sends (ac-backend.sh) settle AC_SEND_SETTLE seconds around each
 # Enter before probing; the fake herdr is synchronous, so the suite skips them.
 export AC_SEND_SETTLE=0
+# The startup-dialog sequence polls an UNOBSERVABLE pane to its budget; a
+# fake backend that models neither identity nor dialog must not cost 15s.
+export AC_STARTUP_DIALOG_BUDGET=2
 # Hermetic scope, too: every roomchief session runs with AC_SCOPE (and often
 # AC_WATCH_ONLY) exported, and scope changes what the scripts under test route,
 # watch and refuse - so an inherited scope reds the suite for exactly the
@@ -686,6 +689,17 @@ make_fake_orca() {
   #                   retained scrollback)
   #   <h>.idle        present = `wait --for tui-idle` satisfied immediately
   #   <h>.agentwait   present = show reports agentWait non-null
+  #   <h>.agent       content = the agentIdentity `show` reports (Orca's own
+  #                   harness detection: "claude"/"codex" once the TUI owns
+  #                   the pane, null for a shell - measured on orca CLI
+  #                   1.4.188); absent = null
+  #   <h>.dialog      content = a STARTUP DIALOG's reason, reported as
+  #                   agentWait {source:"prompt-text", reason} and as `wait
+  #                   --for tui-idle`'s blockedReason (both measured: codex's
+  #                   update prompt and hooks-review prompt); any `send`
+  #                   (text or Enter) dismisses it, advancing to
+  #                   <h>.dialog-next when present - a digit key dismisses
+  #                   the real dialogs the same way
   #   <h>.drop-enters "<count>" - swallow N `--enter` submits (strand knob)
   #   <h>.popup-once  one-shot: the next `--enter` on a non-empty composer is
   #                   CONSUMED by a popup (render changes, composer keeps its
@@ -838,8 +852,10 @@ case "${2:-}" in
     [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
     conn=true; [ -e "$d/terminals/$term.exited" ] && conn=false
     aw='null'; [ -e "$d/terminals/$term.agentwait" ] && aw='{"evidence":"prompt-text"}'
-    printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":%s,"writable":%s,"title":"%s","agentWait":%s}}}\n' \
-      "$term" "$conn" "$conn" "$(head -1 "$d/terminals/$term.title" 2>/dev/null)" "$aw"; exit 0 ;;
+    [ -s "$d/terminals/$term.dialog" ] && aw="{\"source\":\"prompt-text\",\"reason\":\"$(head -1 "$d/terminals/$term.dialog")\"}"
+    ag='null'; [ -s "$d/terminals/$term.agent" ] && ag="\"$(head -1 "$d/terminals/$term.agent")\""
+    printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":%s,"writable":%s,"title":"%s","agentIdentity":%s,"agentWait":%s}}}\n' \
+      "$term" "$conn" "$conn" "$(head -1 "$d/terminals/$term.title" 2>/dev/null)" "$ag" "$aw"; exit 0 ;;
   read)
     [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
     st=running; [ -e "$d/terminals/$term.exited" ] && st=exited
@@ -857,6 +873,14 @@ case "${2:-}" in
     [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
     [ -e "$d/terminals/$term.exited" ] && { printf '{"ok":false,"error":{"message":"terminal_not_writable"}}\n'; exit 1; }
     [ "$interrupt" = 1 ] && { printf '{"ok":true,"result":{}}\n'; exit 0; }
+    if [ -s "$d/terminals/$term.dialog" ]; then
+      if [ -s "$d/terminals/$term.dialog-next" ]; then
+        mv "$d/terminals/$term.dialog-next" "$d/terminals/$term.dialog"
+      else
+        rm -f "$d/terminals/$term.dialog"
+      fi
+      printf '{"ok":true,"result":{}}\n'; exit 0
+    fi
     [ "$has_text" = 1 ] && printf '%s' "$text" >>"$d/terminals/$term.in"
     if [ "$enter" = 1 ]; then
       if [ -e "$d/terminals/$term.popup-once" ] && [ -s "$d/terminals/$term.in" ]; then
@@ -882,8 +906,12 @@ case "${2:-}" in
     printf '{"ok":true,"result":{}}\n'; exit 0 ;;
   wait)
     [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
+    if [ "$cond" = tui-idle ] && [ -s "$d/terminals/$term.dialog" ]; then
+      printf '{"ok":true,"result":{"wait":{"satisfied":false,"status":"running","blockedReason":"%s"}}}\n' \
+        "$(head -1 "$d/terminals/$term.dialog")"; exit 0
+    fi
     if [ "$cond" = tui-idle ] && [ -e "$d/terminals/$term.idle" ]; then
-      printf '{"ok":true,"result":{"terminal":{"wait":{"satisfied":true}}}}\n'; exit 0
+      printf '{"ok":true,"result":{"wait":{"satisfied":true,"status":"running"}}}\n'; exit 0
     fi
     printf '{"ok":false,"error":{"message":"timeout"}}\n'; exit 1 ;;
   list)

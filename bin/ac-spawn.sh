@@ -922,6 +922,9 @@ kickoff_wait_input_ready() {
   local ready_waited=0 ready_same=0 ready_render="" next_render
   while :; do
     w_up=0
+    # A named dialog surfacing late (codex's hooks review follows its update
+    # prompt) is answered here too; unnamed and unobservable are no-ops.
+    backend_dialog_answer "$wkid" >/dev/null 2>&1 || true
     backend_harness_up "$wkid" || w_up=$?
     if [ "$w_up" = 1 ]; then
       ac_status_append "$wkid" "failed: $wharness NO LONGER UP while waiting for its input surface to become ready - kickoff withheld, spawn refused"
@@ -981,20 +984,22 @@ deliver_kickoff() {
   local kid="$1" kharness="$2" kprompt="$3" up=0 kickoff_file
   kickoff_unverified_waked=0
   sleep "$settle"
-  # THE STARTUP-DIALOG ANSWER (header: kickoff-prompt delivery). The registry
-  # names the key per harness (ac_harness_startup_key: codex's bare Enter,
-  # never the prompt); it is the first thing typed at a BUILT-IN pane, and a
-  # CUSTOM launch-<harness> template gets none, its TUI being unknown - that
-  # suppression is this caller's, not the registry's. It runs BEFORE the
-  # came-up gate on purpose: the gate below is then what stands between this
-  # keystroke and the kickoff, and a bare keypress is all that can reach a
-  # pane whose harness never came up. Best-effort: a failed press leaves the
-  # dialog up, which the post-kickoff re-check below then reports as the dead
-  # pane it becomes.
-  k_startup_key="$(ac_harness_startup_key "$kharness")"
-  if [ -n "$k_startup_key" ] && [ ! -f "$(ac_config_dir)/launch-$kharness" ]; then
-    backend_send_key "$kid" "$k_startup_key" || true
-    sleep "$settle"
+  # THE STARTUP-DIALOG SEQUENCE (header: kickoff-prompt delivery;
+  # backend_startup_dialogs, contract in ac-backend.sh's header). Dialogs the
+  # backend can NAME are answered with the key safe on each (orca names
+  # codex's update and hooks-review prompts, where the registry's blind Enter
+  # would run the upgrade - the measured incident); an unnamed one gets that
+  # blind key once (ac_harness_startup_key: codex's trust dialog, never the
+  # prompt); a backend that names none (herdr) presses it right away. It is
+  # the first thing typed at a BUILT-IN pane, and a CUSTOM launch-<harness>
+  # template gets none, its TUI being unknown - that suppression is this
+  # caller's, not the registry's. It runs BEFORE the came-up gate on purpose:
+  # the gate below is then what stands between these keystrokes and the
+  # kickoff. Best-effort: a failed press leaves the dialog up, which the
+  # post-kickoff re-check below then reports as the dead pane it becomes.
+  if [ ! -f "$(ac_config_dir)/launch-$kharness" ]; then
+    backend_startup_dialogs "$kid" "$kharness"
+    [ -z "$(ac_harness_startup_key "$kharness")" ] || sleep "$settle"
   fi
   # The CAME-UP GATE (header: kickoff-prompt delivery). The kickoff prompt is
   # withheld from a pane whose harness is gone; a built-in codex pane may

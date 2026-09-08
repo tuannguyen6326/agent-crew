@@ -1306,6 +1306,10 @@ if [ "$ARM" = crewmate ]; then
       if [ -f "$EXITMARK" ]; then
         fail "harness '$HARNESS' exited (status $(cat "$CRCF" 2>/dev/null || printf 'unrecorded')) before its input surface became ready - no prompt was delivered"
       fi
+      # A named dialog that surfaces late (codex shows its hooks review only
+      # after the update prompt is gone) is answered here too; unnamed and
+      # unobservable are no-ops.
+      backend_dialog_answer_pane "$P" >/dev/null 2>&1 || true
       if backend_agent_idle_pane "$P"; then
         next_render="$(backend_capture_pane "$P" 40 2>/dev/null || true)"
         if [ -n "$(printf '%s' "$next_render" | tr -d '[:space:]')" ]; then
@@ -1332,19 +1336,20 @@ if [ "$ARM" = crewmate ]; then
       ready_waited=$((ready_waited + 1))
     done
   }
-  # THE STARTUP-DIALOG ANSWER first, when the registry names a key
-  # (ac_harness_startup_key: codex's bare Enter, NEVER the prompt - an `n` or
-  # a `2` anywhere in typed text picks "2. No, quit"; harness-facts.md, codex
-  # STARTUP TRUST DIALOG). Best-effort: a failed press leaves the dialog up,
-  # which then shows as a turn that never announces. Residual, stated not
-  # hidden: HARNESS ARMS item 2 owns it and names the captain's acceptance.
+  # THE STARTUP-DIALOG SEQUENCE first (backend_startup_dialogs_pane, contract
+  # in ac-backend.sh's header): dialogs the backend can NAME are answered
+  # with the key safe on each (orca names codex's update and hooks-review
+  # prompts, where the blind Enter runs the upgrade), an unnamed one gets the
+  # registry's blind key once (ac_harness_startup_key: codex's trust dialog
+  # takes Enter, NEVER the prompt - an `n` or a `2` anywhere in typed text
+  # picks "2. No, quit"; harness-facts.md, codex STARTUP TRUST DIALOG).
+  # Best-effort: a failed press leaves the dialog up, which then shows as a
+  # turn that never announces. Residual, stated not hidden: HARNESS ARMS
+  # item 2 owns it and names the captain's acceptance.
   # Then the composer-ready wait, for EVERY crewmate harness: opencode boots
   # its TUI late, and codex's composer only exists once the dialog Enter is
   # answered - the same observation gates both.
-  startup_key="$(ac_harness_startup_key "$HARNESS")"
-  if [ -n "$startup_key" ]; then
-    backend_send_key_pane "$P" "$startup_key" || true
-  fi
+  backend_startup_dialogs_pane "$P" "$HARNESS"
   crewmate_wait_input_ready
   # ONE line, so it cannot half-submit into a composer: the BRIEF stays on disk
   # and the line points at it, exactly as a crewmate kickoff does.

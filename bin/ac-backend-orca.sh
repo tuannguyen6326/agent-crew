@@ -12,9 +12,14 @@
 #   worktree's own node, one tab each.
 # - No agent-report API: the captain-wait stamp is the FILE alone; Orca's own
 #   agentWait detection keeps surfacing waits in its UI (see backend_mark_wait_orca).
-# - No process-info verb: the came-up probe reads the terminal TITLE, which
-#   tracks the foreground process (measured on orca CLI 1.4.188: a bare shell
-#   reports its own name, harness TUIs set an OSC title of their own).
+# - No process-info verb: the came-up probe reads Orca's OWN agent detection
+#   (`terminal show` agentIdentity once a TUI owns the pane, agentWait while a
+#   startup dialog holds it - every harness alike) and the terminal TITLE,
+#   which tracks the foreground process (measured on orca CLI 1.4.188: a bare
+#   shell reports its own name, harness TUIs set an OSC title of their own).
+# - Startup dialogs are NAMED (agentWait.reason), so backend_dialog_answer
+#   answers the known codex ones with the key safe on each instead of the
+#   registry's blind Enter (which runs the upgrade on the update prompt).
 # - Reads never prove liveness: a CLOSED terminal still serves `terminal read`
 #   from retained scrollback (measured) - liveness comes from `terminal show`
 #   `.connected`, with `status` as the control call.
@@ -521,19 +526,27 @@ backend_agent_idle_pane_orca() {
   # `wait --for tui-idle` returns the instant the TUI is idle and times out
   # otherwise; 1000ms bounds a working-TUI poll (herdr answers from a status
   # field, orca answers by observing - measured ~113ms on an idle TUI).
-  # FLEET PANES: tui-idle NEVER satisfies for a TUI launched from an exec'd
-  # shell rather than as the terminal's own command (measured live: an idle
-  # claude titled "✳ Claude Code" timed out for 105s straight), so the
-  # driver also reads the harness's OWN title glyph - claude settles on a
-  # leading ✳ when idle, a working turn shows a spinner glyph instead.
-  local pane="$1" t
+  # Two TUIs, two readings, both measured: for claude on a FLEET pane (TUI
+  # launched from an exec'd shell rather than as the terminal's own command)
+  # tui-idle NEVER satisfies (an idle "✳ Claude Code" timed out for 105s
+  # straight), so the driver reads claude's OWN title glyph - a leading ✳
+  # when idle, a spinner glyph mid-turn. For codex (0.150.1, both pane
+  # shapes) tui-idle DOES satisfy - but it also satisfies under codex's
+  # braille spinner, so the spinner, not tui-idle, tells working from idle.
+  # A pane parked on a dialog (agentWait) is never idle: the composer does
+  # not exist yet.
+  local pane="$1" out t
   [ -n "$pane" ] || return 1
-  if orca_json terminal wait --terminal "$pane" --for tui-idle --timeout-ms 1000 2>/dev/null \
-    | jq -e '.result.terminal.wait.satisfied == true' >/dev/null 2>&1; then
-    return 0
-  fi
-  t="$(orca_json terminal show --terminal "$pane" 2>/dev/null | jq -r '.result.terminal.title // empty')"
+  out="$(orca_json terminal show --terminal "$pane" 2>/dev/null)" || return 1
+  jq -e '.result.terminal.agentWait != null' <<<"$out" >/dev/null 2>&1 && return 1
+  t="$(jq -r '.result.terminal.title // empty' <<<"$out")"
+  orca_title_spinner "$t" && return 1
   case "$t" in "✳"*) return 0 ;; esac
+  # The envelope is {"result":{"wait":{"satisfied":..}}} (measured on orca
+  # CLI 1.4.188 - an earlier reading assumed a `terminal` level that the
+  # real CLI does not emit, which read every satisfied wait as unsatisfied).
+  orca_json terminal wait --terminal "$pane" --for tui-idle --timeout-ms 1000 2>/dev/null \
+    | jq -e '(.result.wait.satisfied // .result.terminal.wait.satisfied) == true' >/dev/null 2>&1 && return 0
   return 1
 }
 
@@ -556,10 +569,43 @@ backend_agent_status_pane_orca() {
     printf 'idle\n'; return 0
   fi
   t="$(jq -r '.result.terminal.title // empty' <<<"$out")"
-  case "$t" in
-    "◐"*|"◓"*|"◑"*|"◒"*|"✻"*|"✽"*|"✢"*|"✶"*|"·"*|"⏺"*) printf 'working\n' ;;
-    *) printf 'unknown\n' ;;
+  if orca_title_spinner "$t"; then printf 'working\n'; else printf 'unknown\n'; fi
+}
+
+backend_dialog_answer_orca() { backend_dialog_answer_pane_orca "$(orca_pane "$1")"; }
+
+backend_dialog_answer_pane_orca() {
+  # STARTUP DIALOGS BY NAME (contract: ac-backend.sh header, backend_dialog_answer).
+  # Orca names the dialog a pane is parked on (agentWait.reason, from its
+  # prompt-text detection - measured on codex 0.150.1: "codex-update-prompt",
+  # then "codex-hooks-review-prompt" in a repo carrying .codex/hooks.json,
+  # both BEFORE the composer exists). The driver answers the ones it knows
+  # with the key that is safe on THAT dialog: a digit selects and confirms
+  # (measured), and a bare Enter is exactly the wrong key on the update
+  # prompt - its highlighted default is "Update now", which runs the
+  # upgrade and left a crewmate mid-install and never booting. The hooks
+  # prompt's "Trust all and continue" is the fleet's posture: the hooks are
+  # the repo's own tracked files, run at the same trust as its scripts and
+  # tests, and "continue without trusting" would silently disarm the fleet
+  # guards on a codex primary. An unknown dialog gets NO keystroke - the
+  # caller falls back to the registry's blind key (the trust dialog's
+  # Enter) - and every read failure is unobservable, never "no dialog".
+  #   0 answered one dialog (another may follow - call again)
+  #   1 nothing pending
+  #   2 a dialog the driver cannot name
+  #   3 unobservable
+  local pane="$1" out reason key
+  [ -n "$pane" ] || return 3
+  out="$(orca_json terminal show --terminal "$pane")" || return 3
+  jq -e '.result.terminal.agentWait != null' <<<"$out" >/dev/null 2>&1 || return 1
+  reason="$(jq -r '.result.terminal.agentWait.reason // empty' <<<"$out" 2>/dev/null)"
+  case "$reason" in
+    codex-update-prompt) key=2 ;;
+    codex-hooks-review-prompt) key=2 ;;
+    *) return 2 ;;
   esac
+  orca_json terminal send --terminal "$pane" --text "$key" >/dev/null 2>&1 || return 3
+  return 0
 }
 
 backend_harness_up_orca() { backend_harness_up_pane_orca "$(orca_pane "$1")"; }
@@ -579,13 +625,31 @@ backend_harness_up_pane_orca() {
   title="${title##*/}"
   title="${title#-}"
   case "$title" in sh|bash|zsh|fish|dash|ksh|tcsh|csh) return 1 ;; esac
+  # Orca's OWN harness detection, every harness alike (measured on codex
+  # 0.150.1 in both pane shapes): agentIdentity names the TUI once it owns
+  # the pane, and a startup dialog rides agentWait while the exec'd shell's
+  # title still reads "cd" - a dialog IS a harness, parked, never a shell.
+  jq -e '.result.terminal.agentIdentity != null or .result.terminal.agentWait != null' <<<"$out" >/dev/null 2>&1 && return 0
   # A leading harness glyph is the TUI's OWN asserted title (claude's
-  # measured vocabulary: ✳ idle, ◐/✻/✽/✢/✶/·/⏺ spinner); an ASCII
-  # non-shell title (a themed zsh titling itself with the cwd) proves
-  # nothing.
-  case "$title" in "✳"*|"◐"*|"◓"*|"◑"*|"◒"*|"✻"*|"✽"*|"✢"*|"✶"*|"·"*|"⏺"*) return 0 ;; esac
+  # measured vocabulary: ✳ idle, ◐/✻/✽/✢/✶/·/⏺ spinner; codex: a braille
+  # spinner while working); an ASCII non-shell title (a themed zsh titling
+  # itself with the cwd, codex's idle cwd-basename title) proves nothing.
+  case "$title" in "✳"*) return 0 ;; esac
+  orca_title_spinner "$title" && return 0
   backend_agent_idle_pane_orca "$pane" && return 0
   return 2
+}
+
+orca_title_spinner() {
+  # The working-turn title glyphs the TUIs assert themselves: claude's
+  # spinner set, and codex's braille spinner (U+2800-28FF, UTF-8 E2 A0-A3
+  # xx; measured "⠇ <cwd>" mid-turn on 0.150.1). The byte-range match is
+  # deliberate: which braille cell shows is a frame of the animation.
+  case "$1" in
+    "◐"*|"◓"*|"◑"*|"◒"*|"✻"*|"✽"*|"✢"*|"✶"*|"·"*|"⏺"*) return 0 ;;
+    $'\xe2\xa0'*|$'\xe2\xa1'*|$'\xe2\xa2'*|$'\xe2\xa3'*) return 0 ;;
+  esac
+  return 1
 }
 
 backend_mark_wait_orca() {

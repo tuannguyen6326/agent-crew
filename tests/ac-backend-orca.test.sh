@@ -257,6 +257,104 @@ printf '\342\227\220 working on things\n' >"$FAKE_ORCA/terminals/term1.title"
 rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
 assert_eq "$rc" "1" "a working-glyph title is not idle"
 
+# --- Orca's OWN harness detection: every harness, not claude's glyphs -----------
+# Measured on codex 0.150.1 under orca CLI 1.4.188, both pane shapes: `show`
+# reports agentIdentity ("codex") once the TUI owns the pane, and a startup
+# dialog rides agentWait {source:"prompt-text", reason} while the exec'd
+# shell's title still reads "cd". Codex's OWN title is the cwd basename when
+# idle and a braille spinner (U+2807 ...) before it while working; tui-idle
+# DOES satisfy for codex (it never did for claude), but it also satisfies
+# under the spinner, so the spinner, not tui-idle, tells working from idle.
+printf 'cd\n' >"$FAKE_ORCA/terminals/term1.title"
+printf 'codex-update-prompt\n' >"$FAKE_ORCA/terminals/term1.dialog"
+run_backend orca 'backend_harness_up o1' \
+  || fail "a startup dialog named by agentWait IS a harness - came-up must read UP"
+rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+assert_eq "$rc" "1" "a pane parked on a startup dialog is not idle"
+rm -f "$FAKE_ORCA/terminals/term1.dialog"
+printf 'agent-crew\n' >"$FAKE_ORCA/terminals/term1.title"
+printf 'codex\n' >"$FAKE_ORCA/terminals/term1.agent"
+run_backend orca 'backend_harness_up o1' \
+  || fail "agentIdentity=codex proves the harness came up without any claude glyph"
+rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+assert_eq "$rc" "1" "identity alone is not idleness - tui-idle must satisfy"
+touch "$FAKE_ORCA/terminals/term1.idle"
+run_backend orca 'backend_agent_idle o1' || fail "codex: tui-idle satisfied + plain cwd title = idle"
+assert_eq "$(run_backend orca 'backend_agent_status_pane term1')" "idle" "status reads idle for a resting codex"
+printf '\342\240\207 agent-crew\n' >"$FAKE_ORCA/terminals/term1.title"
+rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+assert_eq "$rc" "1" "codex: a braille spinner title is WORKING even while tui-idle satisfies"
+assert_eq "$(run_backend orca 'backend_agent_status_pane term1')" "working" "status reads working under the braille spinner"
+run_backend orca 'backend_harness_up o1' || fail "a spinner-titled codex is a harness that came up"
+rm -f "$FAKE_ORCA/terminals/term1.idle" "$FAKE_ORCA/terminals/term1.agent"
+printf 'zsh\n' >"$FAKE_ORCA/terminals/term1.title"
+
+# --- startup dialogs answered BY NAME ---------------------------------------------
+# Orca names the dialog; the driver answers the ones it knows with the key
+# that is safe on THAT dialog (a bare Enter on codex's update prompt runs the
+# upgrade - the measured incident that left a crewmate mid-install and never
+# booting), reports an unknown one so the caller can fall back to the
+# registry's blind key, and says when nothing is pending at all.
+: >"$FAKE_ORCA/log"
+rc=0; run_backend orca 'backend_dialog_answer o1' || rc=$?
+assert_eq "$rc" "1" "no dialog pending reads 1"
+printf 'codex-update-prompt\n' >"$FAKE_ORCA/terminals/term1.dialog"
+printf 'codex-hooks-review-prompt\n' >"$FAKE_ORCA/terminals/term1.dialog-next"
+run_backend orca 'backend_dialog_answer o1' || fail "a known dialog is answered (0)"
+assert_contains "$(cat "$FAKE_ORCA/log")" "--text 2" "the update prompt is answered with 2 (Skip), never Enter"
+assert_eq "$(head -1 "$FAKE_ORCA/terminals/term1.dialog")" "codex-hooks-review-prompt" "one answer, one dialog - the next one is left for the next call"
+: >"$FAKE_ORCA/log"
+run_backend orca 'backend_dialog_answer_pane term1' || fail "the pane twin answers too"
+assert_contains "$(cat "$FAKE_ORCA/log")" "--text 2" "the hooks-review prompt is answered with 2 (trust the tracked hooks and continue)"
+assert_no_file "$FAKE_ORCA/terminals/term1.dialog" "the last dialog is dismissed"
+printf 'codex-something-new\n' >"$FAKE_ORCA/terminals/term1.dialog"
+: >"$FAKE_ORCA/log"
+rc=0; run_backend orca 'backend_dialog_answer o1' || rc=$?
+assert_eq "$rc" "2" "an unknown dialog is reported (2), not guessed at"
+case "$(cat "$FAKE_ORCA/log")" in *"terminal send"*) fail "an unknown dialog must receive no keystroke from the driver" ;; esac
+rm -f "$FAKE_ORCA/terminals/term1.dialog"
+rc=0; run_backend orca 'backend_dialog_answer_pane ""' || rc=$?
+assert_eq "$rc" "3" "an empty handle is unobservable (3)"
+touch "$FAKE_ORCA/.unreachable"
+rc=0; run_backend orca 'backend_dialog_answer o1' || rc=$?
+assert_eq "$rc" "3" "an unreachable backend is unobservable (3)"
+rm -f "$FAKE_ORCA/.unreachable"
+rc=0; run_backend herdr 'backend_dialog_answer_pane p1' || rc=$?
+assert_eq "$rc" "3" "herdr names no dialog: always unobservable (3), the blind key stays"
+
+# --- the startup SEQUENCE both launchers run ------------------------------------
+# Named dialogs are answered as they appear (update, then hooks review), the
+# blind Enter is NEVER typed while the backend can name what it sees, and the
+# sequence ends once the harness is observed up.
+printf 'cd\n' >"$FAKE_ORCA/terminals/term1.title"
+printf 'codex-update-prompt\n' >"$FAKE_ORCA/terminals/term1.dialog"
+printf 'codex-hooks-review-prompt\n' >"$FAKE_ORCA/terminals/term1.dialog-next"
+printf 'codex\n' >"$FAKE_ORCA/terminals/term1.agent"
+: >"$FAKE_ORCA/log"
+run_backend orca 'backend_startup_dialogs_pane term1 codex'
+assert_eq "$(grep -c -- '--text 2' "$FAKE_ORCA/log")" "2" "both codex dialogs are answered by name, in order"
+case "$(cat "$FAKE_ORCA/log")" in *"--enter"*) fail "no blind Enter while every dialog was named" ;; esac
+assert_no_file "$FAKE_ORCA/terminals/term1.dialog" "the sequence leaves no dialog standing"
+# An unnamed dialog gets the registry's blind key exactly once.
+printf 'codex-trust-prompt\n' >"$FAKE_ORCA/terminals/term1.dialog"
+: >"$FAKE_ORCA/log"
+run_backend orca 'backend_startup_dialogs o1 codex'
+assert_eq "$(grep -c -- '--enter' "$FAKE_ORCA/log")" "1" "an unnamed dialog gets the blind Enter once"
+# A harness with no registry key and nothing pending types nothing.
+: >"$FAKE_ORCA/log"
+run_backend orca 'backend_startup_dialogs o1 claude'
+case "$(cat "$FAKE_ORCA/log")" in *"terminal send"*) fail "claude with nothing pending must receive no keystroke" ;; esac
+# herdr: the blind key right away (pre-contract behaviour), and only for a
+# harness whose registry names one.
+: >"$FAKE_HERDR/log"
+run_backend herdr 'backend_startup_dialogs_pane p1 codex'
+assert_contains "$(cat "$FAKE_HERDR/log")" "send-keys p1 enter" "herdr presses the registry key at once"
+: >"$FAKE_HERDR/log"
+run_backend herdr 'backend_startup_dialogs_pane p1 claude'
+case "$(cat "$FAKE_HERDR/log")" in *send*) fail "herdr types nothing for a keyless harness" ;; esac
+rm -f "$FAKE_ORCA/terminals/term1.agent"
+printf 'zsh\n' >"$FAKE_ORCA/terminals/term1.title"
+
 rc=0; run_backend orca 'backend_agent_blocked o1' || rc=$?
 assert_eq "$rc" "1" "agentWait null is not blocked"
 touch "$FAKE_ORCA/terminals/term1.agentwait"
