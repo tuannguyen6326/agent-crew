@@ -815,6 +815,14 @@ fleet home, and instruction files load by the booting cwd), so that read is
 the solo session's own act, once per slice - only the crewmate MECHANICS
 (brief-following, `ac-done.sh`, pane markers, the handback report format) do
 not apply, since a solo session has none of that machinery.
+The report format's `## Lessons` section is part of what does not apply: a
+solo session never prints a Lessons section in chat - chat dies with the
+session, so a lesson printed there is lost, and the section reads as done
+while nothing was recorded. A lesson has exactly two fates: a genuinely new
+method lesson goes to `ac-learn.sh note` (the next Learning transaction
+reads every Pending line, so a routine one is a cost, not a gift), a
+verified repo fact goes to `ac-know.sh add`; anything else ends with the
+answer.
 A slice whose deliverable is KNOWLEDGE (an investigation, a diagnosis, a
 comparison) leaves `data/<id>/report.md` exactly as a scout would - chat
 dies with the session; a code slice's record is its PR and commits, no
