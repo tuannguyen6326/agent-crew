@@ -436,4 +436,36 @@ assert_contains "$out" "ERROR:" "gc refusal survives tail -1 on multi-line input
 assert_fails "$BIN/ac-remote.sh" bogus
 assert_fails "$BIN/ac-remote.sh"
 
+# --- order: the LOCAL entrance (a solo session handing the captain's order to
+# the chief) - same stash, same wake, same dedup as poll/ingest, thread
+# "local"; and a reply on a local thread lands on DISK instead of dying for
+# want of a transport hook, so the chief's remote-order protocol runs
+# unchanged on a fleet with no remote transport at all.
+rm -f "$CFG/remote-reply"
+out="$("$BIN/ac-remote.sh" order 'please harden the widget lock in repo demo')"
+orid="${out#remote-order }"
+case "$orid" in local-*) ;; *) fail "order must mint a local-<...> rid and print its wake line: $out" ;; esac
+assert_file "$INBOX/$orid.json" "order stashes the JSON like any ingested order"
+assert_eq "$(jq -r .thread "$INBOX/$orid.json")" "local" "the stash names the local thread"
+assert_eq "$(jq -r .author "$INBOX/$orid.json")" "captain" "the order is the captain's word"
+assert_eq "$(jq -r .text "$INBOX/$orid.json")" "please harden the widget lock in repo demo" "the text is stashed verbatim"
+assert_contains "$(fleet_wakes)" "remote-order $orid" "order queues the chief's durable wake"
+printf 'a multi-line order
+with "quotes" and a second line
+' >"$TMP/order.md"
+out="$("$BIN/ac-remote.sh" order --text-file "$TMP/order.md")"
+orid2="${out#remote-order }"
+assert_eq "$(jq -r .text "$INBOX/$orid2.json")" "$(cat "$TMP/order.md")" "--text-file carries the text verbatim, quotes and lines intact"
+[ "$orid" != "$orid2" ] || fail "two orders must mint two rids"
+out="$("$BIN/ac-remote.sh" order '' 2>&1 || true)"
+assert_contains "$out" "order needs" "an empty order is refused"
+printf 'TRIAGE: flow=direct, queued as widget-lock
+' | "$BIN/ac-remote.sh" reply "$orid" >/dev/null \
+  || fail "reply on a local thread must not need a transport hook"
+assert_contains "$(cat "$INBOX/$orid.replies.md")" "queued as widget-lock" "the reply lands beside the stash"
+printf 'second
+' >"$TMP/r2.txt"
+"$BIN/ac-remote.sh" reply "$orid" --text-file "$TMP/r2.txt" >/dev/null
+assert_eq "$(grep -c '^## ' "$INBOX/$orid.replies.md")" "2" "every reply appends one dated entry"
+
 pass

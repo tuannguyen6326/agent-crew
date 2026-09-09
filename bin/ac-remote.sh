@@ -12,6 +12,7 @@
 # Usage:
 #   ac-remote.sh poll                                 # fetch new remote orders
 #   ac-remote.sh ingest                               # stash orders fed on stdin
+#   ac-remote.sh order [--text-file <f>] ['<text>']   # stash ONE local order (thread "local")
 #   ac-remote.sh show <rid>                           # print a stashed order
 #   ac-remote.sh reply <rid> [--text-file <f>]        # text into the order's thread
 #   ac-remote.sh link <task-id> <rid>                 # bind a task to an order
@@ -62,6 +63,13 @@
 #   <rid>` line, identical dedup (rid is the idempotency key across BOTH
 #   entrances); malformed lines and refused rids are warned and skipped, and
 #   bad input never hard-fails ingest - it always exits 0.
+# order - the LOCAL entrance: one captain order typed on this host (a SOLO
+#   session handing the captain's word to the chief, the sanctioned way a
+#   solo session gets crew work started without spawning it) becomes the
+#   same stash + durable wake as a polled order, rid local-<stamp>, author
+#   captain, thread "local". Text from --text-file or the one argument -
+#   never composed as JSON by the caller. The chief drains `remote-order
+#   <rid>` and runs the remote-orders protocol unchanged.
 # show <rid> - print the stashed JSON. Orchestrators read order text from
 #   DISK, never from the wake payload.
 # reply <rid> [--text-file <f>] - requires an executable config/remote-reply
@@ -69,6 +77,9 @@
 #   env and the reply text on the hook's STDIN (--text-file, else this
 #   command's stdin). Text is never a hook argument. A failing hook is a hard
 #   error: the reply did NOT go out.
+#   A LOCAL thread (an `order` stash) has no transport: the reply is appended
+#   to state/remote-inbox/<rid>.replies.md, one dated entry per reply, where
+#   the captain's solo session reads it - never a hook, never a hard error.
 # link <task-id> <rid> - record remote_request=<rid> and remote_request_ts=
 #   <now> in state/<task-id>.meta (atomic ac_meta_set), so the landing can
 #   notify the thread that asked. The rid must be stashed.
@@ -298,6 +309,28 @@ cmd_ingest() {
   ingest_stream ingest
 }
 
+cmd_order() {
+  local textfile="" text="" rid
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --text-file) [ -n "${2:-}" ] || ac_die "--text-file needs a path"; textfile="$2"; shift 2 ;;
+      *) text="$1"; shift ;;
+    esac
+  done
+  if [ -n "$textfile" ]; then
+    [ -f "$textfile" ] || ac_die "text file not found: $textfile"
+    text="$(cat "$textfile")"
+  fi
+  [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ] \
+    || ac_die "order needs its text: ac-remote.sh order [--text-file <f>] ['<text>']"
+  # The stamp is the rid: unique per host second and pid, and the slug
+  # guard's alphabet by construction.
+  rid="local-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  jq -cn --arg rid "$rid" --arg text "$text" \
+    '{rid: $rid, text: $text, author: "captain", thread: "local"}' \
+    | ingest_stream order
+}
+
 cmd_show() {
   local rid="${1:-}"
   [ -n "$rid" ] || ac_die "usage: ac-remote.sh show <rid>"
@@ -318,12 +351,24 @@ cmd_reply() {
   done
   rid_guard "$rid"
   local hook stash thread
-  hook="$(ac_config_dir)/remote-reply"
-  [ -f "$hook" ] || ac_die "reply needs a config/remote-reply hook (transport not configured)"
-  [ -x "$hook" ] || ac_die "config/remote-reply is not executable (chmod +x it)"
   stash="$inbox/$rid.json"
   [ -f "$stash" ] || ac_die "no stashed remote order: $rid"
   thread="$(jq -r '.thread // empty' "$stash")"
+  if [ "$thread" = local ]; then
+    # No transport behind a local order: the reply is the record beside the
+    # stash, where the solo session that placed the order reads it.
+    if [ -n "$textfile" ]; then
+      [ -f "$textfile" ] || ac_die "text file not found: $textfile"
+      { printf '## %s\n' "$(ac_iso)"; cat "$textfile"; printf '\n'; } >>"$inbox/$rid.replies.md"
+    else
+      { printf '## %s\n' "$(ac_iso)"; cat; printf '\n'; } >>"$inbox/$rid.replies.md"
+    fi
+    printf 'replied %s (local thread: %s)\n' "$rid" "$inbox/$rid.replies.md"
+    return 0
+  fi
+  hook="$(ac_config_dir)/remote-reply"
+  [ -f "$hook" ] || ac_die "reply needs a config/remote-reply hook (transport not configured)"
+  [ -x "$hook" ] || ac_die "config/remote-reply is not executable (chmod +x it)"
   # Identifiers in env, text on stdin - never as arguments (see SECURITY).
   if [ -n "$textfile" ]; then
     [ -f "$textfile" ] || ac_die "text file not found: $textfile"
@@ -582,6 +627,7 @@ cmd_gc() {
 case "${1:-}" in
   poll) shift; cmd_poll ;;
   ingest) shift; cmd_ingest ;;
+  order) shift; cmd_order "$@" ;;
   show) shift; cmd_show "$@" ;;
   reply) shift; cmd_reply "$@" ;;
   link) shift; cmd_link "$@" ;;

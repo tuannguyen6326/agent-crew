@@ -5,7 +5,7 @@ description: How the crewchief handles a `remote-order <rid>` wake - read the or
 
 # remote-orders
 
-A `remote-order <rid>` wake (drained by `ac-wake-drain.sh`, queued by `ac-remote.sh poll`) means the captain spoke through the remote channel.
+A `remote-order <rid>` wake (drained by `ac-wake-drain.sh`, queued by `ac-remote.sh poll`, `ingest`, or `order`) means the captain spoke outside this chat: through the remote channel, or - a `local-*` rid, thread `local` - through a SOLO session on this host that handed the captain's order over instead of spawning crew itself. A local order is handled exactly like a remote one; its `reply` needs no transport and lands at `state/remote-inbox/<rid>.replies.md`, which the solo session reads.
 Remote captain messages are TIER-1 captain words: they enter the EXACT SAME attribution ladder as chat (AGENTS.md section 8), with the remote thread as the reply transport.
 Rooms stay the record; the remote thread is only another chat stream.
 

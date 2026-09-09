@@ -765,6 +765,17 @@ It is not the chief and never substitutes for one - the prohibitions are the
 point: no spawning crew or roomchiefs, no steering panes, no draining wakes
 (a drain CONSUMES the chief's records), no arming or releasing watchers, no
 answering gates, and no ledger writes beyond the two named below.
+When the captain wants CREW on something from the solo chat, the solo
+session hands the order to the chief instead of spawning: `bin/ac-remote.sh
+order --text-file <draft>` (or `order '<text>'`) stashes the captain's words
+as a local order and queues the chief's durable `remote-order <rid>` wake -
+the chief drains it and runs the remote-orders protocol unchanged (intake,
+triage, spawn, supervision, landing), and its replies land beside the stash
+at `state/remote-inbox/<rid>.replies.md` for the solo session to read. The
+solo session may draft the brief text the order carries; it never briefs,
+spawns or supervises the crewmate itself, because a crewmate lives on the
+chief's watcher, drain and gates, and a solo session stands all of those
+down by design.
 Harness-native subagents stay AVAILABLE to it: a solo session is
 worker-shaped, keeping its own subagents exactly as a crewmate's worktree
 does - the slice stays its responsibility, its self-task meta keeps the work
