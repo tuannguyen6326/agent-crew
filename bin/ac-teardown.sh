@@ -680,6 +680,10 @@ prepare_task_verifiers
 # ORDER GUARANTEE). The status append and both moves are one unit.
 archive="$state_dir/archive/$id"
 mkdir -p "$archive"
+# A landed SOLO slice answers for its knowledge loop here, while the status
+# record still exists to carry the answer (ac_solo_landing_check: warn-only).
+# A forced teardown discards the work and owes nothing.
+[ "$kind" != self ] || [ "$force" = 1 ] || ac_solo_landing_check "$id" "$project_dir"
 [ -z "$pr_ready" ] || ac_status_append "$id" "done: captain accepted the ready-to-merge PR - $pr_ready"
 ac_status_append "$id" "resolved: teardown$([ "$force" = 1 ] && printf ' (forced)')"
 mv "$meta" "$archive/meta"

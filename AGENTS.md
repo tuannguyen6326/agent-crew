@@ -834,6 +834,15 @@ method lesson goes to `ac-learn.sh note` (the next Learning transaction
 reads every Pending line, so a routine one is a cost, not a gift), a
 verified repo fact goes to `ac-know.sh add`; anything else ends with the
 answer.
+Neither write waits for a slice: a repo fact verified while answering in
+chat goes to `ac-know.sh add` right then, family `solo-chat`, since the
+chat that verified it dies with the session. At a slice's landing the
+machine asks: teardown of a `kind=self` task prints and records one
+`knowledge loop:` line naming which of lesson, repo fact and `## Done` row
+exist for that slice (Pending heading `(solo <id>)`, knowledge line
+`by: <id>`, Done row `- [x] <id>`) with the exact command for each that is
+missing - warn-only, since it cannot tell "learned nothing" from "did not
+write it down".
 A slice whose deliverable is KNOWLEDGE (an investigation, a diagnosis, a
 comparison) leaves `data/<id>/report.md` exactly as a scout would - chat
 dies with the session; a code slice's record is its PR and commits, no

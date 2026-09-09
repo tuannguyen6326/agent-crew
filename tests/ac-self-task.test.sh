@@ -292,6 +292,34 @@ assert_no_file "$state/lf1.meta" "the refused start leaves no task in flight"
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
   "a 127 driver failure must never reach the pane-open step - that is the fail-OPEN this closes"
 
+# --- the knowledge-loop checkpoint at landing --------------------------------
+# The solo contract owes three writes per slice and no chief asks whether
+# they happened: teardown of a landed kind=self task answers on the durable
+# timeline - which of lesson / repo fact / Done row exist - naming the exact
+# command for each that is missing, warn-only.
+"$BIN/ac-self-task.sh" start s10 "$repo" >/dev/null
+out="$("$BIN/ac-teardown.sh" s10 2>&1)" || fail "teardown must land a clean self task: $out"
+tl="$AC_HOME/data/s10/timeline.log"
+assert_contains "$(cat "$tl" 2>/dev/null)" "knowledge loop: lessons=none repo-knowledge=none done-row=none" \
+  "a slice that wrote nothing is told so on its durable timeline"
+assert_contains "$out" "ac-learn.sh note" "the missing lesson names its command"
+assert_contains "$out" "ac-know.sh add" "the missing repo fact names its command"
+assert_contains "$out" "## Done" "the missing Done row names its place"
+"$BIN/ac-self-task.sh" start s11 "$repo" >/dev/null
+"$BIN/ac-learn.sh" note "### 2026-09-09 (solo s11)" "- measure before widening a bound" >/dev/null 2>&1 \
+  || fail "ac-learn.sh note must accept a solo heading"
+mkdir -p "$AC_HOME/records/repo-knowledge"
+printf -- '# proj knowledge\n- fact the widget lock lives in file.txt | src: file:file.txt:1 | at: abc 2026-09-09 | by: s11\n' \
+  >"$AC_HOME/records/repo-knowledge/proj.md"
+printf '# Backlog\n## Queued\n## Done\n- [x] s11 - landed the widget lock note\n' >"$AC_HOME/records/backlog.md"
+out="$("$BIN/ac-teardown.sh" s11 2>&1)" || fail "teardown must land a clean self task: $out"
+assert_contains "$(cat "$AC_HOME/data/s11/timeline.log")" "knowledge loop: lessons=yes repo-knowledge=yes done-row=yes" \
+  "a slice that wrote all three is told so"
+case "$out" in *"missing - the solo contract"*) fail "nothing missing must print no hints: $out" ;; esac
+"$BIN/ac-self-task.sh" start s12 "$repo" >/dev/null
+out="$("$BIN/ac-teardown.sh" s12 --force 2>&1)"
+case "$out" in *"knowledge loop"*) fail "a forced teardown discards the work and owes no checkpoint: $out" ;; esac
+
 # --- fleet-memory read at slice open ----------------------------------------
 # The knowledge law names `ac-brain.sh recall` at intake; the start makes it
 # machine-made: the slice id and project are the query, the hits print to the
@@ -310,7 +338,10 @@ if command -v bun >/dev/null 2>&1; then
   assert_contains "$(grep -o '"by":"[^"]*"' "$AC_HOME/state/brain-usage.jsonl" | tail -1)" "solo" \
     "a solo start is attributed solo"
   "$BIN/ac-teardown.sh" zanzibar-quorum-reconciliation --force >/dev/null 2>&1
-  out="$(cd "$AC_HOME" && AC_SOLO=1 "$BIN/ac-self-task.sh" start qqqxzv-wwwqzx "$repo")"
+  # The query is the slice id plus the PROJECT name, so the no-hit case needs
+  # a project whose name matches nothing in the corpus either.
+  repo_nohit="$(make_repo qqqzzrepo)"
+  out="$(cd "$AC_HOME" && AC_SOLO=1 "$BIN/ac-self-task.sh" start qqqxzv-wwwqzx "$repo_nohit")"
   case "$out" in *"ac-brain recall"*) fail "a slice with no hits prints no recall block: $out" ;; esac
   "$BIN/ac-teardown.sh" qqqxzv-wwwqzx --force >/dev/null 2>&1
 fi

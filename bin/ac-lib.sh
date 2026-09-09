@@ -1816,6 +1816,51 @@ or dismiss if it learned nothing about the codebase. Record: $rec"
   return 0
 }
 
+ac_solo_landing_check() {
+  # ac_solo_landing_check <id> <project-repo> - the SOLO slice's knowledge-loop
+  # checkpoint at landing. The solo contract owes three writes per slice
+  # (a lesson via ac-learn.sh note, a verified repo fact via ac-know.sh add,
+  # the ## Done row) and no chief is there to ask whether they happened; a
+  # law with no machine behind it measurably went unwritten. This is the
+  # machine: ONE line naming which of the three exist for this slice, on
+  # the status record (mirrored to the durable timeline) and on stdout,
+  # with the exact command for each that is missing. A PROMPT, not a
+  # detector - it cannot tell "learned nothing" from "did not write it
+  # down" - so warn-only, ALWAYS returns 0: a landing never fails over
+  # bookkeeping. Attribution grammars are the writers' own: a Pending
+  # heading carrying "(solo <id>)", a repo-knowledge line ending
+  # "| by: <id>", a "- [x] <id> " row under ## Done.
+  local id="${1:-}" repo="${2:-}" led rec bl lessons=none facts=none done=none hint="" line
+  [ -n "$id" ] || return 0
+  led="$(ac_records_dir)/learnings.md"
+  if [ -f "$led" ] && awk -v tag="(solo $id)" '
+      /^## Distilled/ { exit }
+      /^### / && index($0, tag) { found = 1; exit }
+      END { exit(found ? 0 : 1) }' "$led"; then lessons=yes; fi
+  if [ -n "$repo" ] && [ -d "$repo" ] && rec="$(ac_knowledge_file "$repo" 2>/dev/null)" \
+     && [ -f "$rec" ] && awk -v suffix="| by: $id" '
+      /^## Superseded/ { exit }
+      /^- / && substr($0, length($0) - length(suffix) + 1) == suffix { found = 1; exit }
+      END { exit(found ? 0 : 1) }' "$rec"; then facts=yes; fi
+  bl="$(ac_records_dir)/backlog.md"
+  if [ -f "$bl" ] && awk -v row="- [x] $id " '
+      /^## Done/ { in_done = 1; next }
+      /^## / { in_done = 0 }
+      in_done && index($0, row) == 1 { found = 1; exit }
+      END { exit(found ? 0 : 1) }' "$bl"; then done=yes; fi
+  line="knowledge loop: lessons=$lessons repo-knowledge=$facts done-row=$done"
+  [ "$lessons" = yes ] || hint="$hint
+  lesson: $(ac_root)/bin/ac-learn.sh note '### $(date -u +%Y-%m-%d) (solo $id)' '- <one method lesson>'   (only a genuinely new one)"
+  [ "$facts" = yes ] || hint="$hint
+  repo fact: $(ac_root)/bin/ac-know.sh add --home $(ac_home) --repo ${repo:-<repo>} --family $id --src-file <path>:<line> --fact '<verified fact>'"
+  [ "$done" = yes ] || hint="$hint
+  done row: append '- [x] $id - <outcome>' under ## Done in $bl"
+  ac_status_append "$id" "$line" 2>/dev/null || true
+  printf '%s\n' "$line"
+  [ -z "$hint" ] || printf 'missing - the solo contract owes these at landing (skip a lesson that is not new):%s\n' "$hint"
+  return 0
+}
+
 # Where the fleet layer lands when the harness's own instruction file is
 # already taken (ac_seed_crewmate_md). NOT a file any harness loads - no such
 # sidecar exists for codex, which reads <worktree>/AGENTS.md and nothing else -
