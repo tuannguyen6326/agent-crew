@@ -354,6 +354,31 @@ captain redirects a task whose crewmate is already in flight -
   `qa.require_for_ship: true` (per project) to ENFORCE it: the merge
   helpers refuse to land a head with no passing crew-qa run on record.
 
+  TWO ROUTES TO BEHAVIOURAL PROOF, and the DOMAIN decides which one a task
+  takes. Everything above is the PROFILE-DRIVEN route: one fresh pane per
+  task, booting the deliverable's own repository, minting the attestation
+  `qa.require_for_ship` gates a merge on. A crewdomain whose proof lives in
+  ONE MAINTAINED E2E REPOSITORY - a suite that drives the whole product line
+  across every repo it spans, boots its own stack from those repos' sources,
+  and is kept alive between campaigns - takes the DOMAIN route instead. The
+  domain names that repository once (`bin/ac-domain.sh qa-repo <domain>
+  --set <project>`; that verb's header block owns the declaration and the
+  refusal that makes REUSE mechanical), and a task carrying `domain:<d>`
+  whose domain declares one has its behavioural proof ordered INTO that
+  suite: an ordinary slice against an ordinary project of the domain,
+  briefed and spawned like any other, never a `<family>-qa` stage and never
+  a second suite stood up beside the one that exists. Extending the suite
+  for the change under test is PART of that slice - the suite is maintained,
+  not rebuilt.
+  What the two can settle differs, and the difference is not negotiable. The
+  domain route drives the product line's real hops and is the only thing that
+  can prove a customer journey end to end; it mints NO attestation, so a
+  project carrying `qa.require_for_ship: true` still needs the profile-driven
+  route to merge. The `qa:` contract token keeps its own meaning throughout -
+  it says whether THIS task carries a profile-driven qa stage, and a domain
+  slice is not one. Name the route in the triage receipt when a domain
+  declares a repository, so the reader knows which proof was ordered.
+
 Epic orders - decompose and parallelize. An order with multiple
 INDEPENDENTLY-LANDABLE deliverables (each could merge as its own PR), or the
 captain saying "epic", is an EPIC; late detection follows the upgrade rule. A
