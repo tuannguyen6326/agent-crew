@@ -7,6 +7,8 @@
 #        ac-domain.sh assign <name> <backlog-id>...     (stamp domain:<name>)
 #        ac-domain.sh unassign <name> <backlog-id>...   (strip the token)
 #        ac-domain.sh queue <name> [--ids]              (the domain's slice)
+#        ac-domain.sh qa-repo <name>                    (print the e2e repo path)
+#        ac-domain.sh qa-repo <name> --set <project> [--force] | --clear
 #        ac-domain.sh list | validate | retire <name>
 #
 # A crewdomain is durable STATE inside this fleet - a KNOWLEDGE package plus
@@ -63,6 +65,29 @@
 #                         The domain works the FLEET's own clone through a
 #                         different path, so a local-only landing reaches the
 #                         working copy the crewchief reads and nothing can drift.
+#
+# --- qa-repo: the domain's E2E REPOSITORY ---------------------------------------
+#
+# AUTHORITATIVE for the second QA route. A domain whose behavioural proof lives
+# in ONE maintained end-to-end repository - a suite that drives the domain's
+# whole product line across every repo it spans, boots its own stack from those
+# repos' sources, and is kept alive between campaigns - declares that repository
+# here, by PROJECT NAME, in the optional fourth package member `qa-repo`.
+#
+# The declaration exists to make REUSE mechanical rather than remembered. A
+# domain that already has a suite must not get a second one stood up beside it:
+# `--set` on a domain that already declares a repository REFUSES and names what
+# is declared, and only `--force` moves it - a deliberate act, not a default.
+# `--clear` returns the domain to the profile-driven route.
+#
+# The project must be one the DOMAIN carries (a link under its own projects/),
+# not merely one the fleet has: QA works the domain's view of the clone, and a
+# repository outside that view is one the domain's own sessions cannot reach.
+#
+# Which route a task takes is AGENTS.md section 5's to say; this verb only
+# records the answer. Nothing here mints an attestation: the profile-driven
+# route (`ac-verify qa`) remains the only producer of the pass marker
+# `qa.require_for_ship` gates a merge on.
 #
 # There is deliberately NO captain.md: domain standing rules are lines in the
 # FLEET records/captain.md prefixed `STANDING (domain:<name>): `, because those
@@ -600,6 +625,54 @@ cmd_queue() {
   return 0
 }
 
+cmd_qa_repo() {
+  # cmd_qa_repo <name> [--set <project> [--force] | --clear] - read or declare
+  # the domain's e2e repository (contract: the qa-repo block in this header).
+  # The read prints the absolute clone path and exits 1 when there is none, so
+  # a caller can branch on it without parsing prose.
+  local name="${1:-}" mode="" proj="" force=0 pkg current
+  [ -n "$name" ] || ac_die "usage: ac-domain.sh qa-repo <name> [--set <project> [--force] | --clear]"
+  domain_require_name "$name"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --set) mode=set; proj="${2:-}"; [ -n "$proj" ] || ac_die "--set needs a project name"; shift 2 ;;
+      --clear) mode=clear; shift ;;
+      --force) force=1; shift ;;
+      *) ac_die "unknown qa-repo argument: $1" ;;
+    esac
+  done
+  pkg="$(domain_pkg "$name")"
+  [ -d "$pkg" ] || ac_die "no such crewdomain: $name (package $pkg does not exist)"
+
+  case "$mode" in
+    "")
+      ac_domain_qa_repo "$name" \
+        || ac_die "domain $name declares no e2e repository - declare it with: ac-domain.sh qa-repo $name --set <project>, or leave it undeclared and QA takes the profile-driven route (ac-verify qa)"
+      ;;
+    clear)
+      rm -f "$pkg/qa-repo"
+      printf 'qa-repo cleared for %s - QA returns to the profile-driven route\n' "$name"
+      ;;
+    set)
+      # SCOPE before POLICY: an argument the domain could never carry is
+      # refused by name whatever is already declared, so the message names
+      # the caller's actual mistake rather than the state it collided with.
+      [ -e "$pkg/projects/$proj" ] \
+        || ac_die "$proj is not a project of domain $name - add it to the domain's projects/ view first (a repository outside that view is one the domain's own sessions cannot reach)"
+      ac_project_dir "$pkg/projects/$proj" >/dev/null 2>&1 \
+        || ac_die "$proj resolves to no git repository through $pkg/projects/$proj"
+      # REUSE is the rule this refusal enforces: an existing suite is reused,
+      # never duplicated, and moving the declaration is a deliberate act.
+      if current="$(ac_domain_qa_repo "$name" 2>/dev/null)" && [ "$force" = 0 ]; then
+        ac_die "domain $name already declares an e2e repository: $current - reuse it. Moving the declaration is deliberate: re-run with --force."
+      fi
+      printf '%s\n' "$proj" >"$pkg/qa-repo.tmp.$$" && mv "$pkg/qa-repo.tmp.$$" "$pkg/qa-repo"
+      printf 'qa-repo for %s: %s (%s)\n' "$name" "$proj" "$(ac_domain_qa_repo "$name")"
+      ;;
+  esac
+}
+
 cmd_retire() {
   # cmd_retire <name> - remove the ONE registry line, fail-closed. The old
   # design could not mechanize this (it meant coordinating two files); one
@@ -865,8 +938,9 @@ case "${1:-}" in
   assign) shift; cmd_assign "$@" ;;
   unassign) shift; cmd_unassign "$@" ;;
   queue) shift; cmd_queue "$@" ;;
+  qa-repo) shift; cmd_qa_repo "$@" ;;
   retire) shift; cmd_retire "$@" ;;
   list) cmd_list ;;
   validate) cmd_validate ;;
-  *) ac_die "usage: ac-domain.sh <new|assign|unassign|queue|retire|list|validate>" ;;
+  *) ac_die "usage: ac-domain.sh <new|assign|unassign|queue|qa-repo|retire|list|validate>" ;;
 esac

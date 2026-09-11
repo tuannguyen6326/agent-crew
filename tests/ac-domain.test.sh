@@ -588,4 +588,48 @@ assert_contains "$(cat "$AC_HOME/state/payments.status" 2>/dev/null || cat "$AC_
   "and the authority rides the durable status record"
 assert_fails_with "Done history" -- "$dom" assign payments oldone --captain-requested 'even with the word'
 
+# ---- qa-repo: the domain's own e2e repository (the second QA route) --------
+# A domain whose behavioural proof lives in ONE maintained e2e repository
+# declares it HERE, by project name, and every QA of that domain goes there.
+# The declaration is what makes REUSE mechanical: a second `--set` refuses
+# rather than letting a fresh suite be stood up beside the one that exists.
+make_clone e2e-suite
+"$dom" new proof --scope 'the proof domain' --charter 'proof' --projects alpha,e2e-suite >/dev/null
+
+# undeclared: prints nothing, exits non-zero, says how to declare it
+rc=0; out="$("$dom" qa-repo proof 2>/dev/null)" || rc=$?
+assert_eq "$rc" "1" "a domain with no e2e repository answers non-zero"
+assert_eq "$out" "" "...and prints nothing on stdout, so a caller can test it"
+assert_fails_with "qa-repo proof --set" -- "$dom" qa-repo proof
+
+# declare, then read back the absolute clone path
+"$dom" qa-repo proof --set e2e-suite >/dev/null
+assert_eq "$("$dom" qa-repo proof)" "$AC_HOME/projects/e2e-suite" \
+  "the declared repository reads back as the fleet's own clone path"
+assert_eq "$(cat "$(pkg proof)/qa-repo")" "e2e-suite" \
+  "the package member holds the PROJECT NAME - the path is derived, never stored"
+
+# the lib reader is what other scripts use
+assert_eq "$(ac_domain_qa_repo proof)" "$AC_HOME/projects/e2e-suite" "ac_domain_qa_repo reads the same path"
+rc=0; ac_domain_qa_repo payments >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" "...and answers non-zero for a domain that declared none"
+
+# REUSE, enforced: a second --set refuses and names what is already declared
+assert_fails_with "already declares" -- "$dom" qa-repo proof --set alpha
+assert_eq "$("$dom" qa-repo proof)" "$AC_HOME/projects/e2e-suite" "a refused --set changes nothing"
+"$dom" qa-repo proof --set alpha --force >/dev/null
+assert_eq "$("$dom" qa-repo proof)" "$AC_HOME/projects/alpha" "--force is the deliberate way to move it"
+
+# the repository must be IN the domain - a fleet project the domain does not
+# carry would point QA at a clone the domain's own view cannot reach
+assert_fails_with "not a project of domain" -- "$dom" qa-repo proof --set beta
+assert_fails_with "not a project of domain" -- "$dom" qa-repo proof --set nosuchproject
+
+# clear, and the name gate every verb carries
+"$dom" qa-repo proof --clear >/dev/null
+rc=0; "$dom" qa-repo proof >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" "--clear returns the domain to undeclared"
+assert_fails_with "legal crewdomain name" -- "$dom" qa-repo ../escape
+assert_fails_with "no such crewdomain" -- "$dom" qa-repo ghostdomain --set alpha
+
 pass

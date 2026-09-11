@@ -651,6 +651,27 @@ ac_domain_parse() {
   ' "$file"
 }
 
+ac_domain_qa_repo() {
+  # ac_domain_qa_repo <domain> - absolute path of the domain's E2E REPOSITORY,
+  # or return 1 when the domain declares none. The declaration is the package
+  # member `qa-repo`, holding the PROJECT NAME; the path is derived through the
+  # domain's own projects/ view, so the repo a QA run works is the same clone
+  # the crewchief reads and nothing can drift.
+  #
+  # WHY A DOMAIN AND NOT A PROJECT owns this (captain ruling 2026-09-11): one
+  # maintained e2e suite proves a whole product line across the four to six
+  # repos it spans, so the only level where "which suite proves this" has ONE
+  # answer is the domain. A project-level key would have to be repeated in
+  # every repo and would disagree the first time one of them was edited alone.
+  local dom="$1" pkg name
+  ac_domain_name_ok "$dom" || return 1
+  pkg="$(ac_home)/crewdomains/$dom" || return 1
+  name="$(head -n1 "$pkg/qa-repo" 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$name" ] || return 1
+  [ -e "$pkg/projects/$name" ] || return 1
+  ac_project_dir "$pkg/projects/$name" 2>/dev/null || return 1
+}
+
 ac_domain_name_ok() {
   # ac_domain_name_ok <name> - 0 when <name> is a legal crewdomain id.
   # EVERY name-taking verb calls this BEFORE building a path from it: the
