@@ -93,6 +93,19 @@ rc=0; out="$(printf '{}' | AC_SOLO=1 "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
 assert_eq "$rc" "0" "a solo session is never blocked on the chief's obligations"
 assert_eq "$out" "" "...and silently: the obligations are not its news"
 rm -rf "$state/.wake-spool" "$AC_HOME/data/hbsolo"
+# Its one turn-end concern is its own slice: uncommitted changes in a self
+# task's worktree get a captain-facing NOTICE (systemMessage), never a block;
+# a clean worktree stays silent.
+solo_repo="$(make_repo solorepo)"
+printf 'kind=self\nproject=solorepo\nworktree=%s\n' "$solo_repo" >"$state/sl1.meta"
+rc=0; out="$(printf '{}' | AC_SOLO=1 "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "0" "a clean solo slice ends its turn freely"
+assert_eq "$out" "" "...and silently"
+printf 'wip\n' >>"$solo_repo/file.txt"
+rc=0; out="$(printf '{}' | AC_SOLO=1 "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "0" "a dirty solo slice is a notice, never a block"
+assert_contains "$(jq -r '.systemMessage' <<<"$out")" "sl1" "the notice names the dirty slice"
+rm -f "$state/sl1.meta"
 
 # (2) stale watcher beacon with crew in flight + HANDBACK, at once.
 hb_room hbwfam

@@ -61,6 +61,16 @@ assert_eq "$rc" 0 "linked worktree: exit 0"
 out="$(AC_SOLO=1 AC_HOME="$g" "$NUDGE" 2>/dev/null)"; rc=$?
 assert_eq "$rc" 0 "solo session: exit 0"
 assert_contains "$out" "SOLO" "solo session gets the solo orientation"
+# A self task left in flight by an earlier session is named at the next start,
+# with both ways out - in the solo orientation and in the chief nudge alike.
+mkdir -p "$g/state"
+printf 'kind=self\nproject=alpha\nworktree=/nonexistent\n' >"$g/state/s9.meta"
+sout="$(AC_SOLO=1 AC_HOME="$g" "$NUDGE" 2>/dev/null)"
+assert_contains "$sout" "self task s9 (alpha" "solo orientation names the in-flight self task"
+assert_contains "$sout" "ac-teardown.sh s9 --force" "...with the discard command"
+cout="$(AC_HOME="$g" "$NUDGE" 2>/dev/null)"
+assert_contains "$cout" "self task s9 (alpha" "the chief nudge names it too"
+rm -f "$g/state/s9.meta"
 assert_contains "$out" "NOT the crewchief" "the orientation denies the chief identity outright"
 assert_contains "$out" "ac-self-task.sh" "the orientation names the one write path"
 assert_contains "$out" "ac-session-start.sh" "solo still runs session-start (read-only)"

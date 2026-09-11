@@ -271,6 +271,7 @@ fi
 
 printf -- '-- fleet --\n'
 "$bin_dir/ac-fleet-view.sh"
+ac_self_tasks_in_flight
 
 printf -- '-- rooms (captain inbox) --\n'
 "$bin_dir/ac-room.sh" list

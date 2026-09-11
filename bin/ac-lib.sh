@@ -1816,6 +1816,28 @@ or dismiss if it learned nothing about the codebase. Record: $rec"
   return 0
 }
 
+ac_self_tasks_in_flight() {
+  # ac_self_tasks_in_flight - one line per kind=self task still in flight,
+  # with its age and the two ways out. A self task outlives the session that
+  # opened it (its pane is a tail, its meta and lease are not), and the only
+  # thing that ends it is a landing or a --force; a slice nobody remembers
+  # holds a pool slot forever, so every session start names it. Prints
+  # nothing when there is none; never fails.
+  local sd m id proj age now
+  sd="$(ac_state_dir 2>/dev/null)" || return 0
+  now="$(ac_now)"
+  while IFS= read -r m; do
+    ac_meta_is_self "$m" || continue
+    id="$(basename "$m" .meta)"
+    proj="$(ac_meta_get "$m" project)"
+    age=$(( now - $(stat -f %m "$m" 2>/dev/null || stat -c %Y "$m" 2>/dev/null || echo "$now") ))
+    if [ "$age" -ge 86400 ]; then age="$(( age / 86400 ))d"; else age="$(( age / 3600 ))h"; fi
+    printf 'self task %s (%s, opened %s ago) is in flight: land it with bin/ac-teardown.sh %s, or discard it with bin/ac-teardown.sh %s --force - its lease holds a pool slot until then\n' \
+      "$id" "$proj" "$age" "$id" "$id"
+  done < <(ac_crew_metas "$sd" verify chiefs 2>/dev/null)
+  return 0
+}
+
 ac_solo_landing_check() {
   # ac_solo_landing_check <id> <project-repo> - the SOLO slice's knowledge-loop
   # checkpoint at landing. The solo contract owes three writes per slice

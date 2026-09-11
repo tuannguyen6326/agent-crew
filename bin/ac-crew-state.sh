@@ -35,7 +35,11 @@ alive_rc=0
 backend_window_alive "$id" || alive_rc=$?
 case "$alive_rc" in
   0) ;;
-  1) printf 'gone\n'; exit 0 ;;
+  1) # A SELF task holds no agent: its pane is a tail that dies with the
+     # session that opened it, while the slice (meta, lease, branch) lives
+     # on for the next session to land or discard. "gone" is the word for a
+     # dead crewmate and would send a chief the wrong way.
+     if ac_meta_is_self "$meta"; then printf 'detached\n'; else printf 'gone\n'; fi; exit 0 ;;
   *) printf 'unobservable: backend could not be read for %s\n' "$(backend_target "$id")"; exit 0 ;;
 esac
 tail="$(backend_capture "$id" 40 | sed '/^$/d' | tail -n 25)"

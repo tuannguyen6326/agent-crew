@@ -843,6 +843,18 @@ exist for that slice (Pending heading `(solo <id>)`, knowledge line
 `by: <id>`, Done row `- [x] <id>`) with the exact command for each that is
 missing - warn-only, since it cannot tell "learned nothing" from "did not
 write it down".
+A solo session ENDS when the captain closes it - no ritual, no lock to
+release, nothing owed at that moment, because everything durable was
+written when it happened. A slice does not end with the session: its pane
+is a tail that dies, its meta, lease and branch live on, and the fleet
+view reads it `detached` (never `gone`, the word for a dead crewmate).
+Before closing, a slice is in one of three states on purpose: landed
+(`bin/ac-teardown.sh <id>`), left in flight for the next session (which is
+told at start, with its age and both ways out, since the lease holds a
+pool slot until then), or discarded (`--force`). The turn-end guard's solo
+arm has one concern of its own: uncommitted changes in a slice's worktree
+get a captain-facing notice, never a block - the captain is pair-coding
+live and decides when to commit.
 A slice whose deliverable is KNOWLEDGE (an investigation, a diagnosis, a
 comparison) leaves `data/<id>/report.md` exactly as a scout would - chat
 dies with the session; a code slice's record is its PR and commits, no

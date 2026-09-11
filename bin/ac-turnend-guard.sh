@@ -109,8 +109,28 @@
 set -uo pipefail
 # A SOLO session (AC_SOLO=1) owes no supervision: the chief drains, arms and
 # answers hand-backs - blocking the one session that must NOT discharge those
-# obligations would nag it into role violations.
-[ "${AC_SOLO:-}" != 1 ] || exit 0
+# obligations would nag it into role violations. Its one turn-end concern
+# is its own: a slice whose worktree carries uncommitted changes, which the
+# session's death would strand for the next session to puzzle over. That is
+# a captain-facing NOTICE (systemMessage, exit 0), never a block: the
+# captain is pair-coding live and decides when to commit.
+if [ "${AC_SOLO:-}" = 1 ]; then
+  . "$(dirname "$0")/ac-lib.sh" 2>/dev/null || exit 0
+  command -v jq >/dev/null 2>&1 || exit 0
+  sd="$(ac_state_dir 2>/dev/null)" || exit 0
+  dirty=""
+  while IFS= read -r m; do
+    ac_meta_is_self "$m" || continue
+    wt="$(ac_meta_get "$m" worktree)"
+    [ -n "$wt" ] && [ -d "$wt" ] || continue
+    [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || continue
+    dirty="$dirty $(basename "$m" .meta)"
+  done < <(ac_crew_metas "$sd" verify chiefs 2>/dev/null)
+  [ -n "$dirty" ] || exit 0
+  jq -n --arg m "solo: uncommitted changes in slice$dirty - the session's end strands them; commit, land (bin/ac-teardown.sh <id>) or leave them on purpose" \
+    '{systemMessage: $m}'
+  exit 0
+fi
 . "$(dirname "$0")/ac-lib.sh" 2>/dev/null || exit 0
 . "$(dirname "$0")/ac-backend.sh" 2>/dev/null || exit 0
 . "$(dirname "$0")/ac-wake-lib.sh" 2>/dev/null || exit 0
