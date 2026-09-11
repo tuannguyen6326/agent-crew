@@ -139,15 +139,19 @@ assert_eq "$(git -C "$wt" status --porcelain)" "" "skill links invisible to git 
 seed_skills "$wt"
 assert_eq "$(git -C "$wt" status --porcelain)" "" "idempotent"
 
-# ONLY crew-ship, qa, and document are crewmate-facing: captain/crewchief
-# skills (rich-review, bearings, debrief) must never land in a crew worktree.
+# ONLY the crewmate-facing set lands: delivery (crew-ship), the TWO
+# behavioural-verification routes (crew-qa for the profile-driven one,
+# domain-e2e for a domain's maintained suite - which one a crewmate needs is
+# decided by the task's domain, not by anything the seed can see), and
+# document. Captain/crewchief skills (rich-review, bearings, debrief) must
+# never land in a crew worktree.
 for extra in rich-review bearings debrief; do
   if [ -e "$wt/.claude/skills/$extra" ]; then
     fail "$extra must not be seeded into crew worktrees"
   fi
 done
 seeded="$(cd "$wt/.claude/skills" && printf '%s\n' * | sort | tr '\n' ' ')"
-assert_eq "$seeded" "crew-qa crew-ship document " "exactly crew-ship + crew-qa + document seeded"
+assert_eq "$seeded" "crew-qa crew-ship document domain-e2e " "exactly crew-ship + the two verification routes + document seeded"
 # ^ Empty learned stores are a no-op (byte-identical to today): the seeded set
 #   is exactly the three built-ins while $AC_HOME/skills and the container carry
 #   no origin: learned skills. The learned-skill tests below all run AFTER this.

@@ -2225,11 +2225,14 @@ ac_seed_crew_settings() {
 }
 
 # Crewmate-facing skills seeded into every crew worktree (ac_seed_crew_skills).
-# ONLY crew-ship, qa, and document: the delivery pipeline, behavioral
-# verification, and the doc-authoring pass are what a crewmate runs itself;
-# everything else (rich-review, bearings, debrief) is captain/crewchief-facing and
-# stays out of crew worktrees.
-AC_CREW_SKILLS="${AC_CREW_SKILLS:-crew-ship crew-qa document}"
+# ONLY crew-ship, the two behavioural-verification routes, and document: the
+# delivery pipeline, behavioral verification, and the doc-authoring pass are
+# what a crewmate runs itself; everything else (rich-review, bearings, debrief)
+# is captain/crewchief-facing and stays out of crew worktrees. crew-qa and
+# domain-e2e are seeded together because which one a crewmate needs is decided
+# by the DOMAIN of the task it was spawned for (AGENTS.md section 5), not by
+# anything the seed can see at lease time.
+AC_CREW_SKILLS="${AC_CREW_SKILLS:-crew-ship crew-qa domain-e2e document}"
 
 ac_seed_crew_skills() {
   # ac_seed_crew_skills <worktree> [harness] - symlink the crewmate-facing
