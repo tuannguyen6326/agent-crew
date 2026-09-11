@@ -661,14 +661,23 @@ cmd_close() {
 cmd_open() {
   # The consented redirect: focus the promoted room's chief window. Callers
   # (the gate) run this ONLY after the captain confirmed the hop.
-  local family="${1:-}" chief meta
+  local family="${1:-}" chief meta alive_rc=0
   [ -n "$family" ] || ac_die "usage: ac-room.sh open <family>"
   chief="${family}-chief"
   meta="$(ac_task_meta "$chief")"
   [ -f "$meta" ] || ac_die "room $family is not promoted (no $chief in flight); promote with ac-spawn.sh --roomchief $family, or keep talking here"
   AC_BACKEND="$(ac_task_backend "$chief")"
   export AC_BACKEND
-  backend_window_alive "$chief" || ac_die "roomchief window is gone; respawn (--roomchief $family) or teardown $chief"
+  # THREE-STATE (contract: ac-backend.sh WINDOW LIVENESS): an unreadable
+  # backend (rc=2, or 127 from a driver that failed to load) must never read
+  # as "gone" - AGENTS.md section 7 forbids tearing down a roomchief that may
+  # be fully alive on an unobservable read.
+  backend_window_alive "$chief" || alive_rc=$?
+  case "$alive_rc" in
+    0) ;;
+    1) ac_die "roomchief window is gone; respawn (--roomchief $family) or teardown $chief" ;;
+    *) ac_die "the BACKEND could not be READ for $chief - whether $(backend_target "$chief") still exists is UNKNOWN, so this is NOT treated as gone; check the backend itself (herdr status server), then try again" ;;
+  esac
   backend_focus "$chief" || ac_die "could not focus $chief"
   printf 'focused %s (%s)\n' "$chief" "$(backend_target "$chief")"
 }
