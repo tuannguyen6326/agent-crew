@@ -1029,3 +1029,177 @@ ac_qa_gate_ok() {
   return 1
 }
 
+
+# --- QA STORE LEARNING LOOP (store-curate / store-label / store-calibration) ---
+# Three pure functions over explicit paths, so the loop is testable without a
+# live run; ac-qa.sh's verbs resolve the run and call them.
+#
+# HISTORY (store/history.tsv, travels with the store through the curation
+# candidate and store-install): one line per case row per run -
+#   sha  date  case  tier  status  classification  body_sha  qa_model  task
+# body_sha hashes the case's testplan row (tier, precondition, steps,
+# expected) so a case whose body changed is a new streak, never a continued
+# one; "-" when the run's testplan has no row for that id (a store case that
+# was adopted has one; an ad-hoc probe may not).
+#
+# PROMOTION (the rule, machine-made where curation used to be judgment): a
+# run-local case becomes a store case when it PASSED in N consecutive runs
+# (distinct shas, newest first) with the SAME body - default 3 - and no
+# store case of that id exists yet. A store case that passed again gets its
+# `verified:` line moved to this sha/date. A pass that is really a re-run of
+# a fail (classification flaky) does not count and resets nothing: it is
+# neither evidence for nor against. Nothing is ever demoted or retired here -
+# retirement stays the curating pane's judgment, recorded with a reason.
+#
+# CALIBRATION (the judge against the human): the pane's `fail` rows classed
+# `defect` are the JUDGE's positive labels, its `pass` rows the negatives; the
+# chief's labels (store-label: confirmed | not-a-defect, recorded when the
+# defect is fixed or dismissed) are the HUMAN's. Paired on (sha, case), the
+# agreement is Cohen's kappa: (po - pe) / (1 - pe), 1.0 when pe == 1 and
+# every pair agrees, 0.0 when pe == 1 and any disagrees. Labels and the
+# calibration file sit BESIDE the store (<store>.labels.tsv,
+# <store>.calibration.json), never inside it: they are the chief's word and
+# a computed summary, and store-install replaces the store wholesale from a
+# pane's candidate - inside it they would be lost at the next install.
+
+qa_store_case_body_sha() {
+  # qa_store_case_body_sha <testplan.md> <case-id> -> sha256 of the row's
+  # tier|precondition|steps|expected, or "-" when the row is absent.
+  local plan="$1" id="$2" body
+  [ -f "$plan" ] || { printf -- '-\n'; return 0; }
+  body="$(awk -F'|' -v id="$id" '
+    { for (i = 1; i <= NF; i++) { gsub(/^[ \t]+|[ \t]+$/, "", $i) } }
+    $2 == id { print $4 "|" $6 "|" $7 "|" $8; exit }' "$plan")"
+  [ -n "$body" ] || { printf -- '-\n'; return 0; }
+  printf '%s' "$body" | qa_store_sha_stdin
+}
+
+qa_store_sha_stdin() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{ print $1 }'
+  else sha256sum | awk '{ print $1 }'; fi
+}
+
+qa_store_history_append() {
+  # qa_store_history_append <store> <cases.tsv> <testplan.md> <sha> <qa_model> <task>
+  # -> prints the number of lines appended. Idempotent per (sha, case): a
+  # second curation of the same run appends nothing.
+  local store="$1" cases="$2" plan="$3" sha="$4" model="${5:--}" task="${6:--}"
+  local hist="$store/history.tsv" n=0 id tier status cls body today
+  [ -f "$cases" ] || { printf '0\n'; return 0; }
+  mkdir -p "$store"
+  today="$(date -u +%Y-%m-%d)"
+  while IFS="$(printf '\t')" read -r id tier status cls _; do
+    [ -n "$id" ] || continue
+    [ -f "$hist" ] && awk -F'\t' -v s="$sha" -v c="$id" '$1 == s && $3 == c { f = 1 } END { exit(f ? 0 : 1) }' "$hist" \
+      && continue
+    body="$(qa_store_case_body_sha "$plan" "$id")"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$sha" "$today" "$id" "$tier" "$status" "${cls:--}" "$body" "${model:--}" "${task:--}" >>"$hist"
+    n=$((n + 1))
+  done <"$cases"
+  printf '%s\n' "$n"
+}
+
+qa_store_promote() {
+  # qa_store_promote <store> <cases.tsv> <testplan.md> <sha> [<after>]
+  # -> prints "promoted=<k> reverified=<m>". Reads the history the caller
+  # appended first (this run's rows included).
+  local store="$1" cases="$2" plan="$3" sha="$4" after="${5:-3}"
+  local hist="$store/history.tsv" promoted=0 reverified=0 id tier status cls today body streak f
+  [ -f "$cases" ] && [ -f "$hist" ] || { printf 'promoted=0 reverified=0\n'; return 0; }
+  mkdir -p "$store/cases"
+  today="$(date -u +%Y-%m-%d)"
+  while IFS="$(printf '\t')" read -r id tier status cls _; do
+    [ -n "$id" ] && [ "$status" = pass ] || continue
+    [ "$cls" = flaky ] && continue
+    f="$store/cases/$id.md"
+    if [ -f "$f" ]; then
+      # re-verified: move the verified line, keep everything else as written
+      if grep -q '^verified: ' "$f"; then
+        awk -v v="verified: $sha $today" '/^verified: / { print v; next } { print }' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+      else
+        printf 'verified: %s %s\n' "$sha" "$today" >>"$f"
+      fi
+      [ -f "$store/catalog.md" ] && awk -v id="$id" -v v="verified $sha $today" '
+        index($0, "- " id " | ") == 1 { sub(/verified [^|]*$/, v) } { print }' "$store/catalog.md" >"$store/catalog.md.tmp" \
+        && mv "$store/catalog.md.tmp" "$store/catalog.md"
+      reverified=$((reverified + 1))
+      continue
+    fi
+    body="$(qa_store_case_body_sha "$plan" "$id")"
+    [ "$body" != - ] || continue
+    # consecutive passes with this body, newest first, distinct shas; a flaky
+    # row is skipped, anything else ends the streak
+    streak="$(awk -F'\t' -v c="$id" -v b="$body" '
+      $3 == c { rows[++n] = $1 "\t" $5 "\t" $6 "\t" $7 }
+      END {
+        seen = ""; s = 0
+        for (i = n; i >= 1; i--) {
+          split(rows[i], r, "\t")
+          if (index(seen, "[" r[1] "]")) continue
+          seen = seen "[" r[1] "]"
+          if (r[3] == "flaky") continue
+          if (r[2] == "pass" && r[4] == b) s++; else break
+        }
+        print s
+      }' "$hist")"
+    [ "${streak:-0}" -ge "$after" ] || continue
+    awk -F'|' -v id="$id" -v sha="$sha" -v today="$today" '
+      { for (i = 1; i <= NF; i++) { gsub(/^[ \t]+|[ \t]+$/, "", $i) } }
+      $2 == id {
+        printf "# %s\n\n", id
+        printf "surface: %s (%s)\n", $4, $9
+        printf "needs: -\n"
+        printf "fixtures: -\n"
+        printf "precondition: %s\n", $6
+        printf "steps: %s\n", $7
+        printf "expected: %s\n", $8
+        printf "provenance: promoted after consecutive passes (store-curate)\n"
+        printf "verified: %s %s\n", sha, today
+        printf "status: active\n"
+        exit
+      }' "$plan" >"$f"
+    [ -f "$store/catalog.md" ] || printf '# Case catalog\n' >"$store/catalog.md"
+    awk -F'|' -v id="$id" -v sha="$sha" -v today="$today" '
+      { for (i = 1; i <= NF; i++) { gsub(/^[ \t]+|[ \t]+$/, "", $i) } }
+      $2 == id { printf "- %s | %s (%s) | %s | verified %s %s\n", id, $4, $9, $8, sha, today; exit }' "$plan" \
+      >>"$store/catalog.md"
+    promoted=$((promoted + 1))
+  done <"$cases"
+  printf 'promoted=%s reverified=%s\n' "$promoted" "$reverified"
+}
+
+qa_store_calibration() {
+  # qa_store_calibration <history.tsv> <labels.tsv> -> one JSON object
+  # {n, agreement, kappa, positives_judge, positives_human, computed_at}.
+  # Pairs on (sha, case); a history row that is neither a defect-classed fail
+  # nor a pass is skipped (unverifiable, flaky, environment - the judge made
+  # no defect claim there).
+  local hist="$1" labels="$2"
+  { [ -f "$hist" ] && [ -f "$labels" ]; } \
+    || { printf '{"n":0,"agreement":null,"kappa":null,"computed_at":"%s"}\n' "$(ac_iso)"; return 0; }
+  awk -F'\t' -v at="$(ac_iso)" '
+    FNR == NR {
+      if ($3 == "confirmed") human[$1 "\t" $2] = "defect"
+      else if ($3 == "not-a-defect") human[$1 "\t" $2] = "pass"
+      next
+    }
+    {
+      k = $1 "\t" $3
+      if (!(k in human)) next
+      if ($5 == "fail" && $6 == "defect") j = "defect"
+      else if ($5 == "pass") j = "pass"
+      else next
+      h = human[k]; n++
+      if (j == h) agree++
+      if (j == "defect") jd++
+      if (h == "defect") hd++
+    }
+    END {
+      if (n == 0) { printf "{\"n\":0,\"agreement\":null,\"kappa\":null,\"computed_at\":\"%s\"}\n", at; exit }
+      po = agree / n
+      pe = (jd / n) * (hd / n) + ((n - jd) / n) * ((n - hd) / n)
+      if (pe == 1) kappa = (po == 1) ? 1.0 : 0.0; else kappa = (po - pe) / (1 - pe)
+      printf "{\"n\":%d,\"agreement\":%.4f,\"kappa\":%.4f,\"positives_judge\":%d,\"positives_human\":%d,\"computed_at\":\"%s\"}\n", n, po, kappa, jd, hd, at
+    }' "$labels" "$hist"
+}

@@ -57,6 +57,20 @@
 #   ac-qa.sh regression-proposal <patch>
 #   ac-qa.sh curation <completed|skipped|failed> [--note <reason>]
 #   ac-qa.sh store-install <curation-candidate-dir>
+#   ac-qa.sh store-curate --candidate <dir> [--promote-after <n>]
+#                                         (pane side, at curation: append this
+#                                          run's case rows to the candidate
+#                                          store's history and promote cases
+#                                          that passed <n> consecutive runs;
+#                                          see QA STORE LEARNING LOOP in
+#                                          ac-qa-lib.sh)
+#   ac-qa.sh store-label <case-id> --run <sha> <confirmed|not-a-defect> [--by <who>]
+#                                         (chief side: the human's word on a
+#                                          defect the pane classed)
+#   ac-qa.sh store-calibration            (chief side: Cohen's kappa between
+#                                          the pane's defect calls and the
+#                                          chief's labels, written beside the
+#                                          store)
 #   ac-qa.sh infra <detect|up|down|status|reap> [--services <a,b,...>] [--task <id>]
 #     detect = scan the repo for needed profiles (postgres/redis/temporal);
 #     up with NO --services (and no qa.infra) boots NOTHING - a service that
@@ -543,6 +557,14 @@
 # baked by the actor that holds the authority. What it does NOT prove: --home
 # is taken on trust beyond its two guards, exactly like --store.
 #
+# LEARNING LOOP on the store (contract: QA STORE LEARNING LOOP in
+# ac-qa-lib.sh): store/history.tsv records every case row of every curated
+# run; store-curate promotes a case that passed three consecutive runs with
+# the same body into cases/ by machine, and re-stamps `verified:` on store
+# cases that passed again; store-label records the chief's verdict on a
+# defect the pane classed, and store-calibration turns the pairs into a
+# kappa beside the store - the honest measure of how far the pane's defect
+# calls can be trusted, computed from decisions the chief already makes.
 # KNOWLEDGE STORE (qa-knowledge-reuse): per-project, durable, OUTSIDE the
 # repo clone - $AC_HOME/data/qa-store/<project>/ (project = the repo scope,
 # same key infra containment uses). Layout, owned here:
@@ -2221,6 +2243,64 @@ qa_store_manifest_build() {
   done < <(find "$source" -type f ! -path "$output" -print | LC_ALL=C sort)
 }
 
+cmd_store_curate() {
+  # Pane side, inside a run: history + promotion into the CANDIDATE store
+  # (never the shared one - store-install carries it over). The candidate is
+  # the pane's own copy of the frozen snapshot; a missing store/ there is a
+  # usage error, not something to mint.
+  require_run
+  local candidate="" after=3 rd store plan sha model task n prom
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --candidate) candidate="${2:-}"; shift 2 ;;
+      --promote-after) after="${2:-}"; shift 2 ;;
+      *) ac_die "usage: ac-qa.sh store-curate --candidate <dir> [--promote-after <n>]" ;;
+    esac
+  done
+  [ -n "$candidate" ] && [ -d "$candidate/store" ] \
+    || ac_die "store-curate needs --candidate <dir> carrying store/ (the candidate the curation step writes)"
+  case "$after" in ''|*[!0-9]*|0) ac_die "--promote-after must be a positive integer" ;; esac
+  rd="$(run_dir)"
+  store="$candidate/store"
+  plan="$(qa_testplan_path)"
+  sha="$(ac_meta_get "$rd/run.meta" target_sha)"
+  model="$(ac_meta_get "$rd/run.meta" qa_model)"
+  task="$(ac_meta_get "$rd/run.meta" task)"
+  n="$(qa_store_history_append "$store" "$rd/cases.tsv" "$plan" "$sha" "${model:--}" "${task:--}")"
+  prom="$(qa_store_promote "$store" "$rd/cases.tsv" "$plan" "$sha" "$after")"
+  printf 'QA-STORE-CURATED: history=+%s %s store=%s\n' "$n" "$prom" "$store"
+}
+
+cmd_store_label() {
+  # Chief side: the human's word on one defect call, beside the store.
+  local id="${1:-}" label="" sha="" by="chief" f
+  [ -n "$id" ] || ac_die "usage: ac-qa.sh store-label <case-id> --run <sha> <confirmed|not-a-defect> [--by <who>]"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --run) sha="${2:-}"; shift 2 ;;
+      --by) by="${2:-}"; shift 2 ;;
+      confirmed|not-a-defect) label="$1"; shift ;;
+      *) ac_die "usage: ac-qa.sh store-label <case-id> --run <sha> <confirmed|not-a-defect> [--by <who>]" ;;
+    esac
+  done
+  [ -n "$sha" ] && [ -n "$label" ] || ac_die "store-label needs --run <sha> and one of confirmed|not-a-defect"
+  [ -n "${AC_HOME:-}" ] || ac_die "store-label is chief-side and needs AC_HOME (the labels sit beside the fleet's store)"
+  f="$(ac_data_dir)/qa-store/$(repo_scope).labels.tsv"
+  mkdir -p "$(dirname "$f")"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$sha" "$id" "$label" "$by" "$(ac_iso)" >>"$f"
+  printf 'labelled %s@%s %s (%s)\n' "$id" "$sha" "$label" "$f"
+}
+
+cmd_store_calibration() {
+  [ -n "${AC_HOME:-}" ] || ac_die "store-calibration is chief-side and needs AC_HOME"
+  local base out
+  base="$(ac_data_dir)/qa-store/$(repo_scope)"
+  out="$(qa_store_calibration "$base/history.tsv" "$base.labels.tsv")"
+  printf '%s\n' "$out" >"$base.calibration.json"
+  printf '%s\n' "$out"
+}
+
 cmd_store_install() {
   # Chief-only installation of a complete curation candidate. The candidate's
   # base manifest must still equal the current shared store, so a concurrent
@@ -3885,6 +3965,9 @@ case "${1:-}" in
   regression-proposal) shift; cmd_regression_proposal "$@" ;;
   curation) shift; cmd_curation "$@" ;;
   store-install) shift; cmd_store_install "$@" ;;
+  store-curate) shift; cmd_store_curate "$@" ;;
+  store-label) shift; cmd_store_label "$@" ;;
+  store-calibration) shift; cmd_store_calibration "$@" ;;
   infra) shift; cmd_infra "$@" ;;
   baseline) shift; cmd_baseline "$@" ;;
   serve) shift; cmd_serve "$@" ;;

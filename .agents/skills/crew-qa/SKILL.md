@@ -369,7 +369,13 @@ is a ledger row + finding, never a reason to stop verifying the rest.
     `harness-classify`: `repo-regression`, `e2e-regression`, `fixture-pack`,
     `evidence-only`, or `retire`. Reusable common setup belongs in one fixture
     pack with reviewed selectors; a read-write selector must declare and
-    implement idempotent retry behavior. Record the result with
+    implement idempotent retry behavior. Then run
+    `ac-qa.sh store-curate --candidate <candidate-dir>`: it appends this
+    run's case rows to the candidate store's `history.tsv` and PROMOTES by
+    machine every case that passed three consecutive runs with the same
+    body into `cases/` (re-stamping `verified:` on store cases that passed
+    again) - your own judgment still owns retirement and guide corrections.
+    Record the result with
     `ac-qa.sh curation completed`, or `skipped|failed --note '<reason>'`.
     Curation is non-gating. The chief may later install a reviewed candidate
     with `store-install`, whose base-manifest check refuses concurrent
