@@ -1438,6 +1438,107 @@ ac_status_timeline_mirror() {
   printf '%s %s\n' "$ts" "$line" >>"$dir/timeline.log"
 }
 
+# --- claude transcript arrival check (kickoff-prompt delivery: ac-spawn.sh;
+# delivery verification: ac-send.sh) --------------------------------------
+#
+# backend_send_line/backend_submit_verified prove a SUBMIT - the pane's
+# composer reacted to Enter - never that the text which ARRIVED equals the
+# text SENT (the measured incident this closes: a kickoff prompt whose head
+# was cut in transit still spawned SUCCESS). Arrival is a PER-HARNESS
+# CAPABILITY, never a universal law: only claude writes a readable
+# per-session transcript this fleet can compare against. This is a
+# DIFFERENT sense from every backend probe above it and never re-reads
+# through the backend, on purpose - four guards sharing one sense is the
+# defect class this closes.
+
+ac_arrival_capable() {
+  # ac_arrival_capable <harness> - true when arrival can be checked against
+  # that harness's own on-disk transcript. Only claude today; adding one
+  # here without VERIFYING it writes a comparable transcript is exactly the
+  # "distro rule that silently assumes claude" this guards against.
+  [ "$1" = claude ]
+}
+
+ac_claude_transcript_root() {
+  # The claude session-transcript root. AC_CLAUDE_TRANSCRIPT_ROOT is the ONE
+  # injectable seam this probe needs: hard-wired to $HOME/.claude/projects it
+  # could never be driven from the fake-backend test suite.
+  printf '%s\n' "${AC_CLAUDE_TRANSCRIPT_ROOT:-$HOME/.claude/projects}"
+}
+
+ac_claude_transcript_path() {
+  # ac_claude_transcript_path <session-id> - the transcript file for that
+  # session, found by GLOBBING THE SESSION ID (a UUID) rather than deriving a
+  # cwd slug - the id is unique, so this is strictly more robust (verified
+  # against a live transcript, 2026-09-11). Empty and rc 1 unless EXACTLY one
+  # file matches.
+  local sid="$1" root f hit="" hits=0
+  [ -n "$sid" ] || return 1
+  root="$(ac_claude_transcript_root)"
+  for f in "$root"/*/"$sid".jsonl; do
+    [ -e "$f" ] || continue
+    hit="$f"; hits=$((hits + 1))
+  done
+  [ "$hits" = 1 ] || return 1
+  printf '%s\n' "$hit"
+}
+
+ac_claude_last_typed_turn() {
+  # ac_claude_last_typed_turn <transcript-file> - the LAST typed human turn's
+  # literal text (shape verified against a live transcript, 2026-09-11):
+  # type=user, promptSource=typed, origin.kind=human, and message.content a
+  # STRING - a tool-result turn's content is an ARRAY and must never
+  # false-match. A --resume session's prior turns are why this is the LAST
+  # one, never the first. Empty and rc 1 when the file holds no such turn.
+  # Reads only the TAIL (last 200 JSONL lines, not bytes - one line is one
+  # whole turn regardless of its own length): the caller polls this right
+  # after ITS OWN submit, so the turn being sought is always near the file's
+  # end - re-slurping and re-parsing an ever-growing session transcript on
+  # every poll tick would cost more as a session ages for no better answer.
+  local out
+  out="$(tail -n 200 "$1" 2>/dev/null | jq -rs '
+    [.[] | select(.type == "user" and .promptSource == "typed"
+                  and .origin.kind == "human"
+                  and (.message.content | type) == "string")]
+    | last | .message.content // empty
+  ' 2>/dev/null)" || return 1
+  [ -n "$out" ] || return 1
+  printf '%s' "$out"
+}
+
+ac_arrival_wait() {
+  # ac_arrival_wait <session-id> <expected-text> - did <expected-text>
+  # ARRIVE as the last typed human turn of that claude session? THREE-STATE,
+  # the same contract as ac-backend.sh WINDOW LIVENESS (2 never collapsed
+  # into 1):
+  #   0 CONFIRMED    - the transcript's last typed turn equals expected-text.
+  #   1 REFUTED      - the transcript stayed readable and kept producing a
+  #                    typed turn through the WHOLE budget, and it never
+  #                    matched.
+  #   2 UNOBSERVABLE - no session id, no resolvable transcript file, or the
+  #                    transcript never produced a typed turn to compare -
+  #                    "wrong" and "not written yet" are different facts,
+  #                    and only the former may become REFUTED.
+  # ADAPTIVE, same shape as herdr_submit_verified_pane (ac-backend.sh): reads
+  # AC_SEND_SETTLE-spaced ticks (~2-3s budget at its default) and returns the
+  # INSTANT the evidence appears, never burning the whole budget on the
+  # healthy path.
+  local sid="$1" expected="$2" tries=7 i=0 path cur last=""
+  [ -n "$sid" ] || return 2
+  path="$(ac_claude_transcript_path "$sid")" || return 2
+  while :; do
+    if cur="$(ac_claude_last_typed_turn "$path")"; then
+      last="$cur"
+      [ "$last" = "$expected" ] && return 0
+    fi
+    i=$((i + 1))
+    [ "$i" -ge "$tries" ] && break
+    sleep "${AC_SEND_SETTLE:-0.4}"
+  done
+  [ -n "$last" ] && return 1
+  return 2
+}
+
 # --- the VERIFICATION-agent class ---------------------------------------------
 #
 # AUTHORITATIVE for what makes a `state/<id>.meta` a verification agent rather

@@ -25,6 +25,17 @@
 #   the two reasons it was, because the next move differs: text STRANDED in
 #   the composer is resubmitted, while a pane that could not be READ leaves
 #   the submit neither confirmed nor refuted and is peeked at first.
+# - ARRIVAL is verified too, on TOP of the submit check above (contract:
+#   ac-lib.sh claude transcript arrival check) - a confirmed submit only
+#   proves the composer reacted to Enter, never that the text which ARRIVED
+#   equals the text SENT. Per-harness capability: a capable target (claude,
+#   with a resolvable session transcript) whose last typed turn does not
+#   match what was sent is REFUTED and refused here, the same way a stranded
+#   submit already is - never "sent to" on a text that landed wrong. A
+#   target with no such capability, or whose transcript this fleet cannot
+#   read, is UNOBSERVABLE: reported honestly as `delivered (arrival
+#   unverified) to <target>`, exit unchanged - the same precedented shape
+#   --key already uses for its own unverifiable case, below.
 #
 # --key is FOCUSED but UNVERIFIED, and says so. herdr's send-keys needs focus
 # on the key path too, so the key is pressed on a focused tab - never blind.
@@ -165,6 +176,30 @@ else
     2) ac_die "delivery UNVERIFIED for $id - the pane could not be read, so the submit was neither confirmed nor refuted (see stderr above)" ;;
     *) ac_die "delivery NOT confirmed for $id - the text likely sits stranded in the composer (see stderr above)" ;;
   esac
+  # ARRIVAL CHECK (contract: ac-lib.sh claude transcript arrival check). A
+  # confirmed SUBMIT above is not a confirmed ARRIVAL - the whole reason this
+  # exists: ac-send.sh used to print "sent to" on submit evidence alone, and a
+  # chief ACTS on that line. Same three-state contract as everywhere else (2
+  # never collapsed into 1): CONFIRMED keeps the honest "sent to" (A4, no
+  # regression); REFUTED refuses here, the same way an unconfirmed submit
+  # already does above - a text that arrived WRONG is worse than one that
+  # never arrived, because nothing else here catches it; UNOBSERVABLE (no
+  # capability, no session id, no resolvable transcript) gets the SAME
+  # already-precedented honest verb --key uses when it too cannot verify.
+  harness="$(ac_meta_get "$(ac_task_meta "$id")" harness)"
+  verb='sent to'
+  if ac_arrival_capable "$harness"; then
+    sid="$(ac_meta_get "$(ac_task_meta "$id")" session_id)"
+    arc=0
+    ac_arrival_wait "$sid" "$text" || arc=$?
+    case "$arc" in
+      0) ;;
+      1) ac_die "arrival REFUTED for $id - the session transcript's last typed turn does not equal what was sent, so this did NOT land as intended (peek it: bin/ac-peek.sh $id before resubmitting - the composer already accepted SOMETHING, just not this)" ;;
+      *) verb='delivered (arrival unverified) to' ;;
+    esac
+  else
+    verb='delivered (arrival unverified) to'
+  fi
   if [ "$marked" = 1 ]; then
     ac_status_append "$id" "routed: $order"
   else
@@ -175,7 +210,6 @@ else
     # record is one line per event.
     ac_status_append "$id" "steered: $(printf '%s' "$order" | tr '\n' ' ')"
   fi
-  verb='sent to'
 fi
 # A delivered steer answers a captain-wait: release the UI stamp HERE, which is
 # where the timing is right. herdr re-adopts a released pane only on a state

@@ -15,6 +15,11 @@ make_home
 
 mk_crewmate() {
   # mk_crewmate <id> <pane> <tab> - a live crewmate: meta + handle + fake pane.
+  # Carries NO harness field, so its ARRIVAL is per-harness-UNKNOWN and every
+  # confirmed submit below reads the honest `delivered (arrival unverified)
+  # to` verb (contract: ac-lib.sh claude transcript arrival check) - the
+  # dedicated arrival-check section further down owns the CONFIRMED/REFUTED
+  # claude-capable cases via mk_claude_crewmate.
   printf 'backend=herdr\n' >"$AC_HOME/state/$1.meta"
   printf '%s %s\n' "$2" "$3" >"$AC_HOME/state/.pane-$1"
   printf '%s\n' "$2" >"$FAKE_HERDR/tabs/$3"
@@ -25,7 +30,8 @@ mk_crewmate() {
 
 mk_crewmate s1 pA1 tA1
 out="$("$BIN/ac-send.sh" s1 'hello crew')"
-assert_contains "$out" "sent to herdr:pane-pA1" "send reports the target"
+assert_contains "$out" "delivered (arrival unverified) to herdr:pane-pA1" \
+  "a target with no arrival capability still reports the target, honestly"
 assert_contains "$(cat "$FAKE_HERDR/panes/pA1.buf")" "hello crew" "text submitted into the pane"
 # A CONFIRMED steer is recorded durably - the chief's index of what it asked,
 # so a restart is not amnesia (the crewmate leg of the deputy routed: rule).
@@ -61,7 +67,7 @@ mk_crewmate s2 pA2 tA2
 printf 'blocked\n' >"$FAKE_HERDR/panes/pA2.reported"
 touch "$AC_HOME/state/.captain-wait-s2"
 out="$("$BIN/ac-send.sh" s2 'answer: keep the cache')"
-assert_contains "$out" "sent to herdr:pane-pA2" "stamped pane accepts the answering steer"
+assert_contains "$out" "delivered (arrival unverified) to herdr:pane-pA2" "stamped pane accepts the answering steer"
 assert_no_file "$AC_HOME/state/.captain-wait-s2" "delivery clears the stamp file"
 assert_no_file "$FAKE_HERDR/panes/pA2.reported" "delivery releases the reported state"
 
@@ -80,12 +86,12 @@ case "$(cat "$FAKE_HERDR/log")" in *"send-text pA6"*) \
   fail "refused text must never reach the shell" ;; esac
 out="$("$BIN/ac-send.sh" s6 --force 'true')" \
   || fail "--force must still type into the shell deliberately"
-assert_contains "$out" "sent to" "--force overrides the dead-shell refusal"
+assert_contains "$out" "delivered (arrival unverified) to" "--force overrides the dead-shell refusal"
 
 # --- --force sends text into a blocked pane deliberately ----------------------------
 
 out="$("$BIN/ac-send.sh" s1 --force 'deliberate steer')"
-assert_contains "$out" "sent to" "--force overrides the refusal"
+assert_contains "$out" "delivered (arrival unverified) to" "--force overrides the refusal"
 assert_contains "$(cat "$FAKE_HERDR/panes/pA1.buf")" "deliberate steer" "--force text delivered"
 
 # --- one dropped Enter: focused retry lands, success stays honest -------------------
@@ -93,7 +99,7 @@ assert_contains "$(cat "$FAKE_HERDR/panes/pA1.buf")" "deliberate steer" "--force
 mk_crewmate s2 pA2 tA2
 printf '1\n' >"$FAKE_HERDR/panes/pA2.drop-enters"
 out="$("$BIN/ac-send.sh" s2 'retry me')"
-assert_contains "$out" "sent to" "recovered strand still reports success"
+assert_contains "$out" "delivered (arrival unverified) to" "recovered strand still reports success"
 assert_contains "$(cat "$FAKE_HERDR/log")" "tab focus tA2" "strand focuses the tab before the retry"
 assert_contains "$(cat "$FAKE_HERDR/panes/pA2.buf")" "retry me" "retried text delivered"
 
@@ -132,7 +138,7 @@ mk_deputy() {
 
 mk_deputy pay pP1 tP1
 out="$("$BIN/ac-send.sh" pay 'fix the interest rounding')"
-assert_contains "$out" "sent to herdr:pane-pP1" "a routed order still reports its target"
+assert_contains "$out" "delivered (arrival unverified) to herdr:pane-pP1" "a routed order still reports its target"
 buf="$(cat "$FAKE_HERDR/panes/pP1.buf")"
 assert_contains "$buf" "[chief-order home=$AC_HOME deputy=pay] fix the interest rounding" \
   "a crewdeputy target gets the chief-order marker, order text verbatim after it"
@@ -203,7 +209,7 @@ assert_contains "$(cat "$FAKE_HERDR/panes/pG1.buf")" \
 # Exit status is UNCHANGED by the warning, and stdout still reports the target.
 out="$("$BIN/ac-send.sh" g1 'and blocked: means the captain, not me' 2>/dev/null)" \
   || fail "the warning must not change the exit status"
-assert_contains "$out" "sent to herdr:pane-pG1" "a warned send still reports its target"
+assert_contains "$out" "delivered (arrival unverified) to herdr:pane-pG1" "a warned send still reports its target"
 
 # The backtick-wrapped form IS the suggested fix - warning on it would be noise.
 err="$("$BIN/ac-send.sh" g1 'print `done:` when you finish' 2>&1 >/dev/null)"
@@ -278,5 +284,48 @@ case "$out" in *"needs-decision: which prefix"*) ;; *) fail "the marker text its
 if grep -qE "$AC_CAPTAIN_RE" <<<"$out"; then
   fail "ac-peek.sh must not re-emit a line matching the LIVE AC_CAPTAIN_RE: $out"
 fi
+
+# --- ARRIVAL: a claude-capable target, CONFIRMED vs REFUTED ------------------
+# Contract: ac-lib.sh claude transcript arrival check. A confirmed SUBMIT
+# above (every case so far) is not a confirmed ARRIVAL; a target this fleet
+# CAN check (claude, with a resolvable session transcript) is held to the
+# stricter bar - the measured incident this family exists to kill.
+
+mk_claude_crewmate() {
+  # mk_claude_crewmate <id> <pane> <tab> <session-id> - a live crewmate whose
+  # harness/session_id make it ARRIVAL-CAPABLE (contract above).
+  mk_crewmate "$1" "$2" "$3"
+  printf 'harness=claude\nsession_id=%s\n' "$4" >>"$AC_HOME/state/$1.meta"
+}
+
+mk_turn() {
+  # mk_turn <session-id> <content> - one typed-human-turn transcript file
+  # under the isolated AC_CLAUDE_TRANSCRIPT_ROOT (tests/helpers.sh), the
+  # shape verified against a live transcript (tests/ac-arrival.test.sh owns
+  # that contract).
+  mkdir -p "$AC_CLAUDE_TRANSCRIPT_ROOT/proj"
+  printf '{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":%s}}\n' \
+    "$(printf '%s' "$2" | jq -Rs .)" >"$AC_CLAUDE_TRANSCRIPT_ROOT/proj/$1.jsonl"
+}
+
+sid_ok="cccccccc-cccc-cccc-cccc-cccccccccccc"
+mk_claude_crewmate cok pCOK tCOK "$sid_ok"
+mk_turn "$sid_ok" "confirmed steer text"
+out="$("$BIN/ac-send.sh" cok 'confirmed steer text')"
+assert_contains "$out" "sent to herdr:pane-pCOK" \
+  "CONFIRMED arrival keeps the honest 'sent to' wording unchanged (A4, no regression)"
+assert_contains "$(cat "$AC_HOME/state/cok.status")" "steered: confirmed steer text" \
+  "a CONFIRMED steer still lands on the status record"
+
+sid_bad="dddddddd-dddd-dddd-dddd-dddddddddddd"
+mk_claude_crewmate cbad pCBAD tCBAD "$sid_bad"
+mk_turn "$sid_bad" "something else entirely arrived"
+err="$("$BIN/ac-send.sh" cbad 'the text that was actually sent' 2>&1)" \
+  && fail "REFUTED arrival must be refused - a text that arrived WRONG is worse than one that never arrived"
+assert_contains "$err" "arrival REFUTED" "the refusal names the fact - arrival, not submit"
+case "$err" in *"sent to"*) fail "THE REGRESSION THIS CLOSES: a REFUTED arrival must never print sent to" ;; esac
+case "$(cat "$AC_HOME/state/cbad.status" 2>/dev/null)" in
+  *"steered:"*) fail "a REFUTED steer must not be recorded as steered - it did not land as asked" ;;
+esac
 
 pass
