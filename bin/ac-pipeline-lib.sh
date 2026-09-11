@@ -289,6 +289,21 @@ ac_findings_normalize() {
            | if (.recommendation | gsub("^\\s+|\\s+$"; "")) == "" then
                .recommendation = "Keep delivery held until the captain records a decision."
              else . end
+           # The DECIDER shape - who answers, what kind of choice, what each
+           # option does to a user or operator - is optional on the wire and
+           # kept only when well-formed: axis in its enum, decider a non-empty
+           # string, impact one line per option. A malformed value is dropped,
+           # never defaulted - inventing "implementer" or an impact line would
+           # put words in the mouth of the reviewer on the one finding the
+           # captain reads most closely.
+           | if (.axis as $a | ["impl","security","product","compliance"] | index($a)) == null
+             then del(.axis) else . end
+           | if ((.decider // "") | tostring | gsub("^\\s+|\\s+$"; "")) == "" then del(.decider)
+             else .decider = (.decider | tostring) end
+           | if ((.impact // null) | type) == "array"
+                and (.impact | length) == (.options | length)
+                and all(.impact[]; type == "string" and (gsub("^\\s+|\\s+$"; "") != ""))
+             then . else del(.impact) end
          else . end
       ]' >"$tmp"; then
     mv "$tmp" "$outfile"

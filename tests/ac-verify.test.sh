@@ -174,6 +174,12 @@ elif [ "$kind" = codereview ]; then
     payload="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[{id:"A1",severity:"warning",action:"ask-user",description:"Choose behavior"}],summary:"decision",risk_level:"medium",risk_rationale:"captain input",reviewed_ref:$ref}')"
   elif [ "${VERIFY_ASK_COMPLETE:-0}" = 1 ]; then
     payload="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[{id:"A1",severity:"warning",action:"ask-user",description:"Choose behavior",question:"Which behavior should ship?",options:["strict","compatible"],tradeoffs:["safer but breaking","compatible but broader"],recommendation:"strict"}],summary:"decision",risk_level:"medium",risk_rationale:"captain input",reviewed_ref:$ref}')"
+  elif [ "${VERIFY_ASK_DECIDER:-0}" = 1 ]; then
+    payload="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[{id:"A2",severity:"warning",action:"ask-user",description:"Choose behavior",question:"Which behavior should ship?",options:["strict","compatible"],tradeoffs:["safer but breaking","compatible but broader"],recommendation:"strict",axis:"product",decider:"product owner",impact:["existing integrations stop until they migrate","nothing changes for anyone today"]},{id:"A3",severity:"warning",action:"ask-user",description:"Malformed decider shape",question:"Q?",options:["a","b"],tradeoffs:["t","u"],recommendation:"a",axis:"vibes",decider:"   ",impact:["only one"]}],summary:"decision",risk_level:"medium",risk_rationale:"captain input",reviewed_ref:$ref}')"
+  elif [ -n "${VERIFY_FIX_FILE:-}" ]; then
+    payload="$(jq -cn --arg ref "$VERIFY_REF" --arg f "$VERIFY_FIX_FILE" --arg l "${VERIFY_FIX_LINE:-}" \
+      '{findings:[{id:"F1",severity:"error",action:"fix",class:"correctness",description:"real bug",authority_class:"internal",authority:"spec",evidence:"seen",file:$f}
+                  | if $l != "" then .line = ($l | tonumber) else . end],summary:"one fix",risk_level:"medium",risk_rationale:"fix owed",reviewed_ref:$ref}')"
   else
     clean="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[],summary:"clean",risk_level:"low",risk_rationale:"bounded",reviewed_ref:$ref}')"
     [ -z "${VERIFY_RESOLVED_IDS:-}" ] \
@@ -512,10 +518,11 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "question, options, matching t
 # 2026-07-30) + the class key and round-2+ churn rule (review-round
 # convergence, captain ruling) + the stable-id formation rule (this
 # is what a later round's disposition binds to); each raise is deliberate, not
-# drift.
+# drift. Raised 500->540 (and its two siblings by the same 40) for the decider
+# shape on ask-user and the citation rule on fix.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 500 ] \
-  || fail "canonical review prompt exceeds its 500-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 540 ] \
+  || fail "canonical review prompt exceeds its 540-word scaffold budget: $scaffold_words"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Reserve action=fix" \
   "fix is reserved for delivery-blocking findings; advisory items ride as no-op"
 # Bug-fix durability + anti-overreach: a fix claim is judged durable-vs-
@@ -662,8 +669,8 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $bas
 # disposition rules, resolved_ids, and the no-renumber clause the measured
 # rejections needed); the ledger payload itself stays excluded like INTENT.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 570 ] \
-  || fail "history review prompt exceeds its 570-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 610 ] \
+  || fail "history review prompt exceeds its 610-word scaffold budget: $scaffold_words"
 
 # A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
 # the interdiff scope: the previous entry's reviewed_ref
@@ -783,8 +790,8 @@ case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: C
 # fixture's one id. A real round's checklist grows one word per prior open id;
 # this bounds the PROSE, which is the part that drifts.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 650 ] \
-  || fail "previous-round ledger review prompt exceeds its 650-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 690 ] \
+  || fail "previous-round ledger review prompt exceeds its 690-word scaffold budget: $scaffold_words"
 
 # PREVIOUS ROUND ONLY: resolved findings from older rounds do not require
 # re-attestation later. A round-3 history whose r1 had an open id but whose r2
@@ -1488,5 +1495,43 @@ assert_eq "$(grep -c . "$tree_log" 2>/dev/null || true)" "$tree_log_before" \
 git -C "$repo" show-ref --verify -q "refs/heads/crew/$ocr_family-verify-codereview" \
   && fail "a verifier round must leave no crew/<id> branch behind"
 printf 'herdr\n' >"$AC_HOME/config/backend"
+
+# --- CITATION CHECK: a fix finding's file/line must exist at the reviewed ref -
+# the one thing the facade can verify without re-reviewing, and exactly the
+# hallucinated-reference class that otherwise buys a fix round on nothing.
+cite_out="$TMP/cite.json"
+export VERIFY_EXPECT_ID="$family-verify-codereview" VERIFY_REF="$target"
+cite_err="$(VERIFY_FIX_FILE=file.txt VERIFY_FIX_LINE=1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$family" --caller "$caller" --base "$base" --intent "$intent" --output "$cite_out" 2>&1 >/dev/null)" \
+  || fail "a fix finding citing a real file and line at the ref is accepted: $cite_err"
+assert_eq "$(jq -r .verdict "$cite_out")" "fix" "the accepted citation keeps its fix verdict"
+VERIFY_FIX_FILE=./file.txt VERIFY_FIX_LINE=1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$family" --caller "$caller" --base "$base" --intent "$intent" --output "$cite_out" >/dev/null 2>&1 \
+  || fail "a ./-prefixed citation resolves like a bare one"
+rm -f "$cite_out"
+rc=0; VERIFY_FIX_FILE=ghost.txt "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$family" --caller "$caller" --base "$base" --intent "$intent" --output "$cite_out" >/dev/null 2>&1 || rc=$?
+[ "$rc" -ne 0 ] || fail "a fix finding citing a file absent at the ref must be rejected"
+assert_no_file "$cite_out" "a rejected citation publishes no verdict"
+rej="$(cat "$(ls -d "$AC_HOME/data/$family/verify/codereview"/*/ 2>/dev/null | tail -1)rejection.log" 2>/dev/null || true)"
+assert_contains "$rej" "fix-citation-not-at-ref: F1(ghost.txt not at ref)" "the rejection names the finding and the missing file"
+rc=0; VERIFY_FIX_FILE=file.txt VERIFY_FIX_LINE=999 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$family" --caller "$caller" --base "$base" --intent "$intent" --output "$cite_out" >/dev/null 2>&1 || rc=$?
+[ "$rc" -ne 0 ] || fail "a fix finding citing a line past the file's end must be rejected"
+rej="$(cat "$(ls -d "$AC_HOME/data/$family/verify/codereview"/*/ 2>/dev/null | tail -1)rejection.log" 2>/dev/null || true)"
+assert_contains "$rej" "past end" "the rejection names the line overrun"
+
+# --- DECIDER SHAPE on ask-user: axis, decider, per-option impact ride through
+# when well-formed and are dropped - never defaulted - when malformed.
+dec_out="$TMP/decider.json"
+VERIFY_ASK_DECIDER=1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$family" --caller "$caller" --base "$base" --intent "$intent" --output "$dec_out" >/dev/null 2>&1 \
+  || fail "an ask-user round carrying the decider shape is accepted"
+assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "axis=impl|security|product|compliance" "the prompt asks for the decider shape"
+assert_eq "$(jq -r '.findings[] | select(.id=="A2") | .axis' "$dec_out")" "product" "a valid axis rides through"
+assert_eq "$(jq -r '.findings[] | select(.id=="A2") | .decider' "$dec_out")" "product owner" "the decider rides through"
+assert_eq "$(jq -r '.findings[] | select(.id=="A2") | .impact | length' "$dec_out")" "2" "impact lines ride through, one per option"
+assert_eq "$(jq -r '.findings[] | select(.id=="A3") | has("axis"), has("decider"), has("impact")' "$dec_out" | paste -sd, -)" "false,false,false" \
+  "a malformed axis, blank decider and mismatched impact are dropped, not defaulted"
 
 pass

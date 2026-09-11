@@ -948,6 +948,8 @@ correctness|security|regression|data-loss|requirement).
 id is a STABLE slug of the defect's own subject and never encodes the round you
 are reporting in, so the same defect yields the same id string every round.
 Every ask-user finding requires question, options, matching tradeoffs, and recommendation; use 2-4 exclusive options and non-empty relay text.
+ask-user also carries axis=impl|security|product|compliance, decider (who answers), and impact: one plain-language line per option, no code symbols.
+A fix finding's file and line must exist at the reviewed ref; an unresolvable citation rejects the verdict.
 Omit inapplicable keys.
 A clean review uses findings=[]. Missing/unknown action or authority-less fix
 fails closed. risk_level=low|medium|high; reviewed_ref must equal the ref above.
@@ -1367,6 +1369,31 @@ case "$kind" in
     ' <<<"$json" 2>/dev/null)" || reject_why="unparseable-json"
     [ -z "$reject_why" ] \
       || { rm -f "$output_tmp"; log_rejection "$reject_why"; die_reaped "verifier $id returned an invalid codereview verdict - failed check: $reject_why; inspect $round_dir"; }
+    # CITATION CHECK: a fix finding names a file (and maybe a line) as the
+    # place the defect lives, and a fix finding is what forces a fix-and-
+    # rereview round - so a citation that does not resolve AT THE REVIEWED REF
+    # is a hallucinated or stale finding about to buy a round on nothing. The
+    # one thing this facade can verify without re-reviewing is that the cited
+    # place exists: the file at $sha (paths are taken as repo-relative, with a
+    # leading ./, the lease root or the main repo root stripped), and the line
+    # within the file's length. Deterministic, no model, same D1 shape as the
+    # predicate above: one named reason in rejection.log. A fix finding with
+    # no file at all is left to the normalizer and the fix loop as before.
+    bad_cite="$(jq -r '.findings[] | select(.action == "fix") | select((.file // "") != "")
+                        | "\(.id // "unknown")\t\(.file)\t\(.line // "")"' <<<"$json" 2>/dev/null \
+      | while IFS="$(printf '\t')" read -r c_id c_file c_line; do
+          c_path="${c_file#"$lease"/}"; c_path="${c_path#"$main_repo"/}"; c_path="${c_path#./}"
+          if ! git -C "$main_repo" cat-file -e "$sha:$c_path" 2>/dev/null; then
+            printf '%s(%s not at ref)\n' "$c_id" "$c_path"; continue
+          fi
+          c_num="${c_line%%[!0-9]*}"
+          [ -n "$c_num" ] || continue
+          c_len="$(git -C "$main_repo" show "$sha:$c_path" 2>/dev/null | wc -l | tr -d ' ')"
+          [ "$c_num" -ge 1 ] && [ "$c_num" -le "$c_len" ] \
+            || printf '%s(%s:%s past end, %s lines)\n' "$c_id" "$c_path" "$c_num" "$c_len"
+        done | paste -sd, -)"
+    [ -z "$bad_cite" ] \
+      || { rm -f "$output_tmp"; log_rejection "fix-citation-not-at-ref: $bad_cite"; die_reaped "verifier $id returned an invalid codereview verdict - failed check: fix-citation-not-at-ref: $bad_cite; inspect $round_dir"; }
     findings="$round_dir/findings.json"
     jq -c '.findings' <<<"$json" | ac_findings_normalize "$findings" \
       || { rm -f "$output_tmp"; die_reaped "verifier $id findings could not be normalized; inspect $round_dir"; }
