@@ -728,6 +728,7 @@ if [ "$kind" != crewdeputy ] && [ "$kind" != roomchief ]; then
       continue
     fi
     sweep_pane_agents "$lease"
+    ac_port_slot_release "$lease"
     # --force: the landed-work proof (or the captain's explicit --force)
     # already authorized discarding whatever is left in the tree.
     if [ -n "$lease_id" ]; then
@@ -743,6 +744,7 @@ EOF
 
   if [ "$wt_backend" = orca ] && [ -n "$worktree" ] && [ -d "$worktree" ]; then
     sweep_pane_agents "$worktree"
+    ac_port_slot_release "$worktree"
     orca_worktree_release "$worktree" \
       || ac_warn "could not remove orca worktree $worktree (remove by hand: orca worktree rm --worktree path:$worktree --force)"
   fi

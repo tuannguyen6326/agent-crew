@@ -27,6 +27,9 @@ AC_CAPTAIN_RE       exported marker regex constant (readers grep it)
 AC_HARNESS_RE       exported registry constant (ac-harness.sh known set)
 AC_DONELINE_AWK     exported shared awk program (backlog Done-line grammar)
 AC_SEED_FALLBACK_REL   seed-layer constant (ac-lib.sh)
+AC_PORT_STRIDE      port-slot constant (ac-lib.sh): ports per slot
+AC_PORT_SLOT        wire: key written into <worktree>/.crew/ports.env for the crewmate
+AC_PORT_RANGE       wire: key written into <worktree>/.crew/ports.env for the crewmate
 AC_SEED_STAMP_DIR_REL  seed-layer constant (ac-lib.sh)
 AC_SEED_STAMP_SUFFIX   seed-layer constant (ac-lib.sh)
 AC_SKILLS_ARCHIVE_BASENAME  skills-archive dirname constant (ac-lib.sh)

@@ -218,6 +218,8 @@ seed_fallback="$(ac_seed_crewmate_md "$worktree" "$harness")"
 }
 ac_seed_crew_settings "$worktree"
 ac_seed_crew_skills "$worktree" "$harness"
+ac_seed_ports_env "$worktree" "$project_name" >/dev/null \
+  || ac_warn "could not seed a port slot for $worktree - listeners in this worktree may collide with a sibling's"
 
 # Fleet-memory read at slice open: the knowledge law names `ac-brain.sh
 # recall` at intake, and the start makes it machine-made through the same

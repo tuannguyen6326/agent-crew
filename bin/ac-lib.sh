@@ -1816,6 +1816,84 @@ or dismiss if it learned nothing about the codebase. Record: $rec"
   return 0
 }
 
+# --- port slots ------------------------------------------------------------------
+# Two crewmates on one host both running `npm run dev` collide on the same
+# default port, and each then improvises. The registry hands every leased
+# worktree a SLOT - a fleet-wide unique integer - and derives a port range
+# from it (AC_PORT_BASE + slot*100, 100 ports), written to
+# <worktree>/.crew/ports.env where the crewmate law tells the crewmate to
+# read it. Fleet-wide (state/port-slots.tsv), not per repo: ports are host
+# resources, and two repos' worktrees share the host. A slot is reused for
+# the same worktree path (re-seeding is idempotent), released at teardown,
+# and reclaimed when its worktree directory is gone. What this does NOT do:
+# rewrite compose files or check the host for a foreign listener - the range
+# is a contract between crewmates, and a repo that needs more takes it from
+# its own .crew/ports.env conventions.
+AC_PORT_STRIDE=100
+
+ac_port_registry() { printf '%s/port-slots.tsv\n' "$(ac_state_dir)"; }
+
+ac_port_slot_allocate() {
+  # ac_port_slot_allocate <worktree> <project> -> prints the slot. The lowest
+  # integer >= 1 no LIVE entry holds; an entry whose worktree no longer exists
+  # is dropped first, so a crashed teardown never pins a slot forever.
+  local wt="$1" proj="${2:-}" reg lock tmp slot=1 taken
+  reg="$(ac_port_registry)" || return 1
+  lock="$reg.lock"
+  ac_lock_acquire "$lock" 10 || return 1
+  [ -f "$reg" ] || : >"$reg"
+  tmp="$reg.tmp.$$"
+  awk -F'\t' '{ if ($2 != "" && system("test -d \"" $2 "\"") == 0) print }' "$reg" >"$tmp" 2>/dev/null || : >"$tmp"
+  mv "$tmp" "$reg"
+  taken="$(awk -F'\t' -v w="$wt" '$2 == w { print $1; exit }' "$reg")"
+  if [ -z "$taken" ]; then
+    while awk -F'\t' -v s="$slot" '$1 == s { found = 1 } END { exit(found ? 0 : 1) }' "$reg"; do
+      slot=$((slot + 1))
+    done
+    printf '%s\t%s\t%s\t%s\n' "$slot" "$wt" "$proj" "$(ac_iso)" >>"$reg"
+    taken="$slot"
+  fi
+  ac_lock_release "$lock"
+  printf '%s\n' "$taken"
+}
+
+ac_port_slot_release() {
+  # ac_port_slot_release <worktree> - drop the worktree's entry; no-op when
+  # there is none. Never fails a teardown.
+  local wt="$1" reg lock tmp
+  reg="$(ac_port_registry 2>/dev/null)" || return 0
+  [ -f "$reg" ] || return 0
+  lock="$reg.lock"
+  ac_lock_acquire "$lock" 10 || return 0
+  tmp="$reg.tmp.$$"
+  awk -F'\t' -v w="$wt" '$2 != w' "$reg" >"$tmp" && mv "$tmp" "$reg"
+  ac_lock_release "$lock"
+  return 0
+}
+
+ac_seed_ports_env() {
+  # ac_seed_ports_env <worktree> [project] - allocate the slot and write
+  # <worktree>/.crew/ports.env (the .crew/ dir is already excluded from git
+  # in every pooled worktree; an orca worktree gets the exclude here). Prints
+  # the range. Best-effort for the caller: a registry failure seeds nothing
+  # and returns 1, the lease itself is unaffected.
+  local wt="$1" proj="${2:-}" slot base lo hi f
+  [ -d "$wt" ] || return 1
+  slot="$(ac_port_slot_allocate "$wt" "$proj")" || return 1
+  base="${AC_PORT_BASE:-20000}"
+  lo=$(( base + slot * AC_PORT_STRIDE )); hi=$(( lo + AC_PORT_STRIDE - 1 ))
+  mkdir -p "$wt/.crew"
+  f="$wt/.crew/ports.env"
+  {
+    printf '# agent-crew port slot - one fleet-wide slot per leased worktree; every listener this worktree starts binds inside this range.\n'
+    printf 'AC_PORT_SLOT=%s\n' "$slot"
+    printf 'AC_PORT_RANGE=%s-%s\n' "$lo" "$hi"
+    printf 'PORT=%s\n' "$lo"
+  } >"$f"
+  ac_seed_exclude "$wt" ".crew/" 2>/dev/null || true
+  printf '%s-%s\n' "$lo" "$hi"
+}
+
 ac_self_tasks_in_flight() {
   # ac_self_tasks_in_flight - one line per kind=self task still in flight,
   # with its age and the two ways out. A self task outlives the session that

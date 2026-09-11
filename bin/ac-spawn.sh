@@ -1660,6 +1660,8 @@ trap spawn_failed_cleanup EXIT
 seed_fallback="$(ac_seed_crewmate_md "$worktree" "$harness")"
 ac_seed_crew_settings "$worktree"
 ac_seed_crew_skills "$worktree" "$harness"
+ac_seed_ports_env "$worktree" "$(basename "$project_dir")" >/dev/null \
+  || ac_warn "could not seed a port slot for $worktree - listeners in this worktree may collide with a sibling's"
 
 # Open the crewmate's window (default shell; the harness launches into it).
 alive_rc=0; backend_window_alive "$id" || alive_rc=$?

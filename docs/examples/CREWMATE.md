@@ -163,6 +163,17 @@ Do not re-derive any of this: `tests/helpers.sh` (the `load_hogs`/`reap_hogs`
 harness) is the landed, sanctioned implementation - copy it, and read its
 header for the measurements behind each layer.
 
+## Listeners bind inside your port slot
+
+Your worktree carries `.crew/ports.env`: a fleet-wide slot and the port
+range it owns (`AC_PORT_RANGE`, `PORT` is its first port). Every server,
+mock or tunnel you start binds inside that range - a sibling crewmate on
+this host owns the default ports as much as you do, and two dev servers on
+one port fail in ways that look like your bug. Load the file before you
+serve anything (`. .crew/ports.env`); a project whose config cannot take a
+port from the environment is a `needs-decision:`, not a reason to bind the
+default.
+
 ## Use what the project provides
 
 Before working, check the skills and plugins YOUR session provides
