@@ -129,4 +129,114 @@ assert_contains "$out" "nothing is polling" "the standing-coverage reason still 
 assert_contains "$out" "hbsfam" "the HANDBACK line rides alongside standing-coverage too"
 rm -f "$hook" "$state/.session-lock"; rm -rf "$AC_HOME/data/hbsfam"
 
+# --- TRACE: state/.stop-hooks.log (stop-hooks-had-zero-effect-and-leave-no-trace) ---
+# Every reachable verdict leaves ONE durable, file-only line: A1-A5 and R1-R4
+# from the row that added this.
+
+trace_log="$AC_HOME/state/.stop-hooks.log"
+last_trace() { tail -n 1 "$trace_log" 2>/dev/null; }
+trace_lines() { wc -l <"$trace_log" 2>/dev/null | tr -d ' '; }
+
+make_home
+: >"$AC_HOME/records/backlog.md"
+
+# A1 (stand-aside) + R4 ("the stand-aside outcomes... are the most valuable
+# lines in the file, not the least"): a clean, otherwise-idle turn end still
+# writes a line.
+rm -f "$trace_log"
+out="$(printf '{}' | "$BIN/ac-turnend-guard.sh")" || fail "the parked reminder must never block"
+assert_contains "$out" "/debrief" "sanity: still the parked reminder"
+assert_eq "$(trace_lines)" "1" "a clean turn end writes exactly one trace line"
+assert_contains "$(last_trace)" "hook=turnend-guard" "the line names the hook"
+assert_contains "$(last_trace)" "verdict=stood-aside" "a clean turn end traces stood-aside"
+assert_contains "$(last_trace)" "reason=clean" "...with its reason"
+
+# R1: the trace write must never reach stdout - the JSON above must still be
+# valid, parseable systemMessage JSON with nothing extra appended to it.
+printf '%s' "$out" | jq -e '.systemMessage' >/dev/null \
+  || fail "R1: stdout must still be valid JSON after adding the trace"
+
+# A1 (blocked) via queued wakes, DISTINGUISHABLE from the stand-aside above.
+rm -f "$trace_log"
+mkdir -p "$state/.wake-spool"
+printf '9\treport\ttw-live\tdone: x\n' >"$state/.wake-spool/1.1.000000"
+rc=0; out="$(printf '{}' | "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "sanity: queued wakes still block"
+assert_eq "$(trace_lines)" "1" "a queued-wake block writes exactly one trace line"
+assert_contains "$(last_trace)" "verdict=blocked" "a queued-wake block traces blocked"
+assert_contains "$(last_trace)" "reason=queued-wakes" "...distinguishably from a stand-aside"
+assert_contains "$(last_trace)" "queued=yes" "R2: the ALREADY-COMPUTED queued flag rides the line as a boolean"
+
+# R1: stderr on this same block must be UNCHANGED by the trace - the exact
+# block-reason text the model reads verbatim.
+err="$(printf '{}' | "$BIN/ac-turnend-guard.sh" 2>&1 1>/dev/null)" || true
+assert_eq "$err" "agent-crew: queued wakes are pending. Run bin/ac-wake-drain.sh and handle them before ending the turn." \
+  "R1: stderr on a block must be exactly the guard's own message, nothing from the trace"
+rm -rf "$state/.wake-spool"
+
+# R3: the handback field distinguishes NOT OBSERVED (n/a) from OBSERVED EMPTY
+# (none) from OBSERVED NON-EMPTY (the family list) - the exact lesson
+# kickoff-ack-verifies-submission-not-arrival landed (6d3a029): "not observed"
+# must never look like "observed negative".
+rm -f "$trace_log"
+hb_room trhbfam
+rc=0; out="$(printf '{}' | "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "a room in HANDBACK on an otherwise-clean turn end still blocks"
+assert_contains "$(last_trace)" "verdict=blocked" "...and traces the block"
+assert_contains "$(last_trace)" "reason=handback-pending" "...distinguishably from every other block reason"
+assert_contains "$(last_trace)" "handback=trhbfam" "R3: an OBSERVED non-empty handback set names the family"
+rm -rf "$AC_HOME/data/trhbfam"
+
+# ...OBSERVED EMPTY (fleet session, no rooms in handback at all) -> "none",
+# never blank and never omitted.
+rm -f "$trace_log"
+out="$(printf '{}' | "$BIN/ac-turnend-guard.sh")" || fail "the parked reminder must never block"
+assert_contains "$(last_trace)" "handback=none" "R3: an OBSERVED but empty handback set prints 'none', never blank or omitted"
+
+# ...NOT OBSERVED (the read-only-lock exemption fires before handback is ever
+# computed) -> "n/a", never conflated with "none". A live FOREIGN pid holds
+# the lock - hold_open/hold_close (helpers.sh) stand in for it with no sleep
+# and no polling.
+rm -f "$trace_log"
+hold_open trlockhold; trlockpid=$HOLD_PID
+printf 'pid=%s\nsince=now\n' "$trlockpid" >"$state/.session-lock"
+printf '{}' | "$BIN/ac-turnend-guard.sh" >/dev/null 2>&1 || true
+hold_close trlockhold "$trlockpid"
+assert_contains "$(last_trace)" "verdict=stood-aside" "R4: the read-only-lock exemption is a stand-aside verdict that MUST be traced"
+assert_contains "$(last_trace)" "reason=read-only-lock" "...distinguishably"
+assert_contains "$(last_trace)" "handback=n/a" "R3: NOT observed on this early-exit path - never 'none'"
+assert_contains "$(last_trace)" "queued=n/a" "...and neither is queued, on this same early-exit path"
+rm -f "$state/.session-lock"
+
+# R4: the structurally-inert exits are NEVER traced.
+rm -f "$trace_log"
+printf '{"stop_hook_active":true}' | "$BIN/ac-turnend-guard.sh" >/dev/null 2>&1 || true
+assert_no_file "$trace_log" "R4: stop_hook_active must never write a trace line"
+
+repo2="$(make_repo trtracerepo)"
+wt2="$TMP/trtracewt"
+git -C "$repo2" worktree add -q -b trtracewt "$wt2"
+mkdir -p "$wt2/state"
+printf 'window=crew:tw9\n' >"$wt2/state/tw9.meta"
+printf '{}' | AC_HOME="$wt2" "$BIN/ac-turnend-guard.sh" >/dev/null 2>&1 || true
+assert_no_file "$wt2/state/.stop-hooks.log" "R4: a linked worktree (crewmate) must never write a trace line"
+
+touch "$AC_HOME/.ac-crewdeputy-home"
+rm -f "$trace_log"
+printf '{}' | "$BIN/ac-turnend-guard.sh" >/dev/null 2>&1 || true
+assert_no_file "$trace_log" "R4: a crewdeputy home must never write a trace line"
+rm -f "$AC_HOME/.ac-crewdeputy-home"
+
+# A5: fail-open. A read-only state dir must never change the guard's own
+# verdict, message, or exit status - the trace write silently does nothing.
+rm -f "$trace_log"
+mkdir -p "$state/.wake-spool"
+printf '9\treport\ttw-live\tdone: x\n' >"$state/.wake-spool/1.1.000000"
+chmod 555 "$state"
+rc=0; out="$(printf '{}' | "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+chmod 755 "$state"
+assert_eq "$rc" "2" "A5: a read-only state dir must not change the guard's own verdict"
+assert_contains "$out" "queued wakes" "...or its message"
+rm -rf "$state/.wake-spool"
+
 pass

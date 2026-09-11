@@ -103,6 +103,18 @@
 # leave the fleet exactly as it found it, never wedge the harness.
 # Exit codes: 0 nothing owed / someone else covers / broken dependency,
 #             2 wake the chief, reason on stderr.
+#
+# TRACE (state/.stop-hooks.log, via ac_hook_trace in ac-lib.sh): every branch
+# that reaches a real verdict appends one durable file-only line (never
+# stdout/stderr - see ac_hook_trace), so a chief can tell whether this hook
+# even ran. A firing that ENTERS the owed-loop logs TWICE - once when it
+# starts (verdict=armed), once when it closes (armed/stood-aside/handed-back)
+# - because the loop can hold the chief's coverage for up to
+# AC_AUTOARM_BUDGET (~50min) and a single line at exit answers nothing during
+# that whole window. NOT traced: a failure to source ac-lib.sh (the floor -
+# nothing here can resolve a home to write to), a linked worktree, and a
+# crewdeputy home. The AC_SOLO exit above is also untraced: a solo session
+# never arms anything, so it never reaches a verdict this trace is for.
 
 set -uo pipefail
 cat >/dev/null 2>&1 || true          # drain the payload; nothing here reads it
@@ -138,7 +150,10 @@ if [ -z "$scope" ]; then
         [ "$p" = "$holder" ] && { mine=1; break; }
         p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
       done
-      [ "$mine" = 1 ] || exit 0
+      if [ "$mine" != 1 ]; then
+        ac_hook_trace watch-autoarm "verdict=stood-aside reason=not-lock-holder scope=fleet"
+        exit 0
+      fi
     fi
   fi
 else
@@ -151,7 +166,10 @@ else
   # is owed", so a dead family's hook re-arms for its own corpse for as long as
   # the fleet has any crew at all. The chief meta is the family's liveness -
   # ac-teardown.sh archives it at demotion - so its absence is the stand-down.
-  [ -f "$state_dir/$scope-chief.meta" ] || exit 0
+  if [ ! -f "$state_dir/$scope-chief.meta" ]; then
+    ac_hook_trace watch-autoarm "verdict=stood-aside reason=family-demoted scope=$scope"
+    exit 0
+  fi
 fi
 
 crew_in_flight() {
@@ -211,7 +229,10 @@ nudge_scoped_chief() {
   ) >/dev/null 2>&1 || true
 }
 
-owed || exit 0
+if ! owed; then
+  ac_hook_trace watch-autoarm "verdict=stood-aside reason=nothing-owed scope=${scope:-fleet}"
+  exit 0
+fi
 
 budget="${AC_AUTOARM_BUDGET:-3000}"
 started="$(date -u +%s)"
@@ -227,6 +248,12 @@ started="$(date -u +%s)"
 # still reads `already running` from a predecessor firing's watcher and stands
 # aside, so the prefix classification below is unchanged.
 export AC_AUTOARM=1
+
+# The (a) half of R5 (see header TRACE note): this firing started and decided
+# to run the watch loop, readable from disk for as long as the loop below
+# holds the chief's coverage. The (b) half - how it ended - is logged at
+# whichever branch below actually closes the loop.
+ac_hook_trace watch-autoarm "verdict=armed reason=loop-start scope=${scope:-fleet} owed=yes"
 
 while owed; do
   # A roomchief watches its own family plus its epic's in-flight stories, and
@@ -265,17 +292,20 @@ while owed; do
       # Coverage is in place; nagging the chief to release it is not this
       # hook's job. A refusal that armed NOTHING (the owner gate at
       # ac-watch.sh:846-855) is not covered and stays in the `*)` arm.
+      ac_hook_trace watch-autoarm "verdict=stood-aside reason=already-running scope=${scope:-fleet}"
       exit 0 ;;
     '')
       # No reason line at all: the watcher could not arm or died mute. Hand it
       # back rather than spinning on it.
       printf 'ac-watch-autoarm: the watcher closed with no reason line - supervision is NOT covered; arm it yourself (bin/ac-watch.sh) and check state/.watch.lock.d\n' >&2
       nudge_scoped_chief "the watcher closed with no reason line - supervision is NOT covered"
+      ac_hook_trace watch-autoarm "verdict=handed-back reason=no-reason-line scope=${scope:-fleet}"
       exit 2 ;;
     *)
       printf 'ac-watch-autoarm: %s\n' "$reason" >&2
       printf 'ac-watch-autoarm: drain it (bin/ac-wake-drain.sh); the watcher is re-armed automatically at your next turn end.\n' >&2
       nudge_scoped_chief "$reason"
+      ac_hook_trace watch-autoarm "verdict=handed-back reason=actionable-close scope=${scope:-fleet} detail=$reason"
       exit 2 ;;
   esac
 done
@@ -288,9 +318,12 @@ done
 if crew_in_flight; then
   printf 'ac-watch-autoarm: auto-arm budget spent with crew still in flight - coverage handed back; it re-arms at your next turn end.\n' >&2
   nudge_scoped_chief "auto-arm budget spent with crew still in flight - coverage handed back"
+  ac_hook_trace watch-autoarm "verdict=handed-back reason=budget-spent-crew-in-flight scope=${scope:-fleet}"
   exit 2
 elif owed; then
   printf 'ac-watch-autoarm: auto-arm budget spent with standing remote-poll coverage still owed (no crew in flight) - coverage handed back; it re-arms at your next turn end.\n' >&2
+  ac_hook_trace watch-autoarm "verdict=handed-back reason=budget-spent-remote-poll scope=${scope:-fleet}"
   exit 2
 fi
+ac_hook_trace watch-autoarm "verdict=stood-aside reason=work-finished scope=${scope:-fleet}"
 exit 0

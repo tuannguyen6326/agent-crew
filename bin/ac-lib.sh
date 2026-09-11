@@ -808,6 +808,37 @@ ac_require() {
 
 ac_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+ac_hook_trace() {
+  # ac_hook_trace <hook> <detail> - append ONE durable line to the shared
+  # Stop-hook trace log (state/.stop-hooks.log): timestamp, which hook, and
+  # whatever the caller already computed - a field the caller never computed
+  # is its own "field=n/a", never an omission and never "field=" (the
+  # kickoff-ack-verifies-submission-not-arrival lesson: "not observed" must
+  # never look like "observed negative").
+  #
+  # FILE ONLY, NEVER stdout/stderr - the sharpest regression risk this
+  # function exists to avoid: ac-turnend-guard.sh's stdout is parsed as JSON
+  # by the harness (parked_reminder's systemMessage, the AC_SOLO branch's
+  # jq-built notice) and its stderr is the block-reason channel the model
+  # reads verbatim on every block; ac-watch-autoarm.sh's stderr is likewise
+  # its own wake payload on exit 2. One stray line on either channel would
+  # break the JSON parse or change the message a chief reads.
+  #
+  # Fail-open, unconditionally: both hooks run on EVERY turn end, so this is
+  # the most unconditionally-executed new code path in the distro - a
+  # missing state dir, a permissions error, or a read-only filesystem writes
+  # nothing and never surfaces to the caller. Trimmed in place like
+  # bin/ac-watch.sh's watch_log, so the trail stays bounded.
+  local sd f keep="${AC_STOPHOOK_LOG_KEEP:-200}"
+  sd="$(ac_state_dir 2>/dev/null)" || return 0
+  f="$sd/.stop-hooks.log"
+  printf '%s hook=%s %s\n' "$(ac_iso)" "$1" "$2" >>"$f" 2>/dev/null || true
+  if [ "$(wc -l <"$f" 2>/dev/null || printf 0)" -gt "$(( keep * 2 ))" ]; then
+    tail -n "$keep" "$f" >"$f.tmp.$$" 2>/dev/null && mv "$f.tmp.$$" "$f" 2>/dev/null
+  fi
+  return 0
+}
+
 # Crewmate status lines the captain must hear about (watcher wake filter).
 # Status markers (done/needs-decision/blocked/failed/paused/merged) are anchored
 # to the LINE START with TUI-prefix tolerance: the prefix class admits leading

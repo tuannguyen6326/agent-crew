@@ -105,6 +105,17 @@
 # working the backlog while items remain"): a reminder that fires while work is
 # startable says stop at exactly the wrong moment, so anything on the schedule -
 # a STUCK line included - keeps it silent. See parked_reminder below.
+#
+# TRACE (state/.stop-hooks.log, via ac_hook_trace in ac-lib.sh): every branch
+# below that reaches a real supervision verdict appends one durable file-only
+# line (never stdout/stderr - see ac_hook_trace) naming what was OBSERVED and
+# the VERDICT, so an incident where the wake was published but nobody was
+# woken can tell whether this guard even ran. NOT traced: stop_hook_active,
+# a linked worktree, a crewdeputy home, and a failure to source any of
+# ac-lib.sh/ac-backend.sh/ac-wake-lib.sh (the floor - nothing here can even
+# resolve a home to write to, let alone judge one). The AC_SOLO branch is
+# also untraced: it owes no supervision (see its own comment below) and
+# never reaches this file's verdict logic at all.
 
 set -uo pipefail
 # A SOLO session (AC_SOLO=1) owes no supervision: the chief drains, arms and
@@ -171,7 +182,10 @@ if [ -z "$scope" ] && [ -f "$lock" ]; then
       [ "$p" = "$holder" ] && { mine=1; break; }
       p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
     done
-    [ "$mine" = 1 ] || exit 0
+    if [ "$mine" != 1 ]; then
+      ac_hook_trace turnend-guard "verdict=stood-aside reason=read-only-lock scope=${scope:-fleet} queued=n/a inflight=n/a age=n/a handback=n/a"
+      exit 0
+    fi
     holds_lock=1
   fi
 fi
@@ -195,6 +209,16 @@ while IFS= read -r meta; do inflight=$((inflight + 1)); done \
 beat="$(ac_watcher_beat_read "$state_dir" "$scope")"
 beat_note="${beat#* }"; beat="${beat%% *}"
 age=$(( $(date +%s) - beat ))
+
+hb_field() {
+  # hb_field - format hb_seen (handback_note's global, see below) for the
+  # trace line: unset (handback_note never ran on this path) prints "n/a";
+  # set-but-empty (it ran and nothing was owed) prints "none"; anything else
+  # prints the family list. `${hb_seen+x}` is bash's set-test - unlike
+  # `${hb_seen:-x}` it does not conflate "unset" with "set to empty", which
+  # is exactly the distinction R3 requires.
+  if [ -n "${hb_seen+x}" ]; then printf '%s' "${hb_seen:-none}"; else printf 'n/a'; fi
+}
 
 landing_receipt_check() {
   # LANDING-RECEIPT reminder: under
@@ -243,6 +267,7 @@ EOF
     && mv "$seen.tmp.$$" "$seen" 2>/dev/null
   if [ -n "$owed" ]; then
     printf 'agent-crew: a task landed (backlog Done) but its Slack done-report may be unposted for:%s. Post it then stamp it (bin/ac-remote.sh done-stamp <family>) before ending the turn.\n' "$owed" >&2
+    ac_hook_trace turnend-guard "verdict=blocked reason=landing-receipt scope=${scope:-fleet} queued=${queued_word:-n/a} inflight=${inflight:-n/a} age=${age:-n/a}s handback=$(hb_field)"
     exit 2
   fi
   return 0
@@ -292,10 +317,14 @@ handback_note() {
   # and never exits itself, so it is safe to call right before an earlier
   # block's own exit 2 (queued wakes, standing-coverage,
   # stale-watcher-with-inflight) as well as from handback_check below.
-  local owed
-  owed="$(handback_owed)"
-  [ -n "$owed" ] || return 1
-  printf 'agent-crew: room(s) in HANDBACK - a roomchief reported back and is still waiting: %s. Demote it (bin/ac-teardown.sh <family>-chief) then close the room (bin/ac-room.sh close <family> <outcome>), or if you REFUSE the hand-back post HANDBACK-REFUSED: <why> (bin/ac-room.sh post <family> <actor> "HANDBACK-REFUSED: <why>") to keep the family open and the roomchief alive, before ending the turn.\n' "$owed" >&2
+  #
+  # hb_seen is deliberately NOT local: it is this invocation's one computation
+  # of handback_owed, and every trace-log call site downstream reads it back
+  # (via hb_field above) instead of paying for a second awk pass over the
+  # room set - see R2 in the row that added this.
+  hb_seen="$(handback_owed)"
+  [ -n "$hb_seen" ] || return 1
+  printf 'agent-crew: room(s) in HANDBACK - a roomchief reported back and is still waiting: %s. Demote it (bin/ac-teardown.sh <family>-chief) then close the room (bin/ac-room.sh close <family> <outcome>), or if you REFUSE the hand-back post HANDBACK-REFUSED: <why> (bin/ac-room.sh post <family> <actor> "HANDBACK-REFUSED: <why>") to keep the family open and the roomchief alive, before ending the turn.\n' "$hb_seen" >&2
   return 0
 }
 
@@ -308,8 +337,9 @@ handback_check() {
   # three earlier exit-2 sites report the SAME state via handback_note above
   # instead of waiting for this call, which is what makes the state reachable
   # on a busy fleet too - see the HANDBACK header block for why.
-  handback_note && exit 2
-  return 0
+  handback_note || return 0
+  ac_hook_trace turnend-guard "verdict=blocked reason=handback-pending scope=${scope:-fleet} queued=${queued_word:-n/a} inflight=${inflight:-n/a} age=${age:-n/a}s handback=$(hb_field)"
+  exit 2
 }
 
 parked_reminder() {
@@ -345,9 +375,13 @@ else
   queued=0
   { ac_wake_pending "$state_dir" '' || ac_wake_orphan_pending "$state_dir"; } 2>/dev/null && queued=1
 fi
+# queued_word: the same boolean as $queued, spelled for the trace log - R2's
+# "queued=yes|no is the honest field", never a count.
+queued_word=no; [ "$queued" = 1 ] && queued_word=yes
 if [ "$queued" = 1 ]; then
   printf 'agent-crew: queued wakes are pending. Run bin/ac-wake-drain.sh and handle them before ending the turn.\n' >&2
   handback_note
+  ac_hook_trace turnend-guard "verdict=blocked reason=queued-wakes scope=${scope:-fleet} queued=yes inflight=${inflight:-n/a} age=${age:-n/a}s handback=$(hb_field)"
   exit 2
 fi
 
@@ -361,10 +395,12 @@ if [ "$inflight" -eq 0 ]; then
     && [ "$age" -gt "${AC_GUARD_GRACE:-300}" ]; then
     printf 'agent-crew: remote orders are wired but nothing is polling - arm bin/ac-watch.sh as a background task (it stays up when idle).\n' >&2
     handback_note
+    ac_hook_trace turnend-guard "verdict=blocked reason=standing-coverage scope=${scope:-fleet} queued=no inflight=0 age=${age:-n/a}s handback=$(hb_field)"
     exit 2
   fi
   landing_receipt_check
   handback_check
+  ac_hook_trace turnend-guard "verdict=stood-aside reason=clean scope=${scope:-fleet} queued=no inflight=0 age=${age:-n/a}s handback=$(hb_field)"
   parked_reminder
   exit 0
 fi
@@ -373,8 +409,10 @@ if [ "$age" -gt "${AC_GUARD_GRACE:-300}" ]; then
   printf 'agent-crew: %s crewmate(s) in flight but %s. Arm bin/ac-watch.sh as a background task before ending the turn.\n' \
     "$inflight" "${beat_note:-the watcher beacon is stale (${age}s)}" >&2
   handback_note
+  ac_hook_trace turnend-guard "verdict=blocked reason=stale-watcher scope=${scope:-fleet} queued=no inflight=${inflight} age=${age:-n/a}s handback=$(hb_field)"
   exit 2
 fi
 landing_receipt_check
 handback_check
+ac_hook_trace turnend-guard "verdict=stood-aside reason=clean scope=${scope:-fleet} queued=no inflight=${inflight} age=${age:-n/a}s handback=$(hb_field)"
 exit 0

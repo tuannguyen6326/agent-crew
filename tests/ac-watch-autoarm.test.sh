@@ -79,32 +79,62 @@ run_hook() {
 
 inflight_meta() { printf 'kind=ship\nproject=p\n' >"$AC_HOME/state/$1.meta"; }
 
+# TRACE (state/.stop-hooks.log, stop-hooks-had-zero-effect-and-leave-no-trace):
+# every branch below that reaches a real verdict appends one durable,
+# file-only line - see last_trace/trace_lines below and ac_hook_trace in
+# ac-lib.sh (copied into $lab above, so the hook resolves the SAME function
+# it would in production).
+trace_log="$AC_HOME/state/.stop-hooks.log"
+last_trace() { tail -n 1 "$trace_log" 2>/dev/null; }
+trace_lines() { wc -l <"$trace_log" 2>/dev/null | tr -d ' '; }
+
 # The home must look like a primary checkout, or the scope test exits 0 first.
 git -C "$AC_HOME" init -q . 2>/dev/null || true
 git -C "$AC_HOME" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>/dev/null || true
 
 # --- nothing owed -----------------------------------------------------------
 # No crew, no remote transport: the hook must not arm anything at all.
+rm -f "$trace_log"
 stub_watch 'heartbeat'
 assert_eq "$(run_hook)" "0" "an idle fleet arms nothing"
+assert_eq "$(trace_lines)" "1" "A2/R4: autoarm's owed || exit 0 is traced - one line, not zero"
+assert_contains "$(last_trace)" "hook=watch-autoarm" "the line names the hook"
+assert_contains "$(last_trace)" "verdict=stood-aside" "and the nothing-owed stand-aside"
+assert_contains "$(last_trace)" "reason=nothing-owed" "...distinguishably from every other stand-aside"
 
 # A SOLO session (AC_SOLO=1) NEVER arms: supervision is the chief's obligation,
 # and a solo hook that took the watcher would steal the chief's wake channel.
+# It also never reaches a supervision verdict - untraced (see header TRACE).
 inflight_meta tsolo
 stub_watch 'report:tsolo'
+rm -f "$trace_log"
 rc=0
 ( cd "$AC_HOME" && printf '{}' | AC_SOLO=1 "$hook" >/dev/null 2>&1 ) || rc=$?
 assert_eq "$rc" "0" "a solo session declines silently even with crew in flight"
 assert_eq "$(calls)" "0" "...and never runs the watcher"
+assert_no_file "$trace_log" "a solo session owes no supervision, so it writes no trace line either"
 rm -f "$AC_HOME"/state/tsolo.meta
 assert_eq "$(calls)" "0" "and never calls the watcher"
 
 # --- an actionable close is translated into a wake --------------------------
 inflight_meta t1
 stub_watch 'report:t1'
+rm -f "$trace_log"
 assert_eq "$(run_hook)" "2" "an actionable close wakes the chief"
 assert_contains "$(cat "$TMP/hook.err")" "report:t1" "the reason reaches the chief verbatim"
 assert_contains "$(cat "$TMP/hook.err")" "ac-wake-drain.sh" "and it names the next move"
+assert_eq "$(trace_lines)" "2" "R5: a firing that enters the owed-loop traces TWICE - its start (a) and its end (b)"
+assert_contains "$(sed -n '1p' "$trace_log")" "verdict=armed" "(a) the START line: this firing decided to run the watch loop"
+assert_contains "$(sed -n '2p' "$trace_log")" "verdict=handed-back" "(b) the END line: how it closed"
+assert_contains "$(sed -n '2p' "$trace_log")" "reason=actionable-close" "...naming the branch"
+assert_contains "$(sed -n '2p' "$trace_log")" "detail=report:t1" "R1: the file may carry what stderr also carries - this is the FILE, never stdout/stderr itself"
+# R1: the trace write must not touch this invocation's own stdout/stderr - the
+# chief-facing reason must be byte-for-byte what it was before the trace
+# existed.
+assert_eq "$(cat "$TMP/hook.out")" "" "R1: stdout carries nothing (ac-watch-autoarm.sh never writes it)"
+assert_eq "$(cat "$TMP/hook.err")" \
+  "$(printf 'ac-watch-autoarm: report:t1\nac-watch-autoarm: drain it (bin/ac-wake-drain.sh); the watcher is re-armed automatically at your next turn end.\n')" \
+  "R1: stderr is exactly the hook's own two lines, nothing from the trace"
 
 # --- heartbeat re-arms SILENTLY, which is the whole point -------------------
 # Three heartbeats then a real signal: the chief is woken ONCE, at the signal,
@@ -116,8 +146,12 @@ assert_contains "$(cat "$TMP/hook.err")" "ask:t1" "only the actionable close is 
 case "$(cat "$TMP/hook.err")" in *heartbeat*) fail "a heartbeat must never reach the chief" ;; esac
 
 # --- another watcher already holds the singleton ----------------------------
+rm -f "$trace_log"
 stub_watch 'already running'
 assert_eq "$(run_hook)" "0" "the hook stands out of a live watcher's way"
+assert_eq "$(trace_lines)" "2" "A2: this firing also armed then stood aside - both traced"
+assert_contains "$(sed -n '2p' "$trace_log")" "verdict=stood-aside" "A2: stood-aside-because-a-watcher-is-live"
+assert_contains "$(sed -n '2p' "$trace_log")" "reason=already-running" "...distinguishably from nothing-owed"
 
 # --- a config-swap refusal is a LIVE watcher, not an absent one -------------
 # ac-watch.sh refuses a second arm carrying a DIFFERENT AC_WATCH_SKIP than the
@@ -142,14 +176,18 @@ assert_eq "$(run_hook)" "2" "a mute non-zero close still hands coverage back"
 assert_contains "$(cat "$TMP/hook.err")" "NOT covered" "and still says coverage is not in place"
 
 # --- a mute watcher is handed back, never spun on ---------------------------
+rm -f "$trace_log"
 stub_watch ''
 assert_eq "$(run_hook)" "2" "a watcher that closed with no reason hands back"
 assert_contains "$(cat "$TMP/hook.err")" "NOT covered" "and says coverage is not in place"
 assert_eq "$(calls)" "1" "it does not retry a mute watcher"
+assert_contains "$(last_trace)" "verdict=handed-back" "the mute close is traced as handed-back"
+assert_contains "$(last_trace)" "reason=no-reason-line" "...distinguishably from an actionable close"
 
 # --- the budget is bounded, and running out is REPORTED ---------------------
 # With crew still in flight, a spent budget must wake the chief rather than
 # let coverage lapse in silence.
+rm -f "$trace_log"
 stub_watch 'heartbeat'
 rc=0
 ( cd "$AC_HOME" && printf '{}' | AC_AUTOARM_BUDGET=0 "$hook" >/dev/null 2>"$TMP/hook.err" ) || rc=$?
@@ -157,6 +195,8 @@ assert_eq "$rc" "2" "a spent budget with crew in flight hands coverage back"
 assert_contains "$(cat "$TMP/hook.err")" "budget spent" "and says so"
 assert_contains "$(cat "$TMP/hook.err")" "crew still in flight" \
   "and names the crew-in-flight branch specifically"
+assert_contains "$(last_trace)" "verdict=handed-back" "the budget handback is traced too"
+assert_contains "$(last_trace)" "reason=budget-spent-crew-in-flight" "...naming the branch that actually fired"
 
 # --- the same exhaustion, but owed() fires on its OTHER branch --------------
 # owed() is also true with ZERO crew in flight when unscoped and standing
@@ -167,6 +207,7 @@ assert_contains "$(cat "$TMP/hook.err")" "crew still in flight" \
 rm -f "$AC_HOME"/state/*.meta
 printf '#!/usr/bin/env bash\n' >"$AC_HOME/config/remote-poll"
 chmod +x "$AC_HOME/config/remote-poll"
+rm -f "$trace_log"
 stub_watch 'heartbeat'
 rc=0
 ( cd "$AC_HOME" && printf '{}' | AC_AUTOARM_BUDGET=0 "$hook" >/dev/null 2>"$TMP/hook.err" ) || rc=$?
@@ -177,6 +218,8 @@ assert_contains "$(cat "$TMP/hook.err")" "remote-poll" \
 case "$(cat "$TMP/hook.err")" in
   *"crew still in flight"*) fail "no crew is in flight; the message must not claim there is" ;;
 esac
+assert_contains "$(last_trace)" "reason=budget-spent-remote-poll" \
+  "the trace also names the remote-poll branch specifically, not crew"
 rm -f "$AC_HOME/config/remote-poll"
 # Restore the crew-in-flight precondition the next test depends on - this
 # block's own `rm -f state/*.meta` above must not silently defang it.
@@ -193,8 +236,11 @@ printf 'heartbeat\n'
 EOF
 chmod +x "$lab/ac-watch.sh"
 : >"$TMP/watch.calls"
+rm -f "$trace_log"
 assert_eq "$(run_hook)" "0" "work finishing mid-loop ends the hook silently"
 assert_eq "$(cat "$TMP/hook.err")" "" "with nothing said to the chief"
+assert_contains "$(last_trace)" "verdict=stood-aside" "...but it is still traced: nothing left to supervise"
+assert_contains "$(last_trace)" "reason=work-finished" "...distinguishably from every other stand-aside"
 
 # --- the arm ENV is reconstructed per session kind ---------------------------
 # A chief arming by hand sets AC_WATCH_SKIP=<promoted families> on the FLEET
@@ -304,6 +350,36 @@ assert_eq "$(run_hook)" "0" "a marked arm still stands aside from a live predece
 assert_eq "$(cat "$TMP/hook.err")" "" "... and still says nothing to the chief"
 rm -f "$AC_HOME"/state/*.meta
 
+# --- not the lock holder: an unscoped session stands aside, traced ----------
+# The symmetric case of ac-turnend-guard.sh's read-only-lock exemption (R4
+# names that one explicitly as a stand-aside verdict that MUST be traced -
+# this hook's own analog gets the same treatment). A live FOREIGN pid holds
+# the lock - hold_open/hold_close (helpers.sh) stand in for it.
+rm -rf "$AC_HOME"/state/*.meta
+inflight_meta t8
+rm -f "$trace_log"
+hold_open aalockhold; aalockpid=$HOLD_PID
+printf 'pid=%s\nsince=now\n' "$aalockpid" >"$AC_HOME/state/.session-lock"
+run_hook >/dev/null
+hold_close aalockhold "$aalockpid"
+rm -f "$AC_HOME/state/.session-lock"
+assert_eq "$(trace_lines)" "1" "not-lock-holder is a single early stand-aside, never entering the owed-loop"
+assert_contains "$(last_trace)" "verdict=stood-aside" "...and it is traced"
+assert_contains "$(last_trace)" "reason=not-lock-holder" "...distinguishably from every other stand-aside"
+rm -f "$AC_HOME"/state/t8.meta
+
+# --- a scoped session whose family was demoted stands aside, traced ---------
+# rearm-outlives-its-own-family: the chief meta is the family's liveness: its
+# absence means this firing's own family is gone and it must not arm for
+# another family's crew.
+rm -f "$trace_log"
+rc=0
+( cd "$AC_HOME" && printf '{}' | AC_SCOPE=famghost "$hook" >/dev/null 2>&1 ) || rc=$?
+assert_eq "$rc" "0" "a scoped hook whose family has no live chief meta stands aside"
+assert_eq "$(trace_lines)" "1" "one line, traced before entering the owed-loop"
+assert_contains "$(last_trace)" "verdict=stood-aside" "...stood-aside"
+assert_contains "$(last_trace)" "reason=family-demoted" "...distinguishably named"
+
 # --- scope: a crewmate's linked worktree is never armed from ----------------
 inflight_meta t2
 stub_watch 'report:t2'
@@ -313,19 +389,27 @@ if [ -d "$linked" ]; then
   rc=0
   ( cd "$linked" && printf '{}' | AC_HOME="$linked" "$hook" >/dev/null 2>&1 ) || rc=$?
   assert_eq "$rc" "0" "a linked worktree (crewmate) never arms the fleet watcher"
+  assert_no_file "$linked/state/.stop-hooks.log" "R4: a linked worktree must never write a trace line"
 fi
 
 # --- a crewdeputy home is left to its own fleet -----------------------------
+rm -f "$trace_log"
 touch "$AC_HOME/.ac-crewdeputy-home"
 assert_eq "$(run_hook)" "0" "a crewdeputy home is out of scope"
+assert_no_file "$trace_log" "R4: a crewdeputy home must never write a trace line"
 rm -f "$AC_HOME/.ac-crewdeputy-home"
 
 # --- fail open: a broken dependency must never wedge the harness ------------
+rm -f "$trace_log"
 mv "$lab/ac-watch.sh" "$lab/ac-watch.sh.away"
 assert_eq "$(run_hook)" "2" "a missing watcher is reported, not swallowed"
+assert_contains "$(last_trace)" "verdict=handed-back" \
+  "A5: a broken dependency is still traceable, and never changes the hook's own verdict"
 mv "$lab/ac-watch.sh.away" "$lab/ac-watch.sh"
+rm -f "$trace_log"
 mv "$lab/ac-lib.sh" "$lab/ac-lib.sh.away"
 assert_eq "$(run_hook)" "0" "a missing ac-lib.sh fails OPEN"
+assert_no_file "$trace_log" "R4: nothing can trace without ac-lib.sh - the honest floor"
 mv "$lab/ac-lib.sh.away" "$lab/ac-lib.sh"
 
 pass
