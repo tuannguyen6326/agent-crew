@@ -40,6 +40,17 @@ export AC_SEND_SETTLE=0
 # The startup-dialog sequence polls an UNOBSERVABLE pane to its budget; a
 # fake backend that models neither identity nor dialog must not cost 15s.
 export AC_STARTUP_DIALOG_BUDGET=2
+# Same hermetic rule for the claude-transcript ARRIVAL probe (ac-lib.sh
+# ac_claude_transcript_root): unset, a claude-harness spawn under the fake
+# backend would glob the OPERATOR's real ~/.claude/projects looking for a
+# session id the fake backend never actually ran - never a match, but still a
+# read of live data no test may depend on or leak into. An isolated, always-
+# empty root makes every such spawn resolve UNOBSERVABLE deterministically
+# (tests/ac-arrival.test.sh and tests/ac-spawn-kickoff-arrival.test.sh own
+# that contract); a test proving CONFIRMED/REFUTED arrival seeds a transcript
+# under this same root.
+export AC_CLAUDE_TRANSCRIPT_ROOT="$TMP/claude-projects"
+mkdir -p "$AC_CLAUDE_TRANSCRIPT_ROOT"
 # Hermetic scope, too: every roomchief session runs with AC_SCOPE (and often
 # AC_WATCH_ONLY) exported, and scope changes what the scripts under test route,
 # watch and refuse - so an inherited scope reds the suite for exactly the

@@ -41,6 +41,12 @@ assert_contains "$(cat "$(fake_pane_buf ready1)")" \
   "kickoff order at" \
   "the kickoff pointer reaches the transcript once the composer surface is confirmed ready - not before"
 "$BIN/ac-teardown.sh" ready1 --force >/dev/null 2>&1
+# ready1's own claude kickoff also published an arrival-unverifiable wake (no
+# transcript exists under the isolated AC_CLAUDE_TRANSCRIPT_ROOT for it - this
+# file is not testing arrival, tests/ac-spawn-kickoff-arrival.test.sh owns
+# that contract) - clear it so it cannot pollute the later scenarios' own
+# wake-count assertions below.
+rm -rf "$AC_HOME/state/.wake-spool"
 
 # --- a composer that never becomes ready: FAILS LOUDLY, nothing typed --------
 # The harness is genuinely UP the whole time (backend_harness_up stays 0 - the

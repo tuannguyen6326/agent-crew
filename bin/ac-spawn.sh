@@ -897,12 +897,40 @@ kickoff_unverified() {
   # like a working one until somebody happened to peek. Every fail-open
   # point stamps the status log with its OWN reason; the wake is published
   # ONCE per spawn (kickoff_unverified_waked), best-effort - a chief is
-  # TOLD, never left to discover.
-  ac_status_append "$1" "warn: kickoff $2 - delivery unverified; peek (bin/ac-peek.sh $1) and resubmit with bin/ac-send.sh $1 --key Enter if the pane sits idle"
+  # TOLD, never left to discover. The status write is best-effort too, same
+  # as the wake below: this is itself a fail-open notifier, called from
+  # every capability-less-harness spawn now (not only an exceptional probe
+  # failure), so a broken .status path (a stale directory, a permissions
+  # wedge) must never abort the delivery it is only trying to ANNOUNCE.
+  ac_status_append "$1" "warn: kickoff $2 - delivery unverified; peek (bin/ac-peek.sh $1) and resubmit with bin/ac-send.sh $1 --key Enter if the pane sits idle" || true
   if [ "${kickoff_unverified_waked:-0}" = 0 ]; then
     kickoff_unverified_waked=1
     ac_wake_publish "$(ac_state_dir)" "${AC_SCOPE:-}" kickoff-unverified "$1" "kickoff $2 - delivery unverified" 2>/dev/null || true
   fi
+}
+
+kickoff_arrival_check() {
+  # kickoff_arrival_check <id> <harness> <session-id> <expected-text> -
+  # establishes ARRIVAL beyond kickoff_acked's submit-only evidence (header:
+  # kickoff-prompt delivery; the measured incident this closes). A harness
+  # with no capability, or one whose session id/transcript this fleet cannot
+  # resolve, is told so on the SAME durable channel as every other fail-open
+  # point here (kickoff_unverified) - never a second mechanism, and never a
+  # refusal: these gates' fail-open design is deliberate (refusing here would
+  # ground the fleet on a herdr hiccup). ac_arrival_capable/ac_arrival_wait
+  # are the shared claude-transcript primitives (ac-lib.sh header).
+  local kkid="$1" kharness="$2" ksid="$3" kexpected="$4" arc=0
+  if ! ac_arrival_capable "$kharness"; then
+    kickoff_unverified "$kkid" "arrival unverifiable ($kharness writes no session transcript this fleet can read)"
+    return 0
+  fi
+  ac_arrival_wait "$ksid" "$kexpected" || arc=$?
+  case "$arc" in
+    0) ;;
+    1) ac_warn "the kickoff prompt ARRIVED WRONG at $(backend_target "$kkid") - the session transcript's last typed turn does not match what was sent (peek it: bin/ac-peek.sh $kkid)"
+       kickoff_unverified "$kkid" "arrived wrong (the session transcript's last typed turn does not match what was sent)" ;;
+    *) kickoff_unverified "$kkid" "arrival unverifiable (no session id, no resolvable transcript, or the transcript wrote no typed turn yet)" ;;
+  esac
 }
 
 kickoff_wait_input_ready() {
@@ -971,7 +999,9 @@ deliver_kickoff() {
   # optionally flip the claude session into the ultracode preset,
   # then write the kickoff prompt to <task-dir>/kickoff.md and type a SHORT
   # pointer line, acknowledgement-checked via
-  # kickoff_acked, and VERIFY the harness survived it
+  # kickoff_acked, ARRIVAL-checked via kickoff_arrival_check (a confirmed
+  # SUBMIT is not a confirmed ARRIVAL - the measured incident this closes),
+  # and VERIFY the harness survived it
   # (header: kickoff-prompt delivery; a lost line ends in a loud
   # warning naming the manual fallback, a DEAD pane kills the spawn - the
   # came-up gate below, the composer-ready gate after it, and the re-check
@@ -980,8 +1010,11 @@ deliver_kickoff() {
   # template is emitted verbatim and gets neither --effort nor the slash line
   # (same contract as build_launch), while a --resume always uses the built-in
   # line so it still gets it. Reads globals $settle, $ultracode,
-  # $ultracode_settle, $resume_sid.
-  local kid="$1" kharness="$2" kprompt="$3" up=0 kickoff_file
+  # $ultracode_settle, $resume_sid, $launch (launch_session_id "$launch" is
+  # this spawn's claude session id, when one was pinned - the meta's own
+  # session_id is written only AFTER this function returns, so it cannot be
+  # the source here).
+  local kid="$1" kharness="$2" kprompt="$3" up=0 kickoff_file kickoff_pointer
   kickoff_unverified_waked=0
   sleep "$settle"
   # THE STARTUP-DIALOG SEQUENCE (header: kickoff-prompt delivery;
@@ -1038,7 +1071,10 @@ $(backend_capture "$kid" 15)"
   kickoff_file="$(ac_task_dir "$kid")/kickoff.md"
   mkdir -p "$(dirname "$kickoff_file")"
   printf '%s\n' "$kprompt" >"$kickoff_file"
-  if ! kickoff_acked "$kid" "Read and follow your kickoff order at $kickoff_file NOW - it is this session's contract. Start by reading that file in full."; then
+  kickoff_pointer="Read and follow your kickoff order at $kickoff_file NOW - it is this session's contract. Start by reading that file in full."
+  if kickoff_acked "$kid" "$kickoff_pointer"; then
+    kickoff_arrival_check "$kid" "$kharness" "$(launch_session_id "$launch")" "$kickoff_pointer"
+  else
     printf 'WARNING: kickoff pointer NOT acknowledged by %s - it may sit unsubmitted in the composer; peek (bin/ac-peek.sh %s), then resubmit manually with bin/ac-send.sh %s --key Enter (the kickoff itself is durable at %s)\n' \
       "$(backend_target "$kid")" "$kid" "$kid" "$kickoff_file" >&2
     kickoff_unverified "$kid" "pointer not acknowledged (may sit unsubmitted in the composer)"
