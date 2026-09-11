@@ -145,6 +145,26 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# SCOUT LANE (--kind codereview-scout): a one-shot observer. It publishes no
+# verifier meta and must never wait for one - the lanes run BEFORE the judge
+# pane exists, which is exactly the ordering this branch pins.
+if [ "$kind" = codereview-scout ]; then
+  printf 'pScout-%s tScout\n' "$$" >"$pane_file"
+  s_tr="$VERIFY_SCOUT_DIR/transcript-$$.jsonl"
+  case "${VERIFY_SCOUT_MODE:-ok}" in
+    drop)   printf '{"event":"done","status":"timeout","pane":"pScout-%s"}\n' "$$"; exit 0 ;;
+    dirty)  printf 'scout wrote here\n' >"$cwd/scout-litter.txt" ;;
+    garbage) printf '{"text":"no json object here"}\n' >"$s_tr"
+             printf '{"event":"done","status":"ok","transcript":"%s","source":"command","pane":"pScout-%s"}\n' "$s_tr" "$$"
+             exit 0 ;;
+  esac
+  # the one-message jsonl shape ac_transcript_final parses
+  obs="$(jq -cn --arg f "$(basename "$prompt")" \
+    '{observations:[{file:"file.txt",line:1,what:"the lane saw something",evidence:"line 1"}]}')"
+  jq -cn --arg t "$obs" '{type:"assistant",message:{content:[{type:"text",text:$t}]}}' >"$s_tr"
+  printf '{"event":"done","status":"ok","transcript":"%s","source":"command","pane":"pScout-%s"}\n' "$s_tr" "$$"
+  exit 0
+fi
 printf 'pVerify tVerify\n' >"$pane_file"
 meta="$AC_FLEET_STATE/$VERIFY_EXPECT_ID.meta"
 i=0
@@ -1533,5 +1553,91 @@ assert_eq "$(jq -r '.findings[] | select(.id=="A2") | .decider' "$dec_out")" "pr
 assert_eq "$(jq -r '.findings[] | select(.id=="A2") | .impact | length' "$dec_out")" "2" "impact lines ride through, one per option"
 assert_eq "$(jq -r '.findings[] | select(.id=="A3") | has("axis"), has("decider"), has("impact")' "$dec_out" | paste -sd, -)" "false,false,false" \
   "a malformed axis, blank decider and mismatched impact are dropped, not defaulted"
+
+# --- SCOUT LANES: N observers, one judge, one lease --------------------------
+# The fan-out runs read-only over the SAME worktree the round already holds
+# (no second lease), mints nothing, and leaves the judge's verdict machinery
+# untouched. Absent config is OFF, which every case above has been proving by
+# construction - the single-reviewer path never saw a lane.
+export VERIFY_SCOUT_DIR="$TMP/scouts"
+mkdir -p "$VERIFY_SCOUT_DIR"
+scout_family=flow-v2-scout
+export VERIFY_EXPECT_ID="$scout_family-verify-codereview" VERIFY_REF="$target"
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [{"when": "anything", "use": {"harness": "claude"}}],
+  "panes": {
+    "codereview-scout": {
+      "lanes": [
+        {"harness": "codex", "model": "gpt-5.6-sol"},
+        {"harness": "opencode", "model": "qwen3.7-plus"}
+      ]
+    }
+  }
+}
+EOF
+scout_out="$TMP/scout-verdict.json"
+scout_gets_before="$(grep -c '^get ' "$VERIFY_TREE_LOG" 2>/dev/null || echo 0)"
+"$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >"$TMP/scout-run.log" 2>&1 \
+  || fail "a round with scout lanes still produces the judge's verdict: $(tail -3 "$TMP/scout-run.log")"
+sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
+[ -d "$sdir" ] || fail "the round keeps its scout evidence at $sdir"
+assert_eq "$(wc -l <"$sdir/lanes.tsv" | tr -d ' ')" "2" "one ledger row per configured lane"
+assert_eq "$(awk -F'\t' '$2=="ok"' "$sdir/lanes.tsv" | wc -l | tr -d ' ')" "2" "both lanes came back ok"
+assert_file "$sdir/1.json" "lane 1 stored its observations"
+assert_eq "$(jq -r '.observations[0].file' "$sdir/1.json")" "file.txt" "the observation survives the harvest"
+assert_file "$sdir/prompt.md" "the lanes share one prompt"
+assert_contains "$(cat "$sdir/prompt.md")" "You are NOT the reviewer" "the scout prompt refuses the reviewer role"
+assert_contains "$(cat "$sdir/prompt.md")" "READ ONLY" "...and forbids writing"
+# The judge still owns the verdict, unchanged.
+assert_eq "$(jq -r .verdict "$scout_out")" "pass" "the judge's verdict is what the round returns"
+# NO SECOND LEASE - the whole point of running the lanes in the round's own
+# worktree. Counted against the tree driver's log, which records every `get`.
+assert_eq "$(( $(grep -c '^get ' "$VERIFY_TREE_LOG" 2>/dev/null || echo 0) - scout_gets_before ))" "1" \
+  "the whole fan-out took exactly the round's own lease, and no other"
+assert_no_file "$sdir/1.handle" "a harvested lane leaves no pane handle behind"
+
+# A lane that drops out is RECORDED, never silently absent - a perspective the
+# caller paid for and did not get must be visible.
+rm -rf "$AC_HOME/data/$scout_family"
+VERIFY_SCOUT_MODE=drop "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
+  || fail "a dropped lane must not fail the round"
+sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
+assert_eq "$(awk -F'\t' '$2=="timeout"' "$sdir/lanes.tsv" | wc -l | tr -d ' ')" "2" "a timed-out lane is recorded by its status"
+assert_no_file "$sdir/1.json" "...and stores no observations"
+
+# A lane whose output is not an observations object is a dropped lane too -
+# the harvest refuses to guess at prose.
+rm -rf "$AC_HOME/data/$scout_family"
+VERIFY_SCOUT_MODE=garbage "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
+  || fail "an unparseable lane must not fail the round"
+sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
+assert_eq "$(awk -F'\t' '$3=="-"' "$sdir/lanes.tsv" | wc -l | tr -d ' ')" "2" "an unparseable lane stores no count"
+
+# THE TREE THE JUDGE READS IS THE REF. A lane that writes into the worktree is
+# both a contract violation and a corrupted input, so the round restores it.
+rm -rf "$AC_HOME/data/$scout_family"
+VERIFY_SCOUT_MODE=dirty "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
+  || fail "a dirtying lane must not fail the round"
+sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
+assert_file "$sdir/tree-after" "the worktree is inspected after the lanes"
+assert_contains "$(cat "$sdir/tree-after")" "scout-litter.txt" "the dirtying lane is caught by inspection, not by trust"
+
+# A misconfigured fan-out degrades to one reviewer instead of grounding the
+# round: a duplicate lane is refused by the resolver, and the round runs on.
+rm -rf "$AC_HOME/data/$scout_family"
+jq '.panes["codereview-scout"].lanes = [{"harness":"codex","model":"m"},{"harness":"codex","model":"m"}]' \
+  "$AC_HOME/config/crew-dispatch.json" >"$TMP/d.json" && mv "$TMP/d.json" "$AC_HOME/config/crew-dispatch.json"
+"$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
+  || fail "an unresolvable lane set must degrade to the judge alone, not fail the round"
+assert_eq "$(jq -r .verdict "$scout_out")" "pass" "...and the judge's verdict still lands"
+sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
+[ ! -d "$sdir" ] || fail "no lanes ran, so no scout evidence dir is minted"
+rm -f "$AC_HOME/config/crew-dispatch.json"
 
 pass
