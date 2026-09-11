@@ -1741,6 +1741,50 @@ test("applyDispatchWrite writes canonical JSON + a receipt for a valid document"
   }
 });
 
+test("applyDispatchWrite accepts a lanes pane and holds the same rules the bash resolver does", () => {
+  const home = mkdtempSync(`${tmpdir()}/dash-lanes-`);
+  try {
+    mkdirSync(`${home}/config`, { recursive: true });
+    const base = { rules: [{ when: "anything", use: { harness: "claude" } }] };
+    const withLanes = (lanes: any) =>
+      JSON.stringify({ ...base, panes: { "codereview-scout": { lanes } } });
+
+    // the shape the dashboard must accept: run every profile listed
+    expect(applyDispatchWrite(home, withLanes([
+      { harness: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
+      { harness: "opencode", model: "qwen3.7-plus" },
+    ])).status).toBe(200);
+
+    // empty / non-array / laneless profile
+    expect(applyDispatchWrite(home, withLanes([])).status).toBe(400);
+    expect(applyDispatchWrite(home, withLanes({ harness: "codex" })).status).toBe(400);
+    expect(applyDispatchWrite(home, withLanes([{ model: "opus" }])).status).toBe(400);
+
+    // two lanes on the same harness AND model buy one perspective twice
+    const dup = applyDispatchWrite(home, withLanes([
+      { harness: "codex", model: "gpt-5.6-sol" },
+      { harness: "codex", model: "gpt-5.6-sol" },
+    ]));
+    expect(dup.status).toBe(400);
+    expect(String((dup.body as any).error)).toContain("duplicates an earlier lane");
+    // ...the same harness at a different model is two real perspectives
+    expect(applyDispatchWrite(home, withLanes([
+      { harness: "codex", model: "gpt-5.6-sol" },
+      { harness: "codex", model: "gpt-5.5" },
+    ])).status).toBe(200);
+
+    // mixing lanes with the other two shapes is the caller asking for both
+    const mixed = applyDispatchWrite(home, JSON.stringify({
+      ...base,
+      panes: { "codereview-scout": { lanes: [{ harness: "codex" }], harness: "claude" } },
+    }));
+    expect(mixed.status).toBe(400);
+    expect(String((mixed.body as any).error)).toContain("cannot mix lanes");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("readDispatch surfaces the `panes` block in file order (the UI's pane cards)", () => {
   const home = tmpHome();
   try {

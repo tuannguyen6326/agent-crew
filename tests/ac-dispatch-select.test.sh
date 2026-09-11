@@ -263,4 +263,71 @@ repo="$(make_repo alpha)"
 out="$("$BIN/ac-spawn.sh" t1 "$repo" 2>&1)" && fail "spawn must refuse without --harness under dispatch"
 assert_contains "$out" "ac-dispatch-select" "refusal points at the resolver"
 
+# --- LANES: a kind whose entry runs EVERY profile, not one of them ----------
+# The third pane shape. A routed `rules[]` picks ONE profile by judgment and a
+# flat entry IS one; `lanes` is the opposite instruction - run all of them,
+# in the order written - which is why it gets its own key rather than reusing
+# the `use[]` list form that means round-robin at the top level.
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [{"when": "anything", "use": {"harness": "grok"}}],
+  "panes": {
+    "codereview": {"harness": "claude", "model": "opus"},
+    "codereview-scout": {
+      "lanes": [
+        {"harness": "codex", "model": "gpt-5.6-sol", "effort": "xhigh"},
+        {"harness": "opencode", "model": "qwen3.7-plus"},
+        {"harness": "claude", "model": "claude-sonnet-5"}
+      ]
+    }
+  }
+}
+EOF
+lanes="$("$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes)"
+assert_eq "$(printf '%s\n' "$lanes" | wc -l | tr -d ' ')" "3" "one line per lane"
+assert_eq "$(printf '%s\n' "$lanes" | sed -n 1p)" "harness=codex model=gpt-5.6-sol effort=xhigh" "lane 1 resolves its whole triple"
+assert_eq "$(printf '%s\n' "$lanes" | sed -n 2p)" "harness=opencode model=qwen3.7-plus effort=" "lane 2 keeps effort empty"
+assert_eq "$(printf '%s\n' "$lanes" | sed -n 3p)" "harness=claude model=claude-sonnet-5 effort=" "lanes come back in the order written"
+
+# ABSENT stays the OFF switch, exactly as for every other kind: no block, no
+# entry, nothing printed, exit 0. Deleting the entry disables the lanes.
+rc=0; out="$("$BIN/ac-dispatch-select.sh" --pane learning --lanes 2>/dev/null)" || rc=$?
+assert_eq "$rc" "0" "a kind with no entry exits 0 under --lanes"
+assert_eq "$out" "" "...and prints nothing - absent is the off switch"
+
+# A lanes entry has no single profile to resolve, so the judgment-free form
+# must refuse rather than pick one.
+assert_fails_with "lanes" -- "$BIN/ac-dispatch-select.sh" --pane codereview-scout
+# ...and the converse: --lanes on a flat entry is a caller asking the wrong
+# question of the wrong kind.
+assert_fails_with "lanes" -- "$BIN/ac-dispatch-select.sh" --pane codereview --lanes
+
+# Fail-closed schema, same posture as every other pane shape: a misconfigured
+# entry dies rather than degrading to something that launches.
+lanes_cfg() { jq ".panes[\"codereview-scout\"] = $1" "$AC_HOME/config/crew-dispatch.json" >"$TMP/d.json" && mv "$TMP/d.json" "$AC_HOME/config/crew-dispatch.json"; }
+lanes_cfg '{"lanes": []}'
+assert_fails "$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes
+lanes_cfg '{"lanes": [{"model": "opus"}]}'
+assert_fails "$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes
+lanes_cfg '{"lanes": {"harness": "codex"}}'
+assert_fails "$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes
+lanes_cfg '{"lanes": [{"harness": "codex"}], "harness": "claude"}'
+assert_fails_with "cannot mix" -- "$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes
+lanes_cfg '{"lanes": [{"harness": "codex"}], "rules": [{"when": "x", "why": "y", "use": {"harness": "claude"}}]}'
+assert_fails_with "cannot mix" -- "$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes
+
+# TWO LANES THAT ARE THE SAME LANE: paying twice for one blind spot is a
+# configuration mistake, and the resolver is where it is cheapest to catch.
+lanes_cfg '{"lanes": [{"harness": "codex", "model": "gpt-5.6-sol"}, {"harness": "codex", "model": "gpt-5.6-sol"}]}'
+# Named, not just detected: the refusal says WHICH lane is doubled, and
+# asserting the name is also what keeps a bash error whose text happens to
+# contain "duplicate lane" from passing as this check.
+assert_fails_with "duplicate lane (codex model gpt-5.6-sol)" -- "$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes
+lanes_cfg '{"lanes": [{"harness": "codex"}, {"harness": "codex"}]}'
+assert_fails_with "duplicate lane (codex)" -- "$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes
+# The same harness at a DIFFERENT model is two real perspectives, and passes.
+lanes_cfg '{"lanes": [{"harness": "codex", "model": "gpt-5.6-sol"}, {"harness": "codex", "model": "gpt-5.5"}]}'
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes | wc -l | tr -d ' ')" "2" \
+  "same harness, different model is not a duplicate"
+
 pass

@@ -11,6 +11,7 @@
 #   ac-dispatch-select.sh [--rule <n>]    # resolve rule n (1-based);
 #                                         # no --rule = the config's default
 #   ac-dispatch-select.sh --pane <kind>   # resolve .panes[<kind>] by KEY
+#   ac-dispatch-select.sh --pane <kind> --lanes   # one line per lane, in order
 #   ac-dispatch-select.sh --pane <qa|gate|codereview|roomchief> --list
 #   ac-dispatch-select.sh --pane <qa|gate|codereview|roomchief> --rule <number|default>
 #   ac-dispatch-select.sh --pane qa --receipt <number|default>
@@ -47,6 +48,19 @@
 # when/why, atomic use, and - for the three mandatory-default kinds - a valid
 # `default`), dies rather than falling back: a misconfigured profile is not an
 # absent one, and ignoring it would launch something other than what it says.
+#
+# THE THIRD PANE SHAPE - `lanes` (--lanes). A flat entry IS one profile and a
+# routed entry PICKS one by judgment; a `lanes` entry says run EVERY profile it
+# lists, in the order written, and --lanes prints one output line per lane. It
+# is a separate key rather than the top level's `use[]` list form because that
+# form means the OPPOSITE - round-robin, one profile per spawn - and a caller
+# confusing them would run one reviewer where it asked for three. The two forms
+# never meet: a lanes entry mixed with static or routed keys is refused, asking
+# a lanes entry for a single profile is refused, and asking --lanes of a
+# non-lanes entry is refused. Two lanes on the same harness AND model are
+# refused by name: that is one perspective paid for twice. ABSENT keeps its
+# meaning - a kind with no entry prints nothing and exits 0, so deleting the
+# entry is how the caller's fan-out is switched off.
 #
 # Output: `harness=<h> model=<m> effort=<e>` (model/effort may be empty).
 # A rule whose `use` is a LIST alternates round-robin between its profiles
@@ -264,6 +278,46 @@ case "${1:-}" in
     jq -e . "$cfg" >/dev/null 2>&1 || ac_die "invalid JSON: $cfg"
     pane="$(jq -c --arg k "$k" '.panes[$k] // empty' "$cfg")"
     [ -n "$pane" ] || exit 0
+    # LANES - the third pane shape. A flat entry IS one profile and a routed
+    # entry PICKS one by judgment; `lanes` says run EVERY profile listed, in
+    # order. It gets its own key rather than reusing the top level's `use[]`
+    # list form precisely because that form means the opposite (round-robin,
+    # one per spawn), and a caller that confused the two would run one
+    # reviewer where it asked for three, or three where it asked for one.
+    # Absent stays the off switch here as everywhere: no entry, no output.
+    has_lanes=0
+    jq -e 'has("lanes")' <<<"$pane" >/dev/null 2>&1 && has_lanes=1
+    if [ "${3:-}" = --lanes ]; then
+      [ "$#" = 3 ] || ac_die "usage: ac-dispatch-select.sh --pane <kind> --lanes"
+      [ "$has_lanes" = 1 ] \
+        || ac_die "panes.$k declares no lanes - --lanes is for a kind that runs EVERY profile it lists; this entry resolves as a single profile"
+      jq -e '(has("harness") or has("model") or has("effort") or has("rules")) | not' <<<"$pane" >/dev/null 2>&1 \
+        || ac_die "panes.$k cannot mix lanes with static or routed keys"
+      jq -e '(.lanes | type) == "array" and (.lanes | length) > 0' <<<"$pane" >/dev/null 2>&1 \
+        || ac_die "panes.$k.lanes must be a non-empty array"
+      jq -e 'all(.lanes[];
+               type == "object"
+               and (.harness | type) == "string"
+               and ((.harness | gsub("^\\s+|\\s+$"; "")) | length) > 0)' <<<"$pane" >/dev/null 2>&1 \
+        || ac_die "every lane of panes.$k needs a harness"
+      # Two lanes that resolve to the same harness AND model are one lane paid
+      # for twice - a configuration mistake, and this is the cheapest place to
+      # catch it. The same harness at a DIFFERENT model is two perspectives.
+      dup="$(jq -r '[.lanes[] | {h: .harness, m: (.model // "")}]
+                    | group_by(.h + "\u0000" + .m)
+                    | map(select(length > 1) | .[0])
+                    | .[0] // empty
+                    | .h + (if .m == "" then "" else " model " + .m end)' <<<"$pane")"
+      [ -z "$dup" ] \
+        || ac_die "panes.$k has a duplicate lane ($dup) - two lanes on the same harness and model buy one perspective twice"
+      while IFS= read -r lane; do
+        [ -n "$lane" ] || continue
+        emit "$lane"
+      done < <(jq -c '.lanes[]' <<<"$pane")
+      exit 0
+    fi
+    [ "$has_lanes" = 0 ] \
+      || ac_die "panes.$k declares lanes and has no single profile to resolve - ask for them with: ac-dispatch-select.sh --pane $k --lanes"
     if [ "$k" = qa ]; then
       qa_pane_validate
       case "${3:-}" in

@@ -1619,6 +1619,30 @@ export function applyDispatchWrite(homePath: string, raw: string): ConfigWriteRe
     if (!parsed.panes || typeof parsed.panes !== "object" || Array.isArray(parsed.panes))
       return { status: 400, body: { error: "`panes` must be an object" } };
     for (const [kind, value] of Object.entries(parsed.panes) as [string, any][]) {
+      // LANES - the third pane shape, and the one the bash resolver reads with
+      // `--pane <kind> --lanes`. A flat entry IS one profile, a routed entry
+      // PICKS one; lanes says run every profile listed. Validated here to the
+      // same rules ac-dispatch-select.sh enforces, because a document this
+      // editor accepts and that resolver refuses is a fleet whose dashboard
+      // says it is configured while every run dies.
+      if (value && typeof value === "object" && !Array.isArray(value)
+          && Object.prototype.hasOwnProperty.call(value, "lanes")) {
+        if ("harness" in value || "model" in value || "effort" in value || "rules" in value)
+          return { status: 400, body: { error: `panes.${kind} cannot mix lanes with static or routed keys` } };
+        if (!Array.isArray(value.lanes) || value.lanes.length === 0)
+          return { status: 400, body: { error: `panes.${kind}.lanes must be a non-empty array` } };
+        const seen = new Set<string>();
+        for (let i = 0; i < value.lanes.length; i++) {
+          const err = profileError(value.lanes[i], `panes.${kind} lane ${i + 1}`);
+          if (err) return { status: 400, body: { error: err } };
+          // Two lanes on the same harness AND model buy one perspective twice.
+          const key = `${value.lanes[i].harness}\u0000${value.lanes[i].model ?? ""}`;
+          if (seen.has(key))
+            return { status: 400, body: { error: `panes.${kind} lane ${i + 1} duplicates an earlier lane (same harness and model)` } };
+          seen.add(key);
+        }
+        continue;
+      }
       if (ROUTED_PANE_KINDS.has(kind) && value && typeof value === "object" && !Array.isArray(value)
           && Object.prototype.hasOwnProperty.call(value, "rules")) {
         if ("harness" in value || "model" in value || "effort" in value)
