@@ -23,6 +23,31 @@ test first). If the change genuinely has no runtime surface to test, say so
 explicitly instead of skipping silently. The validation pipeline's test step
 is a gate, not a substitute for writing tests as you go.
 
+## A bug fix starts from its root cause, never from its symptom
+
+No fix before you can state the root cause in ONE sentence that cites a
+real artifact - a `file:line`, a stack frame, a log line, a test output.
+"Probably X" is not a root cause, it is a stop sign. A TypeError at line 50
+is a symptom; the null that left line 12 is the cause. Before touching code,
+capture the baseline verbatim (the exact error, test output or
+expected-vs-actual) and reproduce it - the Red step above IS that
+reproduction, and the test must fail without the fix and pass with it.
+When no harness can hold the test, say so with a label the report carries
+(`NO_TEST_HARNESS` plus the manual verification you ran, or
+`LIVE_SYSTEM_REQUIRED` plus the code-path trace with concrete values).
+
+Two failed hypotheses end guessing: instrument the suspected call chain
+(every entry, branch and error catch; log decision VALUES - ids, flags,
+lengths - never "got here"), run it, read the run in order, and form the
+next hypothesis from what you observed. Instrumentation lands in the same
+diff, downgraded to debug level, never stripped. Three iterations with no
+progress signal (no test flipping, no new distinct error) is a hard stop:
+hand the trail back with `needs-decision:` instead of a fourth guess.
+
+A fix closes the CLASS, not the instance: the report names the class, the
+regression test that pins it, and any guard at the boundary the bad value
+crossed. A fix that reaches past five files asks the chief first.
+
 ## Do not over-engineer
 
 Change only what the brief requires, update only what your change makes
