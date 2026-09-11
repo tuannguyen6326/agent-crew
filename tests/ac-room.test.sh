@@ -983,4 +983,46 @@ assert_contains "$("$BIN/ac-room.sh" show depfam)" "] depfam-chief>" \
   "a family roomchief actor is untouched in a deputy home"
 rm -f "$AC_HOME/.ac-crewdeputy-home"
 
+# --- open (A2 / window-liveness contract, bin/ac-room.sh cmd_open) ------------
+# rc=0 must still focus a live roomchief and rc=1 must still say "gone" with
+# a teardown invite (A4 no-regression floor); rc=2/127 must NOT say "gone"
+# and must NOT invite a teardown of a roomchief that may be fully alive - the
+# WORST of the three sites this row closes (contract: ac-backend.sh WINDOW
+# LIVENESS; AGENTS.md section 7 - unobservable is "NOT a death and no work
+# is lost").
+seed_live_chief openfam
+
+# rc=0: a live chief window - open focuses it, unchanged.
+"$BIN/ac-room.sh" open openfam >/dev/null \
+  || fail "open must still focus a genuinely live roomchief (rc=0, A4)"
+
+# rc=1: the pane is genuinely gone - open must still say "gone" and invite a
+# teardown, exactly as today (A4 no-regression floor for the 1) branch).
+rm -f "$FAKE_HERDR/tabs/topenfam" "$FAKE_HERDR/panes/popenfam.buf"
+err="$("$BIN/ac-room.sh" open openfam 2>&1)" \
+  && fail "open must still refuse a genuinely gone roomchief window"
+assert_contains "$err" "roomchief window is gone" "a genuine rc=1 still says gone, as before"
+assert_contains "$err" "teardown openfam-chief" "a genuine rc=1 still invites a teardown, as before"
+
+# rc=2: an unreadable backend - THE REGRESSION this row closes.
+seed_live_chief openfam
+touch "$FAKE_HERDR/.unreachable"
+err="$("$BIN/ac-room.sh" open openfam 2>&1)" \
+  && fail "THE REGRESSION: open must refuse an unreadable backend (rc=2), never treat it as gone"
+rm -f "$FAKE_HERDR/.unreachable"
+assert_contains "$err" "BACKEND" "the rc=2 refusal names the BACKEND as unreadable, not the pane"
+case "$err" in *"is gone"*) fail "an unreadable backend must never be reported as gone" ;; esac
+case "$err" in *teardown*) fail "an unreadable backend must never invite a teardown of a possibly-live roomchief" ;; esac
+
+# ...and exit 127 (a driver failed to LOAD) refuses the SAME way - the real
+# production shape of a driver file that failed to load (ac_backend_route
+# dispatches per call to backend_${fn}_herdr, so a missing driver function
+# makes bash itself return 127 from the call being classified).
+make_loadfail_bin
+err="$("$LOADFAIL_BIN/ac-room.sh" open openfam 2>&1)" \
+  && fail "THE REGRESSION: open must refuse a 127 driver-load failure, never treat it as gone"
+assert_contains "$err" "BACKEND" "the 127 refusal names the BACKEND, same as rc=2"
+case "$err" in *"is gone"*) fail "a 127 driver failure must never be reported as gone" ;; esac
+case "$err" in *teardown*) fail "a 127 driver failure must never invite a teardown of a possibly-live roomchief" ;; esac
+
 pass

@@ -873,8 +873,9 @@ clone list (grammar owner: the `crewdeputy routing table` block in
 `bin/ac-lib.sh`; `bin/ac-deputy.sh validate` is the strict check). The
 session-start digest prints it IN FULL - `bin/ac-deputy.sh list`, contract in
 that script's header - with one liveness state per entry
-(`LIVE`/`DOWN`/`NOT-RUNNING`/`HOME-MISSING`) and the exact recover command on
-the recoverable ones, so routing knowledge and live ownership are deterministic
+(`LIVE`/`DOWN`/`UNOBSERVABLE`/`NOT-RUNNING`/`HOME-MISSING`) and the exact
+recover command on the recoverable ones, so routing knowledge and live
+ownership are deterministic
 after any restart, from disk alone. ABSENT and EMPTY are distinct states and
 both mean the same thing: no crewdeputies, so all work stays with the parent
 fleet - never a prompt to seed one.

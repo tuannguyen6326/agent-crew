@@ -1065,7 +1065,18 @@ reap_orphan_window() {
   # SAFETY in this header). No meta exists here (the duplicate-meta refusal
   # above dies on one), so a live window can only be that orphan; the KILL
   # OWNERSHIP PROOF still decides whether the tab really closes.
-  backend_window_alive "$id" || return 0
+  #
+  # THREE-STATE (contract: ac-backend.sh WINDOW LIVENESS): an unreadable
+  # backend (rc=2, or 127 from a driver that failed to load) is not "nothing
+  # to reap" - it is unknown, and proceeding would risk a second window
+  # beside a pane that may still be alive.
+  local alive_rc=0
+  backend_window_alive "$id" || alive_rc=$?
+  case "$alive_rc" in
+    0) ;;
+    1) return 0 ;;
+    *) ac_die "the BACKEND could not be READ for $id - whether $(backend_target "$id") still exists is UNKNOWN, so this is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself (herdr status server), then try again" ;;
+  esac
   ac_warn "reaping the orphan window of $id ($(backend_target "$id")): it carries no meta, so no fleet script could address it - an earlier spawn died before writing one"
   backend_kill_window "$id" || true
 }

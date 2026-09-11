@@ -713,6 +713,72 @@ case "$err" in *"already exists"*) fail "a 127 driver failure is not a window-al
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
 assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
 
+# reap_orphan_window (bin/ac-spawn.sh, called from the crewdeputy NON-recover
+# path): the SAME fail-OPEN as the ordinary crew/recover guards above, but a
+# DIFFERENT shape - it never captures alive_rc at all (`backend_window_alive
+# "$id" || return 0`), so EVERY non-zero code, 2 and 127 alike, reads as
+# "nothing to reap" and the caller proceeds straight to backend_window_new.
+# A fresh id (dep5) keeps this scenario isolated from dep1's recover-ladder
+# state above.
+dhome5="$("$BIN/ac-home-seed.sh" dep5 --no-projects 2>/dev/null)"
+mkdir -p "$AC_HOME/data/dep5"
+printf 'charter for dep5\n' >"$AC_HOME/data/dep5/brief.md"
+
+# rc=0 (a genuinely alive orphan): reap_orphan_window must still reap it and
+# let the spawn proceed - A4's no-regression floor for the 0) branch.
+printf 'pOR5 tOR5\n' >"$AC_HOME/state/.pane-dep5"
+printf 'pOR5 crew:dep5\n' >"$FAKE_HERDR/tabs/tOR5"; : >"$FAKE_HERDR/panes/pOR5.buf"
+: >"$FAKE_HERDR/log"
+"$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake >/dev/null 2>&1 \
+  || fail "a genuinely alive orphan (rc=0) must still be reaped so the spawn can proceed"
+assert_contains "$(cat "$FAKE_HERDR/log")" "tab close tOR5" "reap_orphan_window still kills a genuine orphan on rc=0"
+assert_file "$AC_HOME/state/dep5.meta" "the spawn proceeded to open its window after reaping"
+rm -f "$AC_HOME/state/dep5.meta"
+
+# rc=1 (a genuinely gone orphan, nothing to reap): the spawn must still
+# proceed quietly - A4's no-regression floor for the 1) branch. A handle with
+# no matching tab/pane is the fake herdr's "genuinely gone" shape.
+printf 'pOR5B tOR5B\n' >"$AC_HOME/state/.pane-dep5"
+: >"$FAKE_HERDR/log"
+"$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake >/dev/null 2>&1 \
+  || fail "a genuinely gone orphan (rc=1) must still let the spawn proceed"
+assert_eq "$(grep -c 'tab close' "$FAKE_HERDR/log" || true)" "0" "nothing to reap on a genuine rc=1 - no kill attempted"
+assert_file "$AC_HOME/state/dep5.meta" "the spawn proceeded normally on rc=1"
+rm -f "$AC_HOME/state/dep5.meta"
+
+# rc=2 (an unreadable backend): THE REGRESSION this row closes. Must NOT
+# proceed to backend_window_new - opening a second window beside a pane that
+# may still be alive (contract: ac-backend.sh WINDOW LIVENESS; AGENTS.md
+# section 7 - unobservable is "NOT a death and no work is lost"). Unlike the
+# isolated 127 fixture below, .pane-api-down ALSO blocks the downstream
+# kickoff-readiness pane reads, so the overall exit code/message are not this
+# guard's alone (measured: the pre-fix tree still exits nonzero here, just for
+# an unrelated "input surface did not become ready" reason) - the tab-create
+# COUNT is the unambiguous, single-purpose proof A1 asks for, checked first.
+printf 'pOR5C tOR5C\n' >"$AC_HOME/state/.pane-dep5"
+printf 'pOR5C crew:dep5\n' >"$FAKE_HERDR/tabs/tOR5C"; : >"$FAKE_HERDR/panes/pOR5C.buf"
+touch "$FAKE_HERDR/.pane-api-down"
+: >"$FAKE_HERDR/log"
+err="$("$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake 2>&1)" || true
+rm -f "$FAKE_HERDR/.pane-api-down"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
+  "THE REGRESSION: reap_orphan_window must refuse an unreadable backend (rc=2), never open a second window"
+assert_contains "$err" "could not be READ" "the rc=2 refusal blames the BACKEND, not the pane"
+assert_no_file "$AC_HOME/state/dep5.meta" "the refused spawn leaves no task in flight"
+
+# ...and exit 127 (a driver failed to LOAD) refuses the SAME way - the real
+# production shape of a driver file that failed to load (ac_backend_route
+# dispatches per call to backend_${fn}_herdr, so a missing driver function
+# makes bash itself return 127 from the call being classified).
+make_loadfail_bin
+: >"$FAKE_HERDR/log"
+err="$("$LOADFAIL_BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake 2>&1)" \
+  && fail "THE REGRESSION: reap_orphan_window must refuse a 127 driver-load failure, never open a second window"
+assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "A1: no second window created on rc=127"
+assert_no_file "$AC_HOME/state/dep5.meta" "the refused spawn leaves no task in flight"
+rm -rf "$dhome5"
+
 # Ladder step 2: the home is gone on disk. Repairing or removing a registry
 # line is a captain decision, so recovery refuses rather than spawning a deputy
 # into a home that no longer exists.

@@ -38,9 +38,18 @@
 #                 a captain-facing act, like removing a project.
 #   NOT-RUNNING   no state/<id>.meta in the PARENT home: seeded (or torn down)
 #                 and never spawned since.
-#   DOWN          meta present, backend window not alive. The pane died; the
-#                 deputy's OWN crew may still be running in its home.
-#   LIVE          meta present, backend window alive.
+#   DOWN          meta present, backend window definitely not alive (rc=1) -
+#                 the pane died; the deputy's OWN crew may still be running in
+#                 its home.
+#   UNOBSERVABLE  meta present, but the backend could not be READ (rc=2, or
+#                 127 from a driver that failed to load) - contract:
+#                 ac-backend.sh WINDOW LIVENESS. NOT a verdict of down, and
+#                 distinguished from it so the digest never invites a recover
+#                 spawn against a deputy that may be running (AGENTS.md
+#                 section 7). A stale meta naming an UNSUPPORTED backend is a
+#                 DIFFERENT variable (a malformed meta, not an unreachable
+#                 one) and stays DOWN - see the SUBSHELL comment below.
+#   LIVE          meta present, backend window alive (rc=0).
 # It is a PRESENCE read only (meta + backend_window_alive), deliberately not the
 # deeper ac-crew-state.sh probe: the digest already pays that cost for in-flight
 # crew, and a second deep read per deputy changes no decision.
@@ -129,7 +138,7 @@ FS_US=$'\037'
 
 deputy_state() {
   # deputy_state <id> <home> - the entry's one liveness state (see header).
-  local id="$1" home="$2"
+  local id="$1" home="$2" alive_rc=0
   if [ ! -d "$home" ] || [ ! -f "$home/.ac-crewdeputy-home" ]; then
     printf 'HOME-MISSING\n'; return 0
   fi
@@ -137,13 +146,18 @@ deputy_state() {
     printf 'NOT-RUNNING\n'; return 0
   fi
   # SUBSHELL, not a silenced call: an unsupported backend in a stale meta dies
-  # inside it, so one bad entry degrades to DOWN instead of killing the digest -
-  # while the reason still reaches stderr.
-  if ( AC_BACKEND="$(ac_task_backend "$id")"; export AC_BACKEND; backend_window_alive "$id" ); then
-    printf 'LIVE\n'
-  else
-    printf 'DOWN\n'
-  fi
+  # inside it (ac_backend_route's `b="$(ac_backend)" || exit 1`, itself
+  # rc=1), so one bad entry degrades to DOWN instead of killing the digest -
+  # while the reason still reaches stderr. That is a DIFFERENT variable (a
+  # malformed meta) from a supported backend the fleet cannot READ, so it
+  # stays DOWN rather than joining the UNOBSERVABLE arm below.
+  ( AC_BACKEND="$(ac_task_backend "$id")"; export AC_BACKEND; backend_window_alive "$id" ) \
+    || alive_rc=$?
+  case "$alive_rc" in
+    0) printf 'LIVE\n' ;;
+    1) printf 'DOWN\n' ;;
+    *) printf 'UNOBSERVABLE\n' ;;
+  esac
 }
 
 cmd_list() {
@@ -168,6 +182,10 @@ cmd_list() {
       continue
     fi
     state="$(deputy_state "$id" "$home")"
+    # UNOBSERVABLE is deliberately untallied here (it is not one of the four
+    # documented tally columns): the per-entry line below already carries the
+    # correct state, and it earns no recover hint either - AGENTS.md section 7
+    # forbids inviting a recover spawn against a deputy that may be running.
     case "$state" in
       LIVE) live=$((live + 1)) ;;
       DOWN) down=$((down + 1)) ;;
