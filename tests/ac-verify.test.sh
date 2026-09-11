@@ -202,6 +202,12 @@ elif [ "$kind" = codereview ]; then
                   | if $l != "" then .line = ($l | tonumber) else . end],summary:"one fix",risk_level:"medium",risk_rationale:"fix owed",reviewed_ref:$ref}')"
   else
     clean="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[],summary:"clean",risk_level:"low",risk_rationale:"bounded",reviewed_ref:$ref}')"
+    # The judge's disposition of the lanes, when the fixture asks for one.
+    case "${VERIFY_SCOUT_JUDGE:-}" in
+      full)  clean="$(jq -c '.scout_dispositions = [{ref:"[1.1]",verdict:"refuted",why:"the call is guarded one frame up"},{ref:"[2.1]",verdict:"accepted",why:"reported as CR-1"}]' <<<"$clean")" ;;
+      short) clean="$(jq -c '.scout_dispositions = [{ref:"[1.1]",verdict:"refuted",why:"guarded"}]' <<<"$clean")" ;;
+      bad)   clean="$(jq -c '.scout_dispositions = [{ref:"[1.1]",verdict:"maybe",why:"unsure"}]' <<<"$clean")" ;;
+    esac
     [ -z "${VERIFY_RESOLVED_IDS:-}" ] \
       || clean="$(jq -c --arg ids "$VERIFY_RESOLVED_IDS" '.resolved_ids = ($ids | split(","))' <<<"$clean")"
     # The two reviewed_ref handoff shapes: the model DROPS the echo, and the
@@ -1638,6 +1644,56 @@ jq '.panes["codereview-scout"].lanes = [{"harness":"codex","model":"m"},{"harnes
 assert_eq "$(jq -r .verdict "$scout_out")" "pass" "...and the judge's verdict still lands"
 sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
 [ ! -d "$sdir" ] || fail "no lanes ran, so no scout evidence dir is minted"
+rm -f "$AC_HOME/config/crew-dispatch.json"
+
+# --- THE JUDGE READS THE LANES ------------------------------------------------
+# Observations reach the judge as EVIDENCE appended to its prompt, and what it
+# did with them is COUNTED here rather than taken on its word.
+rm -rf "$AC_HOME/data/$scout_family"
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [{"when": "anything", "use": {"harness": "claude"}}],
+  "panes": {
+    "codereview-scout": {
+      "lanes": [
+        {"harness": "codex", "model": "gpt-5.6-sol"},
+        {"harness": "opencode", "model": "qwen3.7-plus"}
+      ]
+    }
+  }
+}
+EOF
+VERIFY_SCOUT_JUDGE=full "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
+  || fail "a judged round lands"
+jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)prompt.md"
+assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT OBSERVATIONS (evidence, not findings)" "the lanes reach the judge's prompt"
+assert_contains "$(cat "$jp")" "[1.1] file.txt:1" "each observation is tagged by lane and index"
+assert_contains "$(cat "$jp")" "the lane saw something" "...carrying what the observer said"
+assert_contains "$(cat "$jp")" "scout_dispositions" "the prompt names the key the judge answers in"
+assert_contains "$(cat "$jp")" "Agreement between" "...and warns that agreeing observers are not evidence"
+assert_eq "$(jq -r '.scouts.lanes' "$scout_out")" "2" "the verdict counts the lanes that ran"
+assert_eq "$(jq -r '.scouts.observations' "$scout_out")" "2" "...the observations they produced"
+assert_eq "$(jq -r '.scouts.dispositioned' "$scout_out")" "2" "...and how many the judge judged"
+assert_eq "$(jq 'has("warnings")' "$scout_out")" "false" "a fully judged round warns about nothing"
+
+# A judge that ignores half the observations cannot hide it by omitting the key.
+rm -rf "$AC_HOME/data/$scout_family"
+VERIFY_SCOUT_JUDGE=short "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
+  || fail "an under-judged round still lands - the gap is a warning, not a refusal"
+assert_eq "$(jq -r '.scouts.dispositioned' "$scout_out")" "1" "the count is the judge's actual output"
+assert_contains "$(jq -r '.warnings | join(" ")' "$scout_out")" "1 of 2 judged" \
+  "the unjudged remainder is named on the channel a chief reads"
+
+# A malformed disposition is a schema violation like any other.
+rm -rf "$AC_HOME/data/$scout_family"
+rc=0
+VERIFY_SCOUT_JUDGE=bad "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 || rc=$?
+[ "$rc" -ne 0 ] || fail "a disposition with an unknown verdict must be rejected"
+rej="$(cat "$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)rejection.log" 2>/dev/null || true)"
+assert_contains "$rej" "scout-disposition-shape-incomplete" "the rejection names the check that failed"
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
 pass

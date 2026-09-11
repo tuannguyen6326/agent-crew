@@ -1273,6 +1273,48 @@ EOF
   fi
 fi
 
+# THE JUDGE READS THE LANES (contract: SCOUT LANES above). Observations are
+# appended to the prompt here, after the lanes ran and for the same reason the
+# neutralization note is appended above: neither exists when the prompt body
+# is assembled. They arrive as EVIDENCE, never as findings - each one is the
+# judge's to accept under its OWN id or to refute by name, which is what keeps
+# one id space, one interdiff and one disposition ledger no matter how many
+# models looked. A lane that dropped out is named too: the judge should know a
+# perspective is missing rather than read silence as agreement.
+scout_obs_total=0
+if [ "$kind" = codereview ] && [ -d "$scout_dir" ] && [ -s "$scout_dir/lanes.tsv" ]; then
+  scout_obs_total="$(awk -F'\t' '$2 == "ok" { n += $3 } END { print n + 0 }' "$scout_dir/lanes.tsv" 2>/dev/null || true)"
+  [ -n "$scout_obs_total" ] || scout_obs_total=0
+  if [ "$scout_obs_total" -gt 0 ]; then
+    {
+      printf '\nINDEPENDENT SCOUT OBSERVATIONS (evidence, not findings)\n'
+      printf 'Other models read this same diff and reported what follows. They mint no\n'
+      printf 'id, no severity and no action - you do. Judge EVERY numbered item: either\n'
+      printf 'report it as your own finding under your own id, or REFUTE it, and list\n'
+      printf 'every refusal in scout_dispositions with one line saying what you read\n'
+      printf 'that the observer did not. An observation you neither report nor refute\n'
+      printf 'is a perspective that was paid for and thrown away. Agreement between\n'
+      printf 'observers is not evidence: two models can share one wrong assumption.\n'
+      printf 'Add ONE key to the JSON object you already emit:\n'
+      printf '  "scout_dispositions":[{"ref":"<the [n.m] tag>","verdict":"accepted|refuted","why":"<one line>"}]\n'
+      printf 'accepted names the finding id you reported it under in `why`; refuted says\n'
+      printf 'what you read that the observer did not.\n\n'
+      i=0
+      while [ "$i" -lt "$scout_count" ]; do
+        i=$((i + 1))
+        [ -s "$scout_dir/$i.json" ] || continue
+        jq -r --arg lane "$i" '
+          .observations
+          | to_entries[]
+          | "[\($lane).\(.key + 1)] \(.value.file // "?")\(if .value.line then ":" + (.value.line | tostring) else "" end)\n  what: \(.value.what // "")\n  evidence: \(.value.evidence // "")"
+        ' "$scout_dir/$i.json" 2>/dev/null || true
+      done
+      dropped="$(awk -F'\t' '$2 != "ok" { printf "%s(%s) ", $1, $2 }' "$scout_dir/lanes.tsv" 2>/dev/null || true)"
+      [ -z "$dropped" ] || printf '\nLANES THAT PRODUCED NOTHING: %s- their absence is not agreement.\n' "$dropped"
+    } >>"$prompt"
+  fi
+fi
+
 export AC_FLEET_STATE="$state_dir"
 # The verifier pane lands in its FAMILY's herdr workspace, beside the crew
 # tabs it verifies (ac-backend.sh FAMILY WORKSPACE GROUPING) - the pane agent
@@ -1511,6 +1553,14 @@ case "$kind" in
       if type != "object" then "not-a-json-object"
       elif (.findings | type) != "array" then "findings-not-an-array (\(.findings | type))"
       elif ((.resolved_ids // []) | type) != "array" then "resolved_ids-not-an-array"
+      elif ((.scout_dispositions // []) | type) != "array"
+        then "scout_dispositions-not-an-array"
+      elif ((.scout_dispositions // [])
+            | any(type != "object"
+                  or ((.ref // "") | tostring | gsub("^\\s+|\\s+$"; "")) == ""
+                  or ((.verdict // "") as $v | ["accepted","refuted"] | index($v)) == null
+                  or ((.why // "") | tostring | gsub("^\\s+|\\s+$"; "")) == ""))
+        then "scout-disposition-shape-incomplete"
       elif (undispositioned | length) > 0
         then "undispositioned-prior-finding-ids: \(undispositioned | join(","))"
       elif (relay_incomplete | length) > 0
@@ -1553,13 +1603,32 @@ case "$kind" in
     findings="$round_dir/findings.json"
     jq -c '.findings' <<<"$json" | ac_findings_normalize "$findings" \
       || { rm -f "$output_tmp"; die_reaped "verifier $id findings could not be normalized; inspect $round_dir"; }
-    jq --slurpfile findings "$findings" --arg ref "$sha" --argjson warnings "$pane_warnings" '
+    # WHAT THE ROUND ACTUALLY SAW, counted here rather than taken on the judge's
+    # word: how many lanes ran, how many observations they produced, and how
+    # many the judge dispositioned. A judge that ignores the lanes cannot hide
+    # it by omitting the key - the gap becomes a warning on the same channel a
+    # chief already reads, and never a refusal: the lanes are advisory, and
+    # failing a round over an unjudged observation would make a second opinion
+    # more expensive than no second opinion.
+    scout_dispositioned="$(jq '(.scout_dispositions // []) | length' <<<"$json" 2>/dev/null || true)"
+    [ -n "$scout_dispositioned" ] || scout_dispositioned=0
+    if [ "${scout_obs_total:-0}" -gt 0 ] && [ "$scout_dispositioned" -lt "${scout_obs_total:-0}" ]; then
+      pane_warnings="$(jq -c --arg m "scout observations: $scout_dispositioned of $scout_obs_total judged - the rest were neither reported nor refuted" \
+        '. + [$m]' <<<"$pane_warnings" 2>/dev/null || printf '%s' "$pane_warnings")"
+      ac_warn "verifier $id: $scout_dispositioned of $scout_obs_total scout observations were judged"
+    fi
+    jq --slurpfile findings "$findings" --arg ref "$sha" --argjson warnings "$pane_warnings" \
+       --argjson scoutlanes "${scout_count:-0}" --argjson scoutobs "${scout_obs_total:-0}" \
+       --argjson scoutjudged "${scout_dispositioned:-0}" '
       .findings = $findings[0]
       | .reviewed_ref = $ref
       | .verdict = (if ([.findings[].action] | index("ask-user")) != null then "ask-user"
                     elif ([.findings[].action] | index("fix")) != null then "fix"
                     else "pass" end)
       | if ($warnings | length) > 0 then .warnings = $warnings else . end
+      | if $scoutlanes > 0
+        then .scouts = {lanes: $scoutlanes, observations: $scoutobs, dispositioned: $scoutjudged}
+        else . end
     ' <<<"$json" >"$output_tmp" ;;
   qa)
     routing_payload=null
