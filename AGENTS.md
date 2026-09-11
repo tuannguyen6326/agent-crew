@@ -350,6 +350,15 @@ captain redirects a task whose crewmate is already in flight -
   tier/boundary/receipt model, and the fail-closed `finish` guards are
   owned by `bin/ac-qa.sh`'s header (BOUNDARY POLICY block) and the
   crew-qa skill.
+  MORE THAN ONE MODEL MAY LOOK, and exactly one still judges. A fleet that
+  configures `panes.codereview-scout.lanes[]` gives each review round a set of
+  SCOUT lanes - one model per lane, read-only, over the round's own lease -
+  whose observations reach the reviewer as evidence. They mint nothing: the
+  reviewer reports an observation under its own id or refutes it by name, so
+  the round keeps one id space and one disposition ledger no matter how many
+  models read the diff. The verdict counts what the lanes produced and what the
+  reviewer judged, so an ignored fan-out is visible; an absent configuration is
+  simply off, and the single-reviewer round is unchanged.
   The merge gate stays with the captain - qa's verdict informs it. Set
   `qa.require_for_ship: true` (per project) to ENFORCE it: the merge
   helpers refuse to land a head with no passing crew-qa run on record.
