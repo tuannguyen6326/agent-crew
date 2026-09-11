@@ -208,6 +208,45 @@ assert_contains "$(last_trace)" "handback=n/a" "R3: NOT observed on this early-e
 assert_contains "$(last_trace)" "queued=n/a" "...and neither is queued, on this same early-exit path"
 rm -f "$state/.session-lock"
 
+# --- FIX (review-round-1, finding 1): a SCOPED session's handback field -----
+# handback_owed is FLEET session only BY DESIGN (its own opening guard: "[ -z
+# "$scope" ] || return 0"), so for a scoped session it returns 0 having
+# printed NOTHING - hb_seen becomes set-but-empty for a reason that is NOT
+# "observed, nothing owed". That must render n/a, never "none", even while a
+# DIFFERENT family genuinely sits in HANDBACK - "none" there is the log
+# actively answering the diagnostic question WRONG, the exact incident this
+# row exists to kill.
+rm -f "$trace_log"
+hb_room hbscopedfam
+mkdir -p "$state/.wake-spool.famY"
+printf '9\treport\thbsy-live\tdone: x\n' >"$state/.wake-spool.famY/1.1.000000"
+rc=0; out="$(printf '{}' | AC_SCOPE=famY "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "sanity: a scoped session with its own queued wake still blocks"
+assert_contains "$(last_trace)" "scope=famY" "the line names the scoped session"
+assert_contains "$(last_trace)" "handback=n/a" \
+  "FIX: a scoped session's handback is n/a - handback_owed never checked ANY room for it, not even hbscopedfam, which really is in HANDBACK"
+case "$(last_trace)" in *"handback=none"*) fail "a scoped session must never report handback=none - that claims a check that never ran" ;; esac
+rm -rf "$state/.wake-spool.famY" "$AC_HOME/data/hbscopedfam"
+
+# --- FIX (review-round-1, finding 2): the age field with no beacon ----------
+# ac_watcher_beat_read (ac-wake-lib.sh) reports beat=0 for every no-beat state
+# ON PURPOSE - the guard's own fire condition needs now-0 to compare against
+# AC_GUARD_GRACE (A4: that computation must not change) - but its own header
+# warns explicitly against ever PRINTING that figure as an age: "now - 0 is a
+# 56-year figure that a chief reads as a live outage". beat_note is non-empty
+# in exactly that state; the trace must say n/a, never the raw number.
+rm -f "$trace_log" "$state/.last-watcher-beat"
+printf 'kind=ship\n' >"$state/tw-nobeacon.meta"
+rc=0; out="$(printf '{}' | "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "sanity: crew in flight with no beacon still blocks (stale-watcher)"
+assert_contains "$(last_trace)" "age=n/a" \
+  "FIX: no beacon on record renders an honest n/a, never a bogus multi-decade figure"
+case "$(last_trace)" in
+  *"age="[0-9][0-9][0-9][0-9][0-9][0-9][0-9]*)
+    fail "the trace must never carry a raw now-0 epoch figure: $(last_trace)" ;;
+esac
+rm -f "$state/tw-nobeacon.meta"
+
 # R4: the structurally-inert exits are NEVER traced.
 rm -f "$trace_log"
 printf '{"stop_hook_active":true}' | "$BIN/ac-turnend-guard.sh" >/dev/null 2>&1 || true
