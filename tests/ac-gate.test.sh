@@ -1523,6 +1523,71 @@ assert_contains "$(cat "$TMP/maintenance-chief-decide.err")" "raw judge response
 assert_contains "$(cat "$mraw_log")" "chief-decide" "the rejected maintenance body's own text is preserved"
 assert_contains "$(cat "$mreceipt")" 'decision: "continue"' "the failed chief-decide gate must not overwrite the existing maintenance receipt"
 
+# MEASURED, 2026-09-12 (learn-gate-needs-its-own-environment-error-signal,
+# phase A): the read-evidence check binds EVERY decision value, so it also
+# catches a BLIND judge that answers `revise` - and that is the whole of what it
+# catches. The pair below is one variable: both bodies say in their grounds that
+# the judge's environment was broken, both answer revise; only the two `## Inputs
+# Read` values differ, prompt-supplied in the first and taken from the files in
+# the second. The gate refuses the first and WRITES the second, so an
+# environment-broken judge that got as far as opening its two proof inputs mints
+# an authorization indistinguishable from a judge that read everything.
+# DISPUTED: whether the two read-proofs were taken from the input files.
+# HELD-CONSTANT: the decision value, the grounds, the headings, the manifest,
+#   the plan, and the gate invocation.
+cat >"$TMP/maintenance-blind-revise.md" <<EOF
+# Maintenance Gate Decision
+## Decision
+revise
+## Grounds
+My environment is broken and I could not read what this plan points at.
+## Inputs Read
+- INPUT MANIFEST QUOTE: $msha
+- ACTION PLAN NEW SHA-256: $psha
+## Proposed Process
+Revise the candidate before any mutation.
+EOF
+rm -f "$mrun/gates/example/decision.md"
+rc=0
+GATE_BODY_FILE="$TMP/maintenance-blind-revise.md" gate maintenance \
+  --mode learning --run "$mrun" --subject example \
+  --manifest "$mrun/input-manifest.md" --plan "$mrun/plan.json" \
+  >/dev/null 2>"$TMP/maintenance-blind-revise.err" || rc=$?
+assert_eq "$rc" "3" "the read-evidence check binds revise too - a blind revise buys no receipt"
+# 3 is fail_gate's status for ANY maintenance-contract violation, so the rc alone
+# would still pass if a future change refused this body BEFORE read-evidence ran,
+# leaving this leg's claim false. Name the check, as the blind-continue leg does.
+assert_contains "$(cat "$TMP/maintenance-blind-revise.err")" "## Inputs Read" \
+  "and it is the read-evidence check that refused it, not some earlier contract"
+assert_no_file "$mreceipt" "a refused blind revise writes no maintenance receipt at all"
+
+cat >"$TMP/maintenance-broken-revise.md" <<EOF
+# Maintenance Gate Decision
+## Decision
+revise
+## Grounds
+My environment is broken and I could not read what this plan points at.
+## Inputs Read
+- INPUT MANIFEST QUOTE: candidate evidence only a reader of this manifest can quote
+- ACTION PLAN NEW SHA-256: $nsha
+## Proposed Process
+Revise the candidate before any mutation.
+EOF
+rc=0
+GATE_BODY_FILE="$TMP/maintenance-broken-revise.md" gate maintenance \
+  --mode learning --run "$mrun" --subject example \
+  --manifest "$mrun/input-manifest.md" --plan "$mrun/plan.json" >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "0" "proof of opening the two inputs is the whole bar - judging nothing still passes"
+assert_contains "$(cat "$mreceipt")" 'decision: "revise"' \
+  "MEASURED RESIDUAL: the gate mints a receipt for a judge that says it judged nothing"
+# Restore the section's shared fixture: the pair above deleted and then replaced
+# the settled `continue` receipt the rest of section 15 was written against.
+GATE_BODY_FILE="$TMP/maintenance-body.md" gate maintenance \
+  --mode learning --run "$mrun" --subject example \
+  --manifest "$mrun/input-manifest.md" --plan "$mrun/plan.json" >/dev/null
+assert_contains "$(cat "$mreceipt")" 'decision: "continue"' \
+  "the shared continue receipt is back for the tests that follow"
+
 # Tampering with the manifest after plan creation is rejected before a pane.
 printf 'tampered\n' >>"$mrun/input-manifest.md"
 : >"$GLOG"
