@@ -612,7 +612,7 @@ esac
 # it. One scalar, not three, so the profile stays atomic on the wire too.
 : >"$HDLOG"
 env -u AC_HOME AC_FLEET_MODEL=sonnet AC_FLEET_MODEL_CODEREVIEW=haiku \
-  AC_FLEET_PROFILE_CODEREVIEW='harness=claude model=opus effort=max' \
+  AC_FLEET_PROFILE_CODEREVIEW=$'harness=claude\tmodel=opus\teffort=max' \
   PATH="$stub:$PATH" HOME="$FAKEHOME" \
   "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label prof-env >/dev/null
 assert_contains "$(cat "$HDLOG")" "--model opus --effort max" \
@@ -622,14 +622,14 @@ case "$(cat "$HDLOG")" in *"--model haiku"*) fail "the threaded profile supersed
 # than picking up the fleet scalars beside it.
 : >"$HDLOG"
 env -u AC_HOME AC_FLEET_MODEL=sonnet AC_FLEET_EFFORT=high \
-  AC_FLEET_PROFILE_QA='harness=claude model= effort=' \
+  AC_FLEET_PROFILE_QA=$'harness=claude\tmodel=\teffort=' \
   PATH="$stub:$PATH" HOME="$FAKEHOME" \
   "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind qa --label prof-bare >/dev/null
 case "$(cat "$HDLOG")" in *"--model"*|*"--effort"*) fail "a threaded harness-only profile must stay bare" ;; esac
 # And the refusal holds on the homeless rung too - the arm set is a property of
 # this helper, not of who could read the config.
 : >"$HDLOG"
-out="$(env -u AC_HOME AC_FLEET_PROFILE_QA='harness=fictional model= effort=' \
+out="$(env -u AC_HOME AC_FLEET_PROFILE_QA=$'harness=fictional\tmodel=\teffort=' \
   PATH="$stub:$PATH" HOME="$FAKEHOME" \
   "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind qa --label prof-arm 2>&1 || true)"
 assert_contains "$out" '"status":"error"' "a threaded unarmed harness is refused too"

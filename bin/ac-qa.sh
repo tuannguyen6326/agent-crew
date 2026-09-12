@@ -3503,7 +3503,7 @@ $available_rules"
     fi
     qa_pane_profile="$(AC_HOME="$qa_home" "$dispatch_select" --pane qa --rule "$qa_rule_select")"
     routing_json="$(AC_HOME="$qa_home" "$dispatch_select" --pane qa --receipt "$qa_rule_select")"
-    read -r qa_harness qa_model qa_effort <<EOF
+    IFS=$'\t' read -r qa_harness qa_model qa_effort <<EOF
 $qa_pane_profile
 EOF
     qa_harness="${qa_harness#harness=}"

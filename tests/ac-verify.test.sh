@@ -1575,7 +1575,8 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
     "codereview-scout": {
       "lanes": [
         {"harness": "codex", "model": "gpt-5.6-sol"},
-        {"harness": "opencode", "model": "qwen3.7-plus", "effort": "high"}
+        {"harness": "opencode", "model": "qwen3.7-plus", "effort": "high"},
+        {"harness": "agy", "model": "Gemini 3.8 Flash (High)"}
       ]
     }
   }
@@ -1595,7 +1596,13 @@ jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)prompt.
 assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT LANES" "the reviewer's prompt carries the fan-out"
 assert_contains "$(cat "$jp")" "run --exec --harness codex" "lane 1 is a one-shot pane-agent turn"
 assert_contains "$(cat "$jp")" "--kind codereview-scout" "...under its own kind"
-assert_contains "$(cat "$jp")" "--model 'qwen3.7-plus'" "a model is quoted, so a name with spaces survives"
+assert_contains "$(cat "$jp")" "--model 'qwen3.7-plus'" "a lane's model rides as a quoted flag"
+# Lane 3's model carries SPACES, which this whole wire exists to survive: the
+# resolver's fields are TAB-separated and the emitted flag is single-quoted. A
+# space-split read truncated such a name at its first word and launched a
+# different model than the fleet declared, with nothing to say it had.
+assert_contains "$(cat "$jp")" "--model 'Gemini 3.8 Flash (High)'" \
+  "a model name with spaces reaches the lane whole"
 assert_contains "$(cat "$jp")" "--effort high" "a configured effort rides its lane"
 assert_contains "$(cat "$jp")" "reap-pane" "the reviewer is told to close each lane's pane"
 assert_contains "$(cat "$jp")" "status --porcelain" "...and to check the tree before reviewing"
@@ -1613,8 +1620,10 @@ assert_contains "$(cat "$sdir/prompt.md")" "READ ONLY" "...and forbids writing"
 assert_eq "$(( $(grep -c '^get ' "$VERIFY_TREE_LOG" 2>/dev/null || echo 0) - scout_gets_before ))" "1" \
   "the whole fan-out took exactly the round's own lease, and no other"
 
-# The verdict counts the FILES, not the reviewer's word.
-assert_eq "$(jq -r '.scouts.lanes' "$scout_out")" "2" "lanes configured"
+# The verdict counts the FILES, not the reviewer's word - which is what makes a
+# fan-out that was paid for and not delivered VISIBLE: three lanes configured,
+# two files back, and the gap is on the record rather than in the reviewer's prose.
+assert_eq "$(jq -r '.scouts.lanes' "$scout_out")" "3" "lanes configured"
 assert_eq "$(jq -r '.scouts.returned' "$scout_out")" "2" "lanes that came back with observations"
 assert_eq "$(jq -r '.scouts.observations' "$scout_out")" "2" "observations across those lanes"
 
@@ -1625,7 +1634,7 @@ out="$(VERIFY_SCOUT_MODE=skip "$BIN/ac-verify.sh" codereview --repo "$repo" --re
   --family "$scout_family" --caller "$caller" --base "$base" --intent "$intent" \
   --output "$scout_out" 2>&1 >/dev/null)" || fail "a skipped fan-out must not fail the round"
 assert_eq "$(jq -r '.scouts.returned' "$scout_out")" "0" "no lane came back"
-assert_contains "$out" "0 of 2 configured scout lanes" "the gap is named on the channel a chief reads"
+assert_contains "$out" "0 of 3 configured scout lanes" "the gap is named on the channel a chief reads"
 
 # One lane back, one lost: counted as it happened.
 rm -rf "$AC_HOME/data/$scout_family"
@@ -1633,7 +1642,7 @@ out="$(VERIFY_SCOUT_MODE=partial "$BIN/ac-verify.sh" codereview --repo "$repo" -
   --family "$scout_family" --caller "$caller" --base "$base" --intent "$intent" \
   --output "$scout_out" 2>&1 >/dev/null)" || fail "a partial fan-out must not fail the round"
 assert_eq "$(jq -r '.scouts.returned' "$scout_out")" "1" "one lane returned"
-assert_contains "$out" "1 of 2 configured scout lanes" "...and the missing one is named"
+assert_contains "$out" "1 of 3 configured scout lanes" "...and the missing one is named"
 
 # ABSENT IS OFF: no entry, no instructions in the prompt, no scouts dir.
 rm -rf "$AC_HOME/data/$scout_family"; rm -f "$AC_HOME/config/crew-dispatch.json"

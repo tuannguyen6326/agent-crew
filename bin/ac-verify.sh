@@ -1230,18 +1230,10 @@ EOF
     # prompt below, after the lease exists - the same reason the
     # neutralization note is appended there.
     : >"$scout_dir/commands.txt"
-    while IFS= read -r lane; do
-      [ -n "$lane" ] || continue
-      scout_count=$((scout_count + 1))
-      s_h=""; s_m=""; s_e=""
-      for field in $lane; do
-        case "$field" in
-          harness=*) s_h="${field#harness=}" ;;
-          model=*)   s_m="${field#model=}" ;;
-          effort=*)  s_e="${field#effort=}" ;;
-        esac
-      done
+    while IFS=$'\t' read -r s_h s_m s_e; do
+      s_h="${s_h#harness=}"; s_m="${s_m#model=}"; s_e="${s_e#effort=}"
       [ -n "$s_h" ] || continue
+      scout_count=$((scout_count + 1))
       # Built as plain variables rather than inline `${x:+...}` quoting: a
       # model name can carry spaces (agy's do), so its flag needs REAL single
       # quotes in the emitted command - and the shell idiom for that, nested

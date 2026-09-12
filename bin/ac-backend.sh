@@ -386,7 +386,7 @@ ac_backend >/dev/null
 #
 # ac_resolve_profile [--rule <n>] [--harness <h>] [--model <m>] [--effort <e>]
 #   The crew-dispatch resolution, shared the same way. Prints the profile
-#   triple `harness=<h> model=<m> effort=<e>` (ac-dispatch-select.sh's own
+#   triple `harness=<h><TAB>model=<m><TAB>effort=<e>` (ac-dispatch-select.sh's own
 #   format). An explicitly named knob ALWAYS wins, per knob; the rest come from
 #   --rule <n> resolved through ac-dispatch-select.sh. With no rule and no
 #   harness named it REFUSES fail-closed while config/crew-dispatch.json exists
@@ -525,7 +525,7 @@ ac_resolve_profile() {
   done
   if [ -n "$rule" ]; then
     prof="$("$(ac_root)/bin/ac-dispatch-select.sh" --rule "$rule")"
-    read -r p_h p_m p_e <<EOF
+    IFS=$'\t' read -r p_h p_m p_e <<EOF
 $prof
 EOF
     [ -n "$h" ] || h="${p_h#harness=}"
@@ -536,7 +536,7 @@ EOF
       || ac_die "config/crew-dispatch.json is configured: pick a profile (bin/ac-dispatch-select.sh --list, then --rule <n>) and pass --harness/--model/--effort explicitly"
     h="$(ac_config_read crew-harness claude)"
   fi
-  printf 'harness=%s model=%s effort=%s\n' "$h" "$m" "$e"
+  printf 'harness=%s\tmodel=%s\teffort=%s\n' "$h" "$m" "$e"
 }
 
 ac_pane_profile() {

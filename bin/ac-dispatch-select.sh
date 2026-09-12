@@ -62,7 +62,13 @@
 # meaning - a kind with no entry prints nothing and exits 0, so deleting the
 # entry is how the caller's fan-out is switched off.
 #
-# Output: `harness=<h> model=<m> effort=<e>` (model/effort may be empty).
+# Output: one line per profile, three TAB-separated fields -
+# `harness=<h><TAB>model=<m><TAB>effort=<e>` (model/effort may be empty). TAB,
+# not space, because a MODEL NAME MAY CONTAIN SPACES: some harnesses put the
+# reasoning tier inside the name instead of on an --effort axis, and on a
+# space-separated wire every caller's three-field read truncated such a name at
+# its first word and launched a different model than the fleet declared. Each
+# reader splits on TAB (`IFS=$'\t' read -r h m e`).
 # A rule whose `use` is a LIST alternates round-robin between its profiles
 # (persisted in state/.dispatch-rr-<n>); `select: quota-balanced` maps onto
 # this until a quota source exists. Without a config file the fallback is
@@ -89,10 +95,10 @@ emit() {
   m="$(jq -r '.model // empty' <<<"$1")"
   e="$(jq -r '.effort // empty' <<<"$1")"
   [ -n "$h" ] || ac_die "dispatch profile has no harness: $1"
-  printf 'harness=%s model=%s effort=%s\n' "$h" "$m" "$e"
+  printf 'harness=%s\tmodel=%s\teffort=%s\n' "$h" "$m" "$e"
 }
 
-fallback() { printf 'harness=%s model= effort=\n' "$(ac_config_read crew-harness claude)"; }
+fallback() { printf 'harness=%s\tmodel=\teffort=\n' "$(ac_config_read crew-harness claude)"; }
 
 dispatch_sha() {
   shasum -a 256 <"$cfg" | awk '{print $1}'

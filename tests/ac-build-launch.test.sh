@@ -91,12 +91,12 @@ assert_contains "$err" "launch-nope" "the refusal names the config template to c
 # The shared wrapper over ac-dispatch-select.sh. An explicit knob always wins;
 # with a dispatch table configured and no harness named it REFUSES to guess.
 
-assert_eq "$(lib 'ac_resolve_profile')" "harness=claude model= effort=" \
+assert_eq "$(lib 'ac_resolve_profile')" $'harness=claude\tmodel=\teffort=' \
   "no config, no flag: claude"
 printf 'codex\n' >"$AC_HOME/config/crew-harness"
-assert_eq "$(lib 'ac_resolve_profile')" "harness=codex model= effort=" \
+assert_eq "$(lib 'ac_resolve_profile')" $'harness=codex\tmodel=\teffort=' \
   "no dispatch table: config/crew-harness"
-assert_eq "$(lib 'ac_resolve_profile --harness claude')" "harness=claude model= effort=" \
+assert_eq "$(lib 'ac_resolve_profile --harness claude')" $'harness=claude\tmodel=\teffort=' \
   "an explicit harness wins over config/crew-harness"
 rm -f "$AC_HOME/config/crew-harness"
 
@@ -112,11 +112,11 @@ EOF
 err="$(lib 'ac_resolve_profile' 2>&1 || true)"
 assert_contains "$err" "ac-dispatch-select" "a configured dispatch table refuses to be guessed at"
 assert_eq "$(lib 'ac_resolve_profile --harness claude --model opus --effort max')" \
-  "harness=claude model=opus effort=max" "named knobs never consult the dispatch table"
-assert_eq "$(lib 'ac_resolve_profile --rule 1')" "harness=grok model=g1 effort=high" \
+  $'harness=claude\tmodel=opus\teffort=max' "named knobs never consult the dispatch table"
+assert_eq "$(lib 'ac_resolve_profile --rule 1')" $'harness=grok\tmodel=g1\teffort=high' \
   "--rule resolves through ac-dispatch-select.sh"
 assert_eq "$(lib 'ac_resolve_profile --rule 1 --model opus')" \
-  "harness=grok model=opus effort=high" "an explicit knob overrides the resolved rule, per knob"
+  $'harness=grok\tmodel=opus\teffort=high' "an explicit knob overrides the resolved rule, per knob"
 
 # --- ac_pane_profile -----------------------------------------------------------
 # The KEYED half of the same resolution, for the mechanisms that cannot judge a
@@ -141,9 +141,9 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
   }
 }
 EOF
-assert_eq "$(lib 'ac_pane_profile codereview')" "harness=claude model=opus effort=xhigh" \
+assert_eq "$(lib 'ac_pane_profile codereview')" $'harness=claude\tmodel=opus\teffort=xhigh' \
   "a panes entry resolves as the same triple every other rung speaks"
-assert_eq "$(lib 'ac_pane_profile qa')" "harness=codex model= effort=" \
+assert_eq "$(lib 'ac_pane_profile qa')" $'harness=codex\tmodel=\teffort=' \
   "harness-only stays harness-only: no model is inherited from anywhere"
 pane_absent learning "a kind with no entry"
 rm -f "$AC_HOME/config/crew-dispatch.json"

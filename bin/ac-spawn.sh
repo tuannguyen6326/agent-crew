@@ -1312,7 +1312,10 @@ if [ -n "$roomchief_family" ]; then
     [ "$prc" = 0 ] \
       || ac_die "crew-dispatch panes.roomchief is present but unresolvable - refusing to fall back to config/crew-harness (see bin/ac-dispatch-select.sh --pane roomchief)"
     if [ -n "$prof" ]; then
-      harness="${prof%% *}"; harness="${harness#harness=}"
+      IFS=$'\t' read -r p_h _ _ <<EOF
+$prof
+EOF
+      harness="${p_h#harness=}"
     else
       harness="$(ac_config_read crew-harness claude)"
     fi
@@ -1629,7 +1632,10 @@ fi
 # the ship-stage default and the ultracode mapping), which no dispatch profile
 # may quietly undo.
 prof="$(ac_resolve_profile --harness "$harness_flag")"
-harness="${prof%% *}"; harness="${harness#harness=}"
+IFS=$'\t' read -r prof_h _ _ <<EOF
+$prof
+EOF
+harness="${prof_h#harness=}"
 # SHARP EDGE, closed for the KNOWN built-ins: config/model is harness-specific
 # in VALUE (an opus-style name for a claude-habituated fleet, a codex/opencode
 # model name for one on those) - it carries no harness tag of its own, so once

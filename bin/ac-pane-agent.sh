@@ -775,7 +775,7 @@ if [ "$KIND" = codereview ] && [ -z "$HFLAG" ] && [ -n "$PROFILE" ]; then
   ku_configured="${!ku_agent_env:-}"
   [ -n "$ku_configured" ] || ku_configured="$(ac_config_read "$KIND-agent" "")"
   if [ -n "$ku_configured" ]; then
-    read -r ku_p_h _ _ <<EOF
+    IFS=$'\t' read -r ku_p_h _ _ <<EOF
 $PROFILE
 EOF
     ku_p_h="${ku_p_h#harness=}"
@@ -799,7 +799,7 @@ elif [ -n "$PROFILE" ]; then
   # Empty means the harness's own default, never the ladder below - falling
   # through would compose a claude model name onto a non-claude harness, which
   # is exactly the incoherence keeping the triple in one object prevents.
-  read -r p_h p_m p_e <<EOF
+  IFS=$'\t' read -r p_h p_m p_e <<EOF
 $PROFILE
 EOF
   HARNESS="${p_h#harness=}"

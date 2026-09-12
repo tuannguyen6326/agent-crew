@@ -207,8 +207,12 @@ EOF
 "$BIN/ac-brief.sh" tpp proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tpp "$repo" --harness claude >/dev/null 2>&1
 ppbuf="$(cat "$(fake_pane_buf tpp)")"
-case "$ppbuf" in *"AC_FLEET_PROFILE_CODEREVIEW=harness=claude"*) ;; *) fail "panes.codereview must thread as AC_FLEET_PROFILE_CODEREVIEW" ;; esac
-case "$ppbuf" in *"AC_FLEET_PROFILE_QA=harness=claude"*) ;; *) fail "panes.qa must thread as AC_FLEET_PROFILE_QA" ;; esac
+# The threaded value arrives in bash's own $'...' form because the profile's
+# fields are TAB-separated and the launch line is composed with printf %q - so
+# the quoting IS the contract here: an unquoted TAB would split the assignment
+# into arguments and the crewmate would launch with no profile at all.
+case "$ppbuf" in *"AC_FLEET_PROFILE_CODEREVIEW=\$'harness=claude"*) ;; *) fail "panes.codereview must thread as AC_FLEET_PROFILE_CODEREVIEW" ;; esac
+case "$ppbuf" in *"AC_FLEET_PROFILE_QA=\$'harness=claude"*) ;; *) fail "panes.qa must thread as AC_FLEET_PROFILE_QA" ;; esac
 # The learning scout is HOMED - it reads the block first-hand - so threading it
 # would be a rung nobody reads, carried on every crewmate launch line.
 case "$ppbuf" in *AC_FLEET_PROFILE_LEARNING*) fail "a homed kind needs no threaded rung" ;; esac
@@ -239,7 +243,7 @@ EOF
 "$BIN/ac-brief.sh" tcr1 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tcr1 "$repo" --harness claude --codereview-rule 1 >/dev/null 2>&1
 cr1buf="$(cat "$(fake_pane_buf tcr1)")"
-case "$cr1buf" in *"AC_FLEET_PROFILE_CODEREVIEW=harness=claude"*) ;; *) fail "--codereview-rule 1 must pin rule 1's harness onto AC_FLEET_PROFILE_CODEREVIEW" ;; esac
+case "$cr1buf" in *"AC_FLEET_PROFILE_CODEREVIEW=\$'harness=claude"*) ;; *) fail "--codereview-rule 1 must pin rule 1's harness onto AC_FLEET_PROFILE_CODEREVIEW" ;; esac
 case "$cr1buf" in *"model=opus"*) ;; *) fail "--codereview-rule 1 must pin rule 1's model" ;; esac
 case "$cr1buf" in *"effort=xhigh"*) ;; *) fail "--codereview-rule 1 must pin rule 1's effort, not the mandatory default's" ;; esac
 "$BIN/ac-teardown.sh" tcr1 --force >/dev/null 2>&1
@@ -249,7 +253,7 @@ case "$cr1buf" in *"effort=xhigh"*) ;; *) fail "--codereview-rule 1 must pin rul
 "$BIN/ac-brief.sh" tcr2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tcr2 "$repo" --harness claude --codereview-rule default >/dev/null 2>&1
 cr2buf="$(cat "$(fake_pane_buf tcr2)")"
-case "$cr2buf" in *"AC_FLEET_PROFILE_CODEREVIEW=harness=claude"*) ;; *) fail "--codereview-rule default must pin the mandatory default's harness onto AC_FLEET_PROFILE_CODEREVIEW" ;; esac
+case "$cr2buf" in *"AC_FLEET_PROFILE_CODEREVIEW=\$'harness=claude"*) ;; *) fail "--codereview-rule default must pin the mandatory default's harness onto AC_FLEET_PROFILE_CODEREVIEW" ;; esac
 case "$cr2buf" in *"model=haiku"*) ;; *) fail "--codereview-rule default must pin the mandatory default's model" ;; esac
 "$BIN/ac-teardown.sh" tcr2 --force >/dev/null 2>&1
 
@@ -258,7 +262,7 @@ case "$cr2buf" in *"model=haiku"*) ;; *) fail "--codereview-rule default must pi
 cr3buf="$(cat "$(fake_pane_buf tcr3)")"
 # Same two fields asserted on cr2buf above (--codereview-rule default) - no
 # flag at all must resolve the SAME mandatory default, not something else.
-case "$cr3buf" in *"AC_FLEET_PROFILE_CODEREVIEW=harness=claude"*) ;; *) fail "no --codereview-rule must still pin the mandatory default's harness" ;; esac
+case "$cr3buf" in *"AC_FLEET_PROFILE_CODEREVIEW=\$'harness=claude"*) ;; *) fail "no --codereview-rule must still pin the mandatory default's harness" ;; esac
 case "$cr3buf" in *"model=haiku"*) ;; *) fail "no --codereview-rule must resolve the same mandatory default as --codereview-rule default" ;; esac
 "$BIN/ac-teardown.sh" tcr3 --force >/dev/null 2>&1
 

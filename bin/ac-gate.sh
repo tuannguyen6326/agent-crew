@@ -753,7 +753,7 @@ fi
 # panes.gate present but INVALID -> FAIL before a pane (never fall back silently).
 [ "$prc" = 0 ] || ac_die "crew-dispatch panes.gate is present but unresolvable - refusing to fall back to config/gate-* (see bin/ac-dispatch-select.sh --pane gate)"
 if [ -n "$prof" ]; then
-  read -r p_h p_m p_e <<EOF
+  IFS=$'\t' read -r p_h p_m p_e <<EOF
 $prof
 EOF
   p_h="${p_h#harness=}"

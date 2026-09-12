@@ -12,9 +12,9 @@
 make_home
 
 # No config: fall back to crew-harness (default claude).
-assert_eq "$("$BIN/ac-dispatch-select.sh")" "harness=claude model= effort=" "fallback claude"
+assert_eq "$("$BIN/ac-dispatch-select.sh")" $'harness=claude\tmodel=\teffort=' "fallback claude"
 printf 'codex\n' >"$AC_HOME/config/crew-harness"
-assert_eq "$("$BIN/ac-dispatch-select.sh")" "harness=codex model= effort=" "fallback crew-harness"
+assert_eq "$("$BIN/ac-dispatch-select.sh")" $'harness=codex\tmodel=\teffort=' "fallback crew-harness"
 rm -f "$AC_HOME/config/crew-harness"
 
 # --pane <kind>: the KEYED, judgment-free lookup a pane agent needs. ABSENT
@@ -42,14 +42,14 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 }
 EOF
 
-assert_eq "$("$BIN/ac-dispatch-select.sh")" "harness=codex model=gpt effort=medium" "config default"
-assert_eq "$("$BIN/ac-dispatch-select.sh" --rule 1)" "harness=grok model= effort=" "single-profile rule"
+assert_eq "$("$BIN/ac-dispatch-select.sh")" $'harness=codex\tmodel=gpt\teffort=medium' "config default"
+assert_eq "$("$BIN/ac-dispatch-select.sh" --rule 1)" $'harness=grok\tmodel=\teffort=' "single-profile rule"
 
 r1="$("$BIN/ac-dispatch-select.sh" --rule 2)"
 r2="$("$BIN/ac-dispatch-select.sh" --rule 2)"
 r3="$("$BIN/ac-dispatch-select.sh" --rule 2)"
-assert_eq "$r1" "harness=claude model=sonnet effort=high" "round-robin first"
-assert_eq "$r2" "harness=codex model=gpt effort=high" "round-robin second"
+assert_eq "$r1" $'harness=claude\tmodel=sonnet\teffort=high' "round-robin first"
+assert_eq "$r2" $'harness=codex\tmodel=gpt\teffort=high' "round-robin second"
 assert_eq "$r3" "$r1" "round-robin cycles"
 
 list="$("$BIN/ac-dispatch-select.sh" --list)"
@@ -81,11 +81,11 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 }
 EOF
 assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview)" \
-  "harness=claude model=opus effort=xhigh" "panes entry resolves the whole triple"
+  $'harness=claude\tmodel=opus\teffort=xhigh' "panes entry resolves the whole triple"
 # A profile is ATOMIC: an entry naming only a harness resolves with model and
 # effort EMPTY, so the consumer launches the harness's own default instead of
 # falling through to a claude-shaped one.
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane qa)" "harness=codex model= effort=" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane qa)" $'harness=codex\tmodel=\teffort=' \
   "a harness-only entry keeps model and effort empty"
 # A kind with no entry is ABSENT, not an error - the same fall-through as no block.
 pane_absent learning "a kind with no entry"
@@ -129,10 +129,10 @@ assert_contains "$qa_list" "Use an image-capable QA profile." \
 assert_contains "$qa_list" $'default\t\topencode openrouter/qwen/qwen3.7-plus\t' \
   "the bare default renders without synthetic when or why"
 assert_eq "$("$BIN/ac-dispatch-select.sh" --pane qa --rule 2)" \
-  "harness=opencode model=openrouter/z-ai/glm-5.2 effort=" \
+  $'harness=opencode\tmodel=openrouter/z-ai/glm-5.2\teffort=' \
   "a numbered qa selection resolves only its atomic use object"
 assert_eq "$("$BIN/ac-dispatch-select.sh" --pane qa --rule default)" \
-  "harness=opencode model=openrouter/qwen/qwen3.7-plus effort=" \
+  $'harness=opencode\tmodel=openrouter/qwen/qwen3.7-plus\teffort=' \
   "default is an explicit caller selection"
 qa_receipt="$("$BIN/ac-dispatch-select.sh" --pane qa --receipt 1)"
 assert_eq "$(jq -r '.rule' <<<"$qa_receipt")" "1" "numbered receipt binds the selector"
@@ -179,11 +179,11 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
   }
 }
 EOF
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate)" "harness=codex model=gpt effort=high" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate)" $'harness=codex\tmodel=gpt\teffort=high' \
   "flat panes.gate resolves the whole triple, unchanged"
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview)" "harness=claude model=opus effort=" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview)" $'harness=claude\tmodel=opus\teffort=' \
   "flat panes.codereview resolves unchanged"
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane roomchief)" "harness=claude model= effort=" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane roomchief)" $'harness=claude\tmodel=\teffort=' \
   "flat panes.roomchief resolves unchanged"
 pane_absent learning "a kind with no entry stays absent, unaffected by the new kinds"
 assert_fails "$BIN/ac-dispatch-select.sh" --pane gate --list
@@ -234,27 +234,27 @@ EOF
 # deterministically instead of dying. This is exactly the shape a
 # --system-initiated roomchief promote with no --harness needs
 # (bin/ac-learn.sh:1583 - no agent anywhere in the loop to read a `when`).
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate)" "harness=codex model=gpt-lo effort=high" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate)" $'harness=codex\tmodel=gpt-lo\teffort=high' \
   "routed panes.gate with no selector resolves the mandatory default"
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview)" "harness=claude model=sonnet effort=high" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview)" $'harness=claude\tmodel=sonnet\teffort=high' \
   "routed panes.codereview with no selector resolves the mandatory default"
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane roomchief)" "harness=codex model= effort=" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane roomchief)" $'harness=codex\tmodel=\teffort=' \
   "routed panes.roomchief with no selector resolves the mandatory default"
 
 gate_list="$("$BIN/ac-dispatch-select.sh" --pane gate --list)"
 assert_contains "$gate_list" $'1\tfinancial or irreversible risk' "gate list exposes stable 1-based rule numbers and prose"
 assert_contains "$gate_list" $'default\t\tcodex gpt-lo high\t' "gate list always renders the mandatory default"
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate --rule 2)" "harness=claude model=opus effort=" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate --rule 2)" $'harness=claude\tmodel=opus\teffort=' \
   "a numbered gate selection resolves only its atomic use object"
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate --rule default)" "harness=codex model=gpt-lo effort=high" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate --rule default)" $'harness=codex\tmodel=gpt-lo\teffort=high' \
   "an explicit default selection matches the no-selector fallback"
 assert_fails "$BIN/ac-dispatch-select.sh" --pane gate --rule 0
 assert_fails "$BIN/ac-dispatch-select.sh" --pane gate --rule 9
 assert_fails "$BIN/ac-dispatch-select.sh" --pane gate --receipt 1
 
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview --rule 1)" "harness=claude model=opus effort=xhigh" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview --rule 1)" $'harness=claude\tmodel=opus\teffort=xhigh' \
   "a numbered codereview selection resolves"
-assert_eq "$("$BIN/ac-dispatch-select.sh" --pane roomchief --rule 1)" "harness=claude model= effort=" \
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane roomchief --rule 1)" $'harness=claude\tmodel=\teffort=' \
   "a numbered roomchief selection resolves"
 
 # ac-spawn refuses to guess the harness while dispatch rules exist.
@@ -285,9 +285,34 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 EOF
 lanes="$("$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes)"
 assert_eq "$(printf '%s\n' "$lanes" | wc -l | tr -d ' ')" "3" "one line per lane"
-assert_eq "$(printf '%s\n' "$lanes" | sed -n 1p)" "harness=codex model=gpt-5.6-sol effort=xhigh" "lane 1 resolves its whole triple"
-assert_eq "$(printf '%s\n' "$lanes" | sed -n 2p)" "harness=opencode model=qwen3.7-plus effort=" "lane 2 keeps effort empty"
-assert_eq "$(printf '%s\n' "$lanes" | sed -n 3p)" "harness=claude model=claude-sonnet-5 effort=" "lanes come back in the order written"
+assert_eq "$(printf '%s\n' "$lanes" | sed -n 1p)" $'harness=codex\tmodel=gpt-5.6-sol\teffort=xhigh' "lane 1 resolves its whole triple"
+assert_eq "$(printf '%s\n' "$lanes" | sed -n 2p)" $'harness=opencode\tmodel=qwen3.7-plus\teffort=' "lane 2 keeps effort empty"
+assert_eq "$(printf '%s\n' "$lanes" | sed -n 3p)" $'harness=claude\tmodel=claude-sonnet-5\teffort=' "lanes come back in the order written"
+
+# A MODEL NAME MAY CARRY SPACES - some harnesses put the reasoning tier inside
+# the name rather than on an --effort axis - so the field separator on this wire
+# is a TAB. On the space-delimited wire this replaced, every caller's
+# `read -r h m e` truncated such a name at its first word and launched a
+# different model than the fleet declared, silently.
+spacey='Gemini 3.8 Flash (High)'
+cat >"$AC_HOME/config/crew-dispatch.json" <<EOF
+{
+  "panes": {
+    "codereview": {"harness": "agy", "model": "$spacey"},
+    "codereview-scout": {"lanes": [{"harness": "agy", "model": "$spacey"}]}
+  }
+}
+EOF
+for form in "--pane codereview" "--pane codereview-scout --lanes"; do
+  # shellcheck disable=SC2086
+  line="$("$BIN/ac-dispatch-select.sh" $form)"
+  IFS=$'\t' read -r f_h f_m f_e <<EOF
+$line
+EOF
+  assert_eq "${f_h#harness=}" "agy" "$form: the harness survives a TAB split"
+  assert_eq "${f_m#model=}" "$spacey" "$form: a model name keeps every space it was declared with"
+  assert_eq "${f_e#effort=}" "" "$form: the field AFTER the spaced name is still its own field"
+done
 
 # ABSENT stays the OFF switch, exactly as for every other kind: no block, no
 # entry, nothing printed, exit 0. Deleting the entry disables the lanes.
