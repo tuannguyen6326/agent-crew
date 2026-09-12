@@ -273,8 +273,13 @@
 # uses). A rung that died, or judged nothing, FAILED - reported through fail()
 # and NEVER falling through to the scrollback floor, which returns TUI chrome
 # and would hand a caller expecting a JSON object a width-elided render. That
-# is stricter than the interactive arm can be: there, failure can only be
-# inferred from an empty harvest. The turn ends on the Stop-hook marker whether or not
+# is stricter than the interactive arm can be: there, failure is inferred from
+# the harvest alone - either nothing resolved, or what resolved carries no
+# FINAL MESSAGE, the payload ac_transcript_final (ac-pipeline-lib.sh) reads in
+# every caller. A turn that stopped after a completed tool call leaves a last
+# assistant message holding only tool_use, and is refused on BOTH interactive
+# endings - the Stop-hook marker and the idle fallback - rather than reported
+# ok for the caller to die on later. The turn ends on the Stop-hook marker whether or not
 # $PROJ/*.jsonl resolved - and a session dir holding only subagents/ +
 # tool-results/ has no jsonl to resolve at all - so an unresolved transcript
 # there falls back to a PANE SCROLLBACK harvest (the raw-pane-id read
@@ -1576,7 +1581,21 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
       oneshot)  exec_harvest || fail "one-shot rung '$HARNESS' produced no verdict: $EXEC_ERR" ;;
       crewmate) file_harvest || fail "verification agent '$HARNESS' produced no verdict: $FILE_ERR" ;;
       *) [ -n "$TRANSCRIPT" ] || scrollback_transcript \
-           || fail "turn ended but no transcript could be harvested (no $PROJ/*.jsonl and the pane scrollback was empty)" ;;
+           || fail "turn ended but no transcript could be harvested (no $PROJ/*.jsonl and the pane scrollback was empty)"
+         # A RESOLVED transcript is not a harvestable one, and the payload owed
+         # above is the FINAL MESSAGE - the thing ac_transcript_final
+         # (bin/ac-pipeline-lib.sh) reads six lines into every caller. A session
+         # that stopped after a completed tool call leaves a last assistant
+         # message carrying only tool_use: the path resolves, the clause above
+         # passes, and the caller then dies on "transcript has no final
+         # message" with the previous round's receipt still on disk looking
+         # current. Ask the caller's question here, where the turn is still
+         # ours to refuse, and carry the pane the way the pane_closed exit does
+         # so the caller can still reap the agent it opened.
+         if ! final_message_has_text; then
+           emit "{\"event\":\"done\",\"status\":\"error\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"the turn ended but its last assistant message carries no text - the turn stopped mid-pass and there is no final message to harvest, so it is NOT reported ok\"}"
+           exit 1
+         fi ;;
     esac
     emit "{\"event\":\"done\",\"status\":\"ok\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"source\":\"$SOURCE\",\"pane\":\"$P\"}"
     exit 0

@@ -488,6 +488,59 @@ tr_path="$(printf '%s\n' "$out" | sed -n 's/.*"transcript":"\([^"]*\)".*/\1/p' |
 assert_contains "$(bash -c ". '$BIN/ac-lib.sh'; . '$BIN/ac-pipeline-lib.sh'; ac_transcript_final '$tr_path'")" \
   "verdict: passed - harvested from the pane" "the caller's own transcript reader finds the scrollback verdict"
 
+# --- fail-closed harvest: a turn that ended on a bare tool_use ----------------
+# The MARKER arm is where real rounds end - measured over the 477 stored
+# codereview rounds in both fleet homes, the idle fallback below ran 3 times and
+# every other round, passing and failing alike, ended here. Its own comment
+# already declares the contract ("FAIL CLOSED: the turn ended, so a payload is
+# owed"), but the code guarded an empty transcript PATH while the caller asks a
+# different question six lines later: ac_transcript_final (bin/ac-pipeline-lib.sh)
+# takes the LAST assistant message, and a session that stopped after a completed
+# tool call has one carrying only tool_use. The pane reported ok, the caller then
+# died on "transcript has no final message", and the previous round's receipt sat
+# on disk looking current.
+repo3="$(make_repo toolend)"
+tstub="$TMP/toolend-bin"; mkdir -p "$tstub"
+cat >"$tstub/herdr" <<'EOF'
+#!/usr/bin/env bash
+echo "herdr $*" >>"$HDLOG"
+[ "${1:-}" = --session ] && shift 2
+case "${1:-} ${2:-}" in
+  "tab list") echo '{"result":{"tabs":[]}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wP"}}}' ;;
+  "tab create") echo '{"result":{"tab":{"tab_id":"tP"},"root_pane":{"pane_id":"pP1"}}}' ;;
+  # The turn ENDS on the Stop-hook marker, and the transcript it leaves behind
+  # is the shape a session killed mid-pass leaves: assistant text EARLIER in the
+  # turn, then a bare tool_use as the LAST assistant message.
+  "pane run")
+    cwd="$(printf '%s' "$4" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
+    marker="$(sed -n "s/.*touch '\([^']*\)'.*/\1/p" "$cwd/.claude/settings.local.json")"
+    slug="$(printf '%s' "$cwd" | sed 's/[/.]/-/g')"
+    mkdir -p "$HOME/.claude/projects/$slug"
+    t="$HOME/.claude/projects/$slug/toolend-sid.jsonl"
+    printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"reading the sources"}]}}' >"$t"
+    printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{}}]}}' >>"$t"
+    printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","content":"..."}]}}' >>"$t"
+    touch "$marker" ;;
+  "pane get") echo '{"result":{"pane":{"pane_id":"pP1","agent_status":"idle"}}}' ;;
+  "pane read") echo '' ;;
+esac
+exit 0
+EOF
+chmod +x "$tstub/herdr"
+trc=0
+out="$(PATH="$tstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo3" --prompt-file "$pf" --label toolend 2>&1)" || trc=$?
+assert_eq "$trc" "1" "a turn ending on a bare tool_use exits non-zero"
+assert_contains "$out" '"event":"done","status":"error"' "...and says error rather than ok"
+assert_contains "$out" "no final message" "...naming what the caller will find missing"
+assert_contains "$out" '"pane":"pP1"' "...carrying the pane so the caller can still reap what it opened"
+case "$out" in *'"status":"ok"'*) fail "a turn that stopped mid-pass must never be reported ok: $out" ;; esac
+# The caller's own reader must agree that there was nothing to harvest - that
+# agreement is the whole point of asking its question here.
+tr_path="$(printf '%s\n' "$out" | sed -n 's/.*"transcript":"\([^"]*\)".*/\1/p' | tail -1)"
+assert_eq "$(bash -c ". '$BIN/ac-lib.sh'; . '$BIN/ac-pipeline-lib.sh'; ac_transcript_final '$tr_path'")" ""   "ac_transcript_final finds no final message in exactly the transcript the pane refused"
+
 # close verb retires the pane; bad args fail with a protocol error event.
 : >"$HDLOG"
 PATH="$stub:$PATH" "$BIN/ac-pane-agent.sh" close --pane pP1
