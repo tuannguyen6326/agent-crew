@@ -1103,6 +1103,33 @@ case "$(cat "$XLOG")" in *model_reasoning_effort*) fail "an unset effort must pa
 assert_contains "$(cat "$XLOG")" "-c model_reasoning_summary=auto" \
   "the reasoning-summary override is unconditional, unlike model/effort"
 
+# agy's one-shot form differs from every other arm in four ways, each measured
+# on a live CLI rather than assumed (oneshot_launch's own block records the
+# probes). Two of them are load-bearing and invisible in a passing run: `-p`
+# takes the NEXT token as its prompt, so it must be LAST or the caller's
+# positional prompt is ignored in favour of a flag; and the model name carries
+# spaces, so it must be quoted or the tier in its name becomes a stray word.
+: >"$HDLOG"; : >"$HDLOG.cmd"
+xrun --exec --harness agy --kind gate --label gagy --model 'Gemini 3.8 Flash (Low)' >/dev/null 2>&1 || true
+agy_cmd="$(cat "$HDLOG.cmd" 2>/dev/null || true)"
+assert_contains "$agy_cmd" "agy --mode plan" "the read-only boundary rides every agy one-shot"
+assert_contains "$agy_cmd" "--dangerously-skip-permissions" "...alongside the flag without which a headless turn reads nothing"
+assert_contains "$agy_cmd" '--model "Gemini 3.8 Flash (Low)"' "a model name with spaces is quoted"
+case "$agy_cmd" in *'-p "$(cat '*) ;; *) fail "agy's -p must be LAST, taking the caller's prompt: $agy_cmd" ;; esac
+
+# agy has no separate effort axis - its tier is part of the model name, and it
+# REFUSES --effort beside one. A configured effort is reported, never swallowed.
+# The cmd log is APPENDED to by the stub, so reset it here: reading it whole
+# would assert against some earlier harness's launch line, which is exactly
+# the false positive this case first produced.
+: >"$HDLOG"; : >"$HDLOG.cmd"
+out="$(xrun --exec --harness agy --kind gate --label gagy2 --model 'Gemini 3.8 Flash (Low)' --effort high 2>&1 || true)"
+assert_contains "$out" '"event":"warning"' "a dropped effort is announced on the event stream"
+assert_contains "$out" "inside the model name" "...naming why it could not be honoured"
+case "$(cat "$HDLOG.cmd" 2>/dev/null || true)" in
+  *--effort*) fail "agy must never be launched with --effort - the CLI refuses the combination: $(cat "$HDLOG.cmd")" ;;
+esac
+
 # A harness with no one-shot form is refused on the same rung, and the refusal
 # says which mode it is talking about.
 : >"$HDLOG"

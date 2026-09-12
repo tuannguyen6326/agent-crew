@@ -98,7 +98,7 @@
 # script has an implemented arm for it IN THE MODE ASKED FOR:
 #   SESSION (no --exec, harness claude): claude, and only claude.
 #   CREWMATE (no --exec, harness codex | opencode): the crewmate contract.
-#   ONE-SHOT (--exec): codex, claude, opencode, pi, cursor - their `codex exec
+#   ONE-SHOT (--exec): codex, claude, opencode, pi, cursor, agy - their `codex exec
 #     -s read-only` / `claude -p` / `opencode run` / `pi -p` /
 #     `cursor-agent -p --trust` forms (oneshot_launch below, which owns the
 #     per-harness flag shapes and the safety boundary each one does NOT have).
@@ -858,6 +858,26 @@ oneshot_launch() {
     #   by default, the closest to read-only this CLI documents.
     pi)       printf 'pi -p%s%s\n' "${2:+ --model $2}" "${3:+ --thinking $3}" ;;
     cursor)   printf 'cursor-agent -p --trust%s\n' "${2:+ --model $2}" ;;
+    # agy (Antigravity CLI) - MEASURED on this host 2026-09-12, because every
+    # clause below differs from the four above and a guess would have been
+    # wrong four times:
+    #   - `-p` takes the NEXT token as its prompt, so it must come LAST: the
+    #     caller appends the prompt positionally, and `-p --model x` made the
+    #     CLI read "--model" as the prompt and ignore the real one.
+    #   - the model NAME carries spaces and its own effort tier
+    #     ("Gemini 3.8 Flash (Low)"), so it is quoted here, and $3 is dropped:
+    #     agy has no separate effort axis and REFUSES --effort alongside a
+    #     model that already names one. A configured effort is reported at the
+    #     call site rather than silently swallowed.
+    #   - `--mode plan` is the read-only boundary the other non-codex arms
+    #     lack, and it is a real one: a turn told to write a file, and a turn
+    #     told to write one THROUGH bash, both left the cwd untouched.
+    #   - `--dangerously-skip-permissions` is required for the turn to read
+    #     anything at all - headless auto-DENIES the tool permission it cannot
+    #     prompt for, and the run then produces no output. It removes the
+    #     prompt, not the plan-mode boundary, which is what the two write
+    #     probes above establish.
+    agy)      printf 'agy --mode plan --dangerously-skip-permissions%s -p\n' "${2:+ --model \"$2\"}" ;;
     *) return 1 ;;
   esac
 }
@@ -872,7 +892,15 @@ ARM=session
 if [ "$EXEC" = 1 ]; then
   ARM=oneshot
   oneshot_launch "$HARNESS" >/dev/null \
-    || fail "harness '$HARNESS' has no one-shot form here (armed for --exec: codex, claude, opencode) - a one-shot arm owes the command form whose process exit is the turn end and whose stdout is the final message; see HARNESS ARMS in bin/ac-pane-agent.sh"
+    || fail "harness '$HARNESS' has no one-shot form here (armed for --exec: codex, claude, opencode, pi, cursor, agy) - a one-shot arm owes the command form whose process exit is the turn end and whose stdout is the final message; see HARNESS ARMS in bin/ac-pane-agent.sh"
+  # agy folds its effort tier INTO the model name and refuses a separate
+  # --effort, so a configured one cannot be honoured. Say so rather than
+  # swallow it: a caller that asked for high and got the model's own tier
+  # should hear it from the run, not infer it from a bill.
+  if [ "$HARNESS" = agy ] && [ -n "${EFFORT_FLAG:-}" ]; then
+    emit "{\"event\":\"warning\",\"message\":\"agy carries its effort tier inside the model name and refuses --effort; the configured effort '$EFFORT_FLAG' was dropped - pick the model whose name states the tier you want\"}"
+    EFFORT_FLAG=""
+  fi
 else
   # The interactive arm map is the harness registry's (ac_harness_pane_arm,
   # bin/ac-harness.sh): claude as a pane SESSION, codex/opencode through the
