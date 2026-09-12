@@ -1020,7 +1020,16 @@ flags=("$@"); unset 'flags[${#flags[@]}-1]'
 echo "opencode ${flags[*]}" >>"$XLOG"
 echo 'opencode one-shot answer'
 EOF
-chmod +x "$xstub/herdr" "$xstub/codex" "$xstub/claude" "$xstub/opencode"
+# EVERY harness this block reaches through --exec needs a stub HERE: the line
+# really runs, so a missing one falls through $PATH to the operator's own CLI -
+# which for an authenticating harness means a live sign-in on each suite run.
+cat >"$xstub/agy" <<'EOF'
+#!/usr/bin/env bash
+flags=("$@"); unset 'flags[${#flags[@]}-1]'
+echo "agy ${flags[*]}" >>"$XLOG"
+echo 'agy one-shot answer'
+EOF
+chmod +x "$xstub/herdr" "$xstub/codex" "$xstub/claude" "$xstub/opencode" "$xstub/agy"
 xrepo="$(make_repo execwt)"
 xrun() { PATH="$xstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$xrepo" --prompt-file "$pf" "$@"; }
 
@@ -1109,9 +1118,11 @@ assert_contains "$(cat "$XLOG")" "-c model_reasoning_summary=auto" \
 # takes the NEXT token as its prompt, so it must be LAST or the caller's
 # positional prompt is ignored in favour of a flag; and the model name carries
 # spaces, so it must be quoted or the tier in its name becomes a stray word.
-: >"$HDLOG"; : >"$HDLOG.cmd"
-xrun --exec --harness agy --kind gate --label gagy --model 'Gemini 3.8 Flash (Low)' >/dev/null 2>&1 || true
+: >"$HDLOG"; : >"$HDLOG.cmd"; : >"$XLOG"
+xrun --exec --harness agy --kind gate --label gagy --model 'Gemini 3.8 Flash (Low)' >/dev/null
 agy_cmd="$(cat "$HDLOG.cmd" 2>/dev/null || true)"
+assert_contains "$(cat "$XLOG")" "agy --mode plan" \
+  "the STUB answered the launch - an agy line the stub never logged means the real CLI ran"
 assert_contains "$agy_cmd" "agy --mode plan" "the read-only boundary rides every agy one-shot"
 assert_contains "$agy_cmd" "--dangerously-skip-permissions" "...alongside the flag without which a headless turn reads nothing"
 assert_contains "$agy_cmd" '--model "Gemini 3.8 Flash (Low)"' "a model name with spaces is quoted"
