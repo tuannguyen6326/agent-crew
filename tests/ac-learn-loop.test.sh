@@ -859,13 +859,58 @@ STUB4
   cat >"$TMP/stub-pane-envfail.sh" <<'STUB5'
 #!/usr/bin/env bash
 if [ "${1:-}" = reap-pane ]; then exit 0; fi
-cwd=""
+cwd=""; kind=""; prompt=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --cwd) cwd="$2"; shift 2 ;;
+    --kind) kind="$2"; shift 2 ;;
+    --prompt-file) prompt="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
+# THE JUDGE. ac-gate.sh runs the one-shot arm with --kind gate, so ONE stub
+# serves both consumers of AC_PANE_AGENT and legs E/F exercise the REAL gate.
+# It resolves its inputs the way a judge does - out of the prompt it was handed -
+# reads its two proof inputs and the run report it must judge against, and writes
+# the body its reads justify. It inspects no environment variable: what it could
+# read is the only thing that decides which body it emits.
+if [ "$kind" = gate ]; then
+  manifest="$(sed -n 's/^- INPUT MANIFEST: //p' "$prompt" | head -1)"
+  plan="$(sed -n 's/^- ACTION PLAN: //p' "$prompt" | head -1)"
+  report="$(sed -n 's/^- RUN REPORT (when present): //p' "$prompt" | head -1)"
+  jbody="$(mktemp "${TMPDIR:-/tmp}/judge-body-XXXXXX")"
+  if r="$(cat "$report" 2>/dev/null)" && [ -n "$r" ]; then
+    cat >"$jbody" <<JB
+# Maintenance Gate Decision
+## Decision
+revise
+## Grounds
+I read the run report and the manifest: the single source bullet does not carry the evidence this skill claims. Narrow the skill or cite a second run.
+## Inputs Read
+- INPUT MANIFEST QUOTE: $(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$manifest")
+- ACTION PLAN NEW SHA-256: $(jq -r '.actions[0].new_sha256' "$plan")
+## Proposed Process
+Revise the candidate before any mutation.
+JB
+  else
+    cat >"$jbody" <<JB
+# Maintenance Gate Decision
+## Decision
+environment-error
+## Grounds
+My environment denied me the run report this gate points at, so I could not check the candidate against the run that produced it.
+## Inputs Read
+- INPUT MANIFEST QUOTE: $(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$manifest")
+- ACTION PLAN NEW SHA-256: $(jq -r '.actions[0].new_sha256' "$plan")
+## Proposed Process
+Restore this judge's access to the run report and gate this subject again.
+JB
+  fi
+  tf="$(mktemp "${TMPDIR:-/tmp}/judge-tr-XXXXXX")"
+  jq -cn --rawfile t "$jbody" '{type:"assistant",message:{content:[{type:"text",text:$t}]}}' >"$tf"
+  printf '{"event":"done","status":"ok","transcript":"%s","pane":"pJ1"}\n' "$tf"
+  exit 0
+fi
 printf '# Retro\n\nno cross-family pattern found (smoke).\n' >"$cwd/retro.md"
 printf '## Retro\n\nsee ./retro.md.\n\none candidate proposed (smoke).\n' >"$cwd/report.md"
 {
@@ -875,6 +920,11 @@ printf '## Retro\n\nsee ./retro.md.\n\none candidate proposed (smoke).\n' >"$cwd
   printf '2026-08-26\tauto\t- LESSON: the gate cannot read this source today.\n'
   printf '===skill===\n# envfail-skill\n\nDo the thing.\n'
 } >"$cwd/candidate-envfail-skill.md"
+# The LEG'S ENVIRONMENT, applied to the one file the gate prompt hands the judge
+# and the caller only ever stats (bin/ac-learn.sh:847,862 test it with -s, never
+# read it): with this set, the judge below is denied the run report it is told to
+# read, while every other input stays exactly as the legs that do not set it.
+[ -z "${AC_PROBE_DENY_REPORT:-}" ] || chmod 000 "$cwd/report.md"
 printf '{"event":"transcript","path":"/dev/null","session_id":"s1"}\n'
 printf '{"event":"done","status":"ok","session_id":"s1","transcript":"/dev/null","pane":"p1"}\n'
 STUB5
@@ -1011,6 +1061,163 @@ GATE3
     "a gate that honestly could not decide leaves the DISTILL cadence DUE"
   assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
     "a gate that honestly could not decide leaves the retro window anchor UNMOVED"
+
+  # --- MEASURED, 2026-09-12: a gate broken by its ENVIRONMENT can still be
+  # counted as a rendered judgment (learn-gate-needs-its-own-environment-error-
+  # signal, phase A). The `## Inputs Read` read-evidence proof
+  # (bin/ac-maintenance-lib.sh) closed the BLIND half of that - leg D - but it
+  # proves the judge opened its two PROOF inputs, which is not the same act as
+  # reading everything it must judge. Legs E and F are the same judge program,
+  # and the ONE thing that differs between them is whether its environment let
+  # it read the run report the gate prompt points it at. The seam answers them
+  # identically, so the cadence cannot tell a judge that judged from a judge
+  # that could not. THESE THREE ARE A CHARACTERISATION OF AN OPEN RESIDUAL, not
+  # a contract: leg E's two cadence assertions are the lines a fix flips.
+  #
+  # ONE JUDGE, shared by E and F: it reads the manifest and the plan for its two
+  # proofs, then reads the RUN REPORT the prompt hands it and writes the body
+  # its reads justify. Nothing here inspects its own environment - it just reads.
+
+  probe_leg() {  # probe_leg <gate-stub|real> [deny] -> runs one leg, prints ac-learn's output
+    printf 'debriefs=9\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+    # These legs are the first in this file to reach examined=1, which ticks the
+    # records-wide CURATE interval and can fire a whole Curate pass. Reset that
+    # counter too, or F inherits whatever E's pass left and the held-constant
+    # claim between them is false.
+    printf 'runs_since=0\n' >"$AC_HOME/state/.curate.meta"
+    chmod -R u+rwX "$AC_HOME/data" 2>/dev/null || true
+    rm -rf "${AC_HOME:?}"/data/learning-* "${AC_HOME:?}"/skills/envfail-skill
+    # Combined output: cmd_run's withheld-cadence WARN goes to stderr, and it is
+    # the one place learn_auto_apply_candidates' OWN return value is observable
+    # from outside - it is printed exactly when that call returned non-zero
+    # (bin/ac-learn.sh:865-868).
+    local rc=0
+    if [ "$1" = real ]; then
+      AC_PROBE_DENY_REPORT="${2:-}" AC_PANE_AGENT="$TMP/stub-pane-envfail.sh" \
+        "$BIN/ac-learn.sh" run 2>&1 || rc=$?
+    else
+      AC_PROBE_DENY_REPORT="${2:-}" AC_PANE_AGENT="$TMP/stub-pane-envfail.sh" AC_GATE="$1" \
+        "$BIN/ac-learn.sh" run 2>&1 || rc=$?
+    fi
+    chmod -R u+rwX "$AC_HOME/data" 2>/dev/null || true
+    return "$rc"
+  }
+  probe_rundir() {  # probe_rundir -> the one run dir this leg left behind
+    find "$AC_HOME/data" -maxdepth 1 -type d -name 'learning-*' | sort | tail -1
+  }
+  probe_receipt() { printf '%s/gates/envfail-skill/decision.md\n' "$(probe_rundir)"; }
+
+  # D: TOTALLY BLIND JUDGE. It never opened manifest or plan, so its `## Inputs
+  # Read` carries values it could not have read - and the two frontmatter hashes
+  # it does get right are the ones the prompt printed for it.
+  # DISPUTED: whether the judge's body carries proofs it could only hold by
+  #   opening the two input files.
+  # HELD-CONSTANT with E and F: the same scout stub and candidate bytes, the same
+  #   seeded learnings.md, the same cadence meta, the same decision value
+  #   (revise), the same frontmatter keys and the same hash agreement.
+  cat >"$TMP/gate-blindrevise.sh" <<'GATE5'
+#!/usr/bin/env bash
+mode=""; run=""; subject=""; manifest=""; plan=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    maintenance) shift ;;
+    --mode) mode="$2"; shift 2 ;;
+    --run) run="$2"; shift 2 ;;
+    --subject) subject="$2"; shift 2 ;;
+    --manifest) manifest="$2"; shift 2 ;;
+    --plan) plan="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$run/gates/$subject"
+input_sha="$(shasum -a 256 <"$manifest" | awk '{print $1}')"
+cat >"$run/gates/$subject/decision.md" <<EOF
+---
+schema: "agentcrew.maintenance-gate/v1"
+mode: "$mode"
+subject: "$subject"
+decision: "revise"
+authority: "second-chief"
+engine: "stub"
+model: "targeted-test"
+input_manifest_sha256: "$input_sha"
+action_plan_sha256: "$(shasum -a 256 <"$plan" | awk '{print $1}')"
+reviewed_at: "2026-09-12T00:00:00Z"
+---
+# Maintenance Gate Decision
+## Decision
+revise
+## Grounds
+My environment denied me both input files; I could open neither.
+## Inputs Read
+- INPUT MANIFEST QUOTE: the candidate evidence I was unable to open
+- ACTION PLAN NEW SHA-256: $input_sha
+## Proposed Process
+Revise the candidate before any mutation.
+EOF
+GATE5
+  chmod +x "$TMP/gate-blindrevise.sh"
+  envfail_out="$(probe_leg "$TMP/gate-blindrevise.sh")"
+  assert_contains "$envfail_out" 'ask-captain: envfail-skill (invalid gate receipt; no mutation)' \
+    "a blind judge's revise is refused as a receipt, not discarded as a verdict"
+  assert_contains "$envfail_out" 'cadence remains due' \
+    "learn_auto_apply_candidates returned NON-ZERO for the blind judge"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" \
+    "a blind revise leaves the DISTILL cadence DUE"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
+    "a blind revise leaves the retro window anchor UNMOVED"
+
+  # E: PARTIALLY BROKEN JUDGE, through the REAL bin/ac-gate.sh. It CAN open the
+  # manifest and the plan, and its environment still denies it the run report the
+  # gate prompt hands it, so it has no judgment to render and says so with the
+  # token the prompt now offers. The gate writes NO receipt and fails closed, and
+  # the caller's existing absence-of-judgment arm keeps the cycle owed.
+  # DISPUTED: whether the judge's environment let it read the run report the gate
+  #   prompt hands it.
+  # HELD-CONSTANT with F: the same judge program (the --kind gate arm of the one
+  #   pane stub), the same scout, the same candidate bytes, the same seeded
+  #   learnings.md, the same cadence meta, the same real gate.
+  envfail_out="$(probe_leg real 1)"
+  raw_log="$(probe_rundir)/gates/envfail-skill/gate-raw.log"
+  # The denial must BITE, or this leg silently measures the control twice.
+  assert_contains "$(cat "$raw_log")" 'My environment denied me the run report' \
+    "the denial reached the judge - it wrote the body of a judge that could not read"
+  # The raw log's HEADER line carries fail_gate's own message. Without the
+  # validate_body arm the declaration falls through to the generic body-contract
+  # text, so this is what separates the fix from the behaviour it replaced.
+  assert_contains "$(cat "$raw_log")" 'it could not read an input it had to judge' \
+    "the gate diagnosed the declaration by name, where an operator can find it"
+  assert_no_file "$(probe_receipt)" \
+    "a declared environment failure mints NO receipt - there is no judgment to record"
+  assert_contains "$envfail_out" 'ask-captain: envfail-skill (gate unavailable; no mutation)' \
+    "the subject escalates instead of passing as a rendered judgment"
+  assert_contains "$envfail_out" 'cadence remains due' \
+    "learn_auto_apply_candidates returned NON-ZERO for the environment-broken judge"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" \
+    "a judge that could not read what it must judge leaves the DISTILL cadence DUE"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
+    "and leaves the retro window anchor UNMOVED"
+
+  # F: CONTROL - the same judge and the same real gate, nothing denied. It reads
+  # the run report, judges, and says revise on substantive grounds. The captain
+  # has RULED that this is examined, so this leg must not move.
+  # DISPUTED: nothing - this is E's baseline.
+  # HELD-CONSTANT with E: everything except the run report's readability.
+  envfail_out="$(probe_leg real)"
+  assert_contains "$(cat "$(probe_receipt)")" 'I read the run report and the manifest' \
+    "the control judge really did read what E was denied"
+  honest_verdict="$(ac_maintenance_receipt_validate "$(probe_receipt)" \
+    "$(probe_rundir)/plans/envfail-skill.json" \
+    "$(probe_rundir)/candidates/envfail-skill.md")" || honest_verdict="REFUSED"
+  assert_eq "$honest_verdict" "revise" \
+    "an honest revise still authorizes exactly as it did - the captain's ruling, untouched"
+  assert_contains "$envfail_out" 'revise: envfail-skill (sources preserved; no captain question)' \
+    "and the caller still takes the revise arm, which asks the captain nothing"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "0" \
+    "an honest revise CONSUMES the DISTILL cycle - the captain's ruling, and it must not move"
+  [ "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" != "$old_anchor" ] \
+    || fail "an honest revise must still MOVE the retro window anchor"
+
 else
   printf 'SKIP: jq not available - run + gate learning-rejection smoke skipped\n'
 fi

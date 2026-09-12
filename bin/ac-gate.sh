@@ -141,9 +141,18 @@
 # ## Questions for the Owning Chief), maintenance (# Maintenance Gate Decision,
 # ## Decision, ## Grounds, ## Inputs Read, ## Proposed Process), each in that
 # order; ## Decision must hold exactly one token in
-# {continue,revise,ask-captain,chief-decide}; R1 and maintenance mechanically
-# reject `chief-decide`; R2 mechanically rejects `revise` because it is terminal
-# and has no R3. ## Proposed Process and ## Grounds must be non-empty; the body
+# {continue,revise,ask-captain,chief-decide,environment-error}; R1 and
+# maintenance mechanically reject `chief-decide`; R2 mechanically rejects
+# `revise` because it is terminal and has no R3; `environment-error` is
+# MAINTENANCE-ONLY and is not a decision at all - it is the judge's own
+# declaration that its environment denied it an input it had to judge, so it
+# renders no judgment, writes NO receipt, and exits 3 into the caller's
+# absence-of-judgment arm. It is opt-in and structural: the gate infers it from
+# nothing, which is what keeps it from ever rejecting an honest judge. The
+# receipt schema is UNCHANGED and must stay so - `ac_maintenance_receipt_validate`
+# still accepts only {continue,revise,ask-captain}, so a receipt carrying the
+# token authorizes nothing wherever it came from.
+# ## Proposed Process and ## Grounds must be non-empty; the body
 # must be non-empty; a maintenance ## Inputs Read must satisfy
 # `ac_maintenance_read_evidence` against the manifest and the plan themselves.
 # R1 `revise` must include at least one numbered required
@@ -201,8 +210,11 @@
 # skip could honestly be held.
 #
 # Exit codes: 0 = a validated staged-design advice or maintenance receipt was
-# written; 3 = the selected engine failed or returned nothing valid; 4 = gate
-# disabled by config/gate-agent=off. Anything else = usage/input error.
+# written; 3 = the selected engine failed, returned nothing valid, or (in
+# maintenance) declared `environment-error`; 4 = gate disabled by
+# config/gate-agent=off. Anything else = usage/input error. The stderr line
+# distinguishes the declared environment failure from a malformed body, because
+# the operator debugging a stalled Learning loop must be told which one happened.
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
@@ -380,6 +392,16 @@ validate_body() {
   [ "$(printf '%s\n' "$dec" | grep -c .)" = 1 ] || return 1
   case "$dec" in
     continue|revise|ask-captain|chief-decide) ;;
+    # The judge's OWN declaration that its environment denied it an input it had
+    # to judge. OPT-IN and structural: the gate infers it from nothing, so an
+    # honest judge can never be rejected by it - which is the failure the
+    # read-evidence block warns about ("a heuristic that rejects an honest judge
+    # would switch the maintenance loop off silently"). It is NOT a decision and
+    # never becomes a receipt; rc 2 buys it a diagnosis that names it, instead of
+    # the body-contract checklist a garbage response gets.
+    environment-error)
+      [ "$gate_kind" = maintenance ] || return 1
+      return 2 ;;
     *) return 1 ;;
   esac
   if [ "$gate_kind" = maintenance ]; then
@@ -892,13 +914,14 @@ Write your review as Markdown with these headings, each EXACTLY ONCE and in this
 ## Inputs Read
 ## Proposed Process
 
-Under ## Decision put ONLY one token: continue, revise, or ask-captain.
+Under ## Decision put ONLY one token: continue, revise, ask-captain, or environment-error.
 Grounds and Proposed Process must both be non-empty.
+
 Under ## Inputs Read put EXACTLY these two lines and nothing else:
 - INPUT MANIFEST QUOTE: <one whole line of substance copied character-for-character out of the input manifest>
 - ACTION PLAN NEW SHA-256: <one \"new_sha256\" value copied out of the action plan's own actions>
 Both are checked against the files themselves, so neither can be reasoned out: the quote must occur in the manifest verbatim - one line, no ellipsis, no code fence - and still carry at least $AC_MAINTENANCE_QUOTE_MIN letters or digits once the MODE, the SUBJECT and the run id in the paths below are removed from it, so pick a line with real content rather than a heading; and the SHA-256 must be one an action in the plan actually carries. Neither may be one of the two SHA-256 values printed below: those are what this prompt already gave you, and material this prompt gave you cannot prove you opened anything.
-If you cannot open either file, say so in plain prose instead of returning a decision document - a maintenance receipt without both lines is refused, and the caller escalates to the captain rather than applying anything.
+If your environment denied you ANY input you must judge - either of the two files above, or the run report, the captain's standing preferences, or anything the action plan points at - then you have no decision to render. Put environment-error under ## Decision and say which input you could not read under ## Grounds, so an operator can repair it. Still emit all five headings in order: when the decision is environment-error the two ## Inputs Read lines are not required, so put there whatever you could read, or leave it empty. It is NOT a decision - no receipt is written and nothing is applied - so it costs this fleet one re-run and never a wrong mutation. NEVER answer revise because you could not read something: revise means you READ the evidence and judged the action wanting, and answering it for a broken environment silently spends the whole examination window this fleet was owed.
 Output ONLY that Markdown document - no preamble and no code fences.
 
 == IMMUTABLE INPUTS TO READ FROM DISK ==
@@ -1165,7 +1188,13 @@ if [ "$gate_kind" = maintenance ]; then
 else
   body_contract="response failed the second-chief.md contract (headings/decision/process/grounds/required-changes)"
 fi
-body="$(printf '%s' "$text" | validate_body)" || fail_gate "$body_contract"
+body_rc=0
+body="$(printf '%s' "$text" | validate_body)" || body_rc=$?
+if [ "$body_rc" = 2 ]; then
+  fail_gate "the judge answered environment-error: it could not read an input it had to judge, so it rendered no decision and no receipt is written"
+elif [ "$body_rc" != 0 ]; then
+  fail_gate "$body_contract"
+fi
 
 # The inputs are fed as PATHS the judge reads itself, for as long as the turn
 # lasts, so the hashes taken before the pane opened are a CLAIM about what was
