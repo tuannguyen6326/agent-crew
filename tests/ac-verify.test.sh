@@ -145,26 +145,6 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# SCOUT LANE (--kind codereview-scout): a one-shot observer. It publishes no
-# verifier meta and must never wait for one - the lanes run BEFORE the judge
-# pane exists, which is exactly the ordering this branch pins.
-if [ "$kind" = codereview-scout ]; then
-  printf 'pScout-%s tScout\n' "$$" >"$pane_file"
-  s_tr="$VERIFY_SCOUT_DIR/transcript-$$.jsonl"
-  case "${VERIFY_SCOUT_MODE:-ok}" in
-    drop)   printf '{"event":"done","status":"timeout","pane":"pScout-%s"}\n' "$$"; exit 0 ;;
-    dirty)  printf 'scout wrote here\n' >"$cwd/scout-litter.txt" ;;
-    garbage) printf '{"text":"no json object here"}\n' >"$s_tr"
-             printf '{"event":"done","status":"ok","transcript":"%s","source":"command","pane":"pScout-%s"}\n' "$s_tr" "$$"
-             exit 0 ;;
-  esac
-  # the one-message jsonl shape ac_transcript_final parses
-  obs="$(jq -cn --arg f "$(basename "$prompt")" \
-    '{observations:[{file:"file.txt",line:1,what:"the lane saw something",evidence:"line 1"}]}')"
-  jq -cn --arg t "$obs" '{type:"assistant",message:{content:[{type:"text",text:$t}]}}' >"$s_tr"
-  printf '{"event":"done","status":"ok","transcript":"%s","source":"command","pane":"pScout-%s"}\n' "$s_tr" "$$"
-  exit 0
-fi
 printf 'pVerify tVerify\n' >"$pane_file"
 meta="$AC_FLEET_STATE/$VERIFY_EXPECT_ID.meta"
 i=0
@@ -201,6 +181,23 @@ elif [ "$kind" = codereview ]; then
       '{findings:[{id:"F1",severity:"error",action:"fix",class:"correctness",description:"real bug",authority_class:"internal",authority:"spec",evidence:"seen",file:$f}
                   | if $l != "" then .line = ($l | tonumber) else . end],summary:"one fix",risk_level:"medium",risk_rationale:"fix owed",reviewed_ref:$ref}')"
   else
+    # THE REVIEWER RUNS THE LANES NOW. The real one shells out to
+    # ac-pane-agent per lane; this stand-in does what a compliant reviewer
+    # leaves behind - the files the facade counts - so the test pins the
+    # CONTRACT (what must be on disk) rather than a model's obedience.
+    if grep -q "INDEPENDENT SCOUT LANES" "$prompt" 2>/dev/null; then
+      sd="$(grep -o "[^ ]*/scouts" "$prompt" | head -1)"
+      case "${VERIFY_SCOUT_MODE:-ok}" in
+        skip) : ;;                       # a reviewer that ran nothing
+        partial)
+          printf '{"observations":[{"file":"file.txt","line":1,"what":"w","evidence":"e"}]}\n' >"$sd/1.json"
+          printf '1\tok\t1\n2\ttimeout\t-\n' >"$sd/lanes.tsv" ;;
+        *)
+          printf '{"observations":[{"file":"file.txt","line":1,"what":"w","evidence":"e"}]}\n' >"$sd/1.json"
+          printf '{"observations":[{"file":"file.txt","line":2,"what":"w2","evidence":"e2"}]}\n' >"$sd/2.json"
+          printf '1\tok\t1\n2\tok\t1\n' >"$sd/lanes.tsv" ;;
+      esac
+    fi
     clean="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[],summary:"clean",risk_level:"low",risk_rationale:"bounded",reviewed_ref:$ref}')"
     # The judge's disposition of the lanes, when the fixture asks for one.
     case "${VERIFY_SCOUT_JUDGE:-}" in
@@ -545,10 +542,11 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "question, options, matching t
 # convergence, captain ruling) + the stable-id formation rule (this
 # is what a later round's disposition binds to); each raise is deliberate, not
 # drift. Raised 500->540 (and its two siblings by the same 40) for the decider
-# shape on ask-user and the citation rule on fix.
+# shape on ask-user and the citation rule on fix; 540->552 for the one clause
+# that tells the reviewer the scout fan-out is not the second pass it forbids.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 540 ] \
-  || fail "canonical review prompt exceeds its 540-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 552 ] \
+  || fail "canonical review prompt exceeds its 552-word scaffold budget: $scaffold_words"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Reserve action=fix" \
   "fix is reserved for delivery-blocking findings; advisory items ride as no-op"
 # Bug-fix durability + anti-overreach: a fix claim is judged durable-vs-
@@ -695,8 +693,8 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $bas
 # disposition rules, resolved_ids, and the no-renumber clause the measured
 # rejections needed); the ledger payload itself stays excluded like INTENT.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 610 ] \
-  || fail "history review prompt exceeds its 610-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 622 ] \
+  || fail "history review prompt exceeds its 622-word scaffold budget: $scaffold_words"
 
 # A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
 # the interdiff scope: the previous entry's reviewed_ref
@@ -816,8 +814,8 @@ case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: C
 # fixture's one id. A real round's checklist grows one word per prior open id;
 # this bounds the PROSE, which is the part that drifts.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 690 ] \
-  || fail "previous-round ledger review prompt exceeds its 690-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 702 ] \
+  || fail "previous-round ledger review prompt exceeds its 702-word scaffold budget: $scaffold_words"
 
 # PREVIOUS ROUND ONLY: resolved findings from older rounds do not require
 # re-attestation later. A round-3 history whose r1 had an open id but whose r2
@@ -1560,11 +1558,12 @@ assert_eq "$(jq -r '.findings[] | select(.id=="A2") | .impact | length' "$dec_ou
 assert_eq "$(jq -r '.findings[] | select(.id=="A3") | has("axis"), has("decider"), has("impact")' "$dec_out" | paste -sd, -)" "false,false,false" \
   "a malformed axis, blank decider and mismatched impact are dropped, not defaulted"
 
-# --- SCOUT LANES: N observers, one judge, one lease --------------------------
-# The fan-out runs read-only over the SAME worktree the round already holds
-# (no second lease), mints nothing, and leaves the judge's verdict machinery
-# untouched. Absent config is OFF, which every case above has been proving by
-# construction - the single-reviewer path never saw a lane.
+# --- SCOUT LANES: the REVIEWER runs them, the facade counts what it left ----
+# ac-verify resolves which lanes a fleet configured, stages their shared
+# prompt, and writes the exact commands into the reviewer's prompt. The
+# reviewer runs them over the round's OWN lease - no second worktree - and
+# leaves each harvest in <round>/scouts/. The facade counts those FILES: the
+# reviewer ran the lanes, so its own account of them is an interested party's.
 export VERIFY_SCOUT_DIR="$TMP/scouts"
 mkdir -p "$VERIFY_SCOUT_DIR"
 scout_family=flow-v2-scout
@@ -1576,7 +1575,7 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
     "codereview-scout": {
       "lanes": [
         {"harness": "codex", "model": "gpt-5.6-sol"},
-        {"harness": "opencode", "model": "qwen3.7-plus"}
+        {"harness": "opencode", "model": "qwen3.7-plus", "effort": "high"}
       ]
     }
   }
@@ -1585,158 +1584,94 @@ EOF
 scout_out="$TMP/scout-verdict.json"
 scout_gets_before="$(grep -c '^get ' "$VERIFY_TREE_LOG" 2>/dev/null || echo 0)"
 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
-  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >"$TMP/scout-run.log" 2>&1 \
-  || fail "a round with scout lanes still produces the judge's verdict: $(tail -3 "$TMP/scout-run.log")"
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
+  || fail "a round with scout lanes still produces the reviewer's verdict"
 sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
-[ -d "$sdir" ] || fail "the round keeps its scout evidence at $sdir"
-assert_eq "$(wc -l <"$sdir/lanes.tsv" | tr -d ' ')" "2" "one ledger row per configured lane"
-assert_eq "$(awk -F'\t' '$2=="ok"' "$sdir/lanes.tsv" | wc -l | tr -d ' ')" "2" "both lanes came back ok"
-assert_file "$sdir/1.json" "lane 1 stored its observations"
-assert_eq "$(jq -r '.observations[0].file' "$sdir/1.json")" "file.txt" "the observation survives the harvest"
-assert_file "$sdir/prompt.md" "the lanes share one prompt"
+jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)prompt.md"
+
+# The commands the reviewer is told to run: pane-agent ONE-SHOT turns, never
+# the crewmate contract - a crewmate would mint a state/<id>.meta and the
+# watcher would demand supervision for a pane holding no brief and no task.
+assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT LANES" "the reviewer's prompt carries the fan-out"
+assert_contains "$(cat "$jp")" "run --exec --harness codex" "lane 1 is a one-shot pane-agent turn"
+assert_contains "$(cat "$jp")" "--kind codereview-scout" "...under its own kind"
+assert_contains "$(cat "$jp")" "--model 'qwen3.7-plus'" "a model is quoted, so a name with spaces survives"
+assert_contains "$(cat "$jp")" "--effort high" "a configured effort rides its lane"
+assert_contains "$(cat "$jp")" "reap-pane" "the reviewer is told to close each lane's pane"
+assert_contains "$(cat "$jp")" "status --porcelain" "...and to check the tree before reviewing"
+assert_contains "$(cat "$jp")" "--cwd $VERIFY_WORKTREE" "every command names the round's own lease"
+assert_contains "$(cat "$jp")" "scout_dispositions" "the prompt names the key the reviewer answers in"
+assert_contains "$(cat "$jp")" "Agreement between" "...and warns that agreeing observers are not evidence"
+assert_eq "$(ls "$AC_HOME/state"/*scout*.meta 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "a lane mints no crewmate meta - the watcher is never asked to supervise one"
+assert_file "$sdir/prompt.md" "the lanes share one staged prompt"
 assert_contains "$(cat "$sdir/prompt.md")" "You are NOT the reviewer" "the scout prompt refuses the reviewer role"
 assert_contains "$(cat "$sdir/prompt.md")" "READ ONLY" "...and forbids writing"
-# The judge still owns the verdict, unchanged.
-assert_eq "$(jq -r .verdict "$scout_out")" "pass" "the judge's verdict is what the round returns"
+
 # NO SECOND LEASE - the whole point of running the lanes in the round's own
 # worktree. Counted against the tree driver's log, which records every `get`.
 assert_eq "$(( $(grep -c '^get ' "$VERIFY_TREE_LOG" 2>/dev/null || echo 0) - scout_gets_before ))" "1" \
   "the whole fan-out took exactly the round's own lease, and no other"
-assert_no_file "$sdir/1.handle" "a harvested lane leaves no pane handle behind"
 
-# A lane that drops out is RECORDED, never silently absent - a perspective the
-# caller paid for and did not get must be visible.
-rm -rf "$AC_HOME/data/$scout_family"
-VERIFY_SCOUT_MODE=drop "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
-  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
-  || fail "a dropped lane must not fail the round"
-sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
-assert_eq "$(awk -F'\t' '$2=="timeout"' "$sdir/lanes.tsv" | wc -l | tr -d ' ')" "2" "a timed-out lane is recorded by its status"
-assert_no_file "$sdir/1.json" "...and stores no observations"
+# The verdict counts the FILES, not the reviewer's word.
+assert_eq "$(jq -r '.scouts.lanes' "$scout_out")" "2" "lanes configured"
+assert_eq "$(jq -r '.scouts.returned' "$scout_out")" "2" "lanes that came back with observations"
+assert_eq "$(jq -r '.scouts.observations' "$scout_out")" "2" "observations across those lanes"
 
-# A lane whose output is not an observations object is a dropped lane too -
-# the harvest refuses to guess at prose.
+# A reviewer that ran nothing cannot hide it: the directory is empty and the
+# round says so, without failing - the lanes are advisory.
 rm -rf "$AC_HOME/data/$scout_family"
-VERIFY_SCOUT_MODE=garbage "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
-  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
-  || fail "an unparseable lane must not fail the round"
-sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
-assert_eq "$(awk -F'\t' '$3=="-"' "$sdir/lanes.tsv" | wc -l | tr -d ' ')" "2" "an unparseable lane stores no count"
+out="$(VERIFY_SCOUT_MODE=skip "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$scout_family" --caller "$caller" --base "$base" --intent "$intent" \
+  --output "$scout_out" 2>&1 >/dev/null)" || fail "a skipped fan-out must not fail the round"
+assert_eq "$(jq -r '.scouts.returned' "$scout_out")" "0" "no lane came back"
+assert_contains "$out" "0 of 2 configured scout lanes" "the gap is named on the channel a chief reads"
 
-# THE TREE THE JUDGE READS IS THE REF. A lane that writes into the worktree is
-# both a contract violation and a corrupted input, so the round restores it.
+# One lane back, one lost: counted as it happened.
 rm -rf "$AC_HOME/data/$scout_family"
-VERIFY_SCOUT_MODE=dirty "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
-  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
-  || fail "a dirtying lane must not fail the round"
-sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
-assert_file "$sdir/tree-after" "the worktree is inspected after the lanes"
-assert_contains "$(cat "$sdir/tree-after")" "scout-litter.txt" "the dirtying lane is caught by inspection, not by trust"
+out="$(VERIFY_SCOUT_MODE=partial "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$scout_family" --caller "$caller" --base "$base" --intent "$intent" \
+  --output "$scout_out" 2>&1 >/dev/null)" || fail "a partial fan-out must not fail the round"
+assert_eq "$(jq -r '.scouts.returned' "$scout_out")" "1" "one lane returned"
+assert_contains "$out" "1 of 2 configured scout lanes" "...and the missing one is named"
 
-# A misconfigured fan-out degrades to one reviewer instead of grounding the
-# round: a duplicate lane is refused by the resolver, and the round runs on.
-rm -rf "$AC_HOME/data/$scout_family"
-jq '.panes["codereview-scout"].lanes = [{"harness":"codex","model":"m"},{"harness":"codex","model":"m"}]' \
-  "$AC_HOME/config/crew-dispatch.json" >"$TMP/d.json" && mv "$TMP/d.json" "$AC_HOME/config/crew-dispatch.json"
+# ABSENT IS OFF: no entry, no instructions in the prompt, no scouts dir.
+rm -rf "$AC_HOME/data/$scout_family"; rm -f "$AC_HOME/config/crew-dispatch.json"
 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
   --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
-  || fail "an unresolvable lane set must degrade to the judge alone, not fail the round"
-assert_eq "$(jq -r .verdict "$scout_out")" "pass" "...and the judge's verdict still lands"
-sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
-[ ! -d "$sdir" ] || fail "no lanes ran, so no scout evidence dir is minted"
-rm -f "$AC_HOME/config/crew-dispatch.json"
-
-# --- THE JUDGE READS THE LANES ------------------------------------------------
-# Observations reach the judge as EVIDENCE appended to its prompt, and what it
-# did with them is COUNTED here rather than taken on its word.
-rm -rf "$AC_HOME/data/$scout_family"
-cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
-{
-  "rules": [{"when": "anything", "use": {"harness": "claude"}}],
-  "panes": {
-    "codereview-scout": {
-      "lanes": [
-        {"harness": "codex", "model": "gpt-5.6-sol"},
-        {"harness": "opencode", "model": "qwen3.7-plus"}
-      ]
-    }
-  }
-}
-EOF
-VERIFY_SCOUT_JUDGE=full "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
-  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
-  || fail "a judged round lands"
+  || fail "the single-reviewer round is unchanged"
 jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)prompt.md"
-assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT OBSERVATIONS (evidence, not findings)" "the lanes reach the judge's prompt"
-assert_contains "$(cat "$jp")" "[1.1] file.txt:1" "each observation is tagged by lane and index"
-assert_contains "$(cat "$jp")" "the lane saw something" "...carrying what the observer said"
-assert_contains "$(cat "$jp")" "scout_dispositions" "the prompt names the key the judge answers in"
-assert_contains "$(cat "$jp")" "Agreement between" "...and warns that agreeing observers are not evidence"
-assert_eq "$(jq -r '.scouts.lanes' "$scout_out")" "2" "the verdict counts the lanes that ran"
-assert_eq "$(jq -r '.scouts.observations' "$scout_out")" "2" "...the observations they produced"
-assert_eq "$(jq -r '.scouts.dispositioned' "$scout_out")" "2" "...and how many the judge judged"
-assert_eq "$(jq 'has("warnings")' "$scout_out")" "false" "a fully judged round warns about nothing"
+case "$(cat "$jp")" in *"INDEPENDENT SCOUT LANES"*) fail "an unconfigured fleet must see no fan-out" ;; esac
+assert_eq "$(jq 'has("scouts")' "$scout_out")" "false" "...and its verdict carries no scouts block"
 
-# A judge that ignores half the observations cannot hide it by omitting the key.
-rm -rf "$AC_HOME/data/$scout_family"
-VERIFY_SCOUT_JUDGE=short "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
-  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
-  || fail "an under-judged round still lands - the gap is a warning, not a refusal"
-assert_eq "$(jq -r '.scouts.dispositioned' "$scout_out")" "1" "the count is the judge's actual output"
-assert_contains "$(jq -r '.warnings | join(" ")' "$scout_out")" "1 of 2 judged" \
-  "the unjudged remainder is named on the channel a chief reads"
-
-# A malformed disposition is a schema violation like any other.
-rm -rf "$AC_HOME/data/$scout_family"
-rc=0
-VERIFY_SCOUT_JUDGE=bad "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
-  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 || rc=$?
-[ "$rc" -ne 0 ] || fail "a disposition with an unknown verdict must be rejected"
-rej="$(cat "$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)rejection.log" 2>/dev/null || true)"
-assert_contains "$rej" "scout-disposition-shape-incomplete" "the rejection names the check that failed"
-rm -f "$AC_HOME/config/crew-dispatch.json"
-
-# --- THE SHAPE PRODUCTION ACTUALLY CALLS IN: NO AC_HOME ----------------------
-# ac-verify is invoked BY A CREWMATE PANE, and a crewmate pane carries no
-# AC_HOME by design - it gets AC_FLEET_STATE instead. Every scout case above
-# ran with the suite's exported AC_HOME, so all of them passed while the real
-# call shape resolved ZERO lanes and skipped the whole block in silence. This
-# case is that shape, and it is the one that matters.
+# A fleet whose config DECLARES lanes while the resolver answers nothing is a
+# contradiction, not an absence - absent-is-off must never swallow it.
 rm -rf "$AC_HOME/data/$scout_family"
 cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
-{
-  "rules": [{"when": "anything", "use": {"harness": "claude"}}],
-  "panes": {
-    "codereview-scout": {
-      "lanes": [
-        {"harness": "codex", "model": "gpt-5.6-sol"},
-        {"harness": "opencode", "model": "qwen3.7-plus"}
-      ]
-    }
-  }
-}
+{"rules":[{"when":"x","use":{"harness":"claude"}}],
+ "panes":{"codereview-scout":{"lanes":[{"harness":"codex","model":"m"}]}}}
+EOF
+out="$(env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" AC_VERIFY_DISPATCH_BIN=/nonexistent-resolver \
+  "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" 2>&1 >/dev/null)" \
+  || fail "an unresolvable fan-out degrades to the reviewer alone"
+assert_contains "$out" "codereview-scout" "the silent-off case is named"
+
+# THE SHAPE PRODUCTION CALLS IN: no AC_HOME. Every case above ran with the
+# suite's exported one, so all of them once passed while the real call shape
+# resolved zero lanes and skipped the block in silence.
+rm -rf "$AC_HOME/data/$scout_family"
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{"rules":[{"when":"x","use":{"harness":"claude"}}],
+ "panes":{"codereview-scout":{"lanes":[{"harness":"codex","model":"m"},{"harness":"opencode","model":"n"}]}}}
 EOF
 env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" "$BIN/ac-verify.sh" codereview \
   --repo "$repo" --ref "$target" --family "$scout_family" --caller "$caller" \
   --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
   || fail "a homeless caller still runs the round"
-sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
-[ -d "$sdir" ] \
-  || fail "the lanes must resolve for a caller with no AC_HOME - that is every production caller"
-assert_eq "$(awk -F'\t' '$2=="ok"' "$sdir/lanes.tsv" | wc -l | tr -d ' ')" "2" \
-  "both lanes ran under the real call shape"
-assert_eq "$(jq -r '.scouts.lanes' "$scout_out")" "2" "and the verdict counts them"
-
-# A fleet whose config DECLARES lanes but whose resolver answers nothing is a
-# contradiction, not an absence. Absent-is-off must never swallow it: the
-# round says so out loud instead of quietly reviewing with one model.
-rm -rf "$AC_HOME/data/$scout_family"
-out="$(env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" AC_VERIFY_DISPATCH_BIN=/nonexistent-resolver \
-  "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
-  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" 2>&1 >/dev/null)" \
-  || fail "an unresolvable fan-out degrades to the judge, it does not fail the round"
-assert_contains "$out" "codereview-scout" "the silent-off case is named"
-assert_contains "$out" "reviewing with the judge alone" "...and says what the round did instead"
+jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)prompt.md"
+assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT LANES" \
+  "the lanes must reach the prompt for a caller with no AC_HOME - that is every production caller"
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
 pass

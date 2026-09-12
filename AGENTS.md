@@ -353,7 +353,8 @@ captain redirects a task whose crewmate is already in flight -
   MORE THAN ONE MODEL MAY LOOK, and exactly one still judges. A fleet that
   configures `panes.codereview-scout.lanes[]` gives each review round a set of
   SCOUT lanes - one model per lane, read-only, over the round's own lease -
-  whose observations reach the reviewer as evidence. They mint nothing: the
+  which the REVIEWER itself runs before it reviews, as one-shot pane-agent
+  turns and never as crewmates. They mint nothing: the
   reviewer reports an observation under its own id or refutes it by name, so
   the round keeps one id space and one disposition ledger no matter how many
   models read the diff. The verdict counts what the lanes produced and what the
