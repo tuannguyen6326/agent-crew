@@ -52,6 +52,15 @@
 # caller: ac-learn.sh's scout). One scalar carries the whole triple, never three
 # variables - see ATOMIC below.
 #
+# Resolved ONLY when something will read it, i.e. when the caller passed no
+# --harness: that flag takes the whole triple (the branch below), leaving a
+# profile unread. The distinction is load-bearing, not an optimization - a
+# LANES-shaped kind (`panes.codereview-scout.lanes[]`, one profile PER LANE) has
+# no single profile to resolve, and every lane launch names its own harness, so
+# resolving for a lane turned the resolver's correct refusal into a fatal
+# misconfiguration. A kind with no --harness still refuses as below: nothing
+# names an engine, so there is no run to degrade into.
+#
 # A profile is ATOMIC. When one resolves it supplies harness, model and effort
 # TOGETHER and supersedes the per-role model knob for that kind, and its model
 # and effort are used AS-IS, INCLUDING EMPTY: empty means the harness's own
@@ -727,17 +736,23 @@ case "$KIND" in ''|*[!a-z0-9-]*) fail "kind must be [a-z0-9-]: $KIND" ;; esac
 # one. No profile leaves everything below EXACTLY as it was.
 ku="$(printf '%s' "$KIND" | tr '[:lower:]-' '[:upper:]_')"
 penv="AC_FLEET_PROFILE_$ku"
-PROFILE="${!penv:-}"
-if [ -z "$PROFILE" ]; then
-  # Absent resolves to empty with exit 0 and falls through; a resolver ERROR
-  # (a panes entry naming no harness, unreadable JSON, no jq) must NOT - a
-  # misconfigured profile that quietly degraded to the ladder below would put
-  # the fleet's judge back on the defaults without saying so, which is the
-  # silent-wrong-answer failure this whole ladder exists to end.
-  prc=0
-  PROFILE="$(ac_pane_profile "$KIND" 2>/dev/null)" || prc=$?
-  [ "$prc" = 0 ] \
-    || fail "could not resolve a pane profile for kind '$KIND' - see bin/ac-dispatch-select.sh --pane $KIND"
+PROFILE=""
+# Resolve only what something will read (contract: the PANE PROFILE header) - an
+# explicit --harness takes the whole triple below, and a lanes-shaped kind has no
+# single profile to resolve for it.
+if [ -z "$HFLAG" ]; then
+  PROFILE="${!penv:-}"
+  if [ -z "$PROFILE" ]; then
+    # Absent resolves to empty with exit 0 and falls through; a resolver ERROR
+    # (a panes entry naming no harness, unreadable JSON, no jq) must NOT - a
+    # misconfigured profile that quietly degraded to the ladder below would put
+    # the fleet's judge back on the defaults without saying so, which is the
+    # silent-wrong-answer failure this whole ladder exists to end.
+    prc=0
+    PROFILE="$(ac_pane_profile "$KIND" 2>/dev/null)" || prc=$?
+    [ "$prc" = 0 ] \
+      || fail "could not resolve a pane profile for kind '$KIND' - see bin/ac-dispatch-select.sh --pane $KIND"
+  fi
 fi
 # CONTRADICTION CHECK (codereview only): config/codereview-agent (or its
 # AC_FLEET_AGENT_CODEREVIEW env rung) is a real, working knob, and a

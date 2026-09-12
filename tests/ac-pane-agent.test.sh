@@ -399,6 +399,29 @@ assert_contains "$out" "codereview" "the refusal names the kind it could not res
 case "$(cat "$HDLOG")" in *"pane run"*) fail "an unresolvable profile must place no pane" ;; esac
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
+# A LANES-shaped kind has no single profile BY DESIGN, and every lane launch
+# carries its own --harness - the flag that takes the whole triple and leaves
+# the profile unread. Resolving one anyway turned a correct declaration into a
+# fatal misconfiguration and killed every scout lane of a live review round.
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{"panes": {"codereview-scout": {"lanes": [
+  {"harness": "claude", "model": "sonnet"},
+  {"harness": "codex", "model": "gpt-5.6-sol"}]}}}
+EOF
+: >"$HDLOG"
+out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" \
+  --prompt-file "$pf" --kind codereview-scout --harness claude --label p-lane 2>&1 || true)"
+case "$out" in *'"status":"error"'*) fail "a lane naming its own harness must not ask for a single profile: $out" ;; esac
+assert_contains "$(cat "$HDLOG")" "pane run" "the lane's pane is placed like any other"
+# The guard the fix must NOT weaken: with no --harness there IS nothing to run,
+# so the same declaration stays a refusal rather than degrading to the ladder.
+: >"$HDLOG"
+out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" \
+  --prompt-file "$pf" --kind codereview-scout --label p-lane2 2>&1 || true)"
+assert_contains "$out" '"status":"error"' "a lanes-shaped kind with no --harness resolves nothing and is refused"
+assert_contains "$out" "codereview-scout" "...naming the kind"
+rm -f "$AC_HOME/config/crew-dispatch.json"
+
 # --- the shared launch mote (ac_build_launch): --resume, and NO session pin -----
 # The launch command is composed by ac-backend.sh's ac_build_launch, the same
 # helper ac-spawn uses. A resume names the caller's session; a fresh turn pins
