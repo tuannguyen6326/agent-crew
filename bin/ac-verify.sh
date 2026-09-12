@@ -188,6 +188,20 @@ all_leases=""
 qa_error_report_on_exit() {
   local rc=$? tmp target_text attestation_note marker marker_scope marker_app
   attestation_note="No passing attestation was created by this round."
+  # A FAILED ROUND WRITES NO RECEIPT, and that is the trap: --output still holds
+  # the PREVIOUS round's verdict, for a ref that is no longer the one under
+  # review, and nothing about the file says so. A reader finds `pass` and takes
+  # it for this round's. Deleting it would be worse - it is the last real
+  # verdict somebody may still need - so say it out loud instead, naming the ref
+  # it actually covers. Best-effort and never fatal: this runs on the way out.
+  if [ "${kind:-}" = codereview ] && [ "$rc" != 0 ] && [ -s "${output:-/nonexistent}" ]; then
+    local _stale_ref
+    _stale_ref="$(jq -r '.reviewed_ref // ""' "$output" 2>/dev/null || true)"
+    if [ -n "$_stale_ref" ] && [ "$_stale_ref" != "${sha:-}" ]; then
+      printf 'ac-verify: STALE RECEIPT - this round failed and wrote nothing, so %s still carries the verdict for %s, NOT for %s under review. Do not read it as current.\n' \
+        "$output" "$_stale_ref" "${sha:-${ref:-unknown}}" >&2
+    fi
+  fi
   if [ -n "$qa_run" ] && [ -f "$qa_run/run.meta" ] \
     && [ "$(ac_meta_get "$qa_run/run.meta" outcome)" = passed ] \
     && [ -n "${main_repo:-}" ]; then

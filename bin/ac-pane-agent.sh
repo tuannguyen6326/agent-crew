@@ -1533,6 +1533,16 @@ file_harvest() {
   TRANSCRIPT="$f"; SOURCE=file
   emit "{\"event\":\"transcript\",\"path\":\"$f\",\"session_id\":\"$NEWSID\",\"source\":\"file\"}"
 }
+final_message_has_text() {
+  # The CALLER's question, asked here so the two cannot disagree: does the LAST
+  # assistant message carry text? ac_transcript_final (bin/ac-pipeline-lib.sh)
+  # reads exactly this and returns empty when it does not.
+  [ -n "$TRANSCRIPT" ] || return 1
+  jq -rs '[.[] | select(.type == "assistant")] | last
+          | if . == null then "" else
+              ([(.message.content // [])[] | select(.type == "text") | .text] | join(""))
+            end' "$TRANSCRIPT" 2>/dev/null | grep -q '[^[:space:]]'
+}
 has_final_text() {
   [ -n "$TRANSCRIPT" ] || return 1
   python3 - "$TRANSCRIPT" <<'PY' 2>/dev/null
@@ -1612,6 +1622,21 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
         # caller can still reap the agent it opened.
         if [ -n "$DELIVERABLE" ] && [ ! -s "$DELIVERABLE" ]; then
           emit "{\"event\":\"done\",\"status\":\"error\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"the pane went idle (agent_status=$ag) without producing its deliverable $DELIVERABLE - the turn stopped mid-pass, so it is NOT reported ok\"}"
+          exit 1
+        fi
+        # FINAL-MESSAGE GATE, and it binds with no declaration at all. This file
+        # and its CALLER read the same transcript with different questions:
+        # has_final_text above is satisfied by any assistant text ANYWHERE,
+        # while ac_transcript_final (bin/ac-pipeline-lib.sh) takes the LAST
+        # assistant message. A session killed mid-pass - after a tool call, its
+        # last message a bare tool_use - answers yes to the first and EMPTY to
+        # the second, so this arm reported ok and every caller then died on
+        # "transcript has no final message", leaving the previous round's
+        # receipt on disk looking like a current one. Ask the caller's question
+        # here, and refuse in the seconds it took rather than handing out an ok
+        # nothing downstream can use.
+        if ! final_message_has_text; then
+          emit "{\"event\":\"done\",\"status\":\"error\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"the pane went idle (agent_status=$ag) but its last assistant message carries no text - the turn stopped mid-pass and there is no final message to harvest, so it is NOT reported ok\"}"
           exit 1
         fi
         emit "{\"event\":\"note\",\"path\":\"idle-fallback used (agent_status=$ag)\"}"

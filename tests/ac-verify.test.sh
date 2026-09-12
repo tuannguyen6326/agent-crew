@@ -1118,6 +1118,23 @@ assert_eq "$(grep -c '^return ' "$tree_log" || true)" "$((before_returns + 1))" 
 assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$((before_reaps + 1))" \
   "pane-closed-mid-turn reaps: pane reaped"
 
+# A FAILED ROUND WRITES NO RECEIPT, so whatever --output already held survives -
+# the PREVIOUS round's verdict, for a ref that is no longer under review, with
+# nothing on the file to say so. A reader finds `pass` and takes it for current.
+# The file is not deleted (it is the last real verdict somebody may still need);
+# the failure NAMES it instead, with the ref it actually covers.
+stale_out="$TMP/stale-receipt.json"
+jq -cn '{verdict:"pass",reviewed_ref:"0000000000000000000000000000000000000000",findings:[]}' >"$stale_out"
+rc=0
+VERIFY_PANE_DONE_STATUS=pane_closed "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$pane_closed_family-stale" --caller "$caller" --intent "$intent" \
+  --output "$stale_out" >/dev/null 2>"$TMP/stale.err" || rc=$?
+assert_eq "$rc" "1" "the round still fails"
+assert_contains "$(cat "$TMP/stale.err")" "STALE RECEIPT" "a failed round names the receipt it did not replace"
+assert_contains "$(cat "$TMP/stale.err")" "0000000000000000000000000000000000000000" \
+  "...and the ref that receipt actually covers"
+assert_eq "$(jq -r '.verdict' "$stale_out")" "pass" "the previous verdict is named, never deleted"
+
 # (a) prose-tail PASS: the reviewer is asked for JSON-only but often writes a
 # human summary beside/after the verdict. The REAL repro shape is prose, a blank
 # line, then a BARE (unfenced) JSON object; a fenced ```json block wrapped in

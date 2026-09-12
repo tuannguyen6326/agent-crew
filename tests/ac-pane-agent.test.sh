@@ -1626,6 +1626,9 @@ case "${1:-} ${2:-}" in
     mkdir -p "$HOME/.claude/projects/$slug"
     t="$HOME/.claude/projects/$slug/idle-sid-$n.jsonl"
     printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"reading the sources"}]}}' >"$t"
+    # A turn that DIED mid-pass: its last assistant message carries a tool_use
+    # and no text, exactly what a session killed after a Read leaves behind.
+    [ -f "$HDLOG.toolend" ] && printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{}}]}}' >>"$t"
     touch -t 200001010000 "$t" ;;
   "pane get") echo '{"result":{"pane":{"pane_id":"pP1","agent_status":"idle"}}}' ;;
   "pane read") echo 'idle pane scrollback' ;;
@@ -1650,6 +1653,23 @@ assert_contains "$out" '"event":"note"' "the idle fallback still announces itsel
 assert_contains "$out" 'idle-fallback used (agent_status=idle)' "the note names why it fired"
 assert_contains "$out" '"event":"done","status":"ok"' \
   "an undeclared deliverable leaves the idle fallback exactly as it was"
+
+# A TURN THAT DIED MID-PASS IS NOT AN OK TURN, even with no deliverable
+# declared. The pane agent and its caller read the same transcript with two
+# DIFFERENT questions: this file asked whether any assistant text exists
+# anywhere, while ac_transcript_final (bin/ac-pipeline-lib.sh) takes the LAST
+# assistant message. A session killed after a tool call satisfies the first and
+# returns empty from the second - so the pane reported ok and the caller then
+# died on "transcript has no final message", leaving the previous round's
+# receipt on disk looking current. Ask the caller's question here.
+: >"$HDLOG.toolend"
+irc=0; out="$(irun --label idle-toolend)" || irc=$?
+rm -f "$HDLOG.toolend"
+assert_eq "$irc" "1" "a turn whose last message carries no text exits non-zero"
+assert_contains "$out" '"event":"done","status":"error"' \
+  "...and says error rather than ok"
+assert_contains "$out" "no final message" "...naming what the caller will find missing"
+case "$out" in *'"status":"ok"'*) fail "a dead turn must never be reported ok: $out" ;; esac
 
 # DIRECTION 2 with the declaration SATISFIED: a turn that genuinely finished
 # wrote its deliverable before going quiet, so the fallback still passes it.
