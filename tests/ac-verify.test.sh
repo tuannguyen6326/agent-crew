@@ -1696,4 +1696,47 @@ rej="$(cat "$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1
 assert_contains "$rej" "scout-disposition-shape-incomplete" "the rejection names the check that failed"
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
+# --- THE SHAPE PRODUCTION ACTUALLY CALLS IN: NO AC_HOME ----------------------
+# ac-verify is invoked BY A CREWMATE PANE, and a crewmate pane carries no
+# AC_HOME by design - it gets AC_FLEET_STATE instead. Every scout case above
+# ran with the suite's exported AC_HOME, so all of them passed while the real
+# call shape resolved ZERO lanes and skipped the whole block in silence. This
+# case is that shape, and it is the one that matters.
+rm -rf "$AC_HOME/data/$scout_family"
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{
+  "rules": [{"when": "anything", "use": {"harness": "claude"}}],
+  "panes": {
+    "codereview-scout": {
+      "lanes": [
+        {"harness": "codex", "model": "gpt-5.6-sol"},
+        {"harness": "opencode", "model": "qwen3.7-plus"}
+      ]
+    }
+  }
+}
+EOF
+env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" "$BIN/ac-verify.sh" codereview \
+  --repo "$repo" --ref "$target" --family "$scout_family" --caller "$caller" \
+  --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
+  || fail "a homeless caller still runs the round"
+sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)scouts"
+[ -d "$sdir" ] \
+  || fail "the lanes must resolve for a caller with no AC_HOME - that is every production caller"
+assert_eq "$(awk -F'\t' '$2=="ok"' "$sdir/lanes.tsv" | wc -l | tr -d ' ')" "2" \
+  "both lanes ran under the real call shape"
+assert_eq "$(jq -r '.scouts.lanes' "$scout_out")" "2" "and the verdict counts them"
+
+# A fleet whose config DECLARES lanes but whose resolver answers nothing is a
+# contradiction, not an absence. Absent-is-off must never swallow it: the
+# round says so out loud instead of quietly reviewing with one model.
+rm -rf "$AC_HOME/data/$scout_family"
+out="$(env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" AC_VERIFY_DISPATCH_BIN=/nonexistent-resolver \
+  "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" 2>&1 >/dev/null)" \
+  || fail "an unresolvable fan-out degrades to the judge, it does not fail the round"
+assert_contains "$out" "codereview-scout" "the silent-off case is named"
+assert_contains "$out" "reviewing with the judge alone" "...and says what the round did instead"
+rm -f "$AC_HOME/config/crew-dispatch.json"
+
 pass

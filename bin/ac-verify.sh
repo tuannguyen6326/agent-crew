@@ -1157,9 +1157,31 @@ fi
 scout_dir="$round_dir/scouts"
 scout_count=0
 if [ "$kind" = codereview ]; then
-  scout_lanes="$("$bin_dir/ac-dispatch-select.sh" --pane codereview-scout --lanes 2>"$round_dir/scout-lanes.err" || true)"
-  if [ -s "$round_dir/scout-lanes.err" ] && [ -z "$scout_lanes" ]; then
-    ac_warn "scout lanes are configured but did not resolve - reviewing with the judge alone: $(head -1 "$round_dir/scout-lanes.err")"
+  # AC_HOME IS PASSED, NOT ASSUMED. This facade is invoked by a CREWMATE pane,
+  # and a crewmate pane carries no AC_HOME by design (ac-spawn threads
+  # AC_FLEET_STATE instead) - while the resolver reads the home from the
+  # environment. Without this the lookup returned an empty list under every
+  # production call and the absent-is-off rule below skipped the whole
+  # fan-out, silently, on a fleet that had configured three lanes. The home is
+  # already derived here as $fleet_home; handing it down is all this ever
+  # needed.
+  scout_bin="${AC_VERIFY_DISPATCH_BIN:-$bin_dir/ac-dispatch-select.sh}"
+  scout_lanes="$(AC_HOME="$fleet_home" "$scout_bin" --pane codereview-scout --lanes 2>"$round_dir/scout-lanes.err" || true)"
+  # ABSENT IS OFF, but a CONTRADICTION is not an absence. A config that
+  # declares the block while the resolver answers nothing means the fan-out
+  # the fleet paid for did not run, and the first version of this warning
+  # could not see it: it fired only when the resolver wrote to stderr, and
+  # the failure mode that actually happened was exit 0, empty stdout, empty
+  # stderr. The config file is read HERE for diagnosis only - the resolver
+  # remains the one thing that decides what runs.
+  if [ -z "$scout_lanes" ]; then
+    scout_why="$(head -1 "$round_dir/scout-lanes.err" 2>/dev/null || true)"
+    if [ -s "$fleet_home/config/crew-dispatch.json" ] \
+      && jq -e '.panes["codereview-scout"] // empty' "$fleet_home/config/crew-dispatch.json" >/dev/null 2>&1; then
+      ac_warn "config/crew-dispatch.json declares panes.codereview-scout but the resolver returned no lanes - reviewing with the judge alone${scout_why:+: $scout_why}"
+    elif [ -n "$scout_why" ]; then
+      ac_warn "scout lanes did not resolve - reviewing with the judge alone: $scout_why"
+    fi
   fi
   rm -f "$round_dir/scout-lanes.err"
   if [ -n "$scout_lanes" ]; then
