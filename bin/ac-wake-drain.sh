@@ -146,9 +146,22 @@ annotate_wakes() {
   # A SYMLINKED status file is skipped outright rather than followed - the
   # drain reads whatever the state dir holds, and this stays a read of our own
   # regular file.
-  local kind id rest sf line text
+  local kind id rest sf line text rrid
   while IFS=' ' read -r kind id rest; do
     printf '%s %s %s\n' "$kind" "$id" "$rest"
+    if [ "$kind" = remote ]; then
+      # The relocated stranded-remote-order detector (family
+      # remote-order-strands-silently-with-no-live-watcher, decision 3): a
+      # remote-order record exists in a spool ONLY between ac-remote.sh's
+      # atomic publish and this claim (the ONE producer, the ONE consumer;
+      # ingest_stream never republishes a rid) - so this line firing AT ALL
+      # means the order sat undrained until this exact pass, and a drained
+      # rid can never trip it again (A3/A4: drained stays silent).
+      rrid="${rest#remote-order }"
+      printf '  status %s: no chief had drained this remote order until now - ac-remote.sh show %s\n' \
+        "$id" "$rrid"
+      continue
+    fi
     [ -n "$id" ] || continue
     sf="$(ac_task_status "$id")"
     [ -f "$sf" ] && [ ! -L "$sf" ] || continue

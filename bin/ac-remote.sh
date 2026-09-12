@@ -70,6 +70,13 @@
 #   captain, thread "local". Text from --text-file or the one argument -
 #   never composed as JSON by the caller. The chief drains `remote-order
 #   <rid>` and runs the remote-orders protocol unchanged.
+#   DELIVERY-PROSPECTS LINE (family
+#   remote-order-strands-silently-with-no-live-watcher): publish always
+#   succeeds and this still exits 0 either way, but with no live fleet
+#   watcher (ac_watcher_pid) a SECOND line follows the `remote-order <rid>`
+#   confirmation, saying so - the solo session's only channel must never read
+#   a bare confirmation as proof anything is watching for it. A caller
+#   parsing the rid must read line 1 only, never the whole capture.
 # show <rid> - print the stashed JSON. Orchestrators read order text from
 #   DISK, never from the wake payload.
 # reply <rid> [--text-file <f>] - requires an executable config/remote-reply
@@ -329,6 +336,16 @@ cmd_order() {
   jq -cn --arg rid "$rid" --arg text "$text" \
     '{rid: $rid, text: $text, author: "captain", thread: "local"}' \
     | ingest_stream order
+  # Tell the truth about delivery prospects AT SEND TIME (family
+  # remote-order-strands-silently-with-no-live-watcher, decisions 1+2): publish
+  # itself is unchanged - still stashed, still exit 0, the durable spool is
+  # meant to wait - but a solo session reading a bare "remote-order <rid>" has
+  # no way to know whether anything is even watching for it. ac_watcher_pid is
+  # the fleet's OWN liveness signal for "is a watcher covering this scope right
+  # now" (ac-wake-lib.sh); absent one, this line says so instead of letting
+  # the confirmation read as proof the order is certainly queued for pickup.
+  ac_watcher_pid "$state_dir" '' >/dev/null 2>&1 \
+    || printf 'no live fleet watcher right now - %s waits in the spool until a chief session drains it (bin/ac-wake-drain.sh, or the next session-start)\n' "$rid"
 }
 
 cmd_show() {
@@ -605,22 +622,6 @@ cmd_gc() {
     rm -f "$stash"
     printf 'pruned %s\n' "$rid"
   done < <(find "$inbox" -type f -name '*.json' -mtime "+$days" 2>/dev/null)
-  # Visibility for the stash-published/wake-lost crash window: a young
-  # unlinked stash whose rid is not in the wake spool may be a stranded
-  # order - surface it so an inbox audit is one gc away.
-  while IFS= read -r stash; do
-    [ -n "$stash" ] || continue
-    rid="$(basename "$stash" .json)"
-    grep -qrF "remote-order $rid" "$(ac_wake_spool_path "$state_dir" '')" \
-      2>/dev/null && continue
-    linked=0
-    for m in "$state_dir"/*.meta "$state_dir"/archive/*/meta; do
-      [ -f "$m" ] || continue
-      if grep -qxF "remote_request=$rid" "$m" 2>/dev/null; then linked=1; break; fi
-    done
-    [ "$linked" = 1 ] && continue
-    printf 'unwoken %s (stashed, no queued wake, unlinked - inspect with: ac-remote.sh show %s)\n' "$rid" "$rid" >&2
-  done < <(find "$inbox" -type f -name '*.json' ! -mtime "+$days" 2>/dev/null)
   return 0
 }
 
