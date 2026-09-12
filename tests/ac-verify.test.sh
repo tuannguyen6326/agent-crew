@@ -1604,7 +1604,13 @@ assert_contains "$(cat "$jp")" "--model 'qwen3.7-plus'" "a lane's model rides as
 assert_contains "$(cat "$jp")" "--model 'Gemini 3.8 Flash (High)'" \
   "a model name with spaces reaches the lane whole"
 assert_contains "$(cat "$jp")" "--effort high" "a configured effort rides its lane"
-assert_contains "$(cat "$jp")" "reap-pane" "the reviewer is told to close each lane's pane"
+# A lane places NO pane - it is a background process whose stdout the caller
+# already captures - so the reviewer is told to close nothing, and the command
+# names no --pane-file. The pane the lanes used to open belonged to whichever
+# backend the LANE's own environment resolved, which for a pane-run caller
+# carrying no AC_HOME was herdr, whatever backend the fleet actually runs.
+case "$(cat "$jp")" in *reap-pane*) fail "a lane has no pane to reap" ;; esac
+case "$(cat "$jp")" in *--pane-file*) fail "a one-shot lane publishes no pane identity" ;; esac
 assert_contains "$(cat "$jp")" "status --porcelain" "...and to check the tree before reviewing"
 assert_contains "$(cat "$jp")" "--cwd $VERIFY_WORKTREE" "every command names the round's own lease"
 assert_contains "$(cat "$jp")" "scout_dispositions" "the prompt names the key the reviewer answers in"

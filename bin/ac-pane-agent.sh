@@ -123,6 +123,18 @@
 # this file) composes the ONE-SHOT arm's command, while ac_build_launch
 # (bin/ac-backend.sh) composes the SESSION/CREWMATE arms' interactive line.
 #
+# A ONE-SHOT PLACES NO PANE and needs no backend. It runs as a BACKGROUND
+# process: its exit ends the turn (the marker touch the wait loop polls) and its
+# stdout is the final message, both of which the caller captures directly - so a
+# pane held nothing the turn depended on, took no part in observing it, and had
+# to be reaped by somebody. It also could not be placed correctly: a one-shot's
+# callers are themselves PANES (the gate judge, a review round's scout lanes),
+# and a pane carries no AC_HOME, so the backend resolved to the herdr default
+# and opened herdr panes for an ORCA fleet, one per lane per round, owned by
+# nobody. `--pane-file` is therefore refused with `--exec`, and the `done`
+# event's `pane` is empty. The SESSION and CREWMATE arms are unchanged: their
+# turn IS a pane, and they place one on the fleet's own backend.
+#
 # WHY THE SESSION ARM IS CLAUDE-ONLY - it is the DESIGN, not a gap awaiting an
 # implementer (captain ruling 2026-07-22, `data/codex-pane-tui-arm/room.md`
 # 04:20Z: "pane-agent chi dung cho claude" + "codex,opencode dung crewmate").
@@ -701,6 +713,10 @@ done
 # is continuing a conversation. (The crewmate arm refuses it too, on the same
 # grounds, once the harness is resolved below.)
 [ "$EXEC" = 1 ] && [ -n "$SID" ] && fail "--exec runs a one-shot command: there is no session to --resume"
+# Same grounds: a one-shot runs in the BACKGROUND and places no pane, so there
+# is no identity to publish. Refusing beats writing an empty handle a caller
+# would later try to reap.
+[ "$EXEC" = 1 ] && [ -n "$PANEFILE" ] && fail "--exec places no pane: there is no identity to write to --pane-file"
 # --observe is an --exec-only observability seam (the one-shot run has private
 # stdout/stderr an observer cannot otherwise discover).
 [ -n "$OBSERVE" ] && [ "$EXEC" != 1 ] && fail "--observe is only valid with --exec (the one-shot arm)"
@@ -944,11 +960,21 @@ fi
   && fail "the crewmate arm runs '$HARNESS', which Agent Crew cannot resume: there is no session to --resume"
 [ -d "$CWD" ] || fail "cwd missing: $CWD"
 [ -f "$PF" ] || fail "prompt file missing: $PF"
-PA_BACKEND="$(ac_backend 2>/dev/null || printf herdr)"
-if [ "$PA_BACKEND" = orca ]; then
-  command -v orca >/dev/null 2>&1 || fail "orca not on PATH"
-else
-  command -v herdr >/dev/null 2>&1 || fail "herdr not on PATH"
+# A ONE-SHOT NEEDS NO BACKEND AT ALL. Its turn is a process whose exit ends it
+# and whose stdout the caller already captures, so a pane bought nothing and
+# cost something real: the callers that run one (the gate judge, a review
+# round's scout lanes) are themselves PANES, which carry no AC_HOME, so this
+# resolution fell through to the herdr default and opened herdr panes for an
+# ORCA fleet - panes nobody owned, on the wrong backend, accumulating one per
+# lane per round.
+PA_BACKEND=""
+if [ "$ARM" != oneshot ]; then
+  PA_BACKEND="$(ac_backend 2>/dev/null || printf herdr)"
+  if [ "$PA_BACKEND" = orca ]; then
+    command -v orca >/dev/null 2>&1 || fail "orca not on PATH"
+  else
+    command -v herdr >/dev/null 2>&1 || fail "herdr not on PATH"
+  fi
 fi
 
 SLUG=$(printf '%s' "$CWD" | sed 's/[/.]/-/g')
@@ -1201,7 +1227,14 @@ esac
 # RUNCMD as the pane's OWN command - the agent starts WITH the pane, so
 # nothing is ever typed into a booting surface and step 5's herdr `pane run`
 # has no orca counterpart to need.
-if [ "$PA_BACKEND" = orca ]; then
+if [ "$ARM" = oneshot ]; then
+  # BACKGROUND, NOT A PANE (contract: HARNESS ARMS). The trailing marker touch
+  # in RUNCMD is what ends the turn, and the wait loop below already polls for
+  # it - the pane was only ever a place to put the process, never part of how
+  # the turn is observed.
+  sh -c "$RUNCMD" >/dev/null 2>&1 &
+  P=""; TAB=""
+elif [ "$PA_BACKEND" = orca ]; then
   placed="$(orca_place_pane "$CWD" "$RUNCMD" "ac-$KIND")" \
     || fail "could not place orca pane"
   P="${placed%% *}"
@@ -1290,7 +1323,8 @@ if [ -n "$OBSERVE" ] && [ "$ARM" = oneshot ]; then
     "$P" "$TAB" "$HARNESS" "$PF" "$OUTF" "$ERRF" >"$_obs_tmp" 2>/dev/null \
     && mv -f "$_obs_tmp" "$OBSERVE" 2>/dev/null || true
 fi
-[ "$PA_BACKEND" = orca ] || herdr --session "$SES" pane run "$P" "$RUNCMD" >/dev/null 2>&1
+[ "$ARM" = oneshot ] || [ "$PA_BACKEND" = orca ] \
+  || herdr --session "$SES" pane run "$P" "$RUNCMD" >/dev/null 2>&1
 
 # 6. retire the previous turn's pane once the new one is up. Best-effort and
 # never fatal - the new pane is already placed - but the outcome is REPORTED the

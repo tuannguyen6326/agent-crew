@@ -1081,14 +1081,21 @@ xrun() { PATH="$xstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd 
 out="$(xrun --exec --harness codex --kind gate --label g1)"
 assert_contains "$out" '"event":"done","status":"ok"' "a one-shot rung that exits 0 with output is an ok turn"
 assert_contains "$out" '"source":"command"' "the ok event names the harvest that produced it"
-assert_contains "$(cat "$HDLOG.cmd")" "codex exec -s read-only" "the pane runs the one-shot form, not the TUI"
-assert_contains "$(cat "$HDLOG")" "pane rename pX1 ac-gate-agent:g1" "the one-shot pane is labeled like any pane agent"
+assert_contains "$(cat "$XLOG")" "codex exec -s read-only" "the one-shot form runs, not the TUI"
+# NO PANE. A one-shot's turn is a process: its exit ends the turn and its
+# stdout is the final message, both of which the caller already has. The pane
+# was placed on whatever backend the CALLER's env resolved - and a one-shot's
+# callers are themselves panes, carrying no AC_HOME, so it resolved to the
+# herdr default and opened herdr panes for an orca fleet, one per lane per
+# round, owned by nobody.
+case "$(cat "$HDLOG")" in *"pane run"*) fail "a one-shot must place no pane" ;; esac
+case "$(cat "$HDLOG")" in *"tab create"*) fail "a one-shot must create no tab" ;; esac
 tr="$(printf '%s\n' "$out" | sed -n 's/.*"event":"done".*"transcript":"\([^"]*\)".*/\1/p')"
 assert_contains "$(cat "$tr")" "verdict" "the engine's stdout is the harvested payload"
 assert_eq "$(jq -r '.message.content[0].text' "$tr" | head -1)" '{"verdict":"approve"}' \
   "the payload is wrapped in the one-message shape ac_transcript_final parses"
 assert_contains "$(cat "$XLOG.prompt")" "review this" "the prompt file reaches the engine as its positional argument"
-assert_contains "$(cat "$HDLOG.cmd")" "codex exec -s read-only --skip-git-repo-check" \
+assert_contains "$(cat "$XLOG")" "codex exec -s read-only --skip-git-repo-check" \
   "the codex one-shot form skips codex's own git-repo trust check - the gate always runs it from the fleet home, never a git repo"
 
 # The gate's judge cwd is the FLEET HOME (bin/ac-gate.sh:889), and a fleet home
@@ -1101,7 +1108,7 @@ nongit="$TMP/nongit-cwd"; mkdir -p "$nongit"
 : >"$HDLOG"; : >"$HDLOG.cmd"; : >"$XLOG"
 out="$(PATH="$xstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$nongit" --prompt-file "$pf" --exec --harness codex --kind gate --label g1b)"
 assert_contains "$out" '"event":"done","status":"ok"' "the codex one-shot rung answers from a non-git cwd"
-assert_contains "$(cat "$HDLOG.cmd")" "--skip-git-repo-check" "the non-git-cwd run still carries the flag"
+assert_contains "$(cat "$XLOG")" "--skip-git-repo-check" "the non-git-cwd run still carries the flag"
 
 # CONDITION (a): --exec writes NOTHING into the caller's cwd. No .claude/, no
 # lock, no git-exclude entry - the whole claude-only prep is skipped, and the
@@ -1164,25 +1171,25 @@ assert_contains "$(cat "$XLOG")" "-c model_reasoning_summary=auto" \
 # spaces, so it must be quoted or the tier in its name becomes a stray word.
 : >"$HDLOG"; : >"$HDLOG.cmd"; : >"$XLOG"
 xrun --exec --harness agy --kind gate --label gagy --model 'Gemini 3.8 Flash (Low)' >/dev/null
-agy_cmd="$(cat "$HDLOG.cmd" 2>/dev/null || true)"
-assert_contains "$(cat "$XLOG")" "agy --mode plan" \
-  "the STUB answered the launch - an agy line the stub never logged means the real CLI ran"
+agy_cmd="$(cat "$XLOG" 2>/dev/null || true)"
 assert_contains "$agy_cmd" "agy --mode plan" "the read-only boundary rides every agy one-shot"
 assert_contains "$agy_cmd" "--dangerously-skip-permissions" "...alongside the flag without which a headless turn reads nothing"
-assert_contains "$agy_cmd" '--model "Gemini 3.8 Flash (Low)"' "a model name with spaces is quoted"
-case "$agy_cmd" in *'-p "$(cat '*) ;; *) fail "agy's -p must be LAST, taking the caller's prompt: $agy_cmd" ;; esac
+assert_contains "$agy_cmd" "--model Gemini 3.8 Flash (Low)" "the model name reaches agy whole, spaces and all"
+# The stub logs every argument EXCEPT the last, which is the prompt - so a
+# line ending in -p is the proof that -p sat last and took that prompt.
+case "$agy_cmd" in *" -p") ;; *) fail "agy's -p must be LAST, taking the caller's prompt: $agy_cmd" ;; esac
 
 # agy has no separate effort axis - its tier is part of the model name, and it
 # REFUSES --effort beside one. A configured effort is reported, never swallowed.
 # The cmd log is APPENDED to by the stub, so reset it here: reading it whole
 # would assert against some earlier harness's launch line, which is exactly
 # the false positive this case first produced.
-: >"$HDLOG"; : >"$HDLOG.cmd"
+: >"$HDLOG"; : >"$HDLOG.cmd"; : >"$XLOG"
 out="$(xrun --exec --harness agy --kind gate --label gagy2 --model 'Gemini 3.8 Flash (Low)' --effort high 2>&1 || true)"
 assert_contains "$out" '"event":"warning"' "a dropped effort is announced on the event stream"
 assert_contains "$out" "inside the model name" "...naming why it could not be honoured"
-case "$(cat "$HDLOG.cmd" 2>/dev/null || true)" in
-  *--effort*) fail "agy must never be launched with --effort - the CLI refuses the combination: $(cat "$HDLOG.cmd")" ;;
+case "$(cat "$XLOG" 2>/dev/null || true)" in
+  *--effort*) fail "agy must never be launched with --effort - the CLI refuses the combination: $(cat "$XLOG")" ;;
 esac
 
 # A harness with no one-shot form is refused on the same rung, and the refusal
@@ -1205,8 +1212,11 @@ obs="$TMP/observe.json"
 out="$(xrun --exec --harness codex --kind gate --label gobs --observe "$obs")"
 assert_contains "$out" '"event":"done","status":"ok"' "the observed run still completes normally"
 assert_file "$obs" "--observe publishes the observation descriptor"
-assert_eq "$(jq -r '.pane' "$obs")" "pX1" "the descriptor names the live pane"
-assert_eq "$(jq -r '.tab' "$obs")" "tX" "the descriptor names the tab"
+# The pane/tab fields stay in the shape for compatibility but are EMPTY: a
+# one-shot places no pane, and the observer follows the stream files below,
+# which is all it ever read.
+assert_eq "$(jq -r '.pane' "$obs")" "" "a one-shot descriptor names no pane"
+assert_eq "$(jq -r '.tab' "$obs")" "" "...and no tab"
 assert_eq "$(jq -r '.harness' "$obs")" "codex" "the descriptor names the harness"
 assert_contains "$(cat "$(jq -r '.prompt' "$obs")")" "review this" "the descriptor points at the REAL prompt file"
 # the stdout/stderr paths are the REAL per-run stream files the observer tails

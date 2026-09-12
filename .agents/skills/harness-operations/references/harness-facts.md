@@ -3,6 +3,8 @@
 Read this before acting on a specific harness. Every fact traces to current Agent Crew code (the provenance in parentheses); nothing here is imported for an unsupported runtime.
 Flag mapping shared by all: `--model` maps to claude `--model`, codex `-m` and opencode `-m`; effort maps to claude `--effort` and codex `-c model_reasoning_effort=<tier>` - codex has no effort FLAG, `-c` is its global config-override mechanism - and opencode ignores it (`bin/ac-spawn.sh` header + `bin/ac-backend.sh ac_build_launch`, the shared launch mote every mechanism composes its launch line with).
 
+The bullets below labelled ONE-SHOT PANE ARM keep that name for their provenance, but a one-shot no longer runs in a pane at all: it is a background process (`bin/ac-pane-agent.sh`, HARNESS ARMS). The facts hold and the mid-turn-input ones hold more strongly - there is now no pane to write into.
+
 ## claude
 
 - Launch: `claude --permission-mode auto --session-id <uuid>`, adding `--model <name>` and `--effort <tier>` when set (`bin/ac-backend.sh ac_build_launch`; the `--session-id` is minted by the CALLER, so a crewmate pins one it can resume later - `bin/ac-spawn.sh build_launch` - and a one-shot pane turn pins none).

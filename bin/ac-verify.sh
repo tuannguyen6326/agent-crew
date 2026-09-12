@@ -146,9 +146,6 @@ bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 tree_bin="${AC_VERIFY_TREE_BIN:-$bin_dir/ac-tree.sh}"
 pane_bin="${AC_VERIFY_PANE_BIN:-$bin_dir/ac-pane-agent.sh}"
-# Scout handles live here from the moment the first lane is launched, so the
-# EXIT trap can reap panes this process may never get back to (SCOUT LANES).
-scout_handles=""
 
 # Verifier worktree isolation follows the fleet backend the same way the crew
 # lease does: an orca fleet leases Orca-managed worktrees, a herdr fleet the
@@ -473,22 +470,9 @@ reap_pane() {
 # run state or in-tree infra may still be active.
 reap_verify_runtime() {
   [ -z "$pane" ] || reap_pane "$pane" || true
-  # Every scout lane that got as far as publishing a handle is reaped here
-  # too. A one-shot pane whose caller died is exactly the orphan this file
-  # exists to prevent, and there is no other owner: the lanes are launched by
-  # this process and named nowhere else.
-  # The reviewer reaps each lane itself; these are the ones it never got back
-  # to - its own pane died mid-fan-out, or it skipped the reap. The handles
-  # are in the round dir because every lane command names --pane-file there.
-  local _h _p
-  [ -z "${scout_dir:-}" ] || [ ! -d "$scout_dir" ] \
-    || scout_handles="$scout_handles $(find "$scout_dir" -maxdepth 1 -name '*.handle' 2>/dev/null | tr '\n' ' ')"
-  for _h in $scout_handles; do
-    [ -s "$_h" ] || continue
-    read -r _p _ <"$_h" || true
-    [ -z "$_p" ] || reap_pane "$_p" || true
-    rm -f "$_h"
-  done
+  # The lanes need no sweep of their own: a one-shot places no pane, so a
+  # fan-out this process abandons leaves background processes bounded by their
+  # own --timeout and nothing for anyone to reap.
   return_leases "$all_leases" || true
   rm -f "$pane_handle" "$meta" "$status_file" "$pane_early"
 }
@@ -1242,10 +1226,10 @@ EOF
       s_mflag=""; [ -z "$s_m" ] || s_mflag=" --model '$s_m'"
       s_eflag=""; [ -z "$s_e" ] || s_eflag=" --effort $s_e"
       s_label="$s_h"; [ -z "$s_m" ] || s_label="$s_h $s_m"
-      printf 'LANE %s (%s):\n  GIT_OPTIONAL_LOCKS=0 %s run --exec --harness %s%s%s --kind codereview-scout --cwd %s --prompt-file %s --pane-file %s/%s.handle --timeout %s > %s/%s.ndjson 2>&1\n' \
+      printf 'LANE %s (%s):\n  GIT_OPTIONAL_LOCKS=0 %s run --exec --harness %s%s%s --kind codereview-scout --cwd %s --prompt-file %s --timeout %s > %s/%s.ndjson 2>&1\n' \
         "$scout_count" "$s_label" \
         "$bin_dir/ac-pane-agent.sh" "$s_h" "$s_mflag" "$s_eflag" \
-        "$lease" "$scout_prompt" "$scout_dir" "$scout_count" \
+        "$lease" "$scout_prompt" \
         "${AC_VERIFY_SCOUT_TIMEOUT:-900}" "$scout_dir" "$scout_count" \
         >>"$scout_dir/commands.txt"
     done <<EOF
@@ -1270,7 +1254,6 @@ if [ "$kind" = codereview ] && [ "${scout_count:-0}" -gt 0 ] && [ -s "$scout_dir
     printf '  - read %s/N.ndjson and take the last {"event":"done"} line;\n' "$scout_dir"
     printf '  - status ok: read its .transcript path, take the final assistant\n'
     printf '    message, extract the bare JSON object, write it to %s/N.json;\n' "$scout_dir"
-    printf '  - close its pane: %s reap-pane --pane <pane from that done line>;\n' "$bin_dir/ac-pane-agent.sh"
     printf '  - append one line to %s/lanes.tsv - N<TAB>ok<TAB><observation count>,\n' "$scout_dir"
     printf '    or N<TAB><status or reason><TAB>- when the lane produced nothing.\n\n'
     printf 'Then CHECK THE TREE before you review: git -C %s status --porcelain\n' "$lease"
