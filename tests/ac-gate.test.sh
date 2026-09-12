@@ -634,6 +634,18 @@ assert_no_file "$AC_HOME/data/widget/spec/second-chief-r1.md" "round accounting:
 mkbody "$(sed 's/^continue$/maybe/' "$GATE_BODY_FILE")"
 clear_gate_artifacts widget spec; rc=0; GATE_BODY_FILE="$TMP/badbody.md" gate widget spec >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "3" "an out-of-enum decision fails the contract"
+# environment-error is MAINTENANCE-ONLY: to a staged-design body it is just
+# another out-of-enum token. Only a maintenance judge is handed inputs it must
+# open for itself, so only that branch owes it a way to say it could not.
+mkbody "$(sed 's/^continue$/environment-error/' "$GATE_BODY_FILE")"
+clear_gate_artifacts widget spec; rc=0
+GATE_BODY_FILE="$TMP/badbody.md" gate widget spec >/dev/null 2>"$TMP/enverror-staged.err" || rc=$?
+assert_eq "$rc" "3" "environment-error is not a staged-design decision"
+# The rc alone does not discriminate - without the maintenance guard the token
+# would also exit 3, just down the wrong arm. The DIAGNOSTIC is what separates
+# them: a staged body must be told it missed the second-chief contract.
+assert_contains "$(cat "$TMP/enverror-staged.err")" "second-chief.md contract" \
+  "and it is refused as a staged-design contract miss, not as a declared environment failure"
 # a missing required heading
 mkbody "$(grep -v '^## Grounds$' "$GATE_BODY_FILE")"
 clear_gate_artifacts widget spec; rc=0; GATE_BODY_FILE="$TMP/badbody.md" gate widget spec >/dev/null 2>&1 || rc=$?
@@ -1561,12 +1573,12 @@ assert_contains "$(cat "$TMP/maintenance-blind-revise.err")" "## Inputs Read" \
   "and it is the read-evidence check that refused it, not some earlier contract"
 assert_no_file "$mreceipt" "a refused blind revise writes no maintenance receipt at all"
 
-cat >"$TMP/maintenance-broken-revise.md" <<EOF
+cat >"$TMP/maintenance-honest-revise.md" <<EOF
 # Maintenance Gate Decision
 ## Decision
 revise
 ## Grounds
-My environment is broken and I could not read what this plan points at.
+I read the evidence and the action is not warranted as written. Narrow it.
 ## Inputs Read
 - INPUT MANIFEST QUOTE: candidate evidence only a reader of this manifest can quote
 - ACTION PLAN NEW SHA-256: $nsha
@@ -1574,12 +1586,54 @@ My environment is broken and I could not read what this plan points at.
 Revise the candidate before any mutation.
 EOF
 rc=0
-GATE_BODY_FILE="$TMP/maintenance-broken-revise.md" gate maintenance \
+GATE_BODY_FILE="$TMP/maintenance-honest-revise.md" gate maintenance \
   --mode learning --run "$mrun" --subject example \
   --manifest "$mrun/input-manifest.md" --plan "$mrun/plan.json" >/dev/null 2>&1 || rc=$?
-assert_eq "$rc" "0" "proof of opening the two inputs is the whole bar - judging nothing still passes"
+assert_eq "$rc" "0" "an honest revise on real grounds still earns its receipt - untouched"
 assert_contains "$(cat "$mreceipt")" 'decision: "revise"' \
-  "MEASURED RESIDUAL: the gate mints a receipt for a judge that says it judged nothing"
+  "and the receipt still carries it"
+
+# THE SIGNAL THE GATE OWES ITS JUDGE (learn-gate-needs-its-own-environment-error-
+# signal, phase B). Measured in phase A: a judge whose environment denied it the
+# material it must judge could still open the manifest and the plan, so it minted
+# a fully valid `revise` and the run counted as examined. It did that because
+# `revise` was the only token it had - the prompt offered no way to say "I could
+# not read what I must judge". The gate now offers one, and it is NOT a decision:
+# it never becomes a receipt, so it can authorize nothing.
+#
+# A rule the prompt never states is a trap, not a gate: assert the prompt STATES
+# it, or a judge could only stumble onto the token.
+assert_contains "$mprompt" "environment-error" \
+  "the maintenance prompt offers the judge a token for what it could not do"
+assert_contains "$mprompt" "NEVER answer" \
+  "and tells it plainly not to borrow revise for an environment failure"
+
+cat >"$TMP/maintenance-enverror.md" <<EOF
+# Maintenance Gate Decision
+## Decision
+environment-error
+## Grounds
+My environment denied me the run report this gate points at; I could not judge.
+## Inputs Read
+- INPUT MANIFEST QUOTE: candidate evidence only a reader of this manifest can quote
+- ACTION PLAN NEW SHA-256: $nsha
+## Proposed Process
+Restore the judge's access to the run report and gate this subject again.
+EOF
+rm -f "$mreceipt"
+rc=0
+GATE_BODY_FILE="$TMP/maintenance-enverror.md" gate maintenance \
+  --mode learning --run "$mrun" --subject example \
+  --manifest "$mrun/input-manifest.md" --plan "$mrun/plan.json" \
+  >/dev/null 2>"$TMP/maintenance-enverror.err" || rc=$?
+assert_eq "$rc" "3" "a declared environment-error renders no decision, so the gate fails closed"
+assert_no_file "$mreceipt" "and writes NO receipt - there is no judgment to record"
+# ac-gate-engine-failure-undiagnosable: the operator must be told the judge
+# declared a broken environment, not handed the generic body-contract checklist
+# that a garbage response gets.
+assert_contains "$(cat "$TMP/maintenance-enverror.err")" "environment-error" \
+  "the failure names the judge's own declaration"
+
 # Restore the section's shared fixture: the pair above deleted and then replaced
 # the settled `continue` receipt the rest of section 15 was written against.
 GATE_BODY_FILE="$TMP/maintenance-body.md" gate maintenance \

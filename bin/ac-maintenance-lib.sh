@@ -721,6 +721,11 @@ ac_maintenance_receipt_validate() {
   mode="$(ac_maintenance_receipt_field "$receipt" mode)" || return 1
   subject="$(ac_maintenance_receipt_field "$receipt" subject)" || return 1
   decision="$(ac_maintenance_receipt_field "$receipt" decision)" || return 1
+  # `environment-error` is deliberately absent and must never be added: it is the
+  # judge's declaration that its environment denied it something it had to judge,
+  # not a judgment about the action, so a receipt carrying it authorizes nothing.
+  # bin/ac-gate.sh refuses to write one at all; this is the second layer, which
+  # trusts nothing any gate wrote.
   case "$decision" in continue|revise|ask-captain) ;; *) return 1 ;; esac
   [ "$mode" = "$(jq -r '.mode' "$plan")" ] || return 1
   [ "$subject" = "$(jq -r '.subject' "$plan")" ] || return 1
