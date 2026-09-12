@@ -180,6 +180,27 @@ seed '' s4 ""
 out="$(drain '')"
 case "$out" in *"status s4:"*) fail "a task with no status must not be annotated" ;; esac
 
+# --- 1c. remote-order wakes get a DEDICATED label (family
+# remote-order-strands-silently-with-no-live-watcher, A1+A3): the detector
+# moved out of ac-remote.sh's cmd_gc (a pruning verb nobody runs routinely,
+# and its old sign could not tell a genuine drain from a lost publish) into
+# THIS pass, which every session-start already runs. A remote-order record
+# exists in a spool ONLY between ac-remote.sh's atomic publish and the ONE
+# claim that follows (ingest_stream never republishes a rid), so this line
+# firing at all means the order sat undrained until this exact pass.
+reset_state
+publish '' remote captain 'remote-order strand1'
+out="$(drain '')"
+assert_contains "$out" "remote captain remote-order strand1" "the wake line itself stays unchanged and first"
+assert_contains "$out" "  status captain: no chief had drained this remote order until now" \
+  "A1: a dedicated, unmissable label - not generic noise, not stderr, not a verb to type"
+assert_contains "$out" "ac-remote.sh show strand1" "the label points at the exact rid to inspect"
+
+# A4/A3: the SAME rid never fires again once drained - a re-drain of an empty
+# spool must not cry wolf about an order that already went through.
+out="$(drain '')"
+assert_eq "$out" "no queued wakes" "a drained remote order raises no false alarm on the next pass"
+
 # --- 2. orphan fallback drain, BOTH liveness signals ------------------------
 
 # (a) meta archived by teardown -> not live -> the fleet claims its RECORDS in

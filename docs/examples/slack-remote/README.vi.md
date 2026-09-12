@@ -78,5 +78,5 @@ Muốn xem JSON thô thì chạy thẳng `"$AC_HOME/config/remote-poll"` - cwd n
 - `remote-poll` thoát 0 im lặng khi chưa config: cố ý - hook trơ cho đến khi làm xong bước 5.
 - `remote-reply` báo lỗi to khi thiếu config: cố ý - một câu trả lời gate không bao giờ được phép biến mất trong im lặng.
 - Đọc lại lịch sử từ đầu: xóa `state/.slack-cursor` (channel) hoặc `state/remote-threads/<rid>.thread` (một thread); rid đã stash sẽ tự dedup, nhưng rid đã bị `gc` dọn sẽ quay lại như lệnh mới.
-- Lệnh mồ côi (đã stash nhưng chưa từng wake, ví dụ crash giữa lúc poll): `ac-remote.sh gc` liệt kê chúng dưới dạng advisory `unwoken <rid>` trên stderr.
+- Lệnh mồ côi (đã stash nhưng chưa từng được chief drain): `bin/ac-wake-drain.sh` (và session-start, vì nó chạy drain này) sẽ hiện một lệnh còn nằm trong fleet spool bằng dòng riêng `status ...: no chief had drained this remote order until now`; `ac-remote.sh gc` giờ chỉ dọn các stash cũ chưa link, không còn in advisory.
 - Lỗi auth trong log `state/`: kiểm tra lại scope của token (channel private cần `groups:history`) và bot đã được mời vào channel chưa.

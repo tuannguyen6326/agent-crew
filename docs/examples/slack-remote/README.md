@@ -79,5 +79,5 @@ To see the raw JSON instead, run `"$AC_HOME/config/remote-poll"` directly - any 
 - `remote-poll` exits 0 silently with nothing configured: intentional - the hook is inert until step 5 is done.
 - `remote-reply` fails loudly on missing config: intentional - a gate answer must never vanish quietly.
 - Re-read history from scratch: delete `state/.slack-cursor` (channel) or `state/remote-threads/<rid>.thread` (one thread); already-stashed rids dedup, but rids pruned by `gc` would re-arrive as new orders.
-- Stranded orders (stashed but never woken, e.g. a crash mid-poll): `ac-remote.sh gc` lists them as `unwoken <rid>` advisories on stderr.
+- Stranded orders (stashed but never drained by a chief): `bin/ac-wake-drain.sh` (and session-start, which runs it) surfaces one still sitting in the fleet spool with a dedicated `status ...: no chief had drained this remote order until now` line; `ac-remote.sh gc` only prunes old unlinked stashes now, no advisory.
 - Auth errors in `state/` logs: re-check the token scopes (private channel needs `groups:history`) and that the bot was invited to the channel.

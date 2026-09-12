@@ -406,7 +406,13 @@ touch -t 202601010000 "$INBOX/old-un.json" "$INBOX/old-ln.json"
 "$BIN/ac-remote.sh" link gctask old-ln >/dev/null
 out="$("$BIN/ac-remote.sh" gc --days 400 2>"$TMP/gc.err")"
 assert_eq "$out" "" "wider --days window prunes nothing"
-assert_contains "$(cat "$TMP/gc.err")" "unwoken old-un" "young-window stash with no queued wake surfaced as advisory"
+# The "unwoken" advisory that used to live here is GONE (family
+# remote-order-strands-silently-with-no-live-watcher, design decision 3): its
+# own sign ("no wake in spool + unlinked") could never tell a genuine drain
+# apart from a lost publish, and a pruning verb nobody runs routinely is not a
+# signal anyway. The detector moved to bin/ac-wake-drain.sh's annotate_wakes
+# (tests/ac-wake-drain.test.sh), which fires on an unambiguous sign instead.
+assert_eq "$(cat "$TMP/gc.err")" "" "gc prints no advisory about undrained orders any more - that detector moved out of this pruning verb"
 out="$("$BIN/ac-remote.sh" gc)"
 assert_contains "$out" "pruned old-un" "old unlinked stash pruned"
 assert_no_file "$INBOX/old-un.json"
@@ -443,18 +449,27 @@ assert_fails "$BIN/ac-remote.sh"
 # unchanged on a fleet with no remote transport at all.
 rm -f "$CFG/remote-reply"
 out="$("$BIN/ac-remote.sh" order 'please harden the widget lock in repo demo')"
-orid="${out#remote-order }"
+# The machine-parseable confirmation is always line 1 (A2 below may append a
+# second, human-facing line) - extract the rid from line 1 alone, never by
+# stripping the whole (possibly multi-line) capture.
+orid="$(printf '%s\n' "$out" | head -n1)"; orid="${orid#remote-order }"
 case "$orid" in local-*) ;; *) fail "order must mint a local-<...> rid and print its wake line: $out" ;; esac
 assert_file "$INBOX/$orid.json" "order stashes the JSON like any ingested order"
 assert_eq "$(jq -r .thread "$INBOX/$orid.json")" "local" "the stash names the local thread"
 assert_eq "$(jq -r .author "$INBOX/$orid.json")" "captain" "the order is the captain's word"
 assert_eq "$(jq -r .text "$INBOX/$orid.json")" "please harden the widget lock in repo demo" "the text is stashed verbatim"
 assert_contains "$(fleet_wakes)" "remote-order $orid" "order queues the chief's durable wake"
+# A2 (family remote-order-strands-silently-with-no-live-watcher): with no live
+# fleet watcher armed (the ordinary state in this suite), order must not let
+# the solo session read a bare "remote-order <rid>" as proof anything is
+# watching for it - decision 1 keeps publish itself unchanged (still stashed,
+# still exit 0), the honesty is an ADDED line.
+assert_contains "$out" "no live fleet watcher" "order tells the truth about delivery prospects when nothing is watching"
 printf 'a multi-line order
 with "quotes" and a second line
 ' >"$TMP/order.md"
 out="$("$BIN/ac-remote.sh" order --text-file "$TMP/order.md")"
-orid2="${out#remote-order }"
+orid2="$(printf '%s\n' "$out" | head -n1)"; orid2="${orid2#remote-order }"
 assert_eq "$(jq -r .text "$INBOX/$orid2.json")" "$(cat "$TMP/order.md")" "--text-file carries the text verbatim, quotes and lines intact"
 [ "$orid" != "$orid2" ] || fail "two orders must mint two rids"
 out="$("$BIN/ac-remote.sh" order '' 2>&1 || true)"
@@ -467,5 +482,35 @@ printf 'second
 ' >"$TMP/r2.txt"
 "$BIN/ac-remote.sh" reply "$orid" --text-file "$TMP/r2.txt" >/dev/null
 assert_eq "$(grep -c '^## ' "$INBOX/$orid.replies.md")" "2" "every reply appends one dated entry"
+
+# --- A2 happy path: a LIVE fleet watcher -> exit 0, no extra line (A4) --------
+# A stand-in whose command line IS a watcher's (ac_watcher_pid greps `ps
+# command=` for 'ac-watch'), the same fixture shape tests/ac-done.test.sh uses
+# for the real ac_watcher_pid/nudge contract.
+mkdir -p "$TMP/fakewatch"
+cat >"$TMP/fakewatch/ac-watch.sh" <<'EOF'
+#!/usr/bin/env bash
+sleep 30 &
+wait $! 2>/dev/null || true
+EOF
+chmod +x "$TMP/fakewatch/ac-watch.sh"
+bash "$TMP/fakewatch/ac-watch.sh" >/dev/null 2>&1 &
+watch_pid=$!
+mkdir -p "$STATE/.watch.lock.d"
+printf '%s\n' "$watch_pid" >"$STATE/.watch.lock.d/pid"
+i=0
+while [ "$i" -lt 50 ]; do
+  [ -n "$(pgrep -P "$watch_pid" 2>/dev/null || true)" ] && break
+  sleep 0.1; i=$((i + 1))
+done
+out="$("$BIN/ac-remote.sh" order 'ship it with a live watcher armed')"
+assert_eq "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" "1" \
+  "a live fleet watcher means order prints ONLY the confirmation line - no regression on the happy path"
+case "$out" in
+  *"no live fleet watcher"*) fail "must not warn when a live fleet watcher is actually armed" ;;
+esac
+kill "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+rm -rf "$STATE/.watch.lock.d"
 
 pass
