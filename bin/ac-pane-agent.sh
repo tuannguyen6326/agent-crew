@@ -98,8 +98,13 @@
 # script has an implemented arm for it IN THE MODE ASKED FOR:
 #   SESSION (no --exec, harness claude): claude, and only claude.
 #   CREWMATE (no --exec, harness codex | opencode): the crewmate contract.
-#   ONE-SHOT (--exec): codex, claude, opencode - their `codex exec -s
-#     read-only` / `claude -p` / `opencode run` forms (oneshot_launch below).
+#   ONE-SHOT (--exec): codex, claude, opencode, pi, cursor - their `codex exec
+#     -s read-only` / `claude -p` / `opencode run` / `pi -p` /
+#     `cursor-agent -p --trust` forms (oneshot_launch below, which owns the
+#     per-harness flag shapes and the safety boundary each one does NOT have).
+#     pi and cursor were armed on captain order 2026-08-14; this list said
+#     three long after the code ran five, which is exactly the drift that gets
+#     a caller told a working lane is impossible.
 # The modes arm SEPARATELY, because a working one-shot form proves nothing about
 # the same harness's TUI (and the reverse). Refusing beats placing: a pane whose
 # harness never came up still burns the caller's whole timeout (AC_VERIFY_TIMEOUT,
