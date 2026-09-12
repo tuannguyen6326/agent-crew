@@ -636,6 +636,27 @@ assert_contains "$out" '"status":"error"' "a threaded unarmed harness is refused
 assert_contains "$out" "fictional" "the homeless refusal names the harness"
 case "$(cat "$HDLOG")" in *"pane run"*) fail "a threaded unarmed harness must place no pane" ;; esac
 
+# THE ENV RUNG IS THE ONE PLACE A LEGACY VALUE STILL ARRIVES. A crewmate is
+# long-lived: one spawned before the wire became TAB-separated carries the old
+# SPACE-separated triple in its process environment for the rest of its life,
+# and its verification panes read it from there. Splitting that on TAB yields
+# the WHOLE line as the harness, which is how a live review round came to be
+# refused for a harness named `claude model=... effort=...`. Both forms parse.
+: >"$HDLOG"
+env -u AC_HOME AC_FLEET_PROFILE_CODEREVIEW='harness=claude model=opus effort=max' \
+  PATH="$stub:$PATH" HOME="$FAKEHOME" \
+  "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label prof-legacy >/dev/null
+assert_contains "$(cat "$HDLOG")" "--model opus --effort max" \
+  "a pre-TAB threaded profile from an already-running crewmate still resolves"
+# ...including the case the TAB exists FOR: the legacy form splits on its own
+# key boundaries, so even a spaced model name comes out of it whole.
+: >"$HDLOG"
+env -u AC_HOME AC_FLEET_PROFILE_CODEREVIEW='harness=claude model=Some Long Name effort=' \
+  PATH="$stub:$PATH" HOME="$FAKEHOME" \
+  "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label prof-legacy2 >/dev/null
+assert_contains "$(cat "$HDLOG")" "--model Some Long Name" \
+  "a legacy line is split on its key boundaries, not on every space"
+
 # --- two pane agents, ONE worktree: neither destroys the other's turn end -------
 # The ship reviewer (ac-ship.sh review-agent) and the qa agent (ac-qa.sh agent)
 # both run with --cwd the SAME crewmate worktree, so the old whole-file truncate

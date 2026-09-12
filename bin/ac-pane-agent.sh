@@ -742,6 +742,18 @@ PROFILE=""
 # single profile to resolve for it.
 if [ -z "$HFLAG" ]; then
   PROFILE="${!penv:-}"
+  # A CREWMATE OUTLIVES A FORMAT CHANGE. ac-spawn threads this scalar onto the
+  # crewmate's launch line once, and every verification pane that crewmate opens
+  # for the rest of its life reads that same value - so a crewmate spawned
+  # before the wire became TAB-separated still hands us the old SPACE-separated
+  # triple, which a TAB split turns into one bogus harness. Normalise on the two
+  # key boundaries rather than on whitespace: it accepts both forms, and it is
+  # also the only split under which a legacy line's spaced model survives.
+  case "$PROFILE" in
+    ''|*"$(printf '\t')"*) ;;
+    *) PROFILE="$(printf '%s' "$PROFILE" \
+         | sed "s/ model=/$(printf '\t')model=/; s/ effort=/$(printf '\t')effort=/")" ;;
+  esac
   if [ -z "$PROFILE" ]; then
     # Absent resolves to empty with exit 0 and falls through; a resolver ERROR
     # (a panes entry naming no harness, unreadable JSON, no jq) must NOT - a
