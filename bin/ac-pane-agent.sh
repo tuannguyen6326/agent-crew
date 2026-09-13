@@ -1572,6 +1572,12 @@ FILE_ERR=""
 while [ "$(date +%s)" -lt "$deadline" ]; do
   [ "$ARM" != session ] || announce_transcript || true
   if [ -f "$MARKER" ]; then
+    # WHEN the turn-end signal arrived, kept before the marker is consumed. A
+    # captured pane scrollback showed the agent still mid-tool-call at the
+    # moment a round was declared over, so "the turn ended" is itself a claim
+    # worth timestamping: a marker seconds old while the transcript is still
+    # growing says the SIGNAL fired early, not that the model stopped.
+    marker_age="$(( $(date +%s) - $(stat -f %m "$MARKER" 2>/dev/null || date +%s) ))"
     rm -f "$MARKER"
     # FAIL CLOSED: the turn ended, so a payload is owed. An empty TRANSCRIPT
     # here means the glob resolved nothing - report ok with it and the caller
@@ -1594,7 +1600,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
          # ours to refuse, and carry the pane the way the pane_closed exit does
          # so the caller can still reap the agent it opened.
          if ! final_message_has_text; then
-           emit "{\"event\":\"done\",\"status\":\"error\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"the turn ended but its last assistant message carries no text - the turn stopped mid-pass and there is no final message to harvest, so it is NOT reported ok\"}"
+           emit "{\"event\":\"done\",\"status\":\"error\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"the turn-end signal arrived ${marker_age}s ago but the last assistant message carries no text - the turn stopped mid-pass and there is no final message to harvest, so it is NOT reported ok\"}"
            exit 1
          fi ;;
     esac
