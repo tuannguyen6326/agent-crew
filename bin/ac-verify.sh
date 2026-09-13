@@ -483,6 +483,19 @@ reap_pane() {
 # AFTER a valid pane verdict): those stay preserved, since QA's own durable
 # run state or in-tree infra may still be active.
 reap_verify_runtime() {
+  # KEEP WHAT THE PANE WAS SHOWING, before it goes. A judge that dies mid-turn
+  # leaves a transcript ending in a clean tool result and nothing after it - no
+  # error, no status - so the durable artefacts can rule out a kill, an OOM, a
+  # token limit and a tool failure and still not say WHY. The pane's own screen
+  # is the only channel that carries what the harness printed there, and it was
+  # being reaped unread. Best-effort and never fatal, and it writes the file
+  # even when the backend cannot be read, so its ABSENCE always means this round
+  # never got here rather than "nothing was showing".
+  if [ -n "$pane" ] && [ -n "${round_dir:-}" ] && [ -d "$round_dir" ]; then
+    { backend_capture_pane "$pane" 200 2>&1 \
+        || printf 'ac-verify: the backend could not read pane %s\n' "$pane"; } \
+      >"$round_dir/pane-scrollback.txt" 2>/dev/null || true
+  fi
   [ -z "$pane" ] || reap_pane "$pane" || true
   # The lanes need no sweep of their own: a one-shot places no pane, so a
   # fan-out this process abandons leaves background processes bounded by their

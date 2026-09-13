@@ -1118,6 +1118,15 @@ assert_eq "$(grep -c '^return ' "$tree_log" || true)" "$((before_returns + 1))" 
 assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$((before_reaps + 1))" \
   "pane-closed-mid-turn reaps: pane reaped"
 
+# THE PANE'S OWN SCREEN IS THE ONE CHANNEL A FAILED ROUND THROWS AWAY. When a
+# judge dies mid-turn the transcript shows a clean tool result and then nothing
+# - no error, no status - so five rounds of artefacts could rule out a kill, an
+# OOM, a token limit and a tool failure, and still not say WHY. Whatever the
+# pane displayed at that moment is the missing evidence, and it was being reaped
+# unread. Capture it into the round dir before the pane goes.
+sdir_pc="$(ls -d "$AC_HOME/data/$pane_closed_family/verify/codereview"/*/ | tail -1)"
+assert_file "${sdir_pc}pane-scrollback.txt" "a failed round keeps what the pane was showing"
+
 # A FAILED ROUND WRITES NO RECEIPT, so whatever --output already held survives -
 # the PREVIOUS round's verdict, for a ref that is no longer under review, with
 # nothing on the file to say so. A reader finds `pass` and takes it for current.
