@@ -1228,6 +1228,8 @@ EOF
     # prompt below, after the lease exists - the same reason the
     # neutralization note is appended there.
     : >"$scout_dir/commands.txt"
+    printf '#!/usr/bin/env bash\n# Every lane, concurrent, with one wait - see SCOUT LANES in bin/ac-verify.sh.\n' \
+      >"$scout_dir/run-lanes.sh"
     while IFS=$'\t' read -r s_h s_m s_e; do
       s_h="${s_h#harness=}"; s_m="${s_m#model=}"; s_e="${s_e#effort=}"
       [ -n "$s_h" ] || continue
@@ -1246,10 +1248,29 @@ EOF
         "$lease" "$scout_prompt" \
         "${AC_VERIFY_SCOUT_TIMEOUT:-900}" "$scout_dir" "$scout_count" \
         >>"$scout_dir/commands.txt"
+      # ...and the same line into the RUNNER, backgrounded there so the lanes
+      # are concurrent, with one `wait` below that makes the whole fan-out a
+      # single blocking command.
+      printf 'GIT_OPTIONAL_LOCKS=0 %s run --exec --harness %s%s%s --kind codereview-scout --cwd %s --prompt-file %s --timeout %s > %s/%s.ndjson 2>&1 &\n' \
+        "$bin_dir/ac-pane-agent.sh" "$s_h" "$s_mflag" "$s_eflag" \
+        "$lease" "$scout_prompt" \
+        "${AC_VERIFY_SCOUT_TIMEOUT:-900}" "$scout_dir" "$scout_count" \
+        >>"$scout_dir/run-lanes.sh"
     done <<EOF
 $scout_lanes
 EOF
-    [ "$scout_count" -gt 0 ] || rm -rf "$scout_dir"
+    # ONE BLOCKING COMMAND. Told to run N commands "in parallel if you can", a
+    # reviewer ran them as background TASKS and ended its turn with two still in
+    # flight - and a lane is a child of that turn, so both died unwritten and
+    # their completion notice was queued for a turn that never came. A runner
+    # that waits cannot be backgrounded into that shape: the turn cannot end
+    # before the lanes do.
+    if [ "$scout_count" -gt 0 ]; then
+      printf 'wait\n' >>"$scout_dir/run-lanes.sh"
+      chmod +x "$scout_dir/run-lanes.sh" 2>/dev/null || true
+    else
+      rm -rf "$scout_dir"
+    fi
   fi
 fi
 
@@ -1260,9 +1281,12 @@ if [ "$kind" = codereview ] && [ "${scout_count:-0}" -gt 0 ] && [ -s "$scout_dir
   {
     printf '\nINDEPENDENT SCOUT LANES - run these FIRST, before you review\n'
     printf '%s other model(s) are configured to read this same diff. They are\n' "$scout_count"
-    printf 'OBSERVERS: they mint no id, no severity and no action. Run each command\n'
-    printf 'below EXACTLY as written - they are read-only one-shot turns over this\n'
-    printf 'same worktree - in parallel if you can, and wait for all of them.\n\n'
+    printf 'OBSERVERS: they mint no id, no severity and no action. Run this ONE\n'
+    printf 'command and WAIT for it - it starts every lane at once and returns only\n'
+    printf 'when all of them have finished:\n\n  bash %s/run-lanes.sh\n\n' "$scout_dir"
+    printf 'Do NOT background it and do NOT end your turn while it is running: a\n'
+    printf 'lane is a child of this turn, so ending early kills the lanes you paid\n'
+    printf 'for. The lanes it runs, for the record:\n\n'
     cat "$scout_dir/commands.txt"
     printf '\nFor each lane N, after it exits:\n'
     printf '  - read %s/N.ndjson and take the last {"event":"done"} line;\n' "$scout_dir"

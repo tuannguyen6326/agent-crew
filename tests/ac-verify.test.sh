@@ -1611,6 +1611,17 @@ jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | tail -1)prompt.
 # the crewmate contract - a crewmate would mint a state/<id>.meta and the
 # watcher would demand supervision for a pane holding no brief and no task.
 assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT LANES" "the reviewer's prompt carries the fan-out"
+# ONE BLOCKING COMMAND, not N the reviewer may background. Told to run several
+# commands "in parallel if you can", a reviewer ran them as background tasks and
+# ENDED ITS TURN while two were still going - and a lane is a child of that
+# turn, so both died unwritten and their completion notice was queued for a turn
+# that never came. The runner launches every lane and waits, so the turn cannot
+# end before the lanes do.
+assert_file "$sdir/run-lanes.sh" "the lanes are staged as one runner the reviewer cannot background"
+assert_contains "$(cat "$sdir/run-lanes.sh")" "wait" "the runner waits for every lane it started"
+bash -n "$sdir/run-lanes.sh" || fail "the staged runner must be valid bash - the reviewer runs it verbatim"
+assert_eq "$(grep -c ' &$' "$sdir/run-lanes.sh")" "3" "every lane starts concurrently"
+assert_contains "$(cat "$jp")" "run-lanes.sh" "the prompt names the runner, not N separate commands"
 assert_contains "$(cat "$jp")" "run --exec --harness codex" "lane 1 is a one-shot pane-agent turn"
 assert_contains "$(cat "$jp")" "--kind codereview-scout" "...under its own kind"
 assert_contains "$(cat "$jp")" "--model 'qwen3.7-plus'" "a lane's model rides as a quoted flag"
