@@ -1238,6 +1238,7 @@ if [ "$ARM" = oneshot ]; then
   # it - the pane was only ever a place to put the process, never part of how
   # the turn is observed.
   sh -c "$RUNCMD" >/dev/null 2>&1 &
+  ONESHOT_PID=$!
   P=""; TAB=""
 elif [ "$PA_BACKEND" = orca ]; then
   placed="$(orca_place_pane "$CWD" "$RUNCMD" "ac-$KIND")" \
@@ -1607,7 +1608,18 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   if [ "$ARM" = crewmate ] && [ -f "$EXITMARK" ]; then
     fail "harness '$HARNESS' exited (status $(cat "$CRCF" 2>/dev/null || printf 'unrecorded')) without announcing a verdict - $( [ -s "$VERDICT" ] && printf 'it did leave one at %s' "$VERDICT" || printf 'and wrote none' )"
   fi
-  if [ $((i % 5)) -eq 4 ]; then
+  if [ $((i % 5)) -eq 4 ] && [ "$ARM" = oneshot ]; then
+    # A ONE-SHOT HAS NO PANE, so the watchdog below has nothing to ask about -
+    # and asking anyway, with an empty id, made every backend answer "gone" and
+    # killed every lane of every review round about eight seconds in, on turns
+    # that were running fine. Its liveness is the background PROCESS. Re-check
+    # the marker before calling it dead: a turn that just finished touches the
+    # marker and THEN exits, so the two can be observed in either order.
+    if ! kill -0 "$ONESHOT_PID" 2>/dev/null && [ ! -f "$MARKER" ]; then
+      emit "{\"event\":\"done\",\"status\":\"error\",\"session_id\":\"\",\"transcript\":\"\",\"pane\":\"\",\"error\":\"the one-shot process died without ending its turn - no marker, no output to harvest\"}"
+      exit 1
+    fi
+  elif [ $((i % 5)) -eq 4 ]; then
     pane_live=1
     if [ "$PA_BACKEND" = orca ]; then
       orca_json terminal show --terminal "$P" 2>/dev/null \

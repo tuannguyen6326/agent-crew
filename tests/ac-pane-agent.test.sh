@@ -1245,6 +1245,34 @@ case "$(cat "$XLOG" 2>/dev/null || true)" in
   *--effort*) fail "agy must never be launched with --effort - the CLI refuses the combination: $(cat "$XLOG")" ;;
 esac
 
+# A ONE-SHOT OUTLIVES THE PANE WATCHDOG. That watchdog asks the backend every
+# fifth poll whether the pane is still open - and a one-shot HAS no pane, so the
+# question was asked about an empty id, every backend said no, and every lane of
+# every review round died `pane_closed while turn in flight` about eight seconds
+# in, on a turn that was running fine. Its liveness signal is the background
+# PROCESS, not a pane.
+: >"$HDLOG"; : >"$HDLOG.cmd"; : >"$XLOG"
+cat >"$xstub/slowcodex" <<'SLOW'
+#!/usr/bin/env bash
+# /bin/sleep by absolute path: the no-op sleep stub below sits on the PATH this
+# harness inherits, and a shadowed sleep would end the turn before the watchdog
+# tick this case exists to reach.
+/bin/sleep 1
+echo '{"verdict":"approve"}'
+SLOW
+chmod +x "$xstub/slowcodex"
+mv "$xstub/codex" "$xstub/codex.fast"; mv "$xstub/slowcodex" "$xstub/codex"
+# sleep stubbed out so the poll counter reaches the watchdog's fifth tick at
+# once instead of in eight real seconds - the branch taken is identical. The
+# harness calls /bin/sleep by absolute path so this stub cannot shadow it.
+xnosleep="$TMP/xnosleep-bin"; mkdir -p "$xnosleep"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$xnosleep/sleep"; chmod +x "$xnosleep/sleep"
+out="$(PATH="$xnosleep:$xstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run \
+  --cwd "$xrepo" --prompt-file "$pf" --exec --harness codex --kind gate --label g-slow 2>&1 || true)"
+mv "$xstub/codex.fast" "$xstub/codex"
+case "$out" in *pane_closed*) fail "a one-shot has no pane to close: $out" ;; esac
+assert_contains "$out" '"event":"done","status":"ok"' "a one-shot that outlives the watchdog tick still completes"
+
 # A harness with no one-shot form is refused on the same rung, and the refusal
 # says which mode it is talking about.
 : >"$HDLOG"
