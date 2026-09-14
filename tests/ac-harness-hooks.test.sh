@@ -48,6 +48,47 @@ case "$(jq -r '[.hooks.UserPromptSubmit[]?.hooks[]?.command] | .[]' "$cx")" in
   *) fail "codex UserPromptSubmit wiring misses ac-prompt-recall.sh" ;;
 esac
 
+# --- .claude/settings.json: a blocking guard's verdict must reach claude ------
+# Measured on claude 2.1.270 (headless probe, one variable per leg, plus the real
+# guard end to end): the harness reads the hook COMMAND's exit status - the docs
+# say the command string is passed to `sh -c` and "the exit code from your hook
+# command tells Claude Code whether the action should proceed"
+# (code.claude.com/docs/en/hooks). A trailing `|| :` therefore turned every
+# guard's `exit 2` into 0 and no verdict ever blocked anything, with
+# "asyncRewake": true as well as without.
+#
+# So this asserts the INVARIANT, not its spelling: RUN each wiring line the way
+# the harness does and watch the status come back. Two legs per hook, the shape
+# .codex/hooks.json already ships - fail open when the script is absent, pass the
+# status through when it is not.
+#
+# The class is "a script that can exit 2". FAIL DIRECTION, deliberate: a
+# non-blocking hook that merely mentions exit 2 would be held to the same
+# invariant - harmless. The opposite default is the defect this fences.
+hookdir="$TMP/hookproj"; mkdir -p "$hookdir/bin"
+while IFS= read -r cmd; do
+  script="$(printf '%s' "$cmd" | grep -o 'ac-[a-z-]*\.sh' | head -1)"
+  [ -n "$script" ] || continue
+  # Existence is checked BEFORE the class filter, because the filter reads the
+  # script: a wiring line naming a script that is not there would otherwise skip
+  # itself silently, and `[ -x "$h" ] || exit 0` would then fail that hook open
+  # forever behind a green suite. The refs sweep below cannot cover this - it is
+  # built from the codex/opencode/pi surfaces, and ac-watch-autoarm.sh is
+  # claude-only.
+  [ -x "$root/bin/$script" ] \
+    || fail "claude wires bin/$script but it is missing or not executable - that hook is permanently inert"
+  grep -q 'exit 2' "$root/bin/$script" || continue
+
+  printf '#!/usr/bin/env bash\nexit 2\n' >"$hookdir/bin/$script"
+  chmod +x "$hookdir/bin/$script"
+  rc=0; CLAUDE_PROJECT_DIR="$hookdir" sh -c "$cmd" </dev/null >/dev/null 2>&1 || rc=$?
+  assert_eq "$rc" "2" "$script objects but its wiring line reports $rc - the verdict dies in the shell"
+
+  rm -f "$hookdir/bin/$script"
+  rc=0; CLAUDE_PROJECT_DIR="$hookdir" sh -c "$cmd" </dev/null >/dev/null 2>&1 || rc=$?
+  assert_eq "$rc" "0" "$script is missing and its wiring line reports $rc - a missing hook must never wedge a turn"
+done < <(jq -r '.hooks[][] | .hooks[]?.command' "$cl")
+
 # Every script referenced by ANY of the three surfaces exists and executes.
 refs="$(cat "$cx" "$root"/.opencode/plugins/*.js "$root"/.pi/extensions/*.ts 2>/dev/null \
   | grep -o 'ac-[a-z-]*\.sh' | sort -u)"
