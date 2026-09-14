@@ -62,14 +62,21 @@ esac
 # .codex/hooks.json already ships - fail open when the script is absent, pass the
 # status through when it is not.
 #
-# The class is "a script that can exit 2". FAIL DIRECTION, deliberate: a
-# non-blocking hook that merely mentions exit 2 would be held to the same
-# invariant - harmless. The opposite default is the defect this fences.
+# The class was "a script that can exit 2" (the blocking hooks), widened here to
+# every wired command: ac-sessionstart-nudge.sh and ac-prompt-recall.sh both
+# document ALWAYS exiting 0 and neither calls exit 2 (measured: 0 hits each on
+# this tree), so they cannot OBJECT the way the six blocking hooks do - but `|| :`
+# never cared what a script returned, blocking or not, and a crash nobody wrote
+# would have died in the shell exactly like a guard's verdict did. So a script
+# that can exit 2 is stubbed to exit 2 (the objects case, unchanged); one that
+# cannot is stubbed to an arbitrary non-2 non-zero status (9) to prove PASSTHROUGH
+# without pretending it means "block" - that claim is about the harness, an actor
+# outside this repo, and this row makes none.
 hookdir="$TMP/hookproj"; mkdir -p "$hookdir/bin"
 while IFS= read -r cmd; do
   script="$(printf '%s' "$cmd" | grep -o 'ac-[a-z-]*\.sh' | head -1)"
   [ -n "$script" ] || continue
-  # Existence is checked BEFORE the class filter, because the filter reads the
+  # Existence is checked BEFORE the class split, because the split reads the
   # script: a wiring line naming a script that is not there would otherwise skip
   # itself silently, and `[ -x "$h" ] || exit 0` would then fail that hook open
   # forever behind a green suite. The refs sweep below cannot cover this - it is
@@ -77,12 +84,16 @@ while IFS= read -r cmd; do
   # claude-only.
   [ -x "$root/bin/$script" ] \
     || fail "claude wires bin/$script but it is missing or not executable - that hook is permanently inert"
-  grep -q 'exit 2' "$root/bin/$script" || continue
 
-  printf '#!/usr/bin/env bash\nexit 2\n' >"$hookdir/bin/$script"
+  if grep -q 'exit 2' "$root/bin/$script"; then
+    want=2; desc="objects"
+  else
+    want=9; desc="exits $want"
+  fi
+  printf '#!/usr/bin/env bash\nexit %s\n' "$want" >"$hookdir/bin/$script"
   chmod +x "$hookdir/bin/$script"
   rc=0; CLAUDE_PROJECT_DIR="$hookdir" sh -c "$cmd" </dev/null >/dev/null 2>&1 || rc=$?
-  assert_eq "$rc" "2" "$script objects but its wiring line reports $rc - the verdict dies in the shell"
+  assert_eq "$rc" "$want" "$script $desc but its wiring line reports $rc - the status dies in the shell"
 
   rm -f "$hookdir/bin/$script"
   rc=0; CLAUDE_PROJECT_DIR="$hookdir" sh -c "$cmd" </dev/null >/dev/null 2>&1 || rc=$?
