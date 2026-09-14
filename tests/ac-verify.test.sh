@@ -402,7 +402,13 @@ else
     fi
   fi
 fi
-jq -cn --arg text "$payload" '{type:"assistant",message:{content:[{type:"text",text:$text}]}}' >"$transcript"
+# VERIFY_STALE_VERDICT=1 stamps the verdict in the past: a reviewer that wrote
+# before its scout lanes finished, which the facade must refuse.
+if [ "${VERIFY_STALE_VERDICT:-0}" = 1 ]; then
+  jq -cn --arg text "$payload" '{type:"assistant",timestamp:"2020-01-01T00:00:00Z",message:{content:[{type:"text",text:$text}]}}' >"$transcript"
+else
+  jq -cn --arg text "$payload" '{type:"assistant",message:{content:[{type:"text",text:$text}]}}' >"$transcript"
+fi
 # Simulates bin/ac-pane-agent.sh's own CONTRADICTION CHECK: a "warning" event
 # on the SAME NDJSON stream, emitted before "done" - never a refusal.
 [ -z "${VERIFY_WARNING:-}" ] \
@@ -1719,6 +1725,19 @@ assert_eq "$(jq -r '.scouts.returned' "$scout_out")" "1" "one lane returned"
 assert_contains "$out" "1 of 3 configured scout lanes" "...and the missing one is named"
 
 # ABSENT IS OFF: no entry, no instructions in the prompt, no scouts dir.
+# A VERDICT WRITTEN BEFORE THE LAST LANE FINISHED IS REFUSED. The pane agent
+# holds such a turn; this is the facade's own check of the same fact against
+# the lanes themselves, so an early verdict cannot get through even if the
+# pane-side hold were bypassed.
+rm -rf "$AC_HOME/data/$scout_family"
+rc=0
+VERIFY_STALE_VERDICT=1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$scout_family" --caller "$caller" --base "$base" --intent "$intent" \
+  --output "$TMP/stale-verdict.json" >/dev/null 2>"$TMP/stale-verdict.err" || rc=$?
+assert_eq "$rc" "1" "a verdict older than the last scout lane is refused"
+assert_contains "$(cat "$TMP/stale-verdict.err")" "before the last scout lane" "...and the refusal says why"
+assert_no_file "$TMP/stale-verdict.json" "a refused round writes no verdict"
+
 rm -rf "$AC_HOME/data/$scout_family"; rm -f "$AC_HOME/config/crew-dispatch.json"
 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
   --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \

@@ -46,6 +46,7 @@ case "${1:-} ${2:-}" in
     n="$(cat "$HDLOG.n" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$HDLOG.n"
     sid=test-sid; [ "$n" -gt 1 ] && sid="test-sid-$n"
     tf="$HOME/.claude/projects/$slug/$sid.jsonl"
+    ts=""; [ -z "${HD_TS:-}" ] || ts="\"timestamp\":\"$HD_TS\","
     if [ -n "${HD_RACE_TEXT:-}" ]; then
       # The verdict's flush RACES the Stop-hook marker: at the instant the
       # marker fires the last assistant message is still a tool_use, and the
@@ -55,7 +56,7 @@ case "${1:-} ${2:-}" in
       touch "$marker"
       ( sleep 2; printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"the verdict"}]}}' >>"$tf" ) &
     else
-      printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"[]"}]}}' >"$tf"
+      printf '{"type":"assistant",%s"message":{"content":[{"type":"text","text":"[]"}]}}\n' "$ts" >"$tf"
       touch "$marker"
     fi ;;
   "pane close") echo "CLOSE-PANE $3" >>"$HDLOG" ;;
@@ -113,13 +114,25 @@ af="$TMP/await.flag"; rm -f "$af"
 # The second marker stands in for the reviewer being woken by its finished
 # subagents and ending a turn again; the subshell's own status must not reach
 # set -e through `wait`, or a missed marker path kills the suite silently.
-( sleep 4; touch "$af"; sleep 1
+# The FIRST final message is stamped in the past - a verdict written before the
+# fan-out - and the woken turn appends one stamped now: only that one may end
+# the turn (contract: AWAIT, second clause).
+( sleep 4; touch "$af"
   m="$(sed -n "s/.*touch '\([^']*\)'.*/\1/p" "$repo/.claude/settings.local.json" | tail -1)"
-  [ -z "$m" ] || touch "$m" ) &
-out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label await1 --await-file "$af" 2>&1 || true)"
+  # ledger present, old verdict still last: this marker must be HELD
+  sleep 1; [ -z "$m" ] || touch "$m"
+  sleep 3
+  slug="$(printf '%s' "$repo" | sed 's/[/.]/-/g')"
+  tfile="$(ls -t "$FAKEHOME/.claude/projects/$slug"/*.jsonl | head -1)"
+  printf '{"type":"assistant","timestamp":"%s","message":{"content":[{"type":"text","text":"verdict after the fan-out"}]}}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$tfile"
+  # new verdict last: this marker ends the turn
+  sleep 1; [ -z "$m" ] || touch "$m" ) &
+out="$(HD_TS=2020-01-01T00:00:00Z PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label await1 --await-file "$af" 2>&1 || true)"
 wait || true
 assert_contains "$out" '"event":"done","status":"ok"' "a held turn still ends ok once the awaited file exists"
 assert_contains "$out" "await" "the hold is announced on the event stream"
+assert_contains "$out" "predates" "a final message older than the ledger is held, not harvested"
 # ...and it IS a hold: with the file never appearing, the turn cannot end.
 rm -f "$af"
 out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label await2 --await-file "$af" --timeout 5 2>&1 || true)"

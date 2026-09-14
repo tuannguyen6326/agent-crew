@@ -2938,3 +2938,17 @@ ac_orphan_snapshot_scan() {
   # shellcheck disable=SC2016  # the backticked ps command is hint text, not shell expansion
   printf '  inspect: `ps -A -o pid,ppid,pcpu,command | grep shell-snapshots/snapshot` - kill only orphans you confirm (never auto-killed)\n'
 }
+
+# ac_transcript_final_epoch <transcript.jsonl> - the epoch second of the LAST
+# assistant message's own timestamp, or nothing. Two readers need to ask "was
+# the final message written AFTER <moment>": the pane agent, holding a turn
+# whose fan-out ledger appeared later than the verdict on disk, and ac-verify,
+# refusing a verdict older than the last scout lane. Both must agree on the
+# clock, so both read the message's ISO stamp here rather than a file mtime.
+ac_transcript_final_epoch() {
+  local ts
+  ts="$(jq -rs '[.[] | select(.type == "assistant")] | last | .timestamp // ""' "$1" 2>/dev/null || true)"
+  [ -n "$ts" ] || return 1
+  python3 -c 'import sys,datetime; s=sys.argv[1].replace("Z","+00:00"); print(int(datetime.datetime.fromisoformat(s).timestamp()))' "$ts" 2>/dev/null
+}
+

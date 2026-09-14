@@ -1494,6 +1494,22 @@ transcript="$(jq -r '.transcript // ""' <<<"$done_line")"
   || ac_die "verifier $id has no readable transcript; inspect $pane_result and the round evidence under $round_dir"
 cp "$transcript" "$transcript_copy"
 text="$(ac_transcript_final "$transcript")"
+# THE VERDICT MUST POSTDATE THE FAN-OUT. The pane agent already holds a turn
+# whose final message predates the ledger; this is the caller's own check of
+# the same fact against the lanes themselves, so a verdict written before the
+# last lane finished is refused here even if the pane-side hold were bypassed.
+if [ "${scout_count:-0}" -gt 0 ] && [ -d "$scout_dir" ]; then
+  verdict_epoch="$(ac_transcript_final_epoch "$transcript" 2>/dev/null || true)"
+  # `|| true` inside the group, not after the pipeline: with pipefail, a stat
+  # on a glob that matched nothing (a fan-out that never ran) fails the whole
+  # substitution and set -e ends the round silently - which is exactly what
+  # a refusal branch below is supposed to say out loud instead.
+  lane_latest="$( { stat -f %m "$scout_dir"/*.ndjson 2>/dev/null || true; } | sort -n | tail -1)"
+  if [ -n "$verdict_epoch" ] && [ -n "$lane_latest" ] && [ "$verdict_epoch" -lt "$lane_latest" ]; then
+    log_rejection "verdict-written-before-fan-out-finished"
+    ac_die "verifier $id: the verdict was written at epoch $verdict_epoch, before the last scout lane finished at $lane_latest - a verdict reached without the fan-out's evidence is refused; inspect $scout_dir"
+  fi
+fi
 [ -n "$text" ] \
   || ac_die "verifier $id transcript has no final message; inspect $pane_result and the round evidence under $round_dir"
 # Reviewers are asked for JSON-only but routinely wrap the verdict in a human

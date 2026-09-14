@@ -694,7 +694,7 @@ fi
 
 [ "${1:-}" = run ] || fail "usage: ac-pane-agent.sh run --cwd DIR --prompt-file F"
 shift
-CWD=""; PF=""; SID=""; LABEL=agent; TIMEOUT=7200; REPLACE=""; PANEFILE=""; AWAITFILE=""
+CWD=""; PF=""; SID=""; LABEL=agent; TIMEOUT=7200; REPLACE=""; PANEFILE=""; AWAITFILE=""; await_seen_at=""
 MODEL=""; EFFORT=""; KIND=ship
 HFLAG=""; EXEC=0; OBSERVE=""; DELIVERABLE=""
 while [ $# -gt 0 ]; do
@@ -1608,6 +1608,10 @@ EXEC_ERR=""
 FILE_ERR=""
 while [ "$(date +%s)" -lt "$deadline" ]; do
   [ "$ARM" != session ] || announce_transcript || true
+  # The moment the awaited file APPEARED is the moment the fan-out finished;
+  # a final message older than it was written without the fan-out's evidence.
+  [ -z "$AWAITFILE" ] || [ -n "$await_seen_at" ] || [ ! -e "$AWAITFILE" ] \
+    || await_seen_at="$(stat -f %m "$AWAITFILE" 2>/dev/null || true)"
   if [ -f "$MARKER" ]; then
     # WHEN the turn-end signal arrived, kept before the marker is consumed. A
     # captured pane scrollback showed the agent still mid-tool-call at the
@@ -1625,6 +1629,17 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     if [ -n "$AWAITFILE" ] && [ ! -e "$AWAITFILE" ]; then
       emit "{\"event\":\"note\",\"path\":\"await: turn ended but $AWAITFILE is absent - holding for the next turn end\"}"
       sleep 2; i=$((i + 1)); continue
+    fi
+    # AWAIT, second clause: the ledger is here, but a final message written
+    # BEFORE it appeared was reached without the fan-out's evidence - the
+    # reviewer wrote early, was held, and has not written again. Only a turn
+    # end whose final message postdates the ledger is the one that counts.
+    if [ -n "$await_seen_at" ]; then
+      _fin="$(ac_transcript_final_epoch "$TRANSCRIPT" 2>/dev/null || true)"
+      if [ -n "$_fin" ] && [ "$_fin" -lt "$await_seen_at" ]; then
+        emit "{\"event\":\"note\",\"path\":\"await: final message predates $AWAITFILE - holding for a turn end written after the fan-out\"}"
+        sleep 2; i=$((i + 1)); continue
+      fi
     fi
     # FAIL CLOSED: the turn ended, so a payload is owed. An empty TRANSCRIPT
     # here means the glob resolved nothing - report ok with it and the caller
@@ -1694,7 +1709,8 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     if [ $(( $(date +%s) - mt )) -gt 120 ]; then
       ag=$(backend_agent_status_pane "$P")
       if { [ "$ag" = idle ] || [ "$ag" = "done" ]; } && has_final_text \
-         && { [ -z "$AWAITFILE" ] || [ -e "$AWAITFILE" ]; }; then
+         && { [ -z "$AWAITFILE" ] || [ -e "$AWAITFILE" ]; } \
+         && { [ -z "$await_seen_at" ] || [ "$(ac_transcript_final_epoch "$TRANSCRIPT" 2>/dev/null || printf 0)" -ge "$await_seen_at" ]; }; then
         # DELIVERABLE GATE (contract: IDLE FALLBACK in the header). None of the
         # three questions above asks whether the agent's WORK was produced, and
         # has_final_text is satisfied by any assistant text anywhere - including
