@@ -71,12 +71,12 @@
 #   never composed as JSON by the caller. The chief drains `remote-order
 #   <rid>` and runs the remote-orders protocol unchanged.
 #   DELIVERY-PROSPECTS LINE (family
-#   remote-order-strands-silently-with-no-live-watcher): publish always
-#   succeeds and this still exits 0 either way, but with no live fleet
-#   watcher (ac_watcher_pid) a SECOND line follows the `remote-order <rid>`
-#   confirmation, saying so - the solo session's only channel must never read
-#   a bare confirmation as proof anything is watching for it. A caller
-#   parsing the rid must read line 1 only, never the whole capture.
+#   remote-order-strands-silently-with-no-live-watcher): a publish that
+#   succeeds exits 0, but with no live fleet watcher (ac_watcher_pid) a
+#   SECOND line follows the `remote-order <rid>` confirmation, saying so -
+#   the solo session's only channel must never read a bare confirmation as
+#   proof anything is watching for it. A caller parsing the rid must read
+#   line 1 only, never the whole capture.
 # show <rid> - print the stashed JSON. Orchestrators read order text from
 #   DISK, never from the wake payload.
 # reply <rid> [--text-file <f>] - requires an executable config/remote-reply
@@ -237,7 +237,8 @@ ingest_stream() {
   # ingest (one implementation, two entrances). Reads JSON lines on stdin;
   # per valid NEW rid: exclusive stash, durable wake, one printed line.
   # Malformed lines and refused rids are warned (prefixed <label>) and
-  # skipped - bad input is never a hard failure; always returns 0.
+  # skipped - bad input is never a hard failure. A wake that cannot be
+  # published is not bad input: that one rolls its stash back and dies.
   local label="$1" line rid stash tmp
   mkdir -p "$inbox"
   # `|| [ -n "$line" ]` keeps a final unterminated line (a gateway may not
@@ -266,11 +267,31 @@ ingest_stream() {
     # ingester can never double-queue the wake for one rid. The wake itself
     # is published the same way (ac_wake_publish), HARD-WIRED FLEET (scope
     # '' - never AC_SCOPE): a remote order addresses the crewchief, and the
-    # single poller is the fleet watcher. Published from this script's main
-    # shell (ac_wake_publish's subshell contract).
+    # single poller is the fleet watcher. `order` pipes into this function, so
+    # THAT entrance publishes from a pipeline subshell; sound only because no
+    # other publish shares its $$ (ac_wake_publish's collision identity).
     if ln "$tmp" "$stash" 2>/dev/null; then
       rm -f "$tmp"
-      ac_wake_publish "$state_dir" '' remote captain "remote-order $rid"
+      # Two commits in two directories can never be one atomic act, so the
+      # stash must not OUTLIVE a failed publish: the stash is ALSO the dedup
+      # sign the `[ -e "$stash" ]` gate above reads, and one whose wake never
+      # existed reads there as "already ingested" - burning that rid for every
+      # later re-delivery. Rolling it back makes that sign single-cause AT REST:
+      # a concurrent reader can still catch the stash mid-publish and skip, but
+      # that ambiguity now lasts one publish instead of for ever.
+      # Reachable with no crash: every ac_wake_publish failure path sits after
+      # this ln, so an unwritable or full state dir is enough. A death BETWEEN
+      # the two is not covered and cannot be from here.
+      if ! ac_wake_publish "$state_dir" '' remote captain "remote-order $rid"; then
+        # Two residual states, two messages: the rm can fail too (an
+        # unwritable inbox is one of the faults that got us here), and left
+        # unguarded its own errexit death would swallow the line below.
+        rm -f "$stash" || ac_die "$label: no wake for $rid and its stash survived - $stash now blocks every re-delivery of this rid: remove it, then re-send"
+        # Name the BATCH, not just this rid: ac_die exits the read loop, so
+        # every later line on this stdin is dropped unread. A message saying
+        # "re-send it" would have the operator recover one order and lose the rest.
+        ac_die "$label: no wake could be published for $rid - NOT ingested. Re-send it AND anything after it in the same batch: this exits before reading the rest"
+      fi
       # A remote order is the captain SPEAKING, not waiting - they already
       # get the ac-remote reply as confirmation, and the notification rule
       # confined the one captain notification to the
@@ -337,8 +358,8 @@ cmd_order() {
     '{rid: $rid, text: $text, author: "captain", thread: "local"}' \
     | ingest_stream order
   # Tell the truth about delivery prospects AT SEND TIME (family
-  # remote-order-strands-silently-with-no-live-watcher, decisions 1+2): publish
-  # itself is unchanged - still stashed, still exit 0, the durable spool is
+  # remote-order-strands-silently-with-no-live-watcher, decisions 1+2): a
+  # publish that SUCCEEDS is unchanged - stashed, exit 0, the durable spool is
   # meant to wait - but a solo session reading a bare "remote-order <rid>" has
   # no way to know whether anything is even watching for it. ac_watcher_pid is
   # the fleet's OWN liveness signal for "is a watcher covering this scope right

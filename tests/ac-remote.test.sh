@@ -513,4 +513,37 @@ kill "$watch_pid" 2>/dev/null || true
 wait "$watch_pid" 2>/dev/null || true
 rm -rf "$STATE/.watch.lock.d"
 
+# --- a failed wake publish must not leave the rid stashed ---------------------
+# The stash `ln` and the wake publish are two commits into two DIFFERENT
+# directories (state/remote-inbox/ and state/.wake-spool/), so they can never
+# be one atomic act. What can be held is that a stash never OUTLIVES a publish
+# that failed: the stash is also the dedup sign (`[ -e "$stash" ] && continue`),
+# so one whose wake never existed reads as "already ingested" and burns that rid
+# for every later re-delivery - the rid can never be ingested again.
+#
+# The fault is driven through the filesystem rather than a seam: with
+# state/.wake-spool a regular FILE, ac_wake_publish's `[ -d "$spool" ] ||
+# mkdir -p "$spool" || return 1` fails. That reaches the position EVERY one of
+# its non-zero returns shares - strictly after the stash `ln` - with no crash
+# and no signal, which is the whole point: this window is reachable by an
+# ordinary error return, not only by a death.
+rm -rf "$STATE/.wake-spool"
+printf 'not a directory\n' >"$STATE/.wake-spool"
+assert_fails "$BIN/ac-remote.sh" ingest <<'FEED'
+{"rid":"wpfail","text":"the wake for this one cannot be published","author":"TN","thread":"77.1"}
+FEED
+assert_no_file "$INBOX/wpfail.json" \
+  "a failed wake publish must roll its stash back - a stash with no wake burns the rid for good"
+
+# ...and the proof that it is really free: the SAME rid ingests normally once
+# the fault clears. Pre-fix this is a silent no-op (exit 0, nothing printed).
+rm -f "$STATE/.wake-spool"
+out="$(printf '{"rid":"wpfail","text":"re-delivered after the fault cleared","author":"TN","thread":"77.1"}\n' \
+  | "$BIN/ac-remote.sh" ingest)"
+assert_contains "$out" "remote-order wpfail" \
+  "after a rolled-back publish the rid is free: re-delivering it ingests normally"
+assert_file "$INBOX/wpfail.json"
+fleet_wakes | grep -qE "^[0-9]+	remote	captain	remote-order wpfail$" \
+  || fail "the re-delivered order must publish its wake record"
+
 pass
