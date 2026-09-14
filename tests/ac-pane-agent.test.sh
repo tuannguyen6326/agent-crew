@@ -45,9 +45,19 @@ case "${1:-} ${2:-}" in
     # suite now asserts is fail-closed.
     n="$(cat "$HDLOG.n" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$HDLOG.n"
     sid=test-sid; [ "$n" -gt 1 ] && sid="test-sid-$n"
-    printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"[]"}]}}' \
-      >"$HOME/.claude/projects/$slug/$sid.jsonl"
-    touch "$marker" ;;
+    tf="$HOME/.claude/projects/$slug/$sid.jsonl"
+    if [ -n "${HD_RACE_TEXT:-}" ]; then
+      # The verdict's flush RACES the Stop-hook marker: at the instant the
+      # marker fires the last assistant message is still a tool_use, and the
+      # text lands a beat later. This is exactly what a real reviewer's 20KB
+      # verdict did - written, then harvested a few hundred ms too early.
+      printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}' >"$tf"
+      touch "$marker"
+      ( sleep 2; printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"the verdict"}]}}' >>"$tf" ) &
+    else
+      printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"[]"}]}}' >"$tf"
+      touch "$marker"
+    fi ;;
   "pane close") echo "CLOSE-PANE $3" >>"$HDLOG" ;;
   # A closed pane stops resolving, which is what --replace-pane's `closed`
   # verification reads. HD_STICKY names a pane the stub keeps alive however
@@ -73,11 +83,49 @@ assert_contains "$out" '"event":"transcript"' "transcript announced"
 assert_contains "$out" '"event":"done","status":"ok"' "turn ends ok via Stop-hook marker"
 assert_contains "$out" '"session_id":"test-sid"' "session id from transcript name"
 assert_contains "$out" '"source":"transcript"' "an ok turn names where its payload came from"
+
 log="$(cat "$HDLOG")"
 assert_contains "$log" "workspace create --label home --no-focus" "no family: the fleet root workspace is created by label (retired knob ignored)"
 assert_contains "$log" "tab create --workspace wP" "pane lands in the resolved workspace"
 assert_contains "$log" "--label ac-ship-agent" "default kind=ship keeps the ship tab label"
 assert_contains "$log" "pane rename pP1 ac-ship-agent:r1" "pane labeled"
+
+# THE VERDICT FLUSH RACES THE MARKER. The last assistant message is a tool_use
+# at the instant the Stop hook fires; the text lands a beat later. Read once
+# and it looks like a turn that stopped mid-pass - which is how a real 20KB
+# verdict, fully written, was harvested a few hundred ms too early and thrown
+# out. The turn end must SETTLE, not snapshot. (HDLOG.n is NOT reset: a fresh
+# session name is what announce_transcript will adopt - reusing test-sid leaves
+# the run looking at r1's already-seen transcript.)
+out="$(HD_RACE_TEXT=1 PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label race1)"
+assert_contains "$out" '"event":"done","status":"ok"' "a turn-end that beats the transcript flush waits for the text, not errors"
+case "$out" in *"carries no text"*) fail "the settle window was not honoured: $out" ;; esac
+: >"$HDLOG"
+# --await-file: a turn end is NOT the end of the round while work the agent
+# started is still in flight. A reviewer that fanned scout lanes out as
+# subagents ended its turn at once - the Agent tool launches asynchronously
+# and takes no flag to wait - so the marker fired, the round was harvested and
+# the pane reaped with three lanes still running and nobody left to read them.
+# With the file named here absent, a marker is CONSUMED and the poll goes on:
+# the completing subagents wake the agent, it finishes with its evidence, and
+# the marker it fires then is the one that ends the turn.
+af="$TMP/await.flag"; rm -f "$af"
+# The second marker stands in for the reviewer being woken by its finished
+# subagents and ending a turn again; the subshell's own status must not reach
+# set -e through `wait`, or a missed marker path kills the suite silently.
+( sleep 4; touch "$af"; sleep 1
+  m="$(sed -n "s/.*touch '\([^']*\)'.*/\1/p" "$repo/.claude/settings.local.json" | tail -1)"
+  [ -z "$m" ] || touch "$m" ) &
+out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label await1 --await-file "$af" 2>&1 || true)"
+wait || true
+assert_contains "$out" '"event":"done","status":"ok"' "a held turn still ends ok once the awaited file exists"
+assert_contains "$out" "await" "the hold is announced on the event stream"
+# ...and it IS a hold: with the file never appearing, the turn cannot end.
+rm -f "$af"
+out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label await2 --await-file "$af" --timeout 5 2>&1 || true)"
+case "$out" in *'"status":"ok"'*) fail "a turn must not end while the awaited file is absent: $out" ;; esac
+: >"$HDLOG"
+
 # --kind names the caller on both herdr surfaces (tab + pane).
 : >"$HDLOG"
 PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind qa --label q1 >/dev/null

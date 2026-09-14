@@ -360,6 +360,18 @@
 # without bound across many runs. A malformed or hand-edited file fails SOFT to
 # a fresh one rather than killing the launch.
 #
+# AWAIT (the authoritative contract): `--await-file <path>` says a turn end is
+# NOT the end of the turn while that file is absent. The recorded reason: a
+# reviewer that fans its scout lanes out as subagents ends its turn at once,
+# because the Agent tool launches asynchronously and takes no flag to wait -
+# so the Stop-hook marker fired, the round was harvested and the pane reaped
+# with three lanes still running and nobody left to read them. While the file
+# is absent a marker is CONSUMED and the poll continues, and the idle fallback
+# holds the same way; the completing work wakes the agent, it finishes with
+# its evidence, and the marker it fires then ends the turn. The caller owns
+# the file and writes it when the awaited work is done (ac-verify.sh writes
+# the fan-out ledger there). --timeout still bounds the whole wait.
+#
 # IDLE FALLBACK (the authoritative contract): transcript idle >120s with a final
 # assistant message AND an idle herdr agent_status also ends the turn, in case
 # project hooks fail to load. It EXISTS for a recorded reason and is not to be
@@ -682,7 +694,7 @@ fi
 
 [ "${1:-}" = run ] || fail "usage: ac-pane-agent.sh run --cwd DIR --prompt-file F"
 shift
-CWD=""; PF=""; SID=""; LABEL=agent; TIMEOUT=7200; REPLACE=""; PANEFILE=""
+CWD=""; PF=""; SID=""; LABEL=agent; TIMEOUT=7200; REPLACE=""; PANEFILE=""; AWAITFILE=""
 MODEL=""; EFFORT=""; KIND=ship
 HFLAG=""; EXEC=0; OBSERVE=""; DELIVERABLE=""
 while [ $# -gt 0 ]; do
@@ -709,6 +721,10 @@ while [ $# -gt 0 ]; do
     # the header). Optional - no declaration leaves that exit as it was. ABSOLUTE:
     # THIS process reads it, and its cwd is the caller's, never the pane's --cwd.
     --deliverable) DELIVERABLE=${2:?}; shift ;;
+    # --await-file <path>: a turn end is NOT the end of the turn while this
+    # file is absent (contract: AWAIT in the header). The marker is consumed
+    # and the poll goes on; the idle fallback holds the same way. ABSOLUTE.
+    --await-file) AWAITFILE=${2:?}; shift ;;
     *) fail "unknown arg $1" ;;
   esac
   shift
@@ -1023,7 +1039,13 @@ MARKDIR="${AC_FLEET_STATE:-}"
 [ -n "$MARKDIR" ] || MARKDIR="$(ac_state_dir 2>/dev/null || true)"
 [ -n "$MARKDIR" ] && MARKDIR="$MARKDIR/.pane-agent-tmp" || MARKDIR="/tmp"
 mkdir -p "$MARKDIR" 2>/dev/null || MARKDIR="/tmp"
-MARKER="$MARKDIR/ac-pane-turnend.$(basename "$CWD").$$"
+# The RUN's own name, not just its pid. Every lane of a review round is another
+# ac-pane-agent in the SAME lease writing into the SAME marker dir, so the cwd
+# basename discriminates nothing and a pid is the whole of it - and a turn that
+# "ended" while its tool call was still running is exactly what a marker meant
+# for someone else looks like. The random segment sits BEFORE the pid so the
+# dead-hook pruner's `.<digits>` tail still matches.
+MARKER="$MARKDIR/ac-pane-turnend.$(basename "$CWD")-$(od -An -N4 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || printf '%s' "$RANDOM").$$"
 rm -f "$MARKER" 2>/dev/null
 # ONE-SHOT ARM: the marker is touched by the LAUNCH LINE itself (below), so the
 # whole Stop-hook install is skipped and NOTHING is written into the caller's
@@ -1549,6 +1571,21 @@ final_message_has_text() {
               ([(.message.content // [])[] | select(.type == "text") | .text] | join(""))
             end' "$TRANSCRIPT" 2>/dev/null | grep -q '[^[:space:]]'
 }
+final_message_settles() {
+  # final_message_has_text, but the turn end is allowed to SETTLE. A verdict is
+  # written and THEN the Stop hook fires, but the file's last flushed line can
+  # still be the tool_use that preceded the text for a beat - a 20KB verdict,
+  # fully written, was harvested that beat too early and thrown out. Re-read a
+  # few times before believing the turn stopped without a final message; a
+  # genuinely textless end just costs this bounded wait once.
+  local i=0
+  while [ "$i" -lt "${AC_PANE_SETTLE_TRIES:-6}" ]; do
+    final_message_has_text && return 0
+    i=$((i + 1)); sleep "${AC_PANE_SETTLE_SLEEP:-0.5}"
+    announce_transcript 2>/dev/null || true
+  done
+  final_message_has_text
+}
 has_final_text() {
   [ -n "$TRANSCRIPT" ] || return 1
   python3 - "$TRANSCRIPT" <<'PY' 2>/dev/null
@@ -1579,6 +1616,16 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     # growing says the SIGNAL fired early, not that the model stopped.
     marker_age="$(( $(date +%s) - $(stat -f %m "$MARKER" 2>/dev/null || date +%s) ))"
     rm -f "$MARKER"
+    # AWAIT: the agent ended a turn, but work it started is still in flight -
+    # a reviewer's scout subagents, launched asynchronously by a tool that
+    # takes no flag to wait. Consume this marker and keep polling: the
+    # completing work wakes the agent, it finishes with its evidence, and the
+    # marker it fires THEN is the one that ends the turn. Without this hold
+    # the round was harvested and the pane reaped with the lanes still running.
+    if [ -n "$AWAITFILE" ] && [ ! -e "$AWAITFILE" ]; then
+      emit "{\"event\":\"note\",\"path\":\"await: turn ended but $AWAITFILE is absent - holding for the next turn end\"}"
+      sleep 2; i=$((i + 1)); continue
+    fi
     # FAIL CLOSED: the turn ended, so a payload is owed. An empty TRANSCRIPT
     # here means the glob resolved nothing - report ok with it and the caller
     # overwrites its durable session pointer with "" and dies late on an empty
@@ -1599,7 +1646,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
          # current. Ask the caller's question here, where the turn is still
          # ours to refuse, and carry the pane the way the pane_closed exit does
          # so the caller can still reap the agent it opened.
-         if ! final_message_has_text; then
+         if ! final_message_settles; then
            emit "{\"event\":\"done\",\"status\":\"error\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"the turn-end signal arrived ${marker_age}s ago but the last assistant message carries no text - the turn stopped mid-pass and there is no final message to harvest, so it is NOT reported ok\"}"
            exit 1
          fi ;;
@@ -1646,7 +1693,8 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     mt=$(stat -f %m "$TRANSCRIPT" 2>/dev/null || echo 0)
     if [ $(( $(date +%s) - mt )) -gt 120 ]; then
       ag=$(backend_agent_status_pane "$P")
-      if { [ "$ag" = idle ] || [ "$ag" = "done" ]; } && has_final_text; then
+      if { [ "$ag" = idle ] || [ "$ag" = "done" ]; } && has_final_text \
+         && { [ -z "$AWAITFILE" ] || [ -e "$AWAITFILE" ]; }; then
         # DELIVERABLE GATE (contract: IDLE FALLBACK in the header). None of the
         # three questions above asks whether the agent's WORK was produced, and
         # has_final_text is satisfied by any assistant text anywhere - including
@@ -1672,7 +1720,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
         # receipt on disk looking like a current one. Ask the caller's question
         # here, and refuse in the seconds it took rather than handing out an ok
         # nothing downstream can use.
-        if ! final_message_has_text; then
+        if ! final_message_settles; then
           emit "{\"event\":\"done\",\"status\":\"error\",\"session_id\":\"$NEWSID\",\"transcript\":\"$TRANSCRIPT\",\"pane\":\"$P\",\"error\":\"the pane went idle (agent_status=$ag) but its last assistant message carries no text - the turn stopped mid-pass and there is no final message to harvest, so it is NOT reported ok\"}"
           exit 1
         fi

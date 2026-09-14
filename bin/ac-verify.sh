@@ -471,6 +471,61 @@ reap_pane() {
 # reap_verify_runtime - release the runtime resources a round leased (the
 # pane, the lease(s), and the meta/handle/status), never the round evidence
 # under round_dir (always retained for recovery). Shared by die_reaped (a
+# scout_harvest <dir> <count> - turn each lane's raw ndjson into its
+# observations file and write the ledger. BOOKKEEPING, deliberately here and
+# never asked of the reviewer: across nine rounds a reviewer never once reached
+# this reading, so no lane observation ever became a disposition. Nothing
+# waits - whatever finished, finished - and the ledger lands ATOMICALLY (tmp
+# then mv) because it doubles as the pane agent's --await-file: its appearance
+# means "the fan-out is done", and a half-written one would end the reviewer's
+# turn on a partial read. Idempotent: an observations file already on disk is
+# kept, so the background pass and the post-round pass agree.
+scout_harvest() {
+  local dir="$1" count="$2" n=0 done_line st tr tmp
+  tmp="$dir/lanes.tsv.tmp.$$"
+  : >"$tmp"
+  while [ "$n" -lt "$count" ]; do
+    n=$((n + 1))
+    done_line="$(grep '"event":"done"' "$dir/$n.ndjson" 2>/dev/null | tail -1 || true)"
+    st="$(printf '%s' "$done_line" | jq -r '.status // ""' 2>/dev/null || true)"
+    tr="$(printf '%s' "$done_line" | jq -r '.transcript // ""' 2>/dev/null || true)"
+    if [ ! -s "$dir/$n.json" ] && [ "$st" = ok ] && [ -s "$tr" ]; then
+      ac_transcript_final "$tr" 2>/dev/null | ac_verdict_json >"$dir/$n.json" 2>/dev/null || true
+    fi
+    if [ -s "$dir/$n.json" ]; then
+      printf '%s\tok\t%s\n' "$n" \
+        "$(jq -r '(.observations // []) | length' "$dir/$n.json" 2>/dev/null || printf 0)" >>"$tmp"
+    else
+      rm -f "$dir/$n.json"
+      printf '%s\t%s\t-\n' "$n" "${st:-no-done-line}" >>"$tmp"
+    fi
+  done
+  mv -f "$tmp" "$dir/lanes.tsv"
+}
+
+# scout_await_then_harvest <dir> <count> <budget-seconds> - the BACKGROUND
+# harvester. Polls until every lane's ndjson carries a done line, or the budget
+# runs out, then harvests once. Its only durable output is lanes.tsv, which is
+# the pane agent's --await-file: the reviewer's turn cannot end for good until
+# this has run, so a fan-out the reviewer launched asynchronously is still
+# waited for - by this process, on the reviewer's behalf.
+scout_await_then_harvest() {
+  local dir="$1" count="$2" budget="$3" waited=0 n ready tick
+  while [ "$waited" -lt "$budget" ]; do
+    ready=1; n=0
+    while [ "$n" -lt "$count" ]; do
+      n=$((n + 1))
+      grep -q '"event":"done"' "$dir/$n.ndjson" 2>/dev/null || { ready=0; break; }
+    done
+    [ "$ready" = 1 ] && break
+    # Poll no coarser than the budget itself: a 5s tick against a 2s budget
+    # is a 5s wait, and a suite runs this a dozen times.
+    tick=5; [ "$budget" -lt 5 ] && tick=1
+    sleep "$tick"; waited=$((waited + tick))
+  done
+  scout_harvest "$dir" "$count"
+}
+
 # REJECTED verdict: the pane completed, its transcript is durably copied, so
 # nothing live remains to inspect in the pane itself) and, via
 # qa_error_report_on_exit's EXIT trap, every plain ac_die reachable while
@@ -1257,7 +1312,7 @@ EOF
       s_label="$s_h"; [ -z "$s_m" ] || s_label="$s_h $s_m"
       printf 'LANE %s (%s):\n  GIT_OPTIONAL_LOCKS=0 %s run --exec --harness %s%s%s --kind codereview-scout --cwd %s --prompt-file %s --timeout %s > %s/%s.ndjson 2>&1\n' \
         "$scout_count" "$s_label" \
-        "$bin_dir/ac-pane-agent.sh" "$s_h" "$s_mflag" "$s_eflag" \
+        "$pane_bin" "$s_h" "$s_mflag" "$s_eflag" \
         "$lease" "$scout_prompt" \
         "${AC_VERIFY_SCOUT_TIMEOUT:-900}" "$scout_dir" "$scout_count" \
         >>"$scout_dir/commands.txt"
@@ -1265,7 +1320,7 @@ EOF
       # are concurrent, with one `wait` below that makes the whole fan-out a
       # single blocking command.
       printf 'GIT_OPTIONAL_LOCKS=0 %s run --exec --harness %s%s%s --kind codereview-scout --cwd %s --prompt-file %s --timeout %s > %s/%s.ndjson 2>&1 &\n' \
-        "$bin_dir/ac-pane-agent.sh" "$s_h" "$s_mflag" "$s_eflag" \
+        "$pane_bin" "$s_h" "$s_mflag" "$s_eflag" \
         "$lease" "$scout_prompt" \
         "${AC_VERIFY_SCOUT_TIMEOUT:-900}" "$scout_dir" "$scout_count" \
         >>"$scout_dir/run-lanes.sh"
@@ -1287,26 +1342,36 @@ EOF
   fi
 fi
 
-# THE REVIEWER RUNS THE LANES, then reads them (contract: SCOUT LANES above).
+# THE REVIEWER FANS OUT THE LANES, one subagent each (contract: SCOUT LANES
+# above); this script harvests what they leave behind, after the round.
 # Appended here, after the lease exists, for the same reason the
 # neutralization note is: every command names the lease path.
 if [ "$kind" = codereview ] && [ "${scout_count:-0}" -gt 0 ] && [ -s "$scout_dir/commands.txt" ]; then
   {
-    printf '\nINDEPENDENT SCOUT LANES - run these FIRST, before you review\n'
+    printf '\nINDEPENDENT SCOUT LANES - fan these out BEFORE you review\n'
     printf '%s other model(s) are configured to read this same diff. They are\n' "$scout_count"
-    printf 'OBSERVERS: they mint no id, no severity and no action. Run this ONE\n'
-    printf 'command and WAIT for it - it starts every lane at once and returns only\n'
-    printf 'when all of them have finished:\n\n  bash %s/run-lanes.sh\n\n' "$scout_dir"
-    printf 'Do NOT background it and do NOT end your turn while it is running: a\n'
-    printf 'lane is a child of this turn, so ending early kills the lanes you paid\n'
-    printf 'for. The lanes it runs, for the record:\n\n'
+    printf 'OBSERVERS: they mint no id, no severity and no action.\n\n'
+    printf 'LAUNCH THEM AS SUBAGENTS, all in parallel, one subagent per lane, in\n'
+    printf 'a SINGLE message. Give each subagent exactly one of the commands below,\n'
+    printf 'verbatim, plus this instruction: run it, then reply with nothing but the\n'
+    printf 'bare JSON object its output contains.\n\n'
+    printf 'WAIT FOR ALL OF THEM before you write your verdict, and do NOT launch\n'
+    printf 'them in the background: a backgrounded fan-out hands you\n'
+    printf '"async_launched" at once, and a verdict written before the observations\n'
+    printf 'arrive is a verdict built on nothing. A round whose configured lanes all\n'
+    printf 'come back empty is REFUSED.\n\n'
+    printf 'They come back to you in a LATER turn. When they do, write your COMPLETE\n'
+    printf 'verdict JSON again in that turn, scout_dispositions included: only the\n'
+    printf 'last message of your last turn is harvested, so a verdict written\n'
+    printf 'before they returned is not the one that counts, and a reply that only\n'
+    printf 'acknowledges them is no verdict at all.\n\n'
+    printf 'Do NOT run these commands yourself either. Each takes minutes, and a\n'
+    printf 'call that long inside YOUR OWN turn is what has ended this round\n'
+    printf 'mid-pass every time before now - whatever the command was. A subagent\n'
+    printf 'turn is its own, so the waiting happens there and the lanes run at the\n'
+    printf 'same time as each other.\n\n'
     cat "$scout_dir/commands.txt"
-    printf '\nFor each lane N, after it exits:\n'
-    printf '  - read %s/N.ndjson and take the last {"event":"done"} line;\n' "$scout_dir"
-    printf '  - status ok: read its .transcript path, take the final assistant\n'
-    printf '    message, extract the bare JSON object, write it to %s/N.json;\n' "$scout_dir"
-    printf '  - append one line to %s/lanes.tsv - N<TAB>ok<TAB><observation count>,\n' "$scout_dir"
-    printf '    or N<TAB><status or reason><TAB>- when the lane produced nothing.\n\n'
+    printf '\n'
     printf 'Then CHECK THE TREE before you review: git -C %s status --porcelain\n' "$lease"
     printf 'must be empty. A lane that wrote into this worktree corrupted the bytes\n'
     printf 'you are about to review - restore with git -C %s reset --hard %s then\n' "$lease" "$sha"
@@ -1320,6 +1385,11 @@ if [ "$kind" = codereview ] && [ "${scout_count:-0}" -gt 0 ] && [ -s "$scout_dir
     printf 'A lane that produced nothing is not agreement either - name it.\n'
     printf 'Add ONE key to the JSON object you already emit:\n'
     printf '  "scout_dispositions":[{"ref":"<lane N obs M>","verdict":"accepted|refuted","why":"<one line>"}]\n'
+    printf 'and on EVERY finding that absorbs an observation, a "scouts" array naming\n'
+    printf 'the observations it came from - "scouts":["lane 2 obs 1"] - so the\n'
+    printf 'finding carries its own provenance and a reader of findings alone can\n'
+    printf 'see which model first saw it. A finding you reached with no lane behind\n'
+    printf 'it carries no scouts key.\n'
     printf 'accepted names, in `why`, the finding id you reported it under.\n'
   } >>"$prompt"
 fi
@@ -1342,6 +1412,11 @@ if [ -n "$harness" ]; then
   [ -z "$model" ] || pane_args+=(--model "$model")
   [ -z "$effort" ] || pane_args+=(--effort "$effort")
 fi
+# The fan-out ledger is the pane's --await-file (contract: AWAIT in
+# bin/ac-pane-agent.sh): the reviewer's turn cannot end for good until the
+# background harvester below has written it, so subagents the reviewer
+# launched asynchronously are waited for on its behalf.
+[ "${scout_count:-0}" -gt 0 ] && pane_args+=(--await-file "$scout_dir/lanes.tsv")
 # BUSY DECLARATION (see the header): the pane call below blocks this process -
 # a roomchief among its callers - for up to AC_VERIFY_TIMEOUT, so declare that
 # window for the family named on this command line before entering it. The bound
@@ -1357,6 +1432,12 @@ qa_phase=pane
 "$pane_bin" "${pane_args[@]}" \
   >"$pane_result_tmp" 2>&1 &
 pane_pid=$!
+scout_pid=""
+if [ "${scout_count:-0}" -gt 0 ]; then
+  scout_await_then_harvest "$scout_dir" "$scout_count" \
+    "$(( ${AC_VERIFY_SCOUT_TIMEOUT:-900} + 60 ))" >/dev/null 2>&1 &
+  scout_pid=$!
+fi
 set -e
 
 start_deadline=$(( $(date +%s) + ${AC_VERIFY_START_TIMEOUT:-30} ))
@@ -1627,10 +1708,24 @@ case "$kind" in
     # compared against the files rather than trusted on its own.
     scout_lanes_ran=0; scout_obs_total=0
     if [ "${scout_count:-0}" -gt 0 ] && [ -d "$scout_dir" ]; then
+      # The background harvester is bounded, so waiting on it is too; and the
+      # harvest below is idempotent, so a pass here after its pass agrees.
+      [ -z "${scout_pid:-}" ] || wait "$scout_pid" 2>/dev/null || true
+      scout_harvest "$scout_dir" "$scout_count"
       scout_lanes_ran="$(find "$scout_dir" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
       scout_obs_total="$(cat "$scout_dir"/*.json 2>/dev/null \
         | jq -s '[.[] | (.observations // []) | length] | add // 0' 2>/dev/null || true)"
       [ -n "$scout_obs_total" ] || scout_obs_total=0
+      # NOTHING BACK FROM A CONFIGURED FAN-OUT IS A REFUSAL, not a warning. A
+      # reviewer that launched its subagents in the background was handed
+      # "async_launched" at once, reviewed for two minutes and ended its turn
+      # with every lane still running - a verdict reached without one word of
+      # the evidence the round paid for. A PARTIAL return stays a warning
+      # below: one slow lane must not fail a round that heard from the others.
+      if [ "$scout_lanes_ran" = 0 ]; then
+        log_rejection "scout-fan-out-produced-nothing"
+        ac_die "verifier $id: all $scout_count configured scout lanes came back empty - the verdict was written without waiting for any of them; inspect $scout_dir"
+      fi
       if [ "$scout_lanes_ran" -lt "${scout_count:-0}" ]; then
         ac_warn "verifier $id: $scout_lanes_ran of $scout_count configured scout lanes came back with observations - the rest ran and produced nothing, or were never run"
       fi
