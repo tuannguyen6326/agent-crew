@@ -16,7 +16,8 @@
 # ac_maintenance_path_plain / ac_maintenance_move_source /
 # ac_maintenance_plan_validate / ac_maintenance_incomplete_other /
 # ac_maintenance_incomplete / ac_maintenance_receipt_field /
-# ac_maintenance_evidence_value / ac_maintenance_read_evidence /
+# ac_maintenance_evidence_value / _ac_maintenance_significance /
+# _ac_maintenance_bearable_floor / ac_maintenance_read_evidence /
 # ac_maintenance_receipt_validate / _ac_maintenance_hold / ac_maintenance_apply
 # - the closed, hash-bound plan Learning and Curate mutate fleet-local
 # knowledge through: one fleet-wide writer lock, a pre-mutation backup, an
@@ -594,7 +595,7 @@ ac_maintenance_receipt_field() {
 # check is the falsifiable property that already costs nothing: content of the
 # inputs that the prompt never carried is something only a reader has.
 #
-# The two inputs are different in kind, so the proof they can carry is too. The
+# The inputs are different in kind, so the proof each can carry is too. The
 # manifest is free-form candidate evidence, and the only thing a reader of it
 # provably holds is a VERBATIM excerpt. The action plan is generated JSON whose
 # every header field is prompt-supplied - only `.actions` is not - and its
@@ -607,6 +608,24 @@ ac_maintenance_receipt_field() {
 # cannot be forged; the quote is the second one, and it is tuned to never reject
 # an honest reader rather than to carry the proof alone.
 #
+# THE ACTION HASH PROVES THE PLAN WAS OPENED, NEVER THE PAYLOAD. The caller is
+# the side that hashes `<run>/staged/<...>`: ac_maintenance_plan_validate below
+# reads every staged file and compares it to the `new_sha256` the plan carries,
+# BEFORE any pane opens. So a `new_sha256` copied straight out of plan.json is
+# free to a judge that never read one byte of what `apply` will write - and a
+# payload-blind `continue` authorizes a real mutation of the ledger, the
+# crewmate layer, captain.md or a skill, not merely a burnt retro window. The
+# third proof closes that: a verbatim line of the staged file BELONGING TO THE
+# ACTION WHOSE HASH WAS CITED. What the binding buys is exactly that the hash and
+# the bytes speak for the SAME action - an unbound quote would let a judge cite
+# action A's hash and quote action B's payload, and then neither proof covers
+# either action whole. What it does NOT buy, and this is the residual rather than
+# an oversight: the judge still chooses WHICH action to speak for, so a plan's
+# other payloads are proved only transitively. Proving every action instead would
+# mean one quote per action, and a move-skill plan stages one action per file of
+# a package - a judge that must find a qualifying line in each of a dozen copied
+# files is precisely the honest judge this block refuses to reject.
+#
 # THE FLOOR HAS TO SIT INSIDE A MEASURED WINDOW, which is the whole reason it is
 # 12 and not a rounder number. Above it: what a prompt-supplied value leaves
 # behind once deleted is its bare key, and the longest of those is `subject` at
@@ -615,6 +634,29 @@ ac_maintenance_receipt_field() {
 # manifest's `"path": "projects/<name>",` at 13 for a one-character name, 15 for
 # `projects/lab`, 21 for `records/projects.md`. A floor of 24 sat above that
 # lower edge and rejected the very lines the prompt tells the judge to pick.
+#
+# THE FLOOR THAT PAYLOAD CAN BEAR IS NOT ALWAYS 12, and that is measured, not
+# cautious. Every payload a producer COMPOSES bears the full 12 - measured over
+# the write-skill, rewrite-ledger, append-archive, rewrite-crewmate-learned and
+# rewrite-registry payloads a real land emits, and over every file of every
+# package in this fleet's skills store. Their tightest LINES are `  origin:
+# learned` at 13 and `# Learning Ledger` at 14, with the archive entry's
+# `gate: data/<txid>/gates/<subject>/decision.md` at 23 and the crewmate layer's
+# header comment at 63 far above, so 12 sits just under that lower edge exactly
+# as it does under the manifest's. But the payload set is OPEN: a move-skill
+# action stages a VERBATIM COPY of whatever files a skill package holds
+# (bin/ac-curate.sh's `find "$source" -type f` arm), and this store's own root
+# already carries a file measuring 0; a curate registry rewrite that drops the
+# last row stages an empty one. A fixed floor would refuse EVERY honest judge of
+# those actions - the silent switch-off in its most literal form - so the floor
+# is what THIS payload can bear: AC_MAINTENANCE_QUOTE_MIN, or its own best line
+# when that is less. The ceiling is derived from the staged bytes themselves, so
+# the gate still infers nothing from the judge. The outright WAIVER, for a
+# payload holding no significant line at all, is keyed on the whole PLAN and not
+# on the cited action: the judge picks what it cites, so a per-action waiver
+# would hand it a lever - cite the one contentless file and the proof vanishes
+# for every other action in the plan. Waived only when no action could have
+# carried it, which is a fact about what the caller staged.
 AC_MAINTENANCE_QUOTE_MIN=12
 
 ac_maintenance_evidence_value() {
@@ -632,10 +674,58 @@ ac_maintenance_evidence_value() {
   printf '%s' "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
+_ac_maintenance_significance() {
+  # _ac_maintenance_significance <run-id> <subject> <mode> - stdin = one or more
+  # lines. Print the LARGEST number of significant characters any single line
+  # holds: the three prompt-supplied values deleted most-specific-first (the run
+  # id embeds the mode), then punctuation and whitespace dropped. Significant
+  # rather than raw length because an excerpt may be JSON, where quoting and
+  # bracing would otherwise pad a line of nothing but prompt-supplied values past
+  # any plausible raw threshold.
+  #
+  # ONE measure serves both a judge's quote and the floor its payload can bear,
+  # and that is load-bearing rather than tidy: a shell `${#s}` counts CHARACTERS
+  # under a UTF-8 locale while awk under LC_ALL=C counts BYTES, so the two
+  # disagree on every non-ASCII line - measured here, a staged `ệệệệệ` sets a
+  # floor of 12 against a quote scoring 5, which is a floor NO quote of that file
+  # can ever reach. This fleet's own records are written in Vietnamese, so that
+  # is the live case and not a curiosity. Bytes is the side both take: a
+  # multibyte line then scores at least what its characters would, which can only
+  # make an honest quote easier to accept.
+  LC_ALL=C awk -v rid="$1" -v subj="$2" -v mode="$3" '
+    function strip(s, t,   out, p) {
+      if (t == "") return s
+      out = ""
+      while ((p = index(s, t)) > 0) {
+        out = out substr(s, 1, p - 1)
+        s = substr(s, p + length(t))
+      }
+      return out s
+    }
+    {
+      line = strip(strip(strip($0, rid), subj), mode)
+      gsub(/[[:punct:][:space:]]/, "", line)
+      if (length(line) > max) max = length(line)
+    }
+    END { print max + 0 }
+  '
+}
+
+_ac_maintenance_bearable_floor() {
+  # _ac_maintenance_bearable_floor <file> <run-id> <subject> <mode> - the floor
+  # THIS payload can bear: AC_MAINTENANCE_QUOTE_MIN, or the most significant
+  # single line the file actually holds when that is less. 0 says the file can
+  # prove nothing at all about its reader.
+  local max
+  max="$(_ac_maintenance_significance "$2" "$3" "$4" <"$1")" || return 1
+  [ "$max" -lt "$AC_MAINTENANCE_QUOTE_MIN" ] || max="$AC_MAINTENANCE_QUOTE_MIN"
+  printf '%s' "$max"
+}
+
 ac_maintenance_read_evidence() {
   # ac_maintenance_read_evidence <manifest> <plan.json> - stdin = the receipt, or
   # the raw judge body before it becomes one. 0 when `## Inputs Read` proves the
-  # judge opened BOTH inputs:
+  # judge opened the manifest, the plan, and the bytes the cited action writes:
   #   - INPUT MANIFEST QUOTE: one line that occurs verbatim in the manifest and
   #     still holds AC_MAINTENANCE_QUOTE_MIN significant characters - punctuation
   #     and whitespace excluded - once the run id, the subject and the mode are
@@ -652,8 +742,16 @@ ac_maintenance_read_evidence() {
   #     exists, so it can carry neither hash and the verbatim check already
   #     denies both. A plan with no actions has no value that can satisfy this,
   #     and fails closed.
+  #   - STAGED PAYLOAD QUOTE: one line that occurs verbatim in the staged file
+  #     of the action whose `new_sha256` was just cited - the exact bytes apply
+  #     will write - holding the floor that payload can bear. Waived only when
+  #     the payload holds no significant line for anyone to quote, which is a
+  #     property of the staged bytes and never of the judge. The run dir is
+  #     derived from the plan's own path exactly as the receipt boundary derives
+  #     it, so both call sites get this check from one definition.
   local manifest="$1" plan="$2"
-  local body quote bare form rest ex new_sha input_sha plan_sha mode subject run_id
+  local body quote bare form new_sha input_sha plan_sha mode subject run_id
+  local run staged_rel staged_abs other_rel floor payload payload_bare payload_ok
   body="$(cat)"
   input_sha="$(ac_sha256_file "$manifest")" || return 1
   plan_sha="$(ac_sha256_file "$plan")" || return 1
@@ -668,6 +766,48 @@ ac_maintenance_read_evidence() {
   jq -e --arg s "$new_sha" 'any(.actions[]; .new_sha256 == $s)' "$plan" >/dev/null 2>&1 \
     || return 1
 
+  run="$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P)" || return 1
+  [ "$(basename "$run")" != plans ] || run="$(cd "$run/.." && pwd -P)" || return 1
+  # Any further action carrying the same hash stages byte-identical bytes - the
+  # caller proved that - so the first one answers for all of them.
+  staged_rel="$(jq -r --arg s "$new_sha" \
+    'first(.actions[] | select(.new_sha256 == $s) | .staged)' "$plan")" || return 1
+  staged_abs="$run/$staged_rel"
+  [ -f "$staged_abs" ] && [ ! -L "$staged_abs" ] || return 1
+  floor="$(_ac_maintenance_bearable_floor "$staged_abs" "$run_id" "$subject" "$mode")" \
+    || return 1
+  if [ "$floor" -le 0 ]; then
+    # The waiver belongs to the PLAN, never to the judge: the judge chooses which
+    # action it cites, so a waiver keyed on the cited payload alone would let it
+    # cite the one contentless action a plan happens to carry - a move-skill plan
+    # stages one action per package file - and skip the proof for every other
+    # one. Waived only when NO action's payload could have carried it.
+    while IFS= read -r other_rel; do
+      [ -n "$other_rel" ] || continue
+      [ -f "$run/$other_rel" ] && [ ! -L "$run/$other_rel" ] || return 1
+      [ "$(_ac_maintenance_bearable_floor "$run/$other_rel" \
+        "$run_id" "$subject" "$mode")" -le 0 ] || return 1
+    done < <(jq -r '.actions[].staged' "$plan")
+  else
+    payload="$(printf '%s\n' "$body" | ac_maintenance_evidence_value 'STAGED PAYLOAD QUOTE')" \
+      || return 1
+    payload_bare="$payload"
+    case "$payload_bare" in
+      \`*\`) payload_bare="${payload_bare#\`}"; payload_bare="${payload_bare%\`}" ;;
+    esac
+    payload_ok=""
+    for form in "$payload" "$payload_bare"; do
+      [ -n "$form" ] || continue
+      grep -qF -- "$form" "$staged_abs" || continue
+      [ "$(printf '%s\n' "$form" \
+        | _ac_maintenance_significance "$run_id" "$subject" "$mode")" \
+        -ge "$floor" ] || continue
+      payload_ok=yes
+      break
+    done
+    [ -n "$payload_ok" ] || return 1
+  fi
+
   quote="$(printf '%s\n' "$body" | ac_maintenance_evidence_value 'INPUT MANIFEST QUOTE')" \
     || return 1
   bare="$quote"
@@ -675,13 +815,9 @@ ac_maintenance_read_evidence() {
   for form in "$quote" "$bare"; do
     [ -n "$form" ] || continue
     grep -qF -- "$form" "$manifest" || continue
-    rest="$form"
-    for ex in "$run_id" "$subject" "$mode"; do
-      [ -n "$ex" ] || continue
-      rest="${rest//"$ex"/}"
-    done
-    rest="$(printf '%s' "$rest" | tr -d '[:punct:][:space:]')"
-    [ "${#rest}" -ge "$AC_MAINTENANCE_QUOTE_MIN" ] && return 0
+    [ "$(printf '%s\n' "$form" \
+      | _ac_maintenance_significance "$run_id" "$subject" "$mode")" \
+      -ge "$AC_MAINTENANCE_QUOTE_MIN" ] && return 0
   done
   return 1
 }

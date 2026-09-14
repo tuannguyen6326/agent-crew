@@ -37,7 +37,9 @@
 # HASH AGREEMENT DOES NOT AUTHORIZE, because this prompt PRINTS both hashes the
 # receipt is later checked against: a judge that never opened the manifest or
 # the plan could echo them back with `continue`. So the body must also carry a
-# `## Inputs Read` section proving it OPENED both - the rule and its rationale
+# `## Inputs Read` section proving it OPENED both, plus the STAGED BYTES the
+# cited action will write - which the plan's own hash never proves, because the
+# CALLER hashed those bytes before this pane opened - the rule and its rationale
 # are owned by `bin/ac-maintenance-lib.sh`'s READ-EVIDENCE block, the prompt
 # below states it to the judge, and `ac_maintenance_read_evidence` is called
 # TWICE: here at write time, so a blind judge never gets a receipt written and
@@ -154,7 +156,8 @@
 # token authorizes nothing wherever it came from.
 # ## Proposed Process and ## Grounds must be non-empty; the body
 # must be non-empty; a maintenance ## Inputs Read must satisfy
-# `ac_maintenance_read_evidence` against the manifest and the plan themselves.
+# `ac_maintenance_read_evidence` against the manifest, the plan, and the cited
+# action's staged payload themselves.
 # R1 `revise` must include at least one numbered required
 # change with Problem, Evidence, Required change, and Closure condition labels,
 # numbered as a clean 1..N - those ids are what the roomchief's R1-DISPOSITION
@@ -917,11 +920,13 @@ Write your review as Markdown with these headings, each EXACTLY ONCE and in this
 Under ## Decision put ONLY one token: continue, revise, ask-captain, or environment-error.
 Grounds and Proposed Process must both be non-empty.
 
-Under ## Inputs Read put EXACTLY these two lines and nothing else:
+Under ## Inputs Read put EXACTLY these three lines and nothing else:
 - INPUT MANIFEST QUOTE: <one whole line of substance copied character-for-character out of the input manifest>
 - ACTION PLAN NEW SHA-256: <one \"new_sha256\" value copied out of the action plan's own actions>
-Both are checked against the files themselves, so neither can be reasoned out: the quote must occur in the manifest verbatim - one line, no ellipsis, no code fence - and still carry at least $AC_MAINTENANCE_QUOTE_MIN letters or digits once the MODE, the SUBJECT and the run id in the paths below are removed from it, so pick a line with real content rather than a heading; and the SHA-256 must be one an action in the plan actually carries. Neither may be one of the two SHA-256 values printed below: those are what this prompt already gave you, and material this prompt gave you cannot prove you opened anything.
-If your environment denied you ANY input you must judge - either of the two files above, or the run report, the captain's standing preferences, or anything the action plan points at - then you have no decision to render. Put environment-error under ## Decision and say which input you could not read under ## Grounds, so an operator can repair it. Still emit all five headings in order: when the decision is environment-error the two ## Inputs Read lines are not required, so put there whatever you could read, or leave it empty. It is NOT a decision - no receipt is written and nothing is applied - so it costs this fleet one re-run and never a wrong mutation. NEVER answer revise because you could not read something: revise means you READ the evidence and judged the action wanting, and answering it for a broken environment silently spends the whole examination window this fleet was owed.
+- STAGED PAYLOAD QUOTE: <one whole line copied character-for-character out of the staged file of THAT SAME action>
+All three are checked against the files themselves, so none can be reasoned out: the quote must occur in the manifest verbatim - one line, no ellipsis, no code fence - and still carry at least $AC_MAINTENANCE_QUOTE_MIN letters or digits once the MODE, the SUBJECT and the run id in the paths below are removed from it, so pick a line with real content rather than a heading; and the SHA-256 must be one an action in the plan actually carries. Neither may be one of the two SHA-256 values printed below: those are what this prompt already gave you, and material this prompt gave you cannot prove you opened anything.
+The third line is the one that proves you read what this plan will WRITE: the action plan's \"new_sha256\" was computed by the caller before you were asked, so quoting it proves only that you opened the plan. Take the action whose \"new_sha256\" you just cited, open the file its \"staged\" field names under the action plan's own run directory, and copy out its line with the most real content, measured the same way. A staged file may be short, a verbatim copy of some package file, or even empty, and its own best line is then all that is asked of you - so cite an action whose staged file HAS content when the plan offers one, and leave this value blank only when no action in the plan stages a file with any content at all.
+If your environment denied you ANY input you must judge - either of the two files above, or a staged file they point at, or the run report, or the captain's standing preferences - then you have no decision to render. Put environment-error under ## Decision and say which input you could not read under ## Grounds, so an operator can repair it. Still emit all five headings in order: when the decision is environment-error the three ## Inputs Read lines are not required, so put there whatever you could read, or leave it empty. It is NOT a decision - no receipt is written and nothing is applied - so it costs this fleet one re-run and never a wrong mutation. NEVER answer revise because you could not read something: revise means you READ the evidence and judged the action wanting, and answering it for a broken environment silently spends the whole examination window this fleet was owed.
 Output ONLY that Markdown document - no preamble and no code fences.
 
 == IMMUTABLE INPUTS TO READ FROM DISK ==
@@ -1184,7 +1189,7 @@ text="$(ac_transcript_final "$transcript")"
 [ -n "$text" ] || fail_gate "empty final message"
 
 if [ "$gate_kind" = maintenance ]; then
-  body_contract="response failed the maintenance decision.md contract (headings/decision/grounds/process, and the '## Inputs Read' proof that the manifest and the plan were actually opened)"
+  body_contract="response failed the maintenance decision.md contract (headings/decision/grounds/process, and the '## Inputs Read' proof that the manifest, the plan, and the cited action's staged payload were actually opened)"
 else
   body_contract="response failed the second-chief.md contract (headings/decision/process/grounds/required-changes)"
 fi

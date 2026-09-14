@@ -1455,6 +1455,7 @@ The exact recoverable action matches the immutable candidate evidence.
 ## Inputs Read
 - INPUT MANIFEST QUOTE: candidate evidence only a reader of this manifest can quote
 - ACTION PLAN NEW SHA-256: $nsha
+- STAGED PAYLOAD QUOTE: skill body
 ## Proposed Process
 Apply this hash-bound plan through the maintenance transaction.
 EOF
@@ -1482,6 +1483,42 @@ assert_contains "$mprompt" "ACTION PLAN NEW SHA-256" \
   "the prompt states the read-evidence the receipt must carry"
 assert_contains "$(cat "$mreceipt")" "- ACTION PLAN NEW SHA-256: $nsha" \
   "the settled receipt carries the judge's own read-evidence"
+# A required line the prompt never asks for fails EVERY honest judge, so the
+# prompt has to carry the staged-payload proof as plainly as the other two.
+assert_contains "$mprompt" "STAGED PAYLOAD QUOTE" \
+  "the prompt asks for the staged-payload proof it now requires"
+assert_contains "$(cat "$mreceipt")" "- STAGED PAYLOAD QUOTE: skill body" \
+  "and the settled receipt carries it"
+
+# The CONTINUE arm's own hole: the plan's `new_sha256` was computed by the
+# caller before this pane opened, so a judge can copy a real one out of
+# plan.json and still never have opened the bytes apply will write - and here
+# that authorizes a real mutation, not a burnt retro window.
+cat >"$TMP/maintenance-payload-blind.md" <<EOF
+# Maintenance Gate Decision
+## Decision
+continue
+## Grounds
+I read the manifest and the plan; the action hash is one the plan carries.
+## Inputs Read
+- INPUT MANIFEST QUOTE: candidate evidence only a reader of this manifest can quote
+- ACTION PLAN NEW SHA-256: $nsha
+## Proposed Process
+Apply this hash-bound plan through the maintenance transaction.
+EOF
+rm -f "$mreceipt"
+rc=0
+GATE_BODY_FILE="$TMP/maintenance-payload-blind.md" gate maintenance \
+  --mode learning --run "$mrun" --subject example \
+  --manifest "$mrun/input-manifest.md" --plan "$mrun/plan.json" \
+  >/dev/null 2>"$TMP/maintenance-payload-blind.err" || rc=$?
+assert_eq "$rc" "3" "a judge blind to the staged payload buys no maintenance receipt"
+assert_contains "$(cat "$TMP/maintenance-payload-blind.err")" "## Inputs Read" \
+  "and it is the read-evidence check that refused it"
+assert_no_file "$mreceipt" "a payload-blind continue writes no receipt at all"
+GATE_BODY_FILE="$TMP/maintenance-body.md" gate maintenance \
+  --mode learning --run "$mrun" --subject example \
+  --manifest "$mrun/input-manifest.md" --plan "$mrun/plan.json" >/dev/null 2>&1
 
 # The whole point of the row: the prompt PRINTS both hashes the receipt is
 # checked against, so echoing them back must not buy a written receipt.
@@ -1518,6 +1555,7 @@ The plan is technical.
 ## Inputs Read
 - INPUT MANIFEST QUOTE: candidate evidence only a reader of this manifest can quote
 - ACTION PLAN NEW SHA-256: $nsha
+- STAGED PAYLOAD QUOTE: skill body
 ## Proposed Process
 Let the chief decide.
 EOF
@@ -1582,6 +1620,7 @@ I read the evidence and the action is not warranted as written. Narrow it.
 ## Inputs Read
 - INPUT MANIFEST QUOTE: candidate evidence only a reader of this manifest can quote
 - ACTION PLAN NEW SHA-256: $nsha
+- STAGED PAYLOAD QUOTE: skill body
 ## Proposed Process
 Revise the candidate before any mutation.
 EOF

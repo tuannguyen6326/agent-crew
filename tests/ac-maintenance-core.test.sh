@@ -93,6 +93,7 @@ The exact action is recoverable and supported.
 ## Inputs Read
 - INPUT MANIFEST QUOTE: A candidate line that exists nowhere but inside this manifest.
 - ACTION PLAN NEW SHA-256: $sha
+- STAGED PAYLOAD QUOTE: skill
 ## Proposed Process
 Apply the hash-bound maintenance plan.
 EOF
@@ -109,6 +110,8 @@ fi
 # carry content of the inputs that the prompt never handed out.
 receipt_variant() {
   # receipt_variant <out> <decision> <manifest-quote> <plan-sha> [<authority>]
+  #   [<payload-quote>|none]
+  # The staged payload of this run's one action holds the single line `skill`.
   {
     printf -- '---\nschema: "agentcrew.maintenance-gate/v1"\n'
     printf 'mode: "learning"\nsubject: "example"\ndecision: "%s"\n' "$2"
@@ -119,6 +122,7 @@ receipt_variant() {
     printf '## Grounds\nThe exact action is recoverable and supported.\n'
     if [ -n "$3$4" ]; then
       printf '## Inputs Read\n- INPUT MANIFEST QUOTE: %s\n- ACTION PLAN NEW SHA-256: %s\n' "$3" "$4"
+      [ "${6:-skill}" = none ] || printf -- '- STAGED PAYLOAD QUOTE: %s\n' "${6:-skill}"
     fi
     printf '## Proposed Process\nApply the hash-bound maintenance plan.\n'
   } >"$1"
@@ -159,6 +163,15 @@ fi
 receipt_variant "$run/fenced.md" continue "\`$good_quote\`" "\`$sha\`"
 assert_eq "$(ac_maintenance_receipt_validate "$run/fenced.md" "$run/plan.json" "$run/manifest")" \
   "continue" "backtick-wrapped read-evidence is still read-evidence"
+
+# BOTH CALL SITES, not just the gate's write-time one: the settled bytes are
+# re-checked here, so a receipt carrying only the two old proofs authorizes
+# nothing either.
+receipt_variant "$run/payload-blind.md" continue "$good_quote" "$sha" second-chief none
+if ac_maintenance_receipt_validate "$run/payload-blind.md" "$run/plan.json" \
+  "$run/manifest" >/dev/null 2>&1; then
+  fail "a settled receipt blind to the staged payload must not authorize apply"
+fi
 
 # A repository-policy receipt has no engine to be blind: Curate mints it from
 # the very files it just built, so it carries no engine read-evidence.
@@ -229,13 +242,135 @@ json_new="$(ac_sha256_file "$jsonrun/staged/projects.md")"
 cat >"$jsonrun/plan.json" <<EOF
 {"schema":"agentcrew.maintenance-plan/v1","mode":"curate","run_id":"curate-json","subject":"project-lab","input_manifest_sha256":"$(ac_sha256_file "$jsonrun/manifest.json")","actions":[{"op":"rewrite-registry","target":"records/projects.md","old_sha256":"-","new_sha256":"$json_new","staged":"staged/projects.md"}]}
 EOF
-printf '## Inputs Read\n- INPUT MANIFEST QUOTE: "path": "projects/lab",\n- ACTION PLAN NEW SHA-256: %s\n' \
+printf '## Inputs Read\n- INPUT MANIFEST QUOTE: "path": "projects/lab",\n- ACTION PLAN NEW SHA-256: %s\n- STAGED PAYLOAD QUOTE: archived\n' \
   "$json_new" | ac_maintenance_read_evidence "$jsonrun/manifest.json" "$jsonrun/plan.json" \
   || fail "a real path line of a JSON subject manifest must count as read-evidence"
-if printf '## Inputs Read\n- INPUT MANIFEST QUOTE: "subject": "project-lab",\n- ACTION PLAN NEW SHA-256: %s\n' \
+if printf '## Inputs Read\n- INPUT MANIFEST QUOTE: "subject": "project-lab",\n- ACTION PLAN NEW SHA-256: %s\n- STAGED PAYLOAD QUOTE: archived\n' \
   "$json_new" | ac_maintenance_read_evidence "$jsonrun/manifest.json" "$jsonrun/plan.json"; then
   fail "the subject line of a JSON subject manifest is prompt-supplied and must not count"
 fi
+
+# The plan's `new_sha256` proves the judge opened plan.json; it never proves it
+# opened the STAGED BYTES that hash names, because the CALLER is the side that
+# hashed them (ac_maintenance_plan_validate) before any pane opened. A third
+# proof binds the quote to the staged file of the action whose hash was cited.
+payrun="$AC_HOME/data/learning-payload"
+mkdir -p "$payrun/staged/records" "$payrun/staged/skills/thin"
+cat >"$payrun/manifest" <<'EOF'
+kind: skill
+name: payload
+===skill===
+A candidate line that exists nowhere but inside this manifest.
+EOF
+pay_manifest_sha="$(ac_sha256_file "$payrun/manifest")"
+cat >"$payrun/staged/records/learnings.md" <<'EOF'
+# Learning Ledger
+
+## Distilled
+
+- [distilled -> payload] sources=1 updated=2026-09-15 ([evidence](learnings-archive/payload.md))
+EOF
+printf 'thin\n' >"$payrun/staged/skills/thin/SKILL.md"
+: >"$payrun/staged/records/empty.md"
+pay_ledger="$(ac_sha256_file "$payrun/staged/records/learnings.md")"
+pay_thin="$(ac_sha256_file "$payrun/staged/skills/thin/SKILL.md")"
+pay_empty="$(ac_sha256_file "$payrun/staged/records/empty.md")"
+cat >"$payrun/plan.json" <<EOF
+{"schema":"agentcrew.maintenance-plan/v1","mode":"learning","run_id":"learning-payload","subject":"payload","input_manifest_sha256":"$pay_manifest_sha","actions":[{"op":"rewrite-ledger","target":"records/learnings.md","old_sha256":"-","new_sha256":"$pay_ledger","staged":"staged/records/learnings.md"},{"op":"write-skill","target":"skills/thin/SKILL.md","old_sha256":"-","new_sha256":"$pay_thin","staged":"staged/skills/thin/SKILL.md"},{"op":"append-archive","target":"records/empty.md","old_sha256":"-","new_sha256":"$pay_empty","staged":"staged/records/empty.md"}]}
+EOF
+ac_maintenance_plan_validate "$payrun/plan.json" "$payrun" \
+  || fail "the staged-payload fixture plan must itself be valid"
+
+pay_evidence() {
+  # pay_evidence <cited-new-sha256> [<payload-quote-line>]
+  {
+    printf '## Inputs Read\n'
+    printf -- '- INPUT MANIFEST QUOTE: A candidate line that exists nowhere but inside this manifest.\n'
+    printf -- '- ACTION PLAN NEW SHA-256: %s\n' "$1"
+    [ "$#" -lt 2 ] || printf -- '- STAGED PAYLOAD QUOTE: %s\n' "$2"
+  } | ac_maintenance_read_evidence "$payrun/manifest" "$payrun/plan.json"
+}
+
+if pay_evidence "$pay_ledger"; then
+  fail "a judge that copied a real new_sha256 but never opened the staged payload must be refused"
+fi
+pay_evidence "$pay_ledger" '# Learning Ledger' \
+  || fail "a composed line of the cited action's own staged payload must count as read-evidence"
+pay_evidence "$pay_ledger" '`# Learning Ledger`' \
+  || fail "a backtick-wrapped staged-payload quote is still read-evidence"
+if pay_evidence "$pay_ledger" 'A line that staged payload never held.'; then
+  fail "a staged-payload quote absent from the file it claims must not count"
+fi
+if pay_evidence "$pay_ledger" thin; then
+  fail "the payload proof is bound to the cited action: another action's payload must not count"
+fi
+if pay_evidence "$pay_ledger" '## Distilled'; then
+  fail "a staged-payload quote under the floor must not count while the payload can bear it"
+fi
+
+# THE BEARING FLOOR. A staged payload is not always a composed artifact: a
+# move-skill action stages a VERBATIM COPY of an arbitrary file of a skill
+# package, so the floor a payload can bear is the floor this one actually
+# holds - AC_MAINTENANCE_QUOTE_MIN only when its own best line reaches it.
+pay_evidence "$pay_thin" thin \
+  || fail "a payload too thin for the standard floor must still admit its own best line"
+if pay_evidence "$pay_thin" '# Learning Ledger'; then
+  fail "the bearing floor never unbinds the proof from the cited action"
+fi
+
+# THE WAIVER BELONGS TO THE PLAN, NEVER TO THE JUDGE. The judge picks which
+# action it cites, so a waiver keyed only on the CITED payload would let it cite
+# the one contentless action in a plan and skip the proof for every other one.
+if pay_evidence "$pay_empty"; then
+  fail "citing the one payload that can prove nothing must not waive a plan whose other payloads can"
+fi
+if pay_evidence "$pay_empty" '# Learning Ledger'; then
+  fail "and quoting another action's payload does not rescue that citation either"
+fi
+
+# A plan whose payloads ALL prove nothing is the only thing the waiver covers:
+# there is no better action for an honest judge to have cited.
+barerun="$AC_HOME/data/learning-bare"
+mkdir -p "$barerun/staged/records"
+cp "$payrun/manifest" "$barerun/manifest"
+: >"$barerun/staged/records/empty.md"
+printf -- '---\n' >"$barerun/staged/records/punct.md"
+bare_empty="$(ac_sha256_file "$barerun/staged/records/empty.md")"
+bare_punct="$(ac_sha256_file "$barerun/staged/records/punct.md")"
+cat >"$barerun/plan.json" <<EOF
+{"schema":"agentcrew.maintenance-plan/v1","mode":"learning","run_id":"learning-bare","subject":"payload","input_manifest_sha256":"$(ac_sha256_file "$barerun/manifest")","actions":[{"op":"rewrite-ledger","target":"records/empty.md","old_sha256":"-","new_sha256":"$bare_empty","staged":"staged/records/empty.md"},{"op":"append-archive","target":"records/punct.md","old_sha256":"-","new_sha256":"$bare_punct","staged":"staged/records/punct.md"}]}
+EOF
+ac_maintenance_plan_validate "$barerun/plan.json" "$barerun" \
+  || fail "the all-bare fixture plan must itself be valid"
+{
+  printf '## Inputs Read\n'
+  printf -- '- INPUT MANIFEST QUOTE: A candidate line that exists nowhere but inside this manifest.\n'
+  printf -- '- ACTION PLAN NEW SHA-256: %s\n' "$bare_empty"
+} | ac_maintenance_read_evidence "$barerun/manifest" "$barerun/plan.json" \
+  || fail "a plan whose every payload can carry no proof must not refuse an honest judge"
+
+# ONE MEASURE for the quote and for the floor its payload can bear. Two that
+# disagreed by a byte would let a payload set a floor no quote of it can reach -
+# and this fleet's own records are written in Vietnamese, so the multibyte case
+# is the live one, not a curiosity.
+vnrun="$AC_HOME/data/curate-vietnamese"
+mkdir -p "$vnrun/staged/records"
+cp "$payrun/manifest" "$vnrun/manifest"
+# MEASURED: this line scores 15 by the one measure both sides now take, and 10
+# by the shell character count the quote used to take against a byte-measured
+# floor of 12 - so it passes only while the two measures are one.
+printf 'Ghi chú: đã gỡ.\n' >"$vnrun/staged/records/captain.md"
+vn_new="$(ac_sha256_file "$vnrun/staged/records/captain.md")"
+cat >"$vnrun/plan.json" <<EOF
+{"schema":"agentcrew.maintenance-plan/v1","mode":"learning","run_id":"curate-vietnamese","subject":"payload","input_manifest_sha256":"$(ac_sha256_file "$vnrun/manifest")","actions":[{"op":"rewrite-registry","target":"records/captain.md","old_sha256":"-","new_sha256":"$vn_new","staged":"staged/records/captain.md"}]}
+EOF
+{
+  printf '## Inputs Read\n'
+  printf -- '- INPUT MANIFEST QUOTE: A candidate line that exists nowhere but inside this manifest.\n'
+  printf -- '- ACTION PLAN NEW SHA-256: %s\n' "$vn_new"
+  printf -- '- STAGED PAYLOAD QUOTE: Ghi chú: đã gỡ.\n'
+} | ac_maintenance_read_evidence "$vnrun/manifest" "$vnrun/plan.json" \
+  || fail "a non-ASCII payload must not set a floor its own best line cannot reach"
 
 # Applying a validated plan is backup-first, journaled, atomic, and idempotent.
 ac_maintenance_apply "$run/plan.json" "$run"

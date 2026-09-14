@@ -63,9 +63,13 @@ CANDIDATE
     manifest="$(sed -n 's/^- INPUT MANIFEST: //p' "$prompt" | head -1)"
     plan="$(sed -n 's/^- ACTION PLAN: //p' "$prompt" | head -1)"
     quote="$(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$manifest")"
-    jq -cn --arg d "$decision" --arg q "$quote" \
+    prun="$(dirname "$plan")"
+    [ "$(basename "$prun")" != plans ] || prun="$(dirname "$prun")"
+    payload="$(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' \
+      "$prun/$(jq -r '.actions[0].staged' "$plan")")"
+    jq -cn --arg d "$decision" --arg q "$quote" --arg p "$payload" \
       --arg s "$(jq -r '.actions[0].new_sha256' "$plan")" \
-      '{type:"assistant",message:{content:[{type:"text",text:("# Maintenance Gate Decision\n## Decision\n"+$d+"\n## Grounds\nThe immutable candidate and recoverable action plan agree.\n## Inputs Read\n- INPUT MANIFEST QUOTE: "+$q+"\n- ACTION PLAN NEW SHA-256: "+$s+"\n## Proposed Process\nApply only this hash-bound plan through the maintenance transaction.\n")} ]}}' \
+      '{type:"assistant",message:{content:[{type:"text",text:("# Maintenance Gate Decision\n## Decision\n"+$d+"\n## Grounds\nThe immutable candidate and recoverable action plan agree.\n## Inputs Read\n- INPUT MANIFEST QUOTE: "+$q+"\n- ACTION PLAN NEW SHA-256: "+$s+"\n- STAGED PAYLOAD QUOTE: "+$p+"\n## Proposed Process\nApply only this hash-bound plan through the maintenance transaction.\n")} ]}}' \
       >"$transcript"
     printf '{"event":"done","status":"ok","transcript":"%s","pane":"gate-pane"}\n' "$transcript"
     ;;

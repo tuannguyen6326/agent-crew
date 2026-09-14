@@ -332,6 +332,7 @@ The targeted fixture proves the exact recoverable action plan.
 ## Inputs Read
 - INPUT MANIFEST QUOTE: $(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$manifest")
 - ACTION PLAN NEW SHA-256: $(jq -r '.actions[0].new_sha256' "$plan")
+- STAGED PAYLOAD QUOTE: $(prun="$(dirname "$plan")"; [ "$(basename "$prun")" != plans ] || prun="$(dirname "$prun")"; awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$prun/$(jq -r '.actions[0].staged' "$plan")")
 ## Proposed Process
 Apply or preserve only the hash-bound subject.
 EOF

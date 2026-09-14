@@ -878,6 +878,16 @@ if [ "$kind" = gate ]; then
   manifest="$(sed -n 's/^- INPUT MANIFEST: //p' "$prompt" | head -1)"
   plan="$(sed -n 's/^- ACTION PLAN: //p' "$prompt" | head -1)"
   report="$(sed -n 's/^- RUN REPORT (when present): //p' "$prompt" | head -1)"
+  payload_quote() {
+    # payload_quote <plan> - the best line of the staged file belonging to the
+    # action this stub cites, resolved the way a judge resolves it: out of the
+    # plan's own run directory.
+    local prun
+    prun="$(dirname "$1")"
+    [ "$(basename "$prun")" != plans ] || prun="$(dirname "$prun")"
+    awk '{ if (length($0) > length(best)) best = $0 } END { print best }' \
+      "$prun/$(jq -r '.actions[0].staged' "$1")"
+  }
   jbody="$(mktemp "${TMPDIR:-/tmp}/judge-body-XXXXXX")"
   if r="$(cat "$report" 2>/dev/null)" && [ -n "$r" ]; then
     cat >"$jbody" <<JB
@@ -889,6 +899,7 @@ I read the run report and the manifest: the single source bullet does not carry 
 ## Inputs Read
 - INPUT MANIFEST QUOTE: $(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$manifest")
 - ACTION PLAN NEW SHA-256: $(jq -r '.actions[0].new_sha256' "$plan")
+- STAGED PAYLOAD QUOTE: $(payload_quote "$plan")
 ## Proposed Process
 Revise the candidate before any mutation.
 JB
@@ -1095,6 +1106,7 @@ Fixture: what this candidate asks for is a captain-owned call.
 ## Inputs Read
 - INPUT MANIFEST QUOTE: $(awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$manifest")
 - ACTION PLAN NEW SHA-256: $(jq -r '.actions[0].new_sha256' "$plan")
+- STAGED PAYLOAD QUOTE: $(prun="$(dirname "$plan")"; [ "$(basename "$prun")" != plans ] || prun="$(dirname "$prun")"; awk '{ if (length($0) > length(best)) best = $0 } END { print best }' "$prun/$(jq -r '.actions[0].staged' "$plan")")
 ## Proposed Process
 Ask the captain before any mutation.
 EOF
