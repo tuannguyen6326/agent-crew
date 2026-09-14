@@ -186,7 +186,9 @@ elif [ "$kind" = codereview ]; then
     # stand-in writes it, and the facade's own harvest is what the test measures.
     if grep -q "INDEPENDENT SCOUT LANES" "$prompt" 2>/dev/null; then
       sd="$(grep -o "[^ ]*/scouts" "$prompt" | head -1)"
+      : >"$sd/.emitted"
       lane_tr() {
+        printf '%s\n' "$1" >>"$sd/.emitted"
         jq -cn --arg l "$1" '{type:"assistant",message:{content:[{type:"text",text:({observations:[{file:"file.txt",line:($l|tonumber),what:"w",evidence:"e"}]}|tojson)}]}}' \
           >"$VERIFY_SCOUT_DIR/lane-$1.jsonl"
         printf '{"event":"done","status":"ok","transcript":"%s"}\n' "$VERIFY_SCOUT_DIR/lane-$1.jsonl" >"$sd/$1.ndjson"
@@ -198,11 +200,21 @@ elif [ "$kind" = codereview ]; then
       esac
     fi
     clean="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[],summary:"clean",risk_level:"low",risk_rationale:"bounded",reviewed_ref:$ref}')"
+    # A COMPLIANT reviewer dispositions every observation the fan-out produced,
+    # one canonical "lane N obs M" each; the stand-in reads the harvested files
+    # and does the same, so the facade's dispositioned-observations floor holds
+    # for the ordinary cases. VERIFY_SCOUT_JUDGE overrides it to exercise the
+    # floor's own failure modes.
+    if [ -n "${sd:-}" ] && [ -f "$sd/.emitted" ]; then
+      disp="$(while read -r ln; do [ -n "$ln" ] || continue; \
+                printf '{"ref":"lane %s obs 1","verdict":"accepted","why":"reported"}\n' "$ln"; \
+              done <"$sd/.emitted" | jq -cs '.')"
+      clean="$(jq -c --argjson d "${disp:-[]}" '.scout_dispositions = $d' <<<"$clean")"
+    fi
     # The judge's disposition of the lanes, when the fixture asks for one.
     case "${VERIFY_SCOUT_JUDGE:-}" in
-      full)  clean="$(jq -c '.scout_dispositions = [{ref:"[1.1]",verdict:"refuted",why:"the call is guarded one frame up"},{ref:"[2.1]",verdict:"accepted",why:"reported as CR-1"}]' <<<"$clean")" ;;
-      short) clean="$(jq -c '.scout_dispositions = [{ref:"[1.1]",verdict:"refuted",why:"guarded"}]' <<<"$clean")" ;;
-      bad)   clean="$(jq -c '.scout_dispositions = [{ref:"[1.1]",verdict:"maybe",why:"unsure"}]' <<<"$clean")" ;;
+      miss)  clean="$(jq -c '.scout_dispositions = (.scout_dispositions[0:0])' <<<"$clean")" ;;
+      bad)   clean="$(jq -c '.scout_dispositions = [{ref:"lane 1 obs 1",verdict:"maybe",why:"unsure"}]' <<<"$clean")" ;;
     esac
     [ -z "${VERIFY_RESOLVED_IDS:-}" ] \
       || clean="$(jq -c --arg ids "$VERIFY_RESOLVED_IDS" '.resolved_ids = ($ids | split(","))' <<<"$clean")"
@@ -1715,6 +1727,21 @@ VERIFY_SCOUT_MODE=skip "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$tar
   --output "$scout_out" >/dev/null 2>"$TMP/scout-none.err" || rc=$?
 assert_eq "$rc" "1" "a round whose configured lanes all came back empty is refused"
 assert_contains "$(cat "$TMP/scout-none.err")" "came back empty" "...and the refusal says so"
+
+# EVERY OBSERVATION MUST BE DISPOSITIONED, one by one. A reviewer that answers
+# per lane, or drops one, leaves evidence the round paid for unanswered - the
+# floor beneath the finding's own `scouts` provenance. VERIFY_SCOUT_JUDGE=miss
+# strips the dispositions the compliant stand-in would have written.
+rm -rf "$AC_HOME/data/$scout_family"
+rc=0
+VERIFY_SCOUT_JUDGE=miss "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$scout_family" --caller "$caller" --base "$base" --intent "$intent" \
+  --output "$TMP/scout-miss.json" >/dev/null 2>"$TMP/scout-miss.err" || rc=$?
+assert_eq "$rc" "1" "a verdict that leaves a scout observation undispositioned is refused"
+assert_contains "$(cat "$TMP/scout-miss.err")" "lane 1 obs 1" "...naming the observation left unanswered"
+assert_no_file "$TMP/scout-miss.json" "a refused round writes no verdict"
+
+# One lane back, one lost: counted as it happened.
 
 # One lane back, one lost: counted as it happened.
 rm -rf "$AC_HOME/data/$scout_family"

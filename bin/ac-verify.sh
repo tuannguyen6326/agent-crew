@@ -1732,6 +1732,28 @@ case "$kind" in
       scout_obs_total="$(cat "$scout_dir"/*.json 2>/dev/null \
         | jq -s '[.[] | (.observations // []) | length] | add // 0' 2>/dev/null || true)"
       [ -n "$scout_obs_total" ] || scout_obs_total=0
+      # EVERY OBSERVATION DISPOSITIONED, one by one - the floor beneath the
+      # reviewer's per-finding `scouts` provenance. A lane can carry several
+      # observations, and a reviewer answering per lane ("lane 1: ...") drops
+      # the rest, skimming a fan-out the round paid for. Now that they are
+      # harvested, build each observation's canonical id and refuse a verdict
+      # whose scout_dispositions do not name it.
+      _want="$(_n=0; while [ "$_n" -lt "$scout_count" ]; do _n=$((_n+1)); \
+        _k="$(jq -r '(.observations // []) | length' "$scout_dir/$_n.json" 2>/dev/null || printf 0)"; \
+        _m=0; while [ "$_m" -lt "$_k" ]; do _m=$((_m+1)); printf 'lane %s obs %s\n' "$_n" "$_m"; done; done)"
+      _missing=""
+      while IFS= read -r _ref; do
+        [ -n "$_ref" ] || continue
+        printf '%s' "$json" | jq -e --arg r "$_ref" \
+          '[(.scout_dispositions // [])[].ref // "" | ascii_downcase] | any(index($r) != null)' \
+          >/dev/null 2>&1 || _missing="$_missing${_missing:+, }$_ref"
+      done <<EOF
+$_want
+EOF
+      if [ -n "$_missing" ]; then
+        log_rejection "scout-observations-undispositioned"
+        die_reaped "verifier $id left scout observations with no disposition ($_missing) - every lane observation must be reported under a finding or refuted by name; inspect $scout_dir"
+      fi
       # NOTHING BACK FROM A CONFIGURED FAN-OUT IS A REFUSAL, not a warning. A
       # reviewer that launched its subagents in the background was handed
       # "async_launched" at once, reviewed for two minutes and ended its turn
