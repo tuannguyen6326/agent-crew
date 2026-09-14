@@ -857,7 +857,6 @@ output_dir="$(cd "$(dirname "$output")" && pwd -P)"
 output="$output_dir/$(basename "$output")"
 prompt="$round_dir/prompt.md"
 pane_result="$round_dir/pane-result.ndjson"
-pane_result_tmp="$pane_result.tmp"
 transcript_copy="$round_dir/transcript.jsonl"
 [ -z "$history" ] || cp "$history" "$round_dir/input-history.json"
 
@@ -1429,8 +1428,14 @@ busy_decl="$(ac_chief_busy_path "$state_dir" "$family")"
 printf '%s\n' "$(( $(ac_now) + ${AC_VERIFY_TIMEOUT:-7200} + 60 ))" >"$busy_decl" || true
 set +e
 qa_phase=pane
+# STRAIGHT to the path publish_meta records, never a staging name renamed on
+# the way out: the only in-process reader runs after `wait` below, so the
+# rename bought an atomicity nothing consumed - while a driver KILLED before it
+# left the round's whole evidence under a name no ac_die message, and no
+# ac-teardown.sh preservation, ever names (49 of 515 stored rounds across both
+# fleet homes, 2026-09-15).
 "$pane_bin" "${pane_args[@]}" \
-  >"$pane_result_tmp" 2>&1 &
+  >"$pane_result" 2>&1 &
 pane_pid=$!
 scout_pid=""
 if [ "${scout_count:-0}" -gt 0 ]; then
@@ -1450,22 +1455,34 @@ pane=""; tab=""
 if [ -s "$pane_early" ]; then
   read -r pane tab <"$pane_early" || true
   [ -n "$pane" ] && [ -n "$tab" ] \
-    || { wait "$pane_pid" 2>/dev/null || true; mv "$pane_result_tmp" "$pane_result"; publish_meta "" ""; ac_die "verifier $id published an invalid pane handle; inspect $pane_result and the round evidence under $round_dir"; }
+    || { wait "$pane_pid" 2>/dev/null || true; publish_meta "" ""; ac_die "verifier $id published an invalid pane handle; inspect $pane_result and the round evidence under $round_dir"; }
   publish_meta "$pane" "$tab"
 else
   wait "$pane_pid" 2>/dev/null || true
-  mv "$pane_result_tmp" "$pane_result"
   publish_meta "" ""
   ac_die "verifier $id never published a pane handle; inspect $pane_result and the round evidence under $round_dir"
 fi
 
 pane_rc=0
 wait "$pane_pid" || pane_rc=$?
-mv "$pane_result_tmp" "$pane_result"
 [ "$pane_rc" = 0 ] \
   || ac_die "verifier $id pane-agent failed with status $pane_rc; inspect $pane_result and the round evidence under $round_dir"
 
-done_line="$(jq -c 'select(.event == "done")' "$pane_result" 2>/dev/null | tail -n 1)"
+# A stray harness diagnostic shares this stream (stdout and stderr are one file
+# to us) and fails the whole jq read; WHERE it sits decides what survives, both
+# measured here: a LEADING line silences jq over the entire file (3 of 466
+# published rounds in both fleet homes, each with the diagnostic on line 1), a
+# TRAILING one still yields every value parsed before it. Keep a result jq did
+# reach - no stream in either home holds two done events, so a harvested one is
+# never a stale one hiding a later verdict - and refuse BY NAME when jq reached
+# nothing, which is the case a human can still read by hand. Unguarded the jq
+# exit killed the run through pipefail before either refusal below ran, naming
+# no file at all.
+done_line=""
+if ! done_line="$(jq -c 'select(.event == "done")' "$pane_result" 2>/dev/null | tail -n 1)"; then
+  [ -n "$done_line" ] \
+    || ac_die "verifier $id wrote a pane stream that is not readable as NDJSON - a non-JSON line ahead of the result silences the whole file; inspect $pane_result and the round evidence under $round_dir"
+fi
 [ -n "$done_line" ] \
   || ac_die "verifier $id emitted no terminal result; inspect $pane_result and the round evidence under $round_dir"
 # pane-agent REPORTS (never refuses) a codereview-agent-mismatch as a
@@ -1481,8 +1498,11 @@ done_line="$(jq -c 'select(.event == "done")' "$pane_result" 2>/dev/null | tail 
 # .risk_rationale. STDERR is not redirected on either path, so this is the
 # one emission point that reaches a human on BOTH. Always valid JSON ([] on
 # no match, since jq -s of empty input still yields an array), so this is
-# safe to pass through unconditionally.
-pane_warnings="$(jq -c 'select(.event == "warning") | .message' "$pane_result" 2>/dev/null | jq -sc '.')"
+# safe to pass through unconditionally. The `|| true` keeps that promise on the
+# stream the harvest above just accepted DESPITE a jq failure: warnings are
+# advisory, so a trailing stray line must cost at most the warnings after it,
+# never the round - unguarded, its jq exit ends the run here through pipefail.
+pane_warnings="$( { jq -c 'select(.event == "warning") | .message' "$pane_result" 2>/dev/null || true; } | jq -sc '.')"
 while IFS= read -r pane_warning_msg; do
   [ -n "$pane_warning_msg" ] && ac_warn "verifier $id: $pane_warning_msg"
 done < <(jq -r '.[]' <<<"$pane_warnings" 2>/dev/null)

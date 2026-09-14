@@ -161,6 +161,15 @@ printf '%s\n' "$cwd" >"$VERIFY_CWD_CAPTURE"
 # published) and the pane-agent process exiting 0 but reporting a non-ok
 # terminal status (pane_closed/timeout/error alike).
 [ -z "${VERIFY_PANE_EXIT_RC:-}" ] || exit "$VERIFY_PANE_EXIT_RC"
+# A third shape, and the only one the CALLER dies in: the turn stays in flight
+# long enough for the caller to be killed under it, then finishes alone.
+if [ -n "${VERIFY_PANE_HANG:-}" ]; then
+  printf '{"event":"note","path":"turn in flight"}\n'
+  sleep "$VERIFY_PANE_HANG"
+  printf '{"event":"done","status":"ok","session_id":"sHang","transcript":"%s"}\n' \
+    "$VERIFY_TRANSCRIPT"
+  exit 0
+fi
 if [ -n "${VERIFY_PANE_DONE_STATUS:-}" ]; then
   printf '{"event":"done","status":"%s","error":"synthetic failure","pane":"pVerify"}\n' \
     "$VERIFY_PANE_DONE_STATUS"
@@ -421,11 +430,19 @@ if [ "${VERIFY_STALE_VERDICT:-0}" = 1 ]; then
 else
   jq -cn --arg text "$payload" '{type:"assistant",message:{content:[{type:"text",text:$text}]}}' >"$transcript"
 fi
+# stdout and stderr are ONE stream to the caller, so a harness diagnostic can
+# land on it ahead of the agent's own events. Emitted FIRST because that is the
+# position that silences jq over the whole file (measured: a trailing stray line
+# still yields the values parsed before it).
+[ -z "${VERIFY_PANE_NOISE:-}" ] || printf '%s\n' "$VERIFY_PANE_NOISE"
 # Simulates bin/ac-pane-agent.sh's own CONTRADICTION CHECK: a "warning" event
 # on the SAME NDJSON stream, emitted before "done" - never a refusal.
 [ -z "${VERIFY_WARNING:-}" ] \
   || jq -cn --arg msg "$VERIFY_WARNING" '{event:"warning",reason:"test-warning",message:$msg}'
 jq -cn --arg transcript "$transcript" '{event:"done",status:"ok",session_id:"fresh",transcript:$transcript,source:"transcript",pane:"pVerify"}'
+# The same stray line AFTER the terminal result - jq still fails, but it has
+# already yielded the verdict, so the round must not be thrown away.
+[ -z "${VERIFY_PANE_NOISE_TAIL:-}" ] || printf '%s\n' "$VERIFY_PANE_NOISE_TAIL"
 EOF
 chmod +x "$fake_pane"
 
@@ -1135,6 +1152,101 @@ assert_eq "$(grep -c '^return ' "$tree_log" || true)" "$((before_returns + 1))" 
 assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$((before_reaps + 1))" \
   "pane-closed-mid-turn reaps: pane reaped"
 
+# THE CALLER'S OWN DEATH is the third pane-phase shape, and the only one where
+# no line of ac-verify.sh runs again: a killed driver publishes nothing, reaps
+# nothing, and explains nothing. Measured over every stored round in both fleet
+# homes (2026-09-15): 49 of 515 rounds ended this way, and each left the pane's
+# output under a name no reader is told about. The bytes must already be at the
+# path publish_meta records, because that path - not a staging name - is what
+# ac-teardown.sh's incomplete-verifier preservation copies and what every
+# ac_die and ac-ship.sh refusal tells a human to open.
+killed_family=flow-v2-driver-killed
+killed_output="$TMP/killed-review.json"
+export VERIFY_EXPECT_ID="$killed_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/killed-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/killed-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/killed-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/killed-transcript.jsonl"
+VERIFY_PANE_HANG=3 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --base "$base" --family "$killed_family" --caller "$caller" --intent "$intent" \
+  --output "$killed_output" >"$TMP/killed.out" 2>"$TMP/killed.err" &
+killed_pid=$!
+killed_round=""
+for _ in $(seq 1 200); do
+  killed_round="$( { ls -d "$AC_HOME/data/$killed_family/verify/codereview"/*/ 2>/dev/null || true; } | tail -1)"
+  if [ -n "$killed_round" ] \
+    && [ -n "$(find "$killed_round" -name 'pane-result.ndjson*' -size +0c 2>/dev/null)" ]; then
+    break
+  fi
+  sleep 0.05
+done
+kill -9 "$killed_pid" 2>/dev/null || true
+wait "$killed_pid" 2>/dev/null || true
+# The bite check: a driver that completed would have reaped its own meta, so a
+# surviving meta is what proves the kill landed while the turn was in flight.
+assert_file "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" \
+  "the driver was killed mid-turn, not left to finish"
+assert_file "${killed_round}pane-result.ndjson" \
+  "a killed driver leaves its pane output at the path its own meta records"
+assert_no_file "${killed_round}pane-result.ndjson.tmp" \
+  "one name for the evidence, not a staging name only a filesystem walk finds"
+assert_contains "$(cat "${killed_round}pane-result.ndjson")" '"event":"note"' \
+  "what the pane had written before the kill is readable there"
+# The pane outlives the driver and keeps the same fd, so the terminal result it
+# reaches alone is captured too - that is the evidence 5 of those 49 rounds held.
+for _ in $(seq 1 100); do
+  if grep -q '"event":"done"' "${killed_round}pane-result.ndjson" 2>/dev/null; then break; fi
+  sleep 0.1
+done
+assert_contains "$(cat "${killed_round}pane-result.ndjson")" '"event":"done"' \
+  "the terminal result the orphaned pane reaches lands in the same file"
+# kill -9 runs no EXIT trap, so the busy declaration ac-verify.sh clears at :251
+# survives too - and the pane stand-in globs every one of them on each later run.
+rm -f "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" "$AC_HOME/state/$VERIFY_EXPECT_ID.status" \
+  "$AC_HOME/state/.pane-$VERIFY_EXPECT_ID" "$AC_HOME/state/.chief-busy-until.$killed_family"
+
+# AND THE STREAM IS NOT GUARANTEED JSON. A stray harness diagnostic ahead of a
+# valid terminal result silences jq over the whole file, so the round must fail
+# closed on a result it cannot read rather than harvest past it - and the bytes
+# it could not read are the only explanation a diagnosing human has, so they
+# stay at the path the refusal names.
+noisy_family=flow-v2-noisy-stream
+noisy_output="$TMP/noisy-review.json"
+export VERIFY_EXPECT_ID="$noisy_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/noisy-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/noisy-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/noisy-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/noisy-transcript.jsonl"
+rc=0
+VERIFY_PANE_NOISE='harness: could not attach to the tty' \
+  "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$noisy_family" --caller "$caller" --intent "$intent" \
+  --output "$noisy_output" >"$TMP/noisy.out" 2>"$TMP/noisy.err" || rc=$?
+assert_eq "$rc" "1" "a stray non-JSON line ahead of the result is not a harvestable round"
+assert_contains "$(cat "$TMP/noisy.err")" "not readable as NDJSON" \
+  "the refusal names the stream it could not parse, not a bare pipefail death"
+noisy_round="$( { ls -d "$AC_HOME/data/$noisy_family/verify/codereview"/*/ 2>/dev/null || true; } | tail -1)"
+assert_file "${noisy_round}pane-result.ndjson" \
+  "the unreadable stream is kept where the refusal tells a human to look"
+assert_contains "$(cat "${noisy_round}pane-result.ndjson")" '"event":"done"' \
+  "including the terminal result jq refused to yield"
+
+# SAME stray line, AFTER the result: jq fails identically but has already handed
+# the verdict over, so refusing here would discard a round that is entirely fine.
+tail_family=flow-v2-trailing-noise
+tail_output="$TMP/tail-review.json"
+export VERIFY_EXPECT_ID="$tail_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/tail-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/tail-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/tail-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/tail-transcript.jsonl"
+VERIFY_PANE_NOISE_TAIL='harness: tty closed' \
+  "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$tail_family" --caller "$caller" --intent "$intent" \
+  --output "$tail_output" >"$TMP/tail.out" 2>"$TMP/tail.err" \
+  || fail "a stray line AFTER the result must not discard the round: $(cat "$TMP/tail.err")"
+assert_eq "$(jq -r .verdict "$tail_output")" "pass" "the verdict jq did reach is the round's verdict"
+
 # THE PANE'S OWN SCREEN IS THE ONE CHANNEL A FAILED ROUND THROWS AWAY. When a
 # judge dies mid-turn the transcript shows a clean tool result and then nothing
 # - no error, no status - so five rounds of artefacts could rule out a kill, an
@@ -1198,6 +1310,8 @@ VERIFY_QA_RUN=1 "$BIN/ac-verify.sh" qa --repo "$repo" --ref "$target" \
   --output "$qa_output" --evidence-dir "$qa_evidence" --report "$qa_report" \
   --profile "$qa_profile" >/dev/null
 assert_eq "$(jq -r .verdict "$qa_output")" "passed" "QA verdict is captured"
+assert_file "$qa_evidence/pane-result.ndjson" \
+  "the QA kind exports the same pane stream the codereview kind harvests - one shared publish path, so one kind's coverage is never the other's"
 assert_file "$qa_evidence/run-state/state.txt" "QA run state is exported before reap"
 assert_file "$qa_evidence/relay-report.md" "QA relay report is exported before reap"
 assert_file "$qa_report" "QA publishes the canonical stage report before the result"
