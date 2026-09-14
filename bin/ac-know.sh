@@ -33,7 +33,10 @@
 #   - <type> <subject> | src: <tagged provenance> | at: <sha> <date> | by: <family>
 #
 # Everything above the `## Superseded` marker is LIVE; everything below it is
-# history and is never read by any consumer. Two entry types and no more:
+# history - never edited, never counted as a live match. add/retire/cite DO
+# search it now, but only to name a phrase that lives only there, or a phrase
+# that also lives there alongside a live match; its content is never trusted
+# or written back. Two entry types and no more:
 #   fact <free text>            human-consumed repo knowledge; any crewmate
 #                               may write one, directly, through `add --fact`.
 #   scope <name> = <app>, <app> the CLOSED LIST governing qa profile
@@ -224,7 +227,7 @@ record_render() {
   printf '<!-- One entry per line. Grammar owner: bin/ac-know.sh. Write with `ac-know.sh add`; retire with `ac-know.sh retire`; record a read with `ac-know.sh cite` - it bumps the entry `heat:` usage counter in place, the one sanctioned in-place field. Never edit a line by hand; correct a fact by retire then add. -->\n\n'
   cat "$live"
   printf '\n## Superseded\n\n'
-  printf '<!-- Moved here byte-identical by `ac-know.sh retire` / `scope-proposal --replace` / `--retire`. Never read. -->\n\n'
+  printf '<!-- Moved here byte-identical by `ac-know.sh retire` / `scope-proposal --replace` / `--retire`. add/retire/cite search it to name a superseded-only or double match; never edited, never trusted as live. -->\n\n'
   cat "$sup"
 }
 
@@ -379,7 +382,7 @@ resolve_provenance() {
 
 cmd_add() {
   local home_flag="" repo="" family="" src_file="" src_cmd="" at="" fact=""
-  local declared_new=0 supersede="" dups target n
+  local declared_new=0 supersede="" dups target n sup_hit
   local rec name entry live sup lock
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -431,6 +434,17 @@ cmd_add() {
     target="$(fact_live_candidates "$live" "$supersede" "")"
     n=0; [ -z "$target" ] || n="$(printf '%s\n' "$target" | wc -l | tr -d ' ')"
     if [ "$n" -eq 0 ]; then
+      # A phrase quoted from a SUPERSEDED entry's own text is not "nothing
+      # matched" - it is un-correctable-in-place by design (record_live ends
+      # at `## Superseded`), and the caller's real target is whatever live
+      # entry replaced it. Say that instead of the plain zero-match message,
+      # or the caller reads a fixable phrase as unaddressable by any path.
+      sup_hit="$(fact_live_candidates "$sup" "$supersede" "")"
+      if [ -n "$sup_hit" ]; then
+        rm -f "$live" "$sup"; ac_lock_release "$lock"
+        ac_die "--supersede '$supersede' matches no LIVE fact, but matches a SUPERSEDED entry - a superseded entry cannot be corrected again; find the live entry that replaced it and quote that instead (nothing written):
+$sup_hit"
+      fi
       rm -f "$live" "$sup"; ac_lock_release "$lock"
       ac_die "--supersede matched nothing: no live fact contains '$supersede' (nothing written)"
     fi
@@ -438,6 +452,18 @@ cmd_add() {
       rm -f "$live" "$sup"; ac_lock_release "$lock"
       ac_die "--supersede '$supersede' is ambiguous - $n live entries match, quote a longer phrase (nothing written):
 $target"
+    fi
+    # The phrase also naming a superseded entry is the OTHER silent mis-hit:
+    # a quote can be short enough to catch its own live successor AND the
+    # entry that successor quotes, and this verb would then retire the
+    # WRONG one without a word - --by cannot save this call (it filters on
+    # the MATCHED entry's own family, not on what the caller meant).
+    sup_hit="$(fact_live_candidates "$sup" "$supersede" "")"
+    if [ -n "$sup_hit" ]; then
+      rm -f "$live" "$sup"; ac_lock_release "$lock"
+      ac_die "--supersede '$supersede' matches one live entry AND a SUPERSEDED entry - ambiguous which the caller means; quote a longer, disambiguating phrase (nothing written):
+  live: $target
+$sup_hit"
     fi
     # A MOVE, byte-identical, exactly as cmd_retire does it - one locked write,
     # so no reader ever sees the record with both claims or with neither.
@@ -473,11 +499,15 @@ $dups
 # crewmate must not write), not freshness.
 
 fact_live_candidates() {
-  # fact_live_candidates <live-file> <quote> <by> - full physical LIVE `fact`
+  # fact_live_candidates <fact-file> <quote> <by> - full physical `fact`
   # lines whose subject text (the entry's own free-text, before ` | src:`)
   # contains <quote> as a substring, narrowed to the entry's own `by:` family
-  # when <by> is non-empty. One candidate per output line.
-  local live="$1" quote="$2" by="$3"
+  # when <by> is non-empty. One candidate per output line. The substring rule
+  # does not care which set it reads: every zero/one-live-match refusal below
+  # also runs it over $sup, because a phrase that lives only in a superseded
+  # entry is not "nothing matched" - it is a different, sayable defect
+  # (repo-knowledge-superseded-set-is-loaded-never-searched).
+  local f="$1" quote="$2" by="$3"
   awk -v q="$quote" -v by="$by" '
     /^- fact / {
       subj = $0
@@ -489,7 +519,7 @@ fact_live_candidates() {
       if (by != "" && entry_by != by) next
       print
     }
-  ' "$live"
+  ' "$f"
 }
 
 fact_near_duplicates() {
@@ -538,7 +568,7 @@ fact_near_duplicates() {
 
 cmd_retire() {
   local home_flag="" repo="" family="" src_file="" src_cmd="" at="" quote="" by="" why=""
-  local rec name live sup lock matches n target entry
+  local rec name live sup lock matches n target entry sup_hit
   while [ $# -gt 0 ]; do
     case "$1" in
       --home) home_flag="${2:-}"; shift 2 ;;
@@ -573,6 +603,15 @@ cmd_retire() {
   matches="$(fact_live_candidates "$live" "$quote" "$by")"
   n=0; [ -z "$matches" ] || n="$(printf '%s\n' "$matches" | wc -l | tr -d ' ')"
   if [ "$n" -eq 0 ]; then
+    # A phrase that lives only in a superseded entry is retirable by NO
+    # sanctioned path (it already left the live set) - say that, and name the
+    # live entry that replaced it, instead of the plain zero-match message.
+    sup_hit="$(fact_live_candidates "$sup" "$quote" "$by")"
+    if [ -n "$sup_hit" ]; then
+      rm -f "$live" "$sup"; ac_lock_release "$lock"
+      ac_die "retire: '$quote'${by:+ by family $by} matches no LIVE fact, but matches a SUPERSEDED entry - a superseded entry cannot be retired again; find the live entry that replaced it and quote that instead:
+$sup_hit"
+    fi
     rm -f "$live" "$sup"; ac_lock_release "$lock"
     ac_die "retire: nothing matched '$quote'${by:+ by family $by} - no live fact entry contains that phrase"
   fi
@@ -582,6 +621,18 @@ cmd_retire() {
 $matches"
   fi
   target="$matches"
+
+  # The other silent mis-hit: a quote short enough to match exactly one live
+  # entry AND the superseded entry that live entry's own text quotes. --by
+  # cannot save this call - it filters on the MATCHED entry's family, not on
+  # what the caller meant - so this already retired a fact by mistake once.
+  sup_hit="$(fact_live_candidates "$sup" "$quote" "$by")"
+  if [ -n "$sup_hit" ]; then
+    rm -f "$live" "$sup"; ac_lock_release "$lock"
+    ac_die "retire: '$quote'${by:+ by family $by} matches one live entry AND a SUPERSEDED entry - ambiguous which the caller means; quote a longer, disambiguating phrase (nothing written):
+  live: $target
+$sup_hit"
+  fi
 
   # Supersession is a MOVE, byte-identical - the cmd_scope_proposal retire/
   # replace idiom, reused rather than re-implemented (header, Serialization).
@@ -628,7 +679,7 @@ $matches"
 # fact and re-orders nothing.
 cmd_cite() {
   local home_flag="" repo="" quote="" by=""
-  local rec name live sup lock matches n target prefix byval h base new
+  local rec name live sup lock matches n target prefix byval h base new sup_hit
   while [ $# -gt 0 ]; do
     case "$1" in
       --home) home_flag="${2:-}"; shift 2 ;;
@@ -654,6 +705,14 @@ cmd_cite() {
   matches="$(fact_live_candidates "$live" "$quote" "$by")"
   n=0; [ -z "$matches" ] || n="$(printf '%s\n' "$matches" | wc -l | tr -d ' ')"
   if [ "$n" -eq 0 ]; then
+    # A phrase living only in a superseded entry is not "nothing matched" -
+    # name where it actually is, or the caller reads it as unaddressable.
+    sup_hit="$(fact_live_candidates "$sup" "$quote" "$by")"
+    if [ -n "$sup_hit" ]; then
+      rm -f "$live" "$sup"; ac_lock_release "$lock"
+      ac_die "cite: '$quote'${by:+ by family $by} matches no LIVE fact, but matches a SUPERSEDED entry - find the live entry that replaced it and quote that instead:
+$sup_hit"
+    fi
     rm -f "$live" "$sup"; ac_lock_release "$lock"
     ac_die "cite: nothing matched '$quote'${by:+ by family $by} - no live fact entry contains that phrase"
   fi
@@ -663,6 +722,17 @@ cmd_cite() {
 $matches"
   fi
   target="$matches"
+
+  # cite is a read receipt, not a supersession: unlike retire/add --supersede
+  # it does not refuse on a live+superseded double match (that would break an
+  # ordinary intake read over a ranking-only side effect) - it WARNS, so the
+  # caller at least sees that a same-named superseded entry exists, then bumps
+  # heat on the live match it already resolved above.
+  sup_hit="$(fact_live_candidates "$sup" "$quote" "$by")"
+  if [ -n "$sup_hit" ]; then
+    printf 'cite: warning - %s also matches a SUPERSEDED entry; heat is bumped on the live match only:\n%s\n' \
+      "$quote" "$sup_hit" >&2
+  fi
 
   # Split at the LAST `| by:` (the family slug carries no pipe); bump an
   # existing heat or mint `heat: 1` in the slot before it.
