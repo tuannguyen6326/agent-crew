@@ -1914,7 +1914,7 @@ learn_policy_ask_receipt() {
 learn_captain_escalate() {
   # learn_captain_escalate <run> <subject> <plan> <manifest> <reason>
   local run="$1" subject="$2" plan="$3" manifest="$4" reason="$5"
-  local txid plan_sha receipt_rel candidate_rel message
+  local txid plan_sha receipt_rel candidate_rel message gate_links
   txid="$(basename "$run")"
   plan_sha="$(ac_sha256_file "$plan")"
   receipt_rel="data/$txid/gates/$subject/decision.md"
@@ -1923,13 +1923,18 @@ learn_captain_escalate() {
   # name that one file. A path rebuilt from the CALLER's subject misses it: for
   # a `rule` the preparer mints a subject of its own (`rule-<epoch>`).
   candidate_rel="${manifest#"$(ac_home)/"}"
+  # A gate= link is proven, never assumed: the caller's gate-unavailable arm
+  # writes no receipt (learn_auto_apply_candidates), so linking it unconditionally
+  # hands the captain a path to a file that was never written.
+  gate_links=""
+  [ ! -e "$(ac_home)/$receipt_rel" ] || gate_links="; gate=$receipt_rel"
   message="ASK: Learning maintenance cannot decide automatically.
 why: $reason
 subject: $subject; action-plan-sha256: $plan_sha
 options: (1) approve this exact recoverable plan; (2) reject and preserve Pending; (3) request a revised candidate.
 tradeoffs: approve compacts supported evidence now; reject preserves all active records; revise spends another learning/gate round.
 recommendation: reject or revise unless the linked evidence clearly supports the exact action.
-links: candidate=$candidate_rel; gate=$receipt_rel; evidence=$candidate_rel"
+links: candidate=$candidate_rel${gate_links}; evidence=$candidate_rel"
   "$(dirname "$0")/ac-room.sh" post learning roomchief "$message" >/dev/null 2>&1 \
     || ac_warn "captain escalation for $subject could not be posted to the learning room"
 }
@@ -1945,7 +1950,7 @@ learn_auto_apply_candidates() {
   # honestly answers ask-captain are each an absence of judgment, not a
   # rendered one, and are indistinguishable from each other at this layer.
   local run="$1" cand kind subject prepared plan manifest receipt gate gate_out
-  local decision prep_err rc=0 reason
+  local decision prep_err rc=0 reason gate_rc
   local found=0
   gate="${AC_GATE:-$(dirname "$0")/ac-gate.sh}"
   for cand in "$run"/candidate-*.md; do
@@ -1988,7 +1993,17 @@ EOF
       --subject "$subject" --manifest "$manifest" --plan "$plan" 2>&1)"; then
       [ -z "$gate_out" ] || printf '  %s\n' "$gate_out"
     else
-      reason="The selected maintenance gate was disabled, unavailable, invalid, or timed out."
+      gate_rc=$?
+      reason="$(ac_maintenance_gate_failure_reason "$gate_rc")"
+      [ -z "$gate_out" ] || reason="$reason
+$gate_out"
+      # Deliberately NO receipt written here (unlike the kind=rule arm above):
+      # a gate that never rendered a judgment must leave no decision.md behind
+      # - that absence IS the "no judgment" signal the EXAMINED accounting
+      # above depends on (see also tests/ac-learn-loop.test.sh's leg E, which
+      # asserts no receipt exists for a declared environment-error reaching
+      # this exact arm). learn_captain_escalate omits the gate= link itself
+      # when nothing was written, so this never posts a dead one.
       learn_captain_escalate "$run" "$subject" "$plan" "$manifest" "$reason"
       printf '  ask-captain: %s (gate unavailable; no mutation)\n' "$subject"
       rc=1

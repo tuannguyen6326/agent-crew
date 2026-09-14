@@ -754,6 +754,22 @@ ac_maintenance_receipt_validate() {
   printf '%s\n' "$decision"
 }
 
+ac_maintenance_gate_failure_reason() {
+  # ac_maintenance_gate_failure_reason <gate-exit-code> - the ONE place both
+  # maintenance callers turn bin/ac-gate.sh's own documented maintenance exit
+  # codes (its header: 0 receipt written, 3 the engine/judge ran but produced
+  # no usable decision - failure, invalid response, timeout, or a declared
+  # environment-error, all folded into one code by the gate itself, never
+  # split here by guessing at its prose, 4 config/gate-agent=off, anything
+  # else a usage/input error before the engine ever ran) into the one
+  # captain-facing category each demands. Exit code only, never grounds text.
+  case "$1" in
+    4) printf 'The maintenance gate is disabled (config/gate-agent=off).\n' ;;
+    3) printf 'The maintenance gate ran but produced no usable decision (an engine failure, an invalid response, a timeout, or a declared environment-error).\n' ;;
+    *) printf 'The maintenance gate rejected its own invocation before it could run (usage or input error, exit %s).\n' "$1" ;;
+  esac
+}
+
 _ac_maintenance_hold() {
   # _ac_maintenance_hold <journal> <txn> <committed> <total> <why> - the ONE
   # exit every failure past the claim takes, and the answer to the apply loop

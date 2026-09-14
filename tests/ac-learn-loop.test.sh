@@ -949,6 +949,55 @@ GATE1
   assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
     "a gate that could not run at all leaves the retro window anchor UNMOVED"
 
+  # A2 (gate-diagnostic-is-swallowed-and-the-captain-link-is-dead): the
+  # diagnostic the gate ACTUALLY emitted must reach the captain-facing
+  # escalation message - not only the chat line above - and this arm must
+  # never post a gate= link, because bin/ac-gate.sh writes decision.md only
+  # on its success path (line ~1264): every fail_gate() exit - the shape this
+  # arm exists for - leaves no receipt on disk (leg E below already proves
+  # this for the environment-error case; it holds for every failure exit,
+  # not that one alone). A link here would always be dead.
+  before_a2="$(wc -l <"$AC_HOME/data/learning/room.md" 2>/dev/null || printf 0)"
+  cat >"$TMP/gate-failed-run.sh" <<'GATE1B'
+#!/usr/bin/env bash
+printf 'maintenance-gate[stub] learning-x/envfail-skill: engine did not produce a valid maintenance decision (turn did not end ok)\n' >&2
+printf 'LEARN-DISTINCT-DIAGNOSTIC-7f3a\n' >&2
+exit 3
+GATE1B
+  chmod +x "$TMP/gate-failed-run.sh"
+  printf 'debriefs=9\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  AC_PANE_AGENT="$TMP/stub-pane-envfail.sh" AC_GATE="$TMP/gate-failed-run.sh" \
+    "$BIN/ac-learn.sh" run >/dev/null
+  room_a2_new="$(tail -n "+$((before_a2 + 1))" "$AC_HOME/data/learning/room.md")"
+  assert_contains "$room_a2_new" 'LEARN-DISTINCT-DIAGNOSTIC-7f3a' \
+    "A2: the gate's own diagnostic reaches the captain-facing escalation message, not just the chat line"
+  case "$room_a2_new" in
+    *'gate=data/learning-'*) fail "A2: no receipt exists on this arm - the escalation must not link to one" ;;
+  esac
+
+  # A3: a DISABLED gate (config/gate-agent=off, exit 4) demands a different
+  # captain action than a gate that ran and failed (exit 3) - question (5).
+  # The split rides bin/ac-gate.sh's own documented exit code, never prose.
+  cat >"$TMP/gate-disabled.sh" <<'GATE1C'
+#!/usr/bin/env bash
+printf 'gate disabled (config/gate-agent=off)\n'
+exit 4
+GATE1C
+  chmod +x "$TMP/gate-disabled.sh"
+  printf 'debriefs=9\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  AC_PANE_AGENT="$TMP/stub-pane-envfail.sh" AC_GATE="$TMP/gate-disabled.sh" \
+    "$BIN/ac-learn.sh" run >/dev/null
+  room_a3="$(cat "$AC_HOME/data/learning/room.md")"
+  assert_contains "$room_a3" 'gate is disabled' \
+    "A3: an explicitly disabled gate is named distinctly from one that ran and failed"
+  last_a3_why="$(printf '%s\n' "$room_a3" | grep 'why:' | tail -1)"
+  case "$last_a3_why" in
+    *"ran but produced no usable decision"*)
+      fail "A3: exit 4 (disabled) must not be worded as the same category as exit 3 (ran and failed)" ;;
+  esac
+
   # B: the gate ran (exit 0) but its receipt fails the hash/schema check - the
   # gate's OWN output cannot be trusted as a rendered judgment either.
   cat >"$TMP/gate-badreceipt.sh" <<'GATE2'

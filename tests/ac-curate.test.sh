@@ -686,6 +686,43 @@ out="$(AC_GATE="$gate_stub" "$BIN/ac-curate.sh" run)"
 assert_contains "$out" "ask-captain: captain-supersedes-1" \
   "a subject with no identifiable material is never acknowledged by an empty-material key"
 
+# --- gate-diagnostic-is-swallowed-and-the-captain-link-is-dead: the diagnostic
+# the gate actually produced must reach the captain-facing ask for Curate too,
+# not only Learning. curate_gate_subject already wrote a receipt on this arm
+# (curate_ask_receipt, unlike learn's matching arm) - re-verified as a
+# regression guard, not a defect this diff introduces.
+
+rm -rf "$AC_HOME/skills"
+mkdir -p "$AC_HOME/skills"
+printf '# Projects\n\n' >"$records/projects.md"
+cat >"$records/captain.md" <<'CAPFAIL'
+- 2026-08-02: STANDING launch policy SUPERSEDES the clause below.
+- 2026-08-01: earlier policy, now fully retired.
+CAPFAIL
+rm -f "$records/captain-archive.md" "$records/curate-acknowledged.md"
+printf 'runs_since=4\ngeneration=20\n' >"$AC_HOME/state/.curate.meta"
+
+gate_fail_stub="$TMP/curate-gate-fail"
+cat >"$gate_fail_stub" <<'GATEFAIL'
+#!/usr/bin/env bash
+printf 'maintenance-gate[stub] curate/captain-supersedes-1: engine did not produce a valid maintenance decision (turn did not end ok)\n' >&2
+printf 'CURATE-DISTINCT-DIAGNOSTIC-9c1e\n' >&2
+exit 3
+GATEFAIL
+chmod +x "$gate_fail_stub"
+
+out="$(AC_GATE="$gate_fail_stub" "$BIN/ac-curate.sh" run)"
+assert_contains "$out" "ask-captain: captain-supersedes-1" \
+  "curate: a gate that ran and failed still escalates the exact subject"
+room_curate="$(cat "$AC_HOME/data/curate/room.md")"
+assert_contains "$room_curate" 'CURATE-DISTINCT-DIAGNOSTIC-9c1e' \
+  "curate: the gate's own diagnostic reaches the captain-facing escalation message, not just the chat line"
+gate_link_curate="$(printf '%s\n' "$room_curate" \
+  | grep -o 'gate=data/curate-[^;]*decision\.md' | tail -1 | sed 's/^gate=//')"
+[ -n "$gate_link_curate" ] || fail "curate: escalation message carries no gate= link"
+assert_file "$AC_HOME/$gate_link_curate" \
+  "curate: the receipt the gate= link points at was actually written - no dead link"
+
 # --- F3: a captain write landing during the run's shadow passes must never be
 # silently reverted by the automatic deterministic apply --------------------
 # AC_CURATE_SNAPSHOT_HOOK fires right after the pristine snapshot is taken and

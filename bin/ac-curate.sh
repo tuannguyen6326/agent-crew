@@ -815,7 +815,7 @@ curate_gate_subject() {
   # Return 0 when applied/preserved under a settled receipt, 2 when captain
   # input is unresolved, and 1 for an apply failure that must keep cadence due.
   local run="$1" subject="$2" manifest="$3" plan="$4"
-  local receipt gate gate_out decision reason
+  local receipt gate gate_out decision reason gate_rc
   receipt="$run/gates/$subject/decision.md"
   gate="${AC_GATE:-$(dirname "$0")/ac-gate.sh}"
   mkdir -p "$(dirname "$receipt")"
@@ -823,7 +823,10 @@ curate_gate_subject() {
     --subject "$subject" --manifest "$manifest" --plan "$plan" 2>&1)"; then
     [ -z "$gate_out" ] || printf '  %s\n' "$gate_out"
   else
-    reason="The selected maintenance gate was disabled, unavailable, invalid, or timed out."
+    gate_rc=$?
+    reason="$(ac_maintenance_gate_failure_reason "$gate_rc")"
+    [ -z "$gate_out" ] || reason="$reason
+$gate_out"
     [ -e "$receipt" ] || curate_ask_receipt \
       "$receipt" "$plan" "$manifest" "$subject" "$reason"
     curate_captain_escalate "$run" "$subject" "$plan" "$manifest" "$reason"
