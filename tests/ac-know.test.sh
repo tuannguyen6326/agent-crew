@@ -677,6 +677,87 @@ refuses "matched nothing" dadd --supersede 'no such phrase at all' --fact 'a rep
 refuses "ambiguous" dadd --supersede 'the pooled worktree lease' --fact 'a replacement for two entries at once'
 assert_eq "$(cat "$drec")" "$before_d5" "D5: both refusals leave the record byte-unchanged"
 
+# --- SUPERSEDED-SET ADDRESSING: add/retire/cite load $sup already but never
+# search it (repo-knowledge-superseded-set-is-loaded-never-searched). Two
+# symptoms of one root: a phrase quoted from a superseded entry reads as
+# "nothing matched" - indistinguishable from a typo, and from "unaddressable
+# by any sanctioned path" - and a phrase short enough to also match the
+# superseded entry a live entry quotes lets a WRITE verb hit the wrong one
+# silently (--by cannot save it: it filters on the MATCHED entry's own
+# family, not on what the caller meant).
+hrepo="$(make_repo hiderepo)"
+hrec="$AC_HOME/records/repo-knowledge/hiderepo.md"
+hadd() { "$KNOW" add --home "$AC_HOME" --repo "$hrepo" --family fam-h --src-file file.txt:1 "$@"; }
+hretire() { "$KNOW" retire --home "$AC_HOME" --repo "$hrepo" --family fam-h-fix --src-file file.txt:1 "$@"; }
+hcite() { "$KNOW" cite --home "$AC_HOME" --repo "$hrepo" "$@"; }
+
+hadd --fact 'the pool lease survives a restart because the slot meta is durable on disk' >/dev/null
+hretire --quote 'slot meta is durable on disk' --why 'measured wrong, see the successor entry' >/dev/null
+
+# H1/H2/H3 (Arm A, all three verbs): the phrase now lives ONLY under
+# Superseded - each refusal must NAME that entry (its own family and text),
+# not the plain zero-match message.
+out="$(hretire --quote 'slot meta is durable on disk' --why 'second attempt' 2>&1)" \
+  && fail "H1: retire must refuse a phrase that lives only in a superseded entry"
+assert_contains "$out" "SUPERSEDED" "H1: retire names the class"
+assert_contains "$out" "by: fam-h" "H1: retire names the superseded entry's own family"
+assert_contains "$out" "slot meta is durable on disk" "H1: retire quotes the superseded entry's own text"
+
+out="$(hcite --quote 'slot meta is durable on disk' 2>&1)" \
+  && fail "H2: cite must refuse a phrase that lives only in a superseded entry"
+assert_contains "$out" "SUPERSEDED" "H2: cite names the class"
+
+before_h3="$(cat "$hrec")"
+out="$(hadd --supersede 'slot meta is durable on disk' --fact 'a replacement nobody asked for' 2>&1)" \
+  && fail "H3: add --supersede must refuse a phrase that lives only in a superseded entry"
+assert_contains "$out" "SUPERSEDED" "H3: add --supersede names the class"
+assert_eq "$(cat "$hrec")" "$before_h3" "H3: the refusal writes nothing"
+
+# A live successor that itself quotes the superseded entry's own text -
+# exactly the "already retired a fact by mistake" shape from the header.
+"$KNOW" add --home "$AC_HOME" --repo "$hrepo" --family fam-h2 --src-file file.txt:1 \
+  --fact 'the pool lease now checks a leasefile instead of trusting that slot meta is durable on disk' >/dev/null
+
+# H4/H5 (Arm B, WRITE verbs): one live match AND one superseded match -
+# refuse, show both sides, write nothing.
+before_armb="$(cat "$hrec")"
+out="$(hretire --quote 'slot meta is durable on disk' --why 'trying again' 2>&1)" \
+  && fail "H4: retire must refuse when the phrase matches one live entry AND a superseded entry"
+assert_contains "$out" "SUPERSEDED" "H4: retire names the class"
+assert_contains "$out" "leasefile" "H4: retire's refusal shows the live side too"
+assert_eq "$(cat "$hrec")" "$before_armb" "H4: the refusal writes nothing"
+
+out="$(hadd --supersede 'slot meta is durable on disk' --fact 'another replacement' 2>&1)" \
+  && fail "H5: add --supersede must refuse when the phrase matches one live entry AND a superseded entry"
+assert_contains "$out" "SUPERSEDED" "H5: add --supersede names the class"
+assert_eq "$(cat "$hrec")" "$before_armb" "H5: the refusal writes nothing"
+
+# H6 (Arm B, cite): a read receipt is not a supersession - it WARNS instead
+# of refusing (an intake read must not break on a ranking-only side effect),
+# and still bumps heat on the live match it already resolved.
+out="$(hcite --quote 'slot meta is durable on disk' 2>&1)" \
+  || fail "H6: cite must not refuse on a live+superseded double match"
+assert_contains "$out" "warning" "H6: cite warns about the double match"
+assert_contains "$out" "heat: 1" "H6: cite still bumps heat on the resolved live match"
+
+# H7/H8/H9 (do-not-break): a phrase matching exactly one live entry and
+# nothing superseded behaves exactly as before the fix, for all three verbs.
+"$KNOW" add --home "$AC_HOME" --repo "$hrepo" --family fam-h3 --src-file file.txt:1 \
+  --fact 'the pool watcher heartbeat interval is fifteen seconds' >/dev/null
+out="$(hcite --quote 'heartbeat interval is fifteen seconds')"
+assert_contains "$out" "heat: 1" "H7: cite is unaffected by an ordinary live-only match"
+
+"$KNOW" add --home "$AC_HOME" --repo "$hrepo" --family fam-h4 --src-file file.txt:1 \
+  --fact 'the pool retry backoff caps at five attempts' >/dev/null
+out="$(hretire --quote 'retry backoff caps at five attempts' --why 'ordinary retire, no superseded overlap')"
+assert_contains "$out" "retired from $hrec" "H8: retire is unaffected by an ordinary live-only match"
+
+"$KNOW" add --home "$AC_HOME" --repo "$hrepo" --family fam-h5 --src-file file.txt:1 \
+  --fact 'the pool health check timeout is two seconds' >/dev/null
+out="$(hadd --supersede 'health check timeout is two seconds' \
+  --fact 'the pool health check timeout is now three seconds after measurement')"
+assert_contains "$out" "recorded in $hrec" "H9: add --supersede is unaffected by an ordinary live-only match"
+
 # --- RECALL: the tiered read across the knowledge layers ---------------------
 # (knowledge-read-has-no-tiered-recall) Intake used to GREP the record flat:
 # 383KB / 487 entries, no ranking, no budget, and no way to tell a fresh fact
