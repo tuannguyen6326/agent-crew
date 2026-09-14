@@ -23,6 +23,15 @@
 # <deputy>` launcher opens a plain chief session there with NO kickoff to
 # order session-start, and a SPAWNED deputy either holds a live lock by the
 # time it reads context or eats one redundant reminder line - harmless.
+#
+# A SECOND, SEPARATE SIGNAL rides the same hook for the same reason it can: it
+# only ever prints, so it carries no blocking risk. When AC_HOME is ABSENT this
+# hook is the only ac- surface left that can say so - the other three go inert
+# at the same statement, and the trace that would record their silence is
+# written under the home they cannot resolve. The arm below owns that signal and
+# its discriminator; the reminder above is untouched by it, and a homeless
+# session is deliberately NOT handed that reminder (the script it names dies on
+# the same predicate).
 set -u
 
 # THE SOLO ARM COMES BEFORE EVERY GATE. Every check below exists to keep the
@@ -38,6 +47,55 @@ if [ "${AC_SOLO:-}" = 1 ]; then
   # or discard; best-effort, the orientation above never waits on it.
   if . "$(dirname "$0")/ac-lib.sh" 2>/dev/null; then ac_self_tasks_in_flight 2>/dev/null || true; fi
   exit 0
+fi
+# THE ONE STATE NO ac- HOOK CAN OTHERWISE REPORT. With AC_HOME absent, ac_home
+# refuses by design and all four claude hooks - the turn-end guard, the watcher
+# auto-arm, the prompt recall and this nudge - swallow that refusal into exit 0
+# before doing anything; the trace that would have shown the silence is written
+# under the home it cannot resolve, so it cannot record its own absence. A
+# drydock crewchief ran three days like that: 822 hook firings, 160 supervision
+# verdicts, every one swallowed, and the ONE loud detector left
+# (bin/ac-session-start.sh) dies on this same predicate - reminder and detector
+# fail together.
+#
+# IT SITS ABOVE THE ac-lib.sh FLOOR, and that is the point: every predicate here
+# is an environment read or a git call on the CWD, so the one thing that can
+# still speak owes nothing to a library that may itself be missing - and the run
+# path below keeps its exact bytes, so a session WITH a home moves not at all.
+# Nothing is written, and no home is resolved, named or guessed.
+#
+# THE DISCRIMINATOR IS THE WHOLE DIFFICULTY. A crewmate is LEGITIMATELY homeless
+# (ac-spawn.sh, "A crewmate gets no AC_HOME"), and ac_seed_crew_settings copies
+# this settings.json into every crewmate worktree - so a signal keyed on the
+# missing home alone would shout at the entire crew. Two independent gates cover
+# that direction, because shouting at the crew is the unrecoverable error while
+# missing one homeless chief is not:
+#   1. THE BADGES A SESSION IS GIVEN INSTEAD OF A HOME. AC_CREW_ID (ac-spawn.sh,
+#      the crewmate launch line) and AC_FLEET_NAME (that same line, and
+#      ac-pane-agent.sh's ENVPIN, which pins the fleet NAME exactly when the
+#      caller had no home to pin) are set nowhere else. AC_SCOPE is deliberately
+#      NOT on this list: a roomchief is given AC_HOME *and* AC_SCOPE together
+#      (ac-spawn.sh), so a scope with no home is a roomchief that LOST one -
+#      ac-relocate.sh resumes one with AC_SCOPE and no AC_HOME, which is this
+#      very defect and must be spoken to, not silenced.
+#   2. A LINKED WORKTREE is a crewmate checkout - the geometry the sibling hooks
+#      use, asked of the CWD here because there is no home to ask about. It is
+#      not redundant with gate 1: ac-relocate.sh resumes a crewmate with NO
+#      scalars at all, and only the geometry still identifies it. It also covers
+#      a captain reading a leased worktree.
+#      --path-format=absolute is load-bearing: from a SUBDIRECTORY of a primary
+#      checkout the bare form answers an absolute --git-dir against a relative
+#      --git-common-dir, which compares unequal and would read as a worktree.
+# What is left is a fleet home (not a git checkout at all) or a primary checkout
+# hosting a fleet, carrying no crew badge - the shapes that ought to have named a
+# home. A captain hacking on the distro checkout lands there too and eats one
+# line per session: the price of never again missing the shape that cost three days.
+if [ -z "${AC_HOME:-}" ] && [ -z "${AC_CREW_ID:-}" ] && [ -z "${AC_FLEET_NAME:-}" ]; then
+  gd="$(git rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+  gcd="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [ -z "$gd" ] || [ "$gd" = "$gcd" ]; then
+    printf 'agent-crew: AC_HOME is not set in this session - every ac- hook here is INERT. ac_home refuses by design (bin/ac-lib.sh: "A fleet home is NAMED, never guessed"), so the turn-end guard, the watcher auto-arm, the prompt recall and this reminder each ask for the home, get that refusal, and exit 0 without a word - and the hook trace that would have recorded the silence lives under the very home they cannot resolve. Nothing supervises this session and nothing says so. It CANNOT be repaired from inside: a hook subprocess is spawned from the environment of the claude process, so an export, or an AC_HOME= prefix on a Bash command, fixes that command and nothing else. RELAUNCH - close this session and reopen it with `ac <fleet>`, or set AC_HOME=<fleet home> in the pane before starting claude. Not running a fleet from here? Ignore this line.\n'
+  fi
 fi
 . "$(dirname "$0")/ac-lib.sh" 2>/dev/null || exit 0
 

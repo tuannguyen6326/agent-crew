@@ -12,7 +12,10 @@
 NUDGE="$BIN/ac-sessionstart-nudge.sh"
 line="ac-session-start.sh"
 
-run() { out="$(AC_HOME="$1" "$NUDGE" 2>/dev/null)"; rc=$?; }
+# rc is captured through `||` so a non-zero exit REPORTS through the assertion
+# below it: unprotected, errexit kills the suite with no message, and "the hook
+# exited non-zero" is exactly what these cases exist to state out loud.
+run() { rc=0; out="$(AC_HOME="$1" "$NUDGE" 2>/dev/null)" || rc=$?; }
 
 # 1. Genuine primary home: no marker, not a linked worktree, no lock -> nudge.
 g="$TMP/genuine"; mkdir -p "$g/state"
@@ -100,5 +103,112 @@ assert_contains "$out" "NOT the crewchief" "the solo orientation survives an unr
 # 5. Fail open: an unresolvable home exits 0 silently, never blocking init.
 run "$TMP/does-not-exist"
 assert_eq "$rc" 0 "a broken home fails open (exit 0), never blocks session init"
+
+# --- 6. THE HOMELESS SESSION ------------------------------------------------
+# AC_HOME absent is the one state no ac- hook can otherwise report: ac_home
+# refuses by design, all four hooks swallow the refusal into exit 0, and the
+# trace that would have recorded the silence lives under the home they cannot
+# resolve. This hook is the venue, and the whole difficulty is the
+# DISCRIMINATOR - a crewmate is LEGITIMATELY homeless (ac-spawn.sh: "A crewmate
+# gets no AC_HOME"), and this same settings.json is seeded into every crewmate
+# worktree, so a signal keyed on the refusal alone would shout at the whole crew.
+sig="AC_HOME is not set in this session"
+# rc is captured WITHOUT letting errexit abort: a non-zero exit is the very
+# thing acceptance asks about (it would block session init), so it must be
+# reported by an assertion, not by the suite dying silently.
+homeless() { rc=0; out="$(cd "$1" && shift && env -u AC_HOME "$@" "$NUDGE" 2>/dev/null)" || rc=$?; }
+
+# (a) CHIEF-SHAPED: no crew scalars, and a cwd that is not a git checkout at
+#     all - the shape of every fleet home (workspace = home, repo = code).
+chief="$TMP/homeless-chief"; mkdir -p "$chief/state"
+if git -C "$chief" rev-parse --git-dir >/dev/null 2>&1; then
+  fail "fixture precondition: $chief must not sit inside a git repo - a fleet home is not one"
+fi
+homeless "$chief"
+assert_eq "$rc" 0 "homeless chief: exit 0 - a SessionStart hook must never block init"
+assert_contains "$out" "$sig" "a chief-shaped homeless session is told its hooks are inert"
+assert_contains "$out" "RELAUNCH" "...and told the only remedy, which is not available from inside the session"
+# Order item (6) fences the nudge's own FUNCTION for a homeless session: it must
+# not be handed the session-start reminder it cannot act on anyway (that script
+# dies on the same predicate). The detector reports the state; it never revives
+# the reminder.
+case "$out" in *ac-session-start.sh*) fail "the homeless signal must not revive the session-start reminder (order item 6)" ;; esac
+
+# (b) A PRIMARY checkout with no crew scalars is chief-shaped too - a fleet
+#     hosted on a repo itself (AGENTS.md section 1, and bin/ac-delegation-guard.sh
+#     fences exactly that shape). Pinned so the trade-off cannot flip silently:
+#     a captain hacking on the distro eats one informational line per session,
+#     and the fleet hosted there keeps its detector.
+primary="$(make_repo homeless-primary)"
+homeless "$primary"
+assert_eq "$rc" 0 "homeless primary checkout: exit 0"
+assert_contains "$out" "$sig" "a primary checkout carries no crew scalars, so it is chief-shaped"
+
+# (c) CREWMATE by its own badge: AC_CREW_ID and AC_FLEET_NAME are what a session
+#     is handed INSTEAD of a home (bin/ac-spawn.sh's crewmate launch line, and
+#     bin/ac-pane-agent.sh's ENVPIN, which pins the fleet NAME exactly when the
+#     caller had no home to pin). Nothing else in bin/ sets either.
+homeless "$chief" AC_CREW_ID=greet2
+assert_eq "$rc" 0 "homeless crewmate: exit 0"
+[ -z "$out" ] || fail "a crewmate is LEGITIMATELY homeless and must never be signalled (got: $out)"
+homeless "$chief" AC_FLEET_NAME=drydock AC_CREW_ID=greet2 AC_FLEET_STATE="$chief/state"
+[ -z "$out" ] || fail "a fully-dressed crewmate must never be signalled (got: $out)"
+
+# (d) ...and by GEOMETRY, independently of the badge: a linked worktree is a
+#     crewmate checkout. This arm also covers a captain who opened a plain
+#     session inside a leased worktree to read the work.
+homeless "$wt"
+assert_eq "$rc" 0 "homeless linked worktree: exit 0"
+[ -z "$out" ] || fail "a linked worktree is a crewmate checkout and must never be signalled (got: $out)"
+
+#     A verification pane carries the NAME alone (ENVPIN) and no crew id.
+homeless "$chief" AC_FLEET_NAME=drydock
+[ -z "$out" ] || fail "a pane given the fleet NAME instead of a home must never be signalled (got: $out)"
+
+# (e) AC_SCOPE is deliberately NOT a silencing badge, and this is the case that
+#     decides it: bin/ac-spawn.sh gives a roomchief AC_HOME *and* AC_SCOPE
+#     together, so a scope with NO home is a roomchief that LOST one - which is
+#     this defect, not an exemption from it. bin/ac-relocate.sh builds exactly
+#     that resume line (AC_SCOPE=<fam> claude --resume <sid>, no AC_HOME; its
+#     crewdeputy arm does pass AC_HOME, and tests/ac-relocate.test.sh pins the
+#     asymmetry), so the class is real, not hypothetical.
+homeless "$chief" AC_SCOPE=greet2
+assert_contains "$out" "$sig" "a relocated roomchief lost its home and must be told, not silenced"
+
+# (e2) AC_HOME SET but unusable is a DIFFERENT state, not this one: ac_home
+#      refuses on the ABSENCE of AC_HOME alone, so the detector keys on exactly
+#      that predicate and never on cd failing. Proven from $chief, not from the
+#      suite's own cwd - the suite runs inside a linked worktree, where the
+#      geometry arm would silence it anyway and hide a missing check.
+rc=0; out="$(cd "$chief" && AC_HOME="$TMP/does-not-exist" "$NUDGE" 2>/dev/null)" || rc=$?
+assert_eq "$rc" 0 "set-but-unusable home: exit 0"
+[ -z "$out" ] || fail "a set-but-unusable AC_HOME is not a homeless session (got: $out)"
+
+# (e3) A SUBDIRECTORY of a primary checkout is still that checkout. The bare
+#      rev-parse pair answers an ABSOLUTE --git-dir against a RELATIVE
+#      --git-common-dir there, which compares unequal and reads as a linked
+#      worktree; --path-format=absolute is what keeps this arm honest.
+mkdir -p "$primary/sub"
+homeless "$primary/sub"
+assert_contains "$out" "$sig" "a subdirectory of a primary checkout is not a linked worktree"
+
+# (f) A SOLO session gets its own orientation and never this signal - it is told
+#     what it is without resolving a home at all.
+homeless "$chief" AC_SOLO=1
+assert_eq "$rc" 0 "homeless solo session: exit 0"
+assert_contains "$out" "NOT the crewchief" "a homeless solo session still gets the solo orientation"
+case "$out" in *"$sig"*) fail "a solo session is not a chief that lost its home" ;; esac
+
+# (g) AC_HOME SET: the healthy path does not move. Every case above this block
+#     already runs with a home; this is the direct statement of the invariant.
+run "$g"
+assert_contains "$out" "$line" "AC_HOME set: the ordinary nudge is unchanged"
+case "$out" in *"$sig"*) fail "the homeless signal must never fire while AC_HOME is set" ;; esac
+# ...and NOTHING ELSE arrives on that path. Two substring tests would pass while
+# an unrelated new line rode along; the healthy path is supposed to be
+# byte-identical, so count what it prints.
+assert_eq "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" 1 \
+  "AC_HOME set: exactly one line - the healthy path gains nothing"
+
 
 pass
