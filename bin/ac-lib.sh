@@ -2070,27 +2070,33 @@ ac_self_tasks_in_flight() {
 }
 
 ac_solo_landing_check() {
-  # ac_solo_landing_check <id> <project-repo> - the SOLO slice's knowledge-loop
-  # checkpoint at landing. The solo contract owes three writes per slice
-  # (a lesson via ac-learn.sh note, a verified repo fact via ac-know.sh add,
-  # the ## Done row) and no chief is there to ask whether they happened; a
-  # law with no machine behind it measurably went unwritten. This is the
-  # machine: ONE line naming which of the three exist for this slice, on
-  # the status record (mirrored to the durable timeline) and on stdout,
-  # with the exact command for each that is missing. A PROMPT, not a
-  # detector - it cannot tell "learned nothing" from "did not write it
-  # down" - so warn-only, ALWAYS returns 0: a landing never fails over
-  # bookkeeping. Attribution grammars are the writers' own: a Pending
-  # heading carrying "(solo <id>)", a repo-knowledge line ending
-  # "| by: <id>", a "- [x] <id> " row under ## Done.
-  local id="${1:-}" repo="${2:-}" led rec bl lessons=none facts=none done=none hint="" line
+  # ac_solo_landing_check <id> <project-repo> [<lesson-waiver>] [<fact-waiver>]
+  # - the SOLO slice's knowledge-loop GATE at landing. The solo contract owes
+  # three writes per slice (a lesson via ac-learn.sh note, a verified repo
+  # fact via ac-know.sh add, the ## Done row) and no chief is there to ask
+  # whether they happened; a law with no machine behind it measurably went
+  # unwritten, and a warn-only line behind it measurably went unread. This
+  # is the machine: ONE line naming which of the three exist for this slice,
+  # on the status record (mirrored to the durable timeline) and on stdout,
+  # with the exact command for each that is missing - and exit 1 while any
+  # is missing, so the teardown refuses and the slice stays in flight. It
+  # still cannot tell "learned nothing" from "did not write it down", so
+  # "nothing new" is SAID, never inferred: a non-empty waiver for the lesson
+  # or the fact reads as `waived` (the crewmate report's `none` is the same
+  # contract), while the Done row has no waiver - the solo can always write
+  # it. Attribution grammars are the writers' own: a Pending heading carrying
+  # "(solo <id>)", a repo-knowledge line ending "| by: <id>", a "- [x] <id> "
+  # row under ## Done.
+  local id="${1:-}" repo="${2:-}" no_lesson="${3:-}" no_fact="${4:-}" led rec bl lessons=none facts=none done=none hint="" line
   [ -n "$id" ] || return 0
   led="$(ac_records_dir)/learnings.md"
-  if [ -f "$led" ] && awk -v tag="(solo $id)" '
+  if [ -n "$no_lesson" ]; then lessons=waived
+  elif [ -f "$led" ] && awk -v tag="(solo $id)" '
       /^## Distilled/ { exit }
       /^### / && index($0, tag) { found = 1; exit }
       END { exit(found ? 0 : 1) }' "$led"; then lessons=yes; fi
-  if [ -n "$repo" ] && [ -d "$repo" ] && rec="$(ac_knowledge_file "$repo" 2>/dev/null)" \
+  if [ -n "$no_fact" ]; then facts=waived
+  elif [ -n "$repo" ] && [ -d "$repo" ] && rec="$(ac_knowledge_file "$repo" 2>/dev/null)" \
      && [ -f "$rec" ] && awk -v suffix="| by: $id" '
       /^## Superseded/ { exit }
       /^- / && substr($0, length($0) - length(suffix) + 1) == suffix { found = 1; exit }
@@ -2102,16 +2108,16 @@ ac_solo_landing_check() {
       in_done && index($0, row) == 1 { found = 1; exit }
       END { exit(found ? 0 : 1) }' "$bl"; then done=yes; fi
   line="knowledge loop: lessons=$lessons repo-knowledge=$facts done-row=$done"
-  [ "$lessons" = yes ] || hint="$hint
-  lesson: $(ac_root)/bin/ac-learn.sh note '### $(date -u +%Y-%m-%d) (solo $id)' '- <one method lesson>'   (only a genuinely new one)"
-  [ "$facts" = yes ] || hint="$hint
-  repo fact: $(ac_root)/bin/ac-know.sh add --home $(ac_home) --repo ${repo:-<repo>} --family $id --src-file <path>:<line> --fact '<verified fact>'"
+  [ "$lessons" != none ] || hint="$hint
+  lesson: $(ac_root)/bin/ac-learn.sh note '### $(date -u +%Y-%m-%d) (solo $id)' '- <one method lesson>'   (or --no-lesson '<why nothing new>')"
+  [ "$facts" != none ] || hint="$hint
+  repo fact: $(ac_root)/bin/ac-know.sh add --home $(ac_home) --repo ${repo:-<repo>} --family $id --src-file <path>:<line> --fact '<verified fact>'   (or --no-fact '<why none verified>')"
   [ "$done" = yes ] || hint="$hint
   done row: append '- [x] $id - <outcome>' under ## Done in $bl"
   ac_status_append "$id" "$line" 2>/dev/null || true
   printf '%s\n' "$line"
-  [ -z "$hint" ] || printf 'missing - the solo contract owes these at landing (skip a lesson that is not new):%s\n' "$hint"
-  return 0
+  [ -z "$hint" ] || printf 'missing - the solo contract owes these at landing:%s\n' "$hint"
+  [ -z "$hint" ]
 }
 
 # Where the fleet layer lands when the harness's own instruction file is

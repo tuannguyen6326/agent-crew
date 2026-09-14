@@ -872,12 +872,18 @@ answer.
 Neither write waits for a slice: a repo fact verified while answering in
 chat goes to `ac-know.sh add` right then, family `solo-chat`, since the
 chat that verified it dies with the session. At a slice's landing the
-machine asks: teardown of a `kind=self` task prints and records one
+machine GATES it: teardown of a `kind=self` task prints and records one
 `knowledge loop:` line naming which of lesson, repo fact and `## Done` row
 exist for that slice (Pending heading `(solo <id>)`, knowledge line
 `by: <id>`, Done row `- [x] <id>`) with the exact command for each that is
-missing - warn-only, since it cannot tell "learned nothing" from "did not
-write it down".
+missing, and REFUSES while any is - the slice stays in flight for the
+writes to happen. It still cannot tell "learned nothing" from "did not
+write it down", so nothing-new is SAID, never inferred: `--no-lesson
+'<why>'` / `--no-fact '<why>'` waive those two on the record (the crewmate
+report's `none` under `## Lessons`, same contract), and the Done row is
+never waived. Once the loop is complete the teardown runs the keyed
+`ac-learn.sh tick <id>` itself - no chief lands a solo slice, so no chief
+would (`bin/ac-teardown.sh`'s header owns the gate).
 A solo session ENDS when the captain closes it - no ritual, no lock to
 release, nothing owed at that moment, because everything durable was
 written when it happened. A slice does not end with the session: its pane

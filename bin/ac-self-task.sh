@@ -65,8 +65,13 @@
 # crew/<id> in the leased worktree, commits there, then
 #   bin/ac-merge-local.sh <id>   (needs no kind - it reads project_dir/worktree)
 #   bin/ac-teardown.sh <id>      (kind=self takes the ordinary committing-task
-#                                 landed proof, and returns the lease)
-# Nothing in either script needed a self case. `--mode <m>` (default
+#                                 landed proof, then REFUSES until the slice's
+#                                 knowledge loop is written - lesson, repo
+#                                 fact, Done row, or --no-lesson/--no-fact
+#                                 '<why>' - ticks the Learning cadence, and
+#                                 returns the lease; ac-teardown.sh's header
+#                                 owns the gate)
+# `--mode <m>` (default
 # local-only, the chief self path above) records the slice's real delivery
 # mode on the meta - a SOLO slice landing a PR is mode=direct-pr, and the
 # landed proof already accepts a merged PR the same as a local merge. The

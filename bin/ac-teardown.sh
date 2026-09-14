@@ -2,6 +2,7 @@
 # ac-teardown.sh - fail-closed teardown of a finished crewmate.
 #
 # Usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']
+#                            [--no-lesson '<why>'] [--no-fact '<why>']
 #
 # Refuses to destroy evidence of unlanded work. Without --force it requires:
 # - scout tasks: the report exists (report.md in the task's data dir - flat
@@ -28,6 +29,20 @@
 # starts from the merged tree, so a depended-on task lands only by the real
 # merge.
 # --force means "the captain explicitly discards this work".
+# A kind=self slice (a chief self task or a SOLO session's slice) additionally
+# owes its KNOWLEDGE LOOP at landing, and the teardown is the machine behind
+# that law because no chief lands a solo slice: after the landed proof it
+# runs ac_solo_landing_check (bin/ac-lib.sh) and REFUSES - slice, lease and
+# branch left in flight - while the lesson (a Pending heading `(solo <id>)`
+# in records/learnings.md), the verified repo fact (a repo-knowledge line
+# `by: <id>`) or the `- [x] <id>` Done row is missing, printing the exact
+# command for each. "Nothing new" is said, never inferred: --no-lesson
+# '<why>' and --no-fact '<why>' waive those two and land the why on the task
+# status (the crewmate report's `none` under ## Lessons is the same
+# contract); the Done row is never waived, the solo can always write it.
+# Once the loop is complete the teardown runs the keyed `ac-learn.sh tick
+# <id>` itself and records its answer - the one landing actor there is.
+# --force skips all of it: a discarded slice owes nothing.
 #
 # On success: archives the task's state files under state/archive/<id>/, kills
 # the backend window, ends the pane agents/verifiers the task started, returns
@@ -139,8 +154,8 @@ ac_require git
 
 bin_dir="$(cd "$(dirname "$0")" && pwd -P)"
 
-id="${1:-}"; force=0; pr_ready=""
-[ -n "$id" ] || ac_die "usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']"
+id="${1:-}"; force=0; pr_ready=""; no_lesson=""; no_fact=""
+[ -n "$id" ] || ac_die "usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>'] [--no-lesson '<why>'] [--no-fact '<why>']"
 shift
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -148,6 +163,14 @@ while [ $# -gt 0 ]; do
     --pr-ready)
       pr_ready="${2:-}"
       [ -n "$pr_ready" ] || ac_die "--pr-ready carries the captain's acceptance words - they are the proof, so an empty value is refused"
+      shift 2 ;;
+    --no-lesson)
+      no_lesson="${2:-}"
+      [ -n "$no_lesson" ] || ac_die "--no-lesson carries why the slice learned nothing new - it is the record, so an empty value is refused"
+      shift 2 ;;
+    --no-fact)
+      no_fact="${2:-}"
+      [ -n "$no_fact" ] || ac_die "--no-fact carries why the slice verified no repo fact - it is the record, so an empty value is refused"
       shift 2 ;;
     *) ac_die "unknown argument: $1" ;;
   esac
@@ -676,14 +699,23 @@ fi
 # reaped or returned.
 prepare_task_verifiers
 
+# A landed SOLO slice answers for its knowledge loop here, while the status
+# record still exists to carry the answer, and the landing REFUSES until it
+# does (ac_solo_landing_check) - the slice stays in flight, lease and branch
+# intact, for the writes to happen. Once it passes, the landing ticks the
+# Learning cadence itself: no chief lands a solo slice, so no chief would.
+# A forced teardown discards the work and owes nothing.
+if [ "$kind" = self ] && [ "$force" != 1 ]; then
+  [ -z "$no_lesson" ] || ac_status_append "$id" "lesson waived: $no_lesson"
+  [ -z "$no_fact" ] || ac_status_append "$id" "repo fact waived: $no_fact"
+  ac_solo_landing_check "$id" "$project_dir" "$no_lesson" "$no_fact" \
+    || ac_die "solo landing refused: the knowledge loop above is incomplete - write what is missing (or waive the lesson/fact with --no-lesson/--no-fact '<why>'), then run the teardown again"
+  ac_status_append "$id" "learning tick: $("$bin_dir/ac-learn.sh" tick "$id" 2>&1 | tail -n 1)"
+fi
 # Archive task state - the FIRST durable act, before the pane-kill (header:
 # ORDER GUARANTEE). The status append and both moves are one unit.
 archive="$state_dir/archive/$id"
 mkdir -p "$archive"
-# A landed SOLO slice answers for its knowledge loop here, while the status
-# record still exists to carry the answer (ac_solo_landing_check: warn-only).
-# A forced teardown discards the work and owes nothing.
-[ "$kind" != self ] || [ "$force" = 1 ] || ac_solo_landing_check "$id" "$project_dir"
 [ -z "$pr_ready" ] || ac_status_append "$id" "done: captain accepted the ready-to-merge PR - $pr_ready"
 ac_status_append "$id" "resolved: teardown$([ "$force" = 1 ] && printf ' (forced)')"
 mv "$meta" "$archive/meta"

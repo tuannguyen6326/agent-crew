@@ -98,7 +98,7 @@ assert_contains "$err" "already exists" "start refuses a duplicate id"
 # control: no crew/<id> ref => start proceeds exactly as before.
 "$BIN/ac-self-task.sh" start s2 "$repo" >/dev/null
 assert_file "$state/s2.meta" "an id with no crew branch starts as before"
-"$BIN/ac-teardown.sh" s2 >/dev/null 2>&1
+"$BIN/ac-teardown.sh" s2 --force >/dev/null 2>&1
 
 # an UNOWNED crew/<id> ref refuses start, names the ref, touches no ref, and
 # leaves no lease/meta behind.
@@ -125,11 +125,13 @@ assert_file "$state/s4-r2.meta" \
 "$BIN/ac-teardown.sh" s4-r2 --force >/dev/null 2>&1
 "$BIN/ac-teardown.sh" s4 --force >/dev/null 2>&1
 
-# --- teardown is the EXISTING path, unchanged --------------------------------
-# kind=self takes the ordinary committing-task landed proof (no self case
-# anywhere in ac-teardown.sh), and the leases= key it reads is one this script
-# writes by hand - a typo there would strand the pool slot forever.
-"$BIN/ac-teardown.sh" s1 >/dev/null 2>&1 || fail "teardown must land a clean self task"
+# --- teardown is the EXISTING path, plus the knowledge-loop gate -------------
+# kind=self takes the ordinary committing-task landed proof, then answers for
+# its knowledge loop (the gate section below); the leases= key it reads is one
+# this script writes by hand - a typo there would strand the pool slot forever.
+printf '# Backlog\n## Queued\n## Done\n- [x] s1 - the first slice\n' >"$AC_HOME/records/backlog.md"
+"$BIN/ac-teardown.sh" s1 --no-lesson 'fixture' --no-fact 'fixture' >/dev/null 2>&1 \
+  || fail "teardown must land a clean self task"
 assert_no_file "$state/s1.meta" "teardown archives the self task's meta"
 case "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null || true)" in
   *"self:s1"*) fail "teardown must give the self task's lease back" ;;
@@ -292,33 +294,54 @@ assert_no_file "$state/lf1.meta" "the refused start leaves no task in flight"
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
   "a 127 driver failure must never reach the pane-open step - that is the fail-OPEN this closes"
 
-# --- the knowledge-loop checkpoint at landing --------------------------------
+# --- the knowledge-loop gate at landing --------------------------------------
 # The solo contract owes three writes per slice and no chief asks whether
-# they happened: teardown of a landed kind=self task answers on the durable
-# timeline - which of lesson / repo fact / Done row exist - naming the exact
-# command for each that is missing, warn-only.
+# they happened: teardown of a landed kind=self task REFUSES while a lesson,
+# a repo fact or the Done row is missing - naming the exact command for each -
+# and ticks the Learning cadence itself once all three are there. "Nothing
+# new" is said out loud, never inferred: --no-lesson / --no-fact '<why>' waive
+# those two on the record; the Done row is never waived.
 "$BIN/ac-self-task.sh" start s10 "$repo" >/dev/null
-out="$("$BIN/ac-teardown.sh" s10 2>&1)" || fail "teardown must land a clean self task: $out"
+out="$("$BIN/ac-teardown.sh" s10 2>&1)" && fail "a slice that wrote nothing must not land: $out"
+assert_file "$state/s10.meta" "the refused teardown leaves the slice in flight"
 tl="$AC_HOME/data/s10/timeline.log"
 assert_contains "$(cat "$tl" 2>/dev/null)" "knowledge loop: lessons=none repo-knowledge=none done-row=none" \
   "a slice that wrote nothing is told so on its durable timeline"
 assert_contains "$out" "ac-learn.sh note" "the missing lesson names its command"
 assert_contains "$out" "ac-know.sh add" "the missing repo fact names its command"
 assert_contains "$out" "## Done" "the missing Done row names its place"
-"$BIN/ac-self-task.sh" start s11 "$repo" >/dev/null
-"$BIN/ac-learn.sh" note "### 2026-09-09 (solo s11)" "- measure before widening a bound" >/dev/null 2>&1 \
+assert_contains "$out" "--no-lesson" "the refusal names the waiver for a slice with nothing new"
+"$BIN/ac-learn.sh" note "### 2026-09-09 (solo s10)" "- measure before widening a bound" >/dev/null 2>&1 \
   || fail "ac-learn.sh note must accept a solo heading"
 mkdir -p "$AC_HOME/records/repo-knowledge"
-printf -- '# proj knowledge\n- fact the widget lock lives in file.txt | src: file:file.txt:1 | at: abc 2026-09-09 | by: s11\n' \
+printf -- '# proj knowledge\n- fact the widget lock lives in file.txt | src: file:file.txt:1 | at: abc 2026-09-09 | by: s10\n' \
   >"$AC_HOME/records/repo-knowledge/proj.md"
-printf '# Backlog\n## Queued\n## Done\n- [x] s11 - landed the widget lock note\n' >"$AC_HOME/records/backlog.md"
-out="$("$BIN/ac-teardown.sh" s11 2>&1)" || fail "teardown must land a clean self task: $out"
-assert_contains "$(cat "$AC_HOME/data/s11/timeline.log")" "knowledge loop: lessons=yes repo-knowledge=yes done-row=yes" \
+printf '# Backlog\n## Queued\n## Done\n- [x] s10 - landed the widget lock note\n' >"$AC_HOME/records/backlog.md"
+out="$("$BIN/ac-teardown.sh" s10 2>&1)" || fail "teardown must land once all three writes exist: $out"
+assert_contains "$(cat "$tl")" "knowledge loop: lessons=yes repo-knowledge=yes done-row=yes" \
   "a slice that wrote all three is told so"
 case "$out" in *"missing - the solo contract"*) fail "nothing missing must print no hints: $out" ;; esac
+assert_contains "$(cat "$tl")" "learning tick:" "the landing ticks the Learning cadence on the record"
+assert_contains "$("$BIN/ac-learn.sh" tick s10 2>&1)" "already counted" \
+  "the teardown's tick is the keyed one, so the landing is counted exactly once"
+"$BIN/ac-self-task.sh" start s11 "$repo" >/dev/null
+printf '# Backlog\n## Queued\n## Done\n- [x] s11 - a doc-only slice\n' >"$AC_HOME/records/backlog.md"
+out="$("$BIN/ac-teardown.sh" s11 --no-lesson 'nothing new - a doc-only slice' --no-fact 'no repo fact was verified' 2>&1)" \
+  || fail "waived lesson and fact land with the Done row: $out"
+assert_contains "$(cat "$AC_HOME/data/s11/timeline.log")" "knowledge loop: lessons=waived repo-knowledge=waived done-row=yes" \
+  "a waiver is recorded as waived, never as yes"
+assert_contains "$(cat "$AC_HOME/data/s11/timeline.log")" "lesson waived: nothing new - a doc-only slice" \
+  "the waiver's why lands on the record"
+assert_contains "$(cat "$AC_HOME/data/s11/timeline.log")" "repo fact waived: no repo fact was verified" \
+  "the fact waiver's why lands on the record"
 "$BIN/ac-self-task.sh" start s12 "$repo" >/dev/null
+out="$("$BIN/ac-teardown.sh" s12 --no-lesson 'x' --no-fact 'y' 2>&1)" && fail "the Done row is never waived: $out"
+assert_file "$state/s12.meta" "a missing Done row keeps the slice in flight"
+out="$("$BIN/ac-teardown.sh" s12 --no-lesson '' 2>&1)" && fail "an empty waiver must be refused: $out"
+assert_contains "$out" "--no-lesson carries" "an empty waiver says why it is refused"
 out="$("$BIN/ac-teardown.sh" s12 --force 2>&1)"
 case "$out" in *"knowledge loop"*) fail "a forced teardown discards the work and owes no checkpoint: $out" ;; esac
+assert_no_file "$state/s12.meta" "a forced teardown still lands the discard"
 
 # --- fleet-memory read at slice open ----------------------------------------
 # The knowledge law names `ac-brain.sh recall` at intake; the start makes it
