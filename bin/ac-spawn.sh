@@ -1381,8 +1381,9 @@ HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there i
   ac_record_launch_opts "$meta" "$harness" "$model" "$effort" "$effort_flag"
   ac_meta_set "$meta" kind "roomchief"
   # A domainchief IS a roomchief: kind stays roomchief and the domain rides as a
-  # separate field, so the cap, the watcher skip set, teardown, relocate and the
-  # `chiefs` accounting class all cover it with no edit.
+  # separate field, so the cap, the watcher skip set, teardown and the `chiefs`
+  # accounting class all cover it with no edit; relocate reads this same field
+  # to keep AC_DOMAIN on the resume line.
   [ -z "$dom" ] || ac_meta_set "$meta" domain "$dom"
   ac_meta_set "$meta" initiated_by "$initiated_by"
   ac_meta_set "$meta" mode "-"
