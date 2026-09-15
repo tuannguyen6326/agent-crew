@@ -781,7 +781,12 @@ assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --bas
 # same-ref retries went undiagnosed.
 # `ls` of an unmatched glob fails, and under `set -o pipefail` inside a command
 # substitution that aborts the whole suite with NO output - so absorb it here.
-rejection_log() { { ls "$AC_HOME/data/$1/verify/codereview"/*/rejection.log 2>/dev/null || true; } | tail -n 1; }
+# Round dirs are named "<UTC-timestamp>-<pid>" (bin/ac-verify.sh round_id):
+# `tail -n 1` alone breaks on a same-second collision, where the pid tiebreak
+# is compared LEXICALLY and a larger pid can sort before a smaller one - see
+# the round-dir-pick block above `make_profile_bundle`. Same two-key fix:
+# newest by timestamp, then by pid as a number.
+rejection_log() { { ls "$AC_HOME/data/$1/verify/codereview"/*/rejection.log 2>/dev/null || true; } | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}'; }
 rej="$(rejection_log "$open_family")"
 [ -n "$rej" ] || fail "a rejected verdict must leave its reason in the round evidence"
 assert_contains "$(cat "$rej")" "undispositioned-prior-finding-ids: CR-1" \
