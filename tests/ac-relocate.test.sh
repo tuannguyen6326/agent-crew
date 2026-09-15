@@ -64,6 +64,26 @@ assert_contains "$log" 'AC_WATCH_ONLY=$(bin/ac-ready.sh watch-set famR)' "watche
 assert_eq "$(cat "$AC_HOME/state/.pane-famR-chief")" "pNEW wC:tN" "handle updated"
 assert_contains "$(cat "$AC_HOME/state/famR-chief.meta")" "window=herdr:pane-pNEW" "meta updated"
 
+# A domainchief (an ordinary roomchief whose meta carries domain=<name>) must
+# resume with AC_DOMAIN too, riding after AC_SCOPE - ac-spawn.sh:1367-1371's
+# own ordering for the launch line. The needle runs contiguously through the
+# part that changes, same shape as the AC_HOME/AC_SCOPE assertion above: a
+# substring match that stops short of "claude --resume" would stay green
+# whether or not AC_DOMAIN was ever added.
+cat >"$AC_HOME/state/famD-chief.meta" <<EOF
+backend=herdr
+kind=roomchief
+project=famD
+domain=domD
+worktree=/tmp
+session_id=sid-999
+EOF
+printf 'p1 wB:t9\n' >"$AC_HOME/state/.pane-famD-chief"
+relocate famD-chief --family famR >/dev/null
+log="$(cat "$HDLOG")"
+assert_contains "$log" "AC_HOME=/tmp AC_SCOPE=famD AC_DOMAIN=domD claude --resume sid-999" \
+  "domainchief session resumed with home, scope and domain"
+
 # Already in the target workspace: no-op success.
 out="$(relocate famR-chief)"
 assert_contains "$out" "already in group famR" "no-op when already there"

@@ -98,7 +98,14 @@ if [ "$kind" = roomchief ]; then
   # A roomchief's meta "worktree" field holds its fleet HOME, not a leased
   # worktree (ac-spawn.sh:1377 sets it to ac_home) - the fresh pane shell
   # here inherits nothing either, same as the original spawn (ac-spawn.sh:1365-1367).
-  resume="AC_HOME=$(printf '%q' "$dir") AC_SCOPE=$(printf '%q' "$fam") $resume"
+  # A domainchief is a roomchief whose meta also carries domain=<name>
+  # (ac-spawn.sh:1386); dom_env rides after AC_SCOPE, gated on that field so
+  # an ordinary roomchief's resume line stays byte-identical - the same
+  # shape ac-spawn.sh:1367-1371 uses on the original launch line.
+  dom="$(awk -F= '$1=="domain"{print $2}' "$meta")"
+  dom_env=""
+  [ -z "$dom" ] || dom_env="AC_DOMAIN=$(printf '%q' "$dom") "
+  resume="AC_HOME=$(printf '%q' "$dir") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}$resume"
   notice="Notice: your window was relocated to the $group workspace ($ws) - same session, nothing lost. Your family watcher died with the old tab: re-arm it as a background task (AC_WATCH_ONLY=\$(bin/ac-ready.sh watch-set $fam) bin/ac-watch.sh - recompute the set each re-arm so an epic keeps covering its in-flight story panes), then continue."
 elif [ "$kind" = crewdeputy ]; then
   resume="AC_HOME=$(printf '%q' "$dir") $resume"
