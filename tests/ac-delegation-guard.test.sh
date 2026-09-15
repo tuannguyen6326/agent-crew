@@ -27,9 +27,13 @@ for t in Task Agent Workflow AgentTool WorkflowRunner SubAgent; do
   assert_eq "$(hook "$primary" "$t")" "2" "$t must be refused in a primary checkout"
 done
 
-# Ordinary tools are untouched, and so are the observe-or-stop task verbs:
-# they inspect or end work, they never create it.
-for t in Bash Read Edit Write Grep TaskList TaskGet TaskOutput TaskStop TaskUpdate TaskCreate; do
+# Ordinary tools are untouched. So are the Task-prefixed observe-or-stop
+# verbs, but not by exemption - TaskList/TaskGet/TaskOutput/TaskStop/
+# TaskUpdate/TaskCreate never shape-match at all (not exactly `Task`, no
+# `Agent`/`Workflow` substring), an accident of spelling. ListAgents DOES
+# shape-match (it contains `Agent`) and passes by a different mechanism: the
+# exact-name allowlist ahead of the shape test.
+for t in Bash Read Edit Write Grep TaskList TaskGet TaskOutput TaskStop TaskUpdate TaskCreate ListAgents; do
   assert_eq "$(hook "$primary" "$t")" "0" "$t must be allowed"
 done
 

@@ -14,13 +14,26 @@
 # unnoticed supervision downtime to exactly this. AGENTS.md section 1 already
 # forbids it in prose; this is the same rule with an enforcement point.
 #
-# SHAPE, NOT A LIST. A fixed deny list is fail-open against tools that ship
-# later, so the tool NAME is classified by shape: a non-MCP tool whose name is
-# exactly `Task`, or contains `Agent` or `Workflow`, creates delegated work.
-# Observe-or-stop names (TaskList, TaskGet, TaskOutput, TaskStop, TaskUpdate)
-# do NOT match - they inspect or end work, they never create it - and mcp__*
-# names are excluded outright: an MCP server's tools are the captain's own
-# integrations, not this harness's delegation surface.
+# TWO SIDES, TWO MECHANISMS, because the two directions fail at different
+# prices. CREATE side: classified by SHAPE, never a fixed list - a non-MCP
+# tool whose name is exactly `Task`, or contains `Agent` or `Workflow`,
+# creates delegated work. A deny list would be fail-open against a
+# create-tool that ships later: miss one and the whole supervision stack goes
+# inert for the rest of the session - a cost this project has actually paid
+# (two workers, 73 minutes). Most observe-or-stop names (TaskList, TaskGet,
+# TaskOutput, TaskStop, TaskUpdate) never reach this classifier at all - they
+# are not exactly `Task` and carry neither `Agent` nor `Workflow`, so the
+# shape simply does not match; that is an accident of spelling, not a rule
+# about observe verbs. The rare observe verb whose name DOES shape-match
+# (ListAgents, only because it contains `Agent`) is carved out by an
+# EXACT-NAME allowlist, checked before the shape test. That allowlist is
+# deliberately never a second shape rule: a `List*` exemption would
+# pre-authorize a future tool nobody has named yet. A shape-matching observe
+# verb NOT on the allowlist is DENIED - asymmetric on purpose, because
+# missing a create-tool is unsafe (supervision goes inert) while missing an
+# observe-tool is only ever degraded (a read gets blocked). mcp__* names are
+# excluded outright on both sides: an MCP server's tools are the captain's
+# own integrations, not this harness's delegation surface.
 #
 # SCOPE, three arms: (1) the FLEET HOME - physical cwd == physical AC_HOME. A
 # live home is a symlink-based dir, not a git checkout, so the git predicate
@@ -90,6 +103,7 @@ tool="$(jq -r '.tool_name // empty' <<<"$payload" 2>/dev/null || true)"
 case "$tool" in mcp__*) exit 0 ;; esac
 
 case "$tool" in
+  ListAgents) exit 0 ;;                # observe-only, exempted by EXACT name
   Task|*Agent*|*Workflow*) : ;;
   *) exit 0 ;;
 esac
