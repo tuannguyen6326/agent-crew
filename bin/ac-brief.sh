@@ -60,7 +60,8 @@
 # that layout; reads resolve across it through ac_room_file (bin/ac-lib.sh).
 #
 # Execution briefs (default, = --stage implement) tell one crewmate to own
-# IMPLEMENT plus DELIVERY on a `crew/<id>` branch. Scout briefs (--scout) tell
+# IMPLEMENT plus DELIVERY on a `crew/<id>` branch, plus a `report.md`
+# handback note (Lessons only) next to the brief. Scout briefs (--scout) tell
 # the crewmate to investigate and deliver ONLY a report.
 #
 # Normal production topology is direct execution, or staged design -> execution.
