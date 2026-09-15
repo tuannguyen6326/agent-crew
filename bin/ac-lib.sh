@@ -1720,7 +1720,7 @@ ac_task_stamps() {
   # A new stamp kind is added HERE, beside the ones it rides with.
   local sd="$1" tid="$2" b
   for b in hash change seen seen-hash stale gone ask unobservable \
-    report-hash superseded; do
+    report-hash superseded busy busy-stalled; do
     printf '%s/.%s-%s\n' "$sd" "$b" "$tid"
   done
 }
