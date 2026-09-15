@@ -1394,10 +1394,10 @@ assert_eq "$(lib "ac_crew_metas '$TMP/no-such-state-dir'")" "" "an absent dir pr
 # twice (.change-* orphans live, then .seen-hash-/.report-hash-/.superseded-
 # added with no reaper at all).
 stamps="$(lib "ac_task_stamps /sd tid1")"
-for b in hash change seen seen-hash stale gone ask unobservable report-hash superseded; do
+for b in hash change seen seen-hash stale gone ask unobservable report-hash superseded busy busy-stalled; do
   assert_contains "$stamps" "/sd/.$b-tid1" "stamp list carries .$b-<id>"
 done
-assert_eq "$(printf '%s\n' "$stamps" | wc -l | tr -d ' ')" "10" "exactly the ten stamp kinds, no strays"
+assert_eq "$(printf '%s\n' "$stamps" | wc -l | tr -d ' ')" "12" "exactly the twelve stamp kinds, no strays"
 
 # --- crewdomain routing table: a SECOND registry, disjoint from the deputy one
 # The crewdomain feature is ADDITIVE - records/crewdeputies.md and

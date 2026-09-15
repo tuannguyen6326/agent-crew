@@ -95,6 +95,38 @@
 # reaches either. So this is a CREWMATE net: a chief supervising a live crewmate
 # is quiet on this arm too, and SUPERVISING-CHIEF QUIET argues why.
 #
+# BUSY-STALL BOUND (code-reviewer-plugin-has-no-self-timeout). The arms above
+# all read a pane that has gone QUIET; a pane hung INSIDE one tool call is the
+# opposite and was invisible to every one of them. Its harness keeps rendering
+# the busy footer, so AC_BUSY_RE reads busy=1 and BOTH the artifact channel and
+# the stale/ended arm are gated off, while a footer that renders an elapsed
+# counter also rewrites the tail hash every poll, resetting .change-<id> and
+# clearing .stale-<id>. Two independent guards, each alone enough to make the
+# fleet read a hung crewmate as healthy - the live case was a delegated code
+# reviewer that returned neither findings nor an error for over an hour and
+# stopped only when a human noticed. So a busy RUN past AC_BUSY_MAX seconds
+# (default 2700, 0 disables) wakes on the existing `stale` reason with its own
+# message. The SAME bound the verifier arm already has (AC_PANE_STALL_MAX,
+# ac-pane-agent.sh), reached with the data this watcher already holds, because
+# ac-watch.sh reads no transcript and a transcript-shaped bound would cover only
+# the harnesses that write one.
+#
+# The clock is a run stamp written on the busy 0->1 edge, never .change-<id>:
+# defeating the footer guard alone still leaves the hash guard free to reset the
+# clock forever. It fires ONCE per run (.busy-stalled-<id>, the silent-anchor
+# discipline of the branches around it), and both files clear when the pane goes
+# non-busy, so the next run is bounded afresh.
+#
+# The one suppression is an UNEXPIRED busy declaration (chief_busy_declared):
+# ac-verify.sh and ac-gate.sh write it before entering one bounded synchronous
+# call of up to AC_VERIFY_TIMEOUT, well past this bound, so a roomchief in a
+# review round - and a crewmate running crew-verify - is legitimately blocked,
+# not stalled. It is bounded by construction and expires on its own. The two
+# CHIEF-QUIET predicates guarding the stale arm are deliberately NOT applied:
+# they exist to keep a QUIET supervising chief quiet, and a chief hung inside a
+# call is the case this arm exists to surface. Fail direction, chosen once and
+# stated: one extra wake per busy run, never silence.
+#
 # COMPLETION ALREADY REPORTED (stale-signal-costs-a-hard-wake). The one ended
 # turn that goes QUIET, not loud: a pane whose .seen-<id> holds an already-
 # reported chief-facing completion (done/failed/paused/merged - an AC_CAPTAIN_RE
@@ -671,7 +703,7 @@
 # LOUDLY (exit 2), since it blinds nothing real while masking a real misconfig
 # (2026-07-18: a drydock family named on the LAB singleton's skip).
 #
-# Knobs: AC_POLL=15 AC_HEARTBEAT=600 AC_STALE=240 AC_REMOTE_POLL
+# Knobs: AC_POLL=15 AC_HEARTBEAT=600 AC_STALE=240 AC_BUSY_MAX=2700 AC_REMOTE_POLL
 # AC_REMOTE_POLL_TIMEOUT=120 (one poll's ceiling; see HUNG POLL)
 # AC_CAPTAIN_RE AC_BUSY_RE AC_ARMLOG_KEEP=200 (arm-log trim floor;
 # AC_LOCK_STALE_GRACE=5 is ac-lib.sh's, and governs the reclaim above)
@@ -1318,6 +1350,16 @@ rearm_grace_active() {
   [ $(( now - since )) -le "${AC_GUARD_GRACE:-300}" ]
 }
 
+busy_family_of() {
+  # busy_family_of <id> - the FAMILY whose busy declaration covers <id>'s pane.
+  # A chief pane is `<fam>-chief`, which ac_family_of_id does not strip (chief is
+  # no stage), and ac-verify.sh/ac-gate.sh key the declaration by the bare family.
+  case "$1" in
+    *-chief) printf '%s\n' "${1%-chief}" ;;
+    *) ac_family_of_id "$1" 2>/dev/null || printf '%s\n' "$1" ;;
+  esac
+}
+
 chief_busy_declared() {
   # chief_busy_declared <fam> - 0 while <fam>'s roomchief has an UNEXPIRED busy
   # declaration: it is blocked inside ONE bounded synchronous call and cannot take
@@ -1553,6 +1595,7 @@ marker_seen() {
 check_fleet() {
   # One poll pass. Prints an exit reason and returns 0 when actionable.
   local meta id tail hash prev marker seen seen_hash seen_now idle changed_file skip_fam
+  local busy_file busy_age
   local task_dir report rhash sup alive_rc busy wait_file
   # DELIBERATELY does NOT branch on ac_meta_is_verify. A verification agent is
   # excluded from ACCOUNTING (ac_chief_child_live, and the ac-room/
@@ -1712,6 +1755,17 @@ check_fleet() {
     # for the rest of this pass, so re-forking grep against the same input on
     # every branch that needs it is pure waste.
     if grep -qE "$AC_BUSY_RE" <<<"$tail"; then busy=1; else busy=0; fi
+    # BUSY-STALL BOUND (contract: the header block of the same name). The run is
+    # stamped on the 0->1 edge and cleared on the way back. DELIBERATELY not read
+    # off .change-<id>: that clock is reset a few lines down by ANY tail change,
+    # and a harness footer rendering an elapsed counter changes the tail every
+    # poll, so a bound reading it could never accumulate.
+    busy_file="$state_dir/.busy-$id"
+    if [ "$busy" = 1 ]; then
+      [ -e "$busy_file" ] || printf '%s\n' "$(ac_now)" >"$busy_file"
+    else
+      rm -f "$busy_file" "$state_dir/.busy-stalled-$id"
+    fi
     hash="$(printf '%s' "$tail" | cksum | awk '{print $1}')"
     prev="$(cat "$state_dir/.hash-$id" 2>/dev/null || true)"
     changed_file="$state_dir/.change-$id"
@@ -1864,6 +1918,24 @@ check_fleet() {
         printf '%s\n' "$rhash" >"$state_dir/.report-hash-$id"
         queue_wake report "$id" "report.md ready at $report (artifact channel)"
         printf 'report:%s\n' "$id"
+        return 0
+      fi
+    fi
+
+    # BUSY-STALL BOUND (contract: the header block of the same name): busy is
+    # evidence of a process, never of progress. Checked BEFORE the marker
+    # `continue` below, so a pane still showing an already-deduped marker is
+    # bounded too - the arm exists to end silence, so it is placed where silence
+    # cannot route around it.
+    if [ "$busy" = 1 ] && [ "${AC_BUSY_MAX:-2700}" -gt 0 ] \
+      && [ ! -e "$state_dir/.busy-stalled-$id" ] \
+      && ! chief_busy_declared "$(busy_family_of "$id")"; then
+      busy_age=$(( $(ac_now) - $(cat "$busy_file" 2>/dev/null || ac_now) ))
+      if [ "$busy_age" -ge "${AC_BUSY_MAX:-2700}" ]; then
+        touch "$state_dir/.busy-stalled-$id"
+        ac_status_append "$id" "busy but stalled: ${busy_age}s inside one call with no turn end"
+        queue_wake stale "$id" "busy for ${busy_age}s with no turn end - the pane may be hung inside a single call"
+        printf 'stale:%s\n' "$id"
         return 0
       fi
     fi

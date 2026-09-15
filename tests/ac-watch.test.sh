@@ -1641,7 +1641,7 @@ reset_state() {
     "$state"/.unobservable-* \
     "$state"/.report-hash-* "$state"/.superseded-* \
     "$state"/.last-watcher-beat* "$state"/.skip-revoked-* "$state"/.skip-stale-since-* \
-    "$state"/.chief-busy-until* \
+    "$state"/.chief-busy-until* "$state"/.busy-* "$state"/.busy-stalled-* \
     "$state"/.watcher-arm.log \
     "$state"/.watcher-config* "$state"/.session-lock "$state"/.watcher-owner
   rm -rf "$state"/.wake-spool* "$state/.watch.lock.d"
@@ -3296,6 +3296,96 @@ case "$resumed_line" in
   *) fail "a genuine resume after the mask clears must append the honest idle/working line, got: $resumed_line" ;;
 esac
 rm -rf "$state"/.wake-spool*
+
+# --- BUSY-STALL BOUND: busy is evidence of a process, never of progress ------
+# The defect (code-reviewer-plugin-has-no-self-timeout): a crewmate blocked
+# inside ONE tool call keeps rendering its busy footer, so the busy predicate
+# reads 1 forever and BOTH the artifact channel and the stale/ended arm are
+# gated off - the pane wakes nobody for as long as it hangs, which is how a
+# delegated reviewer that returned neither findings nor an error sat unnoticed
+# for over an hour. The VERIFIER arm already bounds this class
+# (AC_PANE_STALL_MAX, ac-pane-agent.sh); the CREWMATE arm had nothing.
+reset_state
+rm -f "$state"/*.status
+rm -rf "$state"/.wake-spool*
+
+mkdir -p "$AC_HOME/data/bs-hung"
+printf 'window=crew:bs-hung\nbackend=herdr\n' >"$state/bs-hung.meta"
+seed_pane bs-hung pBSH tBSH
+printf 'Working… (esc to interrupt)\n' >>"$(fake_pane_buf bs-hung)"
+printf 'working\n' >"$FAKE_HERDR/panes/pBSH.status"
+
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *bs-hung*) fail "a freshly-busy pane must not wake" ;; esac
+assert_file "$state/.busy-bs-hung" "a busy pane opens a busy-run stamp"
+
+# THE POINT OF THE WHOLE PATCH: rewind the BUSY stamp past the bound while the
+# .change stamp stays FRESH - a ticking footer rewrites the tail hash every
+# poll, so a bound reading the hash clock would still be silent right here.
+printf '%s\n' "$(( $(date +%s) - 3000 ))" >"$state/.busy-bs-hung"
+printf '%s\n' "$(date +%s)" >"$state/.change-bs-hung"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:bs-hung" \
+  "a pane busy past the bound wakes even with a fresh change stamp"
+assert_contains "$(fleet_spool)" "busy" "the busy-stall wake publishes durably"
+rm -rf "$state"/.wake-spool*
+
+# ONCE per busy run: the anchor holds even though the pane is still busy and
+# still past the bound.
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *bs-hung*) fail "the busy-stall wake must fire once per busy run, not every poll" ;; esac
+assert_eq "$(fleet_spool)" "" "no second durable record for the same busy run"
+
+# A CHANGING tail does not re-arm it either - the anchor is keyed to the busy
+# run, not to the pane text (the hash clock is exactly what cannot be trusted).
+printf 'Working… (esc to interrupt) 42s\n' >>"$(fake_pane_buf bs-hung)"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *bs-hung*) fail "a redrawn busy footer must not re-fire the busy-stall wake" ;; esac
+
+# The run ENDS when the pane goes non-busy: both files clear, so the next busy
+# run is bounded afresh.
+: >"$(fake_pane_buf bs-hung)"
+printf 'comparing candidate paths\n' >>"$(fake_pane_buf bs-hung)"
+bash "$BIN/ac-watch.sh" --once >/dev/null
+assert_no_file "$state/.busy-bs-hung" "the busy-run stamp clears when the pane stops being busy"
+assert_no_file "$state/.busy-stalled-bs-hung" "the busy-stall anchor clears with its run"
+rm -rf "$state"/.wake-spool*
+
+# 0 disables the bound outright.
+: >"$(fake_pane_buf bs-hung)"
+printf 'Working… (esc to interrupt)\n' >>"$(fake_pane_buf bs-hung)"
+AC_BUSY_MAX=0 bash "$BIN/ac-watch.sh" --once >/dev/null
+printf '%s\n' "$(( $(date +%s) - 3000 ))" >"$state/.busy-bs-hung"
+out="$(AC_BUSY_MAX=0 bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *bs-hung*) fail "AC_BUSY_MAX=0 must disable the bound" ;; esac
+rm -rf "$state"/.wake-spool*
+
+# A DECLARED busy window suppresses it. ac-verify.sh and ac-gate.sh write this
+# file before entering one bounded synchronous call (up to AC_VERIFY_TIMEOUT,
+# well past this bound), so a roomchief in a review round - and a crewmate
+# running crew-verify on its own family - is legitimately busy, not stalled.
+reset_state
+rm -rf "$state"/.wake-spool*
+mkdir -p "$AC_HOME/data/bs-decl"
+printf 'window=crew:bs-decl\nbackend=herdr\n' >"$state/bs-decl.meta"
+seed_pane bs-decl pBSD tBSD
+printf 'Working… (esc to interrupt)\n' >>"$(fake_pane_buf bs-decl)"
+printf 'working\n' >"$FAKE_HERDR/panes/pBSD.status"
+bash "$BIN/ac-watch.sh" --once >/dev/null
+printf '%s\n' "$(( $(date +%s) - 3000 ))" >"$state/.busy-bs-decl"
+printf '%s\n' "$(( $(date +%s) + 300 ))" >"$state/.chief-busy-until.bs-decl"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *bs-decl*) fail "a declared busy window must suppress the busy-stall wake" ;; esac
+
+# The declaration EXPIRES on its own, and the bound takes over again.
+printf '%s\n' "$(( $(date +%s) - 1 ))" >"$state/.chief-busy-until.bs-decl"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:bs-decl" "an expired declaration no longer suppresses the bound"
+rm -rf "$state"/.wake-spool*
+
+reset_state
+rm -f "$state"/*.status
+
 
 reset_state
 rm -f "$state"/*.status
