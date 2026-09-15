@@ -941,7 +941,15 @@ oneshot_launch() {
     #     prompt for, and the run then produces no output. It removes the
     #     prompt, not the plan-mode boundary, which is what the two write
     #     probes above establish.
-    agy)      printf 'agy --mode plan --dangerously-skip-permissions%s -p\n' "${2:+ --model \"$2\"}" ;;
+    #   - `--print-timeout` is agy's OWN wait ceiling in print mode, default
+    #     5m0s (`agy --help`, 2026-09-15), and it is not an error path: past
+    #     it the CLI prints "[agy] print timeout after 5m0s with turn in
+    #     progress; returning partial output" to stderr and exits 0 with an
+    #     EMPTY stdout, which this rung then refuses as "printed nothing" -
+    #     11 of 36 agy scout lanes in one home died that way under a 900s
+    #     budget. The rung's TIMEOUT is the one ceiling, handed over in the
+    #     Go duration form the CLI reads.
+    agy)      printf 'agy --mode plan --dangerously-skip-permissions%s --print-timeout %ss -p\n' "${2:+ --model \"$2\"}" "$TIMEOUT" ;;
     *) return 1 ;;
   esac
 }

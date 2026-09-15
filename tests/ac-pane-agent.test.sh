@@ -1284,11 +1284,17 @@ assert_contains "$(cat "$XLOG")" "-c model_reasoning_summary=auto" \
 # positional prompt is ignored in favour of a flag; and the model name carries
 # spaces, so it must be quoted or the tier in its name becomes a stray word.
 : >"$HDLOG"; : >"$HDLOG.cmd"; : >"$XLOG"
-xrun --exec --harness agy --kind gate --label gagy --model 'Gemini 3.8 Flash (Low)' >/dev/null
+xrun --exec --harness agy --kind gate --label gagy --model 'Gemini 3.8 Flash (Low)' --timeout 900 >/dev/null
 agy_cmd="$(cat "$XLOG" 2>/dev/null || true)"
 assert_contains "$agy_cmd" "agy --mode plan" "the read-only boundary rides every agy one-shot"
 assert_contains "$agy_cmd" "--dangerously-skip-permissions" "...alongside the flag without which a headless turn reads nothing"
 assert_contains "$agy_cmd" "--model Gemini 3.8 Flash (Low)" "the model name reaches agy whole, spaces and all"
+# agy's print mode has its OWN wait ceiling (--print-timeout, default 5m0s)
+# that ran out under the rung's 900s budget: the CLI then exits 0 with an
+# EMPTY stdout, and the rung reads that as "printed nothing" - 11 of 36 agy
+# lanes across the lab home died that way. The rung's timeout is the one
+# ceiling, so it is handed to agy in the duration form the CLI reads.
+assert_contains "$agy_cmd" "--print-timeout 900s" "agy's print-mode ceiling is the rung's own timeout, never the CLI's 5m default"
 # The stub logs every argument EXCEPT the last, which is the prompt - so a
 # line ending in -p is the proof that -p sat last and took that prompt.
 case "$agy_cmd" in *" -p") ;; *) fail "agy's -p must be LAST, taking the caller's prompt: $agy_cmd" ;; esac
