@@ -1039,6 +1039,187 @@ assert_no_file "$state/.watch-only-ep.lock.d" "the epic scoped watcher releases 
 rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat* \
   "$state/.watcher-arm.log"
 
+# --- a poll that HANGS is not a poll that DIED -------------------------------
+# The twin of the DIED block above, and it sits HERE only because it needs
+# dead_within: a watcher with no ceiling never returns, so an honest red would
+# hang the suite instead of failing it.
+# check_remote runs between the beacon at the top of the loop and the poll wait
+# at the bottom, so a transport hook that never returns freezes the whole loop
+# with nothing on any channel - no beat, no pane pass, no heartbeat, no reason
+# line - and the beacon aging out then reports the OPPOSITE of the truth
+# ("WATCHER-DOWN", i.e. dead) about a watcher that is alive and blocked.
+# The ceiling has to be the DISTRO'S: config/remote-poll is the captain's own
+# file, and a home whose transport is a python script or a curl with no
+# --max-time carries no bound at all.
+rm -f "$state"/*.meta "$state"/.last-watcher-beat* "$state/.watcher-arm.log"
+rm -rf "$state"/.wake-spool* "$state/remote-inbox"
+rm -f "$state/.remote-poll-failed" "$state/.remote-poll-timeout"
+hook="$AC_HOME/config/remote-poll"
+hangpid="$TMP/hang-hook.pid"
+hangkid="$TMP/hang-hook.child"
+hangout="$TMP/remote-hang.out"
+hangerr="$TMP/remote-hang.err"
+
+hang_hook() {
+  # hang_hook - a transport hook that NEVER RETURNS, recording its own pid and
+  # that of the child standing in for its curl. Those two pids are what prove
+  # the reap: killing ac-remote.sh alone leaves both alive under ppid=1.
+  rm -f "$hangpid" "$hangkid"
+  cat >"$hook" <<EOF
+#!/bin/sh
+echo \$\$ >"$hangpid"
+sleep 900 &
+echo \$! >"$hangkid"
+wait
+EOF
+  chmod +x "$hook"
+}
+orphan_hook() {
+  # orphan_hook - the OTHER hang shape: the hook prints an order, forks a child
+  # that INHERITS its stdout, and exits 0 at once. The hook is gone, so no bound
+  # on the hook's runtime can see this; what wedges is the capture reading that
+  # stdout to EOF, which the surviving child holds open.
+  rm -f "$hangpid" "$hangkid"
+  cat >"$hook" <<EOF
+#!/bin/sh
+printf '{"rid":"hs1","text":"go","author":"cap","thread":"1.1"}\n'
+echo \$\$ >"$hangpid"
+sleep 900 &
+echo \$! >"$hangkid"
+exit 0
+EOF
+  chmod +x "$hook"
+}
+reap_hang() {
+  # reap_hang - the test's own backstop before any fail(): there is no
+  # timeout(1) on this host, so an honest red must not leave a 900s sleep behind.
+  local p
+  for p in "$(cat "$hangpid" 2>/dev/null || true)" "$(cat "$hangkid" 2>/dev/null || true)"; do
+    [ -n "$p" ] || continue
+    kill -9 "$p" 2>/dev/null || true
+  done
+}
+watch_hang() {
+  # watch_hang <ceiling> <heartbeat> - one armed fleet watcher over the wired
+  # hook, BOUNDED by dead_within rather than by trust: the run is backgrounded
+  # and has to die on its own. Prints the exit reason.
+  : >"$hangout"; : >"$hangerr"
+  AC_LOCK_PID=$$ AC_REMOTE_POLL_TIMEOUT="$1" AC_REMOTE_POLL=1 AC_POLL=1 \
+    AC_HEARTBEAT="$2" bash "$BIN/ac-watch.sh" >"$hangout" 2>"$hangerr" &
+  hangwpid=$!
+  if ! dead_within "$hangwpid" 30; then
+    kill -9 "$hangwpid" 2>/dev/null || true
+    wait "$hangwpid" 2>/dev/null || true
+    reap_hang
+    fail "the watcher never escaped a transport hook that does not return - the poll call path carries no upper bound of its own"
+  fi
+  wait "$hangwpid" 2>/dev/null || true
+  cat "$hangout"
+}
+
+# The hook never returns: the loop must escape it, and say so on a channel that
+# is ALREADY read - the exit reason line ac-watch-autoarm.sh hands back on its
+# catch-all arm, and a durable wake ac-wake-drain.sh renders whatever the kind.
+hang_hook
+out="$(watch_hang 2 9)"
+assert_contains "$out" "remote-timeout:" "a hook that never returns must end the POLL, never the watcher"
+case "$out" in *remote-failed:*) fail "a TIMED-OUT poll is a different fault from a DEAD one and must not wear its prefix" ;; esac
+assert_contains "$(cat "$hangerr")" "remote poll TIMED OUT" "the arm log carries the timeout too"
+
+# REAPING: the kill must reach what the hook forked, not just ac-remote.sh -
+# an orphan holding the capture open is the same wedge at ppid=1.
+hp="$(cat "$hangpid" 2>/dev/null || true)"
+hk="$(cat "$hangkid" 2>/dev/null || true)"
+[ -n "$hp" ] && [ -n "$hk" ] || fail "the hung hook never ran, so nothing here was measured"
+dead_within "$hp" 5 || { reap_hang; fail "a killed poll must reap the transport hook itself"; }
+dead_within "$hk" 5 || { reap_hang; fail "and everything the hook forked - the hook's own curl children leak once per interval otherwise"; }
+
+drained="$("$BIN/ac-wake-drain.sh")"
+assert_contains "$drained" "remote-timeout captain" "the timeout reaches the chief's own drain, as its own wake kind"
+assert_contains "$drained" "exceeded 2s" "and the wake names the ceiling it blew through, so the reader can judge it"
+
+# The bound's own wait must stay OUT of ac_watcher_nudge's blast radius. That
+# nudge kills the first `sleep` that is a DIRECT CHILD of the watcher, so a bare
+# sleep inside the ceiling would swallow a push's nudge and let ac-done.sh report
+# a poll wait ended early that had not started - and under the wedged transport
+# this bound exists for, that window is most of the interval.
+hang_hook
+: >"$hangout"; : >"$hangerr"
+AC_LOCK_PID=$$ AC_REMOTE_POLL_TIMEOUT=6 AC_REMOTE_POLL=1 AC_POLL=1 \
+  AC_HEARTBEAT=30 bash "$BIN/ac-watch.sh" >"$hangout" 2>"$hangerr" &
+hangwpid=$!
+nudged=""
+for _ in $(seq 1 400); do
+  # Sync on the CONDITION: the hook having written its pid is the proof this
+  # watcher is inside the poll, which is the only moment worth nudging at.
+  if [ -s "$hangpid" ]; then
+    nudged="$(bash -c ". '$BIN/ac-lib.sh'; . '$BIN/ac-wake-lib.sh'; ac_watcher_nudge '$state' ''" 2>/dev/null || true)"
+    break
+  fi
+  sleep 0.05
+done
+[ -n "$nudged" ] || { kill -9 "$hangwpid" 2>/dev/null || true; reap_hang; fail "the watcher never reached its poll, so the nudge was never measured"; }
+assert_contains "$nudged" "nothing to nudge" "a watcher inside the bounded poll answers a nudge honestly - the bound's wait must not pass for the poll wait"
+
+# on_signal is the ONE way out that skips every reap check_remote does itself,
+# so it has to carry the guarantee: a watcher TERMed mid-poll must not leave the
+# transport hook and its children behind.
+hp="$(cat "$hangpid" 2>/dev/null || true)"
+hk="$(cat "$hangkid" 2>/dev/null || true)"
+[ -n "$hp" ] && [ -n "$hk" ] || fail "the hung hook never ran, so nothing here was measured"
+kill -TERM "$hangwpid" 2>/dev/null || true
+dead_within "$hangwpid" 10 || { kill -9 "$hangwpid" 2>/dev/null || true; reap_hang; fail "a TERM must still reach the watcher while it is inside the bounded poll"; }
+wait "$hangwpid" 2>/dev/null || true
+dead_within "$hp" 5 || { reap_hang; fail "a watcher signalled mid-poll must reap the transport hook on its way out"; }
+dead_within "$hk" 5 || { reap_hang; fail "and what the hook forked, or a --release mid-poll leaks the tree it was holding"; }
+case "$(ls "$state"/.remote-poll.out.* "$state"/.remote-poll.err.* 2>/dev/null)" in
+  ?*) reap_hang; fail "a watcher signalled mid-poll must sweep its capture files too - on_signal reaches neither of check_remote's own removals" ;;
+esac
+reap_hang
+
+# The watcher is the fleet's EYES: after the ceiling fires the loop must still
+# beat - `heartbeat` is only reachable by completing further passes. And a
+# persistently hung transport must not put the chief on a wake treadmill.
+# Deliberately NO episode reset: the marker the first timeout left is what the
+# second poll must read.
+hang_hook
+out="$(watch_hang 2 9)"
+assert_contains "$out" "heartbeat" "a repeat timeout neither kills the loop nor exits it - the watcher keeps beating"
+case "$(fleet_spool)" in *remote-timeout*) fail "one timeout episode queues one wake, not one per poll interval" ;; esac
+assert_contains "$(cat "$hangerr")" "TIMED OUT again, same episode" "the repeat still leaves its trail in the arm log"
+reap_hang
+
+# A poll that COMPLETES is the proof the fault is over, and it re-arms the loud
+# channel for the next episode - the same latch the DIED path uses.
+cat >"$hook" <<'EOF'
+#!/bin/sh
+printf '{"rid":"ht1","text":"go","author":"cap","thread":"1.1"}\n'
+EOF
+chmod +x "$hook"
+out="$(watch_hang 5 6)"
+assert_contains "$out" "remote:ht1" "a healthy poll after a timed-out one still works - the bound jammed nothing"
+assert_contains "$("$BIN/ac-wake-drain.sh")" "remote-order ht1" "and its order is queued as always"
+hang_hook
+out="$(watch_hang 2 9)"
+assert_contains "$out" "remote-timeout:" "a completed poll ends the episode, so the next timeout is loud again"
+reap_hang
+
+# THE OTHER HANG SHAPE: the hook EXITS, and a child it forked keeps the capture
+# open. A bound on the hook's own runtime cannot see this one - the hook is
+# already gone - so the ceiling has to sit on the whole call path.
+rm -f "$state/.remote-poll-timeout"; rm -rf "$state"/.wake-spool*
+orphan_hook
+out="$(watch_hang 2 9)"
+assert_contains "$out" "remote-timeout:" "a hook that exits while a child holds its stdout wedges the capture just as hard"
+hk="$(cat "$hangkid" 2>/dev/null || true)"
+[ -n "$hk" ] || fail "the orphan-shape hook never ran"
+dead_within "$hk" 5 || { reap_hang; fail "the orphan holding the capture open must be reaped too - it survives its own parent"; }
+reap_hang
+
+rm -f "$hook" "$state/.remote-poll-failed" "$state/.remote-poll-timeout" "$state/.watcher-arm.log"
+rm -rf "$state"/.wake-spool* "$state/remote-inbox"
+rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat*
+
 # --- owner-marked release (behavior: watcher-owner-term-quiet) --------------
 # Every TERM used to read `watcher killed externally`, whatever the sender - so
 # the OWNER'S OWN config-swap release (read the live watcher's pid, TERM it,

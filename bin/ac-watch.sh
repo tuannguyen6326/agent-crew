@@ -319,7 +319,10 @@
 # (new remote captain orders arrived), `remote-failed:<last-rid|none>` (the poll
 # DIED mid-ingest and abandoned the rest of the batch - the named rid is the
 # last one that landed, so re-sending starts after it; see FAILED POLL under the
-# Remote-order slot below), `heartbeat`, `signal:<NAME>` (a TERM/INT
+# Remote-order slot below), `remote-timeout:<last-rid|none>` (the poll blew
+# through its ceiling and was killed - a WEDGED transport, not a dead spool, and
+# a different prefix precisely so the reader can tell the two apart; see HUNG
+# POLL below), `heartbeat`, `signal:<NAME>` (a TERM/INT
 # - either the owner's own `--release`, see OWNER-MARKED RELEASE, or a kill
 # from outside, see EXTERNAL KILLS; the reason text says which). Every one of
 # them exits 0: the reason line, not the exit status, is the payload the chief
@@ -471,6 +474,64 @@
 # durable half is lost - queue_wake's own contract below governs that case, so
 # the loss is logged loudly and the reason line still carries the death.
 #
+# HUNG POLL (a-hung-transport-hook-wedges-the-whole-watcher-loop). A poll that
+# DIES gets the two channels above; a poll that NEVER RETURNS used to get
+# nothing at all. check_remote sits between the beacon at the top of this loop
+# and the poll wait at the bottom, so everything that proves this watcher alive
+# is either before it (and stops being refreshed) or after it (and never runs):
+# a wedged transport froze the whole loop in silence, and the only thing anyone
+# eventually saw was the beacon ageing past AC_GUARD_GRACE - reported as
+# WATCHER-DOWN, the exact opposite of the truth about a watcher that is alive
+# and blocked.
+# THE CEILING IS THE DISTRO'S, and that is the point: config/remote-poll is the
+# captain's own transport, a file this distro neither ships nor tests, so a home
+# whose hook is a python script or a curl without --max-time carries no bound at
+# all. AC_REMOTE_POLL_TIMEOUT env > config/remote-poll-timeout > 120s
+# (remote_poll_timeout). The arithmetic behind 120, measured on this fleet's own
+# hook and host: a HEALTHY poll costs ~0.42s per API call over 1 + live-families
+# + min(roomless,10) calls - ~6s today, ~13s at twenty live families - while the
+# pathological case is 15s per call, a 36x spread that leaves a constant plenty
+# of room. The upper limit is the beacon gap, which must stay under
+# AC_GUARD_GRACE (300s) or the turn-end guard blocks the chief's turn demanding
+# it arm a watcher that is already running: ceiling + pane pass + AC_POLL = 120
+# + ~0 + 15 = ~135s, 45% of the grace. RESIDUAL, stated rather than hidden: that
+# leaves the gap bounded only as far as this loop is - check_fleet's backend
+# RPCs carry no timeout at any layer, so a wedged backend still opens the gap
+# without limit. Bounding the poll fixes the half that is measurable here.
+# WHAT A KILL COSTS is a property of the TRANSPORT, not of this distro, so this
+# header claims only what it owns: the rids ac-remote.sh had already stashed AND
+# published keep their own wakes, and the ceiling costs those nothing. Everything
+# the poll had NOT yet handed over is the hook's business - cmd_poll reads the
+# hook's whole stdout before ingesting a single line, so a hook that advances its
+# own read cursor as it EMITS loses what the kill interrupts, while one that
+# commits only at the end re-delivers the lot next interval (the shipped Slack
+# example is the latter - commit_pending in docs/examples/slack-remote/
+# remote-poll). A transport that cannot be re-read is one whose fleet must size
+# config/remote-poll-timeout for its own worst poll.
+# RESIDUAL THIS BOUND CREATES, named because it is new: ingest_stream commits an
+# order in two steps, the stash then its wake, and says of the gap "A death
+# BETWEEN the two is not covered and cannot be from here" (bin/ac-remote.sh:284).
+# A ceiling kill CAN now be from here. One landing in that gap leaves a stash
+# with no wake, and the stash is also the dedup sign, so that rid is silently
+# burned. The gap is microseconds per rid against a ceiling of seconds, and what
+# it replaces is a watcher wedged for ever - but closing it belongs to
+# ingest_stream's own commit ordering, not to this bound.
+# SIZING THE KNOB: keep ceiling + AC_POLL under AC_GUARD_GRACE. Above that a
+# wedged poll re-opens the very beacon gap the guard reads, and the chief is
+# blocked at its turn end to arm a watcher that is already running - the exact
+# false report this bound exists to kill. Deliberately NOT clamped: serving a
+# value the captain did not write is the other half of that same defect.
+# THE REAP IS THE PROCESS GROUP, not the pid: a kill aimed at ac-remote.sh alone
+# leaves the hook and its curl children alive under ppid=1 (measured), so the
+# launch runs under `set -m` to make the job its own group leader and the kill
+# is TERM, grace, KILL over the negative pid. check_remote reaps on every path
+# it returns through and on_signal reaps the one path that skips them all.
+# ONE DURABLE WAKE PER EPISODE here too, on its OWN latch
+# (state/.remote-poll-timeout): a wedged transport and an unwritable spool are
+# different faults with different remedies, and one shared latch would leave
+# whichever arrived second silent for as long as the first stood. A poll that
+# COMPLETES clears both.
+#
 # IDLE MODE (standing remote coverage): zero crew in flight is NOT an exit
 # condition. With the remote slot live (interval on, executable
 # config/remote-poll hook, and this watcher passing the lock gate above),
@@ -611,6 +672,7 @@
 # (2026-07-18: a drydock family named on the LAB singleton's skip).
 #
 # Knobs: AC_POLL=15 AC_HEARTBEAT=600 AC_STALE=240 AC_REMOTE_POLL
+# AC_REMOTE_POLL_TIMEOUT=120 (one poll's ceiling; see HUNG POLL)
 # AC_CAPTAIN_RE AC_BUSY_RE AC_ARMLOG_KEEP=200 (arm-log trim floor;
 # AC_LOCK_STALE_GRACE=5 is ac-lib.sh's, and governs the reclaim above)
 # AC_CAPTAIN_RE (env-overridable; default defined in ac-lib.sh, which is the
@@ -952,6 +1014,49 @@ release_note() {
   printf '%s by owner (released by pid=%s)\n' "${reason:-release}" "${releaser:-unknown}"
 }
 
+quiet_sleep() {
+  # quiet_sleep <secs> - a wait ac_watcher_nudge cannot mistake for THE poll
+  # wait. That nudge kills the first `sleep` that is a DIRECT CHILD of this pid
+  # (ac-wake-lib.sh), so a bare `sleep` inside the poll's bound would eat a
+  # push's nudge and let ac-done.sh report a watcher nudged early that is in
+  # fact still mid-poll - and under a wedged transport that window is most of
+  # the interval, exactly when supervision matters most. The brace group puts a
+  # shell in between, so the sleep is a GRANDchild and no longer matches
+  # (measured on this host); `wait` keeps a TERM firing at once, the same
+  # reason poll_wait backgrounds its own sleep.
+  { sleep "$1"; } &
+  wait $! 2>/dev/null || true
+}
+
+poll_pid=""
+poll_outfile=""
+poll_errfile=""
+reap_poll() {
+  # reap_poll - end the bounded poll and everything it forked, or nothing when
+  # none is in flight. The process GROUP, not the pid: a kill aimed at
+  # ac-remote.sh alone leaves the transport hook and the curl children it
+  # forked alive under ppid=1, still holding the capture open (measured), so a
+  # hung transport would leak a tree per interval. `set -m` at the launch is
+  # what makes that group addressable - a backgrounded job becomes its own
+  # group leader - so the negative pid reaches the whole tree and never this
+  # watcher, whose own group is a different one.
+  [ -n "$poll_pid" ] || return 0
+  kill -TERM -"$poll_pid" 2>/dev/null || true
+  quiet_sleep 1
+  kill -KILL -"$poll_pid" 2>/dev/null || true
+  wait "$poll_pid" 2>/dev/null || true
+  poll_pid=""
+}
+
+drop_poll_files() {
+  # drop_poll_files - remove the bounded poll's capture files. check_remote does
+  # its own once it has read them; this exists for on_signal, the one exit that
+  # reaches neither, and which reap_poll made an explicitly supported path.
+  [ -z "$poll_outfile" ] || rm -f "$poll_outfile" 2>/dev/null || true
+  [ -z "$poll_errfile" ] || rm -f "$poll_errfile" 2>/dev/null || true
+  poll_outfile=""; poll_errfile=""
+}
+
 sleep_pid=""
 on_signal() {
   # on_signal <NAME> - a TERM/INT from outside this process (see the header).
@@ -965,6 +1070,12 @@ on_signal() {
   local sig="$1" note
   trap - TERM INT                       # never re-enter on a second signal
   if [ -n "$sleep_pid" ]; then kill "$sleep_pid" 2>/dev/null || true; fi
+  # The GUARANTEED half of the poll's reap: check_remote reaps its own job on
+  # every path it returns through, and a signal is the only way out that skips
+  # them all. Without this a --release mid-poll would orphan the transport hook
+  # and its curl children, which is the leak the bound exists to prevent.
+  reap_poll
+  drop_poll_files
   note="$(release_note)" || note="watcher killed externally"
   watch_log "signal:$sig pid=$$ target=$poll_target - $note"
   printf 'signal:%s pid=%s target=%s - %s, lock released; re-arm to restore coverage\n' \
@@ -1234,6 +1345,19 @@ remote_poll_interval() {
   printf '%s\n' "$iv"
 }
 
+remote_poll_timeout() {
+  # remote_poll_timeout - seconds one `ac-remote.sh poll` may run before this
+  # watcher kills it (see HUNG POLL in the header). Resolution: the same ladder
+  # remote_poll_interval takes - AC_REMOTE_POLL_TIMEOUT env >
+  # config/remote-poll-timeout > 120. Anything that is not a positive integer
+  # falls back to the default rather than turning the bound off: the ceiling is
+  # what keeps the loop alive, so there is deliberately no `0 = never`.
+  local t="${AC_REMOTE_POLL_TIMEOUT:-}"
+  [ -n "$t" ] || t="$(ac_config_read remote-poll-timeout "")"
+  case "$t" in ''|*[!0-9]*|0) t=120 ;; esac
+  printf '%s\n' "$t"
+}
+
 remote_poll_allowed() {
   # Lock gate (see header): fleet-scoped watcher only, and this home's
   # recorded watcher owner must BE the session-lock holder - so exactly one
@@ -1269,20 +1393,82 @@ check_remote() {
   # `2>/dev/null`. A fixed path rather than cmd_poll's `mktemp`: an mktemp that
   # failed would leave the redirect target empty, and a redirect that cannot
   # open makes the poll read as DEAD without ever running it.
-  local out err rc=0 first last detail errfile marker="$state_dir/.remote-poll-failed"
-  errfile="$state_dir/.remote-poll.err.$$"
+  local out err rc=0 first last detail errfile outfile ceiling began timed_out=0
+  local marker="$state_dir/.remote-poll-failed" tmarker="$state_dir/.remote-poll-timeout"
+  # Module-level too (drop_poll_files), so a signal mid-poll sweeps them.
+  poll_errfile="$state_dir/.remote-poll.err.$$"
+  poll_outfile="$state_dir/.remote-poll.out.$$"
+  errfile="$poll_errfile"
+  outfile="$poll_outfile"
   : >"$errfile" 2>/dev/null || errfile=/dev/null
-  out="$("$(dirname "$0")/ac-remote.sh" poll 2>"$errfile")" || rc=$?
+  : >"$outfile" 2>/dev/null || outfile=/dev/null
+  ceiling="$(remote_poll_timeout)"
+  # A FILE, not a command substitution, and a BACKGROUND job, not a foreground
+  # one - the two halves of the bound, each answering a different hang.
+  # `$(...)` reads until EOF on the pipe rather than until the child exits, so
+  # a hook that exits cleanly while a child of its OWN still holds stdout wedges
+  # the capture for as long as that child lives (measured: 6.6s against the
+  # child's 0.01s exit, and for ever if the child is). Writing to a file makes
+  # the poll's end the poll's own exit, which a bounded wait can judge - and the
+  # partial output is on disk either way, so a killed poll can still name the
+  # last rid that landed. Backgrounding is what gives us a pid to judge at all,
+  # and parking in `wait`/`quiet_sleep` rather than a foreground child is what
+  # keeps the TERM trap firing in milliseconds (measured: a foreground child
+  # defers it for its whole remaining runtime).
+  set -m
+  "$(dirname "$0")/ac-remote.sh" poll >"$outfile" 2>"$errfile" &
+  poll_pid=$!
+  set +m
+  began=$SECONDS
+  while kill -0 "$poll_pid" 2>/dev/null; do
+    if [ $(( SECONDS - began )) -ge "$ceiling" ]; then timed_out=1; break; fi
+    # 0.2s, ac-sync.sh's fetch_bounded granularity, not 1s: `kill -0` right
+    # after the fork is always true, so EVERY poll pays at least one tick -
+    # and --once is the chief's own foreground checkpoint, which would wear it
+    # whole.
+    quiet_sleep 0.2
+  done
+  if [ "$timed_out" = 1 ]; then
+    reap_poll
+    rc=124
+  else
+    wait "$poll_pid" 2>/dev/null || rc=$?
+    poll_pid=""
+  fi
+  out="$(cat "$outfile" 2>/dev/null || true)"
   err="$(tail -n 1 "$errfile" 2>/dev/null || true)"
   [ "$errfile" = /dev/null ] || rm -f "$errfile"
+  [ "$outfile" = /dev/null ] || rm -f "$outfile"
+  poll_outfile=""; poll_errfile=""
   last="$(printf '%s\n' "$out" | awk '/^remote-order /{r=$2} END{print r}')"
   if [ "$rc" -eq 0 ]; then
     # A poll that ran to the end is the proof the fault is over, so the next
-    # death is loud again.
-    rm -f "$marker"
+    # death - of EITHER kind - is loud again.
+    rm -f "$marker" "$tmarker"
     [ -n "$out" ] || return 1
     first="$(printf '%s\n' "$out" | awk '/^remote-order /{print $2; exit}')"
     printf 'remote:%s\n' "${first:-unknown}"
+    return 0
+  fi
+  if [ "$timed_out" = 1 ]; then
+    # A TIMED-OUT poll is not a DEAD one: the transport is wedged, not the
+    # spool, and the remedy is the transport - so it gets its own reason prefix,
+    # its own wake kind and its OWN episode latch. Sharing the death's latch
+    # would leave whichever fault arrived second silent for as long as the first
+    # stood. Everything else is the death's shape verbatim, including exiting
+    # after a partial batch: the orders this poll DID ingest published their own
+    # wakes before the kill, and naming the last of them costs no extra wake.
+    detail="poll exceeded ${ceiling}s and was killed; last rid ingested: ${last:-none}"
+    [ -z "$err" ] || detail="$detail - $err"
+    if [ ! -e "$tmarker" ]; then
+      : >"$tmarker"
+      queue_wake remote-timeout captain "$detail"
+      watch_log "remote poll TIMED OUT: $detail"
+    else
+      watch_log "remote poll TIMED OUT again, same episode: $detail"
+      [ -n "$out" ] || return 1
+    fi
+    printf 'remote-timeout:%s\n' "${last:-none}"
     return 0
   fi
   detail="poll exited $rc; last rid ingested: ${last:-none}"
