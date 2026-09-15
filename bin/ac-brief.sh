@@ -764,7 +764,7 @@ EOF
 - EPIC TARGET: start the engine with \`--target $epic_eb_branch\` - this story integrates on the epic branch, and the pipeline's review/base/push/PR all follow that target."
       signals_suffix=" (include the PR URL)"
     elif [ "$review" = yes ]; then
-      review_block="Review is required. After delivery preparation and a clean implementation commit, invoke the canonical independent verifier before test/document/lint. Use the exact current ref and target base with this command shape (set \`TARGET_REF\` first):
+      review_block="Review is required. After delivery preparation and a clean implementation commit, invoke the canonical independent verifier before test/document/lint - the \`crew-verify\` skill seeded in this worktree carries the call, how to read the verdict, and the fix/re-review loop. Use the exact current ref and target base with this command shape (set \`TARGET_REF\` first; run it in the FOREGROUND, never as a harness background task):
 \`$(ac_root)/bin/ac-verify.sh codereview --repo \"\$PWD\" --ref HEAD --family $fam --caller \"\$AC_CREW_ID\" --base \"\$TARGET_REF\" --intent $brief --output $task_dir/verification/review.json\`"
       delivery_mode="$(ac_delivery_mode_block "$mode" "$crew_branch" "$pr_base_phrase" "$epic_eb_branch" "the ordered review/check/doc loop below")"
       if [ "$mode" = direct-pr ]; then signals_suffix=" (include the PR URL)"; else signals_suffix=""; fi

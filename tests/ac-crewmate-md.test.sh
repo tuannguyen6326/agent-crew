@@ -151,7 +151,7 @@ for extra in rich-review bearings debrief; do
   fi
 done
 seeded="$(cd "$wt/.claude/skills" && printf '%s\n' * | sort | tr '\n' ' ')"
-assert_eq "$seeded" "crew-qa crew-ship document domain-e2e " "exactly crew-ship + the two verification routes + document seeded"
+assert_eq "$seeded" "crew-qa crew-ship crew-verify document domain-e2e " "exactly crew-ship + the direct review round + the two verification routes + document seeded"
 # ^ Empty learned stores are a no-op (byte-identical to today): the seeded set
 #   is exactly the three built-ins while $AC_HOME/skills and the container carry
 #   no origin: learned skills. The learned-skill tests below all run AFTER this.

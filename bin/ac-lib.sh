@@ -2363,14 +2363,15 @@ ac_seed_crew_settings() {
 }
 
 # Crewmate-facing skills seeded into every crew worktree (ac_seed_crew_skills).
-# ONLY crew-ship, the two behavioural-verification routes, and document: the
-# delivery pipeline, behavioral verification, and the doc-authoring pass are
-# what a crewmate runs itself; everything else (rich-review, bearings, debrief)
-# is captain/crewchief-facing and stays out of crew worktrees. crew-qa and
-# domain-e2e are seeded together because which one a crewmate needs is decided
-# by the DOMAIN of the task it was spawned for (AGENTS.md section 5), not by
-# anything the seed can see at lease time.
-AC_CREW_SKILLS="${AC_CREW_SKILLS:-crew-ship crew-qa domain-e2e document}"
+# ONLY crew-ship, the direct review round, the two behavioural-verification
+# routes, and document: the delivery pipeline, the independent review a
+# direct-pr/local-only task owes outside the engine, behavioral verification,
+# and the doc-authoring pass are what a crewmate runs itself; everything else
+# (rich-review, bearings, debrief) is captain/crewchief-facing and stays out
+# of crew worktrees. crew-qa and domain-e2e are seeded together because which
+# one a crewmate needs is decided by the DOMAIN of the task it was spawned for
+# (AGENTS.md section 5), not by anything the seed can see at lease time.
+AC_CREW_SKILLS="${AC_CREW_SKILLS:-crew-ship crew-verify crew-qa domain-e2e document}"
 
 ac_seed_crew_skills() {
   # ac_seed_crew_skills <worktree> [harness] - symlink the crewmate-facing
@@ -2379,7 +2380,8 @@ ac_seed_crew_skills() {
   # source classes, seeded in precedence order (first symlink to claim a
   # <name> wins; the dst-exists guard skips any name already linked, so an
   # earlier class always beats a later one):
-  #   1. built-in (AC_CREW_SKILLS: crew-ship, crew-qa, document) - resolved
+  #   1. built-in (AC_CREW_SKILLS: crew-ship, crew-verify, crew-qa,
+  #      domain-e2e, document) - resolved
   #      <container>/.claude/skills/<name> > this checkout's .agents/skills
   #      (distro default), mirroring ac_seed_crewmate_md.
   #   2. fleet-learned - the per-fleet store $AC_HOME/skills/* (ac_skills_dir).
