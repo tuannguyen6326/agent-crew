@@ -316,7 +316,10 @@
 # WAKE above - a pane that finished its turn with no marker), `stale:<id>`
 # (a pane merely quiet while working). Neither of those two is ever a chief
 # supervising a live crewmate, see SUPERVISING-CHIEF QUIET above. `remote:<rid>`
-# (new remote captain orders arrived), `heartbeat`, `signal:<NAME>` (a TERM/INT
+# (new remote captain orders arrived), `remote-failed:<last-rid|none>` (the poll
+# DIED mid-ingest and abandoned the rest of the batch - the named rid is the
+# last one that landed, so re-sending starts after it; see FAILED POLL under the
+# Remote-order slot below), `heartbeat`, `signal:<NAME>` (a TERM/INT
 # - either the owner's own `--release`, see OWNER-MARKED RELEASE, or a kill
 # from outside, see EXTERNAL KILLS; the reason text says which). Every one of
 # them exits 0: the reason line, not the exit status, is the payload the chief
@@ -425,7 +428,8 @@
 #    record is missing. The log is bounded (trimmed to AC_ARMLOG_KEEP lines).
 #
 # Remote-order slot: on the poll interval the loop runs `ac-remote.sh poll`
-# (poll queues the wakes durably itself; the watcher then exits
+# (poll queues the wakes durably itself for every order it ingests - see FAILED
+# POLL for the one that does not; the watcher then exits
 # `remote:<first-rid>` so the chief drains at once). Interval resolution:
 # AC_REMOTE_POLL env > config/remote-poll-interval > 300; the 300 default
 # applies only when an executable config/remote-poll hook exists - no
@@ -435,6 +439,37 @@
 # (state/.watcher-owner) IS the session-lock holder (state/.session-lock
 # pid=); scoped roomchief watchers and foreign-lock homes NEVER poll.
 # --once runs at most one poll (same gate), after a quiet pane pass.
+# FAILED POLL (poll-or-true-swallows-a-failed-ingest). `ac-remote.sh poll` exits
+# non-zero when it DIED, the usual cause being that ingest_stream could not
+# publish a wake for an rid: it rolls that stash back, dies, and drops every
+# later line on the same stdin UNREAD - which is why its own message tells the
+# operator to re-send that rid and everything after it. Not the only cause,
+# which is why the status alone is never the whole diagnosis: ingest_stream has
+# a second ac_die whose remedy is the opposite (a stash that SURVIVED a failed
+# publish now blocks every re-delivery of that rid - remove it, then re-send),
+# and under errexit the poll can also die before reading anything. Only the
+# producer knows which, so its own last stderr line is forwarded verbatim in the
+# wake rather than guessed at here. A failing transport HOOK is none of these:
+# it is warned and swallowed there, a designed QUIET poll that exits 0.
+# Reading stdout alone made the death invisible in both its shapes - nothing
+# printed yet read as a quiet poll, and a mid-batch death read as a NORMAL one,
+# a success report over the orders just dropped. The status is now read, and the
+# death gets the same two channels every other actionable event here gets: a
+# durable `remote-failed` wake (id `captain`, as the orders' own wakes are) and
+# the exit reason line above - which a death carries whether or not it ingested
+# anything first, since the watcher exits on that path either way and naming the
+# last rid that landed costs no extra wake.
+# ONE DURABLE WAKE PER EPISODE, the same mark-then-wake latch shape as the pane
+# branches and for the UNOBSERVABLE reason - state/.remote-poll-failed stands
+# while the fault does, so a persistent fault (an unwritable spool) costs the
+# arm log a line per interval instead of the chief a wake record per interval,
+# and the first poll that COMPLETES clears it and re-arms the loud channel. KEEP
+# POLLING: a death never exits the loop except through its own reason line, and
+# the orders a failed poll DID ingest keep their own wakes, published before it.
+# RESIDUAL, stated rather than hidden: the fault that kills the poll is often
+# the fault that kills the wake (an unwritable spool reaches both), and then the
+# durable half is lost - queue_wake's own contract below governs that case, so
+# the loss is logged loudly and the reason line still carries the death.
 #
 # IDLE MODE (standing remote coverage): zero crew in flight is NOT an exit
 # condition. With the remote slot live (interval on, executable
@@ -1213,12 +1248,72 @@ remote_poll_allowed() {
 check_remote() {
   # One remote poll. Prints `remote:<first-rid>` and returns 0 when new
   # orders arrived (poll already stashed them and queued their wakes
-  # durably); returns 1 on a quiet poll.
-  local out first
-  out="$("$(dirname "$0")/ac-remote.sh" poll || true)"
-  [ -n "$out" ] || return 1
-  first="$(printf '%s\n' "$out" | awk '/^remote-order /{print $2; exit}')"
-  printf 'remote:%s\n' "${first:-unknown}"
+  # durably); returns 1 on a quiet poll. A poll that DIED is neither, and the
+  # header's FAILED POLL block owns why it now gets a voice - what matters HERE
+  # is the two shapes the branches below are cut for: a death before the first
+  # rid lands prints NOTHING (so stdout alone read it as a quiet poll), and a
+  # death mid-batch prints the orders it did ingest (so stdout alone read it as
+  # a normal one, over the orders it had just dropped).
+  #
+  # `|| true` was never what kept the loop alive, whatever it looks like. Both
+  # call sites invoke this from an `if` CONDITION, where bash suspends errexit
+  # through the condition list and into the function body, so with or without
+  # it a failed substitution just leaves `out` empty and the next line runs -
+  # measured on this host's bash 3.2.57. It only forged the status to 0.
+  # `|| rc=$?` is safe here AND at top level, which a bare substitution is not.
+  #
+  # STDERR is captured for the same reason the status is: a non-zero exit is
+  # not single-cause, and only the producer knows which cause it was (the
+  # header names them), so its own last line is forwarded rather than guessed
+  # at. Nothing else would read it - ac-watch-autoarm.sh runs this watcher as
+  # `2>/dev/null`. A fixed path rather than cmd_poll's `mktemp`: an mktemp that
+  # failed would leave the redirect target empty, and a redirect that cannot
+  # open makes the poll read as DEAD without ever running it.
+  local out err rc=0 first last detail errfile marker="$state_dir/.remote-poll-failed"
+  errfile="$state_dir/.remote-poll.err.$$"
+  : >"$errfile" 2>/dev/null || errfile=/dev/null
+  out="$("$(dirname "$0")/ac-remote.sh" poll 2>"$errfile")" || rc=$?
+  err="$(tail -n 1 "$errfile" 2>/dev/null || true)"
+  [ "$errfile" = /dev/null ] || rm -f "$errfile"
+  last="$(printf '%s\n' "$out" | awk '/^remote-order /{r=$2} END{print r}')"
+  if [ "$rc" -eq 0 ]; then
+    # A poll that ran to the end is the proof the fault is over, so the next
+    # death is loud again.
+    rm -f "$marker"
+    [ -n "$out" ] || return 1
+    first="$(printf '%s\n' "$out" | awk '/^remote-order /{print $2; exit}')"
+    printf 'remote:%s\n' "${first:-unknown}"
+    return 0
+  fi
+  detail="poll exited $rc; last rid ingested: ${last:-none}"
+  [ -z "$err" ] || detail="$detail - $err"
+  if [ ! -e "$marker" ]; then
+    # The FIRST death of an episode, told on BOTH channels this watcher has:
+    # a durable wake, which ac-wake-drain.sh renders verbatim whatever the
+    # kind, and the exit reason line, which ac-watch-autoarm.sh hands straight
+    # back to the chief on its catch-all arm. Marked before the wake, the same
+    # order every pane branch here uses.
+    : >"$marker"
+    queue_wake remote-failed captain "$detail"
+    watch_log "remote poll FAILED: $detail"
+  else
+    # REPETITION. The slot re-polls every remote_iv, so a persistent fault (an
+    # unwritable spool) would wake the chief on every interval for as long as
+    # it lasts - the treadmill every dedup marker in this watcher exists to
+    # stop. One durable wake per EPISODE; the rest of it goes to the arm log,
+    # which is already where this watcher sends what stdout must not carry.
+    # The marker is presence-only and scope-free: the lock gate above means
+    # exactly one watcher fleet-wide ever polls, so it has exactly one writer.
+    watch_log "remote poll FAILED again, same episode: $detail"
+    # Nothing ingested and nothing new to say - stay quiet and keep polling.
+    [ -n "$out" ] || return 1
+  fi
+  # A death that DID ingest part of its batch exits FAILED too, never
+  # `remote:<first>`: the watcher exits on this path either way, so naming the
+  # last rid that landed costs no extra wake and is the whole point of the
+  # repair - a repeat is still a success report over dropped orders otherwise.
+  # The orders that landed keep their own wakes, published before the death.
+  printf 'remote-failed:%s\n' "${last:-none}"
   return 0
 }
 

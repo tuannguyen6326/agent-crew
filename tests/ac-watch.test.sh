@@ -315,6 +315,168 @@ printf 'pid=%s\nsince=now\n' "$$" >"$state/.session-lock"
 printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "no hook -> idle fleet may park unwatched"
 rm -f "$state/.session-lock" "$state/.watcher-owner"
 
+# --- a poll that DIED is not a poll that was QUIET ---------------------------
+# ingest_stream (bin/ac-remote.sh) ac_die's when a wake cannot be published for
+# an rid, and that death ABANDONS every later line on the same stdin. Read on
+# stdout alone - as `|| true` left it - a first-rid death looked like a quiet
+# poll and a mid-batch death looked like a NORMAL one, a success report over
+# the orders it had just dropped. The poll entrance carries the large majority
+# of this fleet's stashes, so that is the entrance nobody was listening on.
+rm -f "$state"/*.meta "$state/.last-watcher-beat"; rm -rf "$state"/.wake-spool*
+hook="$AC_HOME/config/remote-poll"
+orders="$TMP/remote-orders.jsonl"
+seam="$TMP/wake-seam.sh"
+seamcnt="$TMP/wake-seam.count"
+seamfail="$TMP/wake-seam.failat"
+spool="$state/.wake-spool"
+cat >"$hook" <<EOF
+#!/bin/sh
+cat "$orders"
+EOF
+chmod +x "$hook"
+# Fault injection rides the documented wake seam (ac-wake-lib.sh ac_wake_seam),
+# which runs between a publish's private write and its atomic link: making the
+# spool read-only THERE fails exactly that one publish - the records already in
+# it survive, and the watcher's own publish, one seam call later, finds the dir
+# writable again. So the test can break the Nth rid's wake and nothing else,
+# which is the only way to stand up the mid-batch shape.
+cat >"$seam" <<EOF
+#!/bin/sh
+mkdir -p "$spool" 2>/dev/null || true
+n=\$(cat "$seamcnt" 2>/dev/null || echo 0)
+n=\$((n + 1))
+printf '%s\n' "\$n" >"$seamcnt"
+f=\$(cat "$seamfail" 2>/dev/null || echo 0)
+if [ "\$f" = all ] || [ "\$n" = "\$f" ]; then
+  chmod 500 "$spool"
+else
+  chmod 700 "$spool"
+fi
+EOF
+chmod +x "$seam"
+
+watch_poll() {
+  # watch_poll <heartbeat> - one fleet watcher run with the remote slot on a 1s
+  # interval and the seam armed; prints the exit reason, stderr to $polerr.
+  AC_LOCK_PID=$$ AC_WAKE_SEAM_AT=after-write AC_WAKE_SEAM_RUN="$seam" \
+    AC_REMOTE_POLL=1 AC_POLL=1 AC_HEARTBEAT="$1" bash "$BIN/ac-watch.sh" 2>"$polerr"
+}
+arm_fault() {
+  # arm_fault <nth|all|0> <rid>... - the poll hook emits these orders, and the
+  # Nth wake publish of the coming run fails (`all` = every one, 0 = none).
+  # A run whose watcher must PUBLISH its own wake names a number, so that the
+  # publish - always the call after the poll's last - finds the spool writable;
+  # `all` is for the runs where the watcher is expected to publish nothing.
+  local n="$1"; shift
+  local r
+  : >"$orders"
+  for r in "$@"; do
+    printf '{"rid":"%s","text":"go","author":"cap","thread":"1.1"}\n' "$r" >>"$orders"
+  done
+  printf '%s\n' "$n" >"$seamfail"
+  : >"$seamcnt"
+  chmod 700 "$spool" 2>/dev/null || true
+  rm -rf "$spool" "$state/remote-inbox"
+}
+drain_now() {
+  # The drain CLAIMS records by moving them out of the spool, which needs write
+  # permission on the directory - and a run whose watcher published nothing of
+  # its own leaves the seam's chmod 500 standing. Restore it before draining:
+  # the fault under test is the poll's, and a drain that silently claimed
+  # nothing would let "no queued wakes" pass for the wrong reason.
+  chmod 700 "$spool" 2>/dev/null || true
+  "$BIN/ac-wake-drain.sh"
+}
+polerr="$TMP/remote-hardfail.err"
+
+# SHAPE 1 - the FIRST rid's wake fails: the poll dies having printed nothing,
+# so `[ -n "$out" ]` alone reported it as silence.
+rm -f "$state/.remote-poll-failed"          # a fresh fault episode
+arm_fault 1 hf1
+out="$(watch_poll 4)"
+assert_contains "$out" "remote-failed:none" "a first-rid death exits FAILED, never as a quiet poll"
+drained="$(drain_now)"
+assert_contains "$drained" "remote-failed captain" "the death reaches the chief's own drain, as its own wake kind"
+assert_contains "$drained" "Re-send it AND anything after it" \
+  "the wake forwards ac-remote.sh OWN instruction, not a guess made here"
+case "$drained" in *"remote-order hf1"*) fail "a rid whose wake failed must not read as ingested" ;; esac
+assert_contains "$(cat "$polerr")" "remote poll FAILED" "the arm log carries the failure too"
+
+# SHAPE 2, the nastier half - rid 3 of 3 dies AFTER two orders printed. stdout
+# is non-empty, so the old code returned 0 and exited `remote:hf2a`: a NORMAL
+# poll reported over the batch it had just abandoned.
+rm -f "$state/.remote-poll-failed"          # a fresh fault episode
+arm_fault 3 hf2a hf2b hf2c
+out="$(watch_poll 4)"
+assert_contains "$out" "remote-failed:hf2b" "a mid-batch death names the LAST rid that landed, so re-sending has a starting point"
+case "$out" in *"remote:hf2a"*) fail "a mid-batch death must never be reported as a successful poll" ;; esac
+drained="$(drain_now)"
+assert_contains "$drained" "remote-failed captain" "and the death is queued beside them"
+assert_contains "$drained" "remote-order hf2a" "the orders the poll DID ingest keep their own wakes"
+assert_contains "$drained" "remote-order hf2b" "both of them"
+case "$drained" in *"remote-order hf2c"*) fail "the abandoned rid must not read as ingested" ;; esac
+
+# The watcher is the fleet's EYES: a poll that dies must never kill or jam it,
+# and a persistent fault must not put the chief on a wake treadmill. Reported
+# ONCE per episode; every later death of the same episode goes to the arm log.
+rm -f "$state/.remote-poll-failed"          # a fresh fault episode
+arm_fault 1 hf3
+out="$(watch_poll 4)"
+assert_contains "$out" "remote-failed:none" "the first death of an episode is loud"
+drain_now >/dev/null
+# Deliberately NO episode reset here: the marker the first death left is what
+# the second poll must read.
+arm_fault all hf3
+out="$(watch_poll 4)"
+assert_contains "$out" "heartbeat" "a repeat death neither kills the loop nor exits it - the watcher keeps watching"
+case "$(fleet_spool)" in *remote-failed*) fail "one fault episode queues one wake, not one per poll interval" ;; esac
+assert_contains "$(cat "$polerr")" "remote poll FAILED again, same episode" "the repeat still leaves its trail in the arm log"
+case "$(cat "$polerr")" in *"remote poll FAILED: "*) fail "a repeat death must not be logged as a first one" ;; esac
+
+# A poll that COMPLETES is the proof the fault is over: it works normally and
+# it re-arms the loud channel for the next episode.
+arm_fault 0 hf4
+out="$(watch_poll 6)"
+assert_contains "$out" "remote:hf4" "a healthy poll after a failed one still works - nothing was jammed"
+assert_contains "$(drain_now)" "remote-order hf4" "and its order is queued as always"
+arm_fault 1 hf5
+out="$(watch_poll 4)"
+assert_contains "$out" "remote-failed:none" "a completed poll ends the episode, so the next death is loud again"
+
+# A REPEAT death that ingested part of its batch is still a success report over
+# dropped orders if it exits `remote:<first>` - the very shape this repair
+# exists to kill, one episode later. The watcher exits on this path either way,
+# so naming the last rid that landed costs no extra wake.
+rm -f "$state/.remote-poll-failed"          # a fresh fault episode
+arm_fault 1 rp0
+out="$(watch_poll 4)"
+assert_contains "$out" "remote-failed:none" "episode opened"
+drain_now >/dev/null
+# Same episode, and this time the poll gets two orders in before it dies.
+arm_fault 3 rp1 rp2 rp3
+out="$(watch_poll 4)"
+assert_contains "$out" "remote-failed:rp2" "a REPEAT death with orders in hand still exits FAILED, naming the last that landed"
+case "$out" in *"remote:rp1"*) fail "a repeat death must not be reported as a successful poll either" ;; esac
+drained="$(drain_now)"
+assert_contains "$drained" "remote-order rp1" "the orders it did ingest are never delayed by the repeat"
+case "$drained" in *remote-failed*) fail "one episode queues one durable wake, however many deaths it has" ;; esac
+
+# THE CORRELATED FAULT: the thing that kills the poll is the thing that kills
+# the wake. With the spool unwritable for the WHOLE pass the durable half cannot
+# exist - so the reason line is the channel, and the loss must announce itself
+# in the arm log rather than passing for a successful publish.
+rm -f "$state/.remote-poll-failed"          # a fresh fault episode
+arm_fault all cf1
+out="$(watch_poll 4)"
+assert_contains "$out" "remote-failed:none" "a fault that also breaks the spool still reaches the chief on the reason line"
+assert_contains "$(cat "$polerr")" "wake-publish FAILED kind=remote-failed" "and the lost durable record says so in the arm log"
+assert_contains "$(drain_now)" "no queued wakes" "with nothing silently pretending to be queued"
+
+chmod 700 "$spool" 2>/dev/null || true
+rm -f "$hook" "$state/.remote-poll-failed" "$state/.watcher-arm.log"
+rm -rf "$state"/.wake-spool* "$state/remote-inbox"
+rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat*
+
 # AC_CAPTAIN_RE contract (default from ac-lib.sh): status markers
 # (done/needs-decision/blocked/failed/paused/merged/checks-passed) anchored to
 # line start with TUI-prefix tolerance; the prefix class rejects alpha AND
