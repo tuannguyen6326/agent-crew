@@ -795,6 +795,14 @@ Captain: $captain
 
 <!-- Orchestrator: describe the change here. -->
 
+## Deliverable
+
+You owe exactly one artifact next to this brief: $task_dir/report.md, a
+handback note whose only required section is \`## Lessons\` - one line per
+durable lesson in your own words, or \`none\` when there genuinely are none.
+This obligation is UNCONDITIONAL: it fires at every ending - \`done:\`,
+\`blocked:\`, \`needs-decision:\`, or \`failed:\` - never only a landed one.
+
 ## Working rules
 
 You are in a disposable git worktree at detached HEAD on the clean default branch.

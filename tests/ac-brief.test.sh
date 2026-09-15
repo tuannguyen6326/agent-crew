@@ -58,6 +58,18 @@ assert_contains "$(cat "$brief")" "Do not run a second manual full-diff review a
 assert_contains "$(cat "$brief")" "run-suite.sh" "execution brief names the full suite"
 assert_contains "$(cat "$brief")" "per-change" \
   "execution brief marks the full suite as never the per-change verify"
+# A ship/execution crewmate owes no report.md by the ship-vs-scout rule, so the
+# universal "## Lessons" report contract had no file to land in and no wiring
+# ever fired it. The brief must name the exact sink and state the obligation
+# as unconditional - every ending, not only a landed one.
+assert_contains "$(cat "$brief")" "$AC_HOME/data/task-1/report.md" \
+  "execution brief names its own report.md sink by absolute path"
+assert_contains "$(cat "$brief")" "## Lessons" \
+  "execution brief states the Lessons section obligation"
+assert_contains "$(cat "$brief")" "every ending" \
+  "execution brief states the Lessons obligation fires at every ending, not only done"
+assert_contains "$(cat "$brief")" "\`none\`" \
+  "execution brief carries the none convention for a lessons-free ending"
 assert_contains "$(cat "$brief")" "git rev-parse --show-toplevel" \
   "execution brief names YOUR worktree at runtime (Part c: primary-as-read-only)"
 assert_contains "$(cat "$brief")" "git-common-dir" \
@@ -219,6 +231,14 @@ assert_contains "$implbrief" "Only when no applicable plugin exists, manually se
   "staged implementer falls back to one manual full-diff review"
 assert_contains "$implbrief" "Do not run a second manual full-diff review after the plugin" \
   "staged self-review does not duplicate plugin work"
+# The staged execution crewmate is the same ship template as the flat one (both
+# ride the same `implement)` scaffold branch) and owes the identical sink.
+assert_contains "$implbrief" "$AC_HOME/data/widget/implement/report.md" \
+  "staged execution brief names its nested report.md sink by absolute path"
+assert_contains "$implbrief" "## Lessons" \
+  "staged execution brief states the Lessons section obligation"
+assert_contains "$implbrief" "every ending" \
+  "staged execution brief states the Lessons obligation fires at every ending"
 assert_fails "$BIN/ac-brief.sh" widget-no myproj --stage implement --review no
 "$BIN/ac-brief.sh" widget-pr myproj --stage implement --mode direct-pr >/dev/null
 prbrief="$(cat "$AC_HOME/data/widget-pr/implement/brief.md")"

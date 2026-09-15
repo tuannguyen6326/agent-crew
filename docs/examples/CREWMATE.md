@@ -207,6 +207,10 @@ entry without provenance is refused, and the refusal names what is missing.
 
 ## Lessons - end every report with them
 
+Every crewmate owes this report, ship/execution included: it lands at
+`<task_dir>/report.md` next to your brief, and for an execution crewmate
+`## Lessons` is its only required section.
+
 End every task report with a `## Lessons` section: one line per durable
 lesson, in YOUR OWN words, first-hand - what you would tell the next crewmate
 before it repeats your path. No lessons => the section says `none`, so the

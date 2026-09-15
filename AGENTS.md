@@ -790,7 +790,7 @@ A crewmate the crewchief spawns instead carries no family scope for its whole li
    reconcile rooms and fleet state fail-closed, return a reset verdict); landing
    remains the primary mechanism.
 
-Ship tasks deliver a project change; scout tasks deliver ONLY a `report.md` next to their brief and never open a PR.
+Ship tasks deliver a project change AND a `report.md` handback note next to their brief - its only required section is `## Lessons`, unconditional across every ending; scout tasks deliver ONLY a `report.md` next to their brief (the full report contract) and never open a PR.
 `crew/<id>` is the one branch a crewmate may create.
 
 A SMALL chief-side edit - the sanctioned no-invisible-tasks exception
