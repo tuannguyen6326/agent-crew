@@ -14,19 +14,30 @@ make_home
 # lexical `ls` already picks the right round whenever two rounds start in
 # different seconds. It breaks only when two rounds share a second, where the
 # pid tiebreak is compared LEXICALLY and "9999" sorts after "10001" - plain
-# `tail -1` then returns the SMALLER, EARLIER pid. Real invocations cannot be
-# made to land in the same wall-clock second with a chosen pid order, so the
-# collision is fabricated directly; the assertions exercise the exact pick
-# idiom this file's own round-dir lookups use below.
+# `tail -1` then returns the SMALLER, EARLIER pid. Pick the newest by
+# timestamp, then by pid as a NUMBER instead. Reads a list of `ls`-printed
+# paths on stdin, each ending in the round dir's own name - either as a
+# directory ("<round_id>/") or a file inside it ("<round_id>/rejection.log"),
+# both leave the round id at $(NF-1) - and prints the newest one. Every
+# round-dir lookup in this file calls this, so a revert of any one call site
+# is the only way to reintroduce the bug.
+newest_round_dir() {
+  awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}'
+}
+
+# Real invocations cannot be made to land in the same wall-clock second with
+# a chosen pid order, so the collision is fabricated directly against the
+# same helper every call site below uses - this proves the sites, not just
+# the rule.
 same_second_root="$TMP/round-pick-same-second/verify/codereview"
 mkdir -p "$same_second_root/20260101T000000Z-9999" "$same_second_root/20260101T000000Z-10001"
-same_second_pick="$(ls -d "$same_second_root"/*/ | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')"
+same_second_pick="$(ls -d "$same_second_root"/*/ | newest_round_dir)"
 assert_eq "$(basename "$same_second_pick")" "20260101T000000Z-10001" \
   "same-second collision: the larger pid (the later round) is picked, not the lexically-last dir name"
 
 cross_second_root="$TMP/round-pick-cross-second/verify/codereview"
 mkdir -p "$cross_second_root/20260101T000000Z-99999" "$cross_second_root/20260101T000001Z-5"
-cross_second_pick="$(ls -d "$cross_second_root"/*/ | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')"
+cross_second_pick="$(ls -d "$cross_second_root"/*/ | newest_round_dir)"
 assert_eq "$(basename "$cross_second_pick")" "20260101T000001Z-5" \
   "cross-second case: the later timestamp still wins even carrying the smaller pid"
 
@@ -781,12 +792,7 @@ assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --bas
 # same-ref retries went undiagnosed.
 # `ls` of an unmatched glob fails, and under `set -o pipefail` inside a command
 # substitution that aborts the whole suite with NO output - so absorb it here.
-# Round dirs are named "<UTC-timestamp>-<pid>" (bin/ac-verify.sh round_id):
-# `tail -n 1` alone breaks on a same-second collision, where the pid tiebreak
-# is compared LEXICALLY and a larger pid can sort before a smaller one - see
-# the round-dir-pick block above `make_profile_bundle`. Same two-key fix:
-# newest by timestamp, then by pid as a number.
-rejection_log() { { ls "$AC_HOME/data/$1/verify/codereview"/*/rejection.log 2>/dev/null || true; } | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}'; }
+rejection_log() { { ls "$AC_HOME/data/$1/verify/codereview"/*/rejection.log 2>/dev/null || true; } | newest_round_dir; }
 rej="$(rejection_log "$open_family")"
 [ -n "$rej" ] || fail "a rejected verdict must leave its reason in the round evidence"
 assert_contains "$(cat "$rej")" "undispositioned-prior-finding-ids: CR-1" \
@@ -1199,14 +1205,8 @@ VERIFY_PANE_HANG=3 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target"
   --output "$killed_output" >"$TMP/killed.out" 2>"$TMP/killed.err" &
 killed_pid=$!
 killed_round=""
-# Round dirs are named "<UTC-timestamp>-<pid>" (bin/ac-verify.sh round_id).
-# `tail -1` alone breaks when two rounds share a second: the pid tiebreak is
-# then compared LEXICALLY, so "9999" sorts after "10001" and the smaller,
-# earlier pid wins. The timestamp's lexical order is already correct across
-# seconds, so keep it and repair only the tiebreak: pick the max by
-# timestamp, then by pid as a NUMBER.
 for _ in $(seq 1 200); do
-  killed_round="$( { ls -d "$AC_HOME/data/$killed_family/verify/codereview"/*/ 2>/dev/null || true; } | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')"
+  killed_round="$( { ls -d "$AC_HOME/data/$killed_family/verify/codereview"/*/ 2>/dev/null || true; } | newest_round_dir)"
   if [ -n "$killed_round" ] \
     && [ -n "$(find "$killed_round" -name 'pane-result.ndjson*' -size +0c 2>/dev/null)" ]; then
     break
@@ -1258,7 +1258,7 @@ VERIFY_PANE_NOISE='harness: could not attach to the tty' \
 assert_eq "$rc" "1" "a stray non-JSON line ahead of the result is not a harvestable round"
 assert_contains "$(cat "$TMP/noisy.err")" "not readable as NDJSON" \
   "the refusal names the stream it could not parse, not a bare pipefail death"
-noisy_round="$( { ls -d "$AC_HOME/data/$noisy_family/verify/codereview"/*/ 2>/dev/null || true; } | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')"
+noisy_round="$( { ls -d "$AC_HOME/data/$noisy_family/verify/codereview"/*/ 2>/dev/null || true; } | newest_round_dir)"
 assert_file "${noisy_round}pane-result.ndjson" \
   "the unreadable stream is kept where the refusal tells a human to look"
 assert_contains "$(cat "${noisy_round}pane-result.ndjson")" '"event":"done"' \
@@ -1286,7 +1286,7 @@ assert_eq "$(jq -r .verdict "$tail_output")" "pass" "the verdict jq did reach is
 # OOM, a token limit and a tool failure, and still not say WHY. Whatever the
 # pane displayed at that moment is the missing evidence, and it was being reaped
 # unread. Capture it into the round dir before the pane goes.
-sdir_pc="$(ls -d "$AC_HOME/data/$pane_closed_family/verify/codereview"/*/ | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')"
+sdir_pc="$(ls -d "$AC_HOME/data/$pane_closed_family/verify/codereview"/*/ | newest_round_dir)"
 assert_file "${sdir_pc}pane-scrollback.txt" "a failed round keeps what the pane was showing"
 
 # A FAILED ROUND WRITES NO RECEIPT, so whatever --output already held survives -
@@ -1727,12 +1727,12 @@ rc=0; VERIFY_FIX_FILE=ghost.txt "$BIN/ac-verify.sh" codereview --repo "$repo" --
   --family "$family" --caller "$caller" --base "$base" --intent "$intent" --output "$cite_out" >/dev/null 2>&1 || rc=$?
 [ "$rc" -ne 0 ] || fail "a fix finding citing a file absent at the ref must be rejected"
 assert_no_file "$cite_out" "a rejected citation publishes no verdict"
-rej="$(cat "$(ls -d "$AC_HOME/data/$family/verify/codereview"/*/ 2>/dev/null | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')rejection.log" 2>/dev/null || true)"
+rej="$(cat "$(ls -d "$AC_HOME/data/$family/verify/codereview"/*/ 2>/dev/null | newest_round_dir)rejection.log" 2>/dev/null || true)"
 assert_contains "$rej" "fix-citation-not-at-ref: F1(ghost.txt not at ref)" "the rejection names the finding and the missing file"
 rc=0; VERIFY_FIX_FILE=file.txt VERIFY_FIX_LINE=999 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
   --family "$family" --caller "$caller" --base "$base" --intent "$intent" --output "$cite_out" >/dev/null 2>&1 || rc=$?
 [ "$rc" -ne 0 ] || fail "a fix finding citing a line past the file's end must be rejected"
-rej="$(cat "$(ls -d "$AC_HOME/data/$family/verify/codereview"/*/ 2>/dev/null | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')rejection.log" 2>/dev/null || true)"
+rej="$(cat "$(ls -d "$AC_HOME/data/$family/verify/codereview"/*/ 2>/dev/null | newest_round_dir)rejection.log" 2>/dev/null || true)"
 assert_contains "$rej" "past end" "the rejection names the line overrun"
 
 # --- DECIDER SHAPE on ask-user: axis, decider, per-option impact ride through
@@ -1781,8 +1781,8 @@ scout_gets_before="$(grep -c '^get ' "$VERIFY_TREE_LOG" 2>/dev/null || echo 0)"
 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
   --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
   || fail "a round with scout lanes still produces the reviewer's verdict"
-sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')scouts"
-jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')prompt.md"
+sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)scouts"
+jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)prompt.md"
 
 # The commands the reviewer is told to run: pane-agent ONE-SHOT turns, never
 # the crewmate contract - a crewmate would mint a state/<id>.meta and the
@@ -1916,7 +1916,7 @@ rm -rf "$AC_HOME/data/$scout_family"; rm -f "$AC_HOME/config/crew-dispatch.json"
 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
   --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
   || fail "the single-reviewer round is unchanged"
-jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')prompt.md"
+jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)prompt.md"
 case "$(cat "$jp")" in *"INDEPENDENT SCOUT LANES"*) fail "an unconfigured fleet must see no fan-out" ;; esac
 assert_eq "$(jq 'has("scouts")' "$scout_out")" "false" "...and its verdict carries no scouts block"
 
@@ -1945,7 +1945,7 @@ env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" "$BIN/ac-verify.sh" codereview \
   --repo "$repo" --ref "$target" --family "$scout_family" --caller "$caller" \
   --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
   || fail "a homeless caller still runs the round"
-jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | awk -F/ '{d=$(NF-1);split(d,a,"-");pid=a[2]+0;key=sprintf("%s %020d",a[1],pid);if(key>best){best=key;line=$0}}END{print line}')prompt.md"
+jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)prompt.md"
 assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT LANES" \
   "the lanes must reach the prompt for a caller with no AC_HOME - that is every production caller"
 rm -f "$AC_HOME/config/crew-dispatch.json"
