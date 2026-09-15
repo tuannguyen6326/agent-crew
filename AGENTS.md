@@ -626,7 +626,22 @@ Stage gates - who reviews before the next stage spawns:
   a RISK or REACH question; an empirical invariant a test
   demonstrates is the form that does, exactly the who's-affected /
   how-much-stays-unchanged proof named above. A proof offered
-  against a question it cannot answer counts as no proof. No proof
+  against a question it cannot answer counts as no proof.
+  Compile-forced carries one burden beyond that, because its absence
+  is SILENT: it proves only what the compiler ACTUALLY refuses to
+  compile, so whoever invokes it NAMES the construct that fails to
+  compile if the claim is false. A type system that merely PERMITS
+  the shape has refused nothing, and an unrefused claim is a reading
+  of the code - not one of the three forms, so it counts as no proof.
+  The other two forms need no such clause - a byte comparison and a
+  demonstrated invariant are acts someone performed and a reader
+  re-performs to a definite answer, while a refusal that never
+  happened looks exactly like one that did. A question about what an
+  actor OUTSIDE this repository really sends or does is closable by
+  NO static form: an assertion about a value's type is not an
+  observation of that value, so no number of agreeing in-repo
+  artifacts witnesses a field on the wire - that class is closed by
+  an observation of the actor itself, or by nothing at all. No proof
   means it is not a decision, it is a guess: park it as
   `needs-decision:` and ASK. It is the twin of the finding-authority
   rule above: that one binds a FINDING at write-time, this one binds
