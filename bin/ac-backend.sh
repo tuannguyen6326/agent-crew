@@ -625,20 +625,22 @@ herdr_rpc_bounded() {
   # its own group leader, so backgrounding this way and killing the negative pid
   # are ONE decision - the negative-pid kill without `set -m` would hit this
   # shell's own group instead of the call's.
-  # IT SIGNALS THE BARE PID AS WELL, and that is not belt-and-braces: a group
-  # kill reaches the leader only if the call BECAME a group leader, which this
-  # function cannot verify and cannot survive being wrong about. Measured with
-  # the body held constant and only `set -m` removed: the group kill alone never
-  # reaches the call at all - it runs past its ceiling untouched, and the elapsed
-  # check below is never reached because the wait above never returns. A ceiling
-  # that silently stops bounding is the exact fault this whole mechanism exists
-  # to remove, so the leader is signalled by a route that does not depend on the
-  # grouping. In the ordinary case the group kill already carried it, so this
-  # costs one redundant signal to a process that has just received the same one
-  # (measured: same kill, same status, both ways). What it trades away is
-  # reaping COMPLETENESS if the grouping ever fails - a forked child then
-  # outlives the call - and an orphan someone can count is the right exchange
-  # for a bound that cannot quietly stop existing.
+  # EVERY SIGNAL BELOW ALSO TAKES A ROUTE THAT DOES NOT DEPEND ON THAT GROUPING,
+  # which is the rule for this whole function rather than an argument to be made
+  # again at each kill. A group kill lands only if the job actually BECAME a
+  # group leader - something this function cannot verify and cannot survive
+  # being wrong about. Held constant, with only `set -m` removed: the call runs
+  # past its ceiling untouched, and the elapsed check never runs because the
+  # wait never returns; and the watchdog outlives its own reap, so the wait on
+  # it costs every HEALTHY call the entire ceiling (0.02s becomes 2.03s at 2s).
+  # A ceiling that silently stops bounding, and a bound that silently becomes a
+  # delay, are both the fault this mechanism exists to remove. In the ordinary
+  # case the group kill already carried the same process, so the second signal
+  # costs nothing measurable either way. What stays out of reach is the ONE
+  # target a pid cannot name: surviving group MEMBERS, which is what the
+  # escalation sweeps. That is the whole of what a failed grouping still costs -
+  # a forked child outlives the call - and an orphan someone can count is the
+  # right exchange for a ceiling that cannot quietly stop existing.
   #
   # THE WATCHDOG CARRIES THE DEADLINE INSTEAD OF A POLL LOOP, the first of two
   # places this bound's shape departs from its siblings, and the reason is a
@@ -659,8 +661,9 @@ herdr_rpc_bounded() {
   # function and not to the watchdog: `wait` returns the moment the group LEADER
   # dies, so a watchdog escalating on its own would still be sleeping out its
   # grace when the reap below ends it, leaving any member that ignored the TERM
-  # alive. Aimed at the group only on the timeout path, where the leader was
-  # alive until this very `wait` and the pid therefore cannot have been reused.
+  # alive. It sweeps MEMBERS - the leader is already reaped by that `wait` - so
+  # the group is the only address it has, and it runs on the timeout path alone,
+  # where the leader was alive until that `wait` and the pid cannot be a reuse.
   #
   # THE BASELINE IS READ BEFORE THE WATCHDOG IS FORKED, and the order is load
   # bearing rather than tidy. SECONDS is whole seconds, so a baseline taken
@@ -682,6 +685,7 @@ herdr_rpc_bounded() {
   set +m
   wait "$pid" 2>/dev/null || rc=$?
   kill -KILL -"$wd" 2>/dev/null || true
+  kill -KILL "$wd" 2>/dev/null || true
   wait "$wd" 2>/dev/null || true
   # A call the watchdog reached is reported as the timeout it was, never as the
   # signal death it looks like: only the watchdog signals this group, so a
