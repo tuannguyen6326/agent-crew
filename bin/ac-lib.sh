@@ -763,6 +763,35 @@ ac_domain_view_entry() {
   printf 'ok\n'
 }
 
+ac_domain_binding() {
+  # ac_domain_binding - the domain bound to THIS session: AC_DOMAIN itself
+  # when the spawning process set it, else - when AC_SCOPE names a live
+  # roomchief whose OWN meta carries a domain= field (a domainchief) - that
+  # field. Empty when neither answers.
+  #
+  # THE SECOND SOURCE OF TRUTH (R12): AC_DOMAIN is exactly the binding that
+  # can go missing on the way to a spawn (a resume line, a relaunch that
+  # forgets it), while AC_SCOPE is the roomchief's own load-bearing identity
+  # (the ledger guard, the wake spool and the watcher skip set all key on it
+  # already) and the meta it names is durable. Reading the two TOGETHER
+  # recovers the binding from a dropped AC_DOMAIN without ever inventing one:
+  # a crewchief's own spawn carries no AC_SCOPE at all, and an ordinary
+  # roomchief's own meta carries no domain= field, so both stay exactly as
+  # unguarded as before - only a domainchief's spawn, which alone can name a
+  # domain=<x> meta, ever resolves one here.
+  [ -n "${AC_DOMAIN:-}" ] && { printf '%s\n' "$AC_DOMAIN"; return 0; }
+  # AC_SCOPE's grammar mirrors ac_wake_scope_ok (bin/ac-wake-lib.sh), inlined
+  # rather than sourced: this file deliberately never sources ac-wake-lib.sh
+  # (the SPLIT note above), and a caller of ac_seed_crewmate_md (ac-self-task.sh)
+  # sources only this file.
+  case "${AC_SCOPE:-}" in '' | *[!A-Za-z0-9_-]*) return 0 ;; esac
+  # `|| true`: an unreadable-but-present meta is a real error ac_meta_get
+  # propagates (fail-closed, right for a lock file) - here it must not abort
+  # the caller's `set -e` spawn over a best-effort SECOND source, so it
+  # resolves to "no binding found" exactly like the meta being absent.
+  ac_meta_get "$(ac_state_dir)/$AC_SCOPE-chief.meta" domain || true
+}
+
 ac_domain_tally() {
   # ac_domain_tally [<name>] - "<queued> <inflight> <done>" row counts for one
   # crewdomain, or summed over every domain token when no name is given -
@@ -2300,7 +2329,7 @@ ac_seed_crewmate_md() {
   # purpose: a repo shipping .claude/CLAUDE.md hits the identical gap.
   # A repo that ships NO instruction file is untouched by all of this - the
   # layer reaches the harness's own file and nothing is printed.
-  local wt="$1" harness="${2:-}" fleet cont dom rel staged learned
+  local wt="$1" harness="${2:-}" fleet cont dom dom_bound rel staged learned
   fleet="$(ac_home)/CREWMATE.md"
   cont="$(dirname "$(ac_home)")/.claude/CLAUDE.md"
   # MACHINE-OWNED learned layer, written only by ac-learn.sh transactions
@@ -2310,12 +2339,15 @@ ac_seed_crewmate_md() {
   # override a fleet rule.
   learned="$(ac_home)/CREWMATE-learned.md"
   # THIRD LAYER, appended LAST because the most specific word reads last: the
-  # crewdomain instruction layer, when the SPAWNING session carries AC_DOMAIN.
-  # Every other rule is untouched - a repo-shipped file still wins outright,
-  # the fallback path and its notice still apply, and a single available layer
-  # is still copied byte-identical with no markers.
+  # crewdomain instruction layer, when the SPAWNING session's domain binding
+  # resolves (ac_domain_binding - AC_DOMAIN itself, or AC_SCOPE naming a
+  # domainchief's own meta when AC_DOMAIN went missing en route). Every other
+  # rule is untouched - a repo-shipped file still wins outright, the fallback
+  # path and its notice still apply, and a single available layer is still
+  # copied byte-identical with no markers.
   dom=""
-  [ -z "${AC_DOMAIN:-}" ] || dom="$(ac_home)/crewdomains/$AC_DOMAIN/CREWMATE.md"
+  dom_bound="$(ac_domain_binding)"
+  [ -z "$dom_bound" ] || dom="$(ac_home)/crewdomains/$dom_bound/CREWMATE.md"
   # The registry owns the mapping AND fails closed on a harness it cannot
   # answer for (audit-f5: the old `*)` arm here handed .claude/CLAUDE.md to
   # anything unknown, seeding a file the harness never reads).
