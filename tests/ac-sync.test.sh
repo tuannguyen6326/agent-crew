@@ -139,8 +139,11 @@ assert_contains "$out" "FAILED p8: fetch timed out after 1s" "timeout note"
 # ppid=1: `ext::sleep 30` makes git fork a `git remote-ext` helper which forks
 # the sleep itself, so killing the fetch pid alone leaves both alive. Found by
 # command line (git's own helper naming is stable and specific enough on a dev
-# host) rather than by process group: this test's own group is the whole
-# suite's, so a group kill here would take the runner down with it.
+# host) rather than by process group: under the suite runner, each test file
+# backgrounds under its own `set -m`, so this file's own group IS this file -
+# a group kill here would be suicide; run standalone, there is no such
+# isolation and the group is whatever invoked this file - a group kill here
+# would take that down instead.
 hung_child_pid() {
   # No `exit` inside the awk: under this suite's `pipefail`, an awk that quits
   # early closes the pipe while `ps` is still writing, `ps` dies of SIGPIPE,
