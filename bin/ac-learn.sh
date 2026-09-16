@@ -265,11 +265,15 @@ learn_lessons_lift() {
   # that quote. A fence toggle is one boolean flipped on any line matching
   # `^[[:space:]]*` + three backticks - the corpus carries no tilde fence and
   # no 4-or-more-backtick fence, so nothing more elaborate is warranted. An
-  # unbalanced fence leaves the scanner inside it, which HIDES the section
-  # rather than inventing one - a miss is a smaller defect than a wrong lift,
-  # since a wrong lift puts words nobody wrote into the ledger. Live dir
-  # first, then the archived copy: every window member has landed, so it is
-  # exactly the class bin/ac-archive.sh moves.
+  # unbalanced fence leaves the scanner's fence state wrong for the rest of
+  # the file: opened before `## Lessons` it keeps the opener from ever firing
+  # and the section is silently missed, but opened inside a real section it
+  # keeps the closer from firing too and the section runs on to EOF,
+  # swallowing whatever follows as lesson text - an over-lift, not a miss, so
+  # the failure direction follows where the stray fence sits rather than
+  # guaranteeing safety either way. Live dir first, then the archived copy:
+  # every window member has landed, so it is exactly the class
+  # bin/ac-archive.sh moves.
   local fam="$1" out="$2" base rep n=0 tmp
   local lift_awk='
     /^[[:space:]]*```/ { fence = !fence; if (f) print; next }
