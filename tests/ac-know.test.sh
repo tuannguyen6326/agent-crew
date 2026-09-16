@@ -758,6 +758,74 @@ out="$(hadd --supersede 'health check timeout is two seconds' \
   --fact 'the pool health check timeout is now three seconds after measurement')"
 assert_contains "$out" "recorded in $hrec" "H9: add --supersede is unaffected by an ordinary live-only match"
 
+# --- the DUPLICATE GUARD is blind to the SUPERSEDED set ----------------------
+# fact_near_duplicates on the plain `add` path only ever searched the live
+# set, so a fact that merely repeats a RETIRED entry landed with no signal at
+# all - the same root as the H-block above (the superseded set is loaded and
+# never searched) but a different verb path. Unlike a live duplicate (always
+# the defect: two live claims about one subject), a superseded near-duplicate
+# is often the SANCTIONED correction path (`retire` then `add`), which always
+# restates the retired subject - so this is a WARN that still lands the
+# write, not a refusal.
+irepo="$(make_repo addsuprepo)"
+irec="$AC_HOME/records/repo-knowledge/addsuprepo.md"
+iadd() { "$KNOW" add --home "$AC_HOME" --repo "$irepo" --family fam-i --src-file file.txt:1 "$@"; }
+iretire() { "$KNOW" retire --home "$AC_HOME" --repo "$irepo" --family fam-i-fix --src-file file.txt:1 "$@"; }
+
+iadd --fact 'the pool worker retries exactly three times before giving up' >/dev/null
+iretire --quote 'retries exactly three times before giving up' --why 'measured wrong' >/dev/null
+
+# I1: a near-duplicate of a superseded entry with NO live successor must
+# still land, and stderr names the retired entry it duplicates.
+out="$(iadd --fact 'the pool worker retries exactly three times before it gives up' 2>&1)" \
+  || fail "I1: a near-duplicate of a superseded entry must still land"
+assert_contains "$out" "recorded in $irec" "I1: the write succeeds"
+assert_contains "$out" "SUPERSEDED" "I1: the warning names the class"
+assert_contains "$out" "retries exactly three times before giving up" \
+  "I1: the warning quotes the retired entry's own text"
+case "$out" in
+  *"replaced by"*) fail "I1: no live successor exists yet, must not claim one" ;;
+esac
+assert_contains "$(awk '/^## Superseded/ { exit } /^- fact/' "$irec")" \
+  "before it gives up" "I1: the new fact landed live"
+
+# I2: when a live entry near-duplicates the RETIRED entry's own subject, that
+# live entry is named as the successor - reusing the same measure, never a
+# new link field.
+iadd --fact 'the queue drains oldest jobs first because insertion order is preserved' >/dev/null
+iretire --quote 'insertion order is preserved' --why 'measured wrong, see successor' >/dev/null
+iadd --fact 'the queue drains oldest jobs first because a monotonic sequence number orders them' >/dev/null 2>&1
+
+out="$(iadd --fact 'the queue drains oldest jobs first since insertion order is preserved' 2>&1)" \
+  || fail "I2: a near-duplicate of a superseded entry with a successor must still land"
+assert_contains "$out" "recorded in $irec" "I2: the write succeeds"
+assert_contains "$out" "insertion order is preserved" "I2: the warning quotes the retired entry"
+assert_contains "$out" "replaced by" "I2: the warning names the successor relationship"
+assert_contains "$out" "monotonic sequence number orders them" "I2: and quotes the live successor's own text"
+
+# I3: a fact that ALSO matches a LIVE entry refuses on the live guard - the
+# stronger defect wins the ordering, and the superseded warning never fires.
+iadd --fact 'the pool lease survives a restart because the slot meta is durable on disk' >/dev/null
+iretire --quote 'slot meta is durable on disk' --why 'measured wrong' >/dev/null
+iadd --fact 'the pool lease now checks a leasefile instead of trusting that slot meta is durable on disk' >/dev/null
+before_i3="$(cat "$irec")"
+out="$(iadd --fact 'the pool lease now checks a leasefile instead of trusting that slot meta is durable on disk, always' 2>&1)" \
+  && fail "I3: a live duplicate must still refuse even when a superseded entry also matches"
+assert_contains "$out" "already has a live entry" "I3: the live refusal fires"
+case "$out" in
+  *"near-duplicates a SUPERSEDED"*) fail "I3: the superseded warning must not fire once the live guard already refused" ;;
+esac
+assert_eq "$(cat "$irec")" "$before_i3" "I3: the refusal writes nothing"
+
+# I4: --new remains the declared bypass and this guard stands aside for it,
+# exactly as the live guard does.
+out="$(iadd --new --fact 'the pool worker retries exactly three times before it gives up, always' 2>&1)" \
+  || fail "I4: --new must let a declared-distinct subject through"
+assert_contains "$out" "recorded in $irec" "I4: it landed"
+case "$out" in
+  *"SUPERSEDED"*) fail "I4: --new must bypass the superseded warning too" ;;
+esac
+
 # --- RECALL: the tiered read across the knowledge layers ---------------------
 # (knowledge-read-has-no-tiered-recall) Intake used to GREP the record flat:
 # 383KB / 487 entries, no ranking, no budget, and no way to tell a fresh fact

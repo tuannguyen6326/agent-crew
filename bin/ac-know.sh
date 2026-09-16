@@ -36,7 +36,13 @@
 # history - never edited, never counted as a live match. add/retire/cite DO
 # search it now, but only to name a phrase that lives only there, or a phrase
 # that also lives there alongside a live match; its content is never trusted
-# or written back. Two entry types and no more:
+# or written back. `add`'s own near-duplicate guard searches it too, on its
+# own terms: a plain `add` whose subject near-duplicates a SUPERSEDED entry is
+# not refused (that entry is not live, so it is not the two-live-claims defect
+# the live guard exists to stop) - it WARNS, naming the superseded entry and
+# its live successor when the record affords one, because the same shape is
+# also the sanctioned retire-then-add correction path, which always restates
+# the subject it corrects. Two entry types and no more:
 #   fact <free text>            human-consumed repo knowledge; any crewmate
 #                               may write one, directly, through `add --fact`.
 #   scope <name> = <app>, <app> the CLOSED LIST governing qa profile
@@ -383,7 +389,7 @@ resolve_provenance() {
 cmd_add() {
   local home_flag="" repo="" family="" src_file="" src_cmd="" at="" fact=""
   local declared_new=0 supersede="" dups target n sup_hit
-  local rec name entry live sup lock
+  local rec name entry live sup lock sup_dups sup_line subj succ
   while [ $# -gt 0 ]; do
     case "$1" in
       --home) home_flag="${2:-}"; shift 2 ;;
@@ -480,6 +486,33 @@ $dups
   correct the existing one:  --supersede '<phrase quoted from it>'   (retires it and adds yours in one write)
   genuinely distinct:        --new                                    (declares it, and the guard stands aside)"
     fi
+    # The live guard above cannot tell a genuine defect from the SANCTIONED
+    # correction path (retire, then add): a correction restates the retired
+    # subject by construction, so it always near-duplicates the entry it
+    # replaces. Refusing here has no honest exit - `--supersede` already
+    # refuses a retired target, and `--new` would misdeclare a correction as
+    # a distinct subject - so this warns instead of blocking: name what the
+    # fleet already judged wrong or stale, and its live successor when the
+    # record affords one (reusing the same measure over the retired entry's
+    # own subject text), then let the write proceed.
+    sup_dups="$(fact_near_duplicates "$sup" "$fact")"
+    if [ -n "$sup_dups" ]; then
+      {
+        printf 'add: warning - this subject near-duplicates a SUPERSEDED entry; the fleet already judged this wording wrong or stale once:\n'
+        while IFS= read -r sup_line; do
+          [ -n "$sup_line" ] || continue
+          printf '%s\n' "$sup_line"
+          subj="${sup_line#- fact }"; subj="${subj%% | src:*}"
+          succ="$(fact_near_duplicates "$live" "$subj")"
+          if [ -n "$succ" ]; then
+            printf '  replaced by:\n'
+            printf '%s\n' "$succ" | sed 's/^/    /'
+          fi
+        done <<SUPDUPS
+$sup_dups
+SUPDUPS
+      } >&2
+    fi
   fi
 
   printf '%s\n' "$entry" >>"$live"
@@ -523,9 +556,13 @@ fact_live_candidates() {
 }
 
 fact_near_duplicates() {
-  # fact_near_duplicates <live-file> <fact-text> - live entries whose SUBJECT
-  # text overlaps the new fact's enough to be about the same thing. Printed as
-  # full physical lines, one per candidate, most-overlapping first.
+  # fact_near_duplicates <candidate-file> <fact-text> - entries in
+  # <candidate-file> whose SUBJECT text overlaps the given fact's enough to be
+  # about the same thing. Printed as full physical lines, one per candidate,
+  # most-overlapping first. `add` calls it against BOTH sets on the plain
+  # path: $live for the refusal (two live claims about one subject is always
+  # the defect) and $sup for the warning (a near-duplicate of a RETIRED entry
+  # is often the sanctioned retire-then-add correction, not a defect).
   #
   # The measure is deliberately MECHANICAL, not semantic: distinctive tokens
   # (>=5 chars, so `the`/`with`/`when` never carry a match) intersected against
