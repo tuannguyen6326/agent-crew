@@ -620,11 +620,25 @@ herdr_rpc_bounded() {
   # herdr_rpc_bounded <secs> <argv...> - run one herdr invocation under a
   # watchdog. Returns the call's own status, or 124 when the ceiling killed it.
   #
-  # THE KILL IS THE PROCESS GROUP, not the pid, and backgrounding under `set -m`
-  # is what makes that group addressable at all: a job backgrounded under job
-  # control becomes its own group leader, so backgrounding this way and killing
-  # the negative pid are ONE decision - the negative-pid kill without `set -m`
-  # would hit this shell's own group instead of the call's.
+  # THE KILL IS THE PROCESS GROUP, and backgrounding under `set -m` is what makes
+  # that group addressable at all: a job backgrounded under job control becomes
+  # its own group leader, so backgrounding this way and killing the negative pid
+  # are ONE decision - the negative-pid kill without `set -m` would hit this
+  # shell's own group instead of the call's.
+  # IT SIGNALS THE BARE PID AS WELL, and that is not belt-and-braces: a group
+  # kill reaches the leader only if the call BECAME a group leader, which this
+  # function cannot verify and cannot survive being wrong about. Measured with
+  # the body held constant and only `set -m` removed: the group kill alone never
+  # reaches the call at all - it runs past its ceiling untouched, and the elapsed
+  # check below is never reached because the wait above never returns. A ceiling
+  # that silently stops bounding is the exact fault this whole mechanism exists
+  # to remove, so the leader is signalled by a route that does not depend on the
+  # grouping. In the ordinary case the group kill already carried it, so this
+  # costs one redundant signal to a process that has just received the same one
+  # (measured: same kill, same status, both ways). What it trades away is
+  # reaping COMPLETENESS if the grouping ever fails - a forked child then
+  # outlives the call - and an orphan someone can count is the right exchange
+  # for a bound that cannot quietly stop existing.
   #
   # THE WATCHDOG CARRIES THE DEADLINE INSTEAD OF A POLL LOOP, the first of two
   # places this bound's shape departs from its siblings, and the reason is a
@@ -663,7 +677,7 @@ herdr_rpc_bounded() {
   set -m
   "$@" &
   pid=$!
-  { sleep "$secs"; kill -TERM -"$pid" 2>/dev/null; } &
+  { sleep "$secs"; kill -TERM -"$pid" 2>/dev/null; kill -TERM "$pid" 2>/dev/null; } &
   wd=$!
   set +m
   wait "$pid" 2>/dev/null || rc=$?
