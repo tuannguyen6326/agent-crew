@@ -618,7 +618,6 @@ STUB
     # closed, so it is exactly the class that gets archived, and its lessons
     # must not vanish from the window the moment it moves.
     printf -- '- [x] fam-archived - landed then archived - local main (merged 2026-07-16)\n'
-    # (learn-lessons-lift-is-naive-about-a-quoted-heading-and-blind-to-a-nested-report)
     # A report that quotes the `## Lessons` heading inside a code fence before
     # its real section - the lift must not mistake the quote for the opener.
     printf -- '- [x] fam-fenced - report quotes the Lessons heading in a fence - local main (merged 2026-07-16)\n'
