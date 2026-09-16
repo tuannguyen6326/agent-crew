@@ -369,4 +369,26 @@ if command -v bun >/dev/null 2>&1; then
   "$BIN/ac-teardown.sh" qqqxzv-wwwqzx --force >/dev/null 2>&1
 fi
 
+# --- a SOLO CHIEF's slice: scoped start, LANDED: receipt at landing ----------
+# A solo chief (a roomchief promoted --solo, AC_SCOPE set) works its family's
+# slices through this same verb. Two things differ from a chief/solo-session
+# slice: the meta carries the family scope, so fleet views and the watcher
+# skip set group it under the family; and at landing the Done row - which the
+# ledger guard fences from every scoped session - is stood in for by a
+# `LANDED:` receipt in the family room, the one record a roomchief may write.
+AC_SCOPE=scf "$BIN/ac-self-task.sh" start scf-fix "$repo" >/dev/null
+assert_eq "$(awk -F= '$1=="fleet_scope"{print $2}' "$state/scf-fix.meta")" "scf" \
+  "a scoped start records the family on the meta"
+out="$("$BIN/ac-teardown.sh" scf-fix --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" \
+  && fail "a scoped slice with no LANDED: receipt must not land: $out"
+assert_contains "$out" "landed-receipt=none" "the gate reports the receipt, not a Done row, for a scoped slice"
+assert_contains "$out" "ac-room.sh post scf" "the missing receipt names the room post that writes it"
+case "$out" in *"## Done"*) fail "a scoped slice is never asked for a Done row it may not write: $out" ;; esac
+AC_SCOPE=scf "$BIN/ac-room.sh" post scf scf-chief 'LANDED: scf-fix - the fix, local main @abc' >/dev/null
+out="$("$BIN/ac-teardown.sh" scf-fix --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" \
+  || fail "the LANDED: receipt lands the scoped slice: $out"
+assert_contains "$(cat "$AC_HOME/data/scf-fix/timeline.log")" \
+  "landed-receipt=yes" "the receipt is read from the family room"
+assert_no_file "$state/scf-fix.meta" "the scoped slice is torn down"
+
 pass

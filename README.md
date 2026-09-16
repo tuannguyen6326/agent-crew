@@ -13,7 +13,7 @@ There is no app and no build step - the checkout is the product.
 |---|---|
 | **captain** | You. Approves PRs, answers escalations, owns every irreversible call. |
 | **crewchief** | Your fleet-level thread. Triages orders, promotes families to roomchiefs, merges nothing without your word. |
-| **roomchief** | A scoped crewchief owning one promoted task family in its own thread (`ac-spawn.sh --roomchief <family>`). |
+| **roomchief** | A scoped crewchief owning one promoted task family in its own thread (`ac-spawn.sh --roomchief <family>`). Promoted `--solo` it is a **solo chief**: a family too small to cost a crewmate, whose slices the chief works itself under a mandatory independent review. |
 | **crewmate** | Disposable worker: one task, one in-repo worktree, one herdr tab, then teardown. |
 | **pane agent** | One visible agent turn in its own tab - runs the independent code reviewer and the QA agent. |
 | **second chief** | Independent model invoked for uncertain or high-consequence design decisions in one fresh session per round - advises, never applies. |

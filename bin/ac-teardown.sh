@@ -708,7 +708,7 @@ prepare_task_verifiers
 if [ "$kind" = self ] && [ "$force" != 1 ]; then
   [ -z "$no_lesson" ] || ac_status_append "$id" "lesson waived: $no_lesson"
   [ -z "$no_fact" ] || ac_status_append "$id" "repo fact waived: $no_fact"
-  ac_solo_landing_check "$id" "$project_dir" "$no_lesson" "$no_fact" \
+  ac_solo_landing_check "$id" "$project_dir" "$no_lesson" "$no_fact" "$(ac_meta_get "$meta" fleet_scope)" \
     || ac_die "solo landing refused: the knowledge loop above is incomplete - write what is missing (or waive the lesson/fact with --no-lesson/--no-fact '<why>'), then run the teardown again"
   ac_status_append "$id" "learning tick: $("$bin_dir/ac-learn.sh" tick "$id" 2>&1 | tail -n 1)"
 fi

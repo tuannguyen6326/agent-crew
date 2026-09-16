@@ -11,7 +11,7 @@
 #                    [--resume-from <old-task-id>]
 #                    [--base-branch <b>]
 #        ac-spawn.sh <id> --crewdeputy [--recover] [--harness <h>] [--backend <b>]
-#        ac-spawn.sh --roomchief <family> [--harness <h>] [--backend <b>]
+#        ac-spawn.sh --roomchief <family> [--solo] [--harness <h>] [--backend <b>]
 #                    [--captain-initiated "<order ref>" | --system-initiated "<order ref>"
 #                     | --over-cap "<sanction>"]
 #
@@ -21,6 +21,21 @@
 # never touches the backlog/registry (the crewchief keeps those). It runs
 # in the agent-crew checkout (no worktree lease, no brief - the room IS
 # the brief) with AC_SCOPE=<family> exported.
+#
+# --solo promotes a SOLO CHIEF (captain ruling 2026-09-16, AGENTS.md section
+# 5): the same roomchief session, for a family the crewchief judged too small
+# to cost a crewmate, that WORKS ITS OWN SLICES through ac-self-task.sh under
+# every other roomchief duty. Roomchief-only (refused on a crew spawn - a
+# crewmate has no such mode). Its meta stays kind=roomchief and gains solo=1
+# (what every other process reads), its launch line gains AC_CHIEF_SOLO=1
+# beside AC_SCOPE (what the session and its hooks read; distinct from the
+# captain's own AC_SOLO=1 pair-coding session, which drains no wakes and
+# answers no gates - a solo chief does both for its family), its kickoff
+# gains the solo section (the slice verb with the family prefix, the
+# MANDATORY crew-verify review round, the LANDED: room receipt that stands in
+# for the Done row the ledger guard fences from it, hands-not-subagents), and
+# its PROMOTED: receipt says so. The cap, the watcher skip set, teardown and
+# the chiefs accounting class cover it with no edit, exactly as a domainchief.
 #
 # A promote whose family row carries the domain:<name> token becomes a
 # DOMAINCHIEF - the same session kind, carrying a domain. Its meta stays
@@ -528,12 +543,14 @@ model=""; effort=""; backend=""; resume_from=""; review="-"; base_branch=""; bas
 captain_initiated=""; captain_initiated_set=0; over_cap=""; over_cap_set=0
 system_initiated=""; system_initiated_set=0
 codereview_rule=""; codereview_rule_set=0
+solo_chief=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --scout) scout=1; shift ;;
     --crewdeputy) crewdeputy=1; shift ;;
     --recover) recover=1; shift ;;
     --roomchief) roomchief_family="$2"; shift 2 ;;
+    --solo) solo_chief=1; shift ;;
     --captain-initiated) captain_initiated="$2"; captain_initiated_set=1; shift 2 ;;
     --system-initiated) system_initiated="$2"; system_initiated_set=1; shift 2 ;;
     --over-cap) over_cap="$2"; over_cap_set=1; shift 2 ;;
@@ -558,6 +575,8 @@ done
 [ -n "$roomchief_family" ] \
   || { [ "$captain_initiated_set" = 0 ] && [ "$system_initiated_set" = 0 ] && [ "$over_cap_set" = 0 ]; } \
   || ac_die "--captain-initiated/--system-initiated/--over-cap require --roomchief (they gate the room-parallel cap)"
+[ -n "$roomchief_family" ] || [ "$solo_chief" = 0 ] \
+  || ac_die "--solo requires --roomchief (a SOLO CHIEF is a roomchief that works its family's slices itself; a crewmate has no such mode)"
 # --recover relaxes the crewdeputy meta refusal only; on any other spawn it is
 # a mistake, not a silent no-op.
 [ "$recover" = 0 ] || [ "$crewdeputy" = 1 ] \
@@ -1369,7 +1388,22 @@ HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there i
   # scope pair already uses at :1372-1373/:1400, so no new pattern appears.
   dom_env=""
   [ -z "$dom" ] || dom_env="AC_DOMAIN=$(printf '%q' "$dom") "
-  backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$(ac_home)") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}$launch"
+  # THE SOLO CHIEF SECTION (captain ruling 2026-09-16, AGENTS.md section 5).
+  # Emitted only on --solo, so an ordinary roomchief's prompt stays
+  # byte-identical; like the domain section, every clause is a contract that
+  # lives nowhere the chief would otherwise read it at kickoff.
+  solo_env=""
+  if [ "$solo_chief" = 1 ]; then
+    solo_env="AC_CHIEF_SOLO=1 "
+    prompt="$prompt
+
+You are the SOLO CHIEF of this family (a roomchief promoted --solo; your meta stays kind=roomchief with solo=1, your environment carries AC_CHIEF_SOLO=1). The captain judged this family too small to cost a crewmate, so you WORK ITS SLICES YOURSELF - every other roomchief duty above binds unchanged. What that changes, and nothing else does:
+SLICES: open each slice with bin/ac-self-task.sh start $fam-<slug> <project> (it leases the worktree, seeds the crewmate layer and makes the slice visible), read the seeded crewmate instruction file inside that worktree before your first edit, work under the crewmate rules (TDD, comment discipline, the smallest diff), commit on crew/$fam-<slug>, and log progress with bin/ac-self-task.sh log.
+REVIEW IS MANDATORY: nobody else reads your code, so every slice gets ONE independent review round before it lands - the crew-verify skill (bin/ac-verify.sh codereview, run in the FOREGROUND) - and a pass at a reviewed_ref equal to HEAD is the receipt you land on. No slice of yours lands unreviewed, local-only included.
+LANDING: land per the slice's mode (bin/ac-merge-local.sh, or a PR the captain merges), then post LANDED: $fam-<slug> - <outcome> to this room BEFORE bin/ac-teardown.sh $fam-<slug>: you may not write records/backlog.md (the ledger guard fences it), so that receipt is what the teardown gate reads where a Done row would be; the crewchief moves the family row at your hand-back. The gate still owes a lesson (bin/ac-learn.sh note) and a verified repo fact (bin/ac-know.sh add), or --no-lesson/--no-fact '<why>'.
+HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from this session - edit with your own hands, or spawn a real crewmate when a slice outgrows you; never both on one slice."
+  fi
+  backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$(ac_home)") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}${solo_env}$launch"
   deliver_kickoff "$id" "$harness" "$prompt"
 
   ac_meta_set "$meta" backend "$backend"
@@ -1385,6 +1419,7 @@ HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there i
   # accounting class all cover it with no edit; relocate reads this same field
   # to keep AC_DOMAIN on the resume line.
   [ -z "$dom" ] || ac_meta_set "$meta" domain "$dom"
+  [ "$solo_chief" = 0 ] || ac_meta_set "$meta" solo 1
   ac_meta_set "$meta" initiated_by "$initiated_by"
   ac_meta_set "$meta" mode "-"
   ac_meta_set "$meta" yolo "off"
@@ -1404,7 +1439,9 @@ HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there i
   # captain's only view of which exemption this room rode.
   ac_status_append "$id" "working: roomchief promoted" \
     || ac_warn "roomchief $id is promoted, but its status line could not be appended"
-  "$bin_dir/ac-room.sh" post "$fam" crewchief "PROMOTED: đã mở phiên roomchief ($id) - trao đổi family này trong thread riêng của nó" >/dev/null \
+  solo_note=""
+  [ "$solo_chief" = 0 ] || solo_note=" - solo chief: tự làm các slice của family này qua ac-self-task.sh, không spawn crewmate (captain ruling 2026-09-16)"
+  "$bin_dir/ac-room.sh" post "$fam" crewchief "PROMOTED: đã mở phiên roomchief ($id) - trao đổi family này trong thread riêng của nó$solo_note" >/dev/null \
     || ac_warn "roomchief $id is promoted, but the PROMOTED: post to room $fam failed"
   # The cap-gate receipt (IN ADDITION to PROMOTED): a DECIDED: line recording the
   # captain call this promote rode - captain-initiated (exempt), system-initiated

@@ -505,4 +505,43 @@ assert_contains "$out" "not closing tab tFOR" "a foreign tab is refused, never c
 assert_file "$FAKE_HERDR/tabs/tFOR" "the co-tenant's tab survives the reap attempt"
 "$BIN/ac-teardown.sh" orph3-chief >/dev/null
 
+# --- SOLO CHIEF: a roomchief that works its family's slices itself -----------
+# Captain ruling 2026-09-16: a small family need not cost a crewmate. The
+# crewchief promotes it with --solo and the roomchief works each slice through
+# ac-self-task.sh, under every other roomchief duty. What must hold: the flag is
+# roomchief-only, the meta records it (every other process reads durable
+# state), the launch line carries AC_CHIEF_SOLO=1 (the session and its hooks
+# read the environment), the kickoff names the contract - the self-task verb,
+# the mandatory independent review, the LANDED: receipt that stands in for the
+# Done row it may not write - and an ordinary promote carries none of it.
+out="$("$BIN/ac-spawn.sh" sc0 proj --solo --harness fake 2>&1 || true)"
+assert_contains "$out" "--solo requires --roomchief" "--solo on a crew spawn is a mistake, not a silent no-op"
+assert_no_file "$AC_HOME/state/sc0.meta" "the refused spawn writes no meta"
+room_seed sc1
+"$BIN/ac-spawn.sh" --roomchief sc1 --solo --harness fake >/dev/null 2>&1 \
+  || fail "a --solo promote must spawn like any other roomchief"
+assert_eq "$(awk -F= '$1=="solo"{print $2}' "$AC_HOME/state/sc1-chief.meta")" "1" \
+  "the meta records solo=1 - the field every other process reads"
+assert_eq "$(awk -F= '$1=="kind"{print $2}' "$AC_HOME/state/sc1-chief.meta")" "roomchief" \
+  "a solo chief IS a roomchief: kind is unchanged, so cap, watcher skip and teardown cover it"
+read -r sc1_pane _ <"$AC_HOME/state/.pane-sc1-chief"
+assert_contains "$(cat "$FAKE_HERDR/panes/$sc1_pane.buf")" "AC_CHIEF_SOLO=1" \
+  "the launch line carries AC_CHIEF_SOLO=1 beside AC_SCOPE"
+sc1_kick="$(cat "$AC_HOME/data/sc1/chief/kickoff.md")"
+assert_contains "$sc1_kick" "SOLO CHIEF" "the kickoff names the role"
+assert_contains "$sc1_kick" "ac-self-task.sh start sc1-" "the kickoff names the slice verb with the family prefix"
+assert_contains "$sc1_kick" "crew-verify" "the kickoff makes the independent review mandatory"
+assert_contains "$sc1_kick" "LANDED:" "the kickoff names the room receipt that stands in for the Done row"
+assert_contains "$(cat "$AC_HOME/data/sc1/room.md")" "PROMOTED: " "the promote is receipted"
+assert_contains "$(cat "$AC_HOME/data/sc1/room.md")" "solo" "...and the receipt says the chief works the family itself"
+room_seed sc2
+"$BIN/ac-spawn.sh" --roomchief sc2 --harness fake >/dev/null 2>&1
+case "$(cat "$AC_HOME/data/sc2/chief/kickoff.md")" in
+  *"SOLO CHIEF"*) fail "an ordinary promote's kickoff must not carry the solo section" ;;
+esac
+[ -z "$(awk -F= '$1=="solo"{print $2}' "$AC_HOME/state/sc2-chief.meta")" ] \
+  || fail "an ordinary promote's meta must carry no solo field"
+"$BIN/ac-teardown.sh" sc1-chief >/dev/null
+"$BIN/ac-teardown.sh" sc2-chief >/dev/null
+
 pass

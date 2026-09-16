@@ -108,6 +108,22 @@ if [ "${AC_SOLO:-}" = 1 ]; then
 =================================================================
 EOF
 fi
+# A SOLO CHIEF (AC_CHIEF_SOLO=1 beside AC_SCOPE) is a roomchief that works its
+# family's slices itself (captain ruling 2026-09-16, AGENTS.md section 5).
+# Nothing else it loads at start says so, so the digest does; the scoped
+# rail below (no fleet lock, its own spool) is unchanged.
+if [ "${AC_CHIEF_SOLO:-}" = 1 ] && [ -n "${AC_SCOPE:-}" ]; then
+  cat <<EOF
+=================================================================
+== SOLO CHIEF of family ${AC_SCOPE} (AC_CHIEF_SOLO=1).
+== You work this family's slices YOURSELF:
+==   bin/ac-self-task.sh start ${AC_SCOPE}-<slug> <project>
+== then the crew-verify review round (mandatory), land, post
+== LANDED: <slice> to the room, bin/ac-teardown.sh <slice>.
+== Every other roomchief duty binds unchanged; never a subagent.
+=================================================================
+EOF
+fi
 lock_rc=0
 [ "$read_only" -eq 1 ] || lock_out="$("$bin_dir/ac-lock.sh" acquire 2>&1)" || lock_rc=$?
 [ -n "${lock_out:-}" ] && printf '%s\n' "$lock_out"

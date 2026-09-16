@@ -247,4 +247,16 @@ assert_no_file "$solo_home/state/.session-lock" "a solo session never takes the 
 [ -e "$solo_home/state/.wake-spool/1.1.000000" ] \
   || fail "a solo session must not consume the chief's wake records"
 
+# --- AC_CHIEF_SOLO=1: a SOLO CHIEF's digest names its role --------------------
+# A solo chief is a roomchief (AC_SCOPE set) that works its family's slices
+# itself; the digest tells it so on every start, since nothing else it loads
+# does. Scoped, so it still takes no fleet lock and still leaves the fleet
+# spool alone - the solo-session rail's two invariants hold here too.
+rc=0; out="$(AC_CHIEF_SOLO=1 AC_SCOPE=scfam AC_HOME="$solo_home" "$BIN/ac-session-start.sh" 2>&1)" || rc=$?
+assert_contains "$out" "SOLO CHIEF" "the digest announces the solo chief"
+assert_contains "$out" "ac-self-task.sh start scfam-" "...and names the slice verb with its family prefix"
+assert_no_file "$solo_home/state/.session-lock" "a scoped session never takes the fleet lock"
+[ -e "$solo_home/state/.wake-spool/1.1.000000" ] \
+  || fail "a scoped session must not consume the fleet spool"
+
 pass

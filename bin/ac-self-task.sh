@@ -3,7 +3,11 @@
 # spec for the chief-self-but-visible mechanism. A SOLO session (AC_SOLO=1)
 # uses the SAME verb per slice with no size cap - the cap below binds the
 # CHIEF's self-exception; the solo contract is AGENTS.md section 5's SOLO
-# SESSION block.
+# SESSION block. A SOLO CHIEF (a roomchief promoted --solo, AC_SCOPE set) uses
+# it the same way for its family's slices: the meta then carries
+# fleet_scope=<family>, and at landing the teardown gate reads the family
+# room's `LANDED: <id>` receipt where a Done row would be (bin/ac-lib.sh
+# ac_solo_landing_check), since the ledger guard fences the backlog from it.
 #
 # Usage: ac-self-task.sh start <id> <project-name-or-dir> [--mode <m>] [--harness <h>] [--base-branch <b>]
 #        ac-self-task.sh log <id> '<progress line>'
@@ -282,6 +286,11 @@ ac_meta_set "$meta" project "$project_name"
 ac_meta_set "$meta" project_dir "$project_dir"
 ac_meta_set "$meta" kind "self"
 ac_meta_set "$meta" mode "$mode"
+# A SOLO CHIEF's slice (a scoped session, AC_SCOPE set) belongs to its family:
+# the scope rides the meta the way a crewmate spawn records it, so fleet views
+# group the slice under the family and the teardown gate knows to read the
+# family room's LANDED: receipt where a Done row would be.
+[ -z "${AC_SCOPE:-}" ] || ac_meta_set "$meta" fleet_scope "$AC_SCOPE"
 ac_meta_set "$meta" spawned_at "$(ac_iso)"
 trap - EXIT
 

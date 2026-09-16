@@ -2087,7 +2087,13 @@ ac_solo_landing_check() {
   # it. Attribution grammars are the writers' own: a Pending heading carrying
   # "(solo <id>)", a repo-knowledge line ending "| by: <id>", a "- [x] <id> "
   # row under ## Done.
-  local id="${1:-}" repo="${2:-}" no_lesson="${3:-}" no_fact="${4:-}" led rec bl lessons=none facts=none done=none hint="" line
+  # A SCOPED slice (<scope> non-empty: a solo chief's, AC_SCOPE at its start)
+  # may not write the Done row - the ledger guard fences every scoped session
+  # from records/backlog.md - so its third write is a `LANDED: <id>` receipt
+  # in the family room, the one record a roomchief owns; the crewchief moves
+  # the row at hand-back. Reported as landed-receipt, never as done-row, so
+  # the line says which record was read.
+  local id="${1:-}" repo="${2:-}" no_lesson="${3:-}" no_fact="${4:-}" scope="${5:-}" led rec bl room lessons=none facts=none done=none hint="" line
   [ -n "$id" ] || return 0
   led="$(ac_records_dir)/learnings.md"
   if [ -n "$no_lesson" ]; then lessons=waived
@@ -2101,19 +2107,32 @@ ac_solo_landing_check() {
       /^## Superseded/ { exit }
       /^- / && substr($0, length($0) - length(suffix) + 1) == suffix { found = 1; exit }
       END { exit(found ? 0 : 1) }' "$rec"; then facts=yes; fi
-  bl="$(ac_records_dir)/backlog.md"
-  if [ -f "$bl" ] && awk -v row="- [x] $id " '
-      /^## Done/ { in_done = 1; next }
-      /^## / { in_done = 0 }
-      in_done && index($0, row) == 1 { found = 1; exit }
-      END { exit(found ? 0 : 1) }' "$bl"; then done=yes; fi
-  line="knowledge loop: lessons=$lessons repo-knowledge=$facts done-row=$done"
+  if [ -n "$scope" ]; then
+    room="$(ac_room_file "$scope" 2>/dev/null || true)"
+    if [ -n "$room" ] && [ -f "$room" ] && awk -v id="$id" '
+        /^- \[/ && index($0, "> LANDED:") && index($0, id) { found = 1; exit }
+        END { exit(found ? 0 : 1) }' "$room"; then done=yes; fi
+    line="knowledge loop: lessons=$lessons repo-knowledge=$facts landed-receipt=$done"
+  else
+    bl="$(ac_records_dir)/backlog.md"
+    if [ -f "$bl" ] && awk -v row="- [x] $id " '
+        /^## Done/ { in_done = 1; next }
+        /^## / { in_done = 0 }
+        in_done && index($0, row) == 1 { found = 1; exit }
+        END { exit(found ? 0 : 1) }' "$bl"; then done=yes; fi
+    line="knowledge loop: lessons=$lessons repo-knowledge=$facts done-row=$done"
+  fi
   [ "$lessons" != none ] || hint="$hint
   lesson: $(ac_root)/bin/ac-learn.sh note '### $(date -u +%Y-%m-%d) (solo $id)' '- <one method lesson>'   (or --no-lesson '<why nothing new>')"
   [ "$facts" != none ] || hint="$hint
   repo fact: $(ac_root)/bin/ac-know.sh add --home $(ac_home) --repo ${repo:-<repo>} --family $id --src-file <path>:<line> --fact '<verified fact>'   (or --no-fact '<why none verified>')"
-  [ "$done" = yes ] || hint="$hint
+  if [ "$done" != yes ]; then
+    if [ -n "$scope" ]; then hint="$hint
+  landed receipt: $(ac_root)/bin/ac-room.sh post $scope $scope-chief 'LANDED: $id - <outcome>'   (the crewchief moves the backlog row at your hand-back)"
+    else hint="$hint
   done row: append '- [x] $id - <outcome>' under ## Done in $bl"
+    fi
+  fi
   ac_status_append "$id" "$line" 2>/dev/null || true
   printf '%s\n' "$line"
   [ -z "$hint" ] || printf 'missing - the solo contract owes these at landing:%s\n' "$hint"

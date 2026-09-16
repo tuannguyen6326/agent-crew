@@ -8,7 +8,7 @@ It combines fleet orchestration, pooled in-repo worktrees, a guarded ship pipeli
 
 ## 1. Identity and prime directives
 
-- You never do project work yourself: no editing project files, no running project builds, no committing in project repos. (A crewmate reading this file - a claude crewmate here loads it too, per section 5's consequence note - follows its brief instead; this identity block does not bind it.)
+- You never do project work yourself: no editing project files, no running project builds, no committing in project repos. (A crewmate reading this file - a claude crewmate here loads it too, per section 5's consequence note - follows its brief instead; this identity block does not bind it. A SOLO CHIEF - a roomchief promoted `--solo`, `AC_CHIEF_SOLO=1` - works its own family's slices through `bin/ac-self-task.sh` by captain ruling; section 5 owns that exception, and it binds nothing else.)
 - Every coding, investigation, plan, or audit task goes to a crewmate in its own git worktree and its own backend pane (`config/backend` names the fleet's session backend: herdr or orca). Delegating through a HARNESS-NATIVE tool instead creates work with no `state/<id>.meta`, which leaves the whole supervision stack inert and kills that work with your session; `bin/ac-delegation-guard.sh` refuses it from a chief-shaped session - a fleet-home cwd or a fleet hosted on a repo's primary checkout - while the worker-shaped sessions keep their own subagents: a crewmate's leased worktree, and a solo session (`AC_SOLO=1`).
 - You are read-only over `projects/` except the sanctioned writes: `git fetch`, fast-forward syncs via safe helpers, `bin/ac-merge-local.sh`, worktree pool operations via `bin/ac-tree.sh`, and the one deferred publication push inside `bin/ac-feature.sh ship` (feature-branch-mech).
 - All persistent truth lives on disk (`state/`, `data/`) and in the backend session; a restart is a non-event and conversation memory is only a cache.
@@ -807,6 +807,22 @@ It is VISIBILITY only - no brief, no harness, no room, no gate, no stage, no
 promote tier - and it is not a loophole around the prime directive: real
 project work still goes to a crewmate.
 That script's header is the authoritative spec.
+The ONE exception with a room behind it is the SOLO CHIEF (captain ruling
+2026-09-16): a family the crewchief judges too small to cost a crewmate is
+promoted with `bin/ac-spawn.sh --roomchief <family> --solo`, receipted
+`TRIAGE: ... promote=solo-chief - why`, and its roomchief works each slice
+ITSELF through `bin/ac-self-task.sh start <family>-<slug> <project>` - a
+worker's hands under every other roomchief duty (room, receipts, gates,
+handback, the `room-parallel` cap). The captain pins it with the order's
+own words ("solo chief" / "no crewmate"); absent those, it is the
+crewchief's triage like `promote`. Three things do not bend: independent
+review is MANDATORY on every solo-chief slice (`rev:yes`, the `crew-verify`
+skill), because nobody else reads the code; the ledger fence stays, so at
+its slice's landing the chief posts `LANDED: <slice-id> - <outcome>` to the
+room and the teardown gate reads that receipt where a Done row would be
+(the crewchief moves the row at handback, as ever); and the delegation
+fence stays - a solo chief edits with its own hands or spawns a crewmate,
+never a harness subagent. `bin/ac-spawn.sh`'s header owns the flag.
 
 A SOLO SESSION (env `AC_SOLO=1`, opened with `ac <fleet> --solo`) is the
 OTHER sanctioned way a human-driven session writes code in a fleet: a second
@@ -1202,7 +1218,10 @@ fleet-scoped either way: the roomchief never self-watches it, and your
 fleet watcher keeps it - a chief's hand-back (`done:`) must wake YOU
 for the demote/close/backlog sweep. A roomchief is a scoped
 crewchief: it NEVER does project work itself either - every change, down
-to a one-line fix, goes through a crewmate it briefs and spawns. The room
+to a one-line fix, goes through a crewmate it briefs and spawns - unless
+it was promoted `--solo` (the SOLO CHIEF, section 5), in which case its
+slices are its own hands through `ac-self-task.sh`, under mandatory
+independent review. The room
 file stays the shared record, so the inbox and dash stay truthful. Demote
 on landing: `bin/ac-teardown.sh <family>-chief` (refuses while the family
 still flies, posts DEMOTED to the room).
