@@ -1564,9 +1564,10 @@ queue_wake() {
   # ac_wake_publish (private write, one atomic ln), never a shared append.
   # Called from the watcher's MAIN shell only, never a subshell - $$ is the
   # publish collision-identity (ac_wake_publish's contract).
-  # A FAILED publish is never swallowed: every call site runs inside the
-  # `if check_fleet` condition where errexit is OFF, and the dedup marker
-  # (.seen-/.gone-/.ask-/.stale-) has ALREADY advanced by the time this runs,
+  # A FAILED publish is never swallowed: every call site is reached from a
+  # command inside an `if` condition list, where bash suspends errexit for the
+  # whole list and inside the functions it calls, and the branch's own dedup
+  # latch has ALREADY advanced by the time this runs,
   # so a silent failure would lose the wake with no trace and no retry. The
   # failure goes loudly through watch_log (arm log + stderr - the one
   # out-of-band channel the header names; stdout stays the exit reason's
