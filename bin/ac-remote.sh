@@ -55,6 +55,18 @@
 #   links, replies, or the printed lines. A re-poll of a stashed rid never
 #   re-acks; a hook that ignores AC_REMOTE_ACK_STATE simply acks every edge
 #   the same way.
+#   BOUNDED: this is a SECOND captain-owned hook the core does not control,
+#   called once per edge with no cap of its own - a batch ingest walks it
+#   once per newly stashed rid, so an unbounded hook turns N rids into N x
+#   the hook's own hang, right on the ingest path. Two ceilings, answering
+#   two different questions: AC_REMOTE_ACK_TIMEOUT (default 20s) bounds ONE
+#   call - a dead hook is reaped, never left running; AC_REMOTE_ACK_BUDGET
+#   (default 30s) bounds the WHOLE process's time across every ack call this
+#   run makes - past it, every further call is skipped rather than run, with
+#   ONE warning for the round rather than one per skipped rid. Skipping is
+#   sound: the stash and its durable wake are both committed before run_ack
+#   is ever reached, so a skipped ack costs a transport receipt, never an
+#   order.
 # ingest - the push-gateway entrance: reads the SAME JSON lines a poll hook
 #   would print, from THIS command's stdin, and runs them through the exact
 #   per-line core poll uses (one implementation, two entrances). Needs NO
@@ -163,8 +175,15 @@
 #
 # Hook contracts (config/, executable, transport-owned - this header is the
 # authoritative spec, including for the Slack pair):
-#   remote-poll  - stdout: zero or more JSON lines {rid,text,author,thread,...}
+#   remote-poll  - stdout: zero or more JSON lines {rid,text,author,thread,...};
+#                  stdin closed - a hook that reads stdin anyway gets EOF,
+#                  never bytes belonging to whatever else called this script
 #   remote-reply - env AC_REMOTE_RID, AC_REMOTE_THREAD; reply text on stdin
+#   remote-ack   - env AC_REMOTE_RID, AC_REMOTE_THREAD, AC_REMOTE_ACK_STATE;
+#                  stdin/stdout closed; each call bounded at
+#                  AC_REMOTE_ACK_TIMEOUT seconds (default 20), the whole
+#                  process capped at AC_REMOTE_ACK_BUDGET seconds (default
+#                  30) across every call it makes (see LIFECYCLE-ACK above)
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
@@ -219,6 +238,13 @@ meta_unset() {
   mv "$tmp" "$file"
 }
 
+# Process-lifetime state for run_ack's per-round budget (see its header):
+# how many seconds this run of ac-remote.sh has already spent inside the
+# remote-ack hook, and whether the one exhaustion warning for this round has
+# already fired. One process is one round; nothing here survives past exit.
+_ack_budget_spent=0
+_ack_budget_warned=0
+
 run_ack() {
   # run_ack <label> <rid> <state> [<thread>] - one LIFECYCLE-ACK hook call
   # (header contract): best-effort at every edge, stdout muzzled, one
@@ -226,9 +252,71 @@ run_ack() {
   local label="$1" rid="$2" ackstate="$3" thread="${4:-}" ack
   ack="$(ac_config_dir)/remote-ack"
   [ -x "$ack" ] || return 0
-  AC_REMOTE_RID="$rid" AC_REMOTE_THREAD="$thread" AC_REMOTE_ACK_STATE="$ackstate" \
-    "$ack" </dev/null >/dev/null \
-    || ac_warn "$label: remote-ack hook failed for $rid ($ackstate)"
+
+  local budget="${AC_REMOTE_ACK_BUDGET:-30}"
+  case "$budget" in ''|*[!0-9]*) budget=30 ;; esac
+  if [ "$_ack_budget_spent" -ge "$budget" ]; then
+    # Warn once for the round, not once per skipped rid: a 200-rid batch
+    # past budget would otherwise turn the warn channel into its own denial
+    # of service.
+    if [ "$_ack_budget_warned" -eq 0 ]; then
+      ac_warn "$label: remote-ack budget (${budget}s) spent this round - skipping remaining acks"
+      _ack_budget_warned=1
+    fi
+    return 0
+  fi
+
+  local timeout="${AC_REMOTE_ACK_TIMEOUT:-20}" pid start rc=0 elapsed
+  case "$timeout" in ''|*[!0-9]*) timeout=20 ;; esac
+  # Idiom ported from fetch_bounded (bin/ac-sync.sh): background under
+  # `set -m` so the hook call becomes its own process-group leader, bounded
+  # `kill -0` poll, and on timeout reap the whole GROUP (TERM, short grace,
+  # KILL, wait) - a hook that forked a helper of its own cannot outlive it.
+  # `set -m` at background time and the negative-pid kill are one decision:
+  # without `set -m` the negative-pid kill would hit this script's own
+  # group. No EXIT trap: unlike ac-watch.sh's long-lived poll loop, this
+  # script installs no signal handling at all and run_ack is a short-lived
+  # leaf call, so the inline reap here closes the leak without adding any
+  # new signal surface.
+  #
+  # Fd 3 saves the real stderr before job control gets involved: a
+  # non-interactive bash under `set -m` announces a signal-killed job on
+  # that stream the instant it notices the death, regardless of any redirect
+  # on the `wait` that reaps it (measured) - and that stream is the same
+  # warn channel operators read. Wrapping the whole background+reap segment
+  # in `2>/dev/null` swallows the announcement; sending the hook's own
+  # stderr to the saved fd instead of the swallowed one keeps its real
+  # failures reaching the operator exactly as before this bound existed.
+  exec 3>&2
+  {
+    set -m
+    AC_REMOTE_RID="$rid" AC_REMOTE_THREAD="$thread" AC_REMOTE_ACK_STATE="$ackstate" \
+      "$ack" </dev/null >/dev/null 2>&3 &
+    pid=$!
+    set +m
+    start=$SECONDS
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ $((SECONDS - start)) -ge "$timeout" ]; then
+        kill -TERM -"$pid" 2>/dev/null || true
+        sleep 0.5
+        kill -KILL -"$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        rc=124
+        break
+      fi
+      sleep 0.2
+    done
+    [ "$rc" -eq 124 ] || { wait "$pid" && rc=0 || rc=$?; }
+  } 2>/dev/null
+  exec 3>&-
+
+  elapsed=$((SECONDS - start))
+  _ack_budget_spent=$((_ack_budget_spent + elapsed))
+  if [ "$rc" -eq 124 ]; then
+    ac_warn "$label: remote-ack hook timed out after ${timeout}s for $rid ($ackstate)"
+  elif [ "$rc" -ne 0 ]; then
+    ac_warn "$label: remote-ack hook failed for $rid ($ackstate)"
+  fi
   return 0
 }
 
@@ -313,7 +401,12 @@ cmd_poll() {
   hook="$(ac_config_dir)/remote-poll"
   if [ ! -f "$hook" ] || [ ! -x "$hook" ]; then exit 0; fi
   errfile="$(mktemp "${TMPDIR:-/tmp}/ac-remote-poll-err.XXXXXX")"
-  out="$("$hook" 2>"$errfile")" || rc=$?
+  # </dev/null: the poll hook's published contract is stdout+stderr, no
+  # stdin - unredirected here it would inherit whatever stdin this command
+  # happened to be called with, so a hook that reads stdin would block on
+  # bytes it was never meant to see. run_ack closes this same gap for its
+  # own hook two lines away; this is the sibling half.
+  out="$("$hook" </dev/null 2>"$errfile")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     err="$(cat "$errfile")"
     rm -f "$errfile"

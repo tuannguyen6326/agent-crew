@@ -128,6 +128,105 @@ assert_contains "$err" "remote-ack hook failed" "the ack failure is warned"
 assert_file "$INBOX/rackfail.json" "the failed-ack order is stashed anyway"
 rm -f "$CFG/remote-ack"
 
+# --- poll hook stdin: closed regardless of what the caller's own stdin holds --
+# The poll hook's runtime contract is stdout+stderr, no stdin - a hook that
+# reads stdin anyway must see EOF, never bytes the caller happened to be
+# piping into `ac-remote.sh poll` for some unrelated reason.
+cat >"$CFG/remote-poll" <<'EOF'
+#!/usr/bin/env bash
+if read -r line; then
+  printf 'GOT:%s\n' "$line" >&2
+else
+  printf 'STDIN-EOF\n' >&2
+fi
+EOF
+chmod +x "$CFG/remote-poll"
+err="$(printf 'leaked-caller-stdin\n' | "$BIN/ac-remote.sh" poll 2>&1 1>/dev/null)"
+assert_contains "$err" "STDIN-EOF" "poll hook sees EOF, never the caller's inherited stdin"
+case "$err" in *GOT:*) fail "poll hook must never read bytes off the caller's own stdin" ;; esac
+# Restore the feed-reading hook the rest of the suite depends on.
+cat >"$CFG/remote-poll" <<'EOF'
+#!/usr/bin/env bash
+cat "$AC_REMOTE_TEST_FEED"
+EOF
+chmod +x "$CFG/remote-poll"
+
+# --- lifecycle-ack hook: bounded per call, capped per round -------------------
+# A dead ack hook must never turn one ingest batch into N x the hook's own
+# hang, and the accumulated warn must fire once for the round, not once per
+# skipped rid. `run_ack`'s own header states the contract it must now honour
+# in full: best-effort, never blocks the caller - including the "never" part.
+HANGLOG="$TMP/ack-hang-calls.log"
+export AC_REMOTE_TEST_HANGLOG="$HANGLOG"
+
+# One hung call: bounded at AC_REMOTE_ACK_TIMEOUT, the order still lands, the
+# hook's OWN stderr still reaches the operator (unchanged contract), and
+# nothing from bash's own job-control machinery leaks onto that same channel
+# (measured risk: a non-interactive bash under `set -m` announces a
+# signal-killed job on the real stderr the instant it notices, independent of
+# any redirect on the reaping `wait` itself).
+cat >"$CFG/remote-ack" <<'EOF'
+#!/usr/bin/env bash
+printf 'own hook stderr\n' >&2
+sleep 30
+EOF
+chmod +x "$CFG/remote-ack"
+: >"$HANGLOG"
+printf '{"rid":"rhang","text":"x","author":"TN","thread":"1712.200"}\n' >"$FEED"
+# AC_REMOTE_ACK_TIMEOUT=2, not 1: $SECONDS is whole-second granularity, so a
+# 1s bound leaves no headroom against a `start` sample taken near a second
+# boundary - measured flaky (the reap can fire before the hook's own first
+# line ever runs). 2s leaves enough margin to stay deterministic while still
+# running fast (HOST RULE: hard-cap every bound, leave headroom).
+poll_start=$SECONDS
+err="$(AC_REMOTE_ACK_TIMEOUT=2 AC_REMOTE_ACK_BUDGET=30 "$BIN/ac-remote.sh" poll 2>&1 1>/dev/null)"
+poll_elapsed=$((SECONDS - poll_start))
+[ "$poll_elapsed" -lt 6 ] || fail "a hung ack hook must be reaped near AC_REMOTE_ACK_TIMEOUT, not left to run (took ${poll_elapsed}s)"
+assert_file "$INBOX/rhang.json" "a hung ack never blocks the order it acks from landing"
+assert_contains "$err" "own hook stderr" "the hook's own stderr still reaches the operator (unchanged contract)"
+assert_contains "$err" "remote-ack hook timed out after 2s" "the timeout is warned with its bound named"
+case "$err" in *[Tt]erminated*) fail "bash's own job-control notice must never reach the warn channel" ;; esac
+case "$err" in *'[1]'*) fail "bash's own job-control job-number line must never reach the warn channel" ;; esac
+rm -f "$CFG/remote-ack"
+
+# A batch that would cost N x the per-call timeout is capped at the per-round
+# budget instead: enough new rids that N x AC_REMOTE_ACK_TIMEOUT would blow
+# past AC_REMOTE_ACK_BUDGET, and the round still returns near the budget with
+# the later acks skipped (never attempted - the hook is never even called for
+# them) and EXACTLY ONE exhaustion warning, not one per skipped rid. Every rid
+# still lands: the stash and its wake are committed before run_ack is ever
+# reached, so a skipped ack costs a transport receipt, never an order.
+cat >"$CFG/remote-ack" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$AC_REMOTE_RID" >>"$AC_REMOTE_TEST_HANGLOG"
+sleep 30
+EOF
+chmod +x "$CFG/remote-ack"
+: >"$HANGLOG"
+{
+  printf '{"rid":"rb1","text":"x","author":"TN","thread":"t"}\n'
+  printf '{"rid":"rb2","text":"x","author":"TN","thread":"t"}\n'
+  printf '{"rid":"rb3","text":"x","author":"TN","thread":"t"}\n'
+  printf '{"rid":"rb4","text":"x","author":"TN","thread":"t"}\n'
+  printf '{"rid":"rb5","text":"x","author":"TN","thread":"t"}\n'
+} >"$FEED"
+# Same headroom reasoning as above: 2s per call, 2s round budget - one call
+# is affordable, the other four are not.
+batch_start=$SECONDS
+out="$(AC_REMOTE_ACK_TIMEOUT=2 AC_REMOTE_ACK_BUDGET=2 "$BIN/ac-remote.sh" poll 2>"$TMP/ack-budget.err")"
+batch_elapsed=$((SECONDS - batch_start))
+[ "$batch_elapsed" -lt 6 ] || fail "5 rids at 2s/call must not cost 10s once the 2s round budget is spent (took ${batch_elapsed}s)"
+for r in rb1 rb2 rb3 rb4 rb5; do
+  assert_contains "$out" "remote-order $r" "batch member $r still ingests once its ack is out of budget"
+  assert_file "$INBOX/$r.json" "batch member $r is stashed regardless of its ack outcome"
+done
+assert_eq "$(wc -l <"$HANGLOG" | tr -d ' ')" "1" \
+  "only the calls the budget could afford ever invoke the hook - the rest are skipped, not attempted"
+assert_eq "$(grep -c 'budget.*spent this round' "$TMP/ack-budget.err")" "1" \
+  "budget exhaustion is warned exactly once for the whole round, never once per skipped rid"
+case "$(cat "$TMP/ack-budget.err")" in *[Tt]erminated*) fail "bash's own job-control notice must never reach the warn channel" ;; esac
+rm -f "$CFG/remote-ack"
+
 # --- thread-post: the family-thread mirror verb --------------------------------
 # A successful thread-post must print exactly one confirmation line naming
 # the family, carrying the message ts when the hook printed one (LIVED
