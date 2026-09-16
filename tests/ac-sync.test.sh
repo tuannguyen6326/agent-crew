@@ -154,8 +154,8 @@ hung_child_pid() {
 }
 reap_hung_child() {
   # reap_hung_child - kill a leaked helper AND its own sleep child by exact
-  # pid. Host rule: a test proving a leak is fixed must not itself leak, on
-  # any exit path including a failing assertion.
+  # pid: a test proving a leak is fixed must not itself leak, on any exit
+  # path including a failing assertion.
   local helper leaf
   helper="$(hung_child_pid)"
   [ -n "$helper" ] || return 0
@@ -163,7 +163,8 @@ reap_hung_child() {
   [ -z "$leaf" ] || kill -9 "$leaf" 2>/dev/null || true
   kill -9 "$helper" 2>/dev/null || true
 }
-reap_hung_child   # sweep the leak the case just above (unfixed today) left behind
+reap_hung_child   # baseline clean: a stray helper from any earlier invocation
+                  # must not be mistaken for the one this case forks below
 
 rc=0
 AC_SYNC_TIMEOUT=1 "$BIN/ac-sync.sh" p8 >"$TMP/p8-child.out" 2>&1 &
