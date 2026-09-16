@@ -1553,29 +1553,38 @@ project_dir="$(ac_project_dir "$project")" \
   || ac_die "project not found: $project (clone it into projects/ first)"
 project_name="$(basename "$project_dir")"
 
-# THE DOMAIN VIEW REFUSAL (R12). A spawn under AC_DOMAIN may only work a project
-# the domain's view links - a view nothing enforces is decoration. Placed HERE,
-# immediately after the project resolves and BEFORE the lease, so a refused
-# spawn costs no worktree slot. The decision reads the SYMLINK set only: the
-# projects DETAIL file is prose and may lag, the membership guard may not, which
-# is why the two have opposite failure modes.
-if [ -n "${AC_DOMAIN:-}" ]; then
+# THE DOMAIN VIEW REFUSAL (R12). A spawn bound to a domain may only work a
+# project the domain's view links - a view nothing enforces is decoration.
+# Placed HERE, immediately after the project resolves and BEFORE the lease,
+# so a refused spawn costs no worktree slot. The decision reads the SYMLINK
+# set only: the projects DETAIL file is prose and may lag, the membership
+# guard may not, which is why the two have opposite failure modes.
+#
+# THE BINDING itself comes from ac_domain_binding (bin/ac-lib.sh): AC_DOMAIN
+# when the spawning session still carries it, else AC_SCOPE naming a
+# domainchief's own meta (a SECOND source of truth for exactly the case
+# AC_DOMAIN cannot be trusted to survive - a resume line, a relaunch that
+# forgot it). A crewchief's own spawn carries no AC_SCOPE at all and an
+# ordinary roomchief's meta carries no domain= field, so both stay unguarded
+# exactly as before; only a domainchief's spawn ever resolves a binding here.
+dom_bound="$(ac_domain_binding)"
+if [ -n "$dom_bound" ]; then
   # MEMBERSHIP, not mere existence: ac_domain_view_entry is the same predicate
   # `ac-domain.sh validate` reports with, so a plain directory or a link
   # resolving outside the fleet clones is refused here exactly as validate
   # classifies it. Testing `-e` alone left the domain scope fail-open unless an
   # operator happened to run validate first.
-  dom_cls="$(ac_domain_view_entry "$AC_DOMAIN" "$project_name")" || true
+  dom_cls="$(ac_domain_view_entry "$dom_bound" "$project_name")" || true
   [ "$dom_cls" = ok ] \
-    || ac_die "crewdomain $AC_DOMAIN has no valid '$project_name' in its project view (crewdomains/$AC_DOMAIN/projects/ - $dom_cls) - a domainchief may only brief work its domain links, and the view must be a symlink resolving into the fleet's own clones. Fix the view (bin/ac-domain.sh validate) or hand the order back to the crewchief."
+    || ac_die "crewdomain $dom_bound has no valid '$project_name' in its project view (crewdomains/$dom_bound/projects/ - $dom_cls) - a domainchief may only brief work its domain links, and the view must be a symlink resolving into the fleet's own clones. Fix the view (bin/ac-domain.sh validate) or hand the order back to the crewchief."
   # The view entry is valid - but is it the repository THIS spawn will lease?
   # ac_project_dir accepts a PATH, so an external repo whose basename happens to
   # match a viewed project passed a basename-only check while the lease landed
   # somewhere the domain never linked. Compare the canonical paths.
-  dom_want="$(cd -P "$(ac_home)/crewdomains/$AC_DOMAIN/projects/$project_name" 2>/dev/null && pwd -P)" || dom_want=""
+  dom_want="$(cd -P "$(ac_home)/crewdomains/$dom_bound/projects/$project_name" 2>/dev/null && pwd -P)" || dom_want=""
   dom_have="$(cd -P "$project_dir" 2>/dev/null && pwd -P)" || dom_have="$project_dir"
   [ -n "$dom_want" ] && [ "$dom_want" = "$dom_have" ] \
-    || ac_die "crewdomain $AC_DOMAIN links '$project_name' but this spawn would lease $dom_have, not $dom_want - a matching basename is not membership. Pass the fleet clone the domain actually links."
+    || ac_die "crewdomain $dom_bound links '$project_name' but this spawn would lease $dom_have, not $dom_want - a matching basename is not membership. Pass the fleet clone the domain actually links."
 fi
 
 # THE BRANCH COLLISION REFUSAL (contract: this script's header). The meta

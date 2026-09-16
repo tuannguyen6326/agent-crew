@@ -616,6 +616,34 @@ seed_dom nosuchdomain "$barewt"
 assert_eq "$(cat "$barewt/.claude/CLAUDE.md")" "FLEET RULES" \
   "AC-4.2: an absent domain layer leaves the base behaving exactly as today"
 
+# --- R12: AC_SCOPE -> the domainchief's own meta is a SECOND source of truth
+# for this same layer, for exactly the case AC_DOMAIN cannot be trusted to
+# survive to the spawn that seeds a crewmate (a resume line, a relaunch that
+# forgot it).
+seed_scope() {  # seed_scope <family> <worktree>
+  AC_HOME="$AC_HOME" AC_SCOPE="$1" bash -c "
+    set -euo pipefail
+    . '$BIN/ac-lib.sh'
+    ac_seed_crewmate_md '$2'
+  "
+}
+mkdir -p "$AC_HOME/state"
+printf 'kind=roomchief\ndomain=payments\n' >"$AC_HOME/state/dscope1-chief.meta"
+scopewt="$("$BIN/ac-tree.sh" get --repo "$l3repo" --id lscope1 2>/dev/null)"
+seed_scope dscope1 "$scopewt"
+assert_contains "$(cat "$scopewt/.claude/CLAUDE.md")" "DOMAIN RULES" \
+  "R12: AC_SCOPE alone (no AC_DOMAIN) still reaches the crewdomain layer via the domainchief's own meta"
+
+# An ORDINARY roomchief's AC_SCOPE (its own meta carries no domain= field)
+# must resolve nothing - the fallback names a real domainchief's meta, it is
+# not a blanket AC_SCOPE-to-domain mapping.
+printf 'kind=roomchief\n' >"$AC_HOME/state/dscope2-chief.meta"
+scopewt2="$("$BIN/ac-tree.sh" get --repo "$l3repo" --id lscope2 2>/dev/null)"
+seed_scope dscope2 "$scopewt2"
+case "$(cat "$scopewt2/.claude/CLAUDE.md")" in
+  *'DOMAIN RULES'*) fail "R12: an ordinary roomchief's AC_SCOPE must not resolve a phantom domain" ;;
+esac
+
 # --- the stamp file must never carry an extension a host formatter/linter
 # would select - a bare sha256 hex line stamped as `.claude%settings.json`
 # makes a real `prettier --check` exit 2 with a SyntaxError (measured:
