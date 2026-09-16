@@ -227,6 +227,26 @@ assert_eq "$(grep -c 'budget.*spent this round' "$TMP/ack-budget.err")" "1" \
 case "$(cat "$TMP/ack-budget.err")" in *[Tt]erminated*) fail "bash's own job-control notice must never reach the warn channel" ;; esac
 rm -f "$CFG/remote-ack"
 
+# The per-call timeout must be CLAMPED to what is left of the round budget,
+# not just checked against it before starting: a call let through at
+# spent=0 could otherwise run its own full nominal timeout and push the
+# total past the budget by up to that whole timeout (a budget smaller than
+# the nominal per-call timeout - AC_REMOTE_ACK_BUDGET=2 <
+# AC_REMOTE_ACK_TIMEOUT=5 here - makes this concrete: the call must be cut
+# at 2s, not 5s).
+cat >"$CFG/remote-ack" <<'EOF'
+#!/usr/bin/env bash
+sleep 30
+EOF
+chmod +x "$CFG/remote-ack"
+printf '{"rid":"rclamp","text":"x","author":"TN","thread":"t"}\n' >"$FEED"
+clamp_start=$SECONDS
+err="$(AC_REMOTE_ACK_TIMEOUT=5 AC_REMOTE_ACK_BUDGET=2 "$BIN/ac-remote.sh" poll 2>&1 1>/dev/null)"
+clamp_elapsed=$((SECONDS - clamp_start))
+[ "$clamp_elapsed" -lt 4 ] || fail "a call must be clamped to the remaining 2s budget, not run its full 5s nominal timeout (took ${clamp_elapsed}s)"
+assert_contains "$err" "remote-ack hook timed out after 2s" "the warned bound is the clamped remainder, not the nominal per-call ceiling"
+rm -f "$CFG/remote-ack"
+
 # --- thread-post: the family-thread mirror verb --------------------------------
 # A successful thread-post must print exactly one confirmation line naming
 # the family, carrying the message ts when the hook printed one (LIVED

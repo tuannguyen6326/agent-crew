@@ -266,8 +266,16 @@ run_ack() {
     return 0
   fi
 
-  local timeout="${AC_REMOTE_ACK_TIMEOUT:-20}" pid start rc=0 elapsed
+  local timeout="${AC_REMOTE_ACK_TIMEOUT:-20}" pid start rc=0 elapsed remaining
   case "$timeout" in ''|*[!0-9]*) timeout=20 ;; esac
+  # Clamp to what is left of the round: the budget check above only refuses
+  # a call that has NOT started - a call already let through could still run
+  # its own full per-call timeout and push the total past the budget by up
+  # to that whole timeout. Capping THIS call at the remainder keeps the
+  # round's total spend inside AC_REMOTE_ACK_BUDGET, not just "budget plus
+  # one more timeout".
+  remaining=$((budget - _ack_budget_spent))
+  [ "$timeout" -le "$remaining" ] || timeout="$remaining"
   # Idiom ported from fetch_bounded (bin/ac-sync.sh): background under
   # `set -m` so the hook call becomes its own process-group leader, bounded
   # `kill -0` poll, and on timeout reap the whole GROUP (TERM, short grace,
