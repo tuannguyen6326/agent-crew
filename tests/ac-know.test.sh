@@ -354,6 +354,13 @@ radd 'the --changed selector widens to the full suite when empty'
 
 # Zero matches - refuse, and say nothing matched.
 refuses "nothing matched" rretire --quote 'no such phrase anywhere' --why 'typo probe'
+# A phrase that DOES match, narrowed to a --by family no matching entry
+# carries, is not "nothing matched" - the same defect cite's C5b names.
+out="$(rretire --quote 'widens to the full suite' --by fam-x --why 'probe' 2>&1)" \
+  && fail "retire with a --by no entry carries must refuse"
+assert_contains "$out" "matches 1 live entry, none by family fam-x" "retire names the family mismatch"
+assert_contains "$out" "fam-r" "...and the family that wrote the match"
+case "$out" in *"no live fact entry contains that phrase"*) fail "a matching phrase must not be reported as absent: $out" ;; esac
 
 # Ambiguous - both live facts share the substring "selector"; refuse AND print
 # both candidates so the caller can narrow, rather than guessing one.
@@ -597,6 +604,17 @@ out="$(ccite --quote 'the pool' 2>&1)" && fail "C4: an ambiguous quote must refu
 assert_contains "$out" "ambiguous" "C4: the refusal names the ambiguity"
 out="$(ccite --quote 'the pool' --by fam-d)"
 assert_contains "$out" "| heat: 1 | by: fam-d" "C5: --by narrows to the one entry and cites it"
+# C5b: --by is the ENTRY's author family, not the caller's - and a caller that
+# passes its own family (measured live 2026-09-16: a solo chief citing a fact
+# it had just recalled) got "no live fact entry contains that phrase", which
+# is false and sends it to re-derive a fact that is on the record. The refusal
+# names the real mismatch: the phrase matches, no entry is by that family,
+# and these are the families that wrote the matches.
+out="$(ccite --quote 'the pool' --by fam-x 2>&1)" && fail "C5b: a --by no entry carries must refuse"
+assert_contains "$out" "matches 3 live entries, none by family fam-x" "C5b: the refusal names the family mismatch, not a missing phrase"
+assert_contains "$out" "fam-c" "C5b: ...and lists the families that did write the matches"
+assert_contains "$out" "fam-d" "C5b: ...all of them"
+case "$out" in *"no live fact entry contains that phrase"*) fail "C5b: a phrase that matches must not be reported as absent: $out" ;; esac
 
 # C6: verify parses a heat-bearing line like any other - the field rides the
 # printed entry and the grade is unaffected (file.txt unchanged at HEAD).

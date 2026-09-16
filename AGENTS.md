@@ -168,8 +168,10 @@ record returns dozens of thousand-character lines and puts the whole reading
 cost on you.
 Then CITE the one you used - `bin/ac-know.sh cite --quote '<phrase>' [--by
 <family>]` for a fact, `bin/ac-scene.sh show <slug> --cite` for a scene -
-addressing it by a phrase quoted from the entry plus its `by:` family, never
-by line number.
+addressing it by a phrase quoted from the entry plus, when the phrase
+matches more than one entry, the `by:` family of the entry you mean - the
+family that WROTE it, printed on its line, never your own - and never by
+line number.
 The cite is what bumps `heat:`, the priority signal for which knowledge to
 re-verify, merge or retire first; recall itself deliberately never bumps it,
 since crediting eight entries you only skimmed would corrupt the very ranking

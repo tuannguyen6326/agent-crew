@@ -555,6 +555,25 @@ fact_live_candidates() {
   ' "$f"
 }
 
+fact_by_mismatch() {
+  # fact_by_mismatch <fact-file> <quote> <by> - when <by> narrowed a phrase
+  # that DOES match live entries down to none, say so and name the families
+  # that wrote the matches; prints nothing when the phrase itself matches
+  # nothing (that is the plain zero-match case) or <by> is empty. --by is the
+  # ENTRY's author family, and a caller that passes its own family - measured
+  # live 2026-09-16, a solo chief citing a fact it had just recalled - was told
+  # the phrase was absent, which is false and sends it to re-derive a fact
+  # that is on the record.
+  local f="$1" quote="$2" by="$3" hits n fams
+  [ -n "$by" ] || return 0
+  hits="$(fact_live_candidates "$f" "$quote" "")"
+  [ -n "$hits" ] || return 0
+  n="$(printf '%s\n' "$hits" | wc -l | tr -d ' ')"
+  fams="$(printf '%s\n' "$hits" | sed 's/^.*| by: //' | sort -u | tr '\n' ' ')"
+  printf "matches %s live entr%s, none by family %s - --by is the entry's author family, and these wrote the matches: %s(narrow with one of them, or a longer quote)" \
+    "$n" "$([ "$n" = 1 ] && printf 'y' || printf 'ies')" "$by" "$fams"
+}
+
 fact_near_duplicates() {
   # fact_near_duplicates <candidate-file> <fact-text> - entries in
   # <candidate-file> whose SUBJECT text overlaps the given fact's enough to be
@@ -649,7 +668,9 @@ cmd_retire() {
       ac_die "retire: '$quote'${by:+ by family $by} matches no LIVE fact, but matches a SUPERSEDED entry - a superseded entry cannot be retired again; find the live entry that replaced it and quote that instead:
 $sup_hit"
     fi
+    by_hint="$(fact_by_mismatch "$live" "$quote" "$by")"
     rm -f "$live" "$sup"; ac_lock_release "$lock"
+    [ -z "$by_hint" ] || ac_die "retire: '$quote' $by_hint"
     ac_die "retire: nothing matched '$quote'${by:+ by family $by} - no live fact entry contains that phrase"
   fi
   if [ "$n" -gt 1 ]; then
@@ -750,7 +771,9 @@ cmd_cite() {
       ac_die "cite: '$quote'${by:+ by family $by} matches no LIVE fact, but matches a SUPERSEDED entry - find the live entry that replaced it and quote that instead:
 $sup_hit"
     fi
+    by_hint="$(fact_by_mismatch "$live" "$quote" "$by")"
     rm -f "$live" "$sup"; ac_lock_release "$lock"
+    [ -z "$by_hint" ] || ac_die "cite: '$quote' $by_hint"
     ac_die "cite: nothing matched '$quote'${by:+ by family $by} - no live fact entry contains that phrase"
   fi
   if [ "$n" -gt 1 ]; then
