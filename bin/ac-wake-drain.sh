@@ -150,13 +150,15 @@ annotate_wakes() {
   while IFS=' ' read -r kind id rest; do
     printf '%s %s %s\n' "$kind" "$id" "$rest"
     if [ "$kind" = remote ]; then
-      # The relocated stranded-remote-order detector (family
-      # remote-order-strands-silently-with-no-live-watcher, decision 3): a
-      # remote-order record exists in a spool ONLY between ac-remote.sh's
-      # atomic publish and this claim (the ONE producer, the ONE consumer;
-      # ingest_stream never republishes a rid) - so this line firing AT ALL
-      # means the order sat undrained until this exact pass, and a drained
-      # rid can never trip it again (A3/A4: drained stays silent).
+      # The relocated stranded-remote-order detector: a remote-order record
+      # exists in a spool ONLY between ac-remote.sh's publish and this claim
+      # (the ONE producer, the ONE consumer; ingest_stream never republishes
+      # a rid) - so this line firing AT ALL means the order sat undrained
+      # until this exact pass, and a drained rid can never trip it again
+      # (drained stays silent). The stash and the wake are two
+      # separate writes into two different directories, never one act; this
+      # detector rests on the record itself sitting in the spool, not on the
+      # two ever landing together.
       rrid="${rest#remote-order }"
       printf '  status %s: no chief had drained this remote order until now - ac-remote.sh show %s\n' \
         "$id" "$rrid"

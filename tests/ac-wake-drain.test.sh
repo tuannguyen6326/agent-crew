@@ -180,14 +180,13 @@ seed '' s4 ""
 out="$(drain '')"
 case "$out" in *"status s4:"*) fail "a task with no status must not be annotated" ;; esac
 
-# --- 1c. remote-order wakes get a DEDICATED label (family
-# remote-order-strands-silently-with-no-live-watcher, A1+A3): the detector
-# moved out of ac-remote.sh's cmd_gc (a pruning verb nobody runs routinely,
-# and its old sign could not tell a genuine drain from a lost publish) into
-# THIS pass, which every session-start already runs. A remote-order record
-# exists in a spool ONLY between ac-remote.sh's atomic publish and the ONE
-# claim that follows (ingest_stream never republishes a rid), so this line
-# firing at all means the order sat undrained until this exact pass.
+# --- 1c. remote-order wakes get a DEDICATED label: the detector moved out
+# of ac-remote.sh's cmd_gc (a pruning verb nobody runs routinely, and its
+# old sign could not tell a genuine drain from a lost publish) into THIS
+# pass, which every session-start already runs. A remote-order record
+# exists in a spool ONLY between ac-remote.sh's publish and the ONE claim
+# that follows (ingest_stream never republishes a rid), so this line firing
+# at all means the order sat undrained until this exact pass.
 reset_state
 publish '' remote captain 'remote-order strand1'
 out="$(drain '')"
