@@ -259,21 +259,37 @@ learn_lessons_lift() {
   # silent rather than a stray empty file the scout must open to discover is empty.
   #
   # The section runs from `## Lessons` to the next `## ` heading or EOF, which is
-  # the shape the crewmate contract writes. Live dir first, then the archived
-  # copy: every window member has landed, so it is exactly the class
-  # bin/ac-archive.sh moves.
+  # the shape the crewmate contract writes - but BOTH of those markers only
+  # count outside a backtick code fence, so a report that quotes `## Lessons`
+  # (or a `## ` line) inside a fence neither opens nor closes the section on
+  # that quote. A fence toggle is one boolean flipped on any line matching
+  # `^[[:space:]]*` + three backticks - the corpus carries no tilde fence and
+  # no 4-or-more-backtick fence, so nothing more elaborate is warranted. An
+  # unbalanced fence leaves the scanner inside it, which HIDES the section
+  # rather than inventing one - a miss is a smaller defect than a wrong lift,
+  # since a wrong lift puts words nobody wrote into the ledger. Live dir
+  # first, then the archived copy: every window member has landed, so it is
+  # exactly the class bin/ac-archive.sh moves.
   local fam="$1" out="$2" base rep n=0 tmp
+  local lift_awk='
+    /^[[:space:]]*```/ { fence = !fence; if (f) print; next }
+    fence == 0 && /^## Lessons/ { f = 1; next }
+    fence == 0 && f && /^## / { exit }
+    f
+  '
   base="$(ac_data_dir)/$fam"
   [ -d "$base" ] || base="$(ls -d "$(ac_data_dir)"/archive/*/"$fam" 2>/dev/null | head -1)"
   [ -n "$base" ] && [ -d "$base" ] || return 0
   tmp="$(mktemp)"
-  # -maxdepth 2: a family's own report.md and one stage level under it. Deeper
-  # is not a stage (ac-brief.sh owns the layout), and an unbounded walk would
-  # follow whatever a task happened to leave in its dir.
-  for rep in $(find "$base" -maxdepth 2 -name report.md -type f 2>/dev/null | sort); do
-    if awk '/^## Lessons/ { f = 1; next } f && /^## / { exit } f' "$rep" | grep -q '[^[:space:]]'; then
+  # -maxdepth 3: a family's own report.md, one stage level under it, and a
+  # fan-out sub-task's report at data/<family>/tasks/<slug>/report.md - the
+  # layout AGENTS.md section 8 makes law. Deeper is not a stage or a fan-out
+  # slot, and an unbounded walk would follow whatever a task happened to
+  # leave in its dir.
+  for rep in $(find "$base" -maxdepth 3 -name report.md -type f 2>/dev/null | sort); do
+    if awk "$lift_awk" "$rep" | grep -q '[^[:space:]]'; then
       printf '### %s\n\n' "${rep#$(ac_data_dir)/}" >>"$tmp"
-      awk '/^## Lessons/ { f = 1; next } f && /^## / { exit } f' "$rep" >>"$tmp"
+      awk "$lift_awk" "$rep" >>"$tmp"
       printf '\n' >>"$tmp"
       n=$((n + 1))
     fi

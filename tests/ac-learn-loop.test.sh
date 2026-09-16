@@ -618,6 +618,13 @@ STUB
     # closed, so it is exactly the class that gets archived, and its lessons
     # must not vanish from the window the moment it moves.
     printf -- '- [x] fam-archived - landed then archived - local main (merged 2026-07-16)\n'
+    # (learn-lessons-lift-is-naive-about-a-quoted-heading-and-blind-to-a-nested-report)
+    # A report that quotes the `## Lessons` heading inside a code fence before
+    # its real section - the lift must not mistake the quote for the opener.
+    printf -- '- [x] fam-fenced - report quotes the Lessons heading in a fence - local main (merged 2026-07-16)\n'
+    # A fan-out sub-task report at data/<family>/tasks/<slug>/report.md
+    # (depth 3, AGENTS.md section 8 layout) - the lift must still reach it.
+    printf -- '- [x] fam-fanout - fan-out sub-task report at depth 3 - local main (merged 2026-07-16)\n'
   } >"$backlog"
 
   mkdir -p "$AC_HOME/data/fam-oneday" "$AC_HOME/data/fam-after1" "$AC_HOME/data/fam-after2" "$AC_HOME/escape"
@@ -643,6 +650,45 @@ STUB
   printf '# Implement\n\n## Notes\n\nnothing durable\n' \
     >"$AC_HOME/data/fam-after1/implement/report.md"
 
+  # fam-fenced: the real `## Lessons` section is preceded by a fenced block
+  # that QUOTES the heading, and the real section itself contains a fenced
+  # `## ` line - both ends of the section must stay fence-guarded.
+  mkdir -p "$AC_HOME/data/fam-fenced"
+  cat >"$AC_HOME/data/fam-fenced/report.md" <<'FENCEDEOF'
+# Report
+
+## Notes
+
+Context before the real section.
+
+```
+## Lessons
+
+- this line is quoted inside a fence and must NOT be lifted
+```
+
+## Lessons
+
+- fenced-heading real lesson one
+- a fence embedded inside the section must not end it:
+
+```
+## Not a real heading
+```
+
+- fenced-heading real lesson two
+
+## Next
+
+nope
+FENCEDEOF
+
+  # fam-fanout: a fan-out sub-task report at depth 3
+  # (data/<family>/tasks/<slug>/report.md, AGENTS.md section 8 layout).
+  mkdir -p "$AC_HOME/data/fam-fanout/tasks/slug1"
+  printf '# Report\n\n## Notes\n\nfan-out sub-task report.\n\n## Lessons\n\n- nested-fanout lesson from depth three\n' \
+    >"$AC_HOME/data/fam-fanout/tasks/slug1/report.md"
+
   before_bl="$(cat "$backlog")"
   AC_PANE_AGENT="$TMP/stub-pane.sh" "$BIN/ac-learn.sh" run >/dev/null
   rundir2="$(find "$AC_HOME/data" -maxdepth 1 -type d -name 'learning-*' ! -name 'learning-9999' | sort | tail -1)"
@@ -665,6 +711,30 @@ STUB
   assert_no_file "$rundir2/sources/retro/lessons/fam-after2.md" \
     "a member whose reports carry no Lessons section writes no file - absence is silent"
   assert_file "$rundir2/sources/retro/rooms/fam-after1.md" "AC1: fam-after1's room copied into sources/retro/rooms/"
+
+  # QUOTED HEADING: a `## Lessons` heading quoted inside a fence before the
+  # real section must not be mistaken for the opener, and a fence embedded
+  # inside the real section must not be mistaken for the closer.
+  fenced_lifted="$rundir2/sources/retro/lessons/fam-fenced.md"
+  assert_file "$fenced_lifted" "fam-fenced's real Lessons section is lifted despite the quoted heading"
+  assert_contains "$(cat "$fenced_lifted")" "fenced-heading real lesson one" "the real section's first lesson is carried"
+  assert_contains "$(cat "$fenced_lifted")" "fenced-heading real lesson two" \
+    "a fence embedded inside the real section does not truncate it"
+  case "$(cat "$fenced_lifted")" in
+    *"must NOT be lifted"*) fail "a Lessons heading quoted inside a fence must not be lifted as the real section" ;;
+  esac
+  case "$(cat "$fenced_lifted")" in
+    *"## Next"*|*nope*) fail "the real section must still end at its own unfenced closing heading" ;;
+  esac
+
+  # NESTED REPORT: a fan-out sub-task report at depth 3
+  # (data/<family>/tasks/<slug>/report.md) must be reached and labelled with
+  # its own relative path.
+  fanout_lifted="$rundir2/sources/retro/lessons/fam-fanout.md"
+  assert_file "$fanout_lifted" "fam-fanout's depth-3 sub-task report is lifted"
+  assert_contains "$(cat "$fanout_lifted")" "nested-fanout lesson from depth three" "the sub-task's own words are carried"
+  assert_contains "$(cat "$fanout_lifted")" "fam-fanout/tasks/slug1/report.md" \
+    "the block is labelled with the sub-task report's own relative path"
   # AC4: a [failed] Done line in the window is tagged failed.
   grep -q '^fam-after2 2026-07-17 failed room$' "$window" || fail "AC4: fam-after2 ([failed]) tagged failed in window.md"
   assert_file "$rundir2/sources/retro/rooms/fam-after2.md" "AC1: fam-after2's room also copied"
