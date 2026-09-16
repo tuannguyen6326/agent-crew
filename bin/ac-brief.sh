@@ -480,10 +480,20 @@ design_contract() {
 Authoritative contract - per-stage required content and exit criteria
 (read it before your first report):
 $(ac_root)/docs/staged-design-flow-spec.md
-Every report carries these sections: Inputs, Summary, Evidence,
-Needs Decisions, Risks, Self-Review. A required section with nothing
-material to report records one line, \`n/a: <reason>\` - complete, not
-missing.
+Every report carries six required-and-gated sections: Inputs, Summary,
+Evidence, Needs Decisions, Risks, Self-Review. A required section with
+nothing material to report records one line, \`n/a: <reason>\` - complete,
+not missing.
+\`## Lessons\` rides alongside those six, in the same report file after
+them - never a seventh gated section, never \`n/a\`.
+The crewmate layer owns that obligation and its empty form is \`none\`; no
+stage exit criterion names it.
+Write it in the same pass as the report, before you announce that report ready.
+The pre-implement gate re-hashes every admitted report against the
+\`report_sha256\` its approval carries, so a Lessons line appended after
+that gate changes the hash and reopens it - each report carries the
+lessons of the work that produced it.
+The heading is the exact string \`## Lessons\` at column 0.
 Trace IDs are stage-owned and family-stable: \`R#\` requirements, \`AC#\`
 acceptance criteria, \`D#\` architecture decisions, \`T#\` plan tasks.
 Append-only across revisions: never renumber or reuse an ID; a removed

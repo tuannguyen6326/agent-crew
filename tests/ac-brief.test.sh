@@ -279,6 +279,16 @@ for pair in "spec|$spec" "arch|$arch" "plan|$planb" "design|$dsg"; do
   assert_contains "$body" "Diagram Rule" "$which brief carries the diagram self-review check"
   assert_contains "$body" "TDD check" "$which brief carries the TDD self-review check"
   assert_contains "$body" 'n/a: <reason>' "$which brief carries the n/a section convention"
+  assert_contains "$body" "six required-and-gated sections" \
+    "$which brief marks the six sections as gated, not an exhaustive report shape"
+  assert_contains "$body" '`## Lessons`' \
+    "$which brief's report contract names the Lessons heading"
+  assert_contains "$body" "rides alongside those six" \
+    "$which brief states Lessons rides alongside the six gated sections, not a seventh"
+  assert_contains "$body" "before you announce that report ready" \
+    "$which brief pins writing Lessons in the same pass, before announcing the report ready"
+  assert_contains "$body" "exact string \`## Lessons\` at column 0" \
+    "$which brief pins the exact Lessons heading the automatic consumer recognises"
 done
 assert_contains "$dsg" "STAGE-ADMISSION" \
   "design brief reminds the chief the admission receipts precede the spawn"

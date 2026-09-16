@@ -129,7 +129,7 @@ Rules:
 
 ## Shared Report Contract
 
-Every report must contain:
+Every report must contain six required-and-gated sections:
 
 1. **Inputs**: the captain order, repository revision, and prior report
    references used.
@@ -139,6 +139,14 @@ Every report must contain:
    and the report author's recommendation.
 5. **Risks**: only risks material to the current stage.
 6. **Self-Review**: a compact pass/fail receipt for the stage exit criteria.
+
+`## Lessons` rides alongside those six, in the same report file after them -
+it is not one of the six, carries no exit criterion, and its empty form is
+`none`, never `n/a`. That obligation belongs to the crewmate layer, not this
+contract: write it in the same pass as the report, before announcing the
+report ready, since the pre-implement gate re-hashes every admitted report
+and a line appended after admission reopens the gate. The heading is the
+exact string `## Lessons` at column 0.
 
 Rules shared by all reports:
 
