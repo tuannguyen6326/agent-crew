@@ -356,7 +356,9 @@
 # a different prefix precisely so the reader can tell the two apart; see HUNG
 # POLL below), `heartbeat`, `signal:<NAME>` (a TERM/INT
 # - either the owner's own `--release`, see OWNER-MARKED RELEASE, or a kill
-# from outside, see EXTERNAL KILLS; the reason text says which). Every one of
+# from outside, see EXTERNAL KILLS; the reason text says which), `check:quiet`
+# (the --once checkpoint below completed one bounded pane pass plus one bounded
+# remote poll and found nothing actionable). Every one of
 # them exits 0: the reason line, not the exit status, is the payload the chief
 # reads.
 # With --once it does a single bounded pass (Codex-style checkpoint), and with

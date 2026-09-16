@@ -1288,11 +1288,32 @@ assert_no_file "$state/.watcher-release-$wpid" \
 
 # (8d) A release that could not deliver its TERM WITHDRAWS its marker - a
 # marker outliving its kill is exactly the silencer (8c) exists to prevent.
+# This shape refuses at the HOME-CROSSING check (no .watch.lock.d/pid names
+# this target at all), so the marker is never stamped and the withdrawal
+# below never runs - it only pins the OUTER refusal shape.
 sleep 0 & deadpid=$!
 wait "$deadpid" 2>/dev/null || true
 rc=0; out="$(bash "$BIN/ac-watch.sh" --release "$deadpid" 2>&1)" || rc=$?
 assert_eq "$rc" "2" "releasing a pid that is not there refuses"
 assert_no_file "$state/.watcher-release-$deadpid" "a failed release leaves no marker behind"
+rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat* \
+  "$state/.watcher-arm.log"
+
+# (8d-2) THE WITHDRAWAL ITSELF: the target must first BE this home's fleet
+# watcher (else (8d)'s earlier refusal fires and the marker is never written),
+# and only then fail its TERM - the marker gets stamped and must be pulled
+# back rather than left to outlive the kill it names.
+mkdir -p "$lockd"
+sleep 0 & deadpid2=$!
+wait "$deadpid2" 2>/dev/null || true
+printf '%s\n' "$deadpid2" >"$lockd/pid"
+rc=0; out="$(bash "$BIN/ac-watch.sh" --release "$deadpid2" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "releasing this home's own fleet-watcher pid, already dead, still refuses"
+assert_contains "$out" "no process $deadpid2 to release (marker withdrawn)" \
+  "the refusal names the withdrawal, not a home-crossing guess"
+assert_no_file "$state/.watcher-release-$deadpid2" \
+  "a marker stamped for an undeliverable TERM does not outlive it"
+rm -rf "$lockd"
 rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat* \
   "$state/.watcher-arm.log"
 

@@ -451,7 +451,8 @@ printf -- '-- supervision --\n'
 cat <<'EOF'
 While ANY crewmate is in flight, keep exactly one watcher armed as a
 background task: run `bin/ac-watch.sh` in the background; when it exits it
-prints one reason line (report:<id> | gone:<id> | stale:<id> | heartbeat).
+prints one reason line (the full set is owned by bin/ac-watch.sh's own
+header, next to the printf sites that emit them).
 On wake: run bin/ac-wake-drain.sh, handle each wake (peek, steer, teardown,
 escalate to the captain), then re-arm the watcher. Never end a turn with
 crew in flight and no armed watcher - the Stop hook enforces this.
