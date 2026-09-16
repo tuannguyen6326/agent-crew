@@ -554,7 +554,7 @@
 # config/remote-poll-timeout for its own worst poll.
 # RESIDUAL THIS BOUND CREATES, named because it is new: ingest_stream commits an
 # order in two steps, the stash then its wake, and says of the gap "A death
-# BETWEEN the two is not covered and cannot be from here" (bin/ac-remote.sh:284).
+# BETWEEN the two is not covered and cannot be from here" (bin/ac-remote.sh:380).
 # A ceiling kill CAN now be from here. One landing in that gap leaves a stash
 # with no wake, and the stash is also the dedup sign, so that rid is silently
 # burned. The gap is microseconds per rid against a ceiling of seconds, and what
