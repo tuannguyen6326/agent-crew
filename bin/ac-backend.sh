@@ -641,6 +641,14 @@ herdr_rpc_bounded() {
   # escalation sweeps. That is the whole of what a failed grouping still costs -
   # a forked child outlives the call - and an orphan someone can count is the
   # right exchange for a ceiling that cannot quietly stop existing.
+  # WHAT NONE OF THESE KILLS CLOSES is the ordinary check/use gap on a process
+  # id: every one of them names an id that could in principle have been
+  # re-issued between the decision to kill and the kill, and a signal already
+  # sent does NOT hold its target's id in place for the next one - measured on
+  # this host, a killed background job's id reads gone before any `wait` on it
+  # runs. The windows are microseconds wide and this bound carries the same
+  # exposure its siblings do; nothing here narrows it further, so it is stated
+  # rather than implied away.
   #
   # THE WATCHDOG CARRIES THE DEADLINE INSTEAD OF A POLL LOOP, the first of two
   # places this bound's shape departs from its siblings, and the reason is a
@@ -662,8 +670,7 @@ herdr_rpc_bounded() {
   # dies, so a watchdog escalating on its own would still be sleeping out its
   # grace when the reap below ends it, leaving any member that ignored the TERM
   # alive. It sweeps MEMBERS - the leader is already reaped by that `wait` - so
-  # the group is the only address it has, and it runs on the timeout path alone,
-  # where the leader was alive until that `wait` and the pid cannot be a reuse.
+  # the group is the only address it has, and it runs on the timeout path alone.
   #
   # THE BASELINE IS READ BEFORE THE WATCHDOG IS FORKED, and the order is load
   # bearing rather than tidy. SECONDS is whole seconds, so a baseline taken
