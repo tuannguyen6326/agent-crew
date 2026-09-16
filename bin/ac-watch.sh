@@ -527,11 +527,21 @@
 # pathological case is 15s per call, a 36x spread that leaves a constant plenty
 # of room. The upper limit is the beacon gap, which must stay under
 # AC_GUARD_GRACE (300s) or the turn-end guard blocks the chief's turn demanding
-# it arm a watcher that is already running: ceiling + pane pass + AC_POLL = 120
-# + ~0 + 15 = ~135s, 45% of the grace. RESIDUAL, stated rather than hidden: that
-# leaves the gap bounded only as far as this loop is - check_fleet's backend
-# RPCs carry no timeout at any layer, so a wedged backend still opens the gap
-# without limit. Bounding the poll fixes the half that is measurable here.
+# it arm a watcher that is already running: remote ceiling + pane pass + AC_POLL
+# < 300. BOTH TERMS CAN BLOW IN ONE ITERATION and the SUM is what the grace has
+# to hold - the beacon is published at the top of the loop, check_fleet and
+# check_remote both run before the next one, and a pane pass that finds nothing
+# actionable falls straight through to the remote gate. The pane pass is bounded
+# by herdr_rpc_timeout (ac-backend.sh, 2s per RPC) times the RPCs a wedged pass
+# spends, which is what the pass costs when every pane has already latched its
+# outage: 2 per pane (window_alive's deliberate two-call ladder, and its
+# `continue` lands before capture), and 6 per meta of a SKIPPED family, whose
+# revoked coverage re-probes the same chief pane twice more - both counts
+# measured against a stub that answers nothing, not derived. So the inequality
+# is R x ceiling + 120 + 15 < 300, i.e. R < 82 timed-out RPCs at the 2s default:
+# the distro's own shape (room-parallel 5, a couple of panes a family) spends
+# ~70 and holds at 275s, and a fleet past that lowers config/herdr-rpc-timeout
+# rather than discovering the gap as a false WATCHER-DOWN.
 # WHAT A KILL COSTS is a property of the TRANSPORT, not of this distro, so this
 # header claims only what it owns: the rids ac-remote.sh had already stashed AND
 # published keep their own wakes, and the ceiling costs those nothing. Everything
@@ -550,7 +560,9 @@
 # burned. The gap is microseconds per rid against a ceiling of seconds, and what
 # it replaces is a watcher wedged for ever - but closing it belongs to
 # ingest_stream's own commit ordering, not to this bound.
-# SIZING THE KNOB: keep ceiling + AC_POLL under AC_GUARD_GRACE. Above that a
+# SIZING THE KNOB: keep ceiling + the bounded pane pass + AC_POLL under
+# AC_GUARD_GRACE - the pane pass is a term in that sum, not the `~0` it once
+# was, and the arithmetic above spends it. Above the grace a
 # wedged poll re-opens the very beacon gap the guard reads, and the chief is
 # blocked at its turn end to arm a watcher that is already running - the exact
 # false report this bound exists to kill. Deliberately NOT clamped: serving a

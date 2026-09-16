@@ -406,6 +406,25 @@ hold_close() {
 #                                 answer is typed
 #   $FAKE_HERDR/.probe-unreadable makes `pane process-info` fail outright, the
 #                                 third (unobservable) verdict of that probe
+#   $FAKE_HERDR/.hang             the backend is WEDGED: every call blocks
+#                                 instead of answering, which is what a herdr
+#                                 CLI does against a server that accepts and
+#                                 never replies (measured: still blocked at
+#                                 20.7s, killed by the prober). Distinct from
+#                                 .unreachable, which ANSWERS "I cannot" - a
+#                                 failed call and a call that never returns are
+#                                 different faults, and only the second one can
+#                                 freeze a caller. The call forks `sleep 97` and
+#                                 waits on it, so a reap that takes the pid
+#                                 alone leaves that child alive under ppid=1 and
+#                                 a test can tell the two reaps apart. That
+#                                 child's pid is appended to
+#                                 $FAKE_HERDR/hang-children, which is how a test
+#                                 judges the reap - never by scanning the host
+#                                 process table, which would match and kill a
+#                                 concurrent test file's child under --jobs.
+#                                 Both sleeps end on their own: a test that
+#                                 spawns hanging processes caps them itself
 #   $FAKE_HERDR/.unreachable      the BACKEND itself cannot answer: EVERY call
 #                                 exits 1 with herdr's own error envelope on
 #                                 stderr, the shape a client/server protocol
@@ -489,6 +508,14 @@ printf 'herdr %s\n' "$*" >>"$d/log"
 # ac-backend.sh appends it, ac-pane-agent.sh puts it first. Strip the leading
 # form so both callers reach the same fake.
 [ "${1:-}" = --session ] && shift 2
+if [ -f "$d/.hang" ]; then
+  # The child ignores TERM deliberately - SIG_IGN survives the exec into
+  # `sleep`, so a bound whose TERM is its last word leaves it behind.
+  ( trap '' TERM; sleep 97 ) &
+  printf '%s\n' "$!" >>"$d/hang-children"
+  wait
+  exit 0
+fi
 if [ -f "$d/.unreachable" ]; then
   printf '{"error":{"code":"protocol_mismatch","message":"client protocol 17 server protocol 16"},"id":"cli:%s"}\n' \
     "${1:-}:${2:-}" >&2

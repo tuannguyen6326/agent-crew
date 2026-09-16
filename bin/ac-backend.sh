@@ -274,7 +274,56 @@
 # ac-send.sh reports in those words (contract: its header).
 #
 # herdr knobs: AC_HERDR_SESSION > config/herdr-session (adds --session <name>;
-# neither set = the default herdr session, addressed with no --session flag).
+# neither set = the default herdr session, addressed with no --session flag);
+# AC_HERDR_RPC_TIMEOUT > config/herdr-rpc-timeout > 2s (the ceiling below).
+#
+# HUNG RPC (the authoritative contract). Every call made through the backend_*
+# surface funnels through herdr_cli, and every one of those now carries a
+# ceiling: a call still running at the deadline is killed, process group and
+# all, and reported as the failure it is. That is the surface, and it is not the
+# whole file - the raw `herdr` invocations named under RESIDUALS below reach the
+# CLI without passing through here and are NOT bounded by this. Before it,
+# nothing between a caller and the socket carried a deadline at all: the CLI
+# verbs this file issues expose no timeout flag, and the two that do
+# (`agent wait`, `pane wait-output`, neither of which reaches this funnel)
+# document their own default as waiting indefinitely - so a herdr server that
+# accepted and never replied blocked the caller for as long as it stood
+# (measured: still blocked at 20.7s, ended by the prober and not by any bound of
+# its own). That is a different fault from a backend that ANSWERS "I cannot",
+# and only this one can freeze a caller: the watcher's pane pass in silence, an
+# interactive chief command at the terminal, and the Stop hooks, which reach
+# backend_window_alive through ac_wake_orphan_pending against a 30s budget.
+# THE CEILING NEEDS NO NEW VERDICT ANYWHERE, which is why it is one function and
+# not a branch per caller: a killed RPC is an ordinary failed RPC, and the
+# failure semantics every caller already has are the right ones. WINDOW LIVENESS
+# is the case that matters - its two-call ladder reads two failed calls as
+# UNOBSERVABLE, so a wedge can never be mistaken for a dead pane, and the cost of
+# a ceiling cut too fine is one outage wake, never a death and never lost work.
+# SIZING IT, from two measured numbers and never their product: a HEALTHY call
+# through this layer costs ~26ms (worst single call 45ms quiet, 101ms on a host
+# at 3x CPU oversubscription, 218ms at 8x), while the wedged case has no cost at
+# all - it does not return. 2s is ~9x the worst call measured on a badly loaded
+# host. The MUTATING verbs were measured too rather than assumed from the read
+# probes, because they are the ones a cut would hurt: a killed `pane send-text`
+# leaves a partial composer that the Enter after it would submit, and its caller
+# discards the status. Cost is flat in payload - 10.9ms at 500 characters,
+# 13.2ms at 8000 - so a cut needs a slowdown two orders past anything measured
+# here, and the send path carries its own arrival check for the truncation that
+# herdr itself produces. The upper limit is set by the caller with the tightest
+# budget, and it is not the watcher: the Stop hooks pay the two-call ladder once
+# per promoted family, so 2 x ceiling x room-parallel must clear their 30s - at
+# the default 5 families that caps the ceiling below 3. The watcher's own
+# beacon-gap arithmetic lives in ac-watch.sh.
+# RESIDUALS, stated rather than hidden, because a bound that is claimed wider
+# than it reaches is worse than one honestly scoped. Raw `herdr` invocations
+# that never enter this funnel stay unbounded: ac_herdr_tab_open's own four
+# below; the pane-lifecycle and watch-tab calls in the pane-agent, gate, ship,
+# qa, spawn and relocate paths; and the protocol-compat probe the bootstrap
+# check runs, which is the one UNBOUNDED call still on a chief's own
+# session-start path. The watcher's pane pass reaches none of them - its RPCs,
+# including the window probes it makes through the wake library, all arrive
+# here - so this row's own deliverable is covered and the rest is named as the
+# work it is. The orca driver carries no ceiling of its own either.
 #
 # FAMILY WORKSPACE GROUPING (the authoritative contract; captain order
 # 2026-08-06, mirroring the dashboard's home -> family -> panes tree):
@@ -556,6 +605,80 @@ ac_pane_field() {
 
 # --- herdr -----------------------------------------------------------------------
 
+herdr_rpc_timeout() {
+  # Seconds one herdr RPC may run before it is killed: AC_HERDR_RPC_TIMEOUT env
+  # > config/herdr-rpc-timeout > 2. Anything that is not a positive integer
+  # falls back to the default rather than turning the bound off - the ceiling is
+  # what keeps a caller alive, so there is deliberately no `0 = never`.
+  local t="${AC_HERDR_RPC_TIMEOUT:-}"
+  [ -n "$t" ] || t="$(ac_config_read herdr-rpc-timeout "")"
+  case "$t" in '' | *[!0-9]* | 0) t=2 ;; esac
+  printf '%s\n' "$t"
+}
+
+herdr_rpc_bounded() {
+  # herdr_rpc_bounded <secs> <argv...> - run one herdr invocation under a
+  # watchdog. Returns the call's own status, or 124 when the ceiling killed it.
+  #
+  # THE KILL IS THE PROCESS GROUP, not the pid, and backgrounding under `set -m`
+  # is what makes that group addressable at all: a job backgrounded under job
+  # control becomes its own group leader, so backgrounding this way and killing
+  # the negative pid are ONE decision - the negative-pid kill without `set -m`
+  # would hit this shell's own group instead of the call's.
+  #
+  # THE WATCHDOG CARRIES THE DEADLINE INSTEAD OF A POLL LOOP, the first of two
+  # places this bound's shape departs from its siblings, and the reason is a
+  # measurement rather than taste: a poll loop pays its whole tick on every call
+  # because `kill -0` right after a fork is always true, and where the siblings
+  # wrap ONE subprocess per pass this wraps every RPC - three per pane. Measured
+  # against a real ~26ms call: 206ms per call on a 0.2s tick, 3ms with the
+  # watchdog. The watchdog is its OWN group leader for the same reason the call
+  # is: ending it by pid leaves the `sleep` it forked alive under ppid=1 (also
+  # measured - one orphan per call). Parking in `wait` rather than a foreground
+  # child is what keeps a TERM firing in milliseconds.
+  #
+  # THE ESCALATION IS TERM THEN KILL WITH NO GRACE BETWEEN THEM, the second
+  # place this differs from the siblings and for the same arithmetic reason: the
+  # group holds ONE stateless CLI invocation with nothing to flush, while a
+  # grace paid per RPC would enter the watcher's beacon-gap budget multiplied by
+  # the pass's whole RPC count rather than once. The KILL belongs to this
+  # function and not to the watchdog: `wait` returns the moment the group LEADER
+  # dies, so a watchdog escalating on its own would still be sleeping out its
+  # grace when the reap below ends it, leaving any member that ignored the TERM
+  # alive. Aimed at the group only on the timeout path, where the leader was
+  # alive until this very `wait` and the pid therefore cannot have been reused.
+  #
+  # THE BASELINE IS READ BEFORE THE WATCHDOG IS FORKED, and the order is load
+  # bearing rather than tidy. SECONDS is whole seconds, so a baseline taken
+  # AFTER the fork reads one second too high whenever the tick lands in
+  # between - the comparison below then sees secs-1 at the moment the watchdog
+  # fires, skips the KILL, and returns the raw signal status while a member
+  # that ignored the TERM lives on. Reading it first floors the baseline at or
+  # below the watchdog's own start, so the elapsed count at the fire can only
+  # be >= secs. Measured both ways with the tick forced into that window: 143
+  # and a survivor, against 124 and none.
+  local secs="$1" pid wd rc=0 began
+  shift
+  began=$SECONDS
+  set -m
+  "$@" &
+  pid=$!
+  { sleep "$secs"; kill -TERM -"$pid" 2>/dev/null; } &
+  wd=$!
+  set +m
+  wait "$pid" 2>/dev/null || rc=$?
+  kill -KILL -"$wd" 2>/dev/null || true
+  wait "$wd" 2>/dev/null || true
+  # A call the watchdog reached is reported as the timeout it was, never as the
+  # signal death it looks like: only the watchdog signals this group, so a
+  # non-zero status at or past the deadline is that kill and nothing else.
+  if [ "$rc" != 0 ] && [ $(( SECONDS - began )) -ge "$secs" ]; then
+    kill -KILL -"$pid" 2>/dev/null || true
+    rc=124
+  fi
+  return "$rc"
+}
+
 herdr_cli() {
   # Route to the configured herdr session; default session when unset.
   # The ladder is every other herdr caller's: AC_HERDR_SESSION > the config
@@ -576,12 +699,13 @@ herdr_cli() {
     herdr) ;;
     orca) ac_die "herdr RPC reached under the orca backend - a herdr-only code path leaked past the per-call dispatch" ;;
   esac
-  local s
+  local s t
   s="${AC_HERDR_SESSION:-$(ac_config_read herdr-session "")}"
+  t="$(herdr_rpc_timeout)"
   if [ -n "$s" ]; then
-    HERDR_SESSION="$s" herdr "$@" --session "$s"
+    HERDR_SESSION="$s" herdr_rpc_bounded "$t" herdr "$@" --session "$s"
   else
-    herdr "$@"
+    herdr_rpc_bounded "$t" herdr "$@"
   fi
 }
 

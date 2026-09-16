@@ -783,6 +783,65 @@ rm -f "$state"/*.meta "$state"/.pane-* "$state"/.seen-* \
   "$state"/.hash-* "$state"/.change-* "$state"/.stale-* "$state"/.last-watcher-beat*
 rm -rf "$state"/.wake-spool*
 
+# --- a wedged backend can no longer freeze the pane pass ---------------------
+# check_fleet sits between the beacon at the top of the loop and the poll wait
+# at the bottom, so everything proving this watcher alive is either before it
+# (and stops being refreshed) or after it (and never runs). An RPC that never
+# returns therefore froze the whole loop in silence, and the only thing anyone
+# eventually saw was the beacon ageing out - reported as WATCHER-DOWN about a
+# watcher that is alive and blocked.
+rm -f "$state"/*.meta "$state"/.pane-* "$state"/.hash-* "$state"/.change-* \
+  "$state"/.seen-* "$state"/.stale-* "$state"/.unobservable-* "$state"/.last-watcher-beat*
+rm -rf "$state"/.wake-spool*; mkdir -p "$state/.wake-spool"
+
+wedge_survivors() {
+  # The children this run's own hung calls forked and are still alive, from the
+  # stub's own record. Never a scan of the host process table - the suite runs
+  # test files concurrently under --jobs and every one forks the same sleep, so
+  # a scan would mis-report and then KILL a sibling file's child - and never a
+  # process-group kill, since each test file backgrounds under its own `set -m`
+  # and this file's group IS this file.
+  local p
+  while read -r p; do
+    [ -n "$p" ] && kill -0 "$p" 2>/dev/null && printf '%s\n' "$p"
+  done <"$FAKE_HERDR/hang-children" 2>/dev/null || true
+}
+reap_wedge_children() { local p; for p in $(wedge_survivors); do kill -9 "$p" 2>/dev/null || true; done; }
+reap_wedge_children
+
+printf 'window=crew:w1\nbackend=herdr\n' >"$state/w1.meta"
+seed_pane w1 pW1 tW1
+: >"$FAKE_HERDR/.hang"
+AC_HERDR_RPC_TIMEOUT=1 AC_LOCK_PID=$$ AC_REMOTE_POLL=0 \
+  bash "$BIN/ac-watch.sh" --once >"$TMP/wedge.out" 2>&1 &
+wedge_job=$!
+for _ in $(seq 1 100); do          # 20s cap, ~10x the two 1s ceilings one pane pays
+  kill -0 "$wedge_job" 2>/dev/null || break
+  sleep 0.2
+done
+if kill -0 "$wedge_job" 2>/dev/null; then
+  kill -9 "$wedge_job" 2>/dev/null || true
+  reap_wedge_children
+  fail "a wedged backend must not freeze the pane pass: --once never returned"
+fi
+wait "$wedge_job" 2>/dev/null || true
+rm -f "$FAKE_HERDR/.hang"
+
+# UNOBSERVABLE, and that is the whole point: a call that never answered is no
+# evidence about the pane, so the pass reports an outage the chief can act on
+# rather than a death that would strand live work.
+assert_contains "$(cat "$TMP/wedge.out")" "unobservable:w1" \
+  "a wedged backend reports an outage, never a death"
+assert_no_file "$state/.gone-w1" "a wedge never stamps a pane gone"
+assert_contains "$(fleet_spool)" "liveness unknown" "and the chief is woken about it"
+if [ -n "$(wedge_survivors)" ]; then
+  reap_wedge_children
+  fail "the pane pass must reap what a killed RPC forked"
+fi
+rm -f "$state"/*.meta "$state"/.pane-* "$state"/.unobservable-* "$state"/.hash-* \
+  "$state"/.change-* "$state"/.last-watcher-beat*
+rm -rf "$state"/.wake-spool*
+
 # --- external kills: TERM/INT trap, stale-lock reclaim, arm attribution -----
 # Observed on drydock: external SIGTERMs land on the watcher's poll wait. An
 # untrapped SIGTERM kills bash by its DEFAULT disposition, so the EXIT trap

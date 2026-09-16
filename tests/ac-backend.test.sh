@@ -619,6 +619,85 @@ rc=0; run_backend herdr 'backend_window_alive nohandle' || rc=$?
 assert_eq "$rc" "1" "no recorded pane handle stays GONE - a local fact is never an outage"
 assert_eq "$(cat "$FAKE_HERDR/log")" "" "the no-handle answer asks the backend nothing"
 
+# --- hung backend: every RPC carries a ceiling --------------------------------------
+#
+# The fault here is not a call that FAILS - `.unreachable` models that, and
+# every caller already handles it - but a call that never RETURNS. Nothing
+# between a caller and the socket carried a deadline, so one wedged pane froze
+# a whole watcher pass in silence.
+
+hung_survivors() {
+  # The children this run's own hung calls forked and that are still alive,
+  # read from the stub's own record. Never a scan of the host process table:
+  # the suite runs test files concurrently under --jobs, every one of them
+  # forks the same `sleep 97`, and a scan would both mis-report and then KILL a
+  # sibling file's child. Never a process-group kill either - each test file
+  # backgrounds under its own `set -m`, so this file's group IS this file.
+  local p
+  while read -r p; do
+    [ -n "$p" ] && kill -0 "$p" 2>/dev/null && printf '%s\n' "$p"
+  done <"$FAKE_HERDR/hang-children" 2>/dev/null || true
+}
+reap_hung_children() {
+  # By exact pid, on every path including a failing assertion: a test proving a
+  # reap works must not itself leak.
+  local p
+  for p in $(hung_survivors); do kill -9 "$p" 2>/dev/null || true; done
+}
+
+# A value that is not a positive integer falls back to the default rather than
+# turning the bound OFF - `0` most of all, since that is the spelling an
+# operator reaches for to disable something, and a disabled ceiling is the
+# freeze back.
+assert_eq "$(run_backend herdr 'herdr_rpc_timeout')" "2" "no knob = the 2s default"
+assert_eq "$(AC_HERDR_RPC_TIMEOUT=7 run_backend herdr 'herdr_rpc_timeout')" "7" "the env knob is honoured"
+for bad in 0 '' abc -1 1.5; do
+  assert_eq "$(AC_HERDR_RPC_TIMEOUT="$bad" run_backend herdr 'herdr_rpc_timeout')" "2" \
+    "'$bad' falls back to the default and never disables the ceiling"
+done
+printf '9\n' >"$AC_HOME/config/herdr-rpc-timeout"
+assert_eq "$(run_backend herdr 'herdr_rpc_timeout')" "9" "the config knob is honoured below the env one"
+assert_eq "$(AC_HERDR_RPC_TIMEOUT=3 run_backend herdr 'herdr_rpc_timeout')" "3" "and the env knob outranks it"
+rm -f "$AC_HOME/config/herdr-rpc-timeout"
+
+printf 'pH1\n' >"$FAKE_HERDR/tabs/tH1"; : >"$FAKE_HERDR/panes/pH1.buf"
+printf 'pH1 tH1\n' >"$AC_HOME/state/.pane-hung1"
+: >"$FAKE_HERDR/.hang"
+
+# The call runs in the background under a hard cap, so a REGRESSION reports a
+# failure instead of hanging the suite for ever.
+AC_HERDR_RPC_TIMEOUT=1 run_backend herdr \
+  'rc=0; backend_window_alive hung1 || rc=$?; printf "rc=%s\n" "$rc"' \
+  >"$TMP/hung.out" 2>&1 &
+hung_job=$!
+for _ in $(seq 1 100); do          # 100 x 0.2s = 20s, ~7x the 2 x 1s ceiling below
+  kill -0 "$hung_job" 2>/dev/null || break
+  sleep 0.2
+done
+if kill -0 "$hung_job" 2>/dev/null; then
+  kill -9 "$hung_job" 2>/dev/null || true
+  reap_hung_children
+  fail "a wedged backend must not freeze its caller: backend_window_alive never returned"
+fi
+wait "$hung_job" 2>/dev/null || true
+rm -f "$FAKE_HERDR/.hang"
+
+# UNOBSERVABLE, not gone. The ceiling makes a wedged call an ordinary failed
+# call, and the existing three-state ladder already reads two failed calls as
+# "no evidence about this pane" - so a wedge can never be mistaken for a death.
+assert_contains "$(cat "$TMP/hung.out")" "rc=2" \
+  "a timed-out liveness probe is UNOBSERVABLE (2), never a death (1)"
+
+# The reap is the process GROUP, and that is load-bearing rather than tidy: an
+# orphaned child inherits the call's stdout, and a caller reading that through a
+# command substitution blocks until the pipe closes - so a kill aimed at the
+# call's own pid leaves the caller frozen exactly as the wedge did. Verified by
+# aiming the watchdog at the bare pid: the assertion above goes red first.
+if [ -n "$(hung_survivors)" ]; then
+  reap_hung_children
+  fail "the ceiling must reap the whole process group: the child the wedged call forked outlived it"
+fi
+
 # --- launch-line env: pane env belongs to the herdr daemon, not the chief -----------
 
 # The daemon may have been (re)started from inside a claude session and then
