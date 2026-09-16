@@ -1,17 +1,28 @@
 {
+  "enabledPlugins": {
+    "plugin-master@local-plugins": true,
+    "agentkit@local-plugins": true
+  },
   "hooks": {
     "SessionStart": [
       {
         "matcher": "startup|resume|clear",
         "hooks": [
-          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-sessionstart-nudge.sh; [ -x \"$h\" ] || exit 0; \"$h\"" }
+          {
+            "type": "command",
+            "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-sessionstart-nudge.sh; [ -x \"$h\" ] || exit 0; \"$h\""
+          }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-prompt-recall.sh; [ -x \"$h\" ] || exit 0; \"$h\"", "timeout": 15 }
+          {
+            "type": "command",
+            "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-prompt-recall.sh; [ -x \"$h\" ] || exit 0; \"$h\"",
+            "timeout": 15
+          }
         ]
       }
     ],
@@ -19,34 +30,54 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-watch-policy-hook.sh; [ -x \"$h\" ] || exit 0; \"$h\"" }
+          {
+            "type": "command",
+            "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-watch-policy-hook.sh; [ -x \"$h\" ] || exit 0; \"$h\""
+          }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-delegation-guard.sh; [ -x \"$h\" ] || exit 0; \"$h\"" }
+          {
+            "type": "command",
+            "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-delegation-guard.sh; [ -x \"$h\" ] || exit 0; \"$h\""
+          }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-ledger-guard.sh; [ -x \"$h\" ] || exit 0; \"$h\"" }
+          {
+            "type": "command",
+            "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-ledger-guard.sh; [ -x \"$h\" ] || exit 0; \"$h\""
+          }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-primary-guard.sh; [ -x \"$h\" ] || exit 0; \"$h\"" }
+          {
+            "type": "command",
+            "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-primary-guard.sh; [ -x \"$h\" ] || exit 0; \"$h\""
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-turnend-guard.sh; [ -x \"$h\" ] || exit 0; \"$h\"" }
+          {
+            "type": "command",
+            "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-turnend-guard.sh; [ -x \"$h\" ] || exit 0; \"$h\""
+          }
         ]
       },
       {
         "hooks": [
-          { "type": "command", "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-watch-autoarm.sh; [ -x \"$h\" ] || exit 0; \"$h\"", "asyncRewake": true, "timeout": 3600 }
+          {
+            "type": "command",
+            "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-watch-autoarm.sh; [ -x \"$h\" ] || exit 0; \"$h\"",
+            "asyncRewake": true,
+            "timeout": 3600
+          }
         ]
       }
     ]
