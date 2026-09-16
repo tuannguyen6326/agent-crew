@@ -1606,12 +1606,16 @@ AC_DOMAIN=bare "$BIN/ac-spawn.sh" outsider "$vproj" --harness fake >/dev/null 2>
 assert_file "$AC_HOME/state/outsider.meta" "AC-12.2: a project properly INSIDE the view spawns normally"
 rm -f "$(dom_pkg bare)/projects/vproj"
 
-# And a spawn with NO AC_DOMAIN never meets the guard at all: every domain
-# effect is gated on the binding, so an ordinary crew spawn is unchanged.
+# And a spawn with NO RESOLVABLE domain binding never meets the guard at
+# all: every domain effect is gated on the binding ac_domain_binding
+# resolves, not on AC_DOMAIN alone, so a spawn carrying neither AC_DOMAIN
+# nor AC_SCOPE (the crewchief's own, ordinary spawn) is unchanged. This is
+# that contract's crewchief-spawn instance; the R12 block below completes
+# it for a domainchief's own spawn whose AC_DOMAIN alone went missing.
 rm -f "$(dom_pkg bare)/projects/$(basename "$repo")"
 "$BIN/ac-brief.sh" outsider2 vproj --mode local-only >/dev/null 2>&1 || true
 err="$("$BIN/ac-spawn.sh" outsider2 "$vproj" --harness fake 2>&1 || true)"
-case "$err" in *"project view"*) fail "AC-12.2: a spawn with no AC_DOMAIN must not meet the view guard" ;; esac
+case "$err" in *"project view"*) fail "AC-12.2: a spawn with no domain binding (no AC_DOMAIN, no AC_SCOPE) must not meet the view guard" ;; esac
 
 # --- R12: AC_SCOPE -> the domainchief's own meta is a SECOND source of truth
 # for the SAME domain, for exactly the case AC_DOMAIN cannot be trusted to
