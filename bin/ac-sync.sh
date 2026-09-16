@@ -10,8 +10,10 @@
 # Per project:
 # - `git fetch origin --prune`, time-bounded (AC_SYNC_TIMEOUT env >
 #   config/sync-timeout > 60 seconds): a fetch still running at the deadline
-#   is killed and the project reported `FAILED <project>: fetch timed out` -
-#   a hung remote never hangs the sweep, the next project still runs.
+#   is killed, PROCESS GROUP and all - so a transport helper the fetch forked
+#   cannot outlive it - and the project reported `FAILED <project>: fetch
+#   timed out` - a hung remote never hangs the sweep, the next project still
+#   runs.
 # - Clean clone, on the default branch, strictly behind origin -> the branch
 #   is fast-forwarded: `synced <project>: <branch> <old>..<new>`.
 # - Nothing to pull (or no origin remote at all) -> `fresh <project>`.
@@ -56,16 +58,28 @@ fetch_bounded() {
   # fetch_bounded <repo> <secs> - `git fetch origin --prune` with a watchdog:
   # the fetch is killed once <secs> elapse (TERM, short grace, KILL).
   # Returns the fetch's own status, or 124 on timeout.
+  #
+  # The kill targets the PROCESS GROUP, not the pid: git forks helper
+  # processes of its own (a remote transport, e.g. `git remote-ext` for an
+  # `ext::` URL) that keep running under ppid=1 once the fetch pid alone is
+  # killed - measured, the exact leak this watchdog exists to close.
+  # Backgrounding under `set -m` is what makes that group killable at all: a
+  # job backgrounded under job control becomes its own group leader, so
+  # backgrounding this way and killing the negative pid are ONE decision -
+  # the negative-pid kill without `set -m` would hit this script's own group
+  # instead of the fetch's.
   local repo="$1" secs="$2" pid start
+  set -m
   git -C "$repo" -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$secs" \
     fetch origin --prune --quiet >/dev/null 2>&1 &
   pid=$!
+  set +m
   start=$SECONDS
   while kill -0 "$pid" 2>/dev/null; do
     if [ $((SECONDS - start)) -ge "$secs" ]; then
-      kill "$pid" 2>/dev/null || true
+      kill -TERM -"$pid" 2>/dev/null || true
       sleep 0.5
-      kill -9 "$pid" 2>/dev/null || true
+      kill -KILL -"$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
       return 124
     fi

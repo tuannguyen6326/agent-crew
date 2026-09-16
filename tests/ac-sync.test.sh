@@ -135,6 +135,55 @@ out="$(AC_SYNC_TIMEOUT=1 "$BIN/ac-sync.sh" p8 2>&1)" || rc=$?
 assert_eq "$rc" 1 "timed-out fetch exits 1"
 assert_contains "$out" "FAILED p8: fetch timed out after 1s" "timeout note"
 
+# ...and the CHILD that hung remote forked is dead too, not orphaned under
+# ppid=1: `ext::sleep 30` makes git fork a `git remote-ext` helper which forks
+# the sleep itself, so killing the fetch pid alone leaves both alive. Found by
+# command line (git's own helper naming is stable and specific enough on a dev
+# host) rather than by process group: this test's own group is the whole
+# suite's, so a group kill here would take the runner down with it.
+hung_child_pid() {
+  # No `exit` inside the awk: under this suite's `pipefail`, an awk that quits
+  # early closes the pipe while `ps` is still writing, `ps` dies of SIGPIPE,
+  # and that non-zero status - not awk's - is what pipefail reports (measured:
+  # exit 141 aborted the whole suite under `set -e`).
+  # `!/awk/` excludes this very awk's OWN process: its argv is the pattern
+  # source text, which contains the same needle it searches for, so without
+  # the exclusion it can match itself and report a bogus, already-dead pid -
+  # a false GREEN that never observed the real helper at all (measured).
+  ps -axww -o pid=,command= | awk '/remote-ext origin sleep 30/ && !/awk/ && !found {print $1; found=1}'
+}
+reap_hung_child() {
+  # reap_hung_child - kill a leaked helper AND its own sleep child by exact
+  # pid. Host rule: a test proving a leak is fixed must not itself leak, on
+  # any exit path including a failing assertion.
+  local helper leaf
+  helper="$(hung_child_pid)"
+  [ -n "$helper" ] || return 0
+  leaf="$(ps -axww -o pid=,ppid= | awk -v p="$helper" '$2==p && !found {print $1; found=1}')"
+  [ -z "$leaf" ] || kill -9 "$leaf" 2>/dev/null || true
+  kill -9 "$helper" 2>/dev/null || true
+}
+reap_hung_child   # sweep the leak the case just above (unfixed today) left behind
+
+rc=0
+AC_SYNC_TIMEOUT=1 "$BIN/ac-sync.sh" p8 >"$TMP/p8-child.out" 2>&1 &
+sync_job=$!
+helper=""
+for _ in $(seq 1 50); do
+  helper="$(hung_child_pid)"
+  [ -n "$helper" ] && break
+  sleep 0.1
+done
+wait "$sync_job" || rc=$?
+if [ -z "$helper" ]; then
+  fail "p8's hung remote never forked its child - nothing was measured"
+fi
+if kill -0 "$helper" 2>/dev/null; then
+  reap_hung_child
+  fail "fetch_bounded's timeout must kill the whole process group: the forked remote-ext helper (and the sleep under it) outlived the bounded fetch"
+fi
+reap_hung_child
+
 # Untracked files never count as dirty: the ff-advance proceeds past them.
 new_project p9
 proj="$AC_HOME/projects/p9"
