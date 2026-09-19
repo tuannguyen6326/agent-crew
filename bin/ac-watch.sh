@@ -1548,8 +1548,14 @@ check_remote() {
     detail="poll exceeded ${ceiling}s and was killed; last rid ingested: ${last:-none}"
     [ -z "$err" ] || detail="$detail - $err"
     if [ ! -e "$tmarker" ]; then
-      : >"$tmarker"
       queue_wake remote-timeout captain "$detail"
+      # LATCH ON THE RECORD, NOT THE ATTEMPT. The latch is cleared only by a
+      # poll that COMPLETES, so one set against a publish that failed stands
+      # for the whole episode and every later timeout takes the quiet repeat
+      # branch below - leaving the episode with nothing durable about it
+      # anywhere. The fault that wedges the transport and the fault that
+      # breaks the spool are different ones, but nothing rules out both.
+      if [ "$wake_published" = 1 ]; then : >"$tmarker"; fi
       watch_log "remote poll TIMED OUT: $detail"
     else
       watch_log "remote poll TIMED OUT again, same episode: $detail"
@@ -1566,8 +1572,12 @@ check_remote() {
     # kind, and the exit reason line, which ac-watch-autoarm.sh hands straight
     # back to the chief on its catch-all arm. Marked before the wake, the same
     # order every pane branch here uses.
-    : >"$marker"
     queue_wake remote-failed captain "$detail"
+    # LATCH ON THE RECORD, NOT THE ATTEMPT - see the timeout branch above. Here
+    # the two faults are actively CORRELATED: an unwritable state dir kills the
+    # poll and the wake alike, which is exactly the episode that used to go
+    # entirely unrecorded.
+    if [ "$wake_published" = 1 ]; then : >"$marker"; fi
     watch_log "remote poll FAILED: $detail"
   else
     # REPETITION. The slot re-polls every remote_iv, so a persistent fault (an
@@ -1590,6 +1600,7 @@ check_remote() {
   return 0
 }
 
+wake_published=0
 queue_wake() {
   # queue_wake <kind> <id> <payload> - durable actionable wake, the record
   # every consumer (the crewchief's drain, a roomchief's scoped drain, the
@@ -1611,14 +1622,23 @@ queue_wake() {
   # publish collision-identity (ac_wake_publish's contract).
   # A FAILED publish is never swallowed: every call site is reached from a
   # command inside an `if` condition list, where bash suspends errexit for the
-  # whole list and inside the functions it calls, and the branch's own dedup
-  # latch has ALREADY advanced by the time this runs,
+  # whole list and inside the functions it calls, and a PANE branch's own dedup
+  # latch has ALREADY advanced by the time this runs (the two remote-EPISODE
+  # latches no longer do - they read wake_published below instead),
   # so a silent failure would lose the wake with no trace and no retry. The
   # failure goes loudly through watch_log (arm log + stderr - the one
   # out-of-band channel the header names; stdout stays the exit reason's
   # alone) and the pass continues: the printed reason line still wakes the
   # chief this once - only the DURABLE record is missing, and the log says so.
+  # wake_published is the STATUS without the status: a non-zero RETURN here
+  # would reach eleven call sites that never test one, and the direction that
+  # error fails in is a dead watcher - the fleet losing its eyes over a wake it
+  # could not write. A module flag costs those sites nothing and lets the one
+  # caller that must know - an episode latch, which means "the chief has been
+  # told" - read whether the record actually exists.
+  wake_published=1
   if ! ac_wake_publish "$state_dir" "${AC_SCOPE:-}" "$1" "$2" "$3"; then
+    wake_published=0
     watch_log "wake-publish FAILED kind=$1 id=$2 scope=${AC_SCOPE:-fleet} - record NOT durable, payload: $3"
   fi
 }

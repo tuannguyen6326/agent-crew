@@ -472,6 +472,23 @@ assert_contains "$out" "remote-failed:none" "a fault that also breaks the spool 
 assert_contains "$(cat "$polerr")" "wake-publish FAILED kind=remote-failed" "and the lost durable record says so in the arm log"
 assert_contains "$(drain_now)" "no queued wakes" "with nothing silently pretending to be queued"
 
+# ...and the episode LATCH must not advance on a record that never reached
+# disk. The latch means "the chief has been told about this episode", and it is
+# cleared only by a poll that COMPLETES - so under a persistent fault a latch
+# set against a failed publish stands for the whole episode, every later death
+# takes the quiet repeat branch, and nothing durable is ever written about any
+# of it.
+assert_no_file "$state/.remote-poll-failed" \
+  "a wake that never reached disk must not latch the episode"
+
+# Same episode, deliberately NOT reset: the next death is still the first one
+# on RECORD, so the chief finally gets the durable wake instead of silence.
+arm_fault 1 cf2
+out="$(watch_poll 4)"
+assert_contains "$out" "remote-failed:none" "the next death of an unrecorded episode is still loud"
+assert_contains "$(drain_now)" "remote-failed captain" "and the durable record finally lands"
+assert_file "$state/.remote-poll-failed" "only a wake that reached disk latches the episode"
+
 chmod 700 "$spool" 2>/dev/null || true
 rm -f "$hook" "$state/.remote-poll-failed" "$state/.watcher-arm.log"
 rm -rf "$state"/.wake-spool* "$state/remote-inbox"
