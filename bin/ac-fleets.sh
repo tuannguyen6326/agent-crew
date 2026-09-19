@@ -62,7 +62,11 @@
 #             coverage floor shared with the Stop hook (ac-turnend-guard.sh),
 #             ac-wake-drain.sh, and ac-statusline.sh - NOT ac-guard.sh's
 #             tighter 90s warn-only advisory); state/.watcher-owner names the
-#             holder pid.
+#             holder pid. A down watcher is benign - and totals.watchers_down
+#             stays silent - only when `crew.supervised` is 0. That count is
+#             crew.count minus the kind=self metas, which AGENTS.md:1055-1056
+#             keeps LISTED while excluding them from supervision, so a home
+#             running only chief self tasks is not a coverage gap.
 #   wakes   - queued wakes across the WHOLE home: spool records in
 #             state/.wake-spool[.<fam>]/ (drain claim dirs are not wake stores
 #             and are never counted).
@@ -152,7 +156,7 @@ emit_home() {
   # its short-lived exact-ref lease is verifier-owned. It is surveyed into its
   # OWN verify list and can never inflate the crew tally the digest/dashboard
   # read.
-  local crew_count=0 crew_lines="" crew_tasks_json="[]" meta id kind project dmode stf status row
+  local crew_count=0 supervised_count=0 crew_lines="" crew_tasks_json="[]" meta id kind project dmode stf status row
   local verify_count=0 verify_lines="" verify_json="[]" row_json
   local caller family ref worktree verify_row
   if [ -d "$sd" ]; then
@@ -202,6 +206,9 @@ emit_home() {
         fi
       else
         crew_count=$((crew_count + 1))
+        # AGENTS.md:1055 - a kind=self meta is LISTED (crew_count) but owes no
+        # watcher coverage, so the supervision predicate counts it apart.
+        ac_meta_is_self "$meta" || supervised_count=$((supervised_count + 1))
         crew_lines="${crew_lines}${row}
 "
         [ "$mode" = json ] && crew_tasks_json="$(jq -c --argjson r "$row_json" '. + [$r]' <<<"$crew_tasks_json")"
@@ -275,7 +282,7 @@ emit_home() {
   else
     watcher="down (no beacon)"
   fi
-  if [ "$crew_count" -eq 0 ]; then
+  if [ "$supervised_count" -eq 0 ]; then
     case "$watcher" in down*) watcher="$watcher - no crew in flight" ;; esac
   fi
   case "$watcher" in armed*) w_state=armed ;; *) w_state=down ;; esac
@@ -350,7 +357,8 @@ emit_home() {
     jq -n \
       --arg name "$name" --arg path "$home" --arg captain "$captain" \
       --arg flow "$flow" --arg promote "$promote" --arg mirror "$mirror" \
-      --argjson crew_count "$crew_count" --argjson tasks "$crew_tasks_json" \
+      --argjson crew_count "$crew_count" --argjson supervised "$supervised_count" \
+      --argjson tasks "$crew_tasks_json" \
       --argjson verify "$verify_json" \
       --argjson pending "$inbox_pending" --argjson handback "$inbox_handback" \
       --argjson entries "$inbox_entries_json" \
@@ -366,7 +374,7 @@ emit_home() {
         path: $path,
         captain: (if $captain == "" then null else $captain end),
         config: { flow: $flow, promote: $promote, mirror: $mirror },
-        crew: { count: $crew_count, tasks: $tasks },
+        crew: { count: $crew_count, supervised: $supervised, tasks: $tasks },
         verify: $verify,
         inbox: { pending: $pending, handback: $handback, entries: $entries },
         watcher: {
@@ -523,8 +531,9 @@ if [ "$mode" = json ]; then
   homes_json="$(jq -s -c '.' "$homes_ndjson")"
   # totals: pure arithmetic over the emitted per-home fields (NOT a second
   # accounting) - every home object, crewdeputies included, has a "crew" key.
-  # watchers_down is the COVERAGE-GAP alarm (crew in flight AND watcher down),
-  # not every idle beaconless home. learning_due/curate_due COUNT the homes whose
+  # watchers_down is the COVERAGE-GAP alarm (supervised crew in flight AND
+  # watcher down), not every idle beaconless home - and `supervised` is what it
+  # reads, since a self task is listed in `count` and owes no coverage. learning_due/curate_due COUNT the homes whose
   # own `cadence.*.due` flag is already set - the >= compare stays in bash above,
   # here it is only a tally of booleans (same shape as watchers_down).
   totals_json="$(jq -c '
@@ -533,7 +542,7 @@ if [ "$mode" = json ]; then
         crew: ($all | map(.crew.count) | add // 0),
         pending: ($all | map(.inbox.pending) | add // 0),
         handback: ($all | map(.inbox.handback) | add // 0),
-        watchers_down: ($all | map(select(.crew.count > 0 and .watcher.state == "down")) | length),
+        watchers_down: ($all | map(select(.crew.supervised > 0 and .watcher.state == "down")) | length),
         learning_due: ($all | map(select(.cadence.learn.due)) | length),
         curate_due: ($all | map(select(.cadence.curate.due)) | length) }
   ' <<<"$homes_json")"

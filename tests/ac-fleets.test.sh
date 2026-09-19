@@ -477,4 +477,36 @@ zcalls="$(wc -c <"$jqcount" | tr -d ' ')"
 tmp_after="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'ac-fleets-*' 2>/dev/null | wc -l | tr -d ' ')"
 assert_eq "$tmp_after" "$tmp_before" "no ac-fleets-*.XXXXXX temp files survive a --json run"
 
+# -- the SELF-TASK class: listed, but owing no watcher coverage ------------------
+# AGENTS.md:1055 "A `kind=self` meta ... is the ONE class excluded from
+# supervision: its pane holds a `tail -f` and no agent" and :1056 "It stays in
+# ACCOUNTING (every fleet view lists it)". Both halves bind at once, so a home
+# whose in-flight set is entirely self tasks LISTS them and still reads as a
+# home with no supervision gap - the down-watcher line keeps its benign
+# qualifier and the cross-fleet alarm stays 0.
+sc="$TMP/self-container"
+mkdir -p "$sc/selfhome/state" "$sc/selfhome/data" "$sc/selfhome/config"
+printf 'TN\n' >"$sc/selfhome/config/captain"
+printf 'kind=self\nproject=agent-crew\nmode=local-only\nwindow=w1\nbackend=herdr\n' >"$sc/selfhome/state/slice-one.meta"
+printf '%s editing\n' "$(iso)" >"$sc/selfhome/state/slice-one.status"
+printf 'kind=self\nproject=agent-crew\nmode=local-only\nwindow=w2\nbackend=herdr\n' >"$sc/selfhome/state/slice-two.meta"
+
+out_self="$(fleets "$sc")"
+assert_contains "$out_self" "crew    : 2 in flight" "a self task stays in ACCOUNTING (crew count lists it)"
+assert_contains "$out_self" "slice-one" "the self task row is rendered"
+assert_contains "$out_self" "no crew in flight"   "a home whose in-flight set is all self tasks owes no watcher coverage"
+sj="$(fleets --json "$sc")"
+assert_eq "$(jq -r '.homes[] | select(.name=="selfhome") | .crew.count' <<<"$sj")" "2"   "--json crew.count still counts the rows it lists"
+assert_eq "$(jq -r '.homes[] | select(.name=="selfhome") | .crew.supervised' <<<"$sj")" "0"   "--json crew.supervised excludes self metas"
+assert_eq "$(jq -r '.totals.watchers_down' <<<"$sj")" "0"   "--json watchers_down does not alarm on a self-only home"
+
+# the control, so the qualifier is not simply always on: one real crewmate
+# beside the self tasks and the same down watcher IS a coverage gap.
+printf 'kind=ship\nproject=agent-crew\nbackend=herdr\n' >"$sc/selfhome/state/real-crew.meta"
+out_mixed="$(fleets "$sc")"
+case "$out_mixed" in *"no crew in flight"*) fail "a real crewmate beside self tasks must not read as benign" ;; esac
+mj="$(fleets --json "$sc")"
+assert_eq "$(jq -r '.homes[] | select(.name=="selfhome") | .crew.supervised' <<<"$mj")" "1"   "--json crew.supervised counts the real crewmate"
+assert_eq "$(jq -r '.totals.watchers_down' <<<"$mj")" "1"   "--json watchers_down alarms once a supervised task is in flight"
+
 pass
