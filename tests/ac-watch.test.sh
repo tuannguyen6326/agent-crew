@@ -1754,7 +1754,17 @@ assert_no_file "$state/.skip-revoked-rf" "no revoke while coverage is live"
 # family's done wake is never stolen to the fleet spool.
 rm -f "$state/.skip-revoked-rf" "$state/.skip-stale-since-rf" "$state/.seen-rf-t1"
 printf '0\n' >"$state/.last-watcher-beat.rf"                 # stand-down (d52ec6a #4)
+# This pass is also the CALL-COUNT probe, and it is the clean one: it returns
+# through `continue` before the loop body ever reaches the crewmate pane, and
+# before the revoke's own nudge, so every backend call in the log is a question
+# about the CHIEF pane. With a per-RPC ceiling landed, the count is what decides
+# whether a wedged backend keeps a sweep inside its budget - so asking the same
+# question twice is now a cost, not a rounding error.
+: >"$FAKE_HERDR/log"
 out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)"
+skip_probe_calls="$(grep -c 'pRFC' "$FAKE_HERDR/log" 2>/dev/null || true)"
+assert_eq "$skip_probe_calls" "4" \
+  "the skip branch asks the backend about the chief pane ONCE per pass, never twice over (5 before the dedup)"
 assert_contains "$out" "check:quiet" "a live roomchief mid re-arm keeps its skip (re-arm grace)"
 case "$out" in *report:rf-t1*) fail "the fleet must not steal a re-arming family's pane" ;; esac
 assert_no_file "$state/.skip-revoked-rf" "no revoke during the re-arm grace"

@@ -535,13 +535,17 @@
 # by herdr_rpc_timeout (ac-backend.sh, 2s per RPC) times the RPCs a wedged pass
 # spends, which is what the pass costs when every pane has already latched its
 # outage: 2 per pane (window_alive's deliberate two-call ladder, and its
-# `continue` lands before capture), and 6 per meta of a SKIPPED family, whose
-# revoked coverage re-probes the same chief pane twice more - both counts
-# measured against a stub that answers nothing, not derived. So the inequality
-# is R x ceiling + 120 + 15 < 300, i.e. R < 82 timed-out RPCs at the 2s default:
+# `continue` lands before capture), and 4 per meta of a SKIPPED family - the
+# coverage probe on the chief pane plus the crewmate pane's own - both counts
+# measured against a stub that answers nothing, not derived. It was 6 until
+# skip_coverage_live started REPORTING which half of the coverage test failed:
+# the caller's re-probe was asking the backend the same question about the same
+# chief pane a second time in one pass. So the inequality is
+# R x ceiling + 120 + 15 < 300, i.e. R < 82 timed-out RPCs at the 2s default:
 # the distro's own shape (room-parallel 5, a couple of panes a family) spends
-# ~70 and holds at 275s, and a fleet past that lowers config/herdr-rpc-timeout
-# rather than discovering the gap as a false WATCHER-DOWN.
+# ~50 and holds well inside the grace, and a fleet past that lowers
+# config/herdr-rpc-timeout rather than discovering the gap as a false
+# WATCHER-DOWN.
 # WHAT A KILL COSTS is a property of the TRANSPORT, not of this distro, so this
 # header claims only what it owns: the rids ac-remote.sh had already stashed AND
 # published keep their own wakes, and the ceiling costs those nothing. Everything
@@ -1329,6 +1333,12 @@ skip_coverage_live() {
   # than AC_GUARD_GRACE, the turn-end guard's bound). Either half gone means
   # the skip's justification is gone and the fleet watcher must cover the
   # family's panes directly (behavior: watcher-skip-staleness, 2026-07-18).
+  # A failure says WHICH half: 1 = the roomchief is not live, 2 = it IS live
+  # and only the beacon is stale. The caller's next question is exactly that,
+  # and answering it here is what stops it asking the backend about the same
+  # chief pane a second time within one pass - with a per-RPC ceiling landed,
+  # the CALL COUNT is what decides whether a wedged backend keeps a sweep
+  # inside its budget.
   # Read through ac_watcher_beat_read, never a raw cat: it is the one place that
   # classifies an UNREADABLE beacon (present but empty or non-numeric) as no
   # beat. A raw value reaches the arithmetic below, where bash evaluates the
@@ -1339,7 +1349,7 @@ skip_coverage_live() {
   ac_roomchief_live "$state_dir" "$fam" || return 1
   beat="$(ac_watcher_beat_read "$state_dir" "$fam")"; beat="${beat%% *}"
   age=$(( $(ac_now) - beat ))
-  [ "$age" -le "${AC_GUARD_GRACE:-300}" ]
+  [ "$age" -le "${AC_GUARD_GRACE:-300}" ] || return 2
 }
 
 rearm_grace_active() {
@@ -1638,7 +1648,8 @@ check_fleet() {
         # Revalidate the skip's justification: the family's OWN scoped watcher
         # must actually be covering it (behavior: watcher-skip-staleness). Live
         # coverage -> skip exactly as before (clear the takeover trackers).
-        if skip_coverage_live "$skip_fam"; then
+        cov_rc=0; skip_coverage_live "$skip_fam" || cov_rc=$?
+        if [ "$cov_rc" = 0 ]; then
           rm -f "$state_dir/.skip-revoked-$skip_fam" "$state_dir/.skip-stale-since-$skip_fam"
           continue
         fi
@@ -1657,7 +1668,9 @@ check_fleet() {
         # its full grace afterwards, when it can actually re-arm.
         # Only a GONE roomchief, or a beacon stale past BOTH, revokes - fall
         # through and watch its panes, logging the takeover ONCE (the marker dedups).
-        if ac_roomchief_live "$state_dir" "$skip_fam" \
+        # cov_rc 2 IS "roomchief live, beacon stale" - the same fact a second
+        # ac_roomchief_live used to buy from the backend.
+        if [ "$cov_rc" = 2 ] \
            && { chief_busy_declared "$skip_fam" || rearm_grace_active "$skip_fam"; }; then
           continue
         fi
