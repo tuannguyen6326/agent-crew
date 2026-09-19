@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ac-tree.sh - pooled git worktrees INSIDE the target repo. Worktrees live at
 # <repo>/.crew/worktrees/<n>, and /.crew/ is auto-ignored via
-# .git/info/exclude. On the first lease, `get` also installs a shared
-# pre-commit guard into the default git-common-dir/hooks that refuses a
-# crewmate/roomchief commit made in the PRIMARY checkout - see
-# ensure_commit_guard for its full contract.
+# .git/info/exclude. On the first lease, `get` also installs two shared guard
+# hooks into the default git-common-dir/hooks: a pre-commit that refuses a
+# crewmate/roomchief commit made in the PRIMARY checkout, and a commit-msg that
+# refuses an agent co-author trailer (AGENTS.md section 13) - see
+# ensure_commit_guard for their full contract.
 #
 # Worktrees are detached-HEAD, reset to the freshest default-branch ref on
 # acquire, and REUSED - returning a worktree never deletes it, so dependency
@@ -174,58 +175,130 @@ ensure_gitignore() {
   fi
 }
 
-ensure_commit_guard() {
-  # Install the shared pre-commit guard that REFUSES a commit made in the
-  # PRIMARY checkout by a crewmate or roomchief (spec §5.2a, Q1=lease-time).
-  # It lives in the DEFAULT shared git-common-dir/hooks, so ONE install at lease
-  # time covers the primary checkout plus every existing and future linked
-  # worktree (AC7). A custom core.hooksPath is SKIPPED fail-open (option A,
-  # accepted): a relative value resolves per-worktree (not shared,
-  # breaks AC7), a tracked dir would dirty the primary checkout, and /dev/null
-  # (hooks disabled) would abort the lease - none worth handling for the observed
-  # self-hosted failure. Provenance is BYTE-EXACT (the ensure_gitignore rule): an
-  # installed hook of OURS that is byte-identical is left untouched, one that
-  # DIFFERS (an older guard text, or a hand-edit) is replaced in place with its
-  # previous bytes preserved in an epoch-stamped sidecar that is never executed
-  # and never clobbers an earlier one, and a FOREIGN hook is CHAINED to
-  # pre-commit.ac-crew-prev rather than clobbered (E1). Fail-open on any error -
-  # the guard is a safety net, never a lease blocker.
-  # Runs under the pool lock (cmd_get), so errexit is suppressed here: every
-  # outcome that could clobber a project hook is checked explicitly.
-  local repo="$1" hooksdir hook prev
-  if git -C "$repo" config --get core.hooksPath >/dev/null 2>&1; then
-    ac_warn "core.hooksPath is set; skipping commit-guard install (guard covers only the default shared hooks)"
-    return 0
-  fi
-  hooksdir="$(git -C "$repo" rev-parse --path-format=absolute --git-path hooks 2>/dev/null)" || return 0
-  [ -n "$hooksdir" ] || return 0
-  hook="$hooksdir/pre-commit"
+guard_install() {
+  # guard_install <hook-path> <sentinel> <label>, BODY on stdin - install one
+  # guard hook. This owns the provenance/chaining/atomicity contract that
+  # ensure_commit_guard's header states; the guards differ only in which hook
+  # git runs and in what the body refuses.
+  local hook="$1" sentinel="$2" label="$3" hooksdir prev ours=0 tmp bak
+  hooksdir="$(dirname "$hook")"
   # A symlink-managed hook (a hook manager's target) is left untouched: chaining
   # would dereference a live symlink into a static copy (severing updates through
   # the target) or clobber a dangling one. Skip fail-open, consistent with the
-  # custom-core.hooksPath handling (option A). Our own guard is always a regular
-  # file, so a symlink here is always someone else's.
+  # custom-core.hooksPath handling (option A). Our own guards are always regular
+  # files, so a symlink here is always someone else's.
   if [ -L "$hook" ]; then
-    ac_warn "pre-commit is a symlink (hook-manager managed); skipping commit-guard install to leave it untouched ($hook)"
+    ac_warn "$(basename "$hook") is a symlink (hook-manager managed); skipping $label install to leave it untouched ($hook)"
     return 0
   fi
   # The sentinel decides PROVENANCE only, never freshness: it cannot see the
-  # heredoc below change, so a repo onboarded before an edit kept the old text
-  # forever. The freshness compare needs the bytes we would write now, which the
-  # staged $tmp holds - hence a flag here and the decision after staging.
-  local ours=0
-  if [ -f "$hook" ] && grep -q 'ac-crew-primary-commit-guard' "$hook" 2>/dev/null; then
+  # body change, so a repo onboarded before an edit kept the old text forever.
+  # The freshness compare needs the bytes we would write now, which the staged
+  # $tmp holds - hence a flag here and the decision after staging.
+  if [ -f "$hook" ] && grep -q "$sentinel" "$hook" 2>/dev/null; then
     ours=1
   fi
   mkdir -p "$hooksdir"
-  prev="$hooksdir/pre-commit.ac-crew-prev"
+  prev="$hook.ac-crew-prev"
   # Failure-atomic install: stage the wrapper in a temp file, and only swap it
   # into place with an atomic rename AFTER a pre-existing foreign hook is
   # preserved. errexit is suppressed on the pool-lock callback path, so a failed
   # write/chmod/rename must never leave $hook empty, partial, or missing - that
   # would silently disable the project's own hook (the E1 invariant).
-  local tmp="$hook.ac-crew-tmp.$$"
-  if ! cat >"$tmp" <<'GUARD'
+  tmp="$hook.ac-crew-tmp.$$"
+  if ! cat >"$tmp"; then
+    rm -f "$tmp"
+    ac_warn "could not stage $label; leaving any existing hook untouched ($hook)"
+    return 0
+  fi
+  if ! chmod +x "$tmp"; then
+    rm -f "$tmp"
+    ac_warn "could not stage $label (chmod); leaving any existing hook untouched ($hook)"
+    return 0
+  fi
+  if [ "$ours" = 1 ]; then
+    # Ours and byte-identical: return silently, exactly as the sentinel check did.
+    if cmp -s "$tmp" "$hook"; then
+      rm -f "$tmp"
+      return 0
+    fi
+    # Ours but DIFFERENT (an older guard text, or a hand-edit): replace in place,
+    # preserving the previous bytes. The backup NEVER goes to
+    # <hook>.ac-crew-prev - that slot belongs to a chained project hook and
+    # run_chained EXECs it, so our own old guard landing there would run as its
+    # own chained hook. It is EPOCH-STAMPED, following ac_records_backup's
+    # never-clobber convention (bin/ac-maintenance-lib.sh:189), not the single-slot
+    # `<file>.prev` one (bin/ac-qa.sh:3051), which keeps ONE copy and would let a
+    # second upgrade destroy a preserved hand-edit; git runs only the exact hook
+    # names, so a stamped sidecar is never executed, and cp -p keeps the mode too
+    # so a hand-edit is restorable as it was. An occupied $bak is NOT cleaned up
+    # and must not be: it may hold an earlier hand-edit, and the next second's
+    # stamp gets its own name anyway.
+    bak="$hook.ac-crew-stale-$(ac_now)"
+    if [ -e "$bak" ] || ! cp -p "$hook" "$bak"; then
+      rm -f "$tmp"
+      ac_warn "could not preserve the outdated $label; leaving it in place ($hook)"
+      return 0
+    fi
+    if ! mv "$tmp" "$hook"; then
+      rm -f "$tmp"
+      ac_warn "could not upgrade the outdated $label ($hook)"
+      return 0
+    fi
+    ac_warn "upgraded the outdated $label at $hook (previous bytes kept at $bak)"
+    return 0
+  fi
+  if [ -e "$hook" ]; then
+    # Chain, never clobber (E1): preserve the foreign hook by COPYING it aside
+    # (cp -p keeps its exec bit) - never move it, so $hook is never absent before
+    # the swap. Sidecar already taken (a hook manager replaced our guard after an
+    # earlier chain) -> skip fail-open, keeping the project's own hook.
+    if [ -e "$prev" ]; then
+      rm -f "$tmp"
+      ac_warn "$(basename "$hook") present and $(basename "$prev") already taken; skipping $label install to avoid clobbering a project hook ($hook)"
+      return 0
+    fi
+    if ! cp -p "$hook" "$prev"; then
+      rm -f "$tmp"
+      ac_warn "could not preserve existing $(basename "$hook") hook; skipping $label install to avoid clobbering it ($hook)"
+      return 0
+    fi
+    ac_warn "chained existing $(basename "$hook") hook aside to $(basename "$prev")"
+  fi
+  # Atomic swap: rename the staged wrapper over $hook (overwriting the foreign
+  # copy just preserved, or creating it fresh) - $hook is never a partial file.
+  if ! mv "$tmp" "$hook"; then
+    rm -f "$tmp"
+    ac_warn "could not install $label ($hook)"
+    return 0
+  fi
+  ac_warn "installed $label at $hook"
+}
+
+ensure_commit_guard() {
+  # Install the shared guard hooks that REFUSE (1) a commit made in the PRIMARY
+  # checkout by a crewmate or roomchief (spec §5.2a, Q1=lease-time) and (2) a
+  # commit message carrying an AGENT co-author trailer (AGENTS.md section 13).
+  # They live in the DEFAULT shared git-common-dir/hooks, so ONE install at lease
+  # time covers the primary checkout plus every existing and future linked
+  # worktree (AC7). A custom core.hooksPath is SKIPPED fail-open (option A,
+  # accepted): a relative value resolves per-worktree (not shared,
+  # breaks AC7), a tracked dir would dirty the primary checkout, and /dev/null
+  # (hooks disabled) would abort the lease - none worth handling for the observed
+  # self-hosted failure. Per-hook provenance, chaining and atomicity are
+  # guard_install's above. Fail-open on any error - a guard is a safety net,
+  # never a lease blocker.
+  # Runs under the pool lock (cmd_get), so errexit is suppressed here: every
+  # outcome that could clobber a project hook is checked explicitly.
+  local repo="$1" hooksdir
+  if git -C "$repo" config --get core.hooksPath >/dev/null 2>&1; then
+    ac_warn "core.hooksPath is set; skipping commit-guard install (the guards cover only the default shared hooks)"
+    return 0
+  fi
+  hooksdir="$(git -C "$repo" rev-parse --path-format=absolute --git-path hooks 2>/dev/null)" || return 0
+  [ -n "$hooksdir" ] || return 0
+
+  guard_install "$hooksdir/pre-commit" ac-crew-primary-commit-guard "commit-guard" <<'GUARD'
 #!/usr/bin/env bash
 # ac-crew-primary-commit-guard - REFUSE a git commit made in the PRIMARY
 # checkout by a crewmate or roomchief. Installed once at lease time by
@@ -257,73 +330,38 @@ if [ "$gd" = "$cm" ] && { [ -n "${AC_CREW_ID:-}" ] || [ -n "${AC_SCOPE:-}" ]; };
 fi
 run_chained "$@"
 GUARD
-  then
-    rm -f "$tmp"
-    ac_warn "could not stage commit guard; leaving any existing hook untouched ($hook)"
-    return 0
-  fi
-  if ! chmod +x "$tmp"; then
-    rm -f "$tmp"
-    ac_warn "could not stage commit guard (chmod); leaving any existing hook untouched ($hook)"
-    return 0
-  fi
-  if [ "$ours" = 1 ]; then
-    # Ours and byte-identical: return silently, exactly as the sentinel check did.
-    if cmp -s "$tmp" "$hook"; then
-      rm -f "$tmp"
-      return 0
-    fi
-    # Ours but DIFFERENT (an older guard text, or a hand-edit): replace in place,
-    # preserving the previous bytes. The backup NEVER goes to
-    # pre-commit.ac-crew-prev - that slot belongs to a chained project hook and
-    # run_chained EXECs it, so our own old guard landing there would run as its
-    # own chained hook. It is EPOCH-STAMPED, following ac_records_backup's
-    # never-clobber convention (bin/ac-maintenance-lib.sh:189), not the single-slot
-    # `<file>.prev` one (bin/ac-qa.sh:3051), which keeps ONE copy and would let a
-    # second upgrade destroy a preserved hand-edit; git runs only the exact hook
-    # names, so a stamped sidecar is never executed, and cp -p keeps the mode too
-    # so a hand-edit is restorable as it was. An occupied $bak is NOT cleaned up
-    # and must not be: it may hold an earlier hand-edit, and the next second's
-    # stamp gets its own name anyway.
-    local bak="$hook.ac-crew-stale-$(ac_now)"
-    if [ -e "$bak" ] || ! cp -p "$hook" "$bak"; then
-      rm -f "$tmp"
-      ac_warn "could not preserve the outdated commit guard; leaving it in place ($hook)"
-      return 0
-    fi
-    if ! mv "$tmp" "$hook"; then
-      rm -f "$tmp"
-      ac_warn "could not upgrade the outdated commit guard ($hook)"
-      return 0
-    fi
-    ac_warn "upgraded the outdated primary-checkout commit guard at $hook (previous bytes kept at $bak)"
-    return 0
-  fi
-  if [ -e "$hook" ]; then
-    # Chain, never clobber (E1): preserve the foreign hook by COPYING it aside
-    # (cp -p keeps its exec bit) - never move it, so $hook is never absent before
-    # the swap. Sidecar already taken (a hook manager replaced our guard after an
-    # earlier chain) -> skip fail-open, keeping the project's own pre-commit.
-    if [ -e "$prev" ]; then
-      rm -f "$tmp"
-      ac_warn "pre-commit present and pre-commit.ac-crew-prev already taken; skipping commit-guard install to avoid clobbering a project hook ($hook)"
-      return 0
-    fi
-    if ! cp -p "$hook" "$prev"; then
-      rm -f "$tmp"
-      ac_warn "could not preserve existing pre-commit hook; skipping commit-guard install to avoid clobbering it ($hook)"
-      return 0
-    fi
-    ac_warn "chained existing pre-commit hook aside to pre-commit.ac-crew-prev"
-  fi
-  # Atomic swap: rename the staged wrapper over $hook (overwriting the foreign
-  # copy just preserved, or creating it fresh) - $hook is never a partial file.
-  if ! mv "$tmp" "$hook"; then
-    rm -f "$tmp"
-    ac_warn "could not install commit guard ($hook)"
-    return 0
-  fi
-  ac_warn "installed primary-checkout commit guard at $hook"
+
+  guard_install "$hooksdir/commit-msg" ac-crew-agent-trailer-guard "agent-trailer-guard" <<'MSGGUARD'
+#!/usr/bin/env bash
+# ac-crew-agent-trailer-guard - REFUSE a commit message carrying an AGENT
+# co-author trailer (AGENTS.md section 13). The harness instructs every session
+# to add one and repo law forbids it, and until this hook the only thing between
+# them was a reviewer remembering - one already reached a commit and was caught
+# by hand at verify.
+# WHY commit-msg AND NOT pre-commit: pre-commit runs before the message exists
+#   (COMMIT_EDITMSG still holds the PREVIOUS commit's text there), so this is
+#   the only git seam that can read what is being committed. And it has to be
+#   the earliest one: a refusal at landing time costs an amend or a rebase, and
+#   a trailer already in landed history costs a rewrite, which is a captain act.
+# WHO: everyone. The rule is about agent attribution in a public-source repo,
+#   not about who typed the commit.
+# NOT a human co-author: pairing attribution is legitimate and stays untouched.
+# Fail-OPEN on an unreadable message, and never suppressing a chained hook.
+run_chained() {
+  local prev; prev="$(dirname "$0")/commit-msg.ac-crew-prev"
+  [ -x "$prev" ] && exec "$prev" "$@"
+  exit 0
+}
+msg="${1:-}"
+[ -n "$msg" ] && [ -r "$msg" ] || run_chained "$@"
+if grep -qiE '^[[:space:]]*co-authored-by:.*(claude|anthropic|openai|copilot|cursor|codex|\bgpt\b)' "$msg"; then
+  printf 'ac-crew: REFUSED an agent co-author trailer in this commit message.\n' >&2
+  printf 'ac-crew: AGENTS.md section 13 - never add an agent co-author line to a commit in a project repo.\n' >&2
+  printf 'ac-crew: delete that trailer line and commit again. A HUMAN co-author is fine.\n' >&2
+  exit 1
+fi
+run_chained "$@"
+MSGGUARD
 }
 
 resolve_repo() {

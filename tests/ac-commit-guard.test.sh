@@ -315,4 +315,52 @@ rc=0
 ( cd "$repo" && PATH="$stub:$PATH" AC_CREW_ID=g1 "$hook" ) || rc=$?
 assert_eq "$rc" "0" "E2: a rev-parse failure fails OPEN (exit 0), never fail-closed onto the captain"
 
+# --- the AGENT CO-AUTHOR TRAILER guard ---------------------------------------
+# AGENTS.md section 13 forbids an agent co-author trailer in a project commit
+# while the harness instructs every session to add one, and until now the only
+# thing between them was a reviewer remembering. One already reached a commit
+# and was caught by hand at the verify step; 46 are in this repo's main-branch
+# history, which no later commit can take back.
+#
+# It is a commit-msg hook, not the pre-commit one beside it: pre-commit runs
+# BEFORE the message exists (COMMIT_EDITMSG still holds the previous commit's
+# text at that point), so commit-msg is the only git seam that can read what is
+# being committed. Earliest is what matters here - a refusal at landing time
+# would cost an amend or a rebase, and a trailer already in landed history
+# costs a captain-level rewrite.
+tg_repo="$(make_repo trailer-guard)"
+"$BIN/ac-tree.sh" get --repo "$tg_repo" --id tg1 --holder crew:tg1 >/dev/null 2>&1 \
+  || fail "the trailer-guard lease failed"
+tg_hooks="$(hook_dir "$tg_repo")"
+assert_file "$tg_hooks/commit-msg" "the lease installs the commit-msg guard beside the pre-commit one"
+
+tg_wt="$tg_repo/.crew/worktrees/1-trailer-guard"
+[ -d "$tg_wt" ] || fail "the trailer-guard worktree is missing"
+printf 'one\n' >"$tg_wt/trailer-probe.txt"
+git -C "$tg_wt" add trailer-probe.txt
+
+rc=0
+git -C "$tg_wt" commit -q -m "feat: a change
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>" >"$TMP/tg.out" 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail "a commit carrying an agent co-author trailer must be REFUSED"
+assert_contains "$(cat "$TMP/tg.out")" "co-author" "the refusal names what it refused"
+assert_eq "$(git -C "$tg_wt" rev-list --count HEAD 2>/dev/null || echo 0)" "1" \
+  "the refused commit was never created"
+
+# The same change without the trailer commits normally - the guard refuses a
+# trailer, never a commit.
+git -C "$tg_wt" commit -q -m "feat: a change" || fail "an ordinary commit must still pass"
+assert_eq "$(git -C "$tg_wt" rev-list --count HEAD)" "2" "the clean commit landed"
+
+# A human co-author is not an agent one: the rule is about agent attribution in
+# a public-source repo, and refusing every Co-Authored-By would break pairing.
+printf 'two\n' >"$tg_wt/trailer-probe.txt"
+git -C "$tg_wt" add trailer-probe.txt
+git -C "$tg_wt" commit -q -m "feat: pairing
+
+Co-Authored-By: A Teammate <teammate@example.test>" \
+  || fail "a human co-author trailer must pass"
+assert_eq "$(git -C "$tg_wt" rev-list --count HEAD)" "3" "the human-pairing commit landed"
+
 pass
