@@ -1604,7 +1604,11 @@ ac_arrival_wait() {
   # AC_SEND_SETTLE-spaced ticks (~2-3s budget at its default) and returns the
   # INSTANT the evidence appears, never burning the whole budget on the
   # healthy path.
+  # AC_ARRIVAL_LAST carries the arriving text back to the caller: a REFUTED
+  # verdict that cannot say WHAT landed sends its reader to peek the pane, and
+  # the pane is exactly where a truncated steer looks like a delivered one.
   local sid="$1" expected="$2" tries=7 i=0 path cur last=""
+  AC_ARRIVAL_LAST=""
   [ -n "$sid" ] || return 2
   path="$(ac_claude_transcript_path "$sid")" || return 2
   while :; do
@@ -1616,6 +1620,7 @@ ac_arrival_wait() {
     [ "$i" -ge "$tries" ] && break
     sleep "${AC_SEND_SETTLE:-0.4}"
   done
+  AC_ARRIVAL_LAST="$last"
   [ -n "$last" ] && return 1
   return 2
 }

@@ -328,4 +328,35 @@ case "$(cat "$AC_HOME/state/cbad.status" 2>/dev/null)" in
   *"steered:"*) fail "a REFUTED steer must not be recorded as steered - it did not land as asked" ;;
 esac
 
+# --- a REFUTED arrival SAYS WHAT ARRIVED -------------------------------------
+# MEASURED over five consecutive steers into one claude pane: 4700 chars
+# arrived as 482, 1900 as 158, 1100 as 203, 2000 as 883 - the four that were
+# REFUTED, against one 1700-char send that arrived whole and passed. The
+# surviving fragment is the TAIL and it starts mid-word, so a chief peeking the
+# pane after a REFUTED send sees text that looks exactly like a successful
+# delivery, and three peeks in that run were read as proof of landing. The
+# verdict was right every time; what it did not say is what actually landed.
+sid_cut="eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+mk_claude_crewmate ccut pCCUT tCCUT "$sid_cut"
+sent_head="Read the three findings in data/fam/room.md before you touch the fixer, and"
+sent_tail=" then run the suite once more and report what changed."
+mk_turn "$sid_cut" "$sent_tail"
+err="$("$BIN/ac-send.sh" ccut "$sent_head$sent_tail" 2>&1)" \
+  && fail "a truncated arrival must still be refused"
+assert_contains "$err" "arrival REFUTED" "the verdict is unchanged"
+assert_contains "$err" "TRUNCATED" \
+  "...and it names the SHAPE: what arrived is the tail of what was sent, with the head cut"
+assert_contains "$err" "$(printf '%s' "$sent_head$sent_tail" | wc -c | tr -d ' ')" \
+  "the refusal gives the sent size, so the reader can judge without peeking"
+
+# A genuinely DIFFERENT arrival is not a truncation and must not be described
+# as one - a wrong message and a cut message need different next moves.
+sid_other="ffffffff-ffff-ffff-ffff-ffffffffffff"
+mk_claude_crewmate cother pCOTH tCOTH "$sid_other"
+mk_turn "$sid_other" "a completely unrelated line"
+err="$("$BIN/ac-send.sh" cother 'the text that was actually sent' 2>&1)" \
+  && fail "a wrong arrival must still be refused"
+assert_contains "$err" "arrival REFUTED" "the verdict is unchanged for a wrong arrival too"
+case "$err" in *TRUNCATED*) fail "an unrelated arrival must not be reported as a truncation" ;; esac
+
 pass

@@ -36,6 +36,17 @@
 #   read, is UNOBSERVABLE: reported honestly as `delivered (arrival
 #   unverified) to <target>`, exit unchanged - the same precedented shape
 #   --key already uses for its own unverifiable case, below.
+#   A REFUTED refusal SAYS WHAT ARRIVED - the sizes, and whether what landed is
+#   a strict SUFFIX of what was sent. Measured over five consecutive steers into
+#   one claude pane (4700 chars arrived as 482, 1900 as 158, 1100 as 203, 2000
+#   as 883; one 1700-char send arrived whole), a long steer is delivered
+#   TRUNCATED TO ITS TAIL, starting mid-word - and that tail renders in the pane
+#   exactly like a delivered message, so "peek it" was the wrong instruction:
+#   three peeks in that run were read as proof of a landing that had lost its
+#   first 90 percent. The fix for a long instruction is a file plus a SHORT
+#   pointer, never a resubmit. A ceiling on the send itself is NOT here: the
+#   cliff is the backend's and the one intact send gives a floor, not a number
+#   worth refusing on.
 #
 # --key is FOCUSED but UNVERIFIED, and says so. herdr's send-keys needs focus
 # on the key path too, so the key is pressed on a focused tab - never blind.
@@ -104,6 +115,23 @@ set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-backend.sh"
 [ ! -x "$(dirname "$0")/ac-guard.sh" ] || "$(dirname "$0")/ac-guard.sh" || true  # warn-only advisory
+
+ac_arrival_refusal() {
+  # ac_arrival_refusal <id> <sent> - the REFUTED refusal, naming what landed.
+  # A bare "it did not match" sends the reader to peek the pane, and a steer
+  # truncated to its TAIL renders there exactly like a delivered one - measured
+  # five times, and three of those peeks were read as proof of landing. So the
+  # sizes and the SHAPE are stated here instead: a strict suffix is the
+  # transport cutting the head, which is a different next move from a wrong
+  # message arriving whole.
+  local id="$1" sent="$2" got="${AC_ARRIVAL_LAST:-}" shape
+  if [ -n "$got" ] && [ "${sent%"$got"}" != "$sent" ]; then
+    shape="TRUNCATED TO ITS TAIL - the head was cut in transport, and the pane renders the remainder exactly like a delivered message. Write the instruction to a file and send a SHORT pointer to it instead of resubmitting"
+  else
+    shape="a DIFFERENT text is in the composer, not a cut one - peek it (bin/ac-peek.sh $id) before resubmitting, since the composer already accepted SOMETHING"
+  fi
+  ac_die "arrival REFUTED for $id - sent $(printf '%s' "$sent" | wc -c | tr -d ' ') chars, arrived $(printf '%s' "$got" | wc -c | tr -d ' '): $shape"
+}
 
 id="${1:-}"; shift || true
 [ -n "$id" ] || ac_die "usage: ac-send.sh <id> [--force] '<text>' | --key <key>"
@@ -194,7 +222,7 @@ else
     ac_arrival_wait "$sid" "$text" || arc=$?
     case "$arc" in
       0) ;;
-      1) ac_die "arrival REFUTED for $id - the session transcript's last typed turn does not equal what was sent, so this did NOT land as intended (peek it: bin/ac-peek.sh $id before resubmitting - the composer already accepted SOMETHING, just not this)" ;;
+      1) ac_arrival_refusal "$id" "$text" ;;
       *) verb='delivered (arrival unverified) to' ;;
     esac
   else
