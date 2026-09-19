@@ -22,7 +22,7 @@
 #                                                     # text into the family's thread
 #   ac-remote.sh done-stamp <family>                  # mark the family's landing done-report as posted
 #   ac-remote.sh push-pending                         # batch pending gates/asks out
-#   ac-remote.sh gc [--days <n>]                      # prune old unlinked stashes
+#   ac-remote.sh gc [--days <n>]                      # MANUAL: prune old unlinked stashes
 #
 # poll - HARD no-op (exit 0, no output) unless config/remote-poll exists and
 #   is executable. Runs the hook; the hook prints ZERO OR MORE JSON objects,
@@ -167,8 +167,19 @@
 #   not. The stamp advances only after a delivered message: a failing hook
 #   is warned, kept unstamped, and retried on the next push. Nothing pending
 #   anywhere = silent.
-# gc [--days <n>] - prune stashes older than n days (default 14, file mtime)
-#   that no task meta (live or archived) links via remote_request=.
+# gc [--days <n>] - prune stashes older than n days (14 unless you say
+#   otherwise, file mtime) that no task meta (live or archived) links via
+#   remote_request=.
+#   MANUAL, DELIBERATELY, and nothing in the tree calls it: --days is the
+#   window an operator picks for one run, never a retention policy the fleet
+#   enforces. A stash is also the DEDUP SIGN (`[ -e "$stash" ] && continue` in
+#   ingest_stream), so deleting one re-opens that rid to ingestion - safe
+#   against a transport whose cursor only moves forward, and a duplicate order
+#   against one that can re-read its own history, which this distro neither
+#   ships nor can assume. Against that, what a schedule would reclaim is a few
+#   dozen small JSON files (54 here over ~60 days). A deleting verb on a
+#   schedule is a different risk class from one an operator runs, and this side
+#   of the trade has nothing to win.
 #
 # SECURITY - remote message text is UNTRUSTED, non-negotiable: it is never
 #   eval'd, never interpolated into a shell command line, never used to
