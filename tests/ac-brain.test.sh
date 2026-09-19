@@ -402,4 +402,75 @@ docwarn="$("$BRAIN" doctor --home "$AC_HOME" --compact)" || fail "a self-retriev
 assert_contains "$docwarn" '"name":"self_retrieval","status":"warn"' "a missed page turns the probe warn"
 assert_contains "$docwarn" "missed:" "and the miss is named"
 
+# --- the embedding call is BOUNDED, and names what went wrong -----------------
+# LIVED 2026-09-16: a sync sat 40 minutes in state S at 0.0% CPU, asleep on an
+# open TCP socket, while every other sync that session returned in 121-340ms -
+# a hang on the remote call, not slowness. And every sync printed the single
+# opaque token embed_degraded: "provider_error", so an operator could not tell
+# a dead provider from a rejected key from a billing wall. The real cause,
+# found only by probing the endpoint by hand, was HTTP 402: out of credits.
+#
+# Both halves are exercised against a local stub the config points at through
+# base_url. `ollama` is the registry's keyless provider, so the lane opens with
+# no key material anywhere in the test.
+EMBED_STUB_PID=""; EMBED_STUB_PORT=""
+embed_stub_up() {  # embed_stub_up <script> <portfile> - run it; sets the two globals
+  # NOT through a command substitution: that runs in a subshell, so the pid it
+  # backgrounds would never reach the reaper here.
+  local i=0
+  bun "$1" >"$2" 2>/dev/null &
+  EMBED_STUB_PID=$!
+  EMBED_STUB_PORT=""
+  while [ "$i" -lt 100 ]; do
+    [ -s "$2" ] && { EMBED_STUB_PORT="$(cat "$2")"; return 0; }
+    sleep 0.1; i=$((i + 1))
+  done
+  return 1
+}
+embed_stub_down() { [ -z "$EMBED_STUB_PID" ] || { kill "$EMBED_STUB_PID" 2>/dev/null || true; wait "$EMBED_STUB_PID" 2>/dev/null || true; }; }
+embed_stub_config() {  # embed_stub_config <port>
+  printf '{"embedding":{"provider":"ollama","model":"m","dims":8,"base_url":"http://127.0.0.1:%s/v1"}}\n' \
+    "$1" >"$AC_HOME/config/brain.json"
+}
+mkdir -p "$AC_HOME/config"
+
+# (a) a provider that ANSWERS an error: the status reaches the operator.
+cat >"$TMP/embed-402.ts" <<'TS'
+const s = Bun.serve({ port: 0, fetch: () => new Response(
+  '{"error":{"message":"Insufficient credits. Add more using https://example.test/credits","code":402}}',
+  { status: 402 }) });
+console.log(s.port);
+await new Promise(() => {});
+TS
+embed_stub_up "$TMP/embed-402.ts" "$TMP/embed-402.port" \
+  || { embed_stub_down; fail "the 402 stub never came up"; }
+embed_stub_config "$EMBED_STUB_PORT"
+printf '# Bound probe\nA page that needs embedding for the bounded-call probe.\n' \
+  >"$AC_HOME/data/fam-one/bound-probe.md"
+eb="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+embed_stub_down
+assert_contains "$eb" "402" \
+  "a refused embedding names the HTTP status, not a single opaque provider_error"
+
+# (b) a provider that ACCEPTS AND NEVER ANSWERS: the sync must still return.
+# The bound is the whole point - a wedged sync holds its lease and its DB open
+# for as long as the socket stays up, and nothing above it has a ceiling.
+cat >"$TMP/embed-hang.ts" <<'TS'
+const s = Bun.serve({ port: 0, fetch: async () => { await new Promise(() => {}); return new Response(""); } });
+console.log(s.port);
+await new Promise(() => {});
+TS
+embed_stub_up "$TMP/embed-hang.ts" "$TMP/embed-hang.port" \
+  || { embed_stub_down; fail "the hanging stub never came up"; }
+embed_stub_config "$EMBED_STUB_PORT"
+began=$SECONDS
+eh="$(AC_BRAIN_EMBED_TIMEOUT=2 "$BRAIN" sync --home "$AC_HOME" --compact)"
+elapsed=$((SECONDS - began))
+embed_stub_down
+[ "$elapsed" -lt 30 ] || fail "a provider that never answers must not wedge the sync (took ${elapsed}s)"
+assert_contains "$eh" "timeout" "...and the degraded token says the call timed out, not merely that it failed"
+
+rm -f "$AC_HOME/config/brain.json" "$AC_HOME/data/fam-one/bound-probe.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+
 pass

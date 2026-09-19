@@ -41,7 +41,14 @@
 // - LLM boundaries: sync/recall/entity/context_pack/delta/remember/forget are
 //   zero-LLM forever. The embedding lane (voyage|openai|stub) is an optional
 //   vectorizer - absent config or key degrades to keyword-only with a stamp,
-//   never an error. synthesize is the ONE expensive verb: it shells to the
+//   never an error. Its call is BOUNDED (AC_BRAIN_EMBED_TIMEOUT seconds,
+//   default 60) and its `embed_degraded` stamp NAMES the cause - the HTTP
+//   status plus a slice of the body, a timeout, or an unreachable host -
+//   because one opaque token for every remote failure is a degradation
+//   nobody ever chases. A wedged sync never reaches a prompt: the catch-up
+//   fire is a detached subshell (ac_brain_freshen, bin/ac-lib.sh), measured
+//   to return in 0s against a sync binary that hangs.
+//   synthesize is the ONE expensive verb: it shells to the
 //   fleet's own harness one-shot (env AC_BRAIN_SYNTH_CMD > crew-dispatch
 //   panes.brain > config/model+crew-harness), falls back to an extractive
 //   digest when compose fails but gather succeeded, and returns a typed
@@ -310,25 +317,53 @@ function stubVec(text: string, dims: number): Float32Array {
   for (let i = 0; i < dims; i++) v[i] /= n;
   return v;
 }
+// Seconds, AC_BRAIN_EMBED_TIMEOUT to override. A sync was found alive 40
+// minutes after its caller's own 180s bound gave up, in state S at 0.0% CPU
+// with an established socket open - asleep on the remote read, with no ceiling
+// at any layer. Intermittent and tied to the remote call: the retry right
+// after reaping it returned in 304ms.
+const EMBED_TIMEOUT_MS = (Number(process.env.AC_BRAIN_EMBED_TIMEOUT) > 0
+  ? Number(process.env.AC_BRAIN_EMBED_TIMEOUT) : 60) * 1000;
+// Why the last embedBatch gave up, for the caller's degraded token. A return
+// value would have to be threaded through the batch loop; the failure is
+// read exactly once, right where the loop stops.
+let embedError: string | undefined;
 async function embedBatch(texts: string[], cfg: EmbedCfg): Promise<Float32Array[] | null> {
   const key = embedKey(cfg);
   if (!key) return null;
   if (cfg.provider === "stub") return texts.map(t => stubVec(t, cfg.dims));
   const url = providerBase(cfg.provider, cfg.base_url) + "/embeddings";
+  embedError = undefined;
   try {
     const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "User-Agent": "agent-crew-brain/1.0" },
       body: JSON.stringify({ model: cfg.model, input: texts }),
+      signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      // KEEP THE STATUS AND A SLICE OF THE BODY. Discarding both left every
+      // sync printing one token, `provider_error`, for a dead provider, a
+      // rejected key and a billing wall alike - so nobody chased it and the
+      // degradation became wallpaper. It took a hand-made POST to find the
+      // real answer: HTTP 402, out of credits.
+      const body = (await r.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 200);
+      embedError = `provider_http_${r.status}${body ? `: ${body}` : ""}`;
+      return null;
+    }
     const j: any = await r.json();
     const rows = (j.data || []).map((d: any) => Float32Array.from(d.embedding));
     if (rows.length && rows[0].length !== cfg.dims)
       die("invalid_params", `embedding dims mismatch: provider returned ${rows[0].length}, config says ${cfg.dims}`,
         `set embedding.dims=${rows[0].length} in config/brain.json and run: ac-brain sync --rebuild`);
     return rows;
-  } catch { return null; }
+  } catch (e: any) {
+    const n = e?.name;
+    embedError = (n === "TimeoutError" || n === "AbortError")
+      ? `provider_timeout after ${EMBED_TIMEOUT_MS / 1000}s`
+      : `provider_unreachable: ${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 200)}`;
+    return null;
+  }
 }
 const toBlob = (v: Float32Array) => new Uint8Array(v.buffer.slice(0));
 const fromBlob = (b: Uint8Array) => new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4);
@@ -623,7 +658,7 @@ function syncInner(db: Database, t0: number) {
         for (let i = 0; i < pending.length; i += 64) {
           const slice = pending.slice(i, i + 64);
           const vecs = await embedBatch(slice.map(r => r.text), ec);
-          if (!vecs) { embedDegraded = "provider_error"; return; }
+          if (!vecs) { embedDegraded = embedError ?? "provider_error"; return; }
           const t2 = db.transaction(() => {
             slice.forEach((r, j) => { upd.run(toBlob(vecs[j]), iso(), r.id); embedded++; });
           });
