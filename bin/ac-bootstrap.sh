@@ -241,8 +241,55 @@ esac
 # on EMPTY input (silence would read as a mismatch), and `// empty` swallows the
 # very value being looked for (jq's alternative operator fires on false as well as
 # null). So the field is printed raw and compared here - "" or "null" is silence.
+#
+# AND IT IS BOUNDED. This is the one herdr call left on a chief's OWN
+# session-start path, and a hang here does not degrade a sweep the way a wedged
+# pane pass does - it stops the chief from starting, which is the fleet losing
+# its supervisor before it has one. A TIMEOUT is not the silence above: an
+# absent binary or an unparseable reply says nothing about the backend, while a
+# server that accepts and never answers has been observed to be unusable, so it
+# gets its own MISSING line and its own remedy.
+probe_bounded() {
+  # probe_bounded <secs> <argv...> - one status probe under a ceiling; prints
+  # its stdout, or nothing and returns 124 when the ceiling is reached. The
+  # local copy of the idiom is deliberate: this doctor sources ac-lib.sh alone,
+  # and pulling the whole backend layer into a toolchain check would make the
+  # check depend on more of the tree than it is checking.
+  local secs="$1"; shift
+  local out pid start rc=0
+  out="$(mktemp "${TMPDIR:-/tmp}/ac-bootstrap-probe.XXXXXX")" || return 1
+  set -m
+  "$@" >"$out" 2>/dev/null &
+  pid=$!
+  set +m
+  start=$SECONDS
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ $((SECONDS - start)) -ge "$secs" ]; then
+      kill -TERM -"$pid" 2>/dev/null || true
+      sleep 0.5
+      kill -KILL -"$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      rc=124
+      break
+    fi
+    sleep 0.2
+  done
+  [ "$rc" -eq 124 ] || wait "$pid" 2>/dev/null || true
+  [ "$rc" -eq 124 ] || cat "$out"
+  rm -f "$out"
+  return "$rc"
+}
+probe_secs="${AC_BOOTSTRAP_PROBE_TIMEOUT:-10}"
+case "$probe_secs" in ''|*[!0-9]*) probe_secs=10 ;; esac
+
 if [ "$backend" = herdr ]; then
-  compat="$(herdr status server --json 2>/dev/null | jq -r '.compatible' 2>/dev/null || true)"
+  probe_rc=0
+  compat_json="$(probe_bounded "$probe_secs" herdr status server --json)" || probe_rc=$?
+  if [ "$probe_rc" = 124 ]; then
+    printf 'MISSING: herdr status server did not answer within %ss - the backend is wedged or unreachable, so every socket call this fleet makes will block the same way; restart the herdr server (it exits every pane, the captain owns that call)\n' "$probe_secs"
+    rc=1
+  fi
+  compat="$(printf '%s' "$compat_json" | jq -r '.compatible' 2>/dev/null || true)"
   if [ "$compat" = false ]; then
     printf 'MISSING: herdr protocol compat - the running server disagrees with the client (herdr status server: compatible false), so EVERY socket call fails and no pane can be spawned, read or steered; restart the herdr server (it exits every pane, the captain owns that call)\n'
     rc=1
@@ -252,7 +299,14 @@ else
   # (no binary, no --json, unparseable) says nothing about reachability -
   # and a REACHABLE runtime still starting (or errored) cannot spawn either,
   # so an explicit non-ready state flags the same way.
-  orca_status_json="$(orca status --json 2>/dev/null || true)"
+  # Bounded for the same reason and on the same path as the herdr branch above:
+  # an orca fleet's chief starts through this line too.
+  probe_rc=0
+  orca_status_json="$(probe_bounded "$probe_secs" orca status --json)" || probe_rc=$?
+  if [ "$probe_rc" = 124 ]; then
+    printf 'MISSING: orca status did not answer within %ss - the runtime is wedged or unreachable, so no terminal can be spawned, read or steered; restart it (orca open, or orca serve for headless)\n' "$probe_secs"
+    rc=1
+  fi
   reachable="$(jq -r '.result.runtime.reachable' <<<"$orca_status_json" 2>/dev/null || true)"
   orca_state="$(jq -r '.result.runtime.state // empty' <<<"$orca_status_json" 2>/dev/null || true)"
   if [ "$reachable" = false ]; then

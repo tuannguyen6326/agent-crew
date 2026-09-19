@@ -318,12 +318,17 @@
 # than it reaches is worse than one honestly scoped. Raw `herdr` invocations
 # that never enter this funnel stay unbounded: ac_herdr_tab_open's own four
 # below; the pane-lifecycle and watch-tab calls in the pane-agent, gate, ship,
-# qa, spawn and relocate paths; and the protocol-compat probe the bootstrap
-# check runs, which is the one UNBOUNDED call still on a chief's own
-# session-start path. The watcher's pane pass reaches none of them - its RPCs,
+# qa, spawn and relocate paths. TRIAGED BY CONSEQUENCE rather than wrapped by
+# reflex: the bootstrap protocol-compat probe was the one that sat on a chief's
+# OWN session-start path, where a hang stops the chief from starting rather
+# than degrading a sweep - it now carries its own ceiling and its own MISSING
+# line (bin/ac-bootstrap.sh probe_bounded, both backend branches). The rest
+# stay unbounded deliberately: each is a per-TASK pane lifecycle call whose
+# hang costs one task and is visible as a stalled pane to the watcher and the
+# chief, and several are best-effort reaps whose caller has nothing useful to
+# do on a timeout. The watcher's pane pass reaches none of them - its RPCs,
 # including the window probes it makes through the wake library, all arrive
-# here - so this row's own deliverable is covered and the rest is named as the
-# work it is. The orca driver carries no ceiling of its own either.
+# here. The orca driver carries no ceiling of its own beyond that same probe.
 #
 # FAMILY WORKSPACE GROUPING (the authoritative contract; captain order
 # 2026-08-06, mirroring the dashboard's home -> family -> panes tree):

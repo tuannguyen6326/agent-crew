@@ -98,6 +98,29 @@ assert_eq "$rc" "1" "an incompatible herdr server must still set rc=1"
 assert_contains "$out" "MISSING: herdr" "the mismatch is one MISSING line"
 assert_contains "$out" "restart" "the line names the remedy"
 
+# A WEDGED server - one that accepts and never answers - is a definite
+# observation, not silence. This probe is the one unbounded herdr call left on
+# a chief's own session-start path, and a hang there does not degrade a sweep:
+# it stops the chief from starting, which is the fleet losing its supervisor
+# before it has one. So the probe is bounded and a timeout is its own MISSING
+# line, distinct from the mismatch above and from the no-evidence case below.
+mkdir -p "$TMP/wedged"
+cat >"$TMP/wedged/herdr" <<'EOF'
+#!/usr/bin/env bash
+[ "$1 $2" = "status server" ] && { sleep 60; exit 0; }
+exit 0
+EOF
+chmod +x "$TMP/wedged/herdr"
+rc=0
+began=$SECONDS
+out="$(AC_BOOTSTRAP_PROBE_TIMEOUT=2 PATH="$TMP/wedged:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+elapsed=$((SECONDS - began))
+[ "$elapsed" -lt 30 ] || fail "a wedged backend must not hang the doctor (took ${elapsed}s)"
+assert_eq "$rc" "1" "a backend that never answers sets rc=1"
+assert_contains "$out" "MISSING: herdr" "the wedge is one MISSING line"
+assert_contains "$out" "did not answer" "...and it says the probe timed out rather than claiming a mismatch"
+case "$out" in *compatible\ false*) fail "a timeout must not be reported as a protocol mismatch" ;; esac
+
 # A compatible server says nothing extra, and an unparseable answer is NOT read
 # as an outage: no evidence of a mismatch may never fail the doctor closed.
 mkdir -p "$TMP/compat"
