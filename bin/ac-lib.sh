@@ -2123,17 +2123,32 @@ ac_solo_landing_check() {
   # row under ## Done.
   # A SCOPED slice (<scope> non-empty: a solo chief's, AC_SCOPE at its start)
   # may not write the Done row - the ledger guard fences every scoped session
-  # from records/backlog.md - so its third write is a `LANDED: <id>` receipt
-  # in the family room, the one record a roomchief owns; the crewchief moves
-  # the row at hand-back. Reported as landed-receipt, never as done-row, so
-  # the line says which record was read.
+  # from records/backlog.md - so its third write is a room receipt naming the
+  # slice, the one record a roomchief owns; the crewchief moves the row at
+  # hand-back. Reported as landed-receipt, never as done-row, so the line says
+  # which record was read.
+  # TWO RECEIPTS, because the slice has TWO honest exits and the gate used to
+  # read only one. `LANDED: <id>` is the slice that landed. `HANDBACK: <id>` is
+  # the slice that CANNOT: when main moves under it a scoped actor is withheld
+  # --no-ff by ac-merge-local.sh - the fence captain.md relies on - so it can
+  # never truthfully post LANDED, and a gate reading only that receipt held
+  # such a slice, its lease and its branch for ever with no key in the
+  # contract. Handing back IS the roomchief's ordinary exit; the crewchief
+  # lands it.
+  # The LESSON is read by its ATTRIBUTION, not by a heading's spelling. The
+  # crewmate contract already mandates `(by: <id>, first-hand)` per line, and a
+  # solo chief legitimately files its slices under `### <date> (family <fam>)`
+  # - a gate grepping the heading for `(solo <id>)` reported lessons=none
+  # against five correct first-hand lessons and cost a hand-retagged heading to
+  # unblock a land. Either shape counts now.
   local id="${1:-}" repo="${2:-}" no_lesson="${3:-}" no_fact="${4:-}" scope="${5:-}" led rec bl room lessons=none facts=none done=none hint="" line
   [ -n "$id" ] || return 0
   led="$(ac_records_dir)/learnings.md"
   if [ -n "$no_lesson" ]; then lessons=waived
-  elif [ -f "$led" ] && awk -v tag="(solo $id)" '
+  elif [ -f "$led" ] && awk -v tag="(solo $id)" -v by="(by: $id" '
       /^## Distilled/ { exit }
       /^### / && index($0, tag) { found = 1; exit }
+      index($0, by) { found = 1; exit }
       END { exit(found ? 0 : 1) }' "$led"; then lessons=yes; fi
   if [ -n "$no_fact" ]; then facts=waived
   elif [ -n "$repo" ] && [ -d "$repo" ] && rec="$(ac_knowledge_file "$repo" 2>/dev/null)" \
@@ -2144,7 +2159,8 @@ ac_solo_landing_check() {
   if [ -n "$scope" ]; then
     room="$(ac_room_file "$scope" 2>/dev/null || true)"
     if [ -n "$room" ] && [ -f "$room" ] && awk -v id="$id" '
-        /^- \[/ && index($0, "> LANDED:") && index($0, id) { found = 1; exit }
+        /^- \[/ && index($0, id) \
+          && (index($0, "> LANDED:") || index($0, "> HANDBACK:")) { found = 1; exit }
         END { exit(found ? 0 : 1) }' "$room"; then done=yes; fi
     line="knowledge loop: lessons=$lessons repo-knowledge=$facts landed-receipt=$done"
   else
@@ -2162,7 +2178,8 @@ ac_solo_landing_check() {
   repo fact: $(ac_root)/bin/ac-know.sh add --home $(ac_home) --repo ${repo:-<repo>} --family $id --src-file <path>:<line> --fact '<verified fact>'   (or --no-fact '<why none verified>')"
   if [ "$done" != yes ]; then
     if [ -n "$scope" ]; then hint="$hint
-  landed receipt: $(ac_root)/bin/ac-room.sh post $scope $scope-chief 'LANDED: $id - <outcome>'   (the crewchief moves the backlog row at your hand-back)"
+  landed receipt: $(ac_root)/bin/ac-room.sh post $scope $scope-chief 'LANDED: $id - <outcome>'   (the crewchief moves the backlog row at your hand-back)
+  ...or, when the slice CANNOT land: $(ac_root)/bin/ac-room.sh post $scope $scope-chief 'HANDBACK: $id cannot land - <why>; crewchief to land'   (NEVER rebase to force it: a scoped actor is withheld --no-ff on purpose, and a rebase changes the sha a review receipt binds by)"
     else hint="$hint
   done row: append '- [x] $id - <outcome>' under ## Done in $bl"
     fi

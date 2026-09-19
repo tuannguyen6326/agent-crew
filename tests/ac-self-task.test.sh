@@ -391,4 +391,41 @@ assert_contains "$(cat "$AC_HOME/data/scf-fix/timeline.log")" \
   "landed-receipt=yes" "the receipt is read from the family room"
 assert_no_file "$state/scf-fix.meta" "the scoped slice is torn down"
 
+# --- the slice that CANNOT land: a hand-back is the other exit ----------------
+# Found by the solo-chief live probe: when main moves under a slice, a SCOPED
+# actor cannot land it at all - ac-merge-local.sh withholds --no-ff from any
+# session carrying AC_CREW_ID/AC_SCOPE, which is the fence captain.md relies on
+# - and a chief that cannot land can never truthfully post `LANDED:`. The gate
+# then refused for ever and the slice held its lease and its branch with no key
+# in the contract. The exit is the roomchief's ordinary one: hand back, naming
+# the slice, and the crewchief lands it.
+AC_SCOPE=scg "$BIN/ac-self-task.sh" start scg-stuck "$repo" >/dev/null
+out="$("$BIN/ac-teardown.sh" scg-stuck --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" \
+  && fail "a scoped slice with neither receipt must not land: $out"
+assert_contains "$out" "HANDBACK" "the refusal names the hand-back exit, not only the landing one"
+AC_SCOPE=scg "$BIN/ac-room.sh" post scg scg-chief \
+  'HANDBACK: scg-stuck cannot land - main moved and a scoped actor is withheld --no-ff; crewchief to land' >/dev/null
+out="$("$BIN/ac-teardown.sh" scg-stuck --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" \
+  || fail "a HANDBACK naming the slice discharges the landing obligation: $out"
+assert_contains "$(cat "$AC_HOME/data/scg-stuck/timeline.log")" "landed-receipt=yes" \
+  "the hand-back is read as the record it is"
+assert_no_file "$state/scg-stuck.meta" "the handed-back slice is torn down"
+
+# --- the lesson gate reads the ATTRIBUTION, not the heading spelling ---------
+# Also found by that probe: the roomchief wrote all five lessons correctly and
+# first-hand, attributed `(by: <slice-id>, first-hand)`, under the heading its
+# own contract gives a family - `### <date> (family <fam>)`. The gate grepped
+# the HEADING for the literal `(solo <id>)` and reported lessons=none against
+# lessons that were on the record and good, and a chief retagged a heading by
+# hand to unblock a land. The `(by: <id>` attribution is what the crewmate
+# contract already mandates per LINE, so that is what the gate reads.
+AC_SCOPE=sch "$BIN/ac-self-task.sh" start sch-fix "$repo" >/dev/null
+"$BIN/ac-learn.sh" note "### 2026-09-19 (family sch)" \
+  "- a lesson written under the family heading, attributed to the slice (by: sch-fix, first-hand)" >/dev/null
+AC_SCOPE=sch "$BIN/ac-room.sh" post sch sch-chief 'LANDED: sch-fix - landed' >/dev/null
+out="$("$BIN/ac-teardown.sh" sch-fix --no-fact 'fixture' 2>&1)" \
+  || fail "a lesson attributed to the slice counts however its heading is spelled: $out"
+assert_contains "$(cat "$AC_HOME/data/sch-fix/timeline.log")" "lessons=yes" \
+  "the gate reads the (by: <id> attribution the crewmate contract already mandates"
+
 pass

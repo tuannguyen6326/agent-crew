@@ -822,7 +822,12 @@ review is MANDATORY on every solo-chief slice (`rev:yes`, the `crew-verify`
 skill), because nobody else reads the code; the ledger fence stays, so at
 its slice's landing the chief posts `LANDED: <slice-id> - <outcome>` to the
 room and the teardown gate reads that receipt where a Done row would be
-(the crewchief moves the row at handback, as ever); and the delegation
+(the crewchief moves the row at handback, as ever) - and a slice that
+CANNOT land posts `HANDBACK: <slice-id> cannot land - <why>` instead, which
+the same gate reads: main moving under a slice withholds `--no-ff` from
+every scoped session BY DESIGN, so handing back is the exit and a rebase to
+force the land is not one (it changes the sha a review receipt binds by);
+and the delegation
 fence stays - a solo chief edits with its own hands or spawns a crewmate,
 never a harness subagent. `bin/ac-spawn.sh`'s header owns the flag.
 
