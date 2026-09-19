@@ -613,23 +613,41 @@ sleep 30 &
 wait $! 2>/dev/null || true
 EOF
 chmod +x "$TMP/fakewatch/ac-watch.sh"
+# `set -m` makes the wrapper its own process-group leader, which is the only
+# thing that lets the reap below reach the `sleep` it forks: without it the
+# group is this runner's own, the reap can only name the wrapper pid, and the
+# sleep is reparented to pid 1 on every run of this file. Same idiom as
+# bin/ac-remote.sh run_ack and bin/ac-sync.sh fetch_bounded.
+set -m
 bash "$TMP/fakewatch/ac-watch.sh" >/dev/null 2>&1 &
 watch_pid=$!
+set +m
 mkdir -p "$STATE/.watch.lock.d"
 printf '%s\n' "$watch_pid" >"$STATE/.watch.lock.d/pid"
 i=0
+watch_child=""
 while [ "$i" -lt 50 ]; do
-  [ -n "$(pgrep -P "$watch_pid" 2>/dev/null || true)" ] && break
+  watch_child="$(pgrep -P "$watch_pid" 2>/dev/null || true)"
+  [ -n "$watch_child" ] && break
   sleep 0.1; i=$((i + 1))
 done
+[ -n "$watch_child" ] || fail "fixture watcher never forked its sleep child"
 out="$("$BIN/ac-remote.sh" order 'ship it with a live watcher armed')"
 assert_eq "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" "1" \
   "a live fleet watcher means order prints ONLY the confirmation line - no regression on the happy path"
 case "$out" in
   *"no live fleet watcher"*) fail "must not warn when a live fleet watcher is actually armed" ;;
 esac
-kill "$watch_pid" 2>/dev/null || true
-wait "$watch_pid" 2>/dev/null || true
+# Job control announces a signal-killed job on the real stderr the moment it
+# notices, whatever the reaping `wait` redirects, so the segment owns that
+# noise rather than the suite's output.
+{ kill -TERM -"$watch_pid" 2>/dev/null || true
+  wait "$watch_pid" 2>/dev/null || true
+} 2>/dev/null
+i=0
+while [ "$i" -lt 30 ] && kill -0 "$watch_child" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+kill -0 "$watch_child" 2>/dev/null \
+  && fail "the fixture's sleep child outlived the reap - reparented to pid 1, one leak per run"
 rm -rf "$STATE/.watch.lock.d"
 
 # --- a failed wake publish must not leave the rid stashed ---------------------
