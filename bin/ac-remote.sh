@@ -36,8 +36,12 @@
 #   nothing (exactly one wake per rid; the stash publish is exclusive).
 #   Malformed lines and guard-refused rids are warned and skipped; a failing
 #   hook is warned and poll still exits 0 - poll must never kill a watcher.
-#   The per-line handling is the shared ingest core: one implementation, two
-#   entrances (poll pipes its hook output through it; ingest reads stdin).
+#   The per-line handling is the shared ingest core: one implementation, three
+#   entrances - poll feeds it a HERESTRING, ingest its own stdin, order a real
+#   pipe. Only the pipe forks: the reading side of a pipe runs one subshell
+#   level down and the other two run in the caller's own shell (measured,
+#   bash 3.2.57 on this host), so what a signal reaches and what a kill takes
+#   down is a property of the ENTRANCE, never of the core.
 #   LIFECYCLE-ACK: when an executable config/remote-ack hook exists, the core
 #   runs it at each lifecycle edge of an order, with AC_REMOTE_RID,
 #   AC_REMOTE_THREAD and AC_REMOTE_ACK_STATE in env, stdin/stdout to
@@ -69,7 +73,7 @@
 #   order.
 # ingest - the push-gateway entrance: reads the SAME JSON lines a poll hook
 #   would print, from THIS command's stdin, and runs them through the exact
-#   per-line core poll uses (one implementation, two entrances). Needs NO
+#   per-line core poll uses (one implementation, three entrances). Needs NO
 #   config/remote-poll - a push gateway may be the fleet's only transport.
 #   Per new rid: exclusive stash, durable wake, one printed `remote-order
 #   <rid>` line, identical dedup (rid is the idempotency key across BOTH
@@ -176,11 +180,13 @@
 # Hook contracts (config/, executable, transport-owned - this header is the
 # authoritative spec, including for the Slack pair):
 #   remote-poll  - stdout: zero or more JSON lines {rid,text,author,thread,...};
-#                  stdin closed - a hook that reads stdin anyway gets EOF,
-#                  never bytes belonging to whatever else called this script
+#                  stdin is /dev/null - a hook that reads stdin anyway gets
+#                  EOF (a CLOSED fd would give it EBADF instead), never bytes
+#                  belonging to whatever else called this script
 #   remote-reply - env AC_REMOTE_RID, AC_REMOTE_THREAD; reply text on stdin
 #   remote-ack   - env AC_REMOTE_RID, AC_REMOTE_THREAD, AC_REMOTE_ACK_STATE;
-#                  stdin/stdout closed; each call bounded at
+#                  stdin/stdout are /dev/null (a write still succeeds, it is
+#                  simply discarded); each call bounded at
 #                  AC_REMOTE_ACK_TIMEOUT seconds (default 20), the whole
 #                  process capped at AC_REMOTE_ACK_BUDGET seconds (default
 #                  30) across every call it makes (see LIFECYCLE-ACK above)
@@ -329,8 +335,9 @@ run_ack() {
 }
 
 ingest_stream() {
-  # ingest_stream <label> - THE per-line order core, shared by poll and
-  # ingest (one implementation, two entrances). Reads JSON lines on stdin;
+  # ingest_stream <label> - THE per-line order core, shared by poll, ingest
+  # and order (one implementation, three entrances; only order's pipe puts
+  # this function in a subshell). Reads JSON lines on stdin;
   # per valid NEW rid: exclusive stash, durable wake, one printed line.
   # Malformed lines and refused rids are warned (prefixed <label>) and
   # skipped - bad input is never a hard failure. A wake that cannot be
