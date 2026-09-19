@@ -548,6 +548,29 @@ cmp -s "$TMP/note-lockfail-before.md" "$AC_HOME/records/learnings.md" \
 assert_eq "$(grep -v '^[[:space:]]*#' "$BIN/ac-learn.sh" | grep -c 'crewdomain\|AC_DOMAIN' || true)" "0" \
   "AC-9.4: bin/ac-learn.sh carries no crewdomain feature lines"
 
+# AC-9.8 - argv the verb does not define must never become ledger CONTENT.
+# LIVED 2026-09-16: `note --file <path>` appended the literal `--file` and the
+# literal path as two lessons under ## Pending and printed `appended 2 line(s)`,
+# which reads exactly like success. The next Learning transaction consumes every
+# Pending line as first-hand input, and no verb removes one.
+note_ledger_reset
+cp "$AC_HOME/records/learnings.md" "$TMP/note-flag-before.md"
+note_flagerr="$TMP/note-flag.err"
+if "$BIN/ac-learn.sh" note --file "$TMP/lessons.md" >/dev/null 2>"$note_flagerr"; then
+  fail "AC-9.8: note must refuse an argument shaped like a flag it does not define"
+fi
+assert_contains "$(cat "$note_flagerr")" "--file" \
+  "AC-9.8: the refusal quotes the argument it refused"
+cmp -s "$TMP/note-flag-before.md" "$AC_HOME/records/learnings.md" \
+  || fail "AC-9.8: a refused note leaves the ledger byte-unchanged"
+
+# ... and the guard must not swallow the ledger's OWN convention: every lesson
+# line is written `- <text>`, which begins with a dash and is content.
+note_bullet='- LESSON: a dash-space bullet is content, never a flag.'
+"$BIN/ac-learn.sh" note "$note_bullet" >/dev/null \
+  || fail "AC-9.8: the guard must not refuse a `- ` bullet"
+assert_eq "$(note_count "$note_bullet")" "1" "AC-9.8: the bullet still lands"
+
 note_ledger_reset
 
 # --- rotate-pending: DISTILL staging reads a BOUNDED ledger -------------------

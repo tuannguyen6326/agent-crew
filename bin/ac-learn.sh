@@ -1167,7 +1167,9 @@ cmd_note() {
   # and learn_ledger_split drops every non-pointer line after it, so an append
   # at end-of-file is deleted by the next transaction. This carries no opinion
   # about the lesson's own shape - the caller writes the ledger's existing
-  # convention, and every input line is reproduced exactly once.
+  # convention, and every input line is reproduced exactly once. What it DOES
+  # refuse is argv shaped like a flag it never defined; `reinforce` already
+  # carries that guard and `note` was the one verb in this script without it.
   local ledger tmp lines line lock
   [ "$#" -gt 0 ] \
     || ac_die "usage: ac-learn.sh note <line>... (each argument is appended verbatim as one line under '## Pending')"
@@ -1175,6 +1177,13 @@ cmd_note() {
     case "$line" in
       '## Pending'|'## Distilled')
         ac_die "refusing to append the section marker '$line': a second marker makes learn_ledger_split read everything after it as the pointer index and drop it (nothing written)" ;;
+      --*|-[A-Za-z]*)
+        # This verb defines NO flags, so an unrecognised one used to become two
+        # lessons and a cheerful `appended 2 line(s)` - and the next Learning
+        # transaction consumes every Pending line as first-hand input, with no
+        # verb able to remove one. The ledger's own bullet is `- <text>`
+        # (dash SPACE), which no pattern here matches.
+        ac_die "note takes lesson lines only and defines no flags - refusing '$line' (nothing written). A ledger line is '- <lesson>' and a heading is '### <date> (solo|family <id>)', each passed as its own argument." ;;
     esac
   done
   ledger="$(ac_records_dir)/learnings.md"
