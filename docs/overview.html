@@ -624,6 +624,8 @@
     <p class="cap">Every wake is published durably first (<code>state/.wake-spool[.&lt;family&gt;]/</code>, one record per file) — a crash loses nothing. One Stop hook blocks any turn that would leave crew in flight unwatched, and a second re-arms the watcher for the chief instead of the chief remembering to; when a promoted family's scoped coverage goes down, the fleet watcher takes over its panes, records a <code>coverage</code> wake, and types the drain-and-re-arm order straight into that roomchief's pane — a durable record nobody reads is not a delivered signal. The one captain notification (<code>config/wedge-alarm</code>) fires only when the fleet is blocked <em>by the captain</em>.</p>
   </div>
 
+  <p class="sub">The wakes a chief acts on for a crewmate pane — a partial view, deliberately. The full exit-reason vocabulary (coverage revocation, the remote-poll outcomes, a TERM/INT signal, the bounded <code>--once</code> checkpoint) is owned by the header of <code>bin/ac-watch.sh</code>, next to the printf sites that emit it.</p>
+
   <div class="tablewrap"><table>
     <tr><th>Wake</th><th>Meaning</th></tr>
     <tr><td><code>push:&lt;id&gt;</code></td><td>the agent announced its own completion (<code>ac-done.sh</code>) — the fast path, milliseconds</td></tr>
