@@ -471,6 +471,19 @@ out="$(watch_poll 4)"
 assert_contains "$out" "remote-failed:none" "a fault that also breaks the spool still reaches the chief on the reason line"
 assert_contains "$(cat "$polerr")" "wake-publish FAILED kind=remote-failed" "and the lost durable record says so in the arm log"
 assert_contains "$(drain_now)" "no queued wakes" "with nothing silently pretending to be queued"
+# THE LOSS MUST REACH A LIVE CHANNEL, and the arm log is not one: bin/ac-watch-
+# autoarm.sh runs this watcher as `2>/dev/null` and reads the last non-empty
+# STDOUT line, and in the principal failure class (an unwritable state dir) the
+# arm log cannot be written either. The exit reason line is the only channel
+# that survives the fault AND has a production reader, so the loss rides it.
+assert_contains "$out" "WAKE NOT DURABLE" \
+  "a failed publish reaches the chief on the one channel that is actually read"
+
+# ...and NO site publishes behind queue_wake's back: one wake path, one place
+# that can report a loss. ac_wake_publish must appear exactly once in this
+# file - inside queue_wake - with every caller going through it.
+assert_eq "$(grep -v '^[[:space:]]*#' "$BIN/ac-watch.sh" | grep -c 'ac_wake_publish ' || true)" "1" \
+  "every wake in the watcher goes through queue_wake, so none can lose its record silently"
 
 # ...and the episode LATCH must not advance on a record that never reached
 # disk. The latch means "the chief has been told about this episode", and it is

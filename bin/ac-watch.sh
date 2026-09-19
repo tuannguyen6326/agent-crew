@@ -1561,7 +1561,7 @@ check_remote() {
       watch_log "remote poll TIMED OUT again, same episode: $detail"
       [ -n "$out" ] || return 1
     fi
-    printf 'remote-timeout:%s\n' "${last:-none}"
+    emit_reason "remote-timeout:${last:-none}"
     return 0
   fi
   detail="poll exited $rc; last rid ingested: ${last:-none}"
@@ -1596,7 +1596,7 @@ check_remote() {
   # last rid that landed costs no extra wake and is the whole point of the
   # repair - a repeat is still a success report over dropped orders otherwise.
   # The orders that landed keep their own wakes, published before the death.
-  printf 'remote-failed:%s\n' "${last:-none}"
+  emit_reason "remote-failed:${last:-none}"
   return 0
 }
 
@@ -1626,10 +1626,12 @@ queue_wake() {
   # latch has ALREADY advanced by the time this runs (the two remote-EPISODE
   # latches no longer do - they read wake_published below instead),
   # so a silent failure would lose the wake with no trace and no retry. The
-  # failure goes loudly through watch_log (arm log + stderr - the one
-  # out-of-band channel the header names; stdout stays the exit reason's
-  # alone) and the pass continues: the printed reason line still wakes the
-  # chief this once - only the DURABLE record is missing, and the log says so.
+  # failure is logged through watch_log AND ridden out on the exit reason line
+  # by emit_reason below - the arm log is a forensic trail with no production
+  # reader, and under an unwritable state dir it cannot be written either, so
+  # it is a record rather than a channel. The pass continues: the reason line
+  # wakes the chief this once and now SAYS the durable record is missing, which
+  # is the difference between one lost wake and a loss nobody ever learns of.
   # wake_published is the STATUS without the status: a non-zero RETURN here
   # would reach eleven call sites that never test one, and the direction that
   # error fails in is a dead watcher - the fleet losing its eyes over a wake it
@@ -1640,6 +1642,29 @@ queue_wake() {
   if ! ac_wake_publish "$state_dir" "${AC_SCOPE:-}" "$1" "$2" "$3"; then
     wake_published=0
     watch_log "wake-publish FAILED kind=$1 id=$2 scope=${AC_SCOPE:-fleet} - record NOT durable, payload: $3"
+  fi
+}
+
+emit_reason() {
+  # emit_reason <reason> - print the exit reason line, carrying the loss when
+  # the wake this branch just queued never reached disk.
+  #
+  # THE ONE LIVE CHANNEL, and this is why it is this one. The contract used to
+  # promise that a failed publish "goes loudly through watch_log (arm log +
+  # stderr)". Neither half reaches anyone: bin/ac-watch-autoarm.sh runs this
+  # watcher as `2>/dev/null` and reads only the last non-empty STDOUT line, so
+  # that stderr is destroyed before it exists, and state/.watcher-arm.log has
+  # no production reader at all. Worse, in the PRINCIPAL failure class - an
+  # unwritable state dir - the arm log cannot be written either, so both halves
+  # of the promised channel fail together with the publish they were meant to
+  # report. The exit reason line survives that fault and is already read on
+  # every arm. It must be the SAME line: the reader takes the last non-empty
+  # one, so a second line would be mistaken for the reason itself and an
+  # earlier one would be dropped.
+  if [ "$wake_published" = 1 ]; then
+    printf '%s\n' "$1"
+  else
+    printf '%s - WAKE NOT DURABLE: this line is the only record; the state dir may be unwritable\n' "$1"
   fi
 }
 
@@ -1724,8 +1749,13 @@ check_fleet() {
           # drains it is told the family is down, and one line typed into the
           # roomchief pane - a keystroke starts a real turn on a
           # live-but-asleep chief, and a dead pane swallows it harmlessly.
-          ac_wake_publish "$state_dir" '' coverage "$skip_fam-chief" \
-            "scoped coverage down for $skip_fam - fleet watcher covering its panes; the roomchief must drain and re-arm (or be recovered)" || true
+          # Through queue_wake like every other wake: this branch used to call
+          # the publish directly with `|| true`, so it carried not even the log
+          # line the other sites had. AC_SCOPE is empty in the fleet watcher and
+          # only the fleet watcher reads AC_WATCH_SKIP, so the fleet spool this
+          # record has always gone to is where queue_wake sends it too.
+          queue_wake coverage "$skip_fam-chief" \
+            "scoped coverage down for $skip_fam - fleet watcher covering its panes; the roomchief must drain and re-arm (or be recovered)"
           ( AC_BACKEND="$(ac_task_backend "$skip_fam-chief")"; export AC_BACKEND
             backend_send_line "$skip_fam-chief" \
               "wake: your scoped watcher for $skip_fam is down and wakes may be pending - run bin/ac-wake-drain.sh, act on each, then re-arm bin/ac-watch.sh as your own background task" \
@@ -1753,7 +1783,7 @@ check_fleet() {
         touch "$state_dir/.unobservable-$id"
         ac_status_append "$id" "unobservable: backend could not be read for $(backend_target "$id") - NOT a death; the pane may well be alive (check the backend itself)"
         queue_wake unobservable "$id" "the backend could not be read - liveness unknown, no work assumed lost (check the backend: herdr status server)"
-        printf 'unobservable:%s\n' "$id"
+        emit_reason "unobservable:$id"
         return 0
       fi
       continue
@@ -1765,7 +1795,7 @@ check_fleet() {
         touch "$state_dir/.gone-$id"
         ac_status_append "$id" "failed: window gone"
         queue_wake gone "$id" "window $(backend_target "$id") vanished"
-        printf 'gone:%s\n' "$id"
+        emit_reason "gone:$id"
         return 0
       fi
       continue
@@ -1784,7 +1814,7 @@ check_fleet() {
         touch "$state_dir/.ask-$id"
         ac_status_append "$id" "needs-decision: pane blocked on an interactive prompt"
         queue_wake ask "$id" "agent blocked on an interactive prompt (answer or steer it)"
-        printf 'ask:%s\n' "$id"
+        emit_reason "ask:$id"
         return 0
       fi
     elif [ -e "$state_dir/.ask-$id" ] && [ ! -e "$wait_file" ]; then
@@ -1921,7 +1951,7 @@ check_fleet() {
         seen_now="$(cat "$state_dir/.seen-$id" 2>/dev/null || true)"
         if [ "$seen_now" = "$marker" ] || ! marker_seen "$marker" "$seen_now"; then
           queue_wake report "$id" "$marker"
-          printf 'report:%s\n' "$id"
+          emit_reason "report:$id"
           return 0
         fi
       elif grep -qE "$AC_DECISION_RE" <<<"$marker" \
@@ -1948,7 +1978,7 @@ check_fleet() {
         printf '%s\n' "$hash" >"$state_dir/.seen-hash-$id"
         if [ -n "$seen_hash" ]; then
           queue_wake report "$id" "$marker (pane advanced since the last wake)"
-          printf 'report:%s\n' "$id"
+          emit_reason "report:$id"
           return 0
         fi
         # PUSH ADOPT (see the PUSH CHANNEL in the header): NO hash was recorded
@@ -1986,7 +2016,7 @@ check_fleet() {
       if [ "$rhash" != "$(cat "$state_dir/.report-hash-$id" 2>/dev/null || true)" ]; then
         printf '%s\n' "$rhash" >"$state_dir/.report-hash-$id"
         queue_wake report "$id" "report.md ready at $report (artifact channel)"
-        printf 'report:%s\n' "$id"
+        emit_reason "report:$id"
         return 0
       fi
     fi
@@ -2004,7 +2034,7 @@ check_fleet() {
         touch "$state_dir/.busy-stalled-$id"
         ac_status_append "$id" "busy but stalled: ${busy_age}s inside one call with no turn end"
         queue_wake stale "$id" "busy for ${busy_age}s with no turn end - the pane may be hung inside a single call"
-        printf 'stale:%s\n' "$id"
+        emit_reason "stale:$id"
         return 0
       fi
     fi
@@ -2048,7 +2078,7 @@ check_fleet() {
           ac_status_append "$id" "blocked: ended its turn with no report line"
           backend_mark_wait "$id" "ended its turn with no report line" 2>/dev/null || true
           queue_wake ended "$id" "ended its turn ${idle}s ago with no report line - read the pane, the ask may be prose"
-          printf 'ended:%s\n' "$id"
+          emit_reason "ended:$id"
           return 0
         else
           # SUPERVISING-CHIEF QUIET now guards this arm from one rung up, so
@@ -2056,7 +2086,7 @@ check_fleet() {
           # today's soft stale:, unchanged.
           touch "$state_dir/.stale-$id"
           queue_wake stale "$id" "quiet for ${idle}s with no report line"
-          printf 'stale:%s\n' "$id"
+          emit_reason "stale:$id"
           return 0
         fi
       fi
