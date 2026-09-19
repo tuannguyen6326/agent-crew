@@ -557,10 +557,11 @@
 # BETWEEN the two is not covered and cannot be from here" (bin/ac-remote.sh:380).
 # A ceiling kill CAN now be from here. One landing in that gap leaves a stash
 # with no wake, and the stash is also the dedup sign, so that rid is silently
-# burned. The gap is ~11.7 ms per rid - MEASURED, five fork+execs from that
-# stash `ln` to the wake's own durable `ln` inside ac_wake_publish - against a
-# ceiling of seconds, and what it replaces is a watcher wedged for ever - but
-# closing it belongs to ingest_stream's own commit ordering, not to this bound.
+# burned. The gap is ~11.7 ms per rid - MEASURED on this host, five fork+execs
+# from that stash `ln` to the wake's own durable `ln` inside ac_wake_publish -
+# against a ceiling of seconds, and what it replaces is a watcher wedged for
+# ever - but closing it belongs to ingest_stream's own commit ordering, not to
+# this bound.
 # SIZING THE KNOB: keep ceiling + the bounded pane pass + AC_POLL under
 # AC_GUARD_GRACE - the pane pass is a term in that sum, not the `~0` it once
 # was, and the arithmetic above spends it. Above the grace a
