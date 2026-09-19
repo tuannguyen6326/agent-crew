@@ -555,6 +555,19 @@ reap_verify_runtime() {
   # The lanes need no sweep of their own: a one-shot places no pane, so a
   # fan-out this process abandons leaves background processes bounded by their
   # own --timeout and nothing for anyone to reap.
+  #
+  # The HARVESTER is not one of them. It is this process's own background child
+  # and the only `wait` on it sits after the verdict parses non-stale, so every
+  # ac_die between the fan-out and there returned through here and left it
+  # polling to AC_VERIFY_SCOUT_TIMEOUT+60 under pid 1. A bare pid is the whole
+  # reap: the lanes are launched by the REVIEWER PANE (run-lanes.sh, SCOUT
+  # LANES above), never by the harvester, whose own children are one `sleep`
+  # per tick - there is no group here to need a negative-pid kill.
+  if [ -n "${scout_pid:-}" ]; then
+    kill -TERM "$scout_pid" 2>/dev/null || true
+    wait "$scout_pid" 2>/dev/null || true
+    scout_pid=""
+  fi
   return_leases "$all_leases" || true
   rm -f "$pane_handle" "$meta" "$status_file" "$pane_early"
 }

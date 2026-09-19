@@ -1911,6 +1911,15 @@ VERIFY_STALE_VERDICT=1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$tar
 assert_eq "$rc" "1" "a verdict older than the last scout lane is refused"
 assert_contains "$(cat "$TMP/stale-verdict.err")" "before the last scout lane" "...and the refusal says why"
 assert_no_file "$TMP/stale-verdict.json" "a refused round writes no verdict"
+# ...and it leaves no ORPHANED harvester behind. scout_await_then_harvest is
+# backgrounded beside the reviewer pane and the only `wait` on it sits after the
+# verdict parses non-stale, so every refusal between the fan-out and there used
+# to return through a reap that never touched it - reparented to pid 1 and
+# polling on to its own AC_VERIFY_SCOUT_TIMEOUT+60 ceiling. A subshell wears its
+# parent's argv, which is exactly what makes the orphan findable.
+verify_orphans="$(pgrep -f 'ac-verify.sh codereview --repo' 2>/dev/null || true)"
+[ -z "$verify_orphans" ] \
+  || fail "a refused round left its scout harvester running (pids: $verify_orphans)"
 
 rm -rf "$AC_HOME/data/$scout_family"; rm -f "$AC_HOME/config/crew-dispatch.json"
 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
