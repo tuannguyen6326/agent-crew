@@ -68,24 +68,36 @@ fetch_bounded() {
   # backgrounding this way and killing the negative pid are ONE decision -
   # the negative-pid kill without `set -m` would hit this script's own group
   # instead of the fetch's.
-  local repo="$1" secs="$2" pid start
-  set -m
-  git -C "$repo" -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$secs" \
-    fetch origin --prune --quiet >/dev/null 2>&1 &
-  pid=$!
-  set +m
-  start=$SECONDS
-  while kill -0 "$pid" 2>/dev/null; do
-    if [ $((SECONDS - start)) -ge "$secs" ]; then
-      kill -TERM -"$pid" 2>/dev/null || true
-      sleep 0.5
-      kill -KILL -"$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
-      return 124
-    fi
-    sleep 0.2
-  done
-  wait "$pid"
+  #
+  # The whole background-and-reap segment owns its stderr: job control
+  # announces a signalled job on the REAL stderr the instant it notices the
+  # death, whatever the reaping `wait` redirects - an internal pid and the
+  # entire git command line into a sweep reader's output, next to the
+  # `FAILED <project>: fetch timed out` line that already says what happened.
+  # Nothing else speaks on this stream: the fetch's own stdout and stderr are
+  # discarded at the launch below.
+  local repo="$1" secs="$2" pid start rc=0
+  {
+    set -m
+    git -C "$repo" -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$secs" \
+      fetch origin --prune --quiet >/dev/null 2>&1 &
+    pid=$!
+    set +m
+    start=$SECONDS
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ $((SECONDS - start)) -ge "$secs" ]; then
+        kill -TERM -"$pid" 2>/dev/null || true
+        sleep 0.5
+        kill -KILL -"$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        rc=124
+        break
+      fi
+      sleep 0.2
+    done
+    [ "$rc" -eq 124 ] || { wait "$pid" && rc=0 || rc=$?; }
+  } 2>/dev/null
+  return "$rc"
 }
 
 needed_branches() {

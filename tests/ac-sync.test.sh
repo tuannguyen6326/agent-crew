@@ -134,6 +134,15 @@ rc=0
 out="$(AC_SYNC_TIMEOUT=1 "$BIN/ac-sync.sh" p8 2>&1)" || rc=$?
 assert_eq "$rc" 1 "timed-out fetch exits 1"
 assert_contains "$out" "FAILED p8: fetch timed out after 1s" "timeout note"
+# ...and that note is ALL a sweep reader gets. Job control announces the
+# signalled job on the real stderr with an internal pid and the whole git
+# command line - neither of which a reader can act on, and the command line
+# carries exactly the internal detail the public-text posture keeps out of
+# user-facing output.
+case "$out" in
+  *Terminated*|*lowSpeedLimit*|*"fetch origin --prune"*)
+    fail "the timeout path leaked the shell's job-control notice into the sweep output: $out" ;;
+esac
 
 # ...and the CHILD that hung remote forked is dead too, not orphaned under
 # ppid=1: `ext::sleep 30` makes git fork a `git remote-ext` helper which forks
