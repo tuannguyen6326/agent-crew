@@ -79,7 +79,10 @@
 #   <rid>` line, identical dedup (rid is the idempotency key across BOTH
 #   entrances); malformed lines and refused rids are warned and skipped, and
 #   bad input never hard-fails ingest - it always exits 0.
-# order - the LOCAL entrance: one captain order typed on this host (a SOLO
+# order - the LOCAL entrance, and the one entrance whose commit is
+#   UNINTERRUPTIBLE (cmd_order ignores INT across it; see there for the
+#   measured duty cycle and why a local rid's loss is permanent): one captain
+#   order typed on this host (a SOLO
 #   session handing the captain's word to the chief, the sanctioned way a
 #   solo session gets crew work started without spawning it) becomes the
 #   same stash + durable wake as a polled order, rid local-<stamp>, author
@@ -473,9 +476,23 @@ cmd_order() {
   # The stamp is the rid: unique per host second and pid, and the slug
   # guard's alphabet by construction.
   rid="local-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  # UNINTERRUPTIBLE ACROSS THE COMMIT. The stash and its wake are two steps and
+  # the stash is also the dedup sign, so an INT landing between them burns the
+  # rid - and a LOCAL rid is minted here and re-offered by nothing, so that loss
+  # is permanent where a polled one costs only a re-delivery. MEASURED on this
+  # host: the window is ~11.7ms against a 62.6ms mean for the whole command,
+  # about 19% of its lifetime, so a Ctrl-C at a uniformly random moment lands
+  # inside it roughly one time in five - the polled path's 1.18e-7 was computed
+  # over a long-running watcher and says nothing about this one.
+  # An IGNORED disposition is inherited by the pipeline's subshell and its
+  # children (measured), which is what makes this reach the publish at all: a
+  # real Ctrl-C is a group-wide INT, and the commit runs one subshell down.
+  # The cost is the other direction and it is 62ms of an unresponsive Ctrl-C.
+  trap '' INT
   jq -cn --arg rid "$rid" --arg text "$text" \
     '{rid: $rid, text: $text, author: "captain", thread: "local"}' \
     | ingest_stream order
+  trap - INT
   # Tell the truth about delivery prospects AT SEND TIME (family
   # remote-order-strands-silently-with-no-live-watcher, decisions 1+2): a
   # publish that SUCCEEDS is unchanged - stashed, exit 0, the durable spool is

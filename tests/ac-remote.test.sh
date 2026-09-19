@@ -683,4 +683,49 @@ assert_file "$INBOX/wpfail.json"
 fleet_wakes | grep -qE "^[0-9]+	remote	captain	remote-order wpfail$" \
   || fail "the re-delivered order must publish its wake record"
 
+# --- a LOCAL order survives a Ctrl-C in the stash-then-wake window -----------
+# The seam ac-remote.sh commits an order through is two steps, a stash then its
+# wake, and the stash is ALSO the dedup sign - so an interrupt between them
+# burns that rid for every later re-delivery. A POLLED order costs a
+# re-delivery the transport can still supply; a LOCAL one has no such source -
+# the rid exists only here and nothing in the tree ever re-offers it, so the
+# loss is permanent rather than recoverable.
+#
+# MEASURED on this host: the window is ~11.7ms (five fork+execs) against a
+# 62.6ms mean for the whole `order` command - about 19% of its lifetime, so an
+# interrupt arriving at a uniformly random moment lands in the burn window
+# roughly one time in five. The polled path's 1.18e-7 duty cycle was computed
+# over a long-running watcher and does not carry here at all.
+#
+# Deterministic, not a race: AC_WAKE_SEAM_AT fires the hook exactly between the
+# wake record's private write and its atomic link - the inside of the window -
+# and the hook raises a real Ctrl-C, which is a group-wide INT and not one pid.
+# ac-remote.sh is backgrounded under `set -m` so that group is ITS OWN: a group
+# kill from a test file that shares the runner's group is suicide.
+sigseam="$TMP/order-int-seam"
+cat >"$sigseam" <<'SEAM'
+#!/bin/sh
+pgid=$(ps -o pgid= -p $$ | tr -d ' ')
+kill -INT -"$pgid" 2>/dev/null || true
+sleep 0.3
+SEAM
+chmod +x "$sigseam"
+
+rm -rf "$STATE/.wake-spool"; mkdir -p "$STATE/.wake-spool"
+set -m
+AC_WAKE_SEAM_AT=after-write AC_WAKE_SEAM_RUN="$sigseam" \
+  "$BIN/ac-remote.sh" order 'an order interrupted inside the commit window' \
+  >"$TMP/order-int.out" 2>&1 &
+int_pid=$!
+set +m
+wait "$int_pid" 2>/dev/null || true
+
+int_rid="$(ls "$INBOX" 2>/dev/null | sed -n 's/^\(local-[^.]*\)\.json$/\1/p' | tail -n 1)"
+[ -n "$int_rid" ] || fail "the interrupted order left no stash at all - the fixture never reached the window"
+grep -rq "remote-order $int_rid" "$STATE/.wake-spool" 2>/dev/null \
+  || fail "a local order's rid was BURNED: its stash survives with no wake, and nothing in the tree re-delivers it ($int_rid)"
+
+rm -f "$INBOX/$int_rid.json"
+rm -rf "$STATE/.wake-spool"; mkdir -p "$STATE/.wake-spool"
+
 pass
