@@ -577,7 +577,13 @@
 # leaves the hook and its curl children alive under ppid=1 (measured), so the
 # launch runs under `set -m` to make the job its own group leader and the kill
 # is TERM, grace, KILL over the negative pid. check_remote reaps on every path
-# it returns through and on_signal reaps the one path that skips them all.
+# it returns through and on_signal reaps the one path that skips them all,
+# naming on its way out the last rid that poll had ingested - the ceiling path
+# already did, and a signal can land at ANY moment, including inside the
+# stash-then-wake gap above. It gets no ceiling of its own: the reap it shares
+# with the ceiling path is the same bounded TERM-grace-KILL-wait, and a handler
+# is the wrong place for a third copy - it runs on the way out, with the EXIT
+# trap that releases the lock behind it and every other trap deferred.
 # ONE DURABLE WAKE PER EPISODE here too, on its OWN latch
 # (state/.remote-poll-timeout): a wedged transport and an unwritable spool are
 # different faults with different remedies, and one shared latch would leave
@@ -1119,19 +1125,32 @@ on_signal() {
   # alarming wording byte for byte. Only the wording differs - the reason-line
   # shape, the lock release, the beacon stand-down and the exit status are the
   # same for both.
-  local sig="$1" note
+  local sig="$1" note poll_note="" was_polling=0 last
   trap - TERM INT                       # never re-enter on a second signal
   if [ -n "$sleep_pid" ]; then kill "$sleep_pid" 2>/dev/null || true; fi
   # The GUARANTEED half of the poll's reap: check_remote reaps its own job on
   # every path it returns through, and a signal is the only way out that skips
   # them all. Without this a --release mid-poll would orphan the transport hook
   # and its curl children, which is the leak the bound exists to prevent.
+  [ -z "$poll_pid" ] || was_polling=1
   reap_poll
+  # READ THE CAPTURE BEFORE DROPPING IT, the ceiling path's own order. This
+  # route into a killed poll is the MORE reachable of the two - any TERM at any
+  # moment, against a transport that had to outrun its ceiling - and it used to
+  # delete the capture unread, so the orders that poll HAD ingested were nowhere
+  # on the record. ac-remote.sh commits a stash and its wake in two steps: a
+  # kill inside that gap burns the rid, and this file is the only evidence the
+  # poll ever got that far. No wake of its own: the watcher is exiting and the
+  # reason line below is already the channel the chief reads.
+  if [ "$was_polling" = 1 ] && [ -n "$poll_outfile" ]; then
+    last="$(awk '/^remote-order /{r=$2} END{print r}' "$poll_outfile" 2>/dev/null || true)"
+    poll_note=" - poll interrupted mid-flight; last rid ingested: ${last:-none}"
+  fi
   drop_poll_files
   note="$(release_note)" || note="watcher killed externally"
-  watch_log "signal:$sig pid=$$ target=$poll_target - $note"
-  printf 'signal:%s pid=%s target=%s - %s, lock released; re-arm to restore coverage\n' \
-    "$sig" "$$" "$poll_target" "$note"
+  watch_log "signal:$sig pid=$$ target=$poll_target - $note$poll_note"
+  printf 'signal:%s pid=%s target=%s - %s%s, lock released; re-arm to restore coverage\n' \
+    "$sig" "$$" "$poll_target" "$note" "$poll_note"
   exit 0
 }
 trap 'on_signal TERM' TERM

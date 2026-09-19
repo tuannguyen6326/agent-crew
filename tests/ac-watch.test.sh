@@ -1275,6 +1275,69 @@ hk="$(cat "$hangkid" 2>/dev/null || true)"
 dead_within "$hk" 5 || { reap_hang; fail "the orphan holding the capture open must be reaped too - it survives its own parent"; }
 reap_hang
 
+# A SIGNAL MID-POLL LEAVES THE SAME TRACE THE CEILING DOES. on_signal is the
+# MORE reachable of the two routes into a killed poll - any TERM at any moment,
+# not a transport that outran its ceiling - and it used to reap the poll and
+# delete the capture UNREAD, so the orders that poll had already ingested were
+# nowhere on the record. That matters because ac-remote.sh commits a stash and
+# its wake in two steps: a kill inside that gap burns the rid, and the capture
+# is the only evidence the poll ever got that far.
+#
+# The fixture puts a poll genuinely mid-flight: the transport emits two orders
+# and exits, and the ACK hook - which ingest_stream runs per newly stashed rid,
+# BEFORE it prints that rid's line - returns for the first and hangs on the
+# second. So rid one is on the capture and rid two is not yet, which is exactly
+# the state a signal has to describe.
+rm -f "$state/.remote-poll-failed" "$state/.remote-poll-timeout" "$state/.watcher-arm.log"
+rm -rf "$state"/.wake-spool* "$state/remote-inbox"
+acknum="$TMP/sigpoll-ack-n"; rm -f "$acknum" "$hangpid" "$hangkid"
+cat >"$hook" <<EOF
+#!/bin/sh
+printf '{"rid":"sigr1","text":"one","author":"cap","thread":"1.1"}\n'
+printf '{"rid":"sigr2","text":"two","author":"cap","thread":"1.1"}\n'
+EOF
+chmod +x "$hook"
+cat >"$AC_HOME/config/remote-ack" <<EOF
+#!/bin/sh
+n=\$(cat "$acknum" 2>/dev/null || echo 0)
+n=\$((n + 1)); echo \$n >"$acknum"
+[ "\$n" -ge 2 ] || exit 0
+echo \$\$ >"$hangpid"
+sleep 900 &
+echo \$! >"$hangkid"
+wait
+EOF
+chmod +x "$AC_HOME/config/remote-ack"
+
+: >"$sigout"
+AC_LOCK_PID=$$ AC_REMOTE_POLL=1 AC_REMOTE_POLL_TIMEOUT=60 AC_POLL=1 AC_HEARTBEAT=300 \
+  bash "$BIN/ac-watch.sh" >"$sigout" 2>/dev/null &
+sigwpid=$!
+sig_capture=""
+for _ in $(seq 1 100); do                 # 20s cap
+  for f in "$state"/.remote-poll.out.*; do
+    [ -e "$f" ] && grep -q '^remote-order sigr1' "$f" 2>/dev/null && sig_capture="$f"
+  done
+  [ -n "$sig_capture" ] && break
+  sleep 0.2
+done
+if [ -z "$sig_capture" ]; then
+  kill -9 "$sigwpid" 2>/dev/null || true; wait "$sigwpid" 2>/dev/null || true
+  reap_hang
+  fail "the fixture never reached a poll mid-flight with one rid already ingested"
+fi
+kill -TERM "$sigwpid" 2>/dev/null || true
+dead_within "$sigwpid" 15 || { kill -9 "$sigwpid" 2>/dev/null || true; reap_hang; fail "the signalled watcher never exited"; }
+wait "$sigwpid" 2>/dev/null || true
+sigpoll_out="$(cat "$sigout")"
+reap_hang
+assert_contains "$sigpoll_out" "signal:TERM" "a TERM mid-poll still exits through the signal reason line"
+assert_contains "$sigpoll_out" "last rid ingested: sigr1" \
+  "...and the reason line names what the killed poll had already ingested, exactly as the ceiling path does"
+assert_contains "$(cat "$state/.watcher-arm.log")" "last rid ingested: sigr1" \
+  "the arm log carries the interrupted poll too"
+
+rm -f "$AC_HOME/config/remote-ack" "$acknum"
 rm -f "$hook" "$state/.remote-poll-failed" "$state/.remote-poll-timeout" "$state/.watcher-arm.log"
 rm -rf "$state"/.wake-spool* "$state/remote-inbox"
 rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat*
