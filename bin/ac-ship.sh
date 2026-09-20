@@ -153,6 +153,12 @@
 #   kept at logs/review-agent-rN.json.rejected. The verifier writes the same
 #   kind of line on ITS side (bin/ac-verify.sh). Before this, a rejected round
 #   left no trace of why, so the caller's only move was to re-run the same ref.
+#   The facade also gives a reviewer output that fails an ENVELOPE check ONE
+#   correction turn before anything reaches this adapter (bin/ac-verify.sh,
+#   ONE CORRECTION TURN): the corrected object is that round's verdict at the
+#   same reviewed_ref, `.correction.failed_check` on the stored result says it
+#   happened, and the turn costs no invocation here - the facade returned
+#   once. A result this adapter still refuses fails closed exactly as above.
 # - FLOOR METADATA: round 2+ passes AC_FINDINGS_ROUND + AC_FINDINGS_DELTA
 #   (files changed since the IMMEDIATELY PREVIOUS round's reviewed ref) plus
 #   AC_FINDINGS_PRIOR_OPEN (that round's blocking ids) into
@@ -1070,6 +1076,9 @@ cmd_push() {
   # Deterministic push with a data-loss guard: refuse to
   # force-push over remote commits not incorporated by patch-id, anchor the
   # lease to the exact remote SHA, and FAIL CLOSED on any git error.
+  # Both pushes below deliberately RUN the repository's pre-push hook: this is
+  # the delivery publication the hook exists to gate. Only control-plane
+  # bookkeeping pushes skip it (ac_git_push_control_plane, ac-lib.sh).
   require_run
   # Fail closed, never HANG: on a repo whose credentials are not cached, an
   # unset GIT_TERMINAL_PROMPT makes ls-remote/fetch/push sit at a username
@@ -1651,7 +1660,8 @@ cmd_fix_report() {
   fi
 
   printf '\n## Contract\n'
-  printf -- '- Fix ONLY the findings above; no scope creep, no refactors.\n'
+  printf -- '- Your unit of work is the INVARIANT a finding violates, not the line it cites: enumerate every sibling site in the changed area that violates the same invariant (the other axis, the sibling branch, the same map in a second file, the next unvalidated field) and close them in this round with the same small correction or at one shared boundary - still no refactors, no unrelated scope.\n'
+  printf -- '- After editing and before verifying, SELF-TRACE: re-walk each finding'"'"'s failing sequence AND the ordinary path through every changed function and its callers, deleting what the fix made unreachable.\n'
   printf -- '- Commit to the crew branch. Do NOT push - the pipeline owns push.\n'
   printf -- '- When done print: done: fixed %s findings\n' "$nfix"
   printf -- '- The run stays HELD at %s and re-runs on your diff; earlier completed steps do not re-run.\n' "$step"

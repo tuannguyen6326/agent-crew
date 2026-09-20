@@ -409,6 +409,15 @@ assert_contains "$fr" "drop legacy path?" "parked item listed"
 assert_contains "$fr" "NO AUTHORITY NAMED" "a downgraded finding is marked in the parked section"
 case "$fr" in *"style nit"*) fail "no-op findings must be omitted" ;; esac
 assert_contains "$fr" "Do NOT push" "contract present"
+# FIX THE CLASS, NOT THE INSTANCE: the fixer's unit of work is the invariant
+# a finding violates, closed at every sibling site in the changed area in the
+# same round - and then SELF-TRACED, so the fix's own dead paths go with it.
+# Both stay inside the no-refactor fence.
+assert_contains "$fr" "INVARIANT a finding violates" "the contract names the invariant as the unit of work"
+assert_contains "$fr" "every sibling site in the changed area" "the contract asks for the class's sibling sites"
+assert_contains "$fr" "still no refactors, no unrelated scope" "the class rule keeps the no-refactor fence in the same sentence"
+assert_contains "$fr" "SELF-TRACE" "the contract asks for a self-trace before verifying"
+assert_contains "$fr" "deleting what the fix made unreachable" "the self-trace removes what the fix orphaned"
 assert_fails "$BIN/ac-ship.sh" fix-report push
 assert_fails "$BIN/ac-ship.sh" fix-report bogus
 

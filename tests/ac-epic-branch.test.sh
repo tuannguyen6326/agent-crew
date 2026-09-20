@@ -28,6 +28,17 @@ git -C "$lo" config user.email test@test
 git -C "$lo" config user.name test
 printf 'x\n' >"$lo/f"; git -C "$lo" add -A; git -C "$lo" commit -qm init
 
+# The project's own pre-push hook REFUSES every push. A delivery push must
+# still run it (ac-ship.sh keeps hooks on purpose); the control-plane pushes
+# below (create's cut, the landing's push=yes) are bookkeeping and go through
+# ac_git_push_control_plane, which skips it - a project hook running a full
+# suite, or aborting on a sha that is no deliverable, must not wedge them.
+printf '#!/bin/sh\necho "pre-push: refused" >&2\nexit 1\n' >"$AC_HOME/projects/proj/.git/hooks/pre-push"
+chmod +x "$AC_HOME/projects/proj/.git/hooks/pre-push"
+out="$(git -C "$AC_HOME/projects/proj" push origin main:refs/heads/hook-probe 2>&1 || true)"
+assert_contains "$out" "pre-push: refused" "a plain (delivery-style) push is refused by the project hook"
+assert_fails git -C "$upstream" rev-parse --verify refs/heads/hook-probe
+
 mkdir -p "$AC_HOME/data/eppy"
 printf 'proj epic/eppy push=yes\nlocalonly epic/eppy\n' >"$AC_HOME/data/eppy/branches"
 
