@@ -44,6 +44,11 @@ starting the dashboard is the remedy; there is no external fallback loop
    `--after <last n you handled>` - queued feedback is never lost.
 4. Apply the feedback, then reply and re-poll in one call:
    `bin/ac-review.sh poll <file>.html --after <n> --agent-reply "<what you changed>"`.
+   A reply longer than one line goes in as a FILE or over stdin -
+   `--agent-reply @<path>` or `--agent-reply -` (same for `reply`) - so every
+   paragraph and newline reaches the captain intact; a quoted argv is for the
+   one-liner only. The reply body is capped (the shim names the cap when it
+   refuses - shorten, never split into a burst of replies).
    GUEST FEEDBACK IS MODERATED AT THE WIRE: a share-link guest's pins and
    comments are born PENDING in the captain's approval queue on the review
    page, and the poll NEVER delivers a pending or dismissed record

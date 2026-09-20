@@ -13,10 +13,17 @@
 #                                               launches the captain's
 #                                               browser (silent no-op, still
 #                                               exit 0, with no opener)
-#   ac-review.sh poll <file> [--after N] [--agent-reply <text>]
-#   ac-review.sh reply <file> <text>
+#   ac-review.sh poll <file> [--after N] [--agent-reply <reply>]
+#   ac-review.sh reply <file> <reply>
 #   ac-review.sh end <file>
 #   ac-review.sh url <file>                    print the captain's viewer URL
+#
+# A <reply> is the text itself, `@<path>` (read from that file) or `-` (read
+# from stdin) - the file/stdin forms carry a multi-paragraph reply with every
+# newline intact, where one quoted argv line gets flattened or cut. Either
+# form is bounded at dashboard/app.ts REVIEW_REPLY_MAX_BYTES (the reply route
+# answers 413 past it); the shim refuses an over-cap reply BEFORE sending,
+# naming the cap.
 #
 # poll BLOCKS via the server's long-poll (25s hold per round) and LOOPS until
 # it can print annotations newer than --after (JSON: {state, items:[...]}) or
@@ -70,6 +77,42 @@ req() { # req <method> <route-with-extra-query> [body]
   printf '%s\n' "$out"
 }
 
+# Mirrors dashboard/app.ts REVIEW_REPLY_MAX_BYTES - the one number both ends
+# refuse at, so the agent reads the cap here instead of a bare 413.
+reply_max=$((1024 * 1024))
+post_reply() { # post_reply <text | @<path> | -> - POST one reply, exit non-zero on refusal
+  # A file or stdin reply is spooled to a temp file and handed to curl as
+  # @<spool>: an argv cannot carry every byte (ARG_MAX, no NUL) and curl
+  # already reads a leading "@" as a file name, so `@<path>` costs the
+  # argv form nothing it did not already lack.
+  local src="$1" body spool="" size
+  case "$src" in
+    @* | -)
+      spool="$(mktemp "${TMPDIR:-/tmp}/ac-review-reply.XXXXXX")"
+      if [ "$src" = - ]; then
+        cat >"$spool"
+      else
+        [ -f "${src#@}" ] || { rm -f "$spool"; ac_die "no such reply file: ${src#@}"; }
+        cat "${src#@}" >"$spool"
+      fi
+      size="$(wc -c <"$spool" | tr -d ' ')"
+      if [ "$size" -gt "$reply_max" ]; then
+        rm -f "$spool"
+        ac_die "reply is $size bytes, over the dashboard's $reply_max-byte cap (dashboard/app.ts REVIEW_REPLY_MAX_BYTES) - shorten it"
+      fi
+      [ "$size" -gt 0 ] || { rm -f "$spool"; ac_die "reply text required"; }
+      body="@$spool" ;;
+    "") ac_die "reply text required" ;;
+    *) body="$src" ;;
+  esac
+  local out rc=0
+  out="$(req POST "/api/review/reply?$q" "$body")" || rc=$?
+  [ -z "$spool" ] || rm -f "$spool"
+  [ "$rc" -eq 0 ] || exit "$rc"
+  jq -e '.ok' >/dev/null <<<"$out" \
+    || ac_die "reply refused: $(jq -r '.error // .' <<<"$out")"
+}
+
 ac_try_open() { # ac_try_open <url> - best-effort browser launch, never fails
   # Headless/cron/no-GUI hosts are the common case here, not the exception,
   # so a missing opener is silent success, never a failure this script
@@ -113,8 +156,7 @@ case "$cmd" in
     # ordinary artifact publish never pops a window uninvited.
     if [ "$auto_open" = 1 ]; then ac_try_open "$url"; fi ;;
   reply)
-    [ -n "${1:-}" ] || ac_die "reply text required"
-    req POST "/api/review/reply?$q" "$1" | jq -e '.ok' >/dev/null || ac_die "reply failed"
+    post_reply "${1:-}"
     printf 'replied\n' ;;
   end)
     req POST "/api/review/end?$q&by=agent" | jq -e '.ok' >/dev/null || ac_die "end failed"
@@ -125,8 +167,7 @@ case "$cmd" in
       case "$1" in
         --after) after="${2:?}"; shift 2 ;;
         --agent-reply)
-          req POST "/api/review/reply?$q" "${2:?}" | jq -e '.ok' >/dev/null \
-            || ac_die "agent-reply failed"
+          post_reply "${2:?}"
           shift 2 ;;
         *) ac_die "unknown poll option: $1" ;;
       esac

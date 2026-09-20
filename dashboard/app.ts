@@ -4701,6 +4701,13 @@ export function emptyReviewSession(artifact: string): ReviewSession {
   return { artifact, state: "open", seq: 0, queue: [], replies: [] };
 }
 
+/** Largest reply body the reply route stores (413 past it). Bun.serve above
+ * declares no maxRequestBodySize, so without this the only bound was Bun's
+ * 128 MiB default - far more than one session file should ever carry.
+ * bin/ac-review.sh refuses at the SAME number before sending, so the cap is
+ * named to the agent where it can act on it, never as a bare 413. */
+export const REVIEW_REPLY_MAX_BYTES = 1024 * 1024;
+
 /** Validate one incoming annotation body from the viewer: text required,
  * anchor optional but well-shaped when present. The one gate body->store.
  * scene/snapshot are optional and independent: scene names the diagram's
@@ -7203,7 +7210,10 @@ export function dashboardMain() {
           }
           case "/api/review/reply": {
             if (req.method !== "POST") return json({ error: "POST required" }, 405);
-            const text = (await req.text()).trim();
+            const raw = await req.text();
+            if (Buffer.byteLength(raw) > REVIEW_REPLY_MAX_BYTES)
+              return json({ error: `reply over ${REVIEW_REPLY_MAX_BYTES} bytes (REVIEW_REPLY_MAX_BYTES)` }, 413);
+            const text = raw.trim();
             return text
               ? reviewMutate(p, id, { type: "reply", text, at })
               : json({ error: "reply text required" }, 400);
