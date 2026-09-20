@@ -508,6 +508,7 @@ printf 'herdr %s\n' "$*" >>"$d/log"
 # ac-backend.sh appends it, ac-pane-agent.sh puts it first. Strip the leading
 # form so both callers reach the same fake.
 [ "${1:-}" = --session ] && shift 2
+[ "${1:-}" = --version ] && { printf 'herdr 0.8.0\n'; exit 0; }
 if [ -f "$d/.hang" ]; then
   # The child ignores TERM deliberately - SIG_IGN survives the exec into
   # `sleep`, so a bound whose TERM is its last word leaves it behind.
