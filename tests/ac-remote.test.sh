@@ -728,4 +728,33 @@ grep -rq "remote-order $int_rid" "$STATE/.wake-spool" 2>/dev/null \
 rm -f "$INBOX/$int_rid.json"
 rm -rf "$STATE/.wake-spool"; mkdir -p "$STATE/.wake-spool"
 
+# ...and the ignore ends WITH the commit. A first cut ignored INT across the
+# whole order pipeline, which spans the lifecycle-ack hook - measured 5.66s of
+# a dead Ctrl-C against a hanging hook at a 6s ceiling, up to 20s at the
+# default - over a gap that had already closed. With the order committed and
+# the ack hook parked, a group-wide INT must end the command at once.
+cat >"$CFG/remote-ack" <<'EOF'
+#!/usr/bin/env bash
+sleep 30
+EOF
+chmod +x "$CFG/remote-ack"
+set -m
+AC_REMOTE_ACK_TIMEOUT=8 "$BIN/ac-remote.sh" order 'an order interrupted during its ack' \
+  >"$TMP/order-ack-int.out" 2>&1 &
+ack_pid=$!
+set +m
+sleep 0.7
+ack_began=$SECONDS
+kill -INT -"$ack_pid" 2>/dev/null || true
+wait "$ack_pid" 2>/dev/null || true
+ack_elapsed=$((SECONDS - ack_began))
+[ "$ack_elapsed" -lt 4 ] \
+  || fail "a Ctrl-C during the ack hook must land at once - the ignore is the commit's, not the pipeline's (took ${ack_elapsed}s)"
+ack_rid="$(ls "$INBOX" 2>/dev/null | sed -n 's/^\(local-[^.]*\)\.json$/\1/p' | tail -n 1)"
+[ -n "$ack_rid" ] || fail "the order never committed before the ack"
+grep -rq "remote-order $ack_rid" "$STATE/.wake-spool" 2>/dev/null \
+  || fail "the commit itself stayed whole: stash and wake both on disk ($ack_rid)"
+rm -f "$CFG/remote-ack" "$INBOX/$ack_rid.json"
+rm -rf "$STATE/.wake-spool"; mkdir -p "$STATE/.wake-spool"
+
 pass

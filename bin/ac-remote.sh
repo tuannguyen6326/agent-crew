@@ -79,9 +79,9 @@
 #   <rid>` line, identical dedup (rid is the idempotency key across BOTH
 #   entrances); malformed lines and refused rids are warned and skipped, and
 #   bad input never hard-fails ingest - it always exits 0.
-# order - the LOCAL entrance, and the one entrance whose commit is
-#   UNINTERRUPTIBLE (cmd_order ignores INT across it; see there for the
-#   measured duty cycle and why a local rid's loss is permanent): one captain
+# order - the LOCAL entrance (its rid is minted here and re-offered by
+#   nothing, which is why ingest_stream's stash-then-wake commit is
+#   uninterruptible - see there for the measured duty cycle): one captain
 #   order typed on this host (a SOLO
 #   session handing the captain's word to the chief, the sanctioned way a
 #   solo session gets crew work started without spawning it) becomes the
@@ -387,6 +387,20 @@ ingest_stream() {
     # single poller is the fleet watcher. `order` pipes into this function, so
     # THAT entrance publishes from a pipeline subshell; sound only because no
     # other publish shares its $$ (ac_wake_publish's collision identity).
+    # UNINTERRUPTIBLE FROM THIS ln TO THE WAKE'S ln, and no wider. The stash is
+    # also the dedup sign, so an INT landing between the two commits burns the
+    # rid - permanently for a LOCAL rid, which is minted once and re-offered by
+    # nothing (a polled one costs a re-delivery). MEASURED on this host: the
+    # window is ~11.7ms against a 62.6ms mean for the whole `order` command,
+    # about 19% of its lifetime - a Ctrl-C at a uniformly random moment lands
+    # inside it roughly one time in five. The ignore is restored BEFORE
+    # run_ack: an earlier cut ignored INT across the whole order pipeline,
+    # which spans the lifecycle-ack hook - up to AC_REMOTE_ACK_TIMEOUT (20s)
+    # per call of a dead Ctrl-C for a captain, measured at 5.66s against a
+    # hanging hook, over a gap that had already closed. An ignored disposition
+    # is inherited by children, so the seam inside ac_wake_publish is covered
+    # whichever shell this function runs in.
+    trap '' INT
     if ln "$tmp" "$stash" 2>/dev/null; then
       rm -f "$tmp"
       # Two commits in two directories can never be one atomic act, so the
@@ -409,6 +423,7 @@ ingest_stream() {
         # "re-send it" would have the operator recover one order and lose the rest.
         ac_die "$label: no wake could be published for $rid - NOT ingested. Re-send it AND anything after it in the same batch: this exits before reading the rest"
       fi
+      trap - INT
       # A remote order is the captain SPEAKING, not waiting - they already
       # get the ac-remote reply as confirmation, and the notification rule
       # confined the one captain notification to the
@@ -419,6 +434,7 @@ ingest_stream() {
       run_ack "$label" "$rid" ingested "$(jq -r '.thread // empty' <<<"$line")"
       printf 'remote-order %s\n' "$rid"
     else
+      trap - INT
       rm -f "$tmp"
     fi
   done
@@ -476,23 +492,13 @@ cmd_order() {
   # The stamp is the rid: unique per host second and pid, and the slug
   # guard's alphabet by construction.
   rid="local-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-  # UNINTERRUPTIBLE ACROSS THE COMMIT. The stash and its wake are two steps and
-  # the stash is also the dedup sign, so an INT landing between them burns the
-  # rid - and a LOCAL rid is minted here and re-offered by nothing, so that loss
-  # is permanent where a polled one costs only a re-delivery. MEASURED on this
-  # host: the window is ~11.7ms against a 62.6ms mean for the whole command,
-  # about 19% of its lifetime, so a Ctrl-C at a uniformly random moment lands
-  # inside it roughly one time in five - the polled path's 1.18e-7 was computed
-  # over a long-running watcher and says nothing about this one.
-  # An IGNORED disposition is inherited by the pipeline's subshell and its
-  # children (measured), which is what makes this reach the publish at all: a
-  # real Ctrl-C is a group-wide INT, and the commit runs one subshell down.
-  # The cost is the other direction and it is 62ms of an unresponsive Ctrl-C.
-  trap '' INT
+  # A local rid is minted here and re-offered by nothing, so its loss in the
+  # stash-then-wake window is permanent where a polled one costs a
+  # re-delivery; ingest_stream makes that window uninterruptible for every
+  # entrance, and this one runs it a pipeline subshell down.
   jq -cn --arg rid "$rid" --arg text "$text" \
     '{rid: $rid, text: $text, author: "captain", thread: "local"}' \
     | ingest_stream order
-  trap - INT
   # Tell the truth about delivery prospects AT SEND TIME (family
   # remote-order-strands-silently-with-no-live-watcher, decisions 1+2): a
   # publish that SUCCEEDS is unchanged - stashed, exit 0, the durable spool is
