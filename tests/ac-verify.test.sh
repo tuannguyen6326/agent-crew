@@ -621,10 +621,11 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "question, options, matching t
 # shape on ask-user and the citation rule on fix; 540->552 for the one clause
 # that tells the reviewer the scout fan-out is not the second pass it forbids.
 # 552->600 (siblings by the same 48) for the workspace-boundary fence;
-# 600->690 (siblings by the same 90) for the authorization/privacy axis.
+# 600->690 (siblings by the same 90) for the authorization/privacy axis;
+# 690->750 (siblings by the same 60) for the defect-class-once rule.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 690 ] \
-  || fail "canonical review prompt exceeds its 690-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 750 ] \
+  || fail "canonical review prompt exceeds its 750-word scaffold budget: $scaffold_words"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Reserve action=fix" \
   "fix is reserved for delivery-blocking findings; advisory items ride as no-op"
 # Bug-fix durability + anti-overreach: a fix claim is judged durable-vs-
@@ -660,6 +661,18 @@ assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "absent \"by name\" i
   "an authorization finding needs a reachable path, never a missing name"
 assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "undecided policy is ask-user" \
   "undecided authorization policy is relayed, never invented"
+# A DEFECT CLASS IS REPORTED ONCE: one finding at a primary file:line with
+# the sibling sites in its prose (no schema change - id and carry-forward are
+# untouched), and a re-review labels a follow-on as one. The sentence carries
+# its own evidence bar, so it cannot read as licence to infer a class.
+assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "Report a defect CLASS once" \
+  "the prompt asks for one finding per defect class"
+assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "sibling sites that violate the same invariant enumerated in its prose" \
+  "sibling sites ride in the finding's prose, never as extra findings"
+assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "never a class inferred without each site's own evidence" \
+  "the class rule keeps the anti-speculation bar in the same sentence"
+assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "label a follow-on as a follow-on" \
+  "a re-review labels follow-ons with their origin"
 # ID FORMATION belongs to the CANONICAL prompt, not only to the history block:
 # round 1's ids are the exact strings every later round must reuse, so a round-1
 # reviewer that stamps the CURRENT round into an id makes stable reuse impossible
@@ -798,8 +811,8 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $bas
 # disposition rules, resolved_ids, and the no-renumber clause the measured
 # rejections needed); the ledger payload itself stays excluded like INTENT.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 760 ] \
-  || fail "history review prompt exceeds its 760-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 820 ] \
+  || fail "history review prompt exceeds its 820-word scaffold budget: $scaffold_words"
 
 # A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
 # the interdiff scope: the previous entry's reviewed_ref
@@ -919,8 +932,8 @@ case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: C
 # fixture's one id. A real round's checklist grows one word per prior open id;
 # this bounds the PROSE, which is the part that drifts.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 840 ] \
-  || fail "previous-round ledger review prompt exceeds its 840-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 900 ] \
+  || fail "previous-round ledger review prompt exceeds its 900-word scaffold budget: $scaffold_words"
 
 # PREVIOUS ROUND ONLY: resolved findings from older rounds do not require
 # re-attestation later. A round-3 history whose r1 had an open id but whose r2

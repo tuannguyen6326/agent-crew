@@ -1095,6 +1095,12 @@ authority_class=internal|external plus an exact citation; missing external
 authority means action=ask-user, authority_class=none. A reproduction isolates
 one variable and labels DISPUTED and HELD-CONSTANT. suggested_fix is advisory;
 you never apply it.
+Report a defect CLASS once: one finding anchored at its primary file:line,
+the sibling sites that violate the same invariant enumerated in its prose -
+never one finding per instance, and never a class inferred without each
+site's own evidence. On a re-review, label a follow-on as a follow-on: the
+round it first appeared in, and whether the fix introduced it, left it
+behind, or moved it.
 
 Bug-fix claims: judge durable fix vs authorized containment; for durable,
 reconstruct the failing sequence and check sibling paths - report inadequate

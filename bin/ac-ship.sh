@@ -1660,7 +1660,8 @@ cmd_fix_report() {
   fi
 
   printf '\n## Contract\n'
-  printf -- '- Fix ONLY the findings above; no scope creep, no refactors.\n'
+  printf -- '- Your unit of work is the INVARIANT a finding violates, not the line it cites: enumerate every sibling site in the changed area that violates the same invariant (the other axis, the sibling branch, the same map in a second file, the next unvalidated field) and close them in this round with the same small correction or at one shared boundary - still no refactors, no unrelated scope.\n'
+  printf -- '- After editing and before verifying, SELF-TRACE: re-walk each finding'"'"'s failing sequence AND the ordinary path through every changed function and its callers, deleting what the fix made unreachable.\n'
   printf -- '- Commit to the crew branch. Do NOT push - the pipeline owns push.\n'
   printf -- '- When done print: done: fixed %s findings\n' "$nfix"
   printf -- '- The run stays HELD at %s and re-runs on your diff; earlier completed steps do not re-run.\n' "$step"
