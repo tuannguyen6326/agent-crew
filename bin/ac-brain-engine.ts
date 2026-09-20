@@ -29,7 +29,11 @@
 //   staleness: a live holder mid-CHECKPOINT looks stale.
 // - remember REQUIRES provenance; the write appends the ledger line and the
 //   DB row inside one IMMEDIATE transaction so cross-process writers
-//   serialize on SQLite's own lock.
+//   serialize on SQLite's own lock. A fact's TTL binds at READ time: every
+//   active read (recall, entity, context_pack, delta, stats, the remember
+//   dedup) filters `valid_until` against now, so a lapsed fact is invisible
+//   the moment it lapses; sync's sweep stays the ledger-truth reconciler
+//   and doctor's `validity_lapsed_facts` counts what it has not reached.
 // - Intent switch: >=5 informative query terms read as content-lookup and
 //   run graded BM25 only; fewer read as name-lookup and add the title arm
 //   plus gentle boosts. Fusion normalizes BM25 min-max so boosts reorder
@@ -410,6 +414,11 @@ function replayLedgerInto(db: Database) {
       db.run("UPDATE facts SET expired_at=?, expire_reason=? WHERE id=?", [l.payload.at, l.payload.reason ?? null, l.id]);
   }
 }
+// Read-time validity: a lapsed TTL hides a fact the moment it lapses, on
+// every active read; the sweep below stays the ledger-truth reconciler.
+// Between syncs a lapsed fact was still recalled, packed, delivered - and
+// stood as the dedup candidate that swallowed a correct re-remember.
+const ACTIVE_FACT = "expired_at IS NULL AND (valid_until IS NULL OR valid_until > ?)";
 function ttlSweep(db: Database) {
   const now = iso();
   const lapsed = db.query("SELECT id FROM facts WHERE expired_at IS NULL AND valid_until IS NOT NULL AND valid_until < ?").all(now) as any[];
@@ -893,8 +902,8 @@ async function cmdRecall() {
   // facts arm
   let facts: any[] = [];
   if (entity || agent || since || !q) {
-    let sql = "SELECT id, entity, fact, kind, provenance, agent, valid_until, created_at FROM facts WHERE expired_at IS NULL";
-    const p: any[] = [];
+    let sql = `SELECT id, entity, fact, kind, provenance, agent, valid_until, created_at FROM facts WHERE ${ACTIVE_FACT}`;
+    const p: any[] = [iso()];
     if (entity) { sql += " AND entity=?"; p.push(entity); }
     if (agent) { sql += " AND agent=?"; p.push(agent); }
     if (since) { sql += " AND created_at >= ?"; p.push(since); }
@@ -1002,7 +1011,7 @@ async function cmdRemember() {
   const entity = opt("entity") ?? null, agent = opt("agent") ?? null, family = opt("family") ?? null;
   const db = openDb();
   // dedup: exact text per entity; embedding-similarity supersede when vectors exist
-  const dup = db.query("SELECT id FROM facts WHERE fact=? AND ifnull(entity,'')=ifnull(?,'') AND expired_at IS NULL").get(fact, entity) as any;
+  const dup = db.query(`SELECT id FROM facts WHERE fact=? AND ifnull(entity,'')=ifnull(?,'') AND ${ACTIVE_FACT}`).get(fact, entity, iso()) as any;
   if (dup) { usageLog({ verb: "remember", status: "duplicate" }); out({ protocol_version: 1, id: dup.id, status: "duplicate" }); return; }
   let superseded: number | null = null;
   const ec = embedCfg();
@@ -1010,7 +1019,7 @@ async function cmdRemember() {
   if (ec && embedKey(ec) && entity) {
     vec = (await embedBatch([fact], ec))?.[0] ?? null;
     if (vec) {
-      const cands = db.query("SELECT id, fact, kind, embedding FROM facts WHERE entity=? AND expired_at IS NULL AND embedding IS NOT NULL").all(entity) as any[];
+      const cands = db.query(`SELECT id, fact, kind, embedding FROM facts WHERE entity=? AND ${ACTIVE_FACT} AND embedding IS NOT NULL`).all(entity, iso()) as any[];
       for (const c of cands) {
         const sim = cosine(vec, fromBlob(c.embedding));
         if (sim >= 0.95) {
@@ -1067,7 +1076,7 @@ function entityCard(db: Database, name: string) {
   const best = byAlias[0] || byTitle[0] || bySlug[0];
   if (!best) return null;
   const edges = db.query("SELECT to_slug, type FROM links WHERE from_slug=? AND resolved=1 LIMIT 10").all(best.slug);
-  const facts = db.query("SELECT id, fact, kind, provenance, agent FROM facts WHERE entity=? AND expired_at IS NULL ORDER BY created_at DESC LIMIT 10").all(best.slug);
+  const facts = db.query(`SELECT id, fact, kind, provenance, agent FROM facts WHERE entity=? AND ${ACTIVE_FACT} ORDER BY created_at DESC LIMIT 10`).all(best.slug, iso());
   const commitments = (facts as any[]).filter(f => f.kind === "commitment").slice(0, 3);
   return { slug: best.slug, title: best.title, family: best.family, type: best.type, path: best.path,
     backlinks: best.backlinks, updated_at: best.updated_at, edges, facts, open_threads: commitments };
@@ -1111,7 +1120,7 @@ function cmdContextPack() {
     }
   const tierOf = (f: any): number =>
     scope.has(canon(f.entity || "")) ? 1 : hop.has(canon(f.entity || "")) ? 2 : (f.kind === "commitment" && !f.entity) ? 3 : 0;
-  const recent = db.query("SELECT id, entity, fact, kind, provenance, agent, created_at FROM facts WHERE expired_at IS NULL ORDER BY created_at DESC LIMIT 200").all() as any[];
+  const recent = db.query(`SELECT id, entity, fact, kind, provenance, agent, created_at FROM facts WHERE ${ACTIVE_FACT} ORDER BY created_at DESC LIMIT 200`).all(iso()) as any[];
   let globals = 0;
   let facts = recent.map(f => ({ ...f, tier: tierOf(f) }))
     .filter(f => f.tier === 3 ? ++globals <= 5 : f.tier > 0)
@@ -1171,8 +1180,8 @@ function cmdDelta() {
   const delivered = pages.slice(0, lim);
   const facts = db.query(
     `SELECT id, entity, fact, kind, provenance, agent, created_at FROM facts
-     WHERE expired_at IS NULL AND ((created_at > ?) OR (created_at = ? AND id > ?))
-     ORDER BY created_at ASC, id ASC LIMIT ?`).all(factSince, factSince, factId, lim + 1) as any[];
+     WHERE ${ACTIVE_FACT} AND ((created_at > ?) OR (created_at = ? AND id > ?))
+     ORDER BY created_at ASC, id ASC LIMIT ?`).all(iso(), factSince, factSince, factId, lim + 1) as any[];
   const hasMoreFacts = facts.length > lim;
   const fDelivered = facts.slice(0, lim);
   if (!explicit) {
@@ -1207,13 +1216,13 @@ function cmdLinksTo() {
 }
 function cmdStats() {
   const db = openDb(true);
-  const g = (q: string) => { try { return (db.query(q).get() as any).c; } catch { return 0; } };
+  const g = (q: string, ...p: any[]) => { try { return (db.query(q).get(...p) as any).c; } catch { return 0; } };
   out({
     pages: g("SELECT COUNT(*) c FROM pages WHERE deleted_at IS NULL"), chunks: g("SELECT COUNT(*) c FROM chunks"),
     embedded: g("SELECT COUNT(*) c FROM chunks WHERE embedding IS NOT NULL"),
     links: g("SELECT COUNT(*) c FROM links"), resolved: g("SELECT COUNT(*) c FROM links WHERE resolved=1"),
     code_refs: g("SELECT COUNT(*) c FROM links WHERE type='cites_code'"),
-    facts_active: g("SELECT COUNT(*) c FROM facts WHERE expired_at IS NULL"),
+    facts_active: g(`SELECT COUNT(*) c FROM facts WHERE ${ACTIVE_FACT}`, iso()),
     facts_total: g("SELECT COUNT(*) c FROM facts"), shadows: g("SELECT COUNT(*) c FROM shadows"),
     last_sync: (db.query("SELECT v FROM meta WHERE k='last_sync'").get() as any)?.v ?? null,
     db_bytes: existsSync(DB_PATH) ? statSync(DB_PATH).size : 0,
@@ -1241,6 +1250,8 @@ async function cmdDoctor() {
     const ledgerActive = readLedger().reduce((s, l) => s + (l.op === "f" ? 1 : 0), 0);
     const dbTotal = (db.query("SELECT COUNT(*) c FROM facts").get() as any).c;
     push("facts_ledger_indexed", ledgerActive === dbTotal, `ledger ${ledgerActive} vs db ${dbTotal} (fix: sync --rebuild)`);
+    const lapsed = (db.query("SELECT COUNT(*) c FROM facts WHERE expired_at IS NULL AND valid_until IS NOT NULL AND valid_until <= ?").get(iso()) as any).c;
+    push("validity_lapsed_facts", true, `${lapsed} lapsed, hidden from every read until the next sync sweeps them`);
     // Ambiguous-link census (informational, never a failure): unresolved links
     // whose basename names several pages - sync refuses to guess among them.
     const baseCount = new Map<string, number>();

@@ -119,6 +119,27 @@ fx2="$("$BRAIN" forget "$fid" --home "$AC_HOME" --compact)"
 assert_eq "$(printf '%s' "$fx2" | j "['expired']")" "False" "re-forget is idempotent"
 assert_contains "$(cat "$AC_HOME/state/facts.md")" "- x$fid" "the expiry landed in the ledger"
 
+# --- ttl: a lapsed fact is hidden at READ time, not only after a sync sweep ---
+# The sweep runs only inside sync; between syncs a lapsed fact was still
+# recalled, packed, delivered - and stood as the dedup candidate that
+# swallowed a correct re-remember. No sync runs in this block.
+lt="$("$BRAIN" remember "the lapsed probe fact" --provenance "test" --agent t1 --entity data/fam-one/room --ttl 2020-01-01T00:00:00Z --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$lt" | j "['status']")" "inserted" "a past ttl is accepted (an asof record)"
+lid="$(printf '%s' "$lt" | j "['id']")"
+for probe in "recall --entity data/fam-one/room" "recall" "context_pack --entities data/fam-one/room" "entity fam-one" \
+  "delta --agent ttlprobe --session t --since 2000-01-01T00:00:00Z"; do
+  case "$("$BRAIN" $probe --home "$AC_HOME" --compact)" in
+    *"lapsed probe"*) fail "$probe surfaced a lapsed fact before the sweep" ;;
+  esac
+done
+assert_eq "$("$BRAIN" stats --home "$AC_HOME" --compact | j "['facts_active']")" "0" "stats counts only facts still valid"
+lt2="$("$BRAIN" remember "the lapsed probe fact" --provenance "test" --agent t1 --entity data/fam-one/room --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$lt2" | j "['status']")" "inserted" "the same subject re-remembered inserts fresh - a lapsed fact is no dedup candidate"
+[ "$(printf '%s' "$lt2" | j "['id']")" != "$lid" ] || fail "the fresh fact must be a new row"
+dl="$("$BRAIN" doctor --home "$AC_HOME" --compact)" || fail "doctor stays healthy with a lapsed fact awaiting sweep: $dl"
+assert_contains "$dl" '"name":"validity_lapsed_facts","status":"ok","message":"1 lapsed' "doctor counts the lapsed fact the sweep has not reached"
+"$BRAIN" forget "$(printf '%s' "$lt2" | j "['id']")" --reason probe --home "$AC_HOME" --compact >/dev/null
+
 # --- delta: the insert-then-deliver proof (one timestamp format) --------------
 d0="$("$BRAIN" delta --agent chief --session t --home "$AC_HOME" --compact)"
 assert_eq "$(printf '%s' "$d0" | j "['first_wake']")" "True" "first wake stamps and returns empty"
