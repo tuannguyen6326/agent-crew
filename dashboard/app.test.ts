@@ -9,9 +9,9 @@
 // re-count pending/handback (the no-second-bookkeeping rule).
 
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -2425,6 +2425,105 @@ test("a human-ended session refuses a plain reopen; force and agent-ended reopen
   expect((reviewApply(human, { type: "reopen", force: true }) as typeof base).state).toBe("open");
   const agent = reviewApply(base, { type: "end", by: "agent" }) as typeof base;
   expect((reviewApply(agent, { type: "reopen", force: false }) as typeof base).state).toBe("open");
+});
+
+// SESSION BOUND: a long gate-review grows queue + replies without limit and
+// every mutation rewrites the whole file. reviewBound caps the serialized
+// session by evicting the OLDEST SETTLED entries first - annotations the
+// agent acked through its poll cursor, dismissed guest records, replies the
+// captain's page was served - and remembers each evicted n, so a later
+// settle naming one is a no-op and the poll can never re-deliver it.
+// Pending annotations and unread replies are never dropped. reviewSave is a
+// rev compare-and-write: a stale session cannot replace a newer file.
+type RS = ReturnType<typeof emptyReviewSession>;
+const PAD = "x".repeat(2000);
+function grownSession(rounds: number): RS {
+  let s = emptyReviewSession("/a/b.html");
+  s = reviewApply(s, { type: "annotate", anchor: null, text: "pending guest", at: "T0", by: "an" }) as RS;   // n=1, never settles
+  s = reviewApply(s, { type: "annotate", anchor: null, text: "dismissed guest", at: "T0", by: "an" }) as RS; // n=2
+  s = reviewApply(s, { type: "dismiss", n: 2 }) as RS;
+  for (let i = 0; i < rounds; i++) {
+    s = reviewApply(s, { type: "annotate", anchor: null, text: `c${i} ${PAD}`, at: `T${i}` }) as RS;
+    s = reviewApply(s, { type: "reply", text: `r${i} ${PAD}`, at: `T${i}` }) as RS;
+  }
+  return s;
+}
+const sessionBytes = (s: RS) => Buffer.byteLength(JSON.stringify(s, null, 2) + "\n");
+const statSize = (p: string) => statSync(p).size;
+
+test("reviewBound evicts the oldest settled entries first, keeps every pending one, and lands under budget", () => {
+  let s = grownSession(40); // annotations n=3,5,...,81; replies n=4,6,...,82
+  s = reviewApply(s, { type: "ack", after: 42 }) as RS;  // agent handled through 42
+  s = reviewApply(s, { type: "seen" }) as RS;            // captain saw every reply so far (through 82)
+  s = reviewApply(s, { type: "reply", text: `unread ${PAD}`, at: "T99" }) as RS; // n=83, unread
+  expect(s.acked).toBe(42);
+  expect(s.seen).toBe(82);
+  const budget = 100_000;
+  expect(sessionBytes(s)).toBeGreaterThan(budget);
+  const b = reviewBound(s, budget);
+  expect(sessionBytes(b)).toBeLessThanOrEqual(budget);
+  // never evicted: the pending guest record, every unacked annotation, the unread reply
+  expect(b.queue.some((a) => a.n === 1)).toBe(true);
+  for (let n = 43; n <= 81; n += 2) expect(b.queue.some((a) => a.n === n)).toBe(true);
+  expect(b.replies.some((r) => r.n === 83)).toBe(true);
+  // evicted = a prefix of the settled set in n order: 2 (dismissed), 3..42 (acked + seen), then seen replies only
+  const settled = [2, ...Array.from({ length: 40 }, (_, i) => i + 3), ...Array.from({ length: 20 }, (_, i) => 44 + 2 * i)];
+  expect(b.evicted.length).toBeGreaterThan(0);
+  expect(b.evicted).toEqual(settled.slice(0, b.evicted.length));
+  for (const n of b.evicted) {
+    expect(b.queue.some((a) => a.n === n)).toBe(false);
+    expect(b.replies.some((r) => r.n === n)).toBe(false);
+  }
+  expect(pollSlice(b, 0).items.some((a) => b.evicted.includes(a.n))).toBe(false);
+  // a within-budget session is returned untouched
+  expect(reviewBound(s, 10_000_000)).toBe(s);
+});
+
+test("a settle naming an evicted n is a no-op, never an error", () => {
+  let s = grownSession(40);
+  s = reviewApply(s, { type: "ack", after: 42 }) as RS;
+  s = reviewApply(s, { type: "seen" }) as RS;
+  const b = reviewBound(s, 100_000);
+  const gone = b.evicted[1]; // an evicted annotation
+  expect(b.queue.some((a) => a.n === gone)).toBe(false);
+  expect(reviewApply(b, { type: "dismiss", n: gone })).toBe(b);
+  expect(reviewApply(b, { type: "approve", n: gone })).toBe(b);
+  expect(reviewApply(b, { type: "ack", after: gone })).toBe(b);
+  expect(typeof reviewApply(b, { type: "dismiss", n: 9999 })).toBe("string"); // unknown stays an error
+});
+
+test("reviewLoad normalizes a legacy file and bounds an oversize one; reviewSave is a rev compare-and-write", () => {
+  const root = mkdtempSync(`${tmpdir()}/ac-dash-review-bound-`);
+  try {
+    const id = `${root}/r.html`;
+    // legacy: replies without n, no cursors, no rev - reads as a full-shape session
+    writeFileSync(`${id}.session.json`, JSON.stringify({ artifact: id, state: "open", seq: 1, queue: [{ n: 1, at: "T", anchor: null, text: "a" }], replies: [{ at: "T", text: "old" }] }));
+    const legacy = reviewLoad(root, id);
+    expect(legacy).toMatchObject({ seq: 1, acked: 0, seen: 0, evicted: [], rev: 0 });
+    expect(legacy.replies[0].n).toBeUndefined();
+    // oversize on disk: every reader sees the bounded shape, and the next save lands under budget
+    let big = grownSession(1400); // ~5.7 MiB serialized
+    big = reviewApply(big, { type: "ack", after: big.seq }) as RS;
+    big = reviewApply(big, { type: "seen" }) as RS;
+    writeFileSync(`${id}.session.json`, JSON.stringify(big, null, 2) + "\n");
+    expect(statSize(`${id}.session.json`)).toBeGreaterThan(REVIEW_SESSION_MAX_BYTES);
+    const loaded = reviewLoad(root, id);
+    expect(sessionBytes(loaded)).toBeLessThanOrEqual(REVIEW_SESSION_MAX_BYTES);
+    expect(loaded.evicted.length).toBeGreaterThan(0);
+    expect(reviewSave(root, id, loaded)).toBe(true);
+    expect(statSize(`${id}.session.json`)).toBeLessThanOrEqual(REVIEW_SESSION_MAX_BYTES);
+    // stale write: two loads at one rev, the second save is refused and the file keeps the first
+    const s1 = reviewLoad(root, id);
+    const s2 = reviewLoad(root, id);
+    expect(s1.rev).toBe(1);
+    expect(reviewSave(root, id, reviewApply(s1, { type: "reply", text: "first", at: "T" }) as RS)).toBe(true);
+    expect(reviewSave(root, id, reviewApply(s2, { type: "reply", text: "second", at: "T" }) as RS)).toBe(false);
+    const after = reviewLoad(root, id);
+    expect(after.rev).toBe(2);
+    expect(after.replies.at(-1)!.text).toBe("first");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("normalizeAnnotation requires text and a well-shaped optional anchor", () => {

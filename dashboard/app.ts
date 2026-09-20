@@ -4648,13 +4648,16 @@ document.getElementById("wbf-keep-mine").addEventListener("click", () => { doSav
 // natively. The viewer auto-reloads when the artifact's mtime moves (the
 // session endpoint carries it), re-checks every pinned anchor after a reload
 // and badges it moved/missing - stale, never lost - and a click on a pinned
-// note scrolls-and-flashes its element in the frame. Sessions are file-backed and
-// atomic-written, so they survive a dashboard restart; a human-ended session
+// note scrolls-and-flashes its element in the frame. Sessions are file-backed,
+// atomic-written and rev-guarded (reviewSave), bounded to
+// REVIEW_SESSION_MAX_BYTES by evicting settled entries (reviewBound), so they
+// survive a dashboard restart and a long review; a human-ended session
 // refuses a plain reopen. Anchors are {selector, fingerprint} - after the
 // agent edits the HTML a moved anchor re-attaches by fingerprint or renders
 // STALE in the panel, never lost. The pure gates below (reviewApply,
-// pollSlice, normalizeAnnotation, reviewSessionRel) are exported + bun-tested;
-// the routes around them are thin IO like every other write surface here.
+// pollSlice, reviewBound, normalizeAnnotation, reviewSessionRel) are exported +
+// bun-tested; the routes around them are thin IO like every other write
+// surface here.
 
 export interface ReviewAnnotation {
   n: number;
@@ -4688,25 +4691,93 @@ export interface ReviewSession {
   endedBy?: "human" | "agent";
   seq: number;
   queue: ReviewAnnotation[];
-  replies: { at: string; text: string }[];
+  /** n: the reply's slot in the SAME seq the annotations take, so eviction
+   * has one chronological order across both kinds. A file written before
+   * replies were numbered carries replies without one; those never settle,
+   * so they are never evicted. */
+  replies: { n?: number; at: string; text: string }[];
   /** Live share token (REVIEW SHARE below): its presence IS the share - the
    * guest listener resolves tokens against this field, so dropping it (Stop,
    * or end) revokes the link durably. Never returned to a guest.
    * pw: optional HTTP Basic gate (salted sha256, never plaintext) - with it
    * set, a leaked URL alone no longer opens the review. */
   share?: { token: string; at: string; pw?: { salt: string; hash: string } };
+  /** SETTLEMENT - what reviewBound may evict. acked: the highest `--after`
+   * cursor a poll presented, the agent's own word that every annotation
+   * n <= acked was handled (delivery alone settles nothing: the skill
+   * promises an interrupted poll re-runs with its last handled n). seen:
+   * the highest reply n the captain's page has been served. evicted: the n
+   * of every entry reviewBound dropped, kept so a later settle naming one
+   * is a no-op and pollSlice can never re-deliver it. */
+  acked: number;
+  seen: number;
+  evicted: number[];
+  /** Write version: reviewSave bumps it and refuses when the file's rev is
+   * not the one this session was loaded at, so a bounded rewrite can never
+   * stale-replace a newer file. */
+  rev: number;
 }
 
 export function emptyReviewSession(artifact: string): ReviewSession {
-  return { artifact, state: "open", seq: 0, queue: [], replies: [] };
+  return { artifact, state: "open", seq: 0, queue: [], replies: [], acked: 0, seen: 0, evicted: [], rev: 0 };
 }
+
+/** Byte budget for one serialized session file. Every mutation rewrites the
+ * whole file and every poll round re-reads it, so an unbounded gate-review
+ * degrades quadratically; 5 MiB is hours of prose (images ride as path
+ * references, never bytes) and still a sub-10ms parse. */
+export const REVIEW_SESSION_MAX_BYTES = 5 * 1024 * 1024;
 
 /** Largest reply body the reply route stores (413 past it). Bun.serve above
  * declares no maxRequestBodySize, so without this the only bound was Bun's
- * 128 MiB default - far more than one session file should ever carry.
- * bin/ac-review.sh refuses at the SAME number before sending, so the cap is
- * named to the agent where it can act on it, never as a bare 413. */
+ * 128 MiB default; it sits well under REVIEW_SESSION_MAX_BYTES because an
+ * unread reply is never evicted, so one bigger than the budget would pin the
+ * session over it for good. bin/ac-review.sh refuses at the SAME number
+ * before sending, so the cap is named to the agent where it can act on it,
+ * never as a bare 413. */
 export const REVIEW_REPLY_MAX_BYTES = 1024 * 1024;
+
+function reviewSerialize(s: ReviewSession): string {
+  return JSON.stringify(s, null, 2) + "\n";
+}
+
+function reviewSettled(a: ReviewAnnotation, acked: number): boolean {
+  if (a.dismissed) return true;
+  if (a.by && !a.approved) return false; // pending guest feedback: never delivered, never settled
+  return a.n <= acked;
+}
+
+/** Keep the serialized session within `budget` by evicting the OLDEST
+ * SETTLED entries (one n order across annotations and replies), recording
+ * each evicted n. Never touches a pending annotation or an unread reply, so
+ * a session that is all pending stays over budget rather than losing work.
+ * Candidate sizes are the compact form, an under-estimate of the indented
+ * file, so the loop re-measures instead of trusting one pass. */
+export function reviewBound(s: ReviewSession, budget = REVIEW_SESSION_MAX_BYTES): ReviewSession {
+  let cur = s;
+  for (;;) {
+    const over = Buffer.byteLength(reviewSerialize(cur)) - budget;
+    if (over <= 0) return cur;
+    const cands = [
+      ...cur.queue.filter((a) => reviewSettled(a, cur.acked)).map((a) => ({ n: a.n, bytes: JSON.stringify(a).length })),
+      ...cur.replies.filter((r) => r.n !== undefined && r.n <= cur.seen).map((r) => ({ n: r.n!, bytes: JSON.stringify(r).length })),
+    ].sort((x, y) => x.n - y.n);
+    const drop = new Set<number>();
+    let freed = 0;
+    for (const c of cands) {
+      if (freed >= over) break;
+      drop.add(c.n);
+      freed += c.bytes;
+    }
+    if (drop.size === 0) return cur;
+    cur = {
+      ...cur,
+      queue: cur.queue.filter((a) => !drop.has(a.n)),
+      replies: cur.replies.filter((r) => r.n === undefined || !drop.has(r.n)),
+      evicted: [...cur.evicted, ...drop].sort((x, y) => x - y),
+    };
+  }
+}
 
 /** Validate one incoming annotation body from the viewer: text required,
  * anchor optional but well-shaped when present. The one gate body->store.
@@ -4757,7 +4828,9 @@ export type ReviewAction =
   | { type: "share"; token: string; at: string; pw?: { salt: string; hash: string } }
   | { type: "unshare" }
   | { type: "approve"; n: number }
-  | { type: "dismiss"; n: number };
+  | { type: "dismiss"; n: number }
+  | { type: "ack"; after: number }
+  | { type: "seen" };
 
 /** The PNG signature (89 50 4E 47 0D 0A 1A 0A) every accepted snapshot must
  * start with - a cheap defense against a client sending non-image bytes
@@ -4824,9 +4897,21 @@ export function reviewApply(
       if (action.by) rec.by = action.by;
       return { ...s, seq: n, queue: [...s.queue, rec] };
     }
-    case "reply":
+    case "reply": {
       if (s.state === "ended") return "session ended - reopen it first";
-      return { ...s, replies: [...s.replies, { at: action.at, text: action.text }] };
+      const n = s.seq + 1;
+      return { ...s, seq: n, replies: [...s.replies, { n, at: action.at, text: action.text }] };
+    }
+    case "ack": {
+      // Clamped to seq: a cursor past the last minted n would settle records
+      // that do not exist yet.
+      const a = Math.min(Math.floor(action.after), s.seq);
+      return a > s.acked ? { ...s, acked: a } : s;
+    }
+    case "seen": {
+      const m = s.replies.reduce((top, r) => Math.max(top, r.n ?? 0), 0);
+      return m > s.seen ? { ...s, seen: m } : s;
+    }
     case "end":
       // The share token dies WITH the session: an ended review must never
       // stay reachable through an old link, and reopen does not resurrect it
@@ -4850,6 +4935,7 @@ export function reviewApply(
       // approving a captain record, a dismissed one, or one already
       // approved is a caller error, refused.
       if (s.state === "ended") return "session ended - reopen it first";
+      if (s.evicted.includes(action.n)) return s;
       const i = s.queue.findIndex((a) => a.n === action.n);
       if (i < 0) return `no annotation #${action.n}`;
       const rec = s.queue[i];
@@ -4861,6 +4947,7 @@ export function reviewApply(
     }
     case "dismiss": {
       if (s.state === "ended") return "session ended - reopen it first";
+      if (s.evicted.includes(action.n)) return s;
       const i = s.queue.findIndex((a) => a.n === action.n);
       if (i < 0) return `no annotation #${action.n}`;
       const rec = s.queue[i];
@@ -4909,32 +4996,77 @@ function reviewTarget(homePath: string, file: string): string | null {
   return underArtifactRoot(homePath, real) ? real : null;
 }
 
-function reviewLoad(homePath: string, id: string): ReviewSession {
+/** The ONE load boundary: every reader gets the full current shape (a file
+ * from before the settlement fields reads with them zeroed) and never more
+ * than the budget. The file IS the serialized form, so its byte length is
+ * the measure - a file within budget skips the re-serialization, which is
+ * what every 1s poll round lands on. */
+export function reviewLoad(homePath: string, id: string): ReviewSession {
   try {
-    const s = JSON.parse(readFileSync(`${id}.session.json`, "utf8"));
-    if (s && Array.isArray(s.queue) && typeof s.seq === "number") return s as ReviewSession;
+    const raw = readFileSync(`${id}.session.json`, "utf8");
+    const s = JSON.parse(raw);
+    if (s && Array.isArray(s.queue) && typeof s.seq === "number") {
+      const norm: ReviewSession = {
+        ...s,
+        replies: Array.isArray(s.replies) ? s.replies : [],
+        acked: Number(s.acked) || 0,
+        seen: Number(s.seen) || 0,
+        evicted: Array.isArray(s.evicted) ? s.evicted : [],
+        rev: Number(s.rev) || 0,
+      };
+      return Buffer.byteLength(raw) > REVIEW_SESSION_MAX_BYTES ? reviewBound(norm) : norm;
+    }
   } catch {
     /* fresh session */
   }
   return emptyReviewSession(id);
 }
 
-function reviewSave(homePath: string, id: string, s: ReviewSession): void {
+/** Compare-and-write on rev: false when the file moved since `s` was loaded,
+ * so the caller re-loads instead of replacing a newer session with an older
+ * one. Bounded on the way out, so the FILE never leaves the budget whatever
+ * the in-memory session grew to between load and save. */
+export function reviewSave(homePath: string, id: string, s: ReviewSession): boolean {
   const target = `${id}.session.json`;
+  let onDisk = 0;
+  try {
+    onDisk = Number(JSON.parse(readFileSync(target, "utf8")).rev) || 0;
+  } catch {
+    /* no file yet, or unreadable: reviewLoad read it as rev 0 too */
+  }
+  if (onDisk !== s.rev) return false;
   const tmp = `${target}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(s, null, 2) + "\n");
+  writeFileSync(tmp, reviewSerialize(reviewBound({ ...s, rev: s.rev + 1 })));
   renameSync(tmp, target); // atomic replace
+  return true;
 }
 
 function reviewMutate(homePath: string, id: string, action: ReviewAction): Response {
   const next = reviewApply(reviewLoad(homePath, id), action);
   if (typeof next === "string") return json({ error: next }, 409);
   try {
-    reviewSave(homePath, id, next);
+    if (!reviewSave(homePath, id, next)) return json({ error: "session changed underneath - retry" }, 409);
   } catch (e) {
     return json({ error: String(e) }, 500);
   }
   return json({ ok: true, seq: next.seq, state: next.state });
+}
+
+/** Settlement rides the READ routes - a poll's --after is the agent saying
+ * "handled through n", the captain's page fetching the session is it being
+ * shown every reply. Saved only when a cursor actually moved, and a refused
+ * or failed save is dropped: a lost cursor only delays eviction, and a read
+ * must never fail on it. */
+function reviewSettle(homePath: string, id: string, action: ReviewAction): ReviewSession {
+  const s = reviewLoad(homePath, id);
+  const next = reviewApply(s, action);
+  if (typeof next === "string" || next === s) return s;
+  try {
+    reviewSave(homePath, id, next);
+  } catch {
+    /* read path */
+  }
+  return next;
 }
 
 /** BLOCKING long-poll: hold up to 25s for an annotation newer than `after`
@@ -4943,6 +5075,7 @@ function reviewMutate(homePath: string, id: string, action: ReviewAction): Respo
  * session is atomic-replaced so a read never sees a half write. */
 async function reviewPoll(homePath: string, id: string, after: number): Promise<Response> {
   reviewWaked.delete(id);
+  reviewSettle(homePath, id, { type: "ack", after });
   reviewPollers.set(id, (reviewPollers.get(id) ?? 0) + 1);
   try {
     return await reviewPollHold(homePath, id, after);
@@ -7159,7 +7292,7 @@ export function dashboardMain() {
             // link and the Share/Stop state from it; the token itself never
             // needs a second wire shape. viewers is the live presence of that
             // share (name when the guest gave one, VPN IP always).
-            const s = reviewLoad(p, id);
+            const s = reviewSettle(p, id, { type: "seen" });
             return json({
               ...s, share: undefined,
               shareUrl: s.share ? shareLinkUrl(mainPort + 1, s.share.token) : null,
