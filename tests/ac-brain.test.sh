@@ -92,6 +92,21 @@ assert_contains "$r" "unverified working material" "non-knowledge results carry 
 assert_contains "$r" "keyword_only_no_provider" "keyless mode stamps search_degraded"
 rk="$("$BRAIN" recall --home "$AC_HOME" --query "widget lock acquired" --limit 5 --compact)"
 assert_contains "$rk" "L1-verified" "knowledge-typed results carry the L1 trust label"
+# an EMPTY query browses the store: newest-first page listing plus the count,
+# so a surface with nothing typed yet (the dashboard's Brain page) can show
+# what the brain holds instead of an empty result box
+br="$("$BRAIN" recall --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$br" | j "['page_count']")" "$(sqlite3 "$AC_HOME/state/brain.sqlite" 'SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL')" \
+  "the empty query carries the live page count"
+printf '%s' "$br" | python3 -c '
+import sys, json; d = json.load(sys.stdin); ps = d["pages"]
+assert len(ps) == min(50, d["page_count"]), "listing bounded at 50, else complete"
+for p in ps: assert all(k in p for k in ("slug", "title", "path", "mtime", "size")), p
+assert [p["mtime"] for p in ps] == sorted((p["mtime"] for p in ps), reverse=True), "newest first"
+assert all(p["size"] > 0 for p in ps), "size is the file on disk"
+' || fail "the empty-query page listing has the browse shape"
+case "$("$BRAIN" recall --home "$AC_HOME" --query "widget" --compact)" in *'"pages":'*) fail "a query never carries the browse listing" ;; esac
+
 # alias lookup reaches the aliased page
 ra="$("$BRAIN" entity widget-probe --home "$AC_HOME" --compact)"
 assert_eq "$(printf '%s' "$ra" | j "['card']['slug']")" "data/fam-two/room" "frontmatter alias resolves in entity()"

@@ -3812,7 +3812,21 @@ function pageBrain(){
       +((h.snippet)?'<div class="bh2">'+esc((h.snippet||'').slice(0,300))+'</div>':'')
       +'</div>';
     }
-  } else if(res && res.results){ s+='<div class="cfg-note">No hits for this query - try broader terms, or Ask (LLM) to compose across pages.</div>'; }
+  } else if(res && res.results && (brainQ[hp]||'')){ s+='<div class="cfg-note">No hits for this query - try broader terms, or Ask (LLM) to compose across pages.</div>'; }
+  // Nothing typed: the engine answers an empty query with a browse of the
+  // store (newest 50 pages + page_count), so the page shows what the brain
+  // holds instead of an empty box; each row deep-links into /review like a
+  // hit does.
+  var pgs=(res&&res.pages&&res.pages.length&&!(brainQ[hp]||''))?res.pages:null;
+  if(pgs){
+    s+='<h2 style="font-size:14px;margin:14px 0 6px">Pages <span class="muted" style="font-weight:400">'+esc(String(res.page_count))+' in the store, newest first</span></h2>';
+    for(var pi=0;pi<pgs.length;pi++){ var pg=pgs[pi];
+      var plink='/review?path='+enc(hp)+'&file='+enc(hp+'/'+(pg.path||''));
+      s+='<div class="brainhit"><div class="bh1"><a href="'+esc(plink)+'" target="_blank">'+esc(pg.title||pg.slug)+'</a>'
+        +'<span class="chipm">'+esc(pg.type||'')+'</span>'
+        +'<span class="ts mono" style="margin-left:auto;font-size:11px" title="'+esc(pg.path||'')+'">'+esc(pg.slug)+' \u00b7 '+esc(fmtTime(pg.mtime))+' \u00b7 '+esc(String(Math.round((pg.size||0)/102.4)/10))+' KB</span></div></div>';
+    }
+  }
   var facts=(res&&res.facts&&res.facts.length)?res.facts:null;
   if(!res){ brainSearch(); }
   if(facts){

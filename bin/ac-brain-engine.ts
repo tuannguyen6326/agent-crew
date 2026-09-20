@@ -83,6 +83,8 @@
 //   sync [--rebuild] [--dry-run] [--no-embed] [--force-reconcile] [--break-lease]
 //   recall [--query q] [--entity slug] [--agent a] [--since iso] [--limit n]
 //          [--budget-tokens n] [--no-boosts] [--deputy id]
+//          (no --query: facts plus a browse of the store - the newest 50
+//          pages as slug/title/type/family/path/mtime/size and page_count)
 //   remember <fact> --provenance p --agent a [--entity slug] [--kind k] [--ttl 30d|iso]
 //   forget <id> [--reason r]      entity <name>       links-to <target>
 //   context_pack --entities a,b [--budget-tokens n]
@@ -940,6 +942,15 @@ async function cmdRecall() {
     sql += " ORDER BY created_at DESC LIMIT ?"; p.push(limit);
     facts = db.query(sql).all(...p) as any[];
   }
+  // browse arm: nothing typed yet - what the store holds, newest first, so a
+  // surface with an empty box (the dashboard's Brain page) is not an empty
+  // answer. Size is the file on disk, the thing the reader will open.
+  let pages: any[] | undefined, page_count: number | undefined;
+  if (!q) {
+    page_count = (db.query("SELECT COUNT(*) c FROM pages WHERE deleted_at IS NULL").get() as any).c;
+    pages = (db.query("SELECT slug, title, type, family, path, mtime FROM pages WHERE deleted_at IS NULL ORDER BY mtime DESC, slug ASC LIMIT 50").all() as any[])
+      .map(r => { let size = 0; try { size = statSync(join(HOME, r.path)).size; } catch {} return { ...r, size }; });
+  }
   // search arm
   let hits: Hit[] = [], degraded: string | undefined, reranked = false, relaxedDropped = 0, boostGate: string | undefined;
   if (q) {
@@ -984,6 +995,7 @@ async function cmdRecall() {
   const ms = Math.round((performance.now() - t0) * 10) / 10;
   usageLog({ verb: "recall", q: q ?? null, entity: entity ?? null, hits: hits.length, ms });
   out({ protocol_version: 1, facts, total: facts.length, results: hits, create_safety, ...(reranked ? { reranked: true } : {}),
+    ...(pages ? { pages, page_count } : {}),
     ...(degraded ? { search_degraded: degraded } : {}),
     ...(relaxedDropped ? { relaxed_dropped: relaxedDropped } : {}),
     ...(boostGate ? { metadata_boost_gate: boostGate } : {}),
