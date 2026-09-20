@@ -1157,8 +1157,13 @@ backend_agent_blocked_herdr() {
 
 backend_agent_idle_pane_herdr() {
   # Raw-pane addressing for callers that own no state/.pane-<id> handle.
-  # Herdr's status enum is idle|working|blocked|unknown. Only `idle` answers
-  # true; an unreadable pane and every other status answer false. The meaning is
+  # Herdr's status enum is idle|working|blocked|done|unknown (AgentStatus in
+  # its api schema, carried since before 0.8.0). `idle` AND `done` answer
+  # true: herdr documents `done` as idle-but-not-yet-seen, and only an
+  # explicit `pane focus`/`agent focus` marks a pane seen - reads never do,
+  # and this fleet focuses through `tab focus` - so an unattended pane sits at
+  # `done` for good and would otherwise read as a turn that never ended. An
+  # unreadable pane and every other status answer false. The meaning is
   # caller-relative: an id-keyed running task treats idle as turn-end, while an
   # OpenCode pane with no submitted turn treats it as positive evidence that
   # herdr recognises the input surface and no turn is running. It is not a
@@ -1168,15 +1173,14 @@ backend_agent_idle_pane_herdr() {
   [ -n "$pane" ] || return 1
   out="$(herdr_cli pane get "$pane" 2>/dev/null)" || return 1
   status="$(jq -r '[.. | .agent_status? // empty] | map(select(. != "")) | first // empty' <<<"$out")"
-  [ "$status" = "idle" ]
+  [ "$status" = "idle" ] || [ "$status" = "done" ]
 }
 
 backend_agent_status_pane_herdr() {
   # Raw status enum for callers that need the VALUE, not a boolean (the
   # canonical reader is backend_agent_idle_pane's deep jq search; the old
-  # sed-over-raw-JSON copies in ac-pane-agent drifted - one consumed a
-  # `done` value the documented enum never carried). Prints the pane's
-  # agent_status or `unknown`, always exits 0.
+  # sed-over-raw-JSON copies in ac-pane-agent drifted from it). Prints the
+  # pane's agent_status or `unknown`, always exits 0.
   local pane="$1" out status
   [ -n "$pane" ] || { printf 'unknown\n'; return 0; }
   out="$(herdr_cli pane get "$pane" 2>/dev/null)" || { printf 'unknown\n'; return 0; }

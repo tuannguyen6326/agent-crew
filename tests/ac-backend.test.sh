@@ -174,6 +174,26 @@ printf 'p7 tY\n' >"$AC_HOME/state/.pane-hb2"
 run_backend herdr 'backend_agent_blocked hb1' >/dev/null || fail "blocked pane must report blocked"
 assert_fails run_backend herdr 'backend_agent_blocked hb2'
 
+# --- herdr idle predicate: `done` is idle too -----------------------------------------
+# herdr's status enum is idle|working|blocked|done|unknown, and `done` is
+# "idle, not yet marked seen" - only a focus marks a pane seen, reads never do,
+# so an unattended pane can sit at `done` forever. Treating it as not-idle
+# waited on a turn that had already ended.
+cat >"$stub/herdr" <<'EOF'
+#!/usr/bin/env bash
+echo "herdr $*" >>"$HDLOG"
+case "${1:-} ${2:-}" in
+  "pane get") printf '{"result":{"pane":{"pane_id":"%s","agent_status":"%s"}}}\n' "$3" "${3#p}" ;;
+esac
+exit 0
+EOF
+run_backend herdr 'backend_agent_idle_pane pidle' >/dev/null || fail "an idle pane must answer idle"
+run_backend herdr 'backend_agent_idle_pane pdone' >/dev/null || fail "a done pane is idle-but-unseen and must answer idle"
+assert_fails run_backend herdr 'backend_agent_idle_pane pworking'
+assert_fails run_backend herdr 'backend_agent_idle_pane pblocked'
+assert_fails run_backend herdr 'backend_agent_idle_pane punknown'
+assert_eq "$(run_backend herdr 'backend_agent_status_pane pdone')" "done" "the raw status reader passes done through unchanged"
+
 # --- herdr adopt-by-label / twin-sweep ----------------------------------------------
 # herdr_resolve_workspace: adopt the busiest workspace carrying the label,
 # sweep provably-empty twins, create only when none exists. The stubs label
