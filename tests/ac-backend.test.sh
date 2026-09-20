@@ -237,6 +237,32 @@ assert_contains "$(cat "$HDLOG")" "tab list --workspace wSMALL" "the twin sweep 
 assert_contains "$(cat "$HDLOG")" "workspace close wSMALL" "a twin holding only herdr's default tab is closed"
 rm -f "$AC_HOME/state/.pane-h5"
 
+# (b') a newer herdr refuses to close a PRIMARY workspace while its linked
+# worktree workspaces are open (workspace_group_close_required). The sweep's
+# emptiness proof read only THIS workspace's tabs, so a group close is not
+# authorized here: the refusal is warned about by name and the twin left open.
+cat >"$stub/herdr" <<'EOF'
+#!/usr/bin/env bash
+echo "herdr $*" >>"$HDLOG"
+case "${1:-} ${2:-}" in
+  "workspace list") printf '{"result":{"workspaces":[{"workspace_id":"wGRP","label":"%s · h6","tab_count":1},{"workspace_id":"wBIG","label":"%s · h6","tab_count":5}]}}\n' "$fleet" "$fleet" ;;
+  "tab list")
+    case "${4:-}" in
+      wGRP) echo '{"result":{"tabs":[{"label":"1"}]}}' ;;
+    esac ;;
+  "workspace close") echo '{"error":{"code":"workspace_group_close_required","message":"workspace has linked worktree workspaces; use --group"},"id":"cli:workspace:close"}'; exit 1 ;;
+  "tab create") echo '{"result":{"tab":{"tab_id":"tB"},"root_pane":{"pane_id":"pB"}}}' ;;
+esac
+exit 0
+EOF
+: >"$HDLOG"
+err="$(run_backend herdr 'backend_window_new h6 /tmp' 2>&1 >/dev/null)" || true
+assert_contains "$(cat "$HDLOG")" "tab create --workspace wBIG" "twin sweep: the group-close refusal never fails the spawn"
+assert_contains "$err" "workspace_group_close_required" "the refusal is logged by name instead of swallowed"
+assert_contains "$err" "wGRP" "the refusal names the workspace left open"
+case "$(cat "$HDLOG")" in *"--group"*) fail "the twin sweep must not escalate to a group close - its proof covers this workspace's tabs alone" ;; esac
+rm -f "$AC_HOME/state/.pane-h6"
+
 # --- herdr twin-sweep proof of emptiness ---------------------------------------------
 
 # (d) a twin holding a live `crew:*` tab survives the sweep - closing the
@@ -348,6 +374,33 @@ printf 'pZ wZ:tZ\n' >"$AC_HOME/state/.pane-h12"
 run_backend herdr 'backend_kill_window h12' >/dev/null 2>&1
 assert_contains "$(cat "$HDLOG")" "workspace close wZ" "a last-tab refusal on an otherwise-empty workspace closes the workspace"
 assert_no_file "$AC_HOME/state/.pane-h12" "handle removed with the fallback close"
+
+# A newer herdr refuses that workspace close with workspace_group_close_required
+# when the workspace heads a linked-worktree group; the fallback retries with
+# --group. The retry is gated on that exact refusal and never on a version
+# probe: the installed 0.8.0 CLI rejects --group as a usage error (rc 2) and
+# never emits the refusal, so it never sees the flag.
+cat >"$stub/herdr" <<'EOF'
+#!/usr/bin/env bash
+echo "herdr $*" >>"$HDLOG"
+case "${1:-} ${2:-}" in
+  "tab get") echo '{"result":{"tab":{"tab_id":"tG","label":"crew:h14"}}}' ;;
+  "tab close") exit 1 ;;
+  "tab list") echo '{"result":{"tabs":[{"tab_id":"wG:tG","label":"crew:h14"}]}}' ;;
+  "workspace close")
+    case "${4:-}" in
+      --group) exit 0 ;;
+      *) echo '{"error":{"code":"workspace_group_close_required","message":"workspace has linked worktree workspaces; use --group"},"id":"cli:workspace:close"}'; exit 1 ;;
+    esac ;;
+esac
+exit 0
+EOF
+printf 'pG wG:tG\n' >"$AC_HOME/state/.pane-h14"
+: >"$HDLOG"
+run_backend herdr 'backend_kill_window h14' >/dev/null 2>&1
+assert_contains "$(cat "$HDLOG")" "workspace close wG --group" "the last-tab fallback retries a group-close refusal with --group"
+assert_eq "$(grep -c 'workspace close wG' "$HDLOG")" "2" "the plain close is tried first, --group only on the refusal"
+assert_no_file "$AC_HOME/state/.pane-h14" "handle removed with the group close"
 
 # ...but never while another real tab lives in the workspace.
 cat >"$stub/herdr" <<'EOF'

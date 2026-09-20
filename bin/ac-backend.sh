@@ -236,7 +236,11 @@
 # provably holds nothing else real (this tab and default "1" tabs alone);
 # a workspace holding another labelled tab, or one whose tab list cannot be
 # read, is warned about and left open. Fail closed: an unknown answer never
-# authorizes a close.
+# authorizes a close. A newer herdr refuses to close a workspace heading a
+# linked-worktree group (`workspace_group_close_required`); every workspace
+# close here goes through herdr_ws_close, which names that refusal in a
+# warning instead of swallowing it, and ONLY this fallback retries it with
+# `--group` - the sweeps' emptiness proofs cover one workspace's tabs alone.
 #
 # Delivery verification: herdr's `pane send-keys enter` needs FOCUS - on an
 # unfocused pane it exits 0 and does NOTHING, so a blind send strands its text
@@ -791,6 +795,30 @@ herdr_ws_tabs_state() {
   printf '%s\n' "$state"
 }
 
+herdr_ws_close() {
+  # herdr_ws_close <ws> [group] - best-effort workspace close, exit 0 always.
+  # Newer herdr refuses to close a PRIMARY workspace while its linked-worktree
+  # workspaces are open (`workspace_group_close_required`; a `--group` close
+  # takes the whole group). That refusal is surfaced by name rather than
+  # swallowed, and retried with --group ONLY when the caller passes `group` -
+  # the last-tab fallback, whose caller already proved the workspace empty.
+  # The retry keys on the refusal itself, never on a version probe: the
+  # installed 0.8.0 CLI rejects --group as a usage error and never emits the
+  # refusal, so on it the flag is never sent.
+  local ws="$1" out
+  out="$(herdr_cli workspace close "$ws" 2>&1)" && return 0
+  case "$out" in
+    *workspace_group_close_required*)
+      if [ "${2:-}" = group ]; then
+        herdr_cli workspace close "$ws" --group >/dev/null 2>&1 && return 0
+        ac_warn "workspace $ws refused workspace_group_close_required and the --group retry failed too - close it by hand"
+      else
+        ac_warn "workspace $ws left open: herdr refused the close with workspace_group_close_required (it heads a linked-worktree group, which this sweep is not authorized to close)"
+      fi ;;
+  esac
+  return 0
+}
+
 herdr_resolve_workspace() {
   # herdr_resolve_workspace <label> - THE workspace carrying <label>, printed
   # as its id: adopt the busiest existing one, sweep provably-empty twins
@@ -808,7 +836,7 @@ herdr_resolve_workspace() {
   while IFS= read -r t; do
     [ -n "$t" ] && [ "$t" != "$ws" ] || continue
     case "$(herdr_ws_tabs_state "$t")" in
-      empty) herdr_cli workspace close "$t" >/dev/null 2>&1 ;;
+      empty) herdr_ws_close "$t" ;;
       nonempty) ac_warn "twin workspace $t left open: it holds a tab other than herdr's default '1' - closing the workspace would take that tab with it" ;;
       *) ac_warn "twin workspace $t left open: its tab list could not be read - a close cannot be proven safe" ;;
     esac
@@ -854,7 +882,7 @@ herdr_sweep_legacy_groups() {
   while IFS= read -r t; do
     [ -n "$t" ] || continue
     if [ "$(herdr_ws_tabs_state "$t")" = "empty" ]; then
-      herdr_cli workspace close "$t" >/dev/null 2>&1 || true
+      herdr_ws_close "$t"
     fi
   done
   return 0
@@ -1144,7 +1172,7 @@ backend_kill_window_herdr() {
                   then "closeable" else "occupied" end)
             else "unreadable" end' 2>/dev/null || true)"
         case "$tabs_left" in
-          closeable) herdr_cli workspace close "$ws" >/dev/null 2>&1 || true ;;
+          closeable) herdr_ws_close "$ws" group ;;
           occupied) ac_warn "tab $tab of $id refused to close and its workspace $ws holds other live tabs - close the tab by hand" ;;
           *) ac_warn "tab $tab of $id refused to close and workspace $ws could not be read - close the tab by hand" ;;
         esac
