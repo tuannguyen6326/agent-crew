@@ -33,8 +33,13 @@
 #                                   diagnostic only, never sets rc
 #
 # --quiet suppresses OK lines (problems only). Exit 1 ONLY when a REQUIRED
-# tool is missing or the herdr protocol-compat check below fails; auth
-# gaps, INERT and CHECK-FAILED are advisory and never affect the exit code.
+# tool is missing, the backend protocol-compat check below fails, or that
+# check's status probe does not answer within its ceiling; auth gaps, INERT
+# and CHECK-FAILED are advisory and never affect the exit code.
+#
+# Knobs: AC_BOOTSTRAP_PROBE_TIMEOUT (seconds, default 10) bounds the backend
+# status probe (probe_bounded below); 0 runs it unbounded, the pre-ceiling
+# shape, for a host whose backend is known slow rather than wedged.
 #
 # Every tool this doctor checks (need()/opt()/the gh block below) is also
 # probed for PATH shadowing there - one call site, so the shadowed-tool set
@@ -281,6 +286,11 @@ probe_bounded() {
 }
 probe_secs="${AC_BOOTSTRAP_PROBE_TIMEOUT:-10}"
 case "$probe_secs" in ''|*[!0-9]*) probe_secs=10 ;; esac
+if [ "$probe_secs" = 0 ]; then
+  # 0 is "no ceiling", never "a ceiling of nothing": an instant-answering
+  # backend measurably lost the race to a 0s deadline and read as wedged.
+  probe_bounded() { shift; "$@"; }
+fi
 
 if [ "$backend" = herdr ]; then
   probe_rc=0

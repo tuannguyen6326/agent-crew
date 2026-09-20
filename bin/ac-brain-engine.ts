@@ -329,11 +329,11 @@ const EMBED_TIMEOUT_MS = (Number(process.env.AC_BRAIN_EMBED_TIMEOUT) > 0
 // read exactly once, right where the loop stops.
 let embedError: string | undefined;
 async function embedBatch(texts: string[], cfg: EmbedCfg): Promise<Float32Array[] | null> {
+  embedError = undefined;
   const key = embedKey(cfg);
   if (!key) return null;
   if (cfg.provider === "stub") return texts.map(t => stubVec(t, cfg.dims));
   const url = providerBase(cfg.provider, cfg.base_url) + "/embeddings";
-  embedError = undefined;
   try {
     const r = await fetch(url, {
       method: "POST",

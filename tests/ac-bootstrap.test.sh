@@ -135,6 +135,10 @@ out="$(PATH="$TMP/compat:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)"
 case "$out" in *"MISSING: herdr"*) fail "a compatible server must not be flagged" ;; esac
 out="$(PATH="$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)"   # the fake herdr answers status server with nothing
 case "$out" in *"MISSING: herdr"*) fail "an unreadable answer is not evidence of a mismatch" ;; esac
+# ...and 0 means UNBOUNDED, never a 0s ceiling: an instant backend under
+# AC_BOOTSTRAP_PROBE_TIMEOUT=0 measurably lost the race and read as wedged.
+out="$(AC_BOOTSTRAP_PROBE_TIMEOUT=0 PATH="$TMP/compat:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || true
+case "$out" in *"did not answer"*) fail "a 0 ceiling must disable the bound, not fire it instantly: $out" ;; esac
 
 # --- PATH-shadow probe (installed but inert) --------------------------------
 #

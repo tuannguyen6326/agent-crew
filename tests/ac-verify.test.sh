@@ -1917,7 +1917,7 @@ assert_no_file "$TMP/stale-verdict.json" "a refused round writes no verdict"
 # to return through a reap that never touched it - reparented to pid 1 and
 # polling on to its own AC_VERIFY_SCOUT_TIMEOUT+60 ceiling. A subshell wears its
 # parent's argv, which is exactly what makes the orphan findable.
-verify_orphans="$(pgrep -f 'ac-verify.sh codereview --repo' 2>/dev/null || true)"
+verify_orphans="$(pgrep -f "ac-verify.sh codereview .*--family $scout_family" 2>/dev/null || true)"
 [ -z "$verify_orphans" ] \
   || fail "a refused round left its scout harvester running (pids: $verify_orphans)"
 

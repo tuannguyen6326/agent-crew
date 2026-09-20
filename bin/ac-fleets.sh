@@ -207,8 +207,10 @@ emit_home() {
       else
         crew_count=$((crew_count + 1))
         # AGENTS.md:1055 - a kind=self meta is LISTED (crew_count) but owes no
-        # watcher coverage, so the supervision predicate counts it apart.
-        ac_meta_is_self "$meta" || supervised_count=$((supervised_count + 1))
+        # watcher coverage, so the supervision predicate counts it apart. Read
+        # off the kind already in hand: ac_meta_is_self would fork a second awk
+        # per meta on the path every dashboard refresh walks (measured 2.25ms).
+        [ "$kind" = self ] || supervised_count=$((supervised_count + 1))
         crew_lines="${crew_lines}${row}
 "
         [ "$mode" = json ] && crew_tasks_json="$(jq -c --argjson r "$row_json" '. + [$r]' <<<"$crew_tasks_json")"
@@ -283,7 +285,13 @@ emit_home() {
     watcher="down (no beacon)"
   fi
   if [ "$supervised_count" -eq 0 ]; then
-    case "$watcher" in down*) watcher="$watcher - no crew in flight" ;; esac
+    # The qualifier names the predicate it reads, so a block that lists a
+    # self task two lines up never denies it in the next line.
+    if [ "$crew_count" -eq 0 ]; then
+      case "$watcher" in down*) watcher="$watcher - no crew in flight" ;; esac
+    else
+      case "$watcher" in down*) watcher="$watcher - no supervised crew in flight ($crew_count self task(s) owe none)" ;; esac
+    fi
   fi
   case "$watcher" in armed*) w_state=armed ;; *) w_state=down ;; esac
 
@@ -533,8 +541,9 @@ if [ "$mode" = json ]; then
   # accounting) - every home object, crewdeputies included, has a "crew" key.
   # watchers_down is the COVERAGE-GAP alarm (supervised crew in flight AND
   # watcher down), not every idle beaconless home - and `supervised` is what it
-  # reads, since a self task is listed in `count` and owes no coverage. learning_due/curate_due COUNT the homes whose
-  # own `cadence.*.due` flag is already set - the >= compare stays in bash above,
+  # reads, since a self task is listed in `count` and owes no coverage.
+  # learning_due/curate_due COUNT the homes whose own `cadence.*.due` flag is
+  # already set - the >= compare stays in bash above,
   # here it is only a tally of booleans (same shape as watchers_down).
   totals_json="$(jq -c '
     [.. | objects | select(has("crew"))] as $all

@@ -349,6 +349,21 @@ assert_contains "$err" "TRUNCATED" \
 assert_contains "$err" "$(printf '%s' "$sent_head$sent_tail" | wc -c | tr -d ' ')" \
   "the refusal gives the sent size, so the reader can judge without peeking"
 
+# Two edges the shape test must survive: a steer that ENDS IN A NEWLINE
+# (the transcript reader strips it from what arrived, so the raw suffix test
+# would call a truncation "a DIFFERENT text"), and a non-ASCII steer, whose
+# sizes must be characters - a byte count of a Vietnamese line runs ~20% high.
+sid_nl="abababab-abab-abab-abab-abababababab"
+mk_claude_crewmate cnl pCNL tCNL "$sid_nl"
+nl_head="Đọc ba finding trong room trước, rồi"
+nl_tail=" chạy lại suite và báo cáo"
+mk_turn "$sid_nl" "$nl_tail"
+err="$("$BIN/ac-send.sh" cnl "$nl_head$nl_tail
+" 2>&1)" && fail "a truncated newline-terminated arrival must still be refused"
+assert_contains "$err" "TRUNCATED" "a trailing newline on the sent text does not turn a truncation into a different text"
+assert_contains "$err" "sent $(printf '%s' "$nl_head$nl_tail" | wc -m | tr -d ' ') chars" \
+  "the sent size is counted in characters, not bytes"
+
 # A genuinely DIFFERENT arrival is not a truncation and must not be described
 # as one - a wrong message and a cut message need different next moves.
 sid_other="ffffffff-ffff-ffff-ffff-ffffffffffff"

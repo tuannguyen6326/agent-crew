@@ -1168,8 +1168,7 @@ cmd_note() {
   # at end-of-file is deleted by the next transaction. This carries no opinion
   # about the lesson's own shape - the caller writes the ledger's existing
   # convention, and every input line is reproduced exactly once. What it DOES
-  # refuse is argv shaped like a flag it never defined; `reinforce` already
-  # carries that guard and `note` was the one verb in this script without it.
+  # refuse is argv shaped like a flag it never defined.
   local ledger tmp lines line lock
   [ "$#" -gt 0 ] \
     || ac_die "usage: ac-learn.sh note <line>... (each argument is appended verbatim as one line under '## Pending')"

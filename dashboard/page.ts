@@ -1254,7 +1254,7 @@ function blockedCount(h){
 }
 function needsAttention(h){
   return (h.inbox && (h.inbox.pending>0 || h.inbox.handback>0)) ||
-         (h.watcher && h.watcher.state!=='armed' && h.crew && h.crew.count>0) ||
+         (h.watcher && h.watcher.state!=='armed' && supervisedCrew(h)>0) ||
          blockedCount(h)>0;
 }
 
@@ -1521,8 +1521,15 @@ function reloadViewer(){
 // ===========================================================================
 // Shell rendering (nav / health / header) - updated in place, never rebuilt.
 // ===========================================================================
+// crew.supervised is crew.count minus the kind=self metas (bin/ac-fleets.sh:
+// a self task is LISTED and owes no watcher coverage). An older cached snapshot
+// carries no such key and falls back to count, exactly as this page read it.
+function supervisedCrew(h){
+  if(!h.crew) return 0;
+  return (h.crew.supervised==null) ? (h.crew.count||0) : h.crew.supervised;
+}
 function statusDot(h){
-  if(h.watcher && h.watcher.state!=='armed' && h.crew && h.crew.count>0) return 'err';
+  if(h.watcher && h.watcher.state!=='armed' && supervisedCrew(h)>0) return 'err';
   if(needsAttention(h)) return 'warn';
   if(h.crew && h.crew.count>0) return 'ok';
   return 'idle';

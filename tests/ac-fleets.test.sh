@@ -494,7 +494,7 @@ printf 'kind=self\nproject=agent-crew\nmode=local-only\nwindow=w2\nbackend=herdr
 out_self="$(fleets "$sc")"
 assert_contains "$out_self" "crew    : 2 in flight" "a self task stays in ACCOUNTING (crew count lists it)"
 assert_contains "$out_self" "slice-one" "the self task row is rendered"
-assert_contains "$out_self" "no crew in flight"   "a home whose in-flight set is all self tasks owes no watcher coverage"
+assert_contains "$out_self" "no supervised crew in flight (2 self task(s) owe none)"   "a home whose in-flight set is all self tasks owes no watcher coverage"
 sj="$(fleets --json "$sc")"
 assert_eq "$(jq -r '.homes[] | select(.name=="selfhome") | .crew.count' <<<"$sj")" "2"   "--json crew.count still counts the rows it lists"
 assert_eq "$(jq -r '.homes[] | select(.name=="selfhome") | .crew.supervised' <<<"$sj")" "0"   "--json crew.supervised excludes self metas"
@@ -504,7 +504,7 @@ assert_eq "$(jq -r '.totals.watchers_down' <<<"$sj")" "0"   "--json watchers_dow
 # beside the self tasks and the same down watcher IS a coverage gap.
 printf 'kind=ship\nproject=agent-crew\nbackend=herdr\n' >"$sc/selfhome/state/real-crew.meta"
 out_mixed="$(fleets "$sc")"
-case "$out_mixed" in *"no crew in flight"*) fail "a real crewmate beside self tasks must not read as benign" ;; esac
+case "$out_mixed" in *"crew in flight ("*|*"no crew in flight"*) fail "a real crewmate beside self tasks must not read as benign" ;; esac
 mj="$(fleets --json "$sc")"
 assert_eq "$(jq -r '.homes[] | select(.name=="selfhome") | .crew.supervised' <<<"$mj")" "1"   "--json crew.supervised counts the real crewmate"
 assert_eq "$(jq -r '.totals.watchers_down' <<<"$mj")" "1"   "--json watchers_down alarms once a supervised task is in flight"

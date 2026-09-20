@@ -117,20 +117,23 @@ set -euo pipefail
 [ ! -x "$(dirname "$0")/ac-guard.sh" ] || "$(dirname "$0")/ac-guard.sh" || true  # warn-only advisory
 
 ac_arrival_refusal() {
-  # ac_arrival_refusal <id> <sent> - the REFUTED refusal, naming what landed.
-  # A bare "it did not match" sends the reader to peek the pane, and a steer
-  # truncated to its TAIL renders there exactly like a delivered one - measured
-  # five times, and three of those peeks were read as proof of landing. So the
-  # sizes and the SHAPE are stated here instead: a strict suffix is the
-  # transport cutting the head, which is a different next move from a wrong
-  # message arriving whole.
-  local id="$1" sent="$2" got="${AC_ARRIVAL_LAST:-}" shape
-  if [ -n "$got" ] && [ "${sent%"$got"}" != "$sent" ]; then
+  # ac_arrival_refusal <id> <sent> - the REFUTED refusal, naming what landed
+  # (the measurement and the why are in the header's ARRIVAL paragraph). A
+  # strict suffix is the transport cutting the head, a different next move
+  # from a wrong message arriving whole. The transcript reader strips trailing
+  # newlines from what arrived, so a sent text ending in one is compared
+  # without it - or every multi-line steer would read as "a DIFFERENT text".
+  # Sizes are CHARACTERS (wc -m): captain-facing steers are routinely
+  # non-ASCII, and a byte count inflates one side of the ratio the reader is
+  # meant to judge by.
+  local id="$1" sent="$2" got="${AC_ARRIVAL_LAST:-}" shape body
+  body="${sent%$'\n'}"
+  if [ -n "$got" ] && [ "${body%"$got"}" != "$body" ]; then
     shape="TRUNCATED TO ITS TAIL - the head was cut in transport, and the pane renders the remainder exactly like a delivered message. Write the instruction to a file and send a SHORT pointer to it instead of resubmitting"
   else
     shape="a DIFFERENT text is in the composer, not a cut one - peek it (bin/ac-peek.sh $id) before resubmitting, since the composer already accepted SOMETHING"
   fi
-  ac_die "arrival REFUTED for $id - sent $(printf '%s' "$sent" | wc -c | tr -d ' ') chars, arrived $(printf '%s' "$got" | wc -c | tr -d ' '): $shape"
+  ac_die "arrival REFUTED for $id - sent $(printf '%s' "$body" | wc -m | tr -d ' ') chars, arrived $(printf '%s' "$got" | wc -m | tr -d ' '): $shape"
 }
 
 id="${1:-}"; shift || true
