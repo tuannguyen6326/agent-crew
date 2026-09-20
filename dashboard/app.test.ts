@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, reviewFrameHeaders } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, reviewFrameHeaders } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -3114,6 +3114,30 @@ test("pastedPngFile returns null for a non-PNG image, a non-file item, or an emp
   expect(pastedPngFile([])).toBeNull();
   expect(pastedPngFile(null)).toBeNull();
   expect(pastedPngFile(undefined)).toBeNull();
+});
+
+// Escape on the annotation composer used to hide the card unconditionally -
+// the typed text survived (ctext is cleared only after a successful send) but
+// the pasted image was dropped by the next pin, and the captain had no signal
+// either way. Escape now closes only an EMPTY card; anything typed or pasted
+// needs the deliberate Cancel. An IME's own Escape (cancelling a candidate)
+// is not a request to close the card.
+test("composerEscapeCloses: only an empty composer with no pending image closes on Escape", () => {
+  expect(composerEscapeCloses("", false, false)).toBe(true);
+  expect(composerEscapeCloses("   \n", false, false)).toBe(true);
+  expect(composerEscapeCloses("a note", false, false)).toBe(false);
+  expect(composerEscapeCloses("", true, false)).toBe(false);
+  expect(composerEscapeCloses("", false, true)).toBe(false);
+});
+
+test("review chrome routes the composer's Escape through composerEscapeCloses with the live text, image and IME state", () => {
+  const src = readFileSync(new URL("./app.ts", import.meta.url), "utf8");
+  const handler = src.slice(src.indexOf('getElementById("ctext").addEventListener("keydown"'));
+  const line = handler.slice(0, handler.indexOf("\n});"));
+  expect(line).toContain("composerEscapeCloses(");
+  expect(line).toContain("pendingCImage");
+  expect(line).toContain("e.isComposing");
+  expect(line).not.toMatch(/Escape"\) composer\.style\.display = "none"/);
 });
 
 test("reviewApply attaches an image field to the queued record only when the action carries one", () => {

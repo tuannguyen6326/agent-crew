@@ -5364,6 +5364,15 @@ export function pastedPngFile(
   return null;
 }
 
+/** Escape on the annotation composer closes it only when nothing would be
+ * lost: text or a pasted image is the captain's work, and Cancel is the
+ * deliberate way to drop it. An IME's own Escape (cancelling a candidate)
+ * never reaches the card. Pure. */
+export function composerEscapeCloses(text: string, hasImage: boolean, composing: boolean): boolean {
+  if (composing) return false;
+  return text.trim() === "" && !hasImage;
+}
+
 /** The review page: artifact in a sandboxed srcdoc iframe (content via the
  * existing path-safe /api/artifact route) with an injected overlay - hover
  * highlight, click-to-pin - and a side panel fed from the session file.
@@ -5554,6 +5563,7 @@ let pendingAnchor = null, lastMtime = 0, anchorState = {}, lastSig = "", DIAGRAM
 ${reviewShouldRemount.toString()}
 ${buildReviewSrcdoc.toString()}
 ${pastedPngFile.toString()}
+${composerEscapeCloses.toString()}
 // The iframe's own reader stylesheet, baked once server-side (review-page-missing-markdown-table-css):
 // THEME_VARS for the color tokens, a base body reset mirroring PAGE's own
 // plain body rule (the iframe has no ancestor document to inherit one from),
@@ -6203,7 +6213,7 @@ document.getElementById("ccancel").addEventListener("click", () => {
 });
 document.getElementById("ctext").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); document.getElementById("csend").click(); }
-  if (e.key === "Escape") composer.style.display = "none";
+  if (e.key === "Escape" && composerEscapeCloses(e.target.value, !!pendingCImage, e.isComposing)) composer.style.display = "none";
 });
 document.getElementById("csend").addEventListener("click", async () => {
   const text = document.getElementById("ctext").value.trim();
