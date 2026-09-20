@@ -36,7 +36,10 @@
 //   near-ties, never graded relevance. An arm that relaxed AND->OR votes
 //   only when no vector list exists (its rows are dropped otherwise, counted
 //   as `relaxed_dropped`; carried on a vector-enabled run whose arm came
-//   back empty, `search_degraded` adds `keyword_relaxed_carried`).
+//   back empty, `search_degraded` adds `keyword_relaxed_carried`). The
+//   backlink and recency boosts are page metadata, not relevance: they apply
+//   only once a keyword or title row reached fusion, and the response stamps
+//   `metadata_boost_gate` applied|lexical (lexical = skipped, vector-only).
 // - Every result carries its home-relative path, an evidence stamp, and the
 //   response carries create_safety - recall must never lose to grep on
 //   citability.
@@ -692,7 +695,7 @@ function ftsQuery(q: string) {
 }
 type Hit = { slug: string; title?: string; family?: string; type?: string; path?: string; score: number; evidence: string; snippet?: string; trust?: string; origin?: string };
 
-async function searchArm(db: Database, q: string, limit: number, boosts: boolean, useVector = true): Promise<{ hits: Hit[]; degraded?: string; relaxed_dropped?: number }> {
+async function searchArm(db: Database, q: string, limit: number, boosts: boolean, useVector = true): Promise<{ hits: Hit[]; degraded?: string; relaxed_dropped?: number; metadata_boost_gate?: string }> {
   const { and, or, terms } = ftsQuery(q);
   if (!terms.length) return { hits: [] };
   if (terms.length >= 5) boosts = false; // intent: content-lookup - graded BM25 must not be reordered
@@ -786,6 +789,11 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
   }
   const now = Date.now();
   const ql = q.toLowerCase();
+  // Backlinks and recency describe the PAGE, not the question: on an answer
+  // only the vector arm produced they pulled a fresh hub page above a closer
+  // match, so they wait for a lexical row in fusion. The title/slug evidence
+  // boosts below are lexical by nature and stay unconditional.
+  const metaBoosts = boosts && (kw.length > 0 || titleArm.length > 0);
   const hits: Hit[] = [...fused.entries()].map(([slug, e]) => {
     const m = meta.get(slug) || {};
     // The "vector" label is earned by the REAL cosine, never by a normalized
@@ -795,10 +803,12 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
     let score = e.score, evidence = "keyword";
     if (vecScores.has(slug) && !kw.some(r => r.slug === slug))
       evidence = (vecScores.get(slug)! >= 0.8) ? "vector" : "vector_weak";
-    if (boosts) {
+    if (metaBoosts) {
       score *= 1 + 0.02 * Math.log(1 + (m.backlinks || 0));
       const days = (now - (m.mtime || now)) / 86400000;
       score *= 1 + 0.08 * (30 / (30 + days));
+    }
+    if (boosts) {
       const tl = (m.title || "").toLowerCase();
       if (tl && (tl === ql || tl.includes(ql))) { score *= 1.15; evidence = "title_phrase"; }
       if (slug.toLowerCase().includes(ql.replace(/\s+/g, "-"))) { score *= 1.3; evidence = "slug_match"; }
@@ -809,7 +819,8 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
       : m.type === "learned" ? "L3-promoted" : "unverified working material";
     return { slug, title: m.title, family: m.family, type: m.type, path: m.path, score, evidence, snippet: e.snip, trust };
   }).sort((a, b) => b.score - a.score).slice(0, limit);
-  return { hits, degraded, ...(relaxedDropped ? { relaxed_dropped: relaxedDropped } : {}) };
+  return { hits, degraded, ...(relaxedDropped ? { relaxed_dropped: relaxedDropped } : {}),
+    ...(boosts && hits.length ? { metadata_boost_gate: metaBoosts ? "applied" : "lexical" } : {}) };
 }
 
 // Seconds, AC_BRAIN_RERANK_TIMEOUT to override; 10 rather than the embed
@@ -891,10 +902,10 @@ async function cmdRecall() {
     facts = db.query(sql).all(...p) as any[];
   }
   // search arm
-  let hits: Hit[] = [], degraded: string | undefined, reranked = false, relaxedDropped = 0;
+  let hits: Hit[] = [], degraded: string | undefined, reranked = false, relaxedDropped = 0, boostGate: string | undefined;
   if (q) {
     const r = await searchArm(db, q, limit, !flag("no-boosts"));
-    hits = r.hits; degraded = r.degraded; relaxedDropped = r.relaxed_dropped ?? 0;
+    hits = r.hits; degraded = r.degraded; relaxedDropped = r.relaxed_dropped ?? 0; boostGate = r.metadata_boost_gate;
     const rr = await rerankHits(q, hits);
     hits = rr.hits;
     if (rr.reranked) reranked = true;
@@ -936,6 +947,7 @@ async function cmdRecall() {
   out({ protocol_version: 1, facts, total: facts.length, results: hits, create_safety, ...(reranked ? { reranked: true } : {}),
     ...(degraded ? { search_degraded: degraded } : {}),
     ...(relaxedDropped ? { relaxed_dropped: relaxedDropped } : {}),
+    ...(boostGate ? { metadata_boost_gate: boostGate } : {}),
     ...(budget ? { budget_tokens: budget, budget_used, dropped_count: dropped } : {}), ms });
 }
 // deputy read-only arm: keyword-only (a deputy's embedding config is its own)

@@ -87,5 +87,32 @@ assert_contains "$cr" "keyword_only_no_api_key" "the vector arm's own cause is s
 assert_contains "$cr" "keyword_relaxed_carried" "...and the carried relaxed rows are stamped beside it"
 assert_contains "$cr" "data/alpha/room" "...while the relaxed rows still answer"
 rm -f "$AC_HOME/config/brain.json"
+rm -rf "$AC_HOME/data/alpha" "$AC_HOME/data/beta" "$AC_HOME/data/gamma"
+
+# --- metadata boosts wait for a lexical signal ---------------------------------
+# The query shares no token with any page, so only the vector arm votes: the
+# provider places LEAF closest and HUB a near-tie behind it. HUB is then made
+# the fleet's hub page - hundreds of backlinks, touched today - while LEAF is
+# a year old. Those boosts are metadata about the page, not about the
+# question; on a vector-only answer they pulled the hub above the better
+# match, so they apply only once a keyword or title row reached fusion.
+mkdir -p "$AC_HOME/data/hub" "$AC_HOME/data/leaf" "$AC_HOME/data/decoy"
+printf '# Hub\nThe hubpage body that every family room links back to daily.\n' >"$AC_HOME/data/hub/room.md"
+printf '# Leaf\nThe leafpage body nobody links to, about one narrow topic.\n' >"$AC_HOME/data/leaf/room.md"
+printf '# Decoy\nThe decoypage body anchors the bottom of the vector list.\n' >"$AC_HOME/data/decoy/room.md"
+RULES='{"dims":8,"rules":[["zzq",[1,0,0,0,0,0,0,0]],["leafpage",[0.995,0.0998,0,0,0,0,0,0]],["hubpage",[0.96,0.28,0,0,0,0,0,0]],["decoypage",[0,1,0,0,0,0,0,0]]]}'
+stub_up "$RULES" 8
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+now_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
+sqlite3 "$AC_HOME/state/brain.sqlite" "UPDATE pages SET backlinks=500, mtime=$now_ms WHERE slug='data/hub/room';
+  UPDATE pages SET backlinks=0, mtime=$now_ms - 400*86400000 WHERE slug='data/leaf/room'"
+vo="$("$BRAIN" recall --query "zzq" --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$vo" | j "['results'][0]['slug']")" "data/leaf/room" \
+  "vector-only: the closer match leads; backlinks and recency do not reorder it"
+assert_eq "$(printf '%s' "$vo" | j "['metadata_boost_gate']")" "lexical" "...and the skipped gate is stamped"
+lx="$("$BRAIN" recall --query "hubpage" --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$lx" | j "['metadata_boost_gate']")" "applied" "a lexical hit applies the boosts as before"
+stub_down
+rm -f "$AC_HOME/config/brain.json"
 
 pass
