@@ -6,8 +6,11 @@
 // facts ledger (state/facts.md), exposed as memory verbs over a JSON CLI and
 // an optional MCP stdio surface. Markdown stays the system of record for
 // every data class: pages/chunks/links/aliases are DERIVED (sync owns them,
-// `sync --rebuild` drops and rebuilds them), and facts are replayed from the
-// append-only state/facts.md ledger, so the DB is disposable by construction.
+// `sync --rebuild` drops and rebuilds them - re-attaching every vector whose
+// chunk text hash, model and width still match the configured lane, so an
+// unchanged corpus rebuilds with zero embedding calls and the dims guard's
+// remedy IS that rebuild), and facts are replayed from the append-only
+// state/facts.md ledger, so the DB is disposable by construction.
 //
 // INVARIANTS (each carries its own reason):
 // - PRAGMA busy_timeout is set BEFORE journal_mode=WAL on every open: the
@@ -169,6 +172,12 @@ function migrate(db: Database) {
   db.run(`CREATE TABLE IF NOT EXISTS shadows(path TEXT PRIMARY KEY, mtime REAL, hash TEXT, canonical_slug TEXT)`);
   db.run(`CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, slug TEXT, ord INTEGER, text TEXT,
     embedding BLOB, embedded_at TEXT)`);
+  // Vector provenance (text_hash, embed_model, embed_dims): what a rebuild
+  // needs to re-attach a vector instead of re-embedding it. Same idempotent
+  // ALTER as deleted_at; a row embedded before these columns existed carries
+  // NULLs, cannot be proven current, and re-embeds once.
+  for (const col of ["text_hash TEXT", "embed_model TEXT", "embed_dims INTEGER"])
+    try { db.run(`ALTER TABLE chunks ADD COLUMN ${col}`); } catch {}
   db.run(`CREATE INDEX IF NOT EXISTS idx_chunks_slug ON chunks(slug)`);
   db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text, title, slug UNINDEXED, tokenize='porter unicode61')`);
   db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(title, aliases, slug UNINDEXED, tokenize='porter unicode61')`);
@@ -480,8 +489,20 @@ function cmdSync() {
 }
 function syncInner(db: Database, t0: number) {
   const dry = flag("dry-run");
-  if (flag("rebuild") && !dry)
+  const rebuild = flag("rebuild") && !dry;
+  const ec = embedCfg();
+  if (rebuild) {
+    // A rebuild drops the derived tables, not the lane's work: a vector whose
+    // chunk text, model and width still match the configured lane rides a
+    // temp table across the drop and is re-attached below by text hash, so an
+    // unchanged corpus rebuilds with zero provider calls.
+    db.run("DROP TABLE IF EXISTS temp.kept_vectors");
+    if (ec) {
+      db.run("CREATE TEMP TABLE kept_vectors AS SELECT text_hash, embedding FROM chunks WHERE embedding IS NOT NULL AND text_hash IS NOT NULL AND embed_model=? AND embed_dims=?", [ec.model, ec.dims]);
+      db.run("CREATE INDEX temp.idx_kept_vectors ON kept_vectors(text_hash)");
+    }
     for (const t of ["pages", "shadows", "chunks", "chunks_fts", "pages_fts", "links", "aliases"]) db.run(`DELETE FROM ${t}`);
+  }
   const cfg = loadCfg();
   const excludes = new Set<string>(cfg.excludes || ["state", "logs", "whiteboards", "skills-archive", "scenes-archive", "node_modules", ".git", ".crew"]);
   const files: string[] = [];
@@ -545,7 +566,7 @@ function syncInner(db: Database, t0: number) {
       db.run(`INSERT OR REPLACE INTO pages(slug,title,type,family,path,mtime,hash,updated_at,backlinks,flags) VALUES(?,?,?,?,?,?,?,?,0,?)`,
         [it.slug, it.title, it.type, it.family, it.path, it.mtime, it.hash, it.updated, it.flags]);
       it.chunks.forEach((c, i) => {
-        db.run("INSERT INTO chunks(slug,ord,text) VALUES(?,?,?)", [it.slug, i, c]);
+        db.run("INSERT INTO chunks(slug,ord,text,text_hash) VALUES(?,?,?,?)", [it.slug, i, c, new Bun.CryptoHasher("sha256").update(c).digest("hex")]);
         db.run("INSERT INTO chunks_fts(text,title,slug) VALUES(?,?,?)", [c, it.title, it.slug]);
       });
       db.run("INSERT INTO pages_fts(title,aliases,slug) VALUES(?,?,?)", [it.title, it.aliases.join(" "), it.slug]);
@@ -554,6 +575,14 @@ function syncInner(db: Database, t0: number) {
     }
   });
   tx(batch);
+  let reattached = 0;
+  if (rebuild && ec) {
+    reattached = db.run(`UPDATE chunks SET embedding=(SELECT embedding FROM kept_vectors k WHERE k.text_hash=chunks.text_hash LIMIT 1),
+      embedded_at=?, embed_model=?, embed_dims=? WHERE embedding IS NULL AND text_hash IN (SELECT text_hash FROM kept_vectors)`,
+      [iso(), ec.model, ec.dims]).changes;
+    db.run("DROP TABLE kept_vectors");
+    if (reattached) db.run("INSERT OR REPLACE INTO meta(k,v) VALUES('embed_dims', ?)", [String(ec.dims)]);
+  }
 
   // delete-reconcile with the mass-delete valve - SOFT: a gone file HIDES its
   // page (the recall arms and link resolution stop seeing it) but the row
@@ -649,25 +678,26 @@ function syncInner(db: Database, t0: number) {
 
   const stats = {
     files: files.length, changed, deduped, deleted, revived, purged, refused_reconcile: refusedReconcile,
-    skipped_mtime: skippedMtime, skipped_hash: skippedHash, flagged, ttl_swept: sweptTtl,
+    skipped_mtime: skippedMtime, skipped_hash: skippedHash, flagged, ttl_swept: sweptTtl, reattached,
     pages: (db.query("SELECT COUNT(*) c FROM pages WHERE deleted_at IS NULL").get() as any).c,
     chunks: (db.query("SELECT COUNT(*) c FROM chunks").get() as any).c,
     ms: Math.round(performance.now() - t0),
   };
   // embedding backfill (batched, best-effort; keyless => stamp and continue)
-  const ec = embedCfg();
   let embedded = 0, embedDegraded: string | undefined;
   if (ec && !flag("no-embed")) {
     const metaDims = (db.query("SELECT v FROM meta WHERE k='embed_dims'").get() as any)?.v;
-    if (metaDims && Number(metaDims) !== ec.dims) {
+    // The guard's remedy is the rebuild itself, which carries no vector of
+    // another width - so it must not refuse the rebuild it prescribes.
+    if (metaDims && Number(metaDims) !== ec.dims && !rebuild) {
       db.run("DELETE FROM meta WHERE k='sync_lease' AND v=?", [CUR_LEASE]); // die() skips the finally; CAS on our own value
-      die("invalid_params", `index embedded at ${metaDims} dims but config says ${ec.dims}`, "run: ac-brain sync --rebuild (re-embeds at the new width)");
+      die("invalid_params", `index embedded at ${metaDims} dims but config says ${ec.dims}`, "run: ac-brain sync --rebuild (re-embeds only what the new width invalidates)");
     }
     const pending = db.query("SELECT id, slug, text FROM chunks WHERE embedding IS NULL LIMIT 4096").all() as any[];
     (async () => {})();
     embedDegraded = embedKey(ec) ? undefined : "no_api_key";
     if (!embedDegraded && pending.length) {
-      const upd = db.prepare("UPDATE chunks SET embedding=?, embedded_at=? WHERE id=?");
+      const upd = db.prepare("UPDATE chunks SET embedding=?, embedded_at=?, embed_model=?, embed_dims=? WHERE id=?");
       // synchronous await via Bun top-level not available in function: do it with a promise loop
       const run = async () => {
         for (let i = 0; i < pending.length; i += 64) {
@@ -675,7 +705,7 @@ function syncInner(db: Database, t0: number) {
           const vecs = await embedBatch(slice.map(r => r.text), ec);
           if (!vecs) { embedDegraded = embedError ?? "provider_error"; return; }
           const t2 = db.transaction(() => {
-            slice.forEach((r, j) => { upd.run(toBlob(vecs[j]), iso(), r.id); embedded++; });
+            slice.forEach((r, j) => { upd.run(toBlob(vecs[j]), iso(), ec.model, ec.dims, r.id); embedded++; });
           });
           t2();
         }

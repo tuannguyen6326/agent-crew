@@ -18,16 +18,18 @@ export AC_BRAIN_PATTERN_FILE="$TMP/no-such-pattern-file"
 j() { python3 -c "import sys, json; d=json.load(sys.stdin); print(d$1)"; }
 
 # --- the controlled provider ---------------------------------------------------
-# EMBED_RULES: {"dims":n,"rules":[["substring",[vector]],...]} - the first rule
-# whose substring the input carries wins, anything else embeds to zeros (a
-# zero dot product, so it never competes). EMBED_COUNT: one line per request
-# carrying the number of inputs embedded, the call-count evidence.
+# EMBED_RULES: {"rules":[["substring",[vector]],...]} - the first rule whose
+# substring the input carries wins, anything else embeds to zeros (a zero dot
+# product, so it never competes); every vector is padded to EMBED_DIMS.
+# EMBED_COUNT: one line per request carrying the number of inputs embedded,
+# the call-count evidence.
 cat >"$TMP/embed-ctl.ts" <<'TS'
 import { appendFileSync } from "fs";
 const spec = JSON.parse(process.env.EMBED_RULES!);
+const dims = Number(process.env.EMBED_DIMS);
 const pick = (t: string) => {
-  for (const [sub, vec] of spec.rules) if (t.includes(sub)) return [...vec, ...new Array(spec.dims - vec.length).fill(0)];
-  return new Array(spec.dims).fill(0);
+  for (const [sub, vec] of spec.rules) if (t.includes(sub)) return [...vec, ...new Array(dims - vec.length).fill(0)];
+  return new Array(dims).fill(0);
 };
 const s = Bun.serve({ port: 0, fetch: async req => {
   const j: any = await req.json();
@@ -41,7 +43,7 @@ STUB_PID=""; STUB_PORT=""
 stub_up() {  # stub_up <rules-json> <dims> - starts the provider, writes brain.json at it
   local portfile="$TMP/stub.port" i=0
   : >"$portfile"
-  EMBED_RULES="$1" EMBED_COUNT="$TMP/embed.count" bun "$TMP/embed-ctl.ts" >"$portfile" 2>/dev/null &
+  EMBED_RULES="$1" EMBED_DIMS="$2" EMBED_COUNT="$TMP/embed.count" bun "$TMP/embed-ctl.ts" >"$portfile" 2>/dev/null &
   STUB_PID=$!
   while [ "$i" -lt 100 ]; do
     [ -s "$portfile" ] && { STUB_PORT="$(cat "$portfile")"; break; }
@@ -69,7 +71,7 @@ kl="$("$BRAIN" sync --home "$AC_HOME" --compact >/dev/null && "$BRAIN" recall --
 assert_contains "$kl" "data/alpha/room" "keyless: an AND miss still returns the OR rows"
 case "$kl" in *relaxed_dropped*|*keyword_relaxed_carried*) fail "keyless: relaxed rows are the whole answer, not a degradation: $kl" ;; esac
 
-RULES='{"dims":8,"rules":[["zzzmissing",[1,0,0,0,0,0,0,0]],["beta shard",[0.98,0.2,0,0,0,0,0,0]],["harbor",[0,0,1,0,0,0,0,0]]]}'
+RULES='{"rules":[["zzzmissing",[1,0,0,0,0,0,0,0]],["beta shard",[0.98,0.2,0,0,0,0,0,0]],["harbor",[0,0,1,0,0,0,0,0]]]}'
 stub_up "$RULES" 8
 "$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
 vl="$("$BRAIN" recall --query "harbor zzzmissing" --home "$AC_HOME" --compact)"
@@ -100,7 +102,7 @@ mkdir -p "$AC_HOME/data/hub" "$AC_HOME/data/leaf" "$AC_HOME/data/decoy"
 printf '# Hub\nThe hubpage body that every family room links back to daily.\n' >"$AC_HOME/data/hub/room.md"
 printf '# Leaf\nThe leafpage body nobody links to, about one narrow topic.\n' >"$AC_HOME/data/leaf/room.md"
 printf '# Decoy\nThe decoypage body anchors the bottom of the vector list.\n' >"$AC_HOME/data/decoy/room.md"
-RULES='{"dims":8,"rules":[["zzq",[1,0,0,0,0,0,0,0]],["leafpage",[0.995,0.0998,0,0,0,0,0,0]],["hubpage",[0.96,0.28,0,0,0,0,0,0]],["decoypage",[0,1,0,0,0,0,0,0]]]}'
+RULES='{"rules":[["zzq",[1,0,0,0,0,0,0,0]],["leafpage",[0.995,0.0998,0,0,0,0,0,0]],["hubpage",[0.96,0.28,0,0,0,0,0,0]],["decoypage",[0,1,0,0,0,0,0,0]]]}'
 stub_up "$RULES" 8
 "$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
 now_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
@@ -112,6 +114,35 @@ assert_eq "$(printf '%s' "$vo" | j "['results'][0]['slug']")" "data/leaf/room" \
 assert_eq "$(printf '%s' "$vo" | j "['metadata_boost_gate']")" "lexical" "...and the skipped gate is stamped"
 lx="$("$BRAIN" recall --query "hubpage" --home "$AC_HOME" --compact)"
 assert_eq "$(printf '%s' "$lx" | j "['metadata_boost_gate']")" "applied" "a lexical hit applies the boosts as before"
+
+# --- a rebuild re-attaches still-current vectors instead of re-embedding ------
+# The same corpus, already embedded by the lane above: dropping the derived
+# tables must not cost one provider call for a chunk whose text, model and
+# width are unchanged. The count file is the evidence - the provider, not
+# the engine, says how many texts it was asked to embed.
+c0="$(embed_calls)"
+rb="$("$BRAIN" sync --rebuild --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$rb" | j "['reattached']")" "3" "every current vector is re-attached on rebuild"
+assert_eq "$(printf '%s' "$rb" | j "['embedded']")" "0" "...so nothing is re-embedded"
+assert_eq "$(embed_calls)" "$c0" "...and the provider was not called at all"
+printf '# Leaf\nThe leafpage body, reworded: still nobody links to it.\n' >"$AC_HOME/data/leaf/room.md"
+rb2="$("$BRAIN" sync --rebuild --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$rb2" | j "['reattached']")" "2" "the unchanged chunks re-attach"
+assert_eq "$(printf '%s' "$rb2" | j "['embedded']")" "1" "the one changed chunk re-embeds"
+assert_eq "$(embed_calls)" "$((c0 + 1))" "...exactly one text went to the provider"
+vo2="$("$BRAIN" recall --query "zzq" --home "$AC_HOME" --compact)"
+case "$vo2" in *search_degraded*) fail "a rebuilt index must still serve the vector arm: $vo2" ;; esac
+assert_eq "$(printf '%s' "$vo2" | j "['results'][0]['slug']")" "data/leaf/room" "the re-attached and re-embedded vectors rank as before"
+stub_down
+
+# the dims guard's remedy is that rebuild: a width change must not refuse it
+stub_up "$RULES" 16
+if pl="$("$BRAIN" sync --home "$AC_HOME" --compact 2>&1)"; then fail "a plain sync at a new width must still refuse (got: $pl)"; fi
+assert_contains "$pl" "rebuild" "...naming the remedy"
+rb3="$("$BRAIN" sync --rebuild --home "$AC_HOME" --compact)" || fail "the remedy itself refused: $rb3"
+assert_eq "$(printf '%s' "$rb3" | j "['reattached']")" "0" "vectors of the old width are not carried"
+assert_eq "$(printf '%s' "$rb3" | j "['embedded']")" "3" "...every chunk re-embeds at the new width"
+assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT v FROM meta WHERE k='embed_dims'")" "16" "the index records the new width"
 stub_down
 rm -f "$AC_HOME/config/brain.json"
 
