@@ -138,6 +138,9 @@ jq -c --argjson round <N> \
 With a history the round narrows to the INTERDIFF (the previous
 `reviewed_ref`..HEAD) and must disposition every open fix/ask-user id from the
 previous round - re-reported under the same id, or listed in `resolved_ids`.
+A `resolved_ids` entry counts only when the verdict's own `reviewed_paths`
+(the repo-relative paths the round reviewed) names the finding's file and the
+round reports nothing else in that file; otherwise the id reads as dropped.
 A verdict that renumbers or drops one is REJECTED by the facade, not accepted
 as a pass; that is the reviewer's defect, so re-run the round rather than
 editing the ledger.

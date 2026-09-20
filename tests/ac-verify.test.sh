@@ -278,6 +278,14 @@ elif [ "$kind" = codereview ]; then
     esac
     [ -z "${VERIFY_RESOLVED_IDS:-}" ] \
       || clean="$(jq -c --arg ids "$VERIFY_RESOLVED_IDS" '.resolved_ids = ($ids | split(","))' <<<"$clean")"
+    # The round's own coverage claim, and the two ways a resolution claim fails
+    # it: a scope declared off-shape, and a second finding in the claimed file.
+    [ -z "${VERIFY_REVIEWED_PATHS:-}" ] \
+      || clean="$(jq -c --arg p "$VERIFY_REVIEWED_PATHS" '.reviewed_paths = ($p | split(","))' <<<"$clean")"
+    [ "${VERIFY_REVIEWED_PATHS_BAD:-0}" = 0 ] \
+      || clean="$(jq -c '.reviewed_paths = "value.txt"' <<<"$clean")"
+    [ -z "${VERIFY_NOOP_FILE:-}" ] \
+      || clean="$(jq -c --arg f "$VERIFY_NOOP_FILE" '.findings += [{id:"N1",severity:"info",action:"no-op",description:"nit beside the claim",authority_class:"internal",authority:"spec",file:$f}]' <<<"$clean")"
     # The two reviewed_ref handoff shapes: the model DROPS the echo, and the
     # model echoes some OTHER ref. Same clean body, one variable apart.
     [ "${VERIFY_OMIT_REF:-0}" = 0 ] \
@@ -819,9 +827,10 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $bas
 # 510 = the 435 canonical budget + the history handling contract (previous-round
 # disposition rules, resolved_ids, and the no-renumber clause the measured
 # rejections needed); the ledger payload itself stays excluded like INTENT.
+# +40 for the reviewed_paths coverage clause that backs a resolved_ids entry.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 820 ] \
-  || fail "history review prompt exceeds its 820-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 860 ] \
+  || fail "history review prompt exceeds its 860-word scaffold budget: $scaffold_words"
 
 # A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
 # the interdiff scope: the previous entry's reviewed_ref
@@ -831,7 +840,7 @@ scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
 ledger_input="$TMP/review-ledger.json"
 jq -n --arg ref "$base" '[{round:1, reviewed_ref:$ref, verdict:"fix", risk_level:"high",
   findings:[
-    {id:"CR-1",severity:"error",action:"fix",description:"prior bug",authority_class:"internal",authority:"f.txt:1"},
+    {id:"CR-1",severity:"error",action:"fix",description:"prior bug",authority_class:"internal",authority:"f.txt:1",file:"value.txt"},
     {id:"CR-2",severity:"info",action:"no-op",description:"note",authority_class:"internal",authority:"f.txt:1"}]}]' \
   >"$ledger_input"
 
@@ -869,7 +878,7 @@ export VERIFY_META_CAPTURE="$TMP/ledger-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-cwd.capture"
 export VERIFY_TRANSCRIPT="$TMP/ledger-transcript.jsonl"
-VERIFY_RESOLVED_IDS=CR-1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+VERIFY_RESOLVED_IDS=CR-1 VERIFY_REVIEWED_PATHS=value.txt "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
   --family "$ledger_family" --caller "$caller" --intent "$intent" \
   --history "$ledger_input" --output "$ledger_output" >/dev/null
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $base $target --   (the fix delta since the prior verdict)" \
@@ -901,7 +910,7 @@ export VERIFY_META_CAPTURE="$TMP/ledger-superset-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-superset-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-superset-cwd.capture"
 export VERIFY_TRANSCRIPT="$TMP/ledger-superset-transcript.jsonl"
-VERIFY_RESOLVED_IDS=CR-1,CR-2 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+VERIFY_RESOLVED_IDS=CR-1,CR-2 VERIFY_REVIEWED_PATHS=value.txt "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
   --family "$superset_family" --caller "$caller" --intent "$intent" \
   --history "$ledger_input" --output "$superset_output" >/dev/null \
   || fail "resolved_ids naming an id outside prior_open must stay accepted"
@@ -939,10 +948,101 @@ case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: C
 # ac-ship prompt measured 542 by this same helper, unasserted). 650 = the 570
 # scaffold + the round-2+ interdiff scope block + the checklist prose + this
 # fixture's one id. A real round's checklist grows one word per prior open id;
-# this bounds the PROSE, which is the part that drifts.
+# this bounds the PROSE, which is the part that drifts. +40 for the
+# reviewed_paths coverage clause, same as the legacy-shape budget above.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 900 ] \
-  || fail "previous-round ledger review prompt exceeds its 900-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 940 ] \
+  || fail "previous-round ledger review prompt exceeds its 940-word scaffold budget: $scaffold_words"
+
+# --- A resolved_ids CLAIM IS HONOURED ONLY WHEN THE ROUND'S COVERAGE BACKS IT --
+# Until now a resolved_ids entry closed a prior finding on the reviewer's WORD.
+# Measured over this fleet home's 47 stored round dirs (29 harvestable verdicts,
+# 3 carrying a history): ZERO explicit resolved_ids claims exist to grade, and
+# the pre-channel analogue - a prior open id silently dropped - happened 10
+# times, 8 of them with ANOTHER finding reported in the same file that round
+# (the renumber-while-addressing pattern the checklist above exists for). No
+# stored round records what it reviewed, and the reviewed refs are gone from
+# the object store, so the scope side could not be measured at all - which is
+# why the round now DECLARES it: top-level reviewed_paths. A claim is honoured
+# only when (i) the prior finding's file is in this round's reviewed_paths and
+# (ii) the round reports nothing else in that file; a failing claim is not a
+# disposition, so the id is `undispositioned` - a CONTENT failure that buys no
+# correction turn. The honest channel stays open: re-report the id (no-op once
+# verified fixed). The dispositioned run above IS the valid-claim case - CR-1
+# lives in value.txt, the round declared value.txt reviewed and reported
+# nothing else there.
+assert_eq "$(jq -c '.reviewed_paths' "$ledger_output")" '["value.txt"]' \
+  "reviewed_paths survives into the durable result"
+assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" '"reviewed_paths":[]' \
+  "the literal OUTPUT template carries a reviewed_paths slot once history exists"
+assert_contains "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" "reviewed_paths" \
+  "the history contract tells the reviewer what backs a resolved_ids entry"
+
+# (i) fails: the claimed finding's file is not in the declared scope.
+unrev_family=flow-v2-ledger-unreviewed
+export VERIFY_EXPECT_ID="$unrev_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/ledger-unrev-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/ledger-unrev-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/ledger-unrev-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/ledger-unrev-transcript.jsonl"
+VERIFY_RESOLVED_IDS=CR-1 VERIFY_REVIEWED_PATHS=other.txt \
+  assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$unrev_family" --caller "$caller" --intent "$intent" \
+  --history "$ledger_input" --output "$TMP/ledger-unrev-review.json"
+rej="$(rejection_log "$unrev_family")"
+[ -n "$rej" ] || fail "an unbacked resolution claim must leave its reason in the round evidence"
+assert_contains "$(cat "$rej")" "undispositioned-prior-finding-ids: CR-1" \
+  "an unbacked claim is no disposition - the id reads as undispositioned"
+assert_contains "$(cat "$rej")" "not backed by coverage: CR-1" \
+  "the line says WHY the disposition was refused"
+assert_eq "$(wc -l <"$rej" | tr -d ' ')" "1" "a content failure buys no correction turn"
+assert_no_file "$(dirname "$rej")/correction.meta" "no correction pane ran for an unbacked claim"
+
+# (i) fails by omission: no reviewed_paths at all backs no claim.
+absent_family=flow-v2-ledger-noscope
+export VERIFY_EXPECT_ID="$absent_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/ledger-noscope-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/ledger-noscope-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/ledger-noscope-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/ledger-noscope-transcript.jsonl"
+VERIFY_RESOLVED_IDS=CR-1 \
+  assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$absent_family" --caller "$caller" --intent "$intent" \
+  --history "$ledger_input" --output "$TMP/ledger-noscope-review.json"
+assert_contains "$(cat "$(rejection_log "$absent_family")")" "undispositioned-prior-finding-ids: CR-1" \
+  "a claim with no declared scope is taken on nobody's word"
+
+# (ii) fails: the round reports something else in the claimed file - a moved
+# line or a reworded re-report is ambiguity, not resolution.
+beside_family=flow-v2-ledger-beside
+export VERIFY_EXPECT_ID="$beside_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/ledger-beside-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/ledger-beside-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/ledger-beside-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/ledger-beside-transcript.jsonl"
+VERIFY_RESOLVED_IDS=CR-1 VERIFY_REVIEWED_PATHS=value.txt VERIFY_NOOP_FILE=value.txt \
+  assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$beside_family" --caller "$caller" --intent "$intent" \
+  --history "$ledger_input" --output "$TMP/ledger-beside-review.json"
+assert_contains "$(cat "$(rejection_log "$beside_family")")" "undispositioned-prior-finding-ids: CR-1" \
+  "a claim beside another finding in the same file is ambiguous, so it is no disposition"
+
+# Off-shape reviewed_paths is an ENVELOPE failure like the other optional keys:
+# it buys the one correction turn, then the same predicate grades the result.
+shape_family=flow-v2-ledger-scope-shape
+export VERIFY_EXPECT_ID="$shape_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/ledger-shape-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/ledger-shape-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/ledger-shape-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/ledger-shape-transcript.jsonl"
+VERIFY_RESOLVED_IDS=CR-1 VERIFY_REVIEWED_PATHS_BAD=1 VERIFY_CORRECTION=valid \
+  assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$shape_family" --caller "$caller" --intent "$intent" \
+  --history "$ledger_input" --output "$TMP/ledger-shape-review.json"
+rej="$(rejection_log "$shape_family")"
+assert_contains "$(sed -n '1p' "$rej")" "reviewed_paths-not-an-array-of-paths (one correction turn follows)" \
+  "an off-shape reviewed_paths is named and buys the correction turn"
+assert_file "$(dirname "$rej")/correction.meta" "the correction turn ran for the envelope failure"
 
 # PREVIOUS ROUND ONLY: resolved findings from older rounds do not require
 # re-attestation later. A round-3 history whose r1 had an open id but whose r2
@@ -988,7 +1088,7 @@ rewritten="$(git -C "$repo" commit-tree -p "$base" -m rewritten "$target^{tree}"
   || fail "the rewritten-history fixture must not be an ancestor of the reviewed ref"
 rewritten_ledger="$TMP/review-ledger-rewritten.json"
 jq -n --arg ref "$rewritten" '[{round:1, reviewed_ref:$ref, verdict:"fix", risk_level:"high",
-  findings:[{id:"CR-9",severity:"error",action:"fix",description:"prior bug",authority_class:"internal",authority:"f.txt:1"}]}]' \
+  findings:[{id:"CR-9",severity:"error",action:"fix",description:"prior bug",authority_class:"internal",authority:"f.txt:1",file:"value.txt"}]}]' \
   >"$rewritten_ledger"
 rewritten_family=flow-v2-ledger-rewritten
 rewritten_output="$TMP/ledger-rewritten-review.json"
@@ -997,7 +1097,7 @@ export VERIFY_META_CAPTURE="$TMP/ledger-rewritten-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-rewritten-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-rewritten-cwd.capture"
 export VERIFY_TRANSCRIPT="$TMP/ledger-rewritten-transcript.jsonl"
-VERIFY_RESOLVED_IDS=CR-9 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+VERIFY_RESOLVED_IDS=CR-9 VERIFY_REVIEWED_PATHS=value.txt "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
   --family "$rewritten_family" --caller "$caller" --intent "$intent" \
   --history "$rewritten_ledger" --output "$rewritten_output" >/dev/null \
   || fail "a rewritten prior ref must WIDEN the round, never fail it"
