@@ -1821,7 +1821,7 @@ reset_state() {
     "$state"/.report-hash-* "$state"/.superseded-* \
     "$state"/.last-watcher-beat* "$state"/.skip-revoked-* "$state"/.skip-stale-since-* \
     "$state"/.chief-busy-until* "$state"/.busy-* "$state"/.busy-stalled-* \
-    "$state"/.watcher-arm.log \
+    "$state"/.deferred-* "$state"/.watcher-arm.log \
     "$state"/.watcher-config* "$state"/.session-lock "$state"/.watcher-owner
   rm -rf "$state"/.wake-spool* "$state/.watch.lock.d"
   rm -f "$AC_HOME/config/remote-poll"
@@ -3593,6 +3593,130 @@ rm -rf "$state"/.wake-spool*
 reset_state
 rm -f "$state"/*.status
 
+
+# --- STALE DEFERRAL (watch-stale-defer-on-declared-wait) ---------------------
+# The stale arm measured idle time alone: a worker that had SAID why it is quiet
+# (its own `paused:`/captain-wait line in state/<id>.status) or one parked at an
+# undecided `ask-user` review finding was re-reported stale every AC_STALE window,
+# because the only dedup (.stale-<id>) is cleared by any cosmetic redraw. The
+# declaration outranks the idle clock ONCE: the timer restarts and the arm log
+# records the deferral; the SAME declaration a full window later is stale again
+# (the declaration itself went stale), and a NEW one defers again.
+defer_lines() {
+  # grep -c prints its 0 AND exits 1, so the fallback covers only a missing log.
+  local n; n="$(grep -c "deferred-stale:$1" "$state/.watcher-arm.log" 2>/dev/null)" || true
+  printf '%s\n' "${n:-0}"
+}
+stale_pane() {
+  # stale_pane <id> <p> <t> - a working crewmate pane settled and backdated
+  # past AC_STALE, one poll away from today's stale: wake.
+  mkdir -p "$AC_HOME/data/$1"
+  printf 'window=crew:%s\nbackend=herdr\n' "$1" >"$state/$1.meta"
+  seed_pane "$1" "$2" "$3"
+  printf 'comparing candidate paths\n' >>"$(fake_pane_buf "$1")"
+  printf 'working\n' >"$FAKE_HERDR/panes/$2.status"
+  bash "$BIN/ac-watch.sh" --once >/dev/null
+  rm -rf "$state"/.wake-spool*
+  printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-$1"
+}
+
+# (1) A declared wait is deferred: no stale:, one arm-log line, timer restarted.
+stale_pane dsw pDSW tDSW
+printf '%s paused: waiting on captain\n' "$(date -u +%FT%TZ)" >"$state/dsw.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:dsw*) fail "a pane whose last status line declares a wait must not be reported stale" ;; esac
+assert_no_file "$state/.wake-spool" "a deferred stale publishes no wake"
+assert_eq "$(defer_lines dsw)" "1" "the deferral is recorded once in the arm log"
+assert_contains "$(cat "$state/.watcher-arm.log")" "deferred-stale:dsw declared-wait paused" "the deferral names the declaration"
+[ $(( $(date +%s) - $(cat "$state/.change-dsw") )) -lt 60 ] \
+  || fail "deferral must restart the idle timer the stale arm measures from, got $(cat "$state/.change-dsw")"
+assert_no_file "$state/.stale-dsw" "deferral is not the stale dedup marker"
+
+# (2) The SAME declaration a full window later is stale again, once, with no
+# second deferral line.
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-dsw"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:dsw" "an unchanged declaration past a second full window is reported stale"
+assert_eq "$(defer_lines dsw)" "1" "the same declaration never defers twice"
+rm -rf "$state"/.wake-spool*
+
+# (3) A FRESH declaration after that defers again (a redraw cleared the dedup
+# marker, as any redraw does). The marker branch appends the pane line
+# verbatim, TUI glyph and all, so the declaration is read with the marker
+# regex's own anchoring, never a bare line-start.
+rm -f "$state/.stale-dsw"
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-dsw"
+printf '%s ⏺ paused: waiting on captain\n' "$(date -u +%FT%TZ)" >>"$state/dsw.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:dsw*) fail "a new declaration must defer again" ;; esac
+assert_eq "$(defer_lines dsw)" "2" "a new declaration is a new deferral"
+assert_eq "$(grep -c 'deferred-stale:dsw declared-wait paused$' "$state/.watcher-arm.log")" "2" \
+  "the reason names the bare verb, glyph-prefixed or not"
+rm -f "$state/dsw.meta" "$state/.pane-dsw" "$state/dsw.status"
+
+# (4) GATE PARKED: no declaration, but the latest review findings hold an
+# undecided ask-user - read by KEY, so a fix finding whose description merely
+# says the word is not one, and a decided ask-user is not one either.
+stale_pane gp pGP tGP
+mkdir -p "$AC_HOME/data/gp/verify/codereview/20260920T000000Z-1"
+printf '[{"id":"f1","action":"ask-user","description":"which path?"}]\n' \
+  >"$AC_HOME/data/gp/verify/codereview/20260920T000000Z-1/findings.json"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:gp*) fail "a pane parked at an undecided ask-user finding must be deferred" ;; esac
+assert_contains "$(cat "$state/.watcher-arm.log")" "deferred-stale:gp gate-parked" "the deferral names the gate"
+rm -f "$state/gp.meta" "$state/.pane-gp"
+
+stale_pane gf pGF tGF
+mkdir -p "$AC_HOME/data/gf/verify/codereview/20260920T000000Z-1"
+printf '[{"id":"f1","action":"fix","description":"not an ask-user, the string is prose"}]\n' \
+  >"$AC_HOME/data/gf/verify/codereview/20260920T000000Z-1/findings.json"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:gf" "a fix finding parks nothing - the pane is stale as today"
+assert_eq "$(defer_lines gf)" "0" "a grep over the payload would have deferred here"
+rm -rf "$state"/.wake-spool*
+rm -f "$state/gf.meta" "$state/.pane-gf"
+
+# The crew-ship run's review step is the other findings home, and the captain's
+# decision is recorded ON the finding there (bin/ac-ship.sh finish contract).
+stale_pane gs pGS tGS
+wt="$TMP/wt-gs"; mkdir -p "$wt/.crew/ship/run1/findings"
+ln -s run1 "$wt/.crew/ship/current"
+printf 'worktree=%s\n' "$wt" >>"$state/gs.meta"
+printf '[{"id":"s1","action":"ask-user","description":"keep it?","decision":"yes, keep"}]\n' \
+  >"$wt/.crew/ship/run1/findings/review.json"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:gs" "a decided ask-user holds nothing"
+rm -rf "$state"/.wake-spool* "$state/.stale-gs"
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-gs"
+printf '[{"id":"s2","action":"ask-user","description":"keep it?"}]\n' \
+  >"$wt/.crew/ship/run1/findings/review.json"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:gs*) fail "an undecided ship-run ask-user must defer" ;; esac
+assert_contains "$(cat "$state/.watcher-arm.log")" "deferred-stale:gs gate-parked" "the ship run's findings are read too"
+rm -f "$state/gs.meta" "$state/.pane-gs"
+
+# (5) A completion or a plain line explains no silence: today's stale:, unchanged.
+stale_pane dn pDN tDN
+printf '%s done: shipped the change\n' "$(date -u +%FT%TZ)" >"$state/dn.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:dn" "done: waits on the chief's reap, which the stale wake prompts"
+rm -rf "$state"/.wake-spool*
+rm -f "$state/dn.meta" "$state/.pane-dn"
+stale_pane dp pDP tDP
+printf '%s working: still comparing\n' "$(date -u +%FT%TZ)" >"$state/dp.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:dp" "a neutral status line defers nothing"
+assert_eq "$(defer_lines dn)$(defer_lines dp)" "00" "neither pane was deferred"
+rm -rf "$state"/.wake-spool*
+rm -f "$state/dp.meta" "$state/.pane-dp"
+# The watcher's OWN ended-turn note is wait-shaped but is its verdict, not the
+# worker's word: it must not defer the very stale it exists to precede.
+stale_pane dv pDV tDV
+printf '%s blocked: ended its turn with no report line\n' "$(date -u +%FT%TZ)" >"$state/dv.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:dv" "the watcher's own ended note is not a declaration"
+rm -rf "$state"/.wake-spool*
+rm -rf "$AC_HOME/data/dsw" "$AC_HOME/data/gp" "$AC_HOME/data/gf" "$AC_HOME/data/gs" "$AC_HOME/data/dn" "$AC_HOME/data/dp" "$AC_HOME/data/dv"
 
 reset_state
 rm -f "$state"/*.status
