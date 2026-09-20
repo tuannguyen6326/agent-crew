@@ -262,10 +262,10 @@ else
       # The record's push=yes flag is the captain's own landing rule - the
       # push rides the landing so the integration branch is never stale for
       # the next story's fence. A failed push is LOUD but does not un-land.
-      if git -C "$project_dir" push --quiet origin "refs/heads/$target:refs/heads/$target" 2>/dev/null; then
+      if ac_git_push_control_plane "$project_dir" --quiet origin "refs/heads/$target:refs/heads/$target" 2>/dev/null; then
         printf 'pushed %s to origin (record push=yes)\n' "$target"
       else
-        ac_warn "push of $target to origin FAILED - the landing stands; retry: git -C $project_dir push origin $target"
+        ac_warn "push of $target to origin FAILED - the landing stands; retry: git -C $project_dir push --no-verify origin $target"
       fi
     fi
     [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"

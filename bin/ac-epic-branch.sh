@@ -72,7 +72,7 @@ cmd_create() {
       return 0
     fi
     sha="$(git -C "$dir" rev-parse "$(ac_freshest_ref "$dir")")"
-    git -C "$dir" push --quiet origin "$sha:refs/heads/$branch" \
+    ac_git_push_control_plane "$dir" --quiet origin "$sha:refs/heads/$branch" \
       || ac_die "create: pushing $branch to origin of $repo failed"
     printf 'created: %s on origin of %s at %s\n' "$branch" "$repo" "$sha"
   else

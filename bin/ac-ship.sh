@@ -1070,6 +1070,9 @@ cmd_push() {
   # Deterministic push with a data-loss guard: refuse to
   # force-push over remote commits not incorporated by patch-id, anchor the
   # lease to the exact remote SHA, and FAIL CLOSED on any git error.
+  # Both pushes below deliberately RUN the repository's pre-push hook: this is
+  # the delivery publication the hook exists to gate. Only control-plane
+  # bookkeeping pushes skip it (ac_git_push_control_plane, ac-lib.sh).
   require_run
   # Fail closed, never HANG: on a repo whose credentials are not cached, an
   # unset GIT_TERMINAL_PROMPT makes ls-remote/fetch/push sit at a username

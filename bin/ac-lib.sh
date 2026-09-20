@@ -2673,6 +2673,20 @@ ac_freshest_ref() {
   fi
 }
 
+ac_git_push_control_plane() {
+  # ac_git_push_control_plane <repo> <git push args...> - a CONTROL-PLANE push
+  # with the repository's pre-push hook skipped. Control-plane only: cutting an
+  # integration branch at a tip that already exists, following a local landing
+  # onto a recorded epic/feature branch - bookkeeping that publishes nothing new
+  # for review, so a project hook that runs a full suite, or aborts on a sha
+  # that is no deliverable, would only wedge the fleet. DELIVERY NEVER: the
+  # crew-ship push (bin/ac-ship.sh cmd_push) and the feature/epic ship pushes
+  # that open a PR keep the hook - that push IS the publication the hook
+  # exists to gate.
+  local repo="$1"; shift
+  git -C "$repo" push --no-verify "$@"
+}
+
 # --- epic integration-branch record (epic-branch-mech) -------------------------
 # data/<epic>/branches: `<repo> <branch> [key=value ...]`, one line per repo a
 # branch-recorded epic integrates. Chief-written on the captain's word and
