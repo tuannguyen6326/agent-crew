@@ -10,6 +10,8 @@
 #                    [--backend <herdr>]
 #                    [--resume-from <old-task-id>]
 #                    [--base-branch <b>]
+#        ac-spawn.sh <id> <project> --recover        (reopen a destroyed pane)
+#        ac-spawn.sh --roomchief <family> --recover  (same, for a roomchief)
 #        ac-spawn.sh <id> --crewdeputy [--recover] [--harness <h>] [--backend <b>]
 #        ac-spawn.sh --roomchief <family> [--solo] [--harness <h>] [--backend <b>]
 #                    [--captain-initiated "<order ref>" | --system-initiated "<order ref>"
@@ -297,6 +299,30 @@
 # The deputy's OWN home is never touched: its crew keeps running, its worktrees
 # keep their leases, its backlog and rooms survive, and the restored deputy
 # reconciles them at its own session start. Recovery is not a teardown bypass.
+#
+# GUARDED CREWMATE/ROOMCHIEF RECOVERY (--recover on <id> <project>, or on
+# --roomchief <family>). AUTHORITATIVE for how a task whose pane or tab was
+# DESTROYED gets its pane back without losing anything: a herdr server exit,
+# a tab closed by hand, a stranded tab reaped as an orphan. It widens the
+# crewdeputy guard above rather than adding a verb, because the refusal it
+# relaxes (the duplicate-meta die) lives here and the window is opened the
+# ordinary spawn way. It dies at the first failure of this ladder:
+#   1. a meta exists for the id - else there is nothing to recover;
+#   2. backend_window_alive answers a DEFINITE gone (1) on the task's OWN
+#      backend - ALIVE (0) keeps the duplicate-agent refusal, UNOBSERVABLE (2)
+#      refuses naming the backend (WINDOW LIVENESS, bin/ac-backend.sh);
+#   3. the meta records kind ship|scout|roomchief, an existing worktree, and a
+#      claude session_id - a session that cannot be resumed is a teardown and
+#      a fresh spawn with the branch/report as inputs, never a blind relaunch.
+# On accept: the RECORDED worktree is reused (no new lease, no reset, no
+# branch change, uncommitted work and the brief untouched), one fresh pane is
+# opened in the family workspace at that cwd, the recorded session is resumed
+# on a launch line carrying the same env the first launch did (crew_launch_env
+# for a crewmate; AC_HOME/AC_SCOPE/domain/solo for a roomchief, which is also
+# told to re-arm its family watcher), the came-up gate closes a pane whose
+# resume fell back to a shell, and only then are the meta's `window` field and
+# state/.pane-<id> rewritten and a `recovered:` line appended to the status
+# log. The meta is never archived: it is the live task's record.
 # Harness launch commands come from config/launch-<harness> when present
 # (placeholders __BRIEF__ and __ID__ are substituted); otherwise a built-in
 # template per harness is used.
@@ -462,8 +488,9 @@
 #      window too, and only its own: before it creates one, $window is empty and
 #      the window-collision refusal below is left to stand exactly as it was.
 #   3. reap-on-collision, on the roomchief and crewdeputy paths. A trap cannot
-#      fire on SIGKILL, so a killed spawn still strands a tab - and --recover is
-#      crewdeputy-only, so a stranded roomchief tab has no recovery verb at all.
+#      fire on SIGKILL, so a killed spawn still strands a tab - one with NO
+#      meta, which the crewmate/roomchief --recover (meta required) cannot
+#      reach either.
 #      Reaching those window checks PROVES no meta exists for this id (the
 #      duplicate-meta refusal above dies on one) AND that this spawn holds the
 #      claim, so no other spawn for the id is inside its pre-meta window: a live
@@ -507,8 +534,9 @@
 #     roomchief and crewdeputy paths exit before it (neither leases a worktree
 #     nor holds a crew branch, and a <fam>-chief id is its OWN family - a
 #     roomchief could not collide with crew/<fam> even if it reached here),
-#     --recover is crewdeputy-only, and no verify-* meta is written by this
-#     script at all (ac-verify.sh owns those panes).
+#     every --recover exits before it (a recovery leases nothing and keeps the
+#     task's branch as it is), and no verify-* meta is written by this script
+#     at all (ac-verify.sh owns those panes).
 #   - OWNERSHIP is the FAMILY, never the id, because ac_crew_branch collapses
 #     every stage/revision id in a family onto ONE branch (ac-lib.sh). A live
 #     sibling means the branch is being worked: the fresh-execution-crewmate
@@ -577,10 +605,11 @@ done
   || ac_die "--captain-initiated/--system-initiated/--over-cap require --roomchief (they gate the room-parallel cap)"
 [ -n "$roomchief_family" ] || [ "$solo_chief" = 0 ] \
   || ac_die "--solo requires --roomchief (a SOLO CHIEF is a roomchief that works its family's slices itself; a crewmate has no such mode)"
-# --recover relaxes the crewdeputy meta refusal only; on any other spawn it is
-# a mistake, not a silent no-op.
-[ "$recover" = 0 ] || [ "$crewdeputy" = 1 ] \
-  || ac_die "--recover requires --crewdeputy (it is the guarded crewdeputy recovery ladder)"
+# --recover reopens a pane on an EXISTING task (contract: the two RECOVERY
+# blocks in this header); a resume-from is a NEW task continuing an old
+# session, and the two cannot mean one spawn.
+[ "$recover" = 0 ] || [ -z "$resume_from" ] \
+  || ac_die "--recover and --resume-from are mutually exclusive (a recovery resumes the task's OWN recorded session in its OWN worktree)"
 # --codereview-rule pins panes.codereview at CREWMATE SPAWN TIME (captain
 # decision 2026-07-28, routed-pane-rules-for-gate-codereview-roomchief: the
 # chief - the only actor ever in a position to judge, since an execution
@@ -712,8 +741,9 @@ spawn_meta_claim_cleanup() {
   spawn_meta_claim_release
 }
 
-if [ "$recover" = 1 ]; then
-  # The guarded recovery ladder (contract: the RECOVERY block in this header).
+if [ "$recover" = 1 ] && [ "$crewdeputy" = 1 ]; then
+  # The guarded crewdeputy recovery ladder (contract: the RECOVERY block in
+  # this header); a crewmate/roomchief --recover takes its own block below.
   dep_home="$(ac_deputy_parse | awk -F'\t' -v i="$id" '$1 != "INVALID" && $2 == i { print $3; exit }')"
   [ -n "$dep_home" ] \
     || ac_die "--recover: no parseable entry for $id in $(ac_deputy_registry) - there is nothing to recover"
@@ -744,7 +774,14 @@ if [ "$recover" = 1 ]; then
     ac_warn "--recover: archived the stale meta for $id to $arch_dir"
   fi
 fi
-[ -e "$meta" ] && ac_die "crewmate $id already exists (see $meta); tear it down first"
+# A crewmate/roomchief recovery is the ONE spawn that needs the meta to exist:
+# it reopens that task's pane (the GUARDED RECOVERY block below, which probes
+# liveness itself before touching anything).
+if [ "$recover" = 1 ] && [ "$crewdeputy" = 0 ]; then
+  [ -e "$meta" ] || ac_die "--recover: no meta for $id - there is nothing to recover (spawn it fresh)"
+elif [ -e "$meta" ]; then
+  ac_die "crewmate $id already exists (see $meta); tear it down first"
+fi
 
 # Staged-flow briefs nest under their family (data/<family>/<stage>/brief.md),
 # a scoped chief's fan-out sub-tasks under data/<family>/tasks/<slug>/;
@@ -845,6 +882,103 @@ build_launch() {
     sid="$( (uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())') | tr '[:upper:]' '[:lower:]')"
   fi
   ac_build_launch "$h" "$model" "$effort_flag" "" "$sid"
+}
+
+crew_launch_env() {
+  # crew_launch_env - the env prefix of a CREWMATE launch line, printed;
+  # reads $id $review $model $effort $project_dir $codereview_rule(_set) and
+  # AC_SCOPE. One composer for the ordinary crew launch AND a --recover
+  # resume, so a recovered crewmate keeps every knob its first launch had.
+  # Carry the fleet's knobs forward to the pane agents this crewmate will start
+  # (contract: the AC_FLEET_MODEL/AC_FLEET_EFFORT block in this header). Each is
+  # emitted only when there is something to pass on, so a fleet that pins nothing
+  # leaves the launch line exactly as it was.
+  local fleet_env="" role ru knob kv pane_kind crc pane_prof proj_cfg
+  [ -z "$id" ] || fleet_env="AC_CREW_ID=$(printf '%q' "$id") "
+  [ "$review" = - ] || fleet_env="${fleet_env}AC_FLEET_REVIEW=$(printf '%q' "$review") "
+  [ -n "$model" ] && fleet_env="${fleet_env}AC_FLEET_MODEL=$(printf '%q' "$model") "
+  [ -n "$effort" ] && fleet_env="${fleet_env}AC_FLEET_EFFORT=$(printf '%q' "$effort") "
+  # The crew-ship pipeline config, resolved HERE where AC_HOME is valid, for the
+  # same reason as AC_FLEET_STATE below: a crewmate has no AC_HOME, so
+  # ac_project_config_file inside its own ac-ship.sh start would resolve against
+  # no home at all (ac_home() refuses with AC_HOME unset; before it refused it
+  # answered the config-less distro checkout) and could
+  # never tell that phantom miss apart from a project that genuinely has no
+  # installed config - silently dropping any key the captain pinned
+  # (ship-config-and-know-citation-blind-spots). AC_FLEET_HOME_CHECKED rides
+  # unconditionally: it is the positive signal that a real home ALREADY tried
+  # this resolution, so ac-ship.sh can trust an absent AC_FLEET_PROJECT_CONFIG as
+  # a verified "no config" rather than an unresolved home.
+  fleet_env="${fleet_env}AC_FLEET_HOME_CHECKED=1 "
+  proj_cfg="$(ac_project_config_file "$project_dir" 2>/dev/null || true)"
+  [ -z "$proj_cfg" ] || fleet_env="${fleet_env}AC_FLEET_PROJECT_CONFIG=$(printf '%q' "$proj_cfg") "
+  # Per-ROLE pane-agent knobs for the verification panes this crewmate will start
+  # (codereview reviewer, qa agent): resolved HERE where AC_HOME is valid, so those
+  # homeless panes get config/<role>-{agent,model,effort} via env (else
+  # ac-pane-agent falls back to its own per-role defaults). Threaded only when set,
+  # like AC_FLEET_MODEL. All THREE ride the same rung deliberately - the pane's
+  # ladder reads them together so an agent pin and its model/effort travel as one
+  # choice, never a model composed onto a harness some other rung picked.
+  for role in codereview qa; do
+    ru="$(printf '%s' "$role" | tr '[:lower:]' '[:upper:]')"
+    for knob in agent model effort; do
+      kv="$(ac_config_read "$role-$knob" "")"
+      [ -n "$kv" ] || continue
+      fleet_env="${fleet_env}AC_FLEET_$(printf '%s' "$knob" | tr '[:lower:]' '[:upper:]')_$ru=$(printf '%q' "$kv") "
+    done
+  done
+  # The DISPATCHED pane profile for those same two panes, resolved HERE for the
+  # harder version of that reason: ac-ship.sh review-agent and ac-qa.sh agent are
+  # themselves homeless, so resolving it downstream would read the config-less
+  # distro checkout rather than this fleet. ONE scalar per kind carrying the whole
+  # `harness=<h> model=<m> effort=<e>` triple - not three variables - so the
+  # profile stays atomic on the wire and ac-pane-agent can honour an empty model
+  # as "the harness's own default" instead of re-deriving it. Only these two kinds:
+  # ac-learn.sh's scout is homed and reads the block first-hand. Threaded only when
+  # a profile resolves, so a fleet that configures none leaves this line unchanged.
+  # --codereview-rule is the ONE exception to "no selector, ever": with no flag
+  # this call is byte-identical to before (ac_pane_profile, no --rule - flat
+  # stays flat, an absent key threads nothing, a routed panes.codereview falls
+  # to its mandatory default). WITH the flag, a wrong selector DIES rather than
+  # silently threading nothing - the caller asked to choose deliberately, and a
+  # request that cannot be honored is a misconfiguration, not an absent profile.
+  for pane_kind in codereview qa; do
+    if [ "$pane_kind" = codereview ] && [ "$codereview_rule_set" = 1 ]; then
+      crc=0
+      pane_prof="$("$bin_dir/ac-dispatch-select.sh" --pane codereview --rule "$codereview_rule" 2>/dev/null)" || crc=$?
+      [ "$crc" = 0 ] && [ -n "$pane_prof" ] \
+        || ac_die "--codereview-rule $codereview_rule did not resolve a profile (see bin/ac-dispatch-select.sh --pane codereview --rule $codereview_rule)"
+    else
+      pane_prof="$(ac_pane_profile "$pane_kind")"
+    fi
+    [ -n "$pane_prof" ] || continue
+    fleet_env="${fleet_env}AC_FLEET_PROFILE_$(printf '%s' "$pane_kind" | tr '[:lower:]' '[:upper:]')=$(printf '%q' "$pane_prof") "
+  done
+  # The completion-push CHANNEL, on the same rung and for the same reason: a
+  # crewmate with no AC_HOME cannot resolve state/, so bin/ac-done.sh could
+  # neither publish its wake record nor find the watcher to nudge. AC_FLEET_STATE
+  # is the ONE path that answers both, and AC_FLEET_SCOPE names the family whose
+  # scoped watcher supervises this task (a roomchief's spawn - so the push files
+  # for the chief that drains it, exactly as the watcher's own wakes do); an
+  # unscoped spawn carries no scope and files for the fleet. Not a pin, so it
+  # rides every crewmate launch line; never AC_HOME.
+  fleet_env="${fleet_env}AC_FLEET_STATE=$(printf '%q' "$(ac_state_dir)") "
+  # The fleet NAME, same rung and same reason: ac_fleet_name builds every herdr
+  # workspace label, and a homeless crewmate could only fall back to the ONE group
+  # every fleet on the box shares - so every observation tab it opens (ship watch,
+  # qa watch, the pane agents) landed there instead of in its own fleet's. Also
+  # not a pin, so it rides every crewmate launch line; the NAME, never AC_HOME.
+  fleet_env="${fleet_env}AC_FLEET_NAME=$(printf '%q' "$(ac_fleet_name)") "
+  ac_wake_scope_ok "${AC_SCOPE:-}" \
+    && fleet_env="${fleet_env}AC_FLEET_SCOPE=$(printf '%q' "$AC_SCOPE") "
+  # Memory-plugin project identity: inside a git WORKTREE, `git rev-parse
+  # --show-toplevel` answers the worktree dir itself, so cwd-derived project
+  # names collapse to the slot basename and one repo's memories file under
+  # another's (measured: crewmate sessions filed under "1"). The explicit env
+  # is the plugin's own documented override; the resolved PROJECT name is the
+  # truth whatever the slot is called.
+  fleet_env="${fleet_env}AGENTMEMORY_PROJECT_NAME=$(printf '%q' "$(basename "$project_dir")") "
+  printf '%s' "$fleet_env"
 }
 
 # Pin the backend for this task; ac_backend validates the name and every
@@ -1144,6 +1278,89 @@ spawn_orphan_cleanup() {
   backend_kill_window "$id" || true
   spawn_meta_claim_release
 }
+
+# --- crewmate / roomchief recovery ------------------------------------------------
+
+if [ "$recover" = 1 ] && [ "$crewdeputy" = 0 ]; then
+  # GUARDED RECOVERY of a task whose pane is DEFINITELY gone (contract: the
+  # GUARDED CREWMATE/ROOMCHIEF RECOVERY block in this header). Everything the
+  # task is - meta, worktree, branch, brief, status history - stays exactly
+  # where it is; only its pane is reopened and its recorded session resumed.
+  # The task's OWN backend decides the probe, never this call's flag/config.
+  AC_BACKEND="$(ac_task_backend "$id")"; export AC_BACKEND
+  backend="$(ac_backend)"
+  alive_rc=0; backend_window_alive "$id" || alive_rc=$?
+  case "$alive_rc" in
+    0) ac_die "--recover: $id is LIVE ($(backend_target "$id")) - a live pane is never double-spawned" ;;
+    1) ;;
+    *) ac_die "--recover: the BACKEND could not be READ for $id - whether $(backend_target "$id") still exists is UNKNOWN, so this recovery is REFUSED rather than open a second pane beside a possibly LIVE one; check the backend itself (herdr status server), then recover again" ;;
+  esac
+  rec_kind="$(ac_meta_get "$meta" kind)"
+  rec_dir="$(ac_meta_get "$meta" worktree)"
+  rec_sid="$(ac_meta_get "$meta" session_id)"
+  case "$rec_kind" in
+    ship|scout|roomchief) ;;
+    crewdeputy) ac_die "--recover: $id is a crewdeputy - its ladder is ac-spawn.sh $id --crewdeputy --recover" ;;
+    *) ac_die "--recover: kind=${rec_kind:-unknown} has no recovery path (verify panes belong to ac-verify.sh, self tasks to ac-self-task.sh)" ;;
+  esac
+  [ -n "$rec_dir" ] && [ -d "$rec_dir" ] \
+    || ac_die "--recover: the recorded worktree of $id is gone (${rec_dir:-none}) - nothing to reopen a pane on; tear it down instead"
+  [ "$(ac_meta_get "$meta" harness)" = claude ] && [ -n "$rec_sid" ] \
+    || ac_die "--recover: $id has no resumable claude session on record - tear it down and spawn fresh with its branch and report as inputs"
+  # The recorded model/effort ride the resume exactly as the first launch
+  # carried them; the fleet defaults resolved above are that launch's, not
+  # this task's.
+  model="$(ac_meta_get "$meta" model)"
+  effort="$(ac_meta_get "$meta" effort)"
+  effort_flag="$effort"; [ "$effort" = ultracode ] && effort_flag=xhigh
+  resume_sid="$rec_sid"
+  launch="$(build_launch claude)"
+  command -v claude >/dev/null 2>&1 || ac_die "harness binary not found: claude"
+  notice="Notice: your pane was destroyed and has been RECOVERED - same session, same worktree, nothing lost. Continue where you left off."
+  if [ "$rec_kind" = roomchief ]; then
+    fam="$(ac_meta_get "$meta" project)"
+    dom_env=""; solo_env=""
+    dom="$(ac_meta_get "$meta" domain)"
+    [ -z "$dom" ] || dom_env="AC_DOMAIN=$(printf '%q' "$dom") "
+    [ "$(ac_meta_get "$meta" solo)" != 1 ] || solo_env="AC_CHIEF_SOLO=1 "
+    env_prefix="AC_HOME=$(printf '%q' "$(ac_home)") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}${solo_env}"
+    notice="$notice Your family watcher died with the old tab: re-arm it as a background task (AC_WATCH_ONLY=\$(bin/ac-ready.sh watch-set $fam) bin/ac-watch.sh - recompute the set each re-arm so an epic keeps covering its in-flight story panes), then continue."
+    export AC_WINDOW_FAMILY="$fam"
+  else
+    fam=""
+    review="$(ac_meta_get "$meta" review)"; review="${review:-"-"}"
+    project_dir="$(ac_meta_get "$meta" project_dir)"
+    rec_scope="$(ac_meta_get "$meta" fleet_scope)"
+    [ -z "$rec_scope" ] || { AC_SCOPE="$rec_scope"; export AC_SCOPE; }
+    env_prefix="$(crew_launch_env)"
+  fi
+  # One fresh pane the ordinary spawn way: the task's family workspace, its
+  # recorded cwd. A failed relaunch takes that pane with it and leaves the
+  # task as it found it - handle-less, so the next --recover reads gone again.
+  backend_window_new "$id" "$rec_dir"
+  unset AC_WINDOW_FAMILY
+  window="$(backend_target "$id")"
+  backend_send_line "$id" "$(ac_claude_config_env)${codegraph_env}${env_prefix}$launch" \
+    || { backend_kill_window "$id" || true
+         ac_die "--recover: resume line NOT delivered to $id (see stderr above) - the fresh pane was closed again; recover again once the backend answers"; }
+  sleep "$settle"
+  up=0; backend_harness_up "$id" || up=$?
+  if [ "$up" = 1 ]; then
+    ac_status_append "$id" "warn: recovery refused - claude did NOT come up on --resume $rec_sid (the pane fell back to a shell); the fresh pane was closed again"
+    backend_capture "$id" 15 >&2 || true
+    backend_kill_window "$id" || true
+    ac_die "--recover: claude did NOT come up in $window on --resume $rec_sid (its last lines above) - the fresh pane was closed again and $id is as it was; a session claude no longer knows cannot be recovered, tear down and spawn fresh"
+  elif [ "$up" = 2 ]; then
+    ac_warn "could not read $window to verify claude came up - the recovery stands (peek it: bin/ac-peek.sh $id)"
+  fi
+  backend_send_line "$id" "$notice" \
+    || ac_warn "recovery notice NOT delivered to $id (see stderr above) - the session IS resumed, so re-send it only if the agent looks confused: bin/ac-send.sh $id '$notice'"
+  ac_meta_set "$meta" window "$window"
+  ac_status_append "$id" "recovered: pane reopened at $window, session $rec_sid resumed"
+  printf 'recovered %s kind=%s backend=%s window=%s worktree=%s\n' \
+    "$id" "$rec_kind" "$backend" "$window" "$rec_dir"
+  exit 0
+fi
 
 spawn_meta_claim_acquire
 trap spawn_meta_claim_cleanup EXIT
@@ -1784,95 +2001,7 @@ if eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)"
   eb_branch="${eb_entry%% *}"
   prompt="$prompt INTEGRATION BRANCH: this worktree is cut from $eb_branch and your work lands INTO $eb_branch, never the default branch - branch crew/$id from it as usual, and any PR you are told to open targets $eb_branch."
 fi
-# Carry the fleet's knobs forward to the pane agents this crewmate will start
-# (contract: the AC_FLEET_MODEL/AC_FLEET_EFFORT block in this header). Each is
-# emitted only when there is something to pass on, so a fleet that pins nothing
-# leaves the launch line exactly as it was.
-fleet_env=""
-[ -z "$id" ] || fleet_env="AC_CREW_ID=$(printf '%q' "$id") "
-[ "$review" = - ] || fleet_env="${fleet_env}AC_FLEET_REVIEW=$(printf '%q' "$review") "
-[ -n "$model" ] && fleet_env="${fleet_env}AC_FLEET_MODEL=$(printf '%q' "$model") "
-[ -n "$effort" ] && fleet_env="${fleet_env}AC_FLEET_EFFORT=$(printf '%q' "$effort") "
-# The crew-ship pipeline config, resolved HERE where AC_HOME is valid, for the
-# same reason as AC_FLEET_STATE below: a crewmate has no AC_HOME, so
-# ac_project_config_file inside its own ac-ship.sh start would resolve against
-# no home at all (ac_home() refuses with AC_HOME unset; before it refused it
-# answered the config-less distro checkout) and could
-# never tell that phantom miss apart from a project that genuinely has no
-# installed config - silently dropping any key the captain pinned
-# (ship-config-and-know-citation-blind-spots). AC_FLEET_HOME_CHECKED rides
-# unconditionally: it is the positive signal that a real home ALREADY tried
-# this resolution, so ac-ship.sh can trust an absent AC_FLEET_PROJECT_CONFIG as
-# a verified "no config" rather than an unresolved home.
-fleet_env="${fleet_env}AC_FLEET_HOME_CHECKED=1 "
-proj_cfg="$(ac_project_config_file "$project_dir" 2>/dev/null || true)"
-[ -z "$proj_cfg" ] || fleet_env="${fleet_env}AC_FLEET_PROJECT_CONFIG=$(printf '%q' "$proj_cfg") "
-# Per-ROLE pane-agent knobs for the verification panes this crewmate will start
-# (codereview reviewer, qa agent): resolved HERE where AC_HOME is valid, so those
-# homeless panes get config/<role>-{agent,model,effort} via env (else
-# ac-pane-agent falls back to its own per-role defaults). Threaded only when set,
-# like AC_FLEET_MODEL. All THREE ride the same rung deliberately - the pane's
-# ladder reads them together so an agent pin and its model/effort travel as one
-# choice, never a model composed onto a harness some other rung picked.
-for role in codereview qa; do
-  ru="$(printf '%s' "$role" | tr '[:lower:]' '[:upper:]')"
-  for knob in agent model effort; do
-    kv="$(ac_config_read "$role-$knob" "")"
-    [ -n "$kv" ] || continue
-    fleet_env="${fleet_env}AC_FLEET_$(printf '%s' "$knob" | tr '[:lower:]' '[:upper:]')_$ru=$(printf '%q' "$kv") "
-  done
-done
-# The DISPATCHED pane profile for those same two panes, resolved HERE for the
-# harder version of that reason: ac-ship.sh review-agent and ac-qa.sh agent are
-# themselves homeless, so resolving it downstream would read the config-less
-# distro checkout rather than this fleet. ONE scalar per kind carrying the whole
-# `harness=<h> model=<m> effort=<e>` triple - not three variables - so the
-# profile stays atomic on the wire and ac-pane-agent can honour an empty model
-# as "the harness's own default" instead of re-deriving it. Only these two kinds:
-# ac-learn.sh's scout is homed and reads the block first-hand. Threaded only when
-# a profile resolves, so a fleet that configures none leaves this line unchanged.
-# --codereview-rule is the ONE exception to "no selector, ever": with no flag
-# this call is byte-identical to before (ac_pane_profile, no --rule - flat
-# stays flat, an absent key threads nothing, a routed panes.codereview falls
-# to its mandatory default). WITH the flag, a wrong selector DIES rather than
-# silently threading nothing - the caller asked to choose deliberately, and a
-# request that cannot be honored is a misconfiguration, not an absent profile.
-for pane_kind in codereview qa; do
-  if [ "$pane_kind" = codereview ] && [ "$codereview_rule_set" = 1 ]; then
-    crc=0
-    pane_prof="$("$bin_dir/ac-dispatch-select.sh" --pane codereview --rule "$codereview_rule" 2>/dev/null)" || crc=$?
-    [ "$crc" = 0 ] && [ -n "$pane_prof" ] \
-      || ac_die "--codereview-rule $codereview_rule did not resolve a profile (see bin/ac-dispatch-select.sh --pane codereview --rule $codereview_rule)"
-  else
-    pane_prof="$(ac_pane_profile "$pane_kind")"
-  fi
-  [ -n "$pane_prof" ] || continue
-  fleet_env="${fleet_env}AC_FLEET_PROFILE_$(printf '%s' "$pane_kind" | tr '[:lower:]' '[:upper:]')=$(printf '%q' "$pane_prof") "
-done
-# The completion-push CHANNEL, on the same rung and for the same reason: a
-# crewmate with no AC_HOME cannot resolve state/, so bin/ac-done.sh could
-# neither publish its wake record nor find the watcher to nudge. AC_FLEET_STATE
-# is the ONE path that answers both, and AC_FLEET_SCOPE names the family whose
-# scoped watcher supervises this task (a roomchief's spawn - so the push files
-# for the chief that drains it, exactly as the watcher's own wakes do); an
-# unscoped spawn carries no scope and files for the fleet. Not a pin, so it
-# rides every crewmate launch line; never AC_HOME.
-fleet_env="${fleet_env}AC_FLEET_STATE=$(printf '%q' "$(ac_state_dir)") "
-# The fleet NAME, same rung and same reason: ac_fleet_name builds every herdr
-# workspace label, and a homeless crewmate could only fall back to the ONE group
-# every fleet on the box shares - so every observation tab it opens (ship watch,
-# qa watch, the pane agents) landed there instead of in its own fleet's. Also
-# not a pin, so it rides every crewmate launch line; the NAME, never AC_HOME.
-fleet_env="${fleet_env}AC_FLEET_NAME=$(printf '%q' "$(ac_fleet_name)") "
-ac_wake_scope_ok "${AC_SCOPE:-}" \
-  && fleet_env="${fleet_env}AC_FLEET_SCOPE=$(printf '%q' "$AC_SCOPE") "
-# Memory-plugin project identity: inside a git WORKTREE, `git rev-parse
-# --show-toplevel` answers the worktree dir itself, so cwd-derived project
-# names collapse to the slot basename and one repo's memories file under
-# another's (measured: crewmate sessions filed under "1"). The explicit env
-# is the plugin's own documented override; the resolved PROJECT name is the
-# truth whatever the slot is called.
-fleet_env="${fleet_env}AGENTMEMORY_PROJECT_NAME=$(printf '%q' "$(basename "$project_dir")") "
+fleet_env="$(crew_launch_env)"
 backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)$codegraph_env$fleet_env$launch"
 deliver_kickoff "$id" "$harness" "$prompt"
 
