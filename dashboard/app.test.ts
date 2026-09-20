@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -2077,6 +2077,68 @@ test("ttlMemo.invalidate drops the cached value so the next call re-runs the loa
   load.invalidate();
   expect(await load()).toBe(2);
   expect(calls).toBe(2);
+});
+
+// warmMemo keeps the fleet snapshot warm OFF the request path: a background
+// loop re-gathers every TTL (and at once on a watcher invalidation), so read
+// routes serve the last snapshot and never block on the shell-out. Until the
+// loop has produced one, ttlMemo's share-the-in-flight-call semantics apply.
+test("warmMemo: rapid gets within a TTL cost exactly one gather, an invalidation exactly one more", async () => {
+  let calls = 0;
+  const m = warmMemo(60_000, async () => ++calls);
+  m.start();
+  const vals = await Promise.all([m.get(), m.get(), m.get(), m.get()]);
+  expect(vals).toEqual([1, 1, 1, 1]);
+  expect(calls).toBe(1);
+  await m.invalidate();
+  expect(calls).toBe(2);
+  expect(await m.get()).toBe(2);
+  m.stop();
+});
+
+test("warmMemo: before start() the cold memo answers, sharing one gather across callers", async () => {
+  let calls = 0;
+  const m = warmMemo(60_000, async () => ++calls);
+  expect(await Promise.all([m.get(), m.get()])).toEqual([1, 1]);
+  expect(calls).toBe(1);
+  await m.invalidate();
+  expect(calls).toBe(1); // no loop, nothing to refresh - the next get re-gathers
+  expect(await m.get()).toBe(2);
+});
+
+test("warmMemo: an invalidation during an in-flight gather never overlaps it and re-runs exactly once", async () => {
+  let calls = 0, active = 0, maxActive = 0;
+  const m = warmMemo(60_000, async () => {
+    calls++; active++; maxActive = Math.max(maxActive, active);
+    await new Promise((r) => setTimeout(r, 30));
+    active--;
+    return calls;
+  });
+  m.start();
+  await Promise.all([m.invalidate(), m.invalidate()]);
+  expect(maxActive).toBe(1);
+  expect(calls).toBe(2);
+  expect(await m.get()).toBe(2);
+  m.stop();
+});
+
+test("warmMemo: start() hands each fresh snapshot to the caller, so the watcher set follows the survey", async () => {
+  const seen: number[] = [];
+  let calls = 0;
+  const m = warmMemo(60_000, async () => ++calls);
+  await m.start((v) => seen.push(v));
+  await m.invalidate();
+  expect(seen).toEqual([1, 2]);
+  m.stop();
+});
+
+test("homePathsIn walks a survey's homes and nested crewdeputies for their paths", () => {
+  const json = JSON.stringify({ homes: [
+    { path: "/h/a", crewdeputies: [{ path: "/h/a/crewdeputies/d1", crewdeputies: [] }] },
+    { path: "/h/b" },
+  ] });
+  expect([...homePathsIn(json)].sort()).toEqual(["/h/a", "/h/a/crewdeputies/d1", "/h/b"]);
+  expect(homePathsIn("not json").size).toBe(0);
 });
 
 // app.ts sets the client poll interval POLL_MS = 5000, but that

@@ -1795,7 +1795,7 @@ async function run(
 
 /** Cross-fleet survey as one JSON document - passed through untouched. */
 async function snapshot(): Promise<Response> {
-  const { code, out } = await snapshotResult();
+  const { code, out } = await snapshotResult.get();
   if (code !== 0)
     return json({ error: "ac-fleets.sh --json failed", code }, 502);
   return new Response(out, { headers: { "content-type": "application/json" } });
@@ -1826,6 +1826,57 @@ export function ttlMemo<T>(ttlMs: number, loader: () => Promise<T>): (() => Prom
   return get;
 }
 
+/** A ttlMemo kept warm OFF the request path: once start()ed, a background
+ *  loop re-runs the loader every ttlMs and at once on invalidate(), and
+ *  get() answers from the last landed value without ever waiting on the
+ *  loader. Before the first value lands (cold start, or never started) the
+ *  plain ttlMemo answers. Refreshes never overlap: an invalidation during
+ *  one marks it dirty and one more run follows, since that gather may have
+ *  read the state from before the change. */
+export function warmMemo<T>(ttlMs: number, loader: () => Promise<T>): {
+  get(): Promise<T>;
+  invalidate(): Promise<void>;
+  start(onValue?: (value: T) => void): Promise<void>;
+  stop(): void;
+} {
+  const cold = ttlMemo(ttlMs, loader);
+  let warm: { value: T } | null = null;
+  let inflight: Promise<void> | null = null;
+  let dirty = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let onValue: ((value: T) => void) | undefined;
+  function refresh(): Promise<void> {
+    if (inflight) { dirty = true; return inflight; }
+    inflight = loader()
+      .then((v) => { warm = { value: v }; onValue?.(v); }, () => { /* the cold memo reports the failure */ })
+      .then(() => {
+        inflight = null;
+        if (dirty) { dirty = false; return refresh(); }
+      });
+    return inflight;
+  }
+  return {
+    async get() {
+      if (warm) return warm.value;
+      if (inflight) { await inflight; if (warm) return warm.value; }
+      return cold();
+    },
+    invalidate() {
+      cold.invalidate();
+      return timer ? refresh() : Promise.resolve();
+    },
+    start(cb) {
+      onValue = cb;
+      timer = setInterval(() => { void refresh(); }, ttlMs);
+      return refresh();
+    },
+    stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
+  };
+}
+
 /** Every home path the current survey knows about, crewdeputies included.
  *  Every route below gates on this, so it is the ONE shell-out to
  *  ac-fleets.sh --paths paid per request across the whole API surface -
@@ -1844,12 +1895,11 @@ export function ttlMemo<T>(ttlMs: number, loader: () => Promise<T>): (() => Prom
 // every tick - the bug this constant used to have at 3000. Do not "tidy" it
 // back down without also raising POLL_MS.
 export const HOME_PATHS_TTL_MS = 12000;
-const allowedHomePaths = ttlMemo(HOME_PATHS_TTL_MS, async (): Promise<Set<string>> => {
-  const { code, out } = await run([`${BIN}/ac-fleets.sh`, "--paths"], {
-    AC_HOME,
-  });
+/** Every home path in an ac-fleets.sh survey (--paths or --json share the
+ *  {homes:[{path,crewdeputies:[...]}]} spine), crewdeputies included. Unparseable
+ *  input is an empty set: every drill-down 404s, which is the safe failure. */
+export function homePathsIn(json: string): Set<string> {
   const set = new Set<string>();
-  if (code !== 0) return set;
   try {
     const walk = (homes: any[]) => {
       for (const h of homes ?? []) {
@@ -1857,18 +1907,23 @@ const allowedHomePaths = ttlMemo(HOME_PATHS_TTL_MS, async (): Promise<Set<string
         walk(h?.crewdeputies ?? []);
       }
     };
-    walk(JSON.parse(out).homes);
-  } catch {
-    /* empty allowlist -> every drill-down 404s, which is the safe failure */
-  }
+    walk(JSON.parse(json).homes);
+  } catch { /* empty */ }
   return set;
+}
+const allowedHomePaths = ttlMemo(HOME_PATHS_TTL_MS, async (): Promise<Set<string>> => {
+  const { code, out } = await run([`${BIN}/ac-fleets.sh`, "--paths"], {
+    AC_HOME,
+  });
+  return code === 0 ? homePathsIn(out) : new Set<string>();
 });
 
-/** The raw `ac-fleets.sh --json` shell-out `snapshot()` passes through - its
- *  own ttlMemo cache, separate from allowedHomePaths' (each is a distinct
- *  full multi-home walk), so a steady-state poll hits both instead of
- *  neither. */
-const snapshotResult = ttlMemo(HOME_PATHS_TTL_MS, () =>
+/** The raw `ac-fleets.sh --json` shell-out `snapshot()` passes through - one
+ *  gather for EVERY home (the script walks them itself), kept warm by
+ *  dashboardMain's background loop so a poll never blocks on it; separate
+ *  from allowedHomePaths' cache (each is a distinct full multi-home walk),
+ *  so a steady-state poll hits both instead of neither. */
+const snapshotResult = warmMemo(HOME_PATHS_TTL_MS, () =>
   run([`${BIN}/ac-fleets.sh`, "--json"], { AC_HOME }),
 );
 
@@ -6543,9 +6598,11 @@ export function dashboardMain() {
   mainPort = port; // the share listener (REVIEW SHARE) lives on port+1
   scanShares();    // re-arm durable shares across a dashboard restart
   // Fleet-state watchers (dashboard/watch.ts): a status/meta/backlog/room
-  // write drops the snapshot memo so the next poll re-gathers at once.
-  const fleetWatcher = watchHomes(() => snapshotResult.invalidate(), { log: slog });
-  void allowedHomePaths().then((set) => fleetWatcher.sync([...set]));
+  // write drops the snapshot memo and re-gathers at once, off the request
+  // path; the watched set follows each fresh survey, so a home added later
+  // is covered without a restart.
+  const fleetWatcher = watchHomes(() => { void snapshotResult.invalidate(); }, { log: slog });
+  void snapshotResult.start(({ code, out }) => { if (code === 0) fleetWatcher.sync([...homePathsIn(out)]); });
   // Each terminal socket is a live pty + herdr client; a buggy reconnect loop
   // must not fork-bomb the machine. 4 covers every real captain shape (a few
   // browser tabs), and the 429 names the limit.
