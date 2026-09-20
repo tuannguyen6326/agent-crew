@@ -391,41 +391,89 @@ assert_contains "$(cat "$AC_HOME/data/scf-fix/timeline.log")" \
   "landed-receipt=yes" "the receipt is read from the family room"
 assert_no_file "$state/scf-fix.meta" "the scoped slice is torn down"
 
-# --- the slice that CANNOT land: a hand-back is the other exit ----------------
-# Found by the solo-chief live probe: when main moves under a slice, a SCOPED
-# actor cannot land it at all - ac-merge-local.sh withholds --no-ff from any
-# session carrying AC_CREW_ID/AC_SCOPE, which is the fence captain.md relies on
-# - and a chief that cannot land can never truthfully post `LANDED:`. The gate
-# then refused for ever and the slice held its lease and its branch with no key
-# in the contract. The exit is the roomchief's ordinary one: hand back, naming
-# the slice, and the crewchief lands it.
+# --- the slice that CANNOT land: UNLANDABLE is the other exit, in full -------
+# Found by the solo-chief live probe and then mis-fixed once: when main moves
+# under a slice, a SCOPED actor cannot land it - ac-merge-local.sh withholds
+# --no-ff from any session carrying AC_CREW_ID/AC_SCOPE, the fence captain.md
+# relies on - and a chief that cannot land can never truthfully post LANDED.
+# The first fix taught it to post HANDBACK, which is the FAMILY's tenure-ending
+# verb (ac_room_handback_families): it flipped the whole family into HANDBACK
+# and wedged the crewchief's turn end. And its test tore down a slice with NO
+# commits, so it never crossed landed_proof - the fence that actually holds an
+# unlanded branch - and proved nothing about the scenario in its own comment.
+# This one drives the real thing: a commit on the slice, main moved, the scoped
+# land refused, the receipt posted, and the teardown still refusing until the
+# crewchief lands it.
+scg_default="$(git -C "$repo" rev-parse --abbrev-ref HEAD)"
 AC_SCOPE=scg "$BIN/ac-self-task.sh" start scg-stuck "$repo" >/dev/null
-out="$("$BIN/ac-teardown.sh" scg-stuck --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" \
-  && fail "a scoped slice with neither receipt must not land: $out"
-assert_contains "$out" "HANDBACK" "the refusal names the hand-back exit, not only the landing one"
-AC_SCOPE=scg "$BIN/ac-room.sh" post scg scg-chief \
-  'HANDBACK: scg-stuck cannot land - main moved and a scoped actor is withheld --no-ff; crewchief to land' >/dev/null
-out="$("$BIN/ac-teardown.sh" scg-stuck --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" \
-  || fail "a HANDBACK naming the slice discharges the landing obligation: $out"
-assert_contains "$(cat "$AC_HOME/data/scg-stuck/timeline.log")" "landed-receipt=yes" \
-  "the hand-back is read as the record it is"
-assert_no_file "$state/scg-stuck.meta" "the handed-back slice is torn down"
+scg_wt="$(awk -F= '$1=="worktree"{print $2}' "$state/scg-stuck.meta")"
+git -C "$scg_wt" checkout -q -B crew/scg-stuck
+printf 'slice work\n' >"$scg_wt/scg.txt"
+git -C "$scg_wt" add scg.txt && git -C "$scg_wt" -c user.name=t -c user.email=t@t commit -q -m "scg: slice work"
+printf 'main moved\n' >"$repo/moved.txt"
+git -C "$repo" add moved.txt && git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m "main: moved under the slice"
 
-# --- the lesson gate reads the ATTRIBUTION, not the heading spelling ---------
-# Also found by that probe: the roomchief wrote all five lessons correctly and
-# first-hand, attributed `(by: <slice-id>, first-hand)`, under the heading its
-# own contract gives a family - `### <date> (family <fam>)`. The gate grepped
-# the HEADING for the literal `(solo <id>)` and reported lessons=none against
-# lessons that were on the record and good, and a chief retagged a heading by
-# hand to unblock a land. The `(by: <id>` attribution is what the crewmate
-# contract already mandates per LINE, so that is what the gate reads.
+rc=0; out="$(AC_SCOPE=scg "$BIN/ac-merge-local.sh" scg-stuck 2>&1)" || rc=$?
+[ "$rc" != 0 ] || fail "a scoped actor must be refused the land once main has moved: $out"
+assert_contains "$out" "no-ff is not available" "...and told why (the fence, not a merge conflict)"
+
+# A family HANDBACK that merely MENTIONS the slice is not the slice's receipt.
+AC_SCOPE=scg "$BIN/ac-room.sh" post scg scg-chief 'HANDBACK: scg mostly done; scg-stuck was superseded' >/dev/null
+rc=0; out="$("$BIN/ac-teardown.sh" scg-stuck --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" || rc=$?
+[ "$rc" != 0 ] || fail "an unlanded slice must not tear down on a family hand-back that names it: $out"
+assert_contains "$out" "unlanded" "the branch fence holds first - the work is still on crew/scg-stuck"
+# ...and it did not flip the family into HANDBACK either (that receipt is the
+# family's; the slice never posts it).
+AC_SCOPE=scg "$BIN/ac-room.sh" post scg scg-chief 'HANDBACK-REFUSED: fixture reset' >/dev/null
+
+AC_SCOPE=scg "$BIN/ac-room.sh" post scg scg-chief \
+  'UNLANDABLE: scg-stuck - main moved and a scoped actor is withheld --no-ff; crewchief to land' >/dev/null
+rc=0; out="$("$BIN/ac-teardown.sh" scg-stuck --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" || rc=$?
+[ "$rc" != 0 ] || fail "the receipt is a RECORD, not a key to the branch fence: unlanded work still refuses: $out"
+assert_contains "$out" "unlanded" "...with the same refusal, so the chief knows the crewchief has not landed it yet"
+case "$(AC_HOME="$AC_HOME" "$BIN/ac-room.sh" list 2>/dev/null)" in
+  *"HANDBACK"*"scg"*) fail "UNLANDABLE must not read as a family hand-back" ;;
+esac
+
+# The crewchief (unscoped) lands it --no-ff, and THEN the slice tears down on
+# the receipt it was able to write truthfully.
+"$BIN/ac-merge-local.sh" scg-stuck --no-ff >/dev/null 2>&1 || fail "the crewchief's --no-ff land must succeed"
+out="$("$BIN/ac-teardown.sh" scg-stuck --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" \
+  || fail "once landed by the crewchief, UNLANDABLE discharges the receipt: $out"
+assert_contains "$(cat "$AC_HOME/data/scg-stuck/timeline.log")" "landed-receipt=yes" \
+  "the UNLANDABLE receipt is read as the slice's record"
+assert_no_file "$state/scg-stuck.meta" "the slice is torn down"
+git -C "$repo" branch -q -f "$scg_default" HEAD 2>/dev/null || true
+
+# The receipt match is anchored on the receipt SHAPE, never a substring: a
+# LANDED: line about another slice that mentions this one is not this one's.
+AC_SCOPE=scz "$BIN/ac-self-task.sh" start scz-fix "$repo" >/dev/null
+AC_SCOPE=scz "$BIN/ac-room.sh" post scz scz-chief 'LANDED: scz-other - done; scz-fix was folded in' >/dev/null
+rc=0; out="$("$BIN/ac-teardown.sh" scz-fix --no-lesson 'fixture' --no-fact 'fixture' 2>&1)" || rc=$?
+[ "$rc" != 0 ] || fail "a LANDED: receipt for ANOTHER slice must not discharge this one: $out"
+assert_contains "$out" "landed-receipt=none" "the mention is not a receipt"
+AC_SCOPE=scz "$BIN/ac-room.sh" post scz scz-chief 'LANDED: scz-fix - landed' >/dev/null
+"$BIN/ac-teardown.sh" scz-fix --no-lesson 'fixture' --no-fact 'fixture' >/dev/null 2>&1 \
+  || fail "the slice's own LANDED: receipt lands it"
+
+# --- the lesson gate reads the ATTRIBUTION, exactly ---------------------------
+# The probe's roomchief filed five correct first-hand lessons under the heading
+# its contract gives a family - `### <date> (family <fam>)` - and the gate,
+# grepping the heading for `(solo <id>)`, reported lessons=none. The `(by: <id>,
+# first-hand)` attribution is what the crewmate contract mandates per LINE, so
+# that is what is read - and read whole, so `sch-fix-2`'s lesson is not
+# `sch-fix`'s.
 AC_SCOPE=sch "$BIN/ac-self-task.sh" start sch-fix "$repo" >/dev/null
 "$BIN/ac-learn.sh" note "### 2026-09-19 (family sch)" \
-  "- a lesson written under the family heading, attributed to the slice (by: sch-fix, first-hand)" >/dev/null
+  "- a lesson from the OTHER slice (by: sch-fix-2, first-hand)" >/dev/null
 AC_SCOPE=sch "$BIN/ac-room.sh" post sch sch-chief 'LANDED: sch-fix - landed' >/dev/null
+rc=0; out="$("$BIN/ac-teardown.sh" sch-fix --no-fact 'fixture' 2>&1)" || rc=$?
+[ "$rc" != 0 ] || fail "a lesson attributed to sch-fix-2 must not satisfy sch-fix: $out"
+assert_contains "$out" "lessons=none" "the prefix match is not an attribution"
+"$BIN/ac-learn.sh" note "- a lesson written under the family heading, attributed to the slice (by: sch-fix, first-hand)" >/dev/null
 out="$("$BIN/ac-teardown.sh" sch-fix --no-fact 'fixture' 2>&1)" \
   || fail "a lesson attributed to the slice counts however its heading is spelled: $out"
 assert_contains "$(cat "$AC_HOME/data/sch-fix/timeline.log")" "lessons=yes" \
-  "the gate reads the (by: <id> attribution the crewmate contract already mandates"
+  "the gate reads the (by: <id>, attribution the crewmate contract already mandates"
 
 pass

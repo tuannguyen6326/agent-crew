@@ -193,6 +193,7 @@ ac_verb_emoji() {
     ASK*) printf '❓' ;;
     DECIDED*) printf '✅' ;;
     LANDED*|DONE*) printf '🎉' ;;
+    UNLANDABLE*) printf '🧱' ;;
     HANDBACK*) printf '🤝' ;;
     PROMOTED*) printf '🧵' ;;
     DEMOTED*) printf '🔻' ;;
@@ -2127,25 +2128,33 @@ ac_solo_landing_check() {
   # slice, the one record a roomchief owns; the crewchief moves the row at
   # hand-back. Reported as landed-receipt, never as done-row, so the line says
   # which record was read.
-  # TWO RECEIPTS, because the slice has TWO honest exits and the gate used to
-  # read only one. `LANDED: <id>` is the slice that landed. `HANDBACK: <id>` is
-  # the slice that CANNOT: when main moves under it a scoped actor is withheld
-  # --no-ff by ac-merge-local.sh - the fence captain.md relies on - so it can
-  # never truthfully post LANDED, and a gate reading only that receipt held
-  # such a slice, its lease and its branch for ever with no key in the
-  # contract. Handing back IS the roomchief's ordinary exit; the crewchief
-  # lands it.
+  # TWO RECEIPTS, because the slice has TWO honest exits. `LANDED: <id>` is the
+  # slice that landed. `UNLANDABLE: <id>` is the slice that CANNOT: when main
+  # moves under it a scoped actor is withheld --no-ff by ac-merge-local.sh -
+  # the fence captain.md relies on - so it can never truthfully post LANDED.
+  # It is its OWN verb, never `HANDBACK:`, because HANDBACK is the FAMILY's
+  # tenure-ending receipt (ac_room_handback_families): a slice posting it
+  # flipped the whole family into HANDBACK and wedged the crewchief's turn end
+  # with a remedy that said "demote the roomchief" while the roomchief was
+  # alive and mid-family. And the receipt is a RECORD, not a key: the branch
+  # fence (ac-teardown.sh landed_proof) runs before this gate and keeps
+  # refusing until the crewchief has landed the branch --no-ff; only then does
+  # UNLANDABLE stand where LANDED would.
+  # Both receipts are matched by SHAPE - `> <VERB>: <id> ` - never by the id
+  # appearing somewhere on a line: a LANDED: about another slice, or a family
+  # HANDBACK: that mentions this one in prose, is not this slice's receipt.
   # The LESSON is read by its ATTRIBUTION, not by a heading's spelling. The
-  # crewmate contract already mandates `(by: <id>, first-hand)` per line, and a
-  # solo chief legitimately files its slices under `### <date> (family <fam>)`
-  # - a gate grepping the heading for `(solo <id>)` reported lessons=none
-  # against five correct first-hand lessons and cost a hand-retagged heading to
-  # unblock a land. Either shape counts now.
+  # crewmate contract mandates `(by: <id>, first-hand)` per line, and a solo
+  # chief legitimately files its slices under `### <date> (family <fam>)` - a
+  # gate grepping the heading for `(solo <id>)` reported lessons=none against
+  # five correct first-hand lessons and cost a hand-retagged heading to unblock
+  # a land. Read whole, `(by: <id>,` - so `sch-fix-2`'s lesson is not
+  # `sch-fix`'s.
   local id="${1:-}" repo="${2:-}" no_lesson="${3:-}" no_fact="${4:-}" scope="${5:-}" led rec bl room lessons=none facts=none done=none hint="" line
   [ -n "$id" ] || return 0
   led="$(ac_records_dir)/learnings.md"
   if [ -n "$no_lesson" ]; then lessons=waived
-  elif [ -f "$led" ] && awk -v tag="(solo $id)" -v by="(by: $id" '
+  elif [ -f "$led" ] && awk -v tag="(solo $id)" -v by="(by: $id," '
       /^## Distilled/ { exit }
       /^### / && index($0, tag) { found = 1; exit }
       index($0, by) { found = 1; exit }
@@ -2158,9 +2167,8 @@ ac_solo_landing_check() {
       END { exit(found ? 0 : 1) }' "$rec"; then facts=yes; fi
   if [ -n "$scope" ]; then
     room="$(ac_room_file "$scope" 2>/dev/null || true)"
-    if [ -n "$room" ] && [ -f "$room" ] && awk -v id="$id" '
-        /^- \[/ && index($0, id) \
-          && (index($0, "> LANDED:") || index($0, "> HANDBACK:")) { found = 1; exit }
+    if [ -n "$room" ] && [ -f "$room" ] && awk -v landed="> LANDED: $id " -v unland="> UNLANDABLE: $id " '
+        /^- \[/ && (index($0, landed) || index($0, unland)) { found = 1; exit }
         END { exit(found ? 0 : 1) }' "$room"; then done=yes; fi
     line="knowledge loop: lessons=$lessons repo-knowledge=$facts landed-receipt=$done"
   else
@@ -2179,7 +2187,7 @@ ac_solo_landing_check() {
   if [ "$done" != yes ]; then
     if [ -n "$scope" ]; then hint="$hint
   landed receipt: $(ac_root)/bin/ac-room.sh post $scope $scope-chief 'LANDED: $id - <outcome>'   (the crewchief moves the backlog row at your hand-back)
-  ...or, when the slice CANNOT land: $(ac_root)/bin/ac-room.sh post $scope $scope-chief 'HANDBACK: $id cannot land - <why>; crewchief to land'   (NEVER rebase to force it: a scoped actor is withheld --no-ff on purpose, and a rebase changes the sha a review receipt binds by)"
+  ...or, when the slice CANNOT land: $(ac_root)/bin/ac-room.sh post $scope $scope-chief 'UNLANDABLE: $id - <why>; crewchief to land'   (NEVER rebase to force it: a scoped actor is withheld --no-ff on purpose, and a rebase changes the sha a review receipt binds by. The slice STAYS IN FLIGHT until the crewchief lands crew/$id --no-ff; this teardown keeps refusing 'unlanded work' until then, and passes on this receipt afterwards)"
     else hint="$hint
   done row: append '- [x] $id - <outcome>' under ## Done in $bl"
     fi
