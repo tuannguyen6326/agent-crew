@@ -1771,6 +1771,13 @@ async function configWrite(
 // Shell-outs to the owning scripts (the accounting stays in bash).
 // ---------------------------------------------------------------------------
 
+/** The daemon's log is a file read long after the fact (ac-dashboard.sh
+ *  start redirects stdout there), so every line the server writes carries
+ *  the instant it happened. */
+function slog(msg: string): void {
+  console.log(`${new Date().toISOString()} ${msg}`);
+}
+
 async function run(
   cmd: string[],
   env: Record<string, string>,
@@ -5228,14 +5235,14 @@ function startShareServer(): void {
   // idleTimeout > the 25s review long-poll hold: Bun's 10s default silently
   // drops a held connection (empty reply), which reads as a failed poll.
   shareServer = Bun.serve({ hostname: "0.0.0.0", port: sharePort, idleTimeout: 40, fetch: shareFetch });
-  console.log(`review share listening on 0.0.0.0:${sharePort} (token-gated /review/<token> only)`);
+  slog(`review share listening on 0.0.0.0:${sharePort} (token-gated /review/<token> only)`);
 }
 
 function stopShareServerIfIdle(): void {
   if (shareServer && shareIndex.size === 0) {
     shareServer.stop();
     shareServer = null;
-    console.log("review share listener stopped (no live shares)");
+    slog("review share listener stopped (no live shares)");
   }
 }
 
@@ -5373,6 +5380,15 @@ export function composerEscapeCloses(text: string, hasImage: boolean, composing:
   return text.trim() === "" && !hasImage;
 }
 
+/** The review chrome's "dashboard unreachable" banner text, or null while
+ * the outage is still short enough to be a blip: a dead daemon otherwise
+ * leaves the page looking healthy while every annotate POST fails. Three
+ * consecutive failed session polls (2s apart) is the line. Pure. */
+export function unreachableNotice(consecutiveFailures: number, since: string): string | null {
+  if (consecutiveFailures < 3) return null;
+  return "dashboard unreachable since " + since + " - annotations will not be saved";
+}
+
 /** The review page: artifact in a sandboxed srcdoc iframe (content via the
  * existing path-safe /api/artifact route) with an injected overlay - hover
  * highlight, click-to-pin - and a side panel fed from the session file.
@@ -5394,7 +5410,7 @@ export function reviewFrameHeaders(): Record<string, string> {
   };
 }
 
-function reviewPage(guest = false): Response {
+export function reviewPage(guest = false): Response {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>agent-crew review</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -5418,7 +5434,7 @@ ${UX_BASE}
   #status{margin-left:auto;color:var(--fg2);font-size:12px;display:flex;align-items:center;gap:6px}
   #dot{width:8px;height:8px;border-radius:50%;background:var(--success)}
   #dot.ended{background:var(--stale)}
-  #paintguard{display:none;padding:8px 14px;background:var(--error);color:#fff;font:700 13px var(--ui);text-align:center}
+  #paintguard,#unreach{display:none;padding:8px 14px;background:var(--error);color:#fff;font:700 13px var(--ui);text-align:center}
   #main{flex:1;display:flex;min-height:0}
   #frame{flex:1;border:0;background:#fff}
   #panel{width:min(380px,42vw);border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
@@ -5504,6 +5520,7 @@ ${UX_BASE}
   <span id="status"><span id="dot"></span><span id="stxt"></span></span>
 </div>
 <div id="paintguard">&#9888;&#65039; No visible content detected in this artifact &mdash; the page may be blank or broken.</div>
+<div id="unreach"></div>
 <div id="main">
   <iframe id="frame" sandbox="allow-scripts"></iframe>
   <div id="panel">
@@ -5564,6 +5581,7 @@ ${reviewShouldRemount.toString()}
 ${buildReviewSrcdoc.toString()}
 ${pastedPngFile.toString()}
 ${composerEscapeCloses.toString()}
+${unreachableNotice.toString()}
 // The iframe's own reader stylesheet, baked once server-side (review-page-missing-markdown-table-css):
 // THEME_VARS for the color tokens, a base body reset mirroring PAGE's own
 // plain body rule (the iframe has no ancestor document to inherit one from),
@@ -6338,8 +6356,24 @@ function esc(t){ const d = document.createElement("div"); d.textContent = t; ret
 function moderate(n, verdict){
   api("/api/review/moderate", { method: "POST", extra: "&n=" + n + "&verdict=" + verdict }).then(() => refresh(true));
 }
+// Only a REJECTED fetch counts as unreachable: a refused or errored reply
+// still proves the daemon is there to refuse.
+let failedPolls = 0, unreachableSince = null;
 async function refresh(force){
-  const s = await (await api("/api/review/session")).json();
+  let res;
+  try { res = await api("/api/review/session"); }
+  catch (err) {
+    failedPolls++;
+    if (!unreachableSince) unreachableSince = new Date().toLocaleTimeString();
+    const notice = unreachableNotice(failedPolls, unreachableSince);
+    const u = document.getElementById("unreach");
+    u.textContent = notice ?? "";
+    u.style.display = notice ? "block" : "none";
+    return;
+  }
+  failedPolls = 0; unreachableSince = null;
+  document.getElementById("unreach").style.display = "none";
+  const s = await res.json();
   if (s.artifactMtime && lastMtime && s.artifactMtime !== lastMtime) {
     await loadArtifact();
     setTimeout(checkAnchors, 400);
@@ -6518,8 +6552,19 @@ export function dashboardMain() {
       if (reaping) return;
       reaping = true;
       for (const p of livePtys) try { p.kill(); } catch { /* already gone */ }
+      slog(`shutdown: ${sig}`);
       process.exit(sig === "SIGINT" ? 130 : 143);
     });
+  // Bun already dies on both; the handlers only make the log say why, since
+  // a daemon found dead an hour later has no terminal left to have shown it.
+  process.on("uncaughtException", (err) => {
+    slog(`shutdown: uncaught error - ${err?.stack ?? err}`);
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (err) => {
+    slog(`shutdown: unhandled rejection - ${(err as Error)?.stack ?? err}`);
+    process.exit(1);
+  });
   Bun.serve({
     hostname: "127.0.0.1",
     port,
@@ -7192,8 +7237,6 @@ export function dashboardMain() {
     },
   });
   // The launcher already printed the URL; confirm the bind succeeded.
-  console.log(
-    `agent-crew dashboard serving on http://127.0.0.1:${port}  (Ctrl-C to stop)`,
-  );
+  slog(`agent-crew dashboard serving on http://127.0.0.1:${port}  (Ctrl-C to stop)`);
 }
 
