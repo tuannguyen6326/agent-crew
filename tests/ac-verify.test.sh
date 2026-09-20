@@ -611,9 +611,10 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "question, options, matching t
 # drift. Raised 500->540 (and its two siblings by the same 40) for the decider
 # shape on ask-user and the citation rule on fix; 540->552 for the one clause
 # that tells the reviewer the scout fan-out is not the second pass it forbids.
+# 552->600 (siblings by the same 48) for the workspace-boundary fence.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 552 ] \
-  || fail "canonical review prompt exceeds its 552-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 600 ] \
+  || fail "canonical review prompt exceeds its 600-word scaffold budget: $scaffold_words"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Reserve action=fix" \
   "fix is reserved for delivery-blocking findings; advisory items ride as no-op"
 # Bug-fix durability + anti-overreach: a fix claim is judged durable-vs-
@@ -622,6 +623,19 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "authorized containment" \
   "the prompt carries the durable-fix-vs-containment judgment"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Never infer systemic flaws" \
   "the prompt carries the anti-overreach fence"
+# WORKSPACE BOUNDARY: a self-authored `find / -maxdepth 4` blocked at 0% CPU
+# inside a macOS automount and burned the whole AC_VERIFY_TIMEOUT budget. The
+# fence names the host-wide shapes, says a depth flag does not bound one, and
+# turns a missing tool into an untested check instead of a hunt.
+workspace_fence() {
+  assert_contains "$(tr '\n' ' ' <"$1")" "host-wide search" \
+    "$2 prompt forbids host-wide filesystem searches"
+  assert_contains "$(tr '\n' ' ' <"$1")" "-maxdepth" \
+    "$2 prompt says a depth/device flag does not bound a host-wide search"
+  assert_contains "$(tr '\n' ' ' <"$1")" "report that check untested" \
+    "$2 prompt turns a missing tool into an untested check, never a hunt"
+}
+workspace_fence "$VERIFY_PROMPT_CAPTURE" codereview
 # ID FORMATION belongs to the CANONICAL prompt, not only to the history block:
 # round 1's ids are the exact strings every later round must reuse, so a round-1
 # reviewer that stamps the CURRENT round into an id makes stable reuse impossible
@@ -760,8 +774,8 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $bas
 # disposition rules, resolved_ids, and the no-renumber clause the measured
 # rejections needed); the ledger payload itself stays excluded like INTENT.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 622 ] \
-  || fail "history review prompt exceeds its 622-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 670 ] \
+  || fail "history review prompt exceeds its 670-word scaffold budget: $scaffold_words"
 
 # A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
 # the interdiff scope: the previous entry's reviewed_ref
@@ -881,8 +895,8 @@ case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: C
 # fixture's one id. A real round's checklist grows one word per prior open id;
 # this bounds the PROSE, which is the part that drifts.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 702 ] \
-  || fail "previous-round ledger review prompt exceeds its 702-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 750 ] \
+  || fail "previous-round ledger review prompt exceeds its 750-word scaffold budget: $scaffold_words"
 
 # PREVIOUS ROUND ONLY: resolved findings from older rounds do not require
 # re-attestation later. A round-3 history whose r1 had an open id but whose r2
@@ -1354,6 +1368,7 @@ assert_eq "$(jq -r .report "$qa_output")" "$qa_report" "QA result names the cano
 assert_contains "$(cat "$qa_evidence/relay-report.md")" "QA_VERDICT=passed" "relay report remains usable"
 assert_contains "$(cat "$relay_log")" "relay-report --repo $lease" "facade renders relay from the verifier tree"
 assert_no_file "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" "exported QA completion removes verifier meta"
+workspace_fence "$VERIFY_PROMPT_CAPTURE" qa
 
 # The pane may omit its verdict claim entirely. Durable run.meta still owns the
 # exported verdict, and omission of the non-gating curation step is made

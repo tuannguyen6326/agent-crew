@@ -950,6 +950,10 @@ fix delta touches."
     cat >"$prompt" <<EOF
 You are an INDEPENDENT adversarial code reviewer. Review only; never edit,
 commit, push, call ac-done, or access production.
+Search only this worktree and the repository it was cut from: \`find /\`,
+\`mdfind /\` and any host-wide search are forbidden, and -maxdepth/-xdev does
+not bound one. Never hunt the machine for a tool; a missing tool means report
+that check untested, with the concrete reason.
 
 Repository: $main_repo
 Exact reviewed ref: $sha
@@ -1064,6 +1068,10 @@ ac-done, switch models mid-pane, or ask a second pane to approve your work.
 This one pane owns risk analysis, test-plan design, supervised runtime commands,
 cases/E2E, evidence, findings, verdict recording, curation receipt, and report
 inputs. Do not create per-step, per-case, service, or repository subagents.
+Search only this worktree and the repository it was cut from: \`find /\`,
+\`mdfind /\` and any host-wide search are forbidden, and -maxdepth/-xdev does
+not bound one. Never hunt the machine for a tool; a missing tool means report
+that check untested, with the concrete reason.
 
 Expected behavior comes from the accepted brief/specification/rulings first,
 then the frozen project profile and store, then the exact diff. Implementation
