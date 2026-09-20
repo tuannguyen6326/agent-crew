@@ -31,11 +31,30 @@
 #                                   a copy on PATH would not answer --version
 #                                   with anything version-shaped -
 #                                   diagnostic only, never sets rc
+#   BELOW-FLOOR: <tool> - <path> is <ver>, floor <floor> (probe: <tool> --version) - <hint>
+#                                   present, but an older build than the one
+#                                   this fleet's code targets (the FLOOR
+#                                   TABLE below names each floor and the
+#                                   call that breaks under it). Replaces the
+#                                   OK line; never MISSING.
+#   NO-CAPABILITY: <tool> - <path> lacks <capability> (probe: <cmd>) - <hint>
+#                                   present and at/above its floor, but the
+#                                   one cheap probe of the capability the
+#                                   fleet actually calls failed. Replaces the
+#                                   OK line; never MISSING.
 #
 # --quiet suppresses OK lines (problems only). Exit 1 ONLY when a REQUIRED
-# tool is missing, the backend protocol-compat check below fails, or that
-# check's status probe does not answer within its ceiling; auth gaps, INERT
-# and CHECK-FAILED are advisory and never affect the exit code.
+# tool is missing, below its floor or lacking its capability, the backend
+# protocol-compat check below fails, or that check's status probe does not
+# answer within its ceiling; auth gaps, INERT and CHECK-FAILED are advisory
+# and never affect the exit code, and so is a floor/capability line on an
+# OPTIONAL tool (the same tier rule as OPTIONAL: itself). A wrong REQUIRED
+# build blocks exactly like an absent one, because it fails in a KNOWN
+# shape rather than a diagnosable one: the fleet's code calls the missing
+# verb unconditionally and reads the failure as something else (an old git
+# makes the commit-msg guard fail OPEN, an old herdr makes every stopped
+# server read as unobservable) - the one class of outage a doctor line
+# exists to pre-empt.
 #
 # Knobs: AC_BOOTSTRAP_PROBE_TIMEOUT (seconds, default 10) bounds the backend
 # status probe (probe_bounded below); 0 runs it unbounded, the pre-ceiling
@@ -191,10 +210,95 @@ shadow_check() {
     "$tool" "$active_path" "$active_ver" "$newest_path" "$newest_ver" "$fixdir"
 }
 
+# FLOOR TABLE - present is not "the right build". One row per tool where a
+# wrong build has a KNOWN failure shape in this fleet's code, each naming
+# the floor (the oldest release carrying what the fleet calls) and the ONE
+# cheap capability probe that proves the call answers:
+#   herdr  0.8.0  - the fleet targets 0.8.0 outright; `status server --json`
+#                   reporting `.running` is what bin/ac-backend.sh reads to
+#                   tell a STOPPED server (positive absence, GONE) from an
+#                   unreadable one (unobservable). No higher floor is asked.
+#   git    2.15.0 - the commit-msg guard bin/ac-tree.sh installs runs
+#                   `git interpret-trailers --parse` (taught in 2.15.0, its
+#                   RelNotes) and fails OPEN when that call errors, so on an
+#                   older git every agent trailer would pass unrefused.
+#   jq     1.6    - `--args` / `$ARGS` (bin/ac-brief.sh's qa manifest) exist
+#                   from the 1.6 manual on, not in 1.5's.
+#   bun    1.3.5  - `Bun.Terminal` (dashboard/app.ts's native pty) ships from
+#                   1.3.5 (bun.com/blog/bun-v1.3.5); `bun:sqlite`
+#                   (bin/ac-brain-engine.ts) predates it. Optional tier, so
+#                   its lines are advisory.
+# floor_of/cap_of/cap_probe are the table's three columns; build_check reads
+# them, so adding a row touches no caller.
+floor_of() {
+  case "$1" in
+    herdr) printf '0.8.0' ;;
+    git) printf '2.15.0' ;;
+    jq) printf '1.6' ;;
+    bun) printf '1.3.5' ;;
+  esac
+}
+cap_of() {
+  # cap_of <tool> - the capability's name and probe, as the line prints them.
+  case "$1" in
+    herdr) printf '.running in status server --json (probe: herdr status server --json)' ;;
+    git) printf 'interpret-trailers --parse (probe: git interpret-trailers --parse </dev/null)' ;;
+    jq) printf -- '--args / $ARGS (probe: jq -rn --args %s x)' "'\$ARGS.positional[0]'" ;;
+    bun) printf 'bun:sqlite + Bun.Terminal (probe: bun -e import("bun:sqlite") / typeof Bun.Terminal)' ;;
+  esac
+}
+cap_probe() {
+  # cap_probe <tool> - 0 when the capability answers. herdr's arm reads the
+  # bounded status probe the compat gate below already ran (compat_json,
+  # probe_rc): the server is asked once per run, and a TIMEOUT there is that
+  # gate's own MISSING verdict, never a second one here.
+  case "$1" in
+    herdr)
+      [ "$probe_rc" != 124 ] || return 0
+      case "$(printf '%s' "$compat_json" | jq -r '.running' 2>/dev/null || true)" in
+        true|false) return 0 ;;
+        *) return 1 ;;
+      esac ;;
+    git) git interpret-trailers --parse </dev/null >/dev/null 2>&1 ;;
+    jq) [ "$(jq -rn --args '$ARGS.positional[0]' x 2>/dev/null)" = x ] ;;
+    bun) [ "$(bun -e 'import("bun:sqlite").then(() => console.log(typeof Bun.Terminal))' 2>/dev/null)" = function ] ;;
+    *) return 0 ;;
+  esac
+}
+compat_json=""
+probe_rc=0
+
+build_check() {
+  # build_check <tool> <hint> - the tool is on PATH: judge its BUILD against
+  # the floor table. Prints the BELOW-FLOOR:/NO-CAPABILITY: line and returns
+  # 1 on a wrong build; prints nothing and returns 0 otherwise (the caller
+  # prints OK). A version the copy will not report is shadow_check's
+  # CHECK-FAILED, never read as below the floor - and a below-floor build
+  # is not probed further, one verdict per tool.
+  local tool="$1" hint="$2" floor path ver cap
+  path="$(command -v "$tool")"
+  floor="$(floor_of "$tool")"
+  if [ -n "$floor" ]; then
+    ver="$(ac_tool_version "$path")"
+    if [ -n "$ver" ] && [ "$ver" != "$floor" ] \
+      && [ "$(printf '%s\n%s\n' "$floor" "$ver" | sort -V | head -1)" = "$ver" ]; then
+      printf 'BELOW-FLOOR: %s - %s is %s, floor %s (probe: %s --version) - %s\n' \
+        "$tool" "$path" "$ver" "$floor" "$tool" "$hint"
+      return 1
+    fi
+  fi
+  cap="$(cap_of "$tool")"
+  if [ -n "$cap" ] && ! cap_probe "$tool"; then
+    printf 'NO-CAPABILITY: %s - %s lacks %s - %s\n' "$tool" "$path" "$cap" "$hint"
+    return 1
+  fi
+  return 0
+}
+
 need() {
   # need <tool> <hint>
   if command -v "$1" >/dev/null 2>&1; then
-    ok "$1"
+    if build_check "$1" "$2"; then ok "$1"; else rc=1; fi
     shadow_check "$1"
   else
     printf 'MISSING: %s - %s\n' "$1" "$2"
@@ -205,7 +309,7 @@ need() {
 opt() {
   # opt <tool> <what it unlocks>
   if command -v "$1" >/dev/null 2>&1; then
-    ok "$1"
+    if build_check "$1" "$2"; then ok "$1"; fi
     shadow_check "$1"
   else
     printf 'OPTIONAL: %s missing - %s\n' "$1" "$2"
@@ -229,11 +333,9 @@ esac
 # already forced any unknown value back to herdr, so the name is fixed per
 # branch - and "MISSING: <backend> - configured session backend" told an
 # operator the one thing they already knew, while withholding the one thing
-# they needed. Nothing spawns without the configured backend's CLI.
-case "$backend" in
-  orca) need orca "install the Orca app - its CLI ships with it (the fleet's session backend; nothing spawns without it)" ;;
-  *) need herdr "brew install herdr (the fleet's session backend; nothing spawns without it)" ;;
-esac
+# they needed. Nothing spawns without the configured backend's CLI. The
+# `need` lines themselves sit inside the backend blocks below: herdr's
+# capability arm reads the bounded status probe, which must run first.
 
 # Present is not enough: a client/server PROTOCOL mismatch (brew upgrades the CLI
 # while the old server keeps running - herdr's README: a running server keeps its
@@ -293,8 +395,10 @@ if [ "$probe_secs" = 0 ]; then
 fi
 
 if [ "$backend" = herdr ]; then
-  probe_rc=0
-  compat_json="$(probe_bounded "$probe_secs" herdr status server --json)" || probe_rc=$?
+  if command -v herdr >/dev/null 2>&1; then
+    compat_json="$(probe_bounded "$probe_secs" herdr status server --json)" || probe_rc=$?
+  fi
+  need herdr "brew install herdr (the fleet's session backend; nothing spawns without it)"
   if [ "$probe_rc" = 124 ]; then
     printf 'MISSING: herdr status server did not answer within %ss - the backend is wedged or unreachable, so every socket call this fleet makes will block the same way; restart the herdr server (it exits every pane, the captain owns that call)\n' "$probe_secs"
     rc=1
@@ -311,7 +415,7 @@ else
   # so an explicit non-ready state flags the same way.
   # Bounded for the same reason and on the same path as the herdr branch above:
   # an orca fleet's chief starts through this line too.
-  probe_rc=0
+  need orca "install the Orca app - its CLI ships with it (the fleet's session backend; nothing spawns without it)"
   orca_status_json="$(probe_bounded "$probe_secs" orca status --json)" || probe_rc=$?
   if [ "$probe_rc" = 124 ]; then
     printf 'MISSING: orca status did not answer within %ss - the runtime is wedged or unreachable, so no terminal can be spawned, read or steered; restart it (orca open, or orca serve for headless)\n' "$probe_secs"

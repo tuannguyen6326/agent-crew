@@ -126,8 +126,9 @@ case "$out" in *compatible\ false*) fail "a timeout must not be reported as a pr
 mkdir -p "$TMP/compat"
 cat >"$TMP/compat/herdr" <<'EOF'
 #!/usr/bin/env bash
+[ "${1:-}" = --version ] && { printf 'herdr 0.8.0\n'; exit 0; }
 [ "$1 $2" = "status server" ] \
-  && { printf '{"status":"running","compatible":true,"restart_needed":false}\n'; exit 0; }
+  && { printf '{"status":"running","running":true,"compatible":true,"restart_needed":false}\n'; exit 0; }
 exit 0
 EOF
 chmod +x "$TMP/compat/herdr"
@@ -142,13 +143,17 @@ case "$out" in *"did not answer"*) fail "a 0 ceiling must disable the bound, not
 
 # --- PATH-shadow probe (installed but inert) --------------------------------
 #
-# fake_ver <path> <version-line> - a --version-only stub executable, for
-# scenarios below that need a SPECIFIC tool version on PATH regardless of
-# what the real host happens to have installed.
+# fake_ver <path> <version-line> - a stub answering --version with a
+# SPECIFIC version regardless of what the real host has installed; every
+# other call is handed to the host's real copy (when it has one), so the
+# capability probe judges a real build and only the VERSION is faked.
 fake_ver() {
+  local real
+  real="$(command -v "$(basename "$1")" 2>/dev/null || true)"
   cat >"$1" <<EOF
 #!/usr/bin/env bash
 [ "\${1:-}" = --version ] && { printf '%s\n' '$2'; exit 0; }
+[ -n '$real' ] && exec '$real' "\$@"
 exit 0
 EOF
   chmod +x "$1"
@@ -162,14 +167,14 @@ EOF
 # them). The herdr protocol-compat check below is the real gate; this
 # probe never duplicates it.
 mkdir -p "$TMP/jq-old" "$TMP/jq-new"
-fake_ver "$TMP/jq-old/jq" "jq-1.2"
+fake_ver "$TMP/jq-old/jq" "jq-1.6"
 fake_ver "$TMP/jq-new/jq" "jq-1.9"
 shadow_path="$TMP/jq-old:$TMP/single-nojq:$TMP/jq-new:$TMP/stubbin"
 out="$(PATH="$shadow_path" "$BIN/ac-bootstrap.sh" --quiet)"
 rc=$?
 assert_eq "$rc" "0" "an inert tool must NEVER set rc - it diagnoses, it does not gate"
 assert_contains "$out" "INERT: jq installed but inert" "shadow reported at INERT grade"
-assert_contains "$out" "$TMP/jq-old/jq (1.2)" "active copy and its version named"
+assert_contains "$out" "$TMP/jq-old/jq (1.6)" "active copy and its version named"
 assert_contains "$out" "$TMP/jq-new/jq (1.9)" "newer copy and its version named"
 
 # PATH orders directories, not tools: prepending a fix directory can
@@ -265,5 +270,93 @@ assert_contains "$out" "orca runtime is starting, not ready" "an explicit non-re
 [ "$rc" != 0 ] || fail "a non-ready runtime must fail the toolchain check"
 printf 'herdr
 ' >"$AC_HOME/config/backend"
+
+# --- version floors and capability probes ----------------------------------
+#
+# Present is not "the right build": the fleet's code targets a specific herdr
+# (0.8.0 - `status server --json` .running decides GONE vs unobservable in
+# ac-backend.sh), git (2.15 - the commit-msg guard's `interpret-trailers
+# --parse` fails OPEN on an older git, so every agent trailer would pass) and
+# jq (1.6 - `--args`/`$ARGS` in ac-brief.sh). A wrong build reads as its own
+# line class, never OK and never MISSING, naming the floor and the probe.
+# fake_herdr <dir> <version-line> <status-json> - a herdr answering --version
+# and `status server --json` with the given shapes.
+fake_herdr() {
+  mkdir -p "$1"
+  cat >"$1/herdr" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >>"$1/calls"
+[ "\${1:-}" = --version ] && { printf '%s\\n' '$2'; exit 0; }
+[ "\${1:-} \${2:-}" = "status server" ] && { printf '%s\\n' '$3'; exit 0; }
+exit 0
+EOF
+  chmod +x "$1/herdr"
+}
+real_status='{"status":"running","running":true,"version":"0.8.0","protocol":19,"compatible":true,"restart_needed":false}'
+
+# An older herdr is BELOW-FLOOR: a required tool, so it blocks like MISSING.
+fake_herdr "$TMP/herdr-old" "herdr 0.7.5" "$real_status"
+rc=0
+out="$(PATH="$TMP/herdr-old:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+assert_eq "$rc" "1" "a required tool below its floor blocks the toolchain"
+assert_contains "$out" "BELOW-FLOOR: herdr" "an older herdr is reported at BELOW-FLOOR grade"
+assert_contains "$out" "0.7.5" "...naming the version found"
+assert_contains "$out" "floor 0.8.0" "...and the floor"
+assert_contains "$out" "probe: herdr --version" "...and the probe that measured it"
+case "$out" in *"MISSING: herdr -"*) fail "below-floor is not MISSING: $out" ;; esac
+full="$(PATH="$TMP/herdr-old:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" || true)"
+case "$full" in *"OK: herdr"*) fail "a below-floor tool must never read OK: $full" ;; esac
+
+# A herdr AT the floor whose status server does not report .running lacks the
+# capability the backend calls: NO-CAPABILITY, also blocking.
+fake_herdr "$TMP/herdr-nocap" "herdr 0.8.0" '{"status":"running","compatible":true}'
+rc=0
+out="$(PATH="$TMP/herdr-nocap:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+assert_eq "$rc" "1" "a required tool lacking its capability blocks the toolchain"
+assert_contains "$out" "NO-CAPABILITY: herdr" "a herdr without .running is reported at NO-CAPABILITY grade"
+assert_contains "$out" "probe: herdr status server --json" "...naming the probe"
+case "$out" in *"BELOW-FLOOR: herdr"*) fail "at the floor is not below it: $out" ;; esac
+case "$out" in *"MISSING: herdr -"*) fail "a missing capability is not MISSING: $out" ;; esac
+full="$(PATH="$TMP/herdr-nocap:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" || true)"
+case "$full" in *"OK: herdr"*) fail "a tool lacking its capability must never read OK: $full" ;; esac
+
+# The real-shaped build is OK, and the doctor asks the server ONCE: the
+# capability reads the same bounded status probe the compat gate uses.
+fake_herdr "$TMP/herdr-real" "herdr 0.8.0" "$real_status"
+rc=0
+out="$(PATH="$TMP/herdr-real:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh")" || rc=$?
+assert_eq "$rc" "0" "the targeted build passes"
+assert_contains "$out" "OK: herdr" "the real-shaped herdr reads OK"
+case "$out" in *"BELOW-FLOOR"*|*"NO-CAPABILITY"*) fail "the real-shaped build must raise no floor line: $out" ;; esac
+assert_eq "$(grep -c 'status server' "$TMP/herdr-real/calls")" "1" "the status server is probed exactly once per run"
+
+# A wedged server already owns its MISSING line; the capability probe must not
+# pile a second verdict on the same silence.
+rc=0
+out="$(AC_BOOTSTRAP_PROBE_TIMEOUT=2 PATH="$TMP/wedged:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+case "$out" in *"NO-CAPABILITY: herdr"*) fail "a timeout is not a missing capability: $out" ;; esac
+
+# The same table covers git and jq: an old jq is BELOW-FLOOR (required, blocks).
+mkdir -p "$TMP/jq-below"
+fake_ver "$TMP/jq-below/jq" "jq-1.5"
+rc=0
+out="$(PATH="$TMP/jq-below:$TMP/single-nojq:$TMP/stubbin" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+assert_eq "$rc" "1" "a below-floor jq blocks"
+assert_contains "$out" "BELOW-FLOOR: jq" "an old jq is reported at BELOW-FLOOR grade"
+assert_contains "$out" "floor 1.6" "...naming the jq floor"
+
+# An OPTIONAL tool's floor line is advisory, like its OPTIONAL: line - bun at
+# a fine version but lacking the API the dashboard/brain engine call.
+mkdir -p "$TMP/bun-nocap"
+cat >"$TMP/bun-nocap/bun" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = --version ] && { printf '1.3.13\n'; exit 0; }
+exit 0
+EOF
+chmod +x "$TMP/bun-nocap/bun"
+rc=0
+out="$(PATH="$TMP/bun-nocap:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+assert_eq "$rc" "0" "an optional tool's capability gap never sets rc"
+assert_contains "$out" "NO-CAPABILITY: bun" "an optional tool's gap is still reported"
 
 pass

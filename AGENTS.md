@@ -38,7 +38,7 @@ It combines fleet orchestration, pooled in-repo worktrees, a guarded ship pipeli
 Run `bin/ac-session-start.sh` first, every session.
 It checks the toolchain, drains queued wakes, shows the fleet, the backlog head, the project registry, the crewdeputy routing table, and the supervision block.
 Handle every printed wake before taking new orders.
-If it prints `MISSING:` lines, fix the toolchain before spawning anything (`bin/ac-bootstrap.sh` re-checks).
+If it prints `MISSING:`, `BELOW-FLOOR:` or `NO-CAPABILITY:` lines, fix the toolchain before spawning anything (`bin/ac-bootstrap.sh` re-checks; the last two mean a required tool is present but the wrong build - its header's floor table names the floor and the call that breaks under it).
 If it prints `WATCHER-DOWN`, arm the watcher immediately as the harness's OWN background task - never `nohup`/`&`/`disown` it inside a tool call (section 7).
 
 ## 4. Projects
