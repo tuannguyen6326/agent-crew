@@ -474,4 +474,30 @@ EOF
     "the wait is BOUNDED - a pid that can never be reaped must not hang the pool"
 fi
 
+# A return run from INSIDE the slot (cwd in the tree) used to kill its own
+# caller: the lsof walk lists the caller's shell and every ancestor whose cwd
+# is in the tree, and the kill set excluded only the pool script's own pid - a
+# self-inflicted teardown that read as a crashed pane. The caller's whole
+# ancestry is protected; a stranger inside the tree still dies.
+if command -v lsof >/dev/null 2>&1; then
+  repoS="$(make_repo selfkill)"
+  wtS="$("$BIN/ac-tree.sh" get --repo "$repoS" --id sk1 2>/dev/null)"
+  ( cd "$wtS" && exec sleep 30 ) &
+  strangerS=$!
+  disown "$strangerS"
+  sleep 0.5
+  # The caller: a shell whose cwd is inside the slot, which runs the return
+  # and then proves it is still alive to print. `|| true` sits OUTSIDE the
+  # substitution: a caller killed mid-return runs nothing after the kill, and
+  # the substitution's own 143 would abort this script under errexit instead
+  # of reaching the assert.
+  outS="$(cd "$wtS" && bash -c '"$1" return "$2" --force >/dev/null 2>&1; echo "caller-alive $$"' _ "$BIN/ac-tree.sh" "$wtS" 2>&1)" || true
+  assert_contains "$outS" "caller-alive" "a return from inside the slot must not kill its own caller"
+  case "$(ps -o stat= -p "$strangerS" 2>/dev/null)" in
+    ''|Z*) : ;;
+    *) kill "$strangerS" 2>/dev/null; fail "a stranger inside the slot must still be terminated" ;;
+  esac
+  assert_eq "$(sed -n 's/^leased=//p' "$repoS/.crew/slots/1-selfkill.meta")" "0" "the inside return still releases the slot"
+fi
+
 pass

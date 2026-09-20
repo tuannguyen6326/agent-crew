@@ -418,16 +418,43 @@ fetch_origin() {
 
 is_dirty() { [ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]; }
 
+caller_ancestors() {
+  # This process and every ancestor up to pid 1, one per line. Non-zero when
+  # the walk could not be completed (ps missing, or a ppid it could not read).
+  # `ps -o ppid= -p` is the one shape both BSD and procps ps answer.
+  local pid=$$ ppid hops=0
+  while [ "$pid" -gt 1 ]; do
+    printf '%s\n' "$pid"
+    [ "$hops" -lt 128 ] || return 1
+    ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')" || return 1
+    case "$ppid" in ''|*[!0-9]*) return 1 ;; esac
+    pid="$ppid"
+    hops=$((hops + 1))
+  done
+  printf '1\n'
+}
+
 live_procs() {
-  # live_procs <wt> - pids with cwd/open files under the worktree. STATUS is
-  # the answer's authority: non-zero means the walk COULD NOT BE MADE, and an
-  # empty list with status 0 means it was made and found nothing. A caller
-  # gating destruction must never let those two arrive as the same answer -
-  # `lsof -t +D` exits 1 for "no matches" AND for its own errors, so absence
-  # from PATH is the only failure this can name, and swallowing it turns "I
-  # could not look" into "there is nobody there".
+  # live_procs <wt> - pids with cwd/open files under the worktree, MINUS the
+  # caller's own ancestry. STATUS is the answer's authority: non-zero means
+  # the walk COULD NOT BE MADE, and an empty list with status 0 means it was
+  # made and found nothing. A caller gating destruction must never let those
+  # two arrive as the same answer - `lsof -t +D` exits 1 for "no matches" AND
+  # for its own errors, so absence from PATH is the only failure this can
+  # name, and swallowing it turns "I could not look" into "there is nobody
+  # there".
+  # The whole ancestry is excluded, not just $$: a chief or crewmate running
+  # `return` from INSIDE the slot has its shell, its harness pane and any
+  # pipeline sibling holding the tree as cwd, and killing them is a
+  # self-inflicted teardown that reads as a crashed pane. A failed walk
+  # degrades to the bare $$ exclusion and says so, never to no kill at all.
   command -v lsof >/dev/null 2>&1 || return 1
-  lsof -t +D "$1" 2>/dev/null | sort -u | grep -v "^$$\$" || true
+  local protected
+  if ! protected="$(caller_ancestors)"; then
+    ac_warn "could not walk the caller's ancestry (ps) - protecting only this process from the kill"
+    protected="$$"
+  fi
+  lsof -t +D "$1" 2>/dev/null | sort -u | grep -vxF -f <(printf '%s\n' "$protected") || true
 }
 
 verified_state() {
