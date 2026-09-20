@@ -870,13 +870,23 @@ const RERANK_TIMEOUT_MS = (Number(process.env.AC_BRAIN_RERANK_TIMEOUT) > 0
   ? Number(process.env.AC_BRAIN_RERANK_TIMEOUT) : 10) * 1000;
 // Optional precision knob: cross-encoder rerank of the fused top-N, then
 // autocut at the largest normalized score cliff. Gated on config/brain.json
-// reranker{provider,model} + its key; provider "stub" (term-overlap) exists
+// reranker{provider,model,pin} + its key; provider "stub" (term-overlap) exists
 // so tests prove the plumbing without a paid call. Fail-open: any error
 // returns the fused order untouched.
-async function rerankHits(q: string, hits: Hit[]): Promise<{ hits: Hit[]; reranked: boolean }> {
+// The reranker sees only title+snippet, so a hit whose rank came from a
+// signal outside that text - a slug match or a title phrase - measurably
+// lost it to a page whose snippet merely mentions the words (three of five
+// such hits fell from 1st to 3rd-4th under a snippet-overlap stub). Up to
+// `pin` of them (default 3) keep their fused order above the reranked block
+// and are not sent to the provider.
+async function rerankHits(q: string, hits: Hit[]): Promise<{ hits: Hit[]; reranked: boolean; pinned: number }> {
   const rc = loadCfg().reranker;
-  if (!rc?.provider || hits.length < 3) return { hits, reranked: false };
-  const top = hits.slice(0, 20), tail = hits.slice(20);
+  if (!rc?.provider || hits.length < 3) return { hits, reranked: false, pinned: 0 };
+  const pinMax = Number(rc.pin ?? 3);
+  const pinned: Hit[] = [], rest: Hit[] = [];
+  for (const h of hits)
+    (pinned.length < pinMax && (h.evidence === "slug_match" || h.evidence === "title_phrase") ? pinned : rest).push(h);
+  const top = rest.slice(0, 20), tail = rest.slice(20);
   let scores: number[] | null = null;
   if (rc.provider === "stub") {
     const terms = ftsQuery(q).terms;
@@ -901,7 +911,7 @@ async function rerankHits(q: string, hits: Hit[]): Promise<{ hits: Hit[]; rerank
       }
     } catch {}
   }
-  if (!scores) return { hits, reranked: false };
+  if (!scores) return { hits, reranked: false, pinned: 0 };
   const order = top.map((h, i) => ({ h, s: scores![i] })).sort((a, b) => b.s - a.s);
   // autocut: largest gap in the normalized rerank scores, keep at least 1
   const vals = order.map(o => o.s);
@@ -911,7 +921,7 @@ async function rerankHits(q: string, hits: Hit[]): Promise<{ hits: Hit[]; rerank
     const gap = (order[i - 1].s - order[i].s) / span;
     if (gap > biggest) { biggest = gap; cut = i; }
   }
-  return { hits: [...order.slice(0, cut).map(o => o.h), ...order.slice(cut).map(o => o.h), ...tail], reranked: true };
+  return { hits: [...pinned, ...order.slice(0, cut).map(o => o.h), ...order.slice(cut).map(o => o.h), ...tail], reranked: true, pinned: pinned.length };
 }
 
 const estTokens = (s: string) => Math.ceil((s || "").length / 4);
@@ -952,13 +962,13 @@ async function cmdRecall() {
       .map(r => { let size = 0; try { size = statSync(join(HOME, r.path)).size; } catch {} return { ...r, size }; });
   }
   // search arm
-  let hits: Hit[] = [], degraded: string | undefined, reranked = false, relaxedDropped = 0, boostGate: string | undefined;
+  let hits: Hit[] = [], degraded: string | undefined, reranked = false, rerankPinned = 0, relaxedDropped = 0, boostGate: string | undefined;
   if (q) {
     const r = await searchArm(db, q, limit, !flag("no-boosts"));
     hits = r.hits; degraded = r.degraded; relaxedDropped = r.relaxed_dropped ?? 0; boostGate = r.metadata_boost_gate;
     const rr = await rerankHits(q, hits);
     hits = rr.hits;
-    if (rr.reranked) reranked = true;
+    if (rr.reranked) { reranked = true; rerankPinned = rr.pinned; }
     const dep = opt("deputy");
     if (dep) {
       const dHome = deputyHome(dep);
@@ -994,7 +1004,7 @@ async function cmdRecall() {
     : top && top.evidence === "title_all_terms" ? "probable" : "unknown";
   const ms = Math.round((performance.now() - t0) * 10) / 10;
   usageLog({ verb: "recall", q: q ?? null, entity: entity ?? null, hits: hits.length, ms });
-  out({ protocol_version: 1, facts, total: facts.length, results: hits, create_safety, ...(reranked ? { reranked: true } : {}),
+  out({ protocol_version: 1, facts, total: facts.length, results: hits, create_safety, ...(reranked ? { reranked: true, rerank_pinned: rerankPinned } : {}),
     ...(pages ? { pages, page_count } : {}),
     ...(degraded ? { search_degraded: degraded } : {}),
     ...(relaxedDropped ? { relaxed_dropped: relaxedDropped } : {}),
