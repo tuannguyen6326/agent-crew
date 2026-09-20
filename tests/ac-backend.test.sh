@@ -174,6 +174,26 @@ printf 'p7 tY\n' >"$AC_HOME/state/.pane-hb2"
 run_backend herdr 'backend_agent_blocked hb1' >/dev/null || fail "blocked pane must report blocked"
 assert_fails run_backend herdr 'backend_agent_blocked hb2'
 
+# --- herdr idle predicate: `done` is idle too -----------------------------------------
+# herdr's status enum is idle|working|blocked|done|unknown, and `done` is
+# "idle, not yet marked seen" - only a focus marks a pane seen, reads never do,
+# so an unattended pane can sit at `done` forever. Treating it as not-idle
+# waited on a turn that had already ended.
+cat >"$stub/herdr" <<'EOF'
+#!/usr/bin/env bash
+echo "herdr $*" >>"$HDLOG"
+case "${1:-} ${2:-}" in
+  "pane get") printf '{"result":{"pane":{"pane_id":"%s","agent_status":"%s"}}}\n' "$3" "${3#p}" ;;
+esac
+exit 0
+EOF
+run_backend herdr 'backend_agent_idle_pane pidle' >/dev/null || fail "an idle pane must answer idle"
+run_backend herdr 'backend_agent_idle_pane pdone' >/dev/null || fail "a done pane is idle-but-unseen and must answer idle"
+assert_fails run_backend herdr 'backend_agent_idle_pane pworking'
+assert_fails run_backend herdr 'backend_agent_idle_pane pblocked'
+assert_fails run_backend herdr 'backend_agent_idle_pane punknown'
+assert_eq "$(run_backend herdr 'backend_agent_status_pane pdone')" "done" "the raw status reader passes done through unchanged"
+
 # --- herdr adopt-by-label / twin-sweep ----------------------------------------------
 # herdr_resolve_workspace: adopt the busiest workspace carrying the label,
 # sweep provably-empty twins, create only when none exists. The stubs label
@@ -216,6 +236,32 @@ assert_contains "$(cat "$HDLOG")" "tab create --workspace wBIG" "twins collapse 
 assert_contains "$(cat "$HDLOG")" "tab list --workspace wSMALL" "the twin sweep proves emptiness before closing"
 assert_contains "$(cat "$HDLOG")" "workspace close wSMALL" "a twin holding only herdr's default tab is closed"
 rm -f "$AC_HOME/state/.pane-h5"
+
+# (b') a newer herdr refuses to close a PRIMARY workspace while its linked
+# worktree workspaces are open (workspace_group_close_required). The sweep's
+# emptiness proof read only THIS workspace's tabs, so a group close is not
+# authorized here: the refusal is warned about by name and the twin left open.
+cat >"$stub/herdr" <<'EOF'
+#!/usr/bin/env bash
+echo "herdr $*" >>"$HDLOG"
+case "${1:-} ${2:-}" in
+  "workspace list") printf '{"result":{"workspaces":[{"workspace_id":"wGRP","label":"%s · h6","tab_count":1},{"workspace_id":"wBIG","label":"%s · h6","tab_count":5}]}}\n' "$fleet" "$fleet" ;;
+  "tab list")
+    case "${4:-}" in
+      wGRP) echo '{"result":{"tabs":[{"label":"1"}]}}' ;;
+    esac ;;
+  "workspace close") echo '{"error":{"code":"workspace_group_close_required","message":"workspace has linked worktree workspaces; use --group"},"id":"cli:workspace:close"}'; exit 1 ;;
+  "tab create") echo '{"result":{"tab":{"tab_id":"tB"},"root_pane":{"pane_id":"pB"}}}' ;;
+esac
+exit 0
+EOF
+: >"$HDLOG"
+err="$(run_backend herdr 'backend_window_new h6 /tmp' 2>&1 >/dev/null)" || true
+assert_contains "$(cat "$HDLOG")" "tab create --workspace wBIG" "twin sweep: the group-close refusal never fails the spawn"
+assert_contains "$err" "workspace_group_close_required" "the refusal is logged by name instead of swallowed"
+assert_contains "$err" "wGRP" "the refusal names the workspace left open"
+case "$(cat "$HDLOG")" in *"--group"*) fail "the twin sweep must not escalate to a group close - its proof covers this workspace's tabs alone" ;; esac
+rm -f "$AC_HOME/state/.pane-h6"
 
 # --- herdr twin-sweep proof of emptiness ---------------------------------------------
 
@@ -328,6 +374,33 @@ printf 'pZ wZ:tZ\n' >"$AC_HOME/state/.pane-h12"
 run_backend herdr 'backend_kill_window h12' >/dev/null 2>&1
 assert_contains "$(cat "$HDLOG")" "workspace close wZ" "a last-tab refusal on an otherwise-empty workspace closes the workspace"
 assert_no_file "$AC_HOME/state/.pane-h12" "handle removed with the fallback close"
+
+# A newer herdr refuses that workspace close with workspace_group_close_required
+# when the workspace heads a linked-worktree group; the fallback retries with
+# --group. The retry is gated on that exact refusal and never on a version
+# probe: the installed 0.8.0 CLI rejects --group as a usage error (rc 2) and
+# never emits the refusal, so it never sees the flag.
+cat >"$stub/herdr" <<'EOF'
+#!/usr/bin/env bash
+echo "herdr $*" >>"$HDLOG"
+case "${1:-} ${2:-}" in
+  "tab get") echo '{"result":{"tab":{"tab_id":"tG","label":"crew:h14"}}}' ;;
+  "tab close") exit 1 ;;
+  "tab list") echo '{"result":{"tabs":[{"tab_id":"wG:tG","label":"crew:h14"}]}}' ;;
+  "workspace close")
+    case "${4:-}" in
+      --group) exit 0 ;;
+      *) echo '{"error":{"code":"workspace_group_close_required","message":"workspace has linked worktree workspaces; use --group"},"id":"cli:workspace:close"}'; exit 1 ;;
+    esac ;;
+esac
+exit 0
+EOF
+printf 'pG wG:tG\n' >"$AC_HOME/state/.pane-h14"
+: >"$HDLOG"
+run_backend herdr 'backend_kill_window h14' >/dev/null 2>&1
+assert_contains "$(cat "$HDLOG")" "workspace close wG --group" "the last-tab fallback retries a group-close refusal with --group"
+assert_eq "$(grep -c 'workspace close wG' "$HDLOG")" "2" "the plain close is tried first, --group only on the refusal"
+assert_no_file "$AC_HOME/state/.pane-h14" "handle removed with the group close"
 
 # ...but never while another real tab lives in the workspace.
 cat >"$stub/herdr" <<'EOF'
@@ -609,9 +682,28 @@ assert_eq "$rc" "1" "a reachable backend that does not list the pane is GONE"
 # handle, tab and buffer are all restored first, so the pane really is there.
 : >"$FAKE_HERDR/panes/pAL.buf"
 touch "$FAKE_HERDR/.unreachable"
+: >"$FAKE_HERDR/log"
 rc=0; run_backend herdr 'backend_window_alive al1' || rc=$?
 rm -f "$FAKE_HERDR/.unreachable"
 assert_eq "$rc" "2" "a backend that cannot answer is UNOBSERVABLE, never a verdict about the pane"
+assert_contains "$(cat "$FAKE_HERDR/log")" "status server" "a failed pane list asks the server's own state before settling on unobservable"
+
+# A STOPPED server is positive absence, not an outage: the client answers
+# `status server` on its own (running:false) and a server that is down holds
+# no panes - every pane died with it. Without this, a server exit pinned every
+# task at 2 and nothing could ever reclaim it.
+# DISPUTED: whether the server itself reports running. HELD-CONSTANT: pane get
+# and pane list both fail, exactly as under .unreachable above.
+touch "$FAKE_HERDR/.server-stopped"
+rc=0; run_backend herdr 'backend_window_alive al1' || rc=$?
+rm -f "$FAKE_HERDR/.server-stopped"
+assert_eq "$rc" "1" "a stopped herdr server is GONE - a server that is down holds no panes"
+
+# ...while a RUNNING server whose pane api fails is still no answer about the pane.
+touch "$FAKE_HERDR/.pane-api-down"
+rc=0; run_backend herdr 'backend_window_alive al1' || rc=$?
+rm -f "$FAKE_HERDR/.pane-api-down"
+assert_eq "$rc" "2" "a running server whose pane api cannot answer stays UNOBSERVABLE"
 
 # A missing handle is a LOCAL read: it stays GONE and costs no socket call.
 : >"$FAKE_HERDR/log"

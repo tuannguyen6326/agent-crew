@@ -199,6 +199,14 @@
 # table of herdr error codes: naming `protocol_mismatch` the definition of
 # unobservable would restore this bug the day herdr renames it. The control call
 # runs ONLY after a failure, so the healthy poll costs exactly what it always did.
+# ONE boundary widens toward GONE: when the control call fails too, the driver
+# asks the server's OWN state (`status server --json`, answered by the client
+# with `running:false` when no server sits behind the socket). A server that is
+# positively STOPPED holds no panes - every pane died with it - so that answer is
+# GONE, not an outage; without it a server exit pinned every task at 2 with no
+# verb able to reclaim it. A server that reports running, or a status that cannot
+# be read at all, stays UNOBSERVABLE: the protocol-mismatch incident above is a
+# RUNNING server, and it still classifies as 2.
 # Every caller that merely tests truthiness keeps its behaviour unchanged (2 is
 # non-zero); the three callers the incident named must not collapse 2 into 1 -
 # ac-watch.sh records `unobservable:` and stamps NO failure, ac-peek.sh and
@@ -228,7 +236,11 @@
 # provably holds nothing else real (this tab and default "1" tabs alone);
 # a workspace holding another labelled tab, or one whose tab list cannot be
 # read, is warned about and left open. Fail closed: an unknown answer never
-# authorizes a close.
+# authorizes a close. A newer herdr refuses to close a workspace heading a
+# linked-worktree group (`workspace_group_close_required`); every workspace
+# close here goes through herdr_ws_close, which names that refusal in a
+# warning instead of swallowing it, and ONLY this fallback retries it with
+# `--group` - the sweeps' emptiness proofs cover one workspace's tabs alone.
 #
 # Delivery verification: herdr's `pane send-keys enter` needs FOCUS - on an
 # unfocused pane it exits 0 and does NOTHING, so a blind send strands its text
@@ -783,6 +795,30 @@ herdr_ws_tabs_state() {
   printf '%s\n' "$state"
 }
 
+herdr_ws_close() {
+  # herdr_ws_close <ws> [group] - best-effort workspace close, exit 0 always.
+  # Newer herdr refuses to close a PRIMARY workspace while its linked-worktree
+  # workspaces are open (`workspace_group_close_required`; a `--group` close
+  # takes the whole group). That refusal is surfaced by name rather than
+  # swallowed, and retried with --group ONLY when the caller passes `group` -
+  # the last-tab fallback, whose caller already proved the workspace empty.
+  # The retry keys on the refusal itself, never on a version probe: the
+  # installed 0.8.0 CLI rejects --group as a usage error and never emits the
+  # refusal, so on it the flag is never sent.
+  local ws="$1" out
+  out="$(herdr_cli workspace close "$ws" 2>&1)" && return 0
+  case "$out" in
+    *workspace_group_close_required*)
+      if [ "${2:-}" = group ]; then
+        herdr_cli workspace close "$ws" --group >/dev/null 2>&1 && return 0
+        ac_warn "workspace $ws refused workspace_group_close_required and the --group retry failed too - close it by hand"
+      else
+        ac_warn "workspace $ws left open: herdr refused the close with workspace_group_close_required (it heads a linked-worktree group, which this sweep is not authorized to close)"
+      fi ;;
+  esac
+  return 0
+}
+
 herdr_resolve_workspace() {
   # herdr_resolve_workspace <label> - THE workspace carrying <label>, printed
   # as its id: adopt the busiest existing one, sweep provably-empty twins
@@ -800,7 +836,7 @@ herdr_resolve_workspace() {
   while IFS= read -r t; do
     [ -n "$t" ] && [ "$t" != "$ws" ] || continue
     case "$(herdr_ws_tabs_state "$t")" in
-      empty) herdr_cli workspace close "$t" >/dev/null 2>&1 ;;
+      empty) herdr_ws_close "$t" ;;
       nonempty) ac_warn "twin workspace $t left open: it holds a tab other than herdr's default '1' - closing the workspace would take that tab with it" ;;
       *) ac_warn "twin workspace $t left open: its tab list could not be read - a close cannot be proven safe" ;;
     esac
@@ -846,7 +882,7 @@ herdr_sweep_legacy_groups() {
   while IFS= read -r t; do
     [ -n "$t" ] || continue
     if [ "$(herdr_ws_tabs_state "$t")" = "empty" ]; then
-      herdr_cli workspace close "$t" >/dev/null 2>&1 || true
+      herdr_ws_close "$t"
     fi
   done
   return 0
@@ -885,7 +921,18 @@ backend_window_alive_herdr() {
   pane="$(herdr_pane "$1")"
   [ -n "$pane" ] || return 1            # no handle: a LOCAL fact, really gone
   herdr_cli pane get "$pane" >/dev/null 2>&1 && return 0
-  out="$(herdr_cli pane list 2>/dev/null)" || return 2
+  if ! out="$(herdr_cli pane list 2>/dev/null)"; then
+    # The list failing is still no verdict - unless the SERVER itself is
+    # stopped. `status server --json` is answered by the CLIENT when the socket
+    # has no server behind it (rc 0, `running:false`; herdr 0.8.0, its
+    # cli/status ServerRuntimeStatus::NotRunning arm), and a server that is
+    # down holds no panes: positive absence, GONE. A running server, a remote
+    # target (which errors instead), or an unreadable status stays 2.
+    case "$(herdr_cli status server --json 2>/dev/null | jq -r '.running' 2>/dev/null)" in
+      false) return 1 ;;
+      *) return 2 ;;
+    esac
+  fi
   case "$(jq -r --arg p "$pane" '
         if (.result.panes | type) == "array"
         then (if any(.result.panes[]; .pane_id == $p) then "alive" else "gone" end)
@@ -1125,7 +1172,7 @@ backend_kill_window_herdr() {
                   then "closeable" else "occupied" end)
             else "unreadable" end' 2>/dev/null || true)"
         case "$tabs_left" in
-          closeable) herdr_cli workspace close "$ws" >/dev/null 2>&1 || true ;;
+          closeable) herdr_ws_close "$ws" group ;;
           occupied) ac_warn "tab $tab of $id refused to close and its workspace $ws holds other live tabs - close the tab by hand" ;;
           *) ac_warn "tab $tab of $id refused to close and workspace $ws could not be read - close the tab by hand" ;;
         esac
@@ -1157,8 +1204,13 @@ backend_agent_blocked_herdr() {
 
 backend_agent_idle_pane_herdr() {
   # Raw-pane addressing for callers that own no state/.pane-<id> handle.
-  # Herdr's status enum is idle|working|blocked|unknown. Only `idle` answers
-  # true; an unreadable pane and every other status answer false. The meaning is
+  # Herdr's status enum is idle|working|blocked|done|unknown (AgentStatus in
+  # its api schema, carried since before 0.8.0). `idle` AND `done` answer
+  # true: herdr documents `done` as idle-but-not-yet-seen, and only an
+  # explicit `pane focus`/`agent focus` marks a pane seen - reads never do,
+  # and this fleet focuses through `tab focus` - so an unattended pane sits at
+  # `done` for good and would otherwise read as a turn that never ended. An
+  # unreadable pane and every other status answer false. The meaning is
   # caller-relative: an id-keyed running task treats idle as turn-end, while an
   # OpenCode pane with no submitted turn treats it as positive evidence that
   # herdr recognises the input surface and no turn is running. It is not a
@@ -1168,15 +1220,14 @@ backend_agent_idle_pane_herdr() {
   [ -n "$pane" ] || return 1
   out="$(herdr_cli pane get "$pane" 2>/dev/null)" || return 1
   status="$(jq -r '[.. | .agent_status? // empty] | map(select(. != "")) | first // empty' <<<"$out")"
-  [ "$status" = "idle" ]
+  [ "$status" = "idle" ] || [ "$status" = "done" ]
 }
 
 backend_agent_status_pane_herdr() {
   # Raw status enum for callers that need the VALUE, not a boolean (the
   # canonical reader is backend_agent_idle_pane's deep jq search; the old
-  # sed-over-raw-JSON copies in ac-pane-agent drifted - one consumed a
-  # `done` value the documented enum never carried). Prints the pane's
-  # agent_status or `unknown`, always exits 0.
+  # sed-over-raw-JSON copies in ac-pane-agent drifted from it). Prints the
+  # pane's agent_status or `unknown`, always exits 0.
   local pane="$1" out status
   [ -n "$pane" ] || { printf 'unknown\n'; return 0; }
   out="$(herdr_cli pane get "$pane" 2>/dev/null)" || { printf 'unknown\n'; return 0; }
