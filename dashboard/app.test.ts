@@ -2066,6 +2066,19 @@ test("ttlMemo's TTL window starts at resolution, so a slow loader still caches",
   expect(calls).toBe(1);
 });
 
+// The fleet-state watcher (dashboard/watch.ts) drops the snapshot memo the
+// moment a status/meta/backlog/room file moves, so the next request re-gathers
+// instead of serving up to TTL_MS of stale accounting.
+test("ttlMemo.invalidate drops the cached value so the next call re-runs the loader", async () => {
+  let calls = 0;
+  const load = ttlMemo(60_000, async () => ++calls);
+  expect(await load()).toBe(1);
+  expect(await load()).toBe(1);
+  load.invalidate();
+  expect(await load()).toBe(2);
+  expect(calls).toBe(2);
+});
+
 // app.ts sets the client poll interval POLL_MS = 5000, but that
 // constant lives inside the `PAGE` template literal (bun test cannot import
 // it - see the dashboard-verifier-kind-hardcode repo-knowledge entry), so the

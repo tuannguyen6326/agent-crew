@@ -97,6 +97,7 @@ import {
 } from "./lib.ts";
 export * from "./lib.ts";
 import { PAGE } from "./page.ts";
+import { watchHomes } from "./watch.ts";
 // ---------------------------------------------------------------------------
 // Records ledgers (dash-records): the fleet's records/ markdown ledgers, read
 // read-only via the shared renderMarkdown. The name allowlist below is the
@@ -1805,9 +1806,9 @@ async function snapshot(): Promise<Response> {
  *  The TTL clock starts when the value LANDS, not when the loader was
  *  invoked - a loader slower than ttlMs still caches once it resolves,
  *  and concurrent callers share the one in-flight promise regardless. */
-export function ttlMemo<T>(ttlMs: number, loader: () => Promise<T>): () => Promise<T> {
+export function ttlMemo<T>(ttlMs: number, loader: () => Promise<T>): (() => Promise<T>) & { invalidate(): void } {
   let cached: { until: number; value: Promise<T> } | null = null;
-  return () => {
+  const get = () => {
     const now = Date.now();
     if (!cached || now >= cached.until) {
       const entry = { until: Infinity, value: loader() };
@@ -1819,6 +1820,10 @@ export function ttlMemo<T>(ttlMs: number, loader: () => Promise<T>): () => Promi
     }
     return cached.value;
   };
+  // An in-flight load may have read the state from before the change, so
+  // it is dropped too: its callers still get it, the next call re-runs.
+  get.invalidate = () => { cached = null; };
+  return get;
 }
 
 /** Every home path the current survey knows about, crewdeputies included.
@@ -6537,6 +6542,10 @@ export function dashboardMain() {
   const port = parsePort(process.argv);
   mainPort = port; // the share listener (REVIEW SHARE) lives on port+1
   scanShares();    // re-arm durable shares across a dashboard restart
+  // Fleet-state watchers (dashboard/watch.ts): a status/meta/backlog/room
+  // write drops the snapshot memo so the next poll re-gathers at once.
+  const fleetWatcher = watchHomes(() => snapshotResult.invalidate(), { log: slog });
+  void allowedHomePaths().then((set) => fleetWatcher.sync([...set]));
   // Each terminal socket is a live pty + herdr client; a buggy reconnect loop
   // must not fork-bomb the machine. 4 covers every real captain shape (a few
   // browser tabs), and the 429 names the limit.
