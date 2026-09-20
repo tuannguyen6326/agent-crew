@@ -560,4 +560,83 @@ wtI2="$("$BIN/ac-tree.sh" get --repo "$repoI" --id i2 2>/dev/null)"
 assert_eq "$wtI2" "$wtI" "the recycled slot is reused"
 assert_eq "$(cat "$wtI2/.env")" "SECRET=2" "a recycled slot is re-seeded from the primary"
 
+# An EXPLICIT base ref (the integration-branch fence) is verified as a COMMIT
+# before any slot is touched. The fence proves the branch exists by its full
+# refname, but reset and worktree add resolve the SHORT name through git's
+# DWIM order, where a same-named tag wins - so a ref that passed the fence can
+# still fail every reset ("skip slot: reset failed" per slot, then a failed
+# worktree add) with the cause never named. The gate dies once, naming the ref
+# and the record that named it, and leases nothing.
+repoF="$(make_repo fence)"
+fF="$("$BIN/ac-tree.sh" get --repo "$repoF" --id f0 2>/dev/null)"
+"$BIN/ac-tree.sh" return "$fF" 2>/dev/null
+git -C "$repoF" branch -q feat/shadow
+git -C "$repoF" tag feat/shadow "$(printf 'x' | git -C "$repoF" hash-object -w --stdin)"
+printf -- '- [ ] shadow-s1 - story; feature:shadow (repo: fence)\n' >>"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/shadow"
+printf 'fence feat/shadow push=deferred\n' >"$AC_HOME/data/shadow/branches"
+outF="$("$BIN/ac-tree.sh" get --repo "$repoF" --id shadow-s1 --holder t 2>&1 || true)"
+assert_contains "$outF" "base ref feat/shadow" "the refusal names the ref"
+assert_contains "$outF" "does not resolve to a commit" "the refusal names the cause"
+assert_contains "$outF" "record for shadow-s1 on fence" "the refusal names where the ref came from"
+case "$outF" in *"reset failed"*) fail "the gate must fire BEFORE the acquire loop tries a slot" ;; esac
+assert_eq "$(ls "$repoF/.crew/slots" | wc -l | tr -d ' ')" "1" "an unresolvable base leases and creates no slot"
+assert_eq "$(sed -n 's/^leased=//p' "$repoF/.crew/slots/1-fence.meta")" "0" "the existing free slot stays available"
+
+# lease <slot>: a DURABLE, STATE-ONLY lease on an existing pool worktree. The
+# only other way to mint a lease is get, which resets the tree, so a tree that
+# must live on (QA infra, a parked investigation) could be protected from get
+# and prune only by staying dirty - which pool health then reports as stuck.
+# lease stamps exactly the lease state get writes and touches the tree not at
+# all; return releases it like any other lease.
+repoE="$(make_repo parked)"
+e1="$("$BIN/ac-tree.sh" get --repo "$repoE" --id e1 2>/dev/null)"
+e2="$("$BIN/ac-tree.sh" get --repo "$repoE" --id e2 2>/dev/null)"
+"$BIN/ac-tree.sh" return "$e1" 2>/dev/null
+printf 'parked investigation\n' >"$e1/parked.txt"
+git -C "$e1" checkout -q -b crew/park && git -C "$e1" add -A && git -C "$e1" commit -qm parked
+printf 'wip\n' >"$e1/wip.txt"
+headE="$(git -C "$e1" rev-parse HEAD)"
+metaE="$repoE/.crew/slots/1-parked.meta"
+"$BIN/ac-tree.sh" lease 1-parked --repo "$repoE" --id park --holder self:park 2>/dev/null \
+  || fail "lease of an available slot must succeed"
+assert_eq "$(git -C "$e1" rev-parse HEAD)" "$headE" "lease is state-only: HEAD untouched"
+assert_eq "$(git -C "$e1" symbolic-ref -q --short HEAD)" "crew/park" "lease is state-only: the branch checkout survives"
+assert_eq "$(cat "$e1/parked.txt")" "parked investigation" "lease is state-only: committed content preserved byte-for-byte"
+assert_eq "$(cat "$e1/wip.txt")" "wip" "lease is state-only: uncommitted content preserved byte-for-byte"
+assert_eq "$(sed -n 's/^leased=//p' "$metaE")" "1" "the slot is leased"
+assert_eq "$(sed -n 's/^task=//p' "$metaE")" "park" "the lease records the task"
+assert_eq "$(sed -n 's/^holder=//p' "$metaE")" "self:park" "the lease records the holder"
+assert_eq "$(sed -n 's/^owner_pid=//p' "$metaE")" "" "a lease is durable: no owner pid"
+[ -n "$(sed -n 's/^lease_id=//p' "$metaE")" ] || fail "lease must mint a lease id"
+[ -n "$(sed -n 's/^leased_at=//p' "$metaE")" ] || fail "lease must stamp leased_at"
+outE="$("$BIN/ac-tree.sh" list --repo "$repoE")"
+assert_contains "$outE" "1-parked	leased dirty	park" "list shows the leased slot like any other lease"
+assert_contains "$(cat "$repoE/.crew/parked.code-workspace")" '"path": "worktrees/1-parked", "name": "wt1-parked - park"' "the editor workspace picks the lease up"
+# Already leased: refused naming the holder, the slot untouched; the path
+# form names the same slot.
+outE="$("$BIN/ac-tree.sh" lease "$e2" --repo "$repoE" --id other --holder crew:other 2>&1 || true)"
+assert_contains "$outE" "slot 2-parked is leased by task e2" "a leased slot refuses naming the holder"
+assert_eq "$(sed -n 's/^task=//p' "$repoE/.crew/slots/2-parked.meta")" "e2" "a refused lease changes nothing"
+assert_fails "$BIN/ac-tree.sh" lease 2-parked --repo "$repoE" --id other
+outE="$("$BIN/ac-tree.sh" lease 9-parked --repo "$repoE" --id x 2>&1 || true)"
+assert_contains "$outE" "no such slot 9-parked" "an unknown slot name dies naming it"
+# get never hands the leased slot out, prune never takes it.
+e3="$("$BIN/ac-tree.sh" get --repo "$repoE" --id e3 2>/dev/null)"
+assert_eq "$e3" "$repoE/.crew/worktrees/3-parked" "get skips the leased slot"
+assert_eq "$(cat "$e1/parked.txt")" "parked investigation" "get left the leased tree alone"
+assert_contains "$("$BIN/ac-tree.sh" prune --repo "$repoE" --yes 2>&1)" "skip slot 1-parked: leased" "prune skips the leased slot"
+# A task whose crew meta exists gets the lease appended, like a second get.
+printf 'kind=ship\nworktree=%s\nleases=%s\n' "$e3" "$e3" >"$AC_HOME/state/e3.meta"
+"$BIN/ac-tree.sh" return "$e2" 2>/dev/null
+"$BIN/ac-tree.sh" lease 2-parked --repo "$repoE" --id e3 --holder crew:e3 2>/dev/null || fail "lease for a task with a crew meta"
+assert_eq "$(awk -F= '$1=="leases"{print $2}' "$AC_HOME/state/e3.meta")" "$e3:$e2" "a lease is appended to the task's leases="
+# return releases it, bound to the lease id like any other.
+idE="$(sed -n 's/^lease_id=//p' "$metaE")"
+assert_fails "$BIN/ac-tree.sh" return 1-parked --repo "$repoE" --force --if-lease-id not-this-one
+"$BIN/ac-tree.sh" return 1-parked --repo "$repoE" --force --if-lease-id "$idE" 2>/dev/null \
+  || fail "return must release a state-only lease by its lease id"
+assert_eq "$(sed -n 's/^leased=//p' "$metaE")" "0" "return released the lease"
+assert_eq "$(sed -n 's/^lease_id=//p' "$metaE")" "" "the identity dies with the lease"
+
 pass

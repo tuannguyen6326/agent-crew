@@ -14,6 +14,8 @@
 # Usage:
 #   ac-tree.sh get    --repo <path> [--id <task>] [--holder <label>]
 #                     [--owner <pid>] [--prefer <path-or-slot-n>]
+#   ac-tree.sh lease  <slot-name | worktree-path> --repo <path>
+#                     [--id <task>] [--holder <label>]
 #   ac-tree.sh list   --repo <path>
 #   ac-tree.sh return <worktree-path | slot-name> [--repo <path>] [--force]
 #                     [--if-lease-id <id>]
@@ -36,6 +38,21 @@
 # the append stays a silent no-op until the meta exists - which also keeps a
 # verifier's lease (a distinct id that never gets a crew meta) out of it, and
 # never mints a stray meta file for one.
+#
+# LEASE - a durable lease on an EXISTING pool worktree, state only. `get` is
+# the other way to mint a lease and it always resets the tree (--prefer
+# included), so a tree that must live on across tasks - QA infra, a parked
+# investigation - could be kept from `get` and `prune` only by staying dirty,
+# which ac-pool-health.sh then reports as stuck. `lease` stamps exactly the
+# lease state `get` writes (stamp_lease is the one writer: task, holder, an
+# empty owner_pid - i.e. durable - leased_at and a fresh lease_id, plus the
+# crew-meta append when state/<id>.meta exists) and runs no fetch, reset,
+# clean or checkout. Under the pool lock it refuses an unknown slot, a slot
+# leased to a live holder (naming it), or an unreadable lease state; a lease
+# whose owner pid is dead is reclaimed as everywhere else. `list` and pool
+# health show it as any other lease, `get`/`prune` skip it, and `return`
+# (with --if-lease-id) releases it exactly like a `get` lease - which DOES
+# reset the tree, so a parked tree is returned only when it may be discarded.
 #
 # return <slot-name>: the slot id `list` and ac-pool-health.sh print (e.g.
 # `3-repo`), resolved in the pool of --repo, else of the repo the cwd is in.
@@ -676,6 +693,13 @@ cmd_get() {
         || ac_die "get: epic branch $ebranch does not exist in $rname - cut it first: ac-epic-branch.sh create <epic> $rname"
       base_ref="$ebranch"
     fi
+    # The fence proved the branch by its FULL refname; the reset and the
+    # worktree add below resolve the SHORT name through git's DWIM order,
+    # where a same-named tag wins - so verify the exact string the loop will
+    # use, before any slot is touched, or the cause surfaces only as one
+    # "reset failed" per slot and a failed worktree add naming nothing.
+    git -C "$repo" rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null \
+      || ac_die "get: base ref $base_ref (named by the integration-branch record for $id on $rname) does not resolve to a commit - nothing was leased; fix the ref before retrying"
   fi
   local wt
   wt="$(with_pool_lock "$repo" acquire_slot "$repo" "$id" "$holder" "$owner" "$prefer" "$base_ref")"
@@ -873,9 +897,18 @@ acquire_slot() {
     ac_warn "prefer: slot $prefer unavailable ($prefer_why) - leased slot $n instead"
   fi
 
-  # One atomic meta write: a slot is never observed half-leased.
+  stamp_lease "$repo" "$n" "$id" "$holder" "$owner" >/dev/null
+  printf '%s\n' "$wt"
+}
+
+stamp_lease() {
+  # stamp_lease <repo> <n> <id> <holder> <owner> - the ONE writer of a slot's
+  # lease state (get and lease both mint through it, so the two can never
+  # drift), one atomic meta write so a slot is never observed half-leased,
+  # plus the crew-meta append. Prints the minted lease id.
+  local repo="$1" n="$2" id="$3" holder="$4" owner="$5" meta tmp created lease_id
   meta="$(slot_meta "$repo" "$n")"
-  local tmp="$meta.tmp.$$" created lease_id
+  tmp="$meta.tmp.$$"
   created="$(ac_meta_get "$meta" created_at)"
   lease_id="$(mint_lease_id)"
   {
@@ -888,8 +921,50 @@ acquire_slot() {
     printf 'lease_id=%s\n' "$lease_id"
   } >"$tmp"
   mv "$tmp" "$meta"
-  append_lease_to_crew_meta "$id" "$wt" "$lease_id"
-  printf '%s\n' "$wt"
+  append_lease_to_crew_meta "$id" "$(slot_path "$repo" "$n")" "$lease_id"
+  printf '%s\n' "$lease_id"
+}
+
+# --- lease -------------------------------------------------------------------
+
+cmd_lease() {
+  local slot="" repo="" id="" holder=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) repo="$2"; shift 2 ;;
+      --id) id="$2"; shift 2 ;;
+      --holder) holder="$2"; shift 2 ;;
+      -*) ac_die "lease: unknown argument $1" ;;
+      *) slot="$1"; shift ;;
+    esac
+  done
+  [ -n "$slot" ] || ac_die "lease: slot name or worktree path required"
+  [ -n "$repo" ] || ac_die "lease: --repo is required"
+  repo="$(resolve_repo "$repo")"
+  case "$slot" in */*) slot="${slot%/}"; slot="$(basename "$slot")" ;; esac
+  with_pool_lock "$repo" lease_slot "$repo" "$slot" "$id" "$holder"
+  write_workspace "$repo"
+  ac_warn "worktree slot $slot leased to ${id:-cli} (state only, tree untouched)"
+  slot_path "$repo" "$slot"
+}
+
+lease_slot() {
+  # Runs under the pool lock: the ownership check and the stamp are ONE step,
+  # so a concurrent get cannot take the slot between them. Nothing here
+  # reads or writes the tree - that is the verb's whole point.
+  local repo="$1" n="$2" id="$3" holder="$4" meta
+  meta="$(slot_meta "$repo" "$n")"
+  [ -f "$meta" ] || ac_die "lease: no such slot $n in the pool of $repo"
+  case "$(ac_meta_get "$meta" leased)" in
+    0) : ;;
+    1)
+      lease_reclaimable "$meta" \
+        || ac_die "lease: slot $n is leased by task $(ac_meta_get "$meta" task) (holder $(ac_meta_get "$meta" holder)) - refusing"
+      ac_warn "reclaiming slot $n from dead owner $(ac_meta_get "$meta" owner_pid)"
+      ;;
+    *) ac_die "lease: slot $n lease state unknown (half-written meta?) - refusing" ;;
+  esac
+  stamp_lease "$repo" "$n" "$id" "$holder" "" >/dev/null
 }
 
 append_lease_to_crew_meta() {
@@ -1274,6 +1349,7 @@ cmd="${1:-}"
 shift
 case "$cmd" in
   get) cmd_get "$@" ;;
+  lease) cmd_lease "$@" ;;
   list) cmd_list "$@" ;;
   return) cmd_return "$@" ;;
   prune) cmd_prune "$@" ;;

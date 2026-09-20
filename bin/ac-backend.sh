@@ -103,7 +103,8 @@
 #                                     foreground process alone does not prove
 #                                     that a TUI composer exists yet.
 #   backend_kill_window <id>          close the task's tab - only with the
-#                                     OWNERSHIP PROOF below
+#                                     OWNERSHIP PROOF below; non-zero only
+#                                     when OUR tab stayed open (same block)
 #   backend_target <id>               display label for humans/logs
 #   backend_mark_wait <id> [<msg>]    stamp the pane BLOCKED in the UI (below)
 #   backend_clear_wait <id>           release the stamp (no-op when absent)
@@ -229,6 +230,16 @@
 # returns 0, and the fleet-local files (state/.pane-<id>, the wait stamp) are
 # swept either way - a handle just PROVEN stale is exactly what must not
 # survive to aim a later kill.
+# The ONE non-zero (herdr driver, exit 1): a close that FAILED on a PROVEN-owned
+# tab which the last-tab fallback below did not close either - the tab is still
+# open in an occupied or unreadable workspace, or it could not be re-read at all
+# (gone, or the backend went away - the same answer, and only the second leaves
+# a live pane, so it is reported rather than assumed benign). That is a live
+# pane with no live record, which the caller must say ON the record:
+# ac-teardown.sh warns naming the handle and the exact close command and appends
+# the same to the ARCHIVED status log, and still completes. The files are swept
+# either way. The orca driver never returns non-zero (handle uniqueness is its
+# proof and its close is fire-and-forget).
 # LAST-TAB FALLBACK: herdr refuses `tab close` on a workspace's last tab, and
 # a family workspace (its default "1" tab closed at birth - see FAMILY
 # WORKSPACE GROUPING) ends exactly there. A refused close on a PROVEN-owned
@@ -1149,7 +1160,7 @@ backend_kill_window_herdr() {
   # tab whose close failed while it is still present retries as a close of
   # its whole workspace, but only on the emptiness proof (this tab + default
   # "1" tabs and nothing else).
-  local id="$1" tab label ws tabs_left rc
+  local id="$1" tab label ws tabs_left rc unclosed=0
   tab="$(herdr_tab "$id")"
   if [ -n "$tab" ]; then
     label="$(herdr_cli tab get "$tab" 2>/dev/null | jq -r '.result.tab.label // empty' 2>/dev/null || true)"
@@ -1159,29 +1170,38 @@ backend_kill_window_herdr() {
       # The fallback fires only on a FAILED close whose tab is still present
       # (herdr's last-tab refusal exits 1, verified 2026-08-06); a close that
       # reported success is trusted.
-      if [ "$rc" -ne 0 ] && herdr_cli tab get "$tab" >/dev/null 2>&1; then
-        # Still there: last-tab refusal (or a hiccup). The tab id carries its
-        # workspace ("<ws>:t<n>"); close the workspace only when NOTHING else
-        # real lives in it - the proof reads the remaining tabs and demands
-        # every one be this tab or a default "1". Unreadable = leave it.
-        ws="${tab%%:*}"
-        tabs_left="$(herdr_cli tab list --workspace "$ws" 2>/dev/null \
-          | jq -r --arg t "$tab" '
-            if (.result.tabs | type) == "array"
-            then (if ([.result.tabs[] | select(.tab_id != $t) | .label] | all(. == "1"))
-                  then "closeable" else "occupied" end)
-            else "unreadable" end' 2>/dev/null || true)"
-        case "$tabs_left" in
-          closeable) herdr_ws_close "$ws" group ;;
-          occupied) ac_warn "tab $tab of $id refused to close and its workspace $ws holds other live tabs - close the tab by hand" ;;
-          *) ac_warn "tab $tab of $id refused to close and workspace $ws could not be read - close the tab by hand" ;;
-        esac
+      if [ "$rc" -ne 0 ]; then
+        if herdr_cli tab get "$tab" >/dev/null 2>&1; then
+          # Still there: last-tab refusal (or a hiccup). The tab id carries its
+          # workspace ("<ws>:t<n>"); close the workspace only when NOTHING else
+          # real lives in it - the proof reads the remaining tabs and demands
+          # every one be this tab or a default "1". Unreadable = leave it.
+          ws="${tab%%:*}"
+          tabs_left="$(herdr_cli tab list --workspace "$ws" 2>/dev/null \
+            | jq -r --arg t "$tab" '
+              if (.result.tabs | type) == "array"
+              then (if ([.result.tabs[] | select(.tab_id != $t) | .label] | all(. == "1"))
+                    then "closeable" else "occupied" end)
+              else "unreadable" end' 2>/dev/null || true)"
+          case "$tabs_left" in
+            closeable) herdr_ws_close "$ws" group ;;
+            occupied) unclosed=1; ac_warn "tab $tab of $id refused to close and its workspace $ws holds other live tabs - close the tab by hand" ;;
+            *) unclosed=1; ac_warn "tab $tab of $id refused to close and workspace $ws could not be read - close the tab by hand" ;;
+          esac
+        else
+          # Gone, or the backend went away between the label read and now: the
+          # two are the same answer here, and only the second leaves a live
+          # pane - report, never assume the benign one.
+          unclosed=1
+          ac_warn "tab $tab of $id: close failed (rc $rc) and the tab could not be re-read - close it by hand if it is still open"
+        fi
       fi
     else
       ac_warn "not closing tab $tab for $id: it is labelled '${label:-none}', not crew:$id - the handle is stale (close the tab by hand if it really is this task's)"
     fi
   fi
   rm -f "$(ac_pane_file "$id")" "$(ac_wait_file "$id")"
+  return "$unclosed"
 }
 
 backend_focus_herdr() { herdr_cli tab focus "$(herdr_tab "$1")" >/dev/null 2>&1; }

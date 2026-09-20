@@ -36,6 +36,16 @@ esac
 out2="$("$BIN/ac-pool-health.sh" --repo "$repo")"
 assert_eq "$out2" "" "quiet when every slot is available or leased"
 
+# A tree parked on purpose (QA infra, an investigation) is protected by
+# `ac-tree.sh lease`, not by staying dirty: leased state-only, it leaves the
+# stuck-dirty bucket and the block stays quiet.
+printf 'parked\n' >>"$wt1/file.txt"
+"$BIN/ac-tree.sh" lease 1-repo --repo "$repo" --id park --holder self:park 2>/dev/null \
+  || fail "fixture: lease of the available slot must succeed"
+out3="$("$BIN/ac-pool-health.sh" --repo "$repo")"
+assert_eq "$out3" "" "a slot leased state-only is active, never stuck-dirty"
+"$BIN/ac-tree.sh" return "$wt1" --force 2>/dev/null
+
 # BROKEN, own bucket: a slot released to the pool (leased=0) whose gitdir
 # pointer is then broken must be named as its own bucket - never silently
 # counted as leasable (wrong bucket) and never folded into stuck-dirty

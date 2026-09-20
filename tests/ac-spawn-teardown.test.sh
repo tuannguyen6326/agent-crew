@@ -828,6 +828,35 @@ grep -q "leased.*t12" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
   || fail "the killed run should leave its lease behind, reclaimable by ac-tree.sh"
 "$BIN/ac-tree.sh" return "$wt12" --force >/dev/null 2>&1
 
+# --- pane close FAILED on a tab that IS ours: the record says so --------------
+# A label-mismatch refusal deliberately returns 0 (a stale handle must never
+# fail a teardown), but a close that FAILS on a PROVEN-owned tab and leaves it
+# open is a live pane with no live record - the archive above already moved
+# the meta and status. The driver returns non-zero there; teardown keeps going
+# (lease and branch are already handled, refusing would strand more), warns
+# naming the handle and the exact close command, and writes the same line into
+# the ARCHIVED status log - never a re-minted live one.
+"$BIN/ac-brief.sh" t12b proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t12b "$repo" --harness fake --mode local-only >/dev/null 2>&1
+tab12b="$(awk '{print $2}' "$AC_HOME/state/.pane-t12b")"
+[ -n "$tab12b" ] || fail "fixture: the spawn must record a tab handle"
+: >"$FAKE_HERDR/.tab-close-fails"
+err12b="$("$BIN/ac-teardown.sh" t12b --force 2>&1 >/dev/null)" \
+  || fail "a failed pane close must not fail the teardown: $err12b"
+rm -f "$FAKE_HERDR/.tab-close-fails"
+assert_file "$FAKE_HERDR/tabs/$tab12b" "fixture: the tab really stayed open"
+assert_contains "$err12b" "pane close FAILED for t12b" "teardown warns loudly"
+assert_contains "$err12b" "herdr tab close $tab12b" "the warn names the handle and the exact close command"
+assert_contains "$(cat "$AC_HOME/state/archive/t12b/status")" "warn: pane close failed" \
+  "the ARCHIVED status log carries the failure"
+assert_contains "$(cat "$AC_HOME/state/archive/t12b/status")" "$tab12b" "the archived line names the handle"
+assert_no_file "$AC_HOME/state/t12b.status" "no live status re-minted behind the archive"
+assert_no_file "$AC_HOME/state/t12b.meta" "the archive stands (teardown was not refused)"
+assert_no_file "$AC_HOME/state/.pane-t12b" "the handle is swept either way"
+grep -q "leased.*t12b" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
+  && fail "the lease must still be returned after a failed pane close"
+rm -f "$FAKE_HERDR/tabs/$tab12b"
+
 # --- end-of-task pane-agent sweep ---------------------------------------------
 # The pane agents a task starts (the ship reviewer, the qa agent, the ship/qa
 # watch panes) and the qa serve process are retired only by ac-ship.sh /
