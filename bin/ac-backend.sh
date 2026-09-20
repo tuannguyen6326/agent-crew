@@ -199,6 +199,14 @@
 # table of herdr error codes: naming `protocol_mismatch` the definition of
 # unobservable would restore this bug the day herdr renames it. The control call
 # runs ONLY after a failure, so the healthy poll costs exactly what it always did.
+# ONE boundary widens toward GONE: when the control call fails too, the driver
+# asks the server's OWN state (`status server --json`, answered by the client
+# with `running:false` when no server sits behind the socket). A server that is
+# positively STOPPED holds no panes - every pane died with it - so that answer is
+# GONE, not an outage; without it a server exit pinned every task at 2 with no
+# verb able to reclaim it. A server that reports running, or a status that cannot
+# be read at all, stays UNOBSERVABLE: the protocol-mismatch incident above is a
+# RUNNING server, and it still classifies as 2.
 # Every caller that merely tests truthiness keeps its behaviour unchanged (2 is
 # non-zero); the three callers the incident named must not collapse 2 into 1 -
 # ac-watch.sh records `unobservable:` and stamps NO failure, ac-peek.sh and
@@ -885,7 +893,18 @@ backend_window_alive_herdr() {
   pane="$(herdr_pane "$1")"
   [ -n "$pane" ] || return 1            # no handle: a LOCAL fact, really gone
   herdr_cli pane get "$pane" >/dev/null 2>&1 && return 0
-  out="$(herdr_cli pane list 2>/dev/null)" || return 2
+  if ! out="$(herdr_cli pane list 2>/dev/null)"; then
+    # The list failing is still no verdict - unless the SERVER itself is
+    # stopped. `status server --json` is answered by the CLIENT when the socket
+    # has no server behind it (rc 0, `running:false`; herdr 0.8.0, its
+    # cli/status ServerRuntimeStatus::NotRunning arm), and a server that is
+    # down holds no panes: positive absence, GONE. A running server, a remote
+    # target (which errors instead), or an unreadable status stays 2.
+    case "$(herdr_cli status server --json 2>/dev/null | jq -r '.running' 2>/dev/null)" in
+      false) return 1 ;;
+      *) return 2 ;;
+    esac
+  fi
   case "$(jq -r --arg p "$pane" '
         if (.result.panes | type) == "array"
         then (if any(.result.panes[]; .pane_id == $p) then "alive" else "gone" end)

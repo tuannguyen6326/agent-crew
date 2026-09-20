@@ -529,8 +529,24 @@ if [ -f "$d/.pane-api-down" ]; then
       exit 1 ;;
   esac
 fi
+if [ -f "$d/.server-stopped" ]; then
+  # No server behind the socket: the client answers `status server` on its own
+  # (rc 0, running:false - real herdr 0.8.0 against an absent session socket),
+  # and every other call fails to connect.
+  case "${1:-} ${2:-}" in
+    "status server")
+      printf '{"status":"not_running","running":false,"version":null,"protocol":null,"socket":"%s/herdr.sock","session":null}\n' "$d"
+      exit 0 ;;
+  esac
+  printf '{"error":{"code":"server_not_running","message":"no herdr server is running at %s/herdr.sock"},"id":"cli:%s"}\n' \
+    "$d" "${1:-}:${2:-}" >&2
+  exit 1
+fi
 next() { local f="$d/.${1:-n}" n; n="$(cat "$f" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$f"; printf '%s\n' "$n"; }
 case "${1:-} ${2:-}" in
+  "status server")
+    printf '{"status":"running","running":true,"version":"0.8.0","protocol":19,"compatible":true,"socket":"%s/herdr.sock","session":null}\n' "$d"
+    exit 0 ;;
   "workspace get")
     # ws.<id> holds the workspace's LABEL (empty file = unlabelled) - real herdr
     # reports it under result.workspace.label, which ac_herdr_agents_workspace

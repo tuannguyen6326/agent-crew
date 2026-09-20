@@ -629,9 +629,28 @@ assert_eq "$rc" "1" "a reachable backend that does not list the pane is GONE"
 # handle, tab and buffer are all restored first, so the pane really is there.
 : >"$FAKE_HERDR/panes/pAL.buf"
 touch "$FAKE_HERDR/.unreachable"
+: >"$FAKE_HERDR/log"
 rc=0; run_backend herdr 'backend_window_alive al1' || rc=$?
 rm -f "$FAKE_HERDR/.unreachable"
 assert_eq "$rc" "2" "a backend that cannot answer is UNOBSERVABLE, never a verdict about the pane"
+assert_contains "$(cat "$FAKE_HERDR/log")" "status server" "a failed pane list asks the server's own state before settling on unobservable"
+
+# A STOPPED server is positive absence, not an outage: the client answers
+# `status server` on its own (running:false) and a server that is down holds
+# no panes - every pane died with it. Without this, a server exit pinned every
+# task at 2 and nothing could ever reclaim it.
+# DISPUTED: whether the server itself reports running. HELD-CONSTANT: pane get
+# and pane list both fail, exactly as under .unreachable above.
+touch "$FAKE_HERDR/.server-stopped"
+rc=0; run_backend herdr 'backend_window_alive al1' || rc=$?
+rm -f "$FAKE_HERDR/.server-stopped"
+assert_eq "$rc" "1" "a stopped herdr server is GONE - a server that is down holds no panes"
+
+# ...while a RUNNING server whose pane api fails is still no answer about the pane.
+touch "$FAKE_HERDR/.pane-api-down"
+rc=0; run_backend herdr 'backend_window_alive al1' || rc=$?
+rm -f "$FAKE_HERDR/.pane-api-down"
+assert_eq "$rc" "2" "a running server whose pane api cannot answer stays UNOBSERVABLE"
 
 # A missing handle is a LOCAL read: it stays GONE and costs no socket call.
 : >"$FAKE_HERDR/log"
