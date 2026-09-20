@@ -2219,6 +2219,12 @@ AC_SEED_STAMP_DIR_REL='.claude/.ac-seed'
 # the stamp inert to every such tool regardless of which path gets seeded.
 AC_SEED_STAMP_SUFFIX='.sha256'
 
+# First line of the stub bin/ac-verify.sh writes over every instruction file
+# in a verifier lease for the length of a round. The ONE in-file marker the
+# seed reads (ac_seed_disposable): it claims the opposite of ownership -
+# nobody's file - so the seed overwrites it instead of stepping aside.
+AC_VERIFY_NEUTRALIZED_MARK='# Neutralized by ac-verify:'
+
 ac_sha256_file() {
   # ac_sha256_file <file> - portable SHA-256 used by maintenance plans.
   shasum -a 256 <"$1" | awk '{print $1}'
@@ -2254,7 +2260,11 @@ ac_seed_install() {
   # file seeded before stamps existed are all left untouched - the seed never
   # overwrites what it cannot PROVE it wrote. The stamp authorizes a refresh
   # of the seed's own copy and nothing beyond it; it is not a claim on the
-  # path, and an unstamped file is never adopted.
+  # path, and an unstamped file is never adopted. "Repo-shipped" is therefore
+  # not detected, it is the DEFAULT for any file the stamp does not vouch
+  # for - the seeded copy carries no in-file marker of its own. The one
+  # in-file marker consulted is ac-verify's neutralized header
+  # (ac_seed_disposable), which makes the opposite claim and is overwritten.
   #
   # STAMP NAME carries $AC_SEED_STAMP_SUFFIX; `legacy` is the pre-suffix name
   # this function used to write. A `legacy` stamp is ALWAYS retired here - it
@@ -2284,7 +2294,7 @@ ac_seed_install() {
   legacy="$wt/$AC_SEED_STAMP_DIR_REL/${rel//\//%}"
   stamp="$legacy$AC_SEED_STAMP_SUFFIX"
   want="$(ac_sha256_file "$staged")" || return 1
-  if [ -e "$dst" ]; then
+  if [ -e "$dst" ] && ! ac_seed_disposable "$dst"; then
     if [ -f "$stamp" ]; then
       have="$(ac_sha256_file "$dst" 2>/dev/null)" || return 1
       [ "$have" = "$(cat "$stamp")" ] || return 1
@@ -2308,6 +2318,19 @@ ac_seed_install() {
   rm -f "$legacy"
   ac_seed_exclude "$wt" "$rel"
   ac_seed_exclude "$wt" "$AC_SEED_STAMP_DIR_REL/"
+}
+
+ac_seed_disposable() {
+  # ac_seed_disposable <file> - true for the stub bin/ac-verify.sh writes over
+  # an instruction file for the length of a review round. The round restores
+  # the true bytes at harvest; a stub that outlived it (a round killed
+  # untrappably) is nobody's file - never repo-shipped, never a human's - and
+  # a slot carrying one would otherwise send its next crewmate's harness a
+  # pointer to a commit path that no longer exists.
+  case "$(head -n 1 "$1" 2>/dev/null)" in
+    "$AC_VERIFY_NEUTRALIZED_MARK"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 ac_seed_crewmate_md() {

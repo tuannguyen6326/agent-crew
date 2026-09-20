@@ -36,7 +36,9 @@
 # NEUTRALIZES the project's instruction files in that working tree (CLAUDE.md /
 # CLAUDE.local.md / AGENTS.md at any depth, tracked or untracked - the CONTEXT
 # NEUTRALIZATION block below owns the reasoning: the diff under review can edit
-# the very files the harness loads as identity before the prompt speaks), and
+# the very files the harness loads as identity before the prompt speaks -
+# and restores their pre-round bytes before the lease is released, on every
+# exit path, so no stub rides a pooled slot into its next lessee), and
 # calls ac-pane-agent synchronously. A valid result is durably captured before
 # pane/meta/tree cleanup. A REJECTED verdict (the pane completed and its round
 # evidence is durable, only the output failed the schema) releases those same
@@ -190,6 +192,7 @@ lock_held=0
 # actually assigned a real pane id, so referencing $pane there is always safe.
 pane=""
 all_leases=""
+ctx_backup=""
 
 qa_error_report_on_exit() {
   local rc=$? tmp target_text attestation_note marker marker_scope marker_app
@@ -452,8 +455,29 @@ lock_held=1
 # clobber the canonical report of the round the lock holder legitimately owns.
 [ "$kind" != qa ] || qa_report_armed=1
 
+restore_neutralized() {
+  # Every instruction file the CONTEXT NEUTRALIZATION block below stubbed goes
+  # back to its pre-round bytes BEFORE the lease is released, on every exit
+  # path return_leases serves. The pool's return resets TRACKED files only:
+  # an untracked, info/excluded seed (.claude/CLAUDE.md) kept the stub and
+  # rode the slot into its next lessee, whose seed read it as repo-shipped
+  # (unstamped bytes, ac_seed_install) and stepped aside to the fallback
+  # path - so that crewmate's harness loaded a 166-byte pointer at a commit
+  # path that no longer existed (observed 2026-09-20). ac_seed_disposable is
+  # the fail-safe for a round killed untrappably, where this never runs.
+  [ -n "$ctx_backup" ] && [ -f "$ctx_backup/manifest" ] || return 0
+  local n path
+  while IFS=$'\t' read -r n path; do
+    [ -n "$path" ] || continue
+    cat "$ctx_backup/$n" >"$path" 2>/dev/null || true
+  done <"$ctx_backup/manifest"
+  rm -rf "$ctx_backup"
+  ctx_backup=""
+}
+
 return_leases() {
   local leases="$1" lease rest
+  restore_neutralized
   rest="$leases"
   while [ -n "$rest" ]; do
     case "$rest" in *:*) lease=${rest%%:*}; rest=${rest#*:} ;; *) lease=$rest; rest="" ;; esac
@@ -1233,13 +1257,28 @@ verify_drop_branch "$lease" "$id"
 # reviewer needing an instruction file's true content reads it via git show.
 # File-based and harness-agnostic on purpose: a future harness is covered
 # without new per-harness flag facts.
-# The pool's `return` resets tracked files; untracked seeds are re-seeded at
-# the next crewmate spawn, so nothing here outlives the lease.
+# Nothing here outlives the lease: the pre-round bytes are kept aside and
+# restore_neutralized writes them back before the lease is released (the
+# pool's return resets tracked files only, and an untracked seed would
+# otherwise carry the stub to the slot's next lessee). Two passes - back up
+# EVERY file before overwriting ANY: a root CLAUDE.md symlinked to AGENTS.md
+# (this distro's own shape) makes one write reach two listed paths, and a
+# backup taken mid-loop would capture the stub itself.
 neutralized=0
+ctx_backup="$(mktemp -d "${TMPDIR:-/tmp}/ac-verify-ctx.XXXXXX")"
+ctx_files=()
 while IFS= read -r ctx_file; do
-  printf '# Neutralized by ac-verify: project instruction files must not steer the independent verifier. True content: git show %s:<path>\n' "$sha" >"$ctx_file"
-  neutralized=$((neutralized + 1))
+  ctx_files+=("$ctx_file")
 done < <(find "$lease" \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md \) -not -path '*/.git/*' 2>/dev/null)
+for ctx_file in ${ctx_files[@]+"${ctx_files[@]}"}; do
+  neutralized=$((neutralized + 1))
+  cat "$ctx_file" >"$ctx_backup/$neutralized" 2>/dev/null || continue
+  printf '%s\t%s\n' "$neutralized" "$ctx_file" >>"$ctx_backup/manifest"
+done
+for ctx_file in ${ctx_files[@]+"${ctx_files[@]}"}; do
+  printf '%s project instruction files must not steer the independent verifier. True content: git show %s:<path>\n' \
+    "$AC_VERIFY_NEUTRALIZED_MARK" "$sha" >"$ctx_file"
+done
 
 # Story 3 - the SECOND (E2E) lease. A qa --profile carrying an e2e block drives
 # a separate E2E suite from its own repository at an exact frozen SHA, so the

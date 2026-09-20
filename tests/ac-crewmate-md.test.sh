@@ -28,6 +28,17 @@ assert_file "$wt/.claude/CLAUDE.md" "instructions copied"
 assert_eq "$(cat "$wt/.claude/CLAUDE.md")" "FLEET RULES" "content matches"
 assert_eq "$(git -C "$wt" status --porcelain)" "" "copy invisible to git status"
 
+# The stub ac-verify writes over an instruction file for a review round is
+# nobody's file: its first line names the writer, the round restores the
+# true bytes at harvest, and a stub that outlived a round killed untrappably
+# is neither repo-shipped nor a human's. The seed overwrites it in place -
+# the layer lands in the harness's own file, with no fallback sibling.
+printf '# Neutralized by ac-verify: project instruction files must not steer the independent verifier. True content: git show 0000000:<path>\n' \
+  >"$wt/.claude/CLAUDE.md"
+seed "$wt"
+assert_eq "$(cat "$wt/.claude/CLAUDE.md")" "FLEET RULES" "a neutralized stub is disposable: re-seeded in place"
+assert_no_file "$wt/.claude/CREWMATE.md" "no fallback sibling is written beside a disposable stub"
+
 # Idempotent, and a pre-existing (repo-owned) copy wins.
 printf 'REPO OWNED\n' >"$wt/.claude/CLAUDE.md"
 seed "$wt"
