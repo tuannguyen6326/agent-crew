@@ -799,6 +799,10 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
   return { hits, degraded };
 }
 
+// Seconds, AC_BRAIN_RERANK_TIMEOUT to override; 10 rather than the embed
+// lane's 60 because a prompt is waiting on the other end.
+const RERANK_TIMEOUT_MS = (Number(process.env.AC_BRAIN_RERANK_TIMEOUT) > 0
+  ? Number(process.env.AC_BRAIN_RERANK_TIMEOUT) : 10) * 1000;
 // Optional precision knob: cross-encoder rerank of the fused top-N, then
 // autocut at the largest normalized score cliff. Gated on config/brain.json
 // reranker{provider,model} + its key; provider "stub" (term-overlap) exists
@@ -813,10 +817,17 @@ async function rerankHits(q: string, hits: Hit[]): Promise<{ hits: Hit[]; rerank
     const terms = ftsQuery(q).terms;
     scores = top.map(h => terms.filter(t => ((h.title || "") + " " + (h.snippet || "")).toLowerCase().includes(t)).length);
   } else if (rc.provider === "voyage" && process.env.VOYAGE_API_KEY) {
+    // Bounded like the embedding call, and tighter: this sits on the RECALL
+    // path, which the prompt-submit hook runs on every prompt a human types,
+    // so a wedged provider here is a wedged prompt, not a wedged sync. The
+    // catch below already degrades to the fused order; the ceiling is what
+    // makes it reachable. base_url is the same test seam the embedding lane
+    // has - a local stub is the only way to make a hang deterministic.
     try {
-      const r = await fetch("https://api.voyageai.com/v1/rerank", {
+      const r = await fetch((rc.base_url || "https://api.voyageai.com/v1").replace(/\/$/, "") + "/rerank", {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.VOYAGE_API_KEY}` },
         body: JSON.stringify({ model: rc.model || "rerank-2.5", query: q, documents: top.map(h => (h.title || "") + "\n" + (h.snippet || "")) }),
+        signal: AbortSignal.timeout(RERANK_TIMEOUT_MS),
       });
       if (r.ok) {
         const j: any = await r.json();

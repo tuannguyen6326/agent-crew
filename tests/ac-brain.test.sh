@@ -473,4 +473,31 @@ assert_contains "$eh" "timeout" "...and the degraded token says the call timed o
 rm -f "$AC_HOME/config/brain.json" "$AC_HOME/data/fam-one/bound-probe.md"
 "$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
 
+# --- the rerank call is bounded too, and tighter: it sits on the RECALL path,
+# which the prompt-submit hook runs on every prompt a human types. A provider
+# that answers late must hand back the fused order at the ceiling, not a
+# wedged prompt. The stub answers after 20s (not never - an unbounded engine
+# would hang this file for ever instead of failing it), pointed at through
+# reranker.base_url; three pages sharing one term give rerank its >=3 hits.
+cat >"$TMP/rerank-slow.ts" <<'TS'
+const s = Bun.serve({ port: 0, fetch: async () => { await new Promise(r => setTimeout(r, 20000)); return new Response('{"data":[]}'); } });
+console.log(s.port);
+await new Promise(() => {});
+TS
+mkdir -p "$AC_HOME/data/rr"
+for n in 1 2 3; do printf '# rr %s\nA page about the quokka reranking probe number %s.\n' "$n" "$n" >"$AC_HOME/data/rr/p$n.md"; done
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+embed_stub_up "$TMP/rerank-slow.ts" "$TMP/rerank-slow.port" \
+  || { embed_stub_down; fail "the slow rerank stub never came up"; }
+printf '{"reranker":{"provider":"voyage","model":"m","base_url":"http://127.0.0.1:%s/v1"}}\n' \
+  "$EMBED_STUB_PORT" >"$AC_HOME/config/brain.json"
+began=$SECONDS
+rr="$(AC_BRAIN_RERANK_TIMEOUT=2 VOYAGE_API_KEY=x "$BRAIN" recall --home "$AC_HOME" --query "quokka reranking probe" --limit 5 --compact)"
+elapsed=$((SECONDS - began))
+embed_stub_down
+[ "$elapsed" -lt 15 ] || fail "a reranker that answers late must be cut at the ceiling, not waited for (took ${elapsed}s)"
+case "$rr" in *'"reranked":true'*) fail "a cut rerank must not stamp reranked" ;; esac
+assert_contains "$rr" "quokka" "...and the fused order still comes back"
+rm -f "$AC_HOME/config/brain.json"; rm -rf "$AC_HOME/data/rr"
+
 pass
