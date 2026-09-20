@@ -360,7 +360,12 @@
 # (the --once checkpoint below completed one bounded pane pass plus one bounded
 # remote poll and found nothing actionable). Every one of
 # them exits 0: the reason line, not the exit status, is the payload the chief
-# reads.
+# reads. A reason may carry ONE trailing clause after ` - `, on the same line
+# (the reader keeps only the last non-empty line): a wake branch whose durable
+# record failed to write appends `WAKE NOT DURABLE: ...` (emit_reason), and
+# `signal:<NAME>` appends `poll interrupted mid-flight; last rid ingested:
+# <rid|none>` when the kill landed inside a poll. The prefix before ` - ` is
+# the classifier; the clause is for the chief.
 # With --once it does a single bounded pass (Codex-style checkpoint), and with
 # --release <pid> it releases ONE named watcher and exits without arming.
 # A captain-wait marker (AC_DECISION_RE: needs-decision:/blocked: and the
@@ -543,9 +548,11 @@
 # chief pane a second time in one pass. So the inequality is
 # R x ceiling + 120 + 15 < 300, i.e. R < 82 timed-out RPCs at the 2s default:
 # the distro's own shape (room-parallel 5, a couple of panes a family) spends
-# ~50 and holds well inside the grace, and a fleet past that lowers
+# ~50 and holds at 235s (50 x 2 + 120 + 15), and a fleet past that lowers
 # config/herdr-rpc-timeout rather than discovering the gap as a false
-# WATCHER-DOWN.
+# WATCHER-DOWN. Against the LIVE test stub the same dedup reads 5 -> 4 chief-
+# pane calls, because window_alive's ladder short-circuits at one call when
+# the pane answers; the two counts are the same fix priced on two backends.
 # WHAT A KILL COSTS is a property of the TRANSPORT, not of this distro, so this
 # header claims only what it owns: the rids ac-remote.sh had already stashed AND
 # published keep their own wakes, and the ceiling costs those nothing. Everything
@@ -1015,6 +1022,15 @@ family_known() {
 # REFUSED at arm (exit 2, naming the entry AND the whole set). Runs for --once
 # too - a foreign skip is equally wrong in a bounded checkpoint.
 if [ -n "${AC_WATCH_SKIP:-}" ]; then
+  # A skip is the FLEET watcher's instrument, and the coverage record a revoked
+  # skip publishes must land on the fleet spool - queue_wake files it under
+  # AC_SCOPE, so a scoped watcher carrying a skip would hand that record to
+  # the very family whose roomchief is gone. Refused rather than assumed.
+  if [ -n "${AC_SCOPE:-}" ]; then
+    watch_log "refused: AC_WATCH_SKIP is the fleet watcher's alone, but AC_SCOPE=$AC_SCOPE is set (AC_WATCH_SKIP=$AC_WATCH_SKIP)"
+    printf 'refused: AC_WATCH_SKIP cannot be combined with AC_SCOPE=%s - a scoped watcher watches its own family, it skips nothing\n' "$AC_SCOPE"
+    exit 2
+  fi
   for _skf in ${AC_WATCH_SKIP//,/ }; do
     if ! family_known "$_skf"; then
       watch_log "refused: AC_WATCH_SKIP names $_skf, absent from this home (AC_WATCH_SKIP=$AC_WATCH_SKIP)"
@@ -1580,11 +1596,15 @@ check_remote() {
     if [ "$wake_published" = 1 ]; then : >"$marker"; fi
     watch_log "remote poll FAILED: $detail"
   else
-    # REPETITION. The slot re-polls every remote_iv, so a persistent fault (an
-    # unwritable spool) would wake the chief on every interval for as long as
-    # it lasts - the treadmill every dedup marker in this watcher exists to
-    # stop. One durable wake per EPISODE; the rest of it goes to the arm log,
-    # which is already where this watcher sends what stdout must not carry.
+    # REPETITION. The slot re-polls every remote_iv, so a persistent fault
+    # would wake the chief on every interval for as long as it lasts - the
+    # treadmill every dedup marker in this watcher exists to stop. One durable
+    # wake per EPISODE once one has REACHED DISK; the rest goes to the arm log.
+    # The exception is the correlated fault the latch above defers on: while
+    # the spool itself is unwritable no record can latch, so every death exits
+    # loud with the loss on its reason line, one chief turn per interval,
+    # until the spool is writable again - accepted (captain ruling
+    # 2026-09-19), because the alternative was an episode nobody ever heard of.
     # The marker is presence-only and scope-free: the lock gate above means
     # exactly one watcher fleet-wide ever polls, so it has exactly one writer.
     watch_log "remote poll FAILED again, same episode: $detail"
@@ -1600,7 +1620,9 @@ check_remote() {
   return 0
 }
 
-wake_published=0
+# 1 between publishes: the flag means "the wake the CURRENT branch queued
+# reached disk", and a branch that queued none must read it as clean.
+wake_published=1
 queue_wake() {
   # queue_wake <kind> <id> <payload> - durable actionable wake, the record
   # every consumer (the crewchief's drain, a roomchief's scoped drain, the
@@ -1633,11 +1655,15 @@ queue_wake() {
   # wakes the chief this once and now SAYS the durable record is missing, which
   # is the difference between one lost wake and a loss nobody ever learns of.
   # wake_published is the STATUS without the status: a non-zero RETURN here
-  # would reach eleven call sites that never test one, and the direction that
+  # would reach twelve call sites that never test one, and the direction that
   # error fails in is a dead watcher - the fleet losing its eyes over a wake it
   # could not write. A module flag costs those sites nothing and lets the one
   # caller that must know - an episode latch, which means "the chief has been
-  # told" - read whether the record actually exists.
+  # told" - read whether the record actually exists. The flag is AMBIENT, so
+  # whoever reads it must reset it to 1 (emit_reason does; the coverage site
+  # does by hand): a 0 left standing was measured riding out on the next
+  # reason line of a branch that queued no wake at all - "WAKE NOT DURABLE"
+  # over a healthy spool, the false alarm on the one channel the chief reads.
   wake_published=1
   if ! ac_wake_publish "$state_dir" "${AC_SCOPE:-}" "$1" "$2" "$3"; then
     wake_published=0
@@ -1666,6 +1692,7 @@ emit_reason() {
   else
     printf '%s - WAKE NOT DURABLE: this line is the only record; the state dir may be unwritable\n' "$1"
   fi
+  wake_published=1
 }
 
 marker_seen() {
@@ -1687,7 +1714,7 @@ check_fleet() {
   # One poll pass. Prints an exit reason and returns 0 when actionable.
   local meta id tail hash prev marker seen seen_hash seen_now idle changed_file skip_fam
   local busy_file busy_age
-  local task_dir report rhash sup alive_rc busy wait_file
+  local task_dir report rhash sup alive_rc busy wait_file cov_rc
   # DELIBERATELY does NOT branch on ac_meta_is_verify. A verification agent is
   # excluded from ACCOUNTING (ac_chief_child_live, and the ac-room/
   # ac-teardown/ac-wake-drain/ac-fleets enumerators), NEVER from SUPERVISION:
@@ -1739,7 +1766,6 @@ check_fleet() {
           continue
         fi
         if [ ! -e "$state_dir/.skip-revoked-$skip_fam" ]; then
-          touch "$state_dir/.skip-revoked-$skip_fam"
           watch_log "skip revoked: $skip_fam scoped coverage down (roomchief gone or beacon stale past re-arm grace) - fleet watcher covering its panes directly"
           # A revoke must WAKE, not merely log - measured: a live-but-asleep
           # roomchief slept 101 minutes on piled family-spool wakes (its
@@ -1751,11 +1777,18 @@ check_fleet() {
           # live-but-asleep chief, and a dead pane swallows it harmlessly.
           # Through queue_wake like every other wake: this branch used to call
           # the publish directly with `|| true`, so it carried not even the log
-          # line the other sites had. AC_SCOPE is empty in the fleet watcher and
-          # only the fleet watcher reads AC_WATCH_SKIP, so the fleet spool this
-          # record has always gone to is where queue_wake sends it too.
+          # line the other sites had. The fleet spool it has always gone to is
+          # where queue_wake sends it: AC_SCOPE is empty here by the refusal at
+          # the top of this file, which makes the pairing a guard, not a habit.
+          # It is the ONE queue_wake site with no reason line of its own - the
+          # branch `continue`s into the pane pass - so the loss has no live
+          # channel; the latch deferring to the record is the retry it gets,
+          # exactly as check_remote's two episode latches do, and the flag is
+          # cleared here because no emit_reason will do it.
           queue_wake coverage "$skip_fam-chief" \
             "scoped coverage down for $skip_fam - fleet watcher covering its panes; the roomchief must drain and re-arm (or be recovered)"
+          if [ "$wake_published" = 1 ]; then touch "$state_dir/.skip-revoked-$skip_fam"; fi
+          wake_published=1
           ( AC_BACKEND="$(ac_task_backend "$skip_fam-chief")"; export AC_BACKEND
             backend_send_line "$skip_fam-chief" \
               "wake: your scoped watcher for $skip_fam is down and wakes may be pending - run bin/ac-wake-drain.sh, act on each, then re-arm bin/ac-watch.sh as your own background task" \

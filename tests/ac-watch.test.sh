@@ -457,6 +457,12 @@ arm_fault 3 rp1 rp2 rp3
 out="$(watch_poll 4)"
 assert_contains "$out" "remote-failed:rp2" "a REPEAT death with orders in hand still exits FAILED, naming the last that landed"
 case "$out" in *"remote:rp1"*) fail "a repeat death must not be reported as a successful poll either" ;; esac
+# The repeat branch queues NO wake, so it can have lost none: the reason line
+# is the whole line, never a "WAKE NOT DURABLE" suffix inherited from a flag
+# some earlier branch left standing. Asserted on the exact line, because every
+# prefix assertion in this file would pass over the false alarm.
+assert_eq "$(printf '%s\n' "$out" | sed '/^$/d' | tail -n 1)" "remote-failed:rp2" \
+  "a repeat that queued no wake reports no loss - the reason line is exact"
 drained="$(drain_now)"
 assert_contains "$drained" "remote-order rp1" "the orders it did ingest are never delayed by the repeat"
 case "$drained" in *remote-failed*) fail "one episode queues one durable wake, however many deaths it has" ;; esac
@@ -1857,7 +1863,7 @@ printf '0\n' >"$state/.last-watcher-beat.rf"                 # stand-down (d52ec
 out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)"
 skip_probe_calls="$(grep -c 'pRFC' "$FAKE_HERDR/log" 2>/dev/null || true)"
 assert_eq "$skip_probe_calls" "4" \
-  "the skip branch asks the backend about the chief pane ONCE per pass, never twice over (5 before the dedup)"
+  "one coverage probe on the chief pane per pass (the other three are rf-chief's own pane pass); 5 before the dedup, against this LIVE stub - the header's 6->4 is the wedged-stub count, where the ladder costs 2"
 assert_contains "$out" "check:quiet" "a live roomchief mid re-arm keeps its skip (re-arm grace)"
 case "$out" in *report:rf-t1*) fail "the fleet must not steal a re-arming family's pane" ;; esac
 assert_no_file "$state/.skip-revoked-rf" "no revoke during the re-arm grace"
@@ -1876,6 +1882,17 @@ assert_eq "$(find "$state/.wake-spool.rf" -type f 2>/dev/null | wc -l | tr -d ' 
 rm -f "$state/.skip-revoked-rf" "$state/.seen-rf-t1"
 printf '0\n' >"$state/.last-watcher-beat.rf"
 printf '%s\n' "$(( $(date +%s) - 9999 ))" >"$state/.skip-stale-since-rf"   # gap opened long ago
+# ...but a revoke whose coverage wake never reached disk must not LATCH: the
+# `.skip-revoked` marker is the dedup for the whole episode, and this branch
+# `continue`s past every reason line, so a publish that fails here has no live
+# channel at all - the latch deferring to the record is the only retry it gets.
+# The spool as a regular FILE fails every publish (ac_wake_publish's mkdir).
+rm -rf "$state/.wake-spool"; : >"$state/.wake-spool"
+out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)"
+assert_no_file "$state/.skip-revoked-rf" \
+  "a revoke whose coverage wake was not durable does not latch - the next pass retries it"
+rm -f "$state/.wake-spool"; mkdir -p "$state/.wake-spool"
+rm -f "$state/.seen-rf-t1"
 out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:rf-t1" "a beacon stale past the grace is covered directly"
 assert_file "$state/.skip-revoked-rf" "the revoke is marked once"
@@ -1890,6 +1907,13 @@ grep -rq "coverage" "$state/.wake-spool" 2>/dev/null \
   || fail "the revoke must publish a coverage wake to the fleet spool"
 assert_contains "$(cat "$(fake_pane_buf rf-chief)")" "scoped watcher" \
   "the revoke nudges the roomchief pane with a drain-and-re-arm order"
+
+# A scoped watcher may not carry a skip at all: queue_wake files under
+# AC_SCOPE, so a revoke's coverage record would land on the dead roomchief's
+# own spool instead of the fleet's. Refused at arm, exit 2, naming both.
+rc=0; out="$(AC_SCOPE=rf AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once 2>/dev/null)" || rc=$?
+assert_eq "$rc" "2" "AC_WATCH_SKIP under AC_SCOPE is refused at arm"
+assert_contains "$out" "AC_SCOPE=rf" "...naming the scope that makes the skip wrong"
 
 # Coverage back (fresh beacon) -> skip honored again, both trackers cleared.
 date +%s >"$state/.last-watcher-beat.rf"
