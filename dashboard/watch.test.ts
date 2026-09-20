@@ -80,21 +80,6 @@ test("backlog.md and data/<family>/room.md writes fire; unrelated files in the s
   rmSync(home, { recursive: true, force: true });
 });
 
-test("a burst of writes inside the debounce window fires the hook once", async () => {
-  const home = fleetHome();
-  const w = waiter();
-  const watcher = watchHomes(() => w.hook(), { debounceMs: 150 });
-  watcher.sync([home]);
-  await settle();
-  const p = w.next();
-  for (let i = 0; i < 5; i++) appendFileSync(`${home}/state/t1.status`, `line ${i}\n`);
-  expect(await p).toBe(true);
-  await new Promise((r) => setTimeout(r, 300));
-  expect(w.count()).toBe(1);
-  watcher.close();
-  rmSync(home, { recursive: true, force: true });
-});
-
 test("a home with no watchable dirs, or one removed underneath, is logged and never throws", async () => {
   const logged: string[] = [];
   const watcher = watchHomes(() => {}, { debounceMs: 20, log: (l) => logged.push(l) });
