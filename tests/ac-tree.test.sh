@@ -528,4 +528,36 @@ assert_contains "$outN" "no such slot 9-byname" "an unknown slot name dies namin
 outN="$("$BIN/ac-tree.sh" return sub/1-byname --repo "$repoN" 2>&1 || true)"
 assert_contains "$outN" "no such directory: sub/1-byname" "a name with a separator is a path, never a slot lookup"
 
+# A committed .worktreeinclude manifest seeds project-ignored runtime files
+# from the PRIMARY checkout into every acquired slot, so a fresh slot and a
+# recycled one boot alike (header: WORKTREE INCLUDE). Read from the slot's
+# HEAD, never a working tree. Entries that escape the repo, are absolute, are
+# symlinks, or are not ignored are refused with a warning and nothing else
+# breaks; the slot stays clean, since only ignored paths ever land.
+repoI="$(make_repo include)"
+printf '.env\ncache/\nlink\n' >"$repoI/.gitignore"
+printf '# runtime files every slot needs\n.env\ncache/\nlink\n../x\n/abs\nfile.txt\n' >"$repoI/.worktreeinclude"
+git -C "$repoI" add -A && git -C "$repoI" commit -qm manifest
+printf 'SECRET=1\n' >"$repoI/.env"
+mkdir -p "$repoI/cache" && printf 'blob\n' >"$repoI/cache/data"
+ln -s /etc/hosts "$repoI/link"
+outI="$("$BIN/ac-tree.sh" get --repo "$repoI" --id i1 2>&1)"
+wtI="$(printf '%s\n' "$outI" | tail -n1)"
+assert_eq "$wtI" "$repoI/.crew/worktrees/1-include" "the seeded slot still leases"
+assert_eq "$(cat "$wtI/.env")" "SECRET=1" "an ignored file named by the manifest is seeded"
+assert_eq "$(cat "$wtI/cache/data")" "blob" "an ignored directory named by the manifest is seeded"
+assert_no_file "$wtI/link" "a symlink entry is never followed or copied"
+assert_contains "$outI" "worktreeinclude: refusing '../x'" "an escaping entry is refused with a warning"
+assert_contains "$outI" "worktreeinclude: refusing '/abs'" "an absolute entry is refused with a warning"
+assert_contains "$outI" "worktreeinclude: refusing 'link'" "a symlink entry is refused with a warning"
+assert_contains "$outI" "worktreeinclude: skipping 'file.txt'" "a tracked (not ignored) entry is never copied over"
+[ -z "$(git -C "$wtI" status --porcelain)" ] || fail "seeding must leave the slot clean"
+# A recycled slot gets the primary's CURRENT copy, not the previous lessee's.
+printf 'SECRET=stale\n' >"$wtI/.env"
+"$BIN/ac-tree.sh" return "$wtI" 2>/dev/null
+printf 'SECRET=2\n' >"$repoI/.env"
+wtI2="$("$BIN/ac-tree.sh" get --repo "$repoI" --id i2 2>/dev/null)"
+assert_eq "$wtI2" "$wtI" "the recycled slot is reused"
+assert_eq "$(cat "$wtI2/.env")" "SECRET=2" "a recycled slot is re-seeded from the primary"
+
 pass

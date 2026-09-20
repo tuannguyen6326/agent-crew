@@ -55,6 +55,22 @@
 # keeps the old unconditional behavior, so a pool or a meta that predates the
 # id needs no migration.
 #
+# WORKTREE INCLUDE - seeding project-ignored runtime files so slots are
+# interchangeable. A slot's reset keeps ignored files (`git clean` runs
+# without -x, deliberately: caches survive, and -x would destroy what a
+# captain may want to keep), so a recycled slot carries its previous
+# lessee's `.env`/`node_modules` while a fresh slot has none - the "boots only
+# in slot 4" shape. A project that commits a `.worktreeinclude` at its root
+# names, one relative path per line (`#` comments and blank lines ignored),
+# the ignored files or directories `get` copies from the PRIMARY checkout
+# into the slot after every reset. It is read from the slot's HEAD
+# (`git show HEAD:.worktreeinclude`), never from a working tree, so an
+# unreviewed edit cannot name arbitrary paths. An entry is refused with a
+# warning when it is absolute, escapes the repo (`..`), names `.crew`, or is
+# a symlink (never followed); one that is not ignored, or absent from the
+# primary, is skipped with a warning. No manifest = no-op. A directory is
+# merged over the slot's copy, a file overwrites it; nothing is deleted.
+#
 # Safety model:
 # - every mutating operation holds the slot exclusively: pool state changes
 #   run under the pool lock, and the one section that cannot (return's
@@ -661,8 +677,57 @@ cmd_get() {
       base_ref="$ebranch"
     fi
   fi
-  with_pool_lock "$repo" acquire_slot "$repo" "$id" "$holder" "$owner" "$prefer" "$base_ref"
+  local wt
+  wt="$(with_pool_lock "$repo" acquire_slot "$repo" "$id" "$holder" "$owner" "$prefer" "$base_ref")"
+  # Outside the lock: a manifest can name a dependency tree that takes longer
+  # to copy than the 30s every other pool caller waits, and the slot is
+  # already leased to us, so nothing else touches it meanwhile.
+  seed_worktree_include "$repo" "$wt"
   write_workspace "$repo"
+  printf '%s\n' "$wt"
+}
+
+seed_worktree_include() {
+  # seed_worktree_include <repo> <wt> - copy the project-ignored runtime files
+  # a committed .worktreeinclude names (header: WORKTREE INCLUDE) from the
+  # primary checkout into the slot just acquired. The manifest is read from
+  # the slot's HEAD, never from any working tree, so an unreviewed edit cannot
+  # name arbitrary paths. No manifest = no-op.
+  local repo="$1" wt="$2" manifest line src dst
+  manifest="$(git -C "$wt" show HEAD:.worktreeinclude 2>/dev/null)" || return 0
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -n "$line" ] || continue
+    line="${line%/}"
+    case "$line" in
+      # .crew is ignored too, and holds this very pool: copying it into a slot
+      # copies the pool into itself.
+      /*|..|../*|*/..|*/../*|.crew|.crew/*)
+        ac_warn "worktreeinclude: refusing '$line' (a relative path inside the repo, outside .crew)"
+        continue ;;
+    esac
+    src="$repo/$line"
+    dst="$wt/$line"
+    if [ -L "$src" ]; then
+      ac_warn "worktreeinclude: refusing '$line' (a symlink is never followed)"
+      continue
+    fi
+    if [ ! -e "$src" ]; then
+      ac_warn "worktreeinclude: skipping '$line' (absent from the primary checkout)"
+      continue
+    fi
+    if ! git -C "$repo" check-ignore -q "$line" 2>/dev/null; then
+      ac_warn "worktreeinclude: skipping '$line' (not ignored - it is project content, already in the tree)"
+      continue
+    fi
+    if [ -d "$src" ]; then
+      mkdir -p "$dst" && cp -RP "$src/." "$dst/"
+    else
+      mkdir -p "$(dirname "$dst")" && cp -P "$src" "$dst"
+    fi || ac_warn "worktreeinclude: copy of '$line' failed"
+  done <<<"$manifest"
 }
 
 acquire_slot() {
