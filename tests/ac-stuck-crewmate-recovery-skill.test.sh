@@ -46,6 +46,7 @@ assert_contains "$skill" "bin/ac-peek.sh" "reads the bounded transcript"
 assert_contains "$skill" "bin/ac-crew-state.sh" "reads deterministic state"
 assert_contains "$skill" "bin/ac-send.sh" "one corrective steer"
 assert_contains "$skill" "--resume-from" "resume preserves the recorded session"
+assert_contains "$skill" "bin/ac-spawn.sh <id> <project> --recover" "a definitely-gone pane is recovered in place, not resumed into a fresh worktree"
 assert_contains "$skill" "\`harness-operations\`" "verified harness action defers to harness-operations"
 
 # --- not-stuck classes + durable outcome -------------------------------------
