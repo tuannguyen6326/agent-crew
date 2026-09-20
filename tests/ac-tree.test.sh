@@ -474,4 +474,90 @@ EOF
     "the wait is BOUNDED - a pid that can never be reaped must not hang the pool"
 fi
 
+# A return run from INSIDE the slot (cwd in the tree) used to kill its own
+# caller: the lsof walk lists the caller's shell and every ancestor whose cwd
+# is in the tree, and the kill set excluded only the pool script's own pid - a
+# self-inflicted teardown that read as a crashed pane. The caller's whole
+# ancestry is protected; a stranger inside the tree still dies.
+if command -v lsof >/dev/null 2>&1; then
+  repoS="$(make_repo selfkill)"
+  wtS="$("$BIN/ac-tree.sh" get --repo "$repoS" --id sk1 2>/dev/null)"
+  ( cd "$wtS" && exec sleep 30 ) &
+  strangerS=$!
+  disown "$strangerS"
+  sleep 0.5
+  # The caller: a shell whose cwd is inside the slot, which runs the return
+  # and then proves it is still alive to print. `|| true` sits OUTSIDE the
+  # substitution: a caller killed mid-return runs nothing after the kill, and
+  # the substitution's own 143 would abort this script under errexit instead
+  # of reaching the assert.
+  outS="$(cd "$wtS" && bash -c '"$1" return "$2" --force >/dev/null 2>&1; echo "caller-alive $$"' _ "$BIN/ac-tree.sh" "$wtS" 2>&1)" || true
+  assert_contains "$outS" "caller-alive" "a return from inside the slot must not kill its own caller"
+  case "$(ps -o stat= -p "$strangerS" 2>/dev/null)" in
+    ''|Z*) : ;;
+    *) kill "$strangerS" 2>/dev/null; fail "a stranger inside the slot must still be terminated" ;;
+  esac
+  assert_eq "$(sed -n 's/^leased=//p' "$repoS/.crew/slots/1-selfkill.meta")" "0" "the inside return still releases the slot"
+fi
+
+# return by SLOT NAME: list and pool health print the slot id as the thing to
+# act on, so return takes it too - resolved in the pool of --repo, or of the
+# repo the cwd is in. A bare name that is no directory and no slot dies
+# naming it; anything with a path separator stays a path.
+repoN="$(make_repo byname)"
+wtN="$("$BIN/ac-tree.sh" get --repo "$repoN" --id n1 2>/dev/null)"
+metaN="$repoN/.crew/slots/1-byname.meta"
+"$BIN/ac-tree.sh" return 1-byname --repo "$repoN" 2>/dev/null \
+  || fail "return must accept a slot name with --repo"
+assert_eq "$(sed -n 's/^leased=//p' "$metaN")" "0" "return by name releases the slot"
+"$BIN/ac-tree.sh" get --repo "$repoN" --id n2 >/dev/null 2>&1
+(cd "$repoN" && "$BIN/ac-tree.sh" return 1-byname 2>/dev/null) \
+  || fail "return must resolve a slot name in the repo the cwd is in"
+assert_eq "$(sed -n 's/^leased=//p' "$metaN")" "0" "return by name from inside the repo releases the slot"
+"$BIN/ac-tree.sh" get --repo "$repoN" --id n3 >/dev/null 2>&1
+idN="$(sed -n 's/^lease_id=//p' "$metaN")"
+assert_fails "$BIN/ac-tree.sh" return 1-byname --repo "$repoN" --if-lease-id not-this-one
+assert_eq "$(sed -n 's/^leased=//p' "$metaN")" "1" "a by-name return keeps the lease-id refusal"
+printf 'junk\n' >"$wtN/junk.txt"
+assert_fails "$BIN/ac-tree.sh" return 1-byname --repo "$repoN"
+"$BIN/ac-tree.sh" return 1-byname --repo "$repoN" --force --if-lease-id "$idN" 2>/dev/null \
+  || fail "return by name must honor --force and --if-lease-id together"
+assert_no_file "$wtN/junk.txt" "a by-name forced return resets the tree"
+outN="$("$BIN/ac-tree.sh" return 9-byname --repo "$repoN" 2>&1 || true)"
+assert_contains "$outN" "no such slot 9-byname" "an unknown slot name dies naming it"
+outN="$("$BIN/ac-tree.sh" return sub/1-byname --repo "$repoN" 2>&1 || true)"
+assert_contains "$outN" "no such directory: sub/1-byname" "a name with a separator is a path, never a slot lookup"
+
+# A committed .worktreeinclude manifest seeds project-ignored runtime files
+# from the PRIMARY checkout into every acquired slot, so a fresh slot and a
+# recycled one boot alike (header: WORKTREE INCLUDE). Read from the slot's
+# HEAD, never a working tree. Entries that escape the repo, are absolute, are
+# symlinks, or are not ignored are refused with a warning and nothing else
+# breaks; the slot stays clean, since only ignored paths ever land.
+repoI="$(make_repo include)"
+printf '.env\ncache/\nlink\n' >"$repoI/.gitignore"
+printf '# runtime files every slot needs\n.env\ncache/\nlink\n../x\n/abs\nfile.txt\n' >"$repoI/.worktreeinclude"
+git -C "$repoI" add -A && git -C "$repoI" commit -qm manifest
+printf 'SECRET=1\n' >"$repoI/.env"
+mkdir -p "$repoI/cache" && printf 'blob\n' >"$repoI/cache/data"
+ln -s /etc/hosts "$repoI/link"
+outI="$("$BIN/ac-tree.sh" get --repo "$repoI" --id i1 2>&1)"
+wtI="$(printf '%s\n' "$outI" | tail -n1)"
+assert_eq "$wtI" "$repoI/.crew/worktrees/1-include" "the seeded slot still leases"
+assert_eq "$(cat "$wtI/.env")" "SECRET=1" "an ignored file named by the manifest is seeded"
+assert_eq "$(cat "$wtI/cache/data")" "blob" "an ignored directory named by the manifest is seeded"
+assert_no_file "$wtI/link" "a symlink entry is never followed or copied"
+assert_contains "$outI" "worktreeinclude: refusing '../x'" "an escaping entry is refused with a warning"
+assert_contains "$outI" "worktreeinclude: refusing '/abs'" "an absolute entry is refused with a warning"
+assert_contains "$outI" "worktreeinclude: refusing 'link'" "a symlink entry is refused with a warning"
+assert_contains "$outI" "worktreeinclude: skipping 'file.txt'" "a tracked (not ignored) entry is never copied over"
+[ -z "$(git -C "$wtI" status --porcelain)" ] || fail "seeding must leave the slot clean"
+# A recycled slot gets the primary's CURRENT copy, not the previous lessee's.
+printf 'SECRET=stale\n' >"$wtI/.env"
+"$BIN/ac-tree.sh" return "$wtI" 2>/dev/null
+printf 'SECRET=2\n' >"$repoI/.env"
+wtI2="$("$BIN/ac-tree.sh" get --repo "$repoI" --id i2 2>/dev/null)"
+assert_eq "$wtI2" "$wtI" "the recycled slot is reused"
+assert_eq "$(cat "$wtI2/.env")" "SECRET=2" "a recycled slot is re-seeded from the primary"
+
 pass

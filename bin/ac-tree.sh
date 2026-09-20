@@ -15,7 +15,8 @@
 #   ac-tree.sh get    --repo <path> [--id <task>] [--holder <label>]
 #                     [--owner <pid>] [--prefer <path-or-slot-n>]
 #   ac-tree.sh list   --repo <path>
-#   ac-tree.sh return <worktree-path> [--force] [--if-lease-id <id>]
+#   ac-tree.sh return <worktree-path | slot-name> [--repo <path>] [--force]
+#                     [--if-lease-id <id>]
 #   ac-tree.sh prune  --repo <path> [--yes]
 #   ac-tree.sh remove <worktree-path> [--force] [--include-leased]
 #
@@ -36,6 +37,11 @@
 # verifier's lease (a distinct id that never gets a crew meta) out of it, and
 # never mints a stray meta file for one.
 #
+# return <slot-name>: the slot id `list` and ac-pool-health.sh print (e.g.
+# `3-repo`), resolved in the pool of --repo, else of the repo the cwd is in.
+# The argument is tried as a path first; a bare name that is no directory is
+# a slot lookup, and anything carrying a path separator stays path-only.
+#
 # return --if-lease-id <id>: bind the return to the acquisition that took the
 # slot. A slot is identified by PATH, and a path is REUSED, so a return that
 # arrives after the slot was released and re-leased would otherwise kill the
@@ -48,6 +54,22 @@
 # lease_ids= (grammar: the LEASES block in ac-spawn.sh). Omitting the flag
 # keeps the old unconditional behavior, so a pool or a meta that predates the
 # id needs no migration.
+#
+# WORKTREE INCLUDE - seeding project-ignored runtime files so slots are
+# interchangeable. A slot's reset keeps ignored files (`git clean` runs
+# without -x, deliberately: caches survive, and -x would destroy what a
+# captain may want to keep), so a recycled slot carries its previous
+# lessee's `.env`/`node_modules` while a fresh slot has none - the "boots only
+# in slot 4" shape. A project that commits a `.worktreeinclude` at its root
+# names, one relative path per line (`#` comments and blank lines ignored),
+# the ignored files or directories `get` copies from the PRIMARY checkout
+# into the slot after every reset. It is read from the slot's HEAD
+# (`git show HEAD:.worktreeinclude`), never from a working tree, so an
+# unreviewed edit cannot name arbitrary paths. An entry is refused with a
+# warning when it is absolute, escapes the repo (`..`), names `.crew`, or is
+# a symlink (never followed); one that is not ignored, or absent from the
+# primary, is skipped with a warning. No manifest = no-op. A directory is
+# merged over the slot's copy, a file overwrites it; nothing is deleted.
 #
 # Safety model:
 # - every mutating operation holds the slot exclusively: pool state changes
@@ -418,16 +440,43 @@ fetch_origin() {
 
 is_dirty() { [ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]; }
 
+caller_ancestors() {
+  # This process and every ancestor up to pid 1, one per line. Non-zero when
+  # the walk could not be completed (ps missing, or a ppid it could not read).
+  # `ps -o ppid= -p` is the one shape both BSD and procps ps answer.
+  local pid=$$ ppid hops=0
+  while [ "$pid" -gt 1 ]; do
+    printf '%s\n' "$pid"
+    [ "$hops" -lt 128 ] || return 1
+    ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')" || return 1
+    case "$ppid" in ''|*[!0-9]*) return 1 ;; esac
+    pid="$ppid"
+    hops=$((hops + 1))
+  done
+  printf '1\n'
+}
+
 live_procs() {
-  # live_procs <wt> - pids with cwd/open files under the worktree. STATUS is
-  # the answer's authority: non-zero means the walk COULD NOT BE MADE, and an
-  # empty list with status 0 means it was made and found nothing. A caller
-  # gating destruction must never let those two arrive as the same answer -
-  # `lsof -t +D` exits 1 for "no matches" AND for its own errors, so absence
-  # from PATH is the only failure this can name, and swallowing it turns "I
-  # could not look" into "there is nobody there".
+  # live_procs <wt> - pids with cwd/open files under the worktree, MINUS the
+  # caller's own ancestry. STATUS is the answer's authority: non-zero means
+  # the walk COULD NOT BE MADE, and an empty list with status 0 means it was
+  # made and found nothing. A caller gating destruction must never let those
+  # two arrive as the same answer - `lsof -t +D` exits 1 for "no matches" AND
+  # for its own errors, so absence from PATH is the only failure this can
+  # name, and swallowing it turns "I could not look" into "there is nobody
+  # there".
+  # The whole ancestry is excluded, not just $$: a chief or crewmate running
+  # `return` from INSIDE the slot has its shell, its harness pane and any
+  # pipeline sibling holding the tree as cwd, and killing them is a
+  # self-inflicted teardown that reads as a crashed pane. A failed walk
+  # degrades to the bare $$ exclusion and says so, never to no kill at all.
   command -v lsof >/dev/null 2>&1 || return 1
-  lsof -t +D "$1" 2>/dev/null | sort -u | grep -v "^$$\$" || true
+  local protected
+  if ! protected="$(caller_ancestors)"; then
+    ac_warn "could not walk the caller's ancestry (ps) - protecting only this process from the kill"
+    protected="$$"
+  fi
+  lsof -t +D "$1" 2>/dev/null | sort -u | grep -vxF -f <(printf '%s\n' "$protected") || true
 }
 
 verified_state() {
@@ -628,8 +677,57 @@ cmd_get() {
       base_ref="$ebranch"
     fi
   fi
-  with_pool_lock "$repo" acquire_slot "$repo" "$id" "$holder" "$owner" "$prefer" "$base_ref"
+  local wt
+  wt="$(with_pool_lock "$repo" acquire_slot "$repo" "$id" "$holder" "$owner" "$prefer" "$base_ref")"
+  # Outside the lock: a manifest can name a dependency tree that takes longer
+  # to copy than the 30s every other pool caller waits, and the slot is
+  # already leased to us, so nothing else touches it meanwhile.
+  seed_worktree_include "$repo" "$wt"
   write_workspace "$repo"
+  printf '%s\n' "$wt"
+}
+
+seed_worktree_include() {
+  # seed_worktree_include <repo> <wt> - copy the project-ignored runtime files
+  # a committed .worktreeinclude names (header: WORKTREE INCLUDE) from the
+  # primary checkout into the slot just acquired. The manifest is read from
+  # the slot's HEAD, never from any working tree, so an unreviewed edit cannot
+  # name arbitrary paths. No manifest = no-op.
+  local repo="$1" wt="$2" manifest line src dst
+  manifest="$(git -C "$wt" show HEAD:.worktreeinclude 2>/dev/null)" || return 0
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -n "$line" ] || continue
+    line="${line%/}"
+    case "$line" in
+      # .crew is ignored too, and holds this very pool: copying it into a slot
+      # copies the pool into itself.
+      /*|..|../*|*/..|*/../*|.crew|.crew/*)
+        ac_warn "worktreeinclude: refusing '$line' (a relative path inside the repo, outside .crew)"
+        continue ;;
+    esac
+    src="$repo/$line"
+    dst="$wt/$line"
+    if [ -L "$src" ]; then
+      ac_warn "worktreeinclude: refusing '$line' (a symlink is never followed)"
+      continue
+    fi
+    if [ ! -e "$src" ]; then
+      ac_warn "worktreeinclude: skipping '$line' (absent from the primary checkout)"
+      continue
+    fi
+    if ! git -C "$repo" check-ignore -q "$line" 2>/dev/null; then
+      ac_warn "worktreeinclude: skipping '$line' (not ignored - it is project content, already in the tree)"
+      continue
+    fi
+    if [ -d "$src" ]; then
+      mkdir -p "$dst" && cp -RP "$src/." "$dst/"
+    else
+      mkdir -p "$(dirname "$dst")" && cp -P "$src" "$dst"
+    fi || ac_warn "worktreeinclude: copy of '$line' failed"
+  done <<<"$manifest"
 }
 
 acquire_slot() {
@@ -899,15 +997,26 @@ list_slots() {
 # --- return ------------------------------------------------------------------
 
 cmd_return() {
-  local wt="" force=0 repo want_lease=""
+  local wt="" force=0 repo="" want_lease=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force=1; shift ;;
       --if-lease-id) want_lease="$2"; shift 2 ;;
+      --repo) repo="$2"; shift 2 ;;
       *) wt="$1"; shift ;;
     esac
   done
-  [ -n "$wt" ] || ac_die "return: worktree path required"
+  [ -n "$wt" ] || ac_die "return: worktree path or slot name required"
+  # A bare slot name (what list/pool-health print) resolves in the pool of
+  # --repo, else of the repo the cwd is in; a separator makes it path-only.
+  if [ ! -d "$wt" ]; then
+    case "$wt" in
+      */*) ac_die "return: no such directory: $wt" ;;
+    esac
+    repo="$(resolve_repo "${repo:-$PWD}")"
+    [ -f "$(slot_meta "$repo" "$wt")" ] || ac_die "return: no such slot $wt in the pool of $repo"
+    wt="$(slot_path "$repo" "$wt")"
+  fi
   [ -d "$wt" ] || ac_die "return: no such directory: $wt"
   wt="$(cd "$wt" && pwd -P)"
   repo="$(ac_repo_root "$wt")" || ac_die "return: not a git worktree: $wt"
