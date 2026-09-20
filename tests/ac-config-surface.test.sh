@@ -56,6 +56,15 @@ AC_CREW_ID          spawn->crewmate identity threading (launch line)
 AC_FLEET_REVIEW     spawn->crewmate review-obligation threading
 AC_PA_LABEL         pane-agent internal label threading
 AC_LOCK_PID         lock-owner record wire (ac-lock.sh)
+AC_ARRIVAL_LAST     intra-run wire: ac-lib.sh's arrival probe hands the text it
+                    actually read back to ac-send.sh, which quotes it in a
+                    REFUTED arrival line
+AC_CHIEF_SOLO       spawn->roomchief launch-line threading: marks the session a
+                    SOLO CHIEF beside AC_SCOPE (read by ac-session-start.sh)
+AC_VERIFY_NEUTRALIZED_MARK  shared constant, not an override: ac-verify.sh prints
+                    this first line into every instruction file it neutralizes
+                    and ac-lib.sh's seed reads it to treat that file as
+                    disposable - one string, two readers
 AC_PLIST            env->awk ENVIRON wire (ac-spawn.sh list transport)
 AC_ROOM_PROMOTE_RECEIPT  spawn->ac-room.sh cap-gate exemption receipt declaration (one call site)
 AC_MAINTENANCE_QUOTE_MIN  measured evidence-quote floor constant (ac-maintenance-lib.sh:
@@ -96,7 +105,10 @@ known_extra() {
 # Tokens are maximal [A-Z_]+ runs; a token ENDING in `_` is a dynamic-family
 # prefix (AC_FLEET_MODEL_$ku and friends) and must match a templated doc row
 # (`AC_X_<...>`), which documents the whole family.
-code_tokens="$(grep -ohE 'AC_[A-Z_]+' "$BIN"/*.sh | sort -u)"
+# bin/ holds TypeScript too (the brain engine, the dashboard entry), and a knob
+# only they read is as real as any other - scanning .sh alone read two live
+# brain timeouts as phantom rows.
+code_tokens="$(grep -ohE 'AC_[A-Z_]+' "$BIN"/*.sh "$BIN"/*.ts | sort -u)"
 doc_names="$(awk -F'`' '/^\| `AC_/ {print $2}' "$DOC" | sort -u)"
 doc_plain="$(printf '%s\n' "$doc_names" | grep -v '<' || true)"
 doc_prefixes="$(printf '%s\n' "$doc_names" | sed -n 's/^\(AC_[A-Z_]*_\)<.*$/\1/p' | sort -u)"
