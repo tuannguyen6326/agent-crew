@@ -611,10 +611,11 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "question, options, matching t
 # drift. Raised 500->540 (and its two siblings by the same 40) for the decider
 # shape on ask-user and the citation rule on fix; 540->552 for the one clause
 # that tells the reviewer the scout fan-out is not the second pass it forbids.
-# 552->600 (siblings by the same 48) for the workspace-boundary fence.
+# 552->600 (siblings by the same 48) for the workspace-boundary fence;
+# 600->690 (siblings by the same 90) for the authorization/privacy axis.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 600 ] \
-  || fail "canonical review prompt exceeds its 600-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 690 ] \
+  || fail "canonical review prompt exceeds its 690-word scaffold budget: $scaffold_words"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Reserve action=fix" \
   "fix is reserved for delivery-blocking findings; advisory items ride as no-op"
 # Bug-fix durability + anti-overreach: a fix claim is judged durable-vs-
@@ -636,6 +637,20 @@ workspace_fence() {
     "$2 prompt turns a missing tool into an untested check, never a hunt"
 }
 workspace_fence "$VERIFY_PROMPT_CAPTURE" codereview
+# AUTHORIZATION & PRIVACY TRACING: `security` was a fix class with no method.
+# The axis names the trace (one concrete operation across its boundaries),
+# where the check must sit, the secondary channels, and keeps the evidence
+# bar - a middleware missing "by name" is not a reachable path.
+assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "earliest shared boundary" \
+  "the prompt asks whether authorization sits at the earliest shared boundary"
+assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "secondary disclosure" \
+  "the prompt traces disclosure through projections, caches, logs and exports"
+assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "fail-open defaults" \
+  "the prompt names fail-open defaults on the authorization axis"
+assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "absent \"by name\" is none" \
+  "an authorization finding needs a reachable path, never a missing name"
+assert_contains "$(tr '\n' ' ' <"$VERIFY_PROMPT_CAPTURE")" "undecided policy is ask-user" \
+  "undecided authorization policy is relayed, never invented"
 # ID FORMATION belongs to the CANONICAL prompt, not only to the history block:
 # round 1's ids are the exact strings every later round must reuse, so a round-1
 # reviewer that stamps the CURRENT round into an id makes stable reuse impossible
@@ -774,8 +789,8 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $bas
 # disposition rules, resolved_ids, and the no-renumber clause the measured
 # rejections needed); the ledger payload itself stays excluded like INTENT.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 670 ] \
-  || fail "history review prompt exceeds its 670-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 760 ] \
+  || fail "history review prompt exceeds its 760-word scaffold budget: $scaffold_words"
 
 # A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
 # the interdiff scope: the previous entry's reviewed_ref
@@ -895,8 +910,8 @@ case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: C
 # fixture's one id. A real round's checklist grows one word per prior open id;
 # this bounds the PROSE, which is the part that drifts.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 750 ] \
-  || fail "previous-round ledger review prompt exceeds its 750-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 840 ] \
+  || fail "previous-round ledger review prompt exceeds its 840-word scaffold budget: $scaffold_words"
 
 # PREVIOUS ROUND ONLY: resolved findings from older rounds do not require
 # re-attestation later. A round-3 history whose r1 had an open id but whose r2

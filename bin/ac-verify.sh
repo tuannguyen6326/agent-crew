@@ -1000,6 +1000,15 @@ you never apply it.
 Bug-fix claims: judge durable fix vs authorized containment; for durable,
 reconstruct the failing sequence and check sibling paths - report inadequate
 only when source evidence proves the same failure stays reachable.
+Authorization and privacy: when changed behavior reads, writes, returns,
+indexes, caches, logs or exports protected resources or user data, trace ONE
+concrete operation across its boundaries - where identity is established,
+whether authorization sits at the earliest shared boundary every caller
+passes, tenant/role/admin scope on alternate call paths, private-field
+serialization, secondary disclosure through search projections, caches,
+logs, telemetry or exports, and fail-open defaults. Such a finding needs
+source evidence of a reachable path (a middleware absent "by name" is none);
+undecided policy is ask-user, never invented.
 Never infer systemic flaws from shape or duplication, demand abstractions
 without a reachable failing path, block authorized containment for a better
 fix, or promote advisories into blockers.
