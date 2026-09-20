@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, reviewFrameHeaders } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -2066,6 +2066,81 @@ test("ttlMemo's TTL window starts at resolution, so a slow loader still caches",
   expect(calls).toBe(1);
 });
 
+// The fleet-state watcher (dashboard/watch.ts) drops the snapshot memo the
+// moment a status/meta/backlog/room file moves, so the next request re-gathers
+// instead of serving up to TTL_MS of stale accounting.
+test("ttlMemo.invalidate drops the cached value so the next call re-runs the loader", async () => {
+  let calls = 0;
+  const load = ttlMemo(60_000, async () => ++calls);
+  expect(await load()).toBe(1);
+  expect(await load()).toBe(1);
+  load.invalidate();
+  expect(await load()).toBe(2);
+  expect(calls).toBe(2);
+});
+
+// warmMemo keeps the fleet snapshot warm OFF the request path: a background
+// loop re-gathers every TTL (and at once on a watcher invalidation), so read
+// routes serve the last snapshot and never block on the shell-out. Until the
+// loop has produced one, ttlMemo's share-the-in-flight-call semantics apply.
+test("warmMemo: rapid gets within a TTL cost exactly one gather, an invalidation exactly one more", async () => {
+  let calls = 0;
+  const m = warmMemo(60_000, async () => ++calls);
+  m.start();
+  const vals = await Promise.all([m.get(), m.get(), m.get(), m.get()]);
+  expect(vals).toEqual([1, 1, 1, 1]);
+  expect(calls).toBe(1);
+  await m.invalidate();
+  expect(calls).toBe(2);
+  expect(await m.get()).toBe(2);
+  m.stop();
+});
+
+test("warmMemo: before start() the cold memo answers, sharing one gather across callers", async () => {
+  let calls = 0;
+  const m = warmMemo(60_000, async () => ++calls);
+  expect(await Promise.all([m.get(), m.get()])).toEqual([1, 1]);
+  expect(calls).toBe(1);
+  await m.invalidate();
+  expect(calls).toBe(1); // no loop, nothing to refresh - the next get re-gathers
+  expect(await m.get()).toBe(2);
+});
+
+test("warmMemo: an invalidation during an in-flight gather never overlaps it and re-runs exactly once", async () => {
+  let calls = 0, active = 0, maxActive = 0;
+  const m = warmMemo(60_000, async () => {
+    calls++; active++; maxActive = Math.max(maxActive, active);
+    await new Promise((r) => setTimeout(r, 30));
+    active--;
+    return calls;
+  });
+  m.start();
+  await Promise.all([m.invalidate(), m.invalidate()]);
+  expect(maxActive).toBe(1);
+  expect(calls).toBe(2);
+  expect(await m.get()).toBe(2);
+  m.stop();
+});
+
+test("warmMemo: start() hands each fresh snapshot to the caller, so the watcher set follows the survey", async () => {
+  const seen: number[] = [];
+  let calls = 0;
+  const m = warmMemo(60_000, async () => ++calls);
+  await m.start((v) => seen.push(v));
+  await m.invalidate();
+  expect(seen).toEqual([1, 2]);
+  m.stop();
+});
+
+test("homePathsIn walks a survey's homes and nested crewdeputies for their paths", () => {
+  const json = JSON.stringify({ homes: [
+    { path: "/h/a", crewdeputies: [{ path: "/h/a/crewdeputies/d1", crewdeputies: [] }] },
+    { path: "/h/b" },
+  ] });
+  expect([...homePathsIn(json)].sort()).toEqual(["/h/a", "/h/a/crewdeputies/d1", "/h/b"]);
+  expect(homePathsIn("not json").size).toBe(0);
+});
+
 // app.ts sets the client poll interval POLL_MS = 5000, but that
 // constant lives inside the `PAGE` template literal (bun test cannot import
 // it - see the dashboard-verifier-kind-hardcode repo-knowledge entry), so the
@@ -3114,6 +3189,58 @@ test("pastedPngFile returns null for a non-PNG image, a non-file item, or an emp
   expect(pastedPngFile([])).toBeNull();
   expect(pastedPngFile(null)).toBeNull();
   expect(pastedPngFile(undefined)).toBeNull();
+});
+
+// Escape on the annotation composer used to hide the card unconditionally -
+// the typed text survived (ctext is cleared only after a successful send) but
+// the pasted image was dropped by the next pin, and the captain had no signal
+// either way. Escape now closes only an EMPTY card; anything typed or pasted
+// needs the deliberate Cancel. An IME's own Escape (cancelling a candidate)
+// is not a request to close the card.
+test("composerEscapeCloses: only an empty composer with no pending image closes on Escape", () => {
+  expect(composerEscapeCloses("", false, false)).toBe(true);
+  expect(composerEscapeCloses("   \n", false, false)).toBe(true);
+  expect(composerEscapeCloses("a note", false, false)).toBe(false);
+  expect(composerEscapeCloses("", true, false)).toBe(false);
+  expect(composerEscapeCloses("", false, true)).toBe(false);
+});
+
+test("review chrome routes the composer's Escape through composerEscapeCloses with the live text, image and IME state", () => {
+  const src = readFileSync(new URL("./app.ts", import.meta.url), "utf8");
+  const handler = src.slice(src.indexOf('getElementById("ctext").addEventListener("keydown"'));
+  const line = handler.slice(0, handler.indexOf("\n});"));
+  expect(line).toContain("composerEscapeCloses(");
+  expect(line).toContain("pendingCImage");
+  expect(line).toContain("e.isComposing");
+  expect(line).not.toMatch(/Escape"\) composer\.style\.display = "none"/);
+});
+
+// A dead daemon left the review page looking healthy: the session poll just
+// threw into a setInterval callback, so the captain kept annotating into a
+// void. Three consecutive failed polls now raise a banner naming the moment
+// it went dark; one success clears it (the client resets its count).
+test("unreachableNotice: silent below three consecutive failed polls, then names the moment it went dark", () => {
+  expect(unreachableNotice(0, "10:00:00")).toBeNull();
+  expect(unreachableNotice(2, "10:00:00")).toBeNull();
+  expect(unreachableNotice(3, "10:00:00")).toBe("dashboard unreachable since 10:00:00 - annotations will not be saved");
+  expect(unreachableNotice(9, "10:00:00")).toContain("since 10:00:00");
+});
+
+// bun test has no browser, but it can PARSE the review chrome's inline
+// scripts: a syntax error there blanks the whole page while the server still
+// answers 200 (the same failure class the PAGE-literal lint above guards in
+// page.ts). Both variants, since the guest markup interpolates differently.
+test("review page inline scripts parse, captain and guest variants", async () => {
+  for (const guest of [false, true]) {
+    const html = await reviewPage(guest).text();
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const s of scripts) expect(() => new Function(s)).not.toThrow();
+    // the unreachable banner is wired: an element to show, and the client
+    // counting failures into it
+    expect(html).toContain('id="unreach"');
+    expect(html).toContain("unreachableNotice(");
+  }
 });
 
 test("reviewApply attaches an image field to the queued record only when the action carries one", () => {

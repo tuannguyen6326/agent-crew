@@ -32,6 +32,14 @@ kill -0 "$pid1" 2>/dev/null || fail "the daemon process is alive"
 out="$("$DB" status --port "$port")"
 assert_contains "$out" "running" "status reports running"
 
+# the server stamps its own log lines at the source (an ISO instant first),
+# so a log read a day later still says WHEN each line happened
+first="$(head -1 "$AC_HOME/state/dashboard.log")"
+case "$first" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) ;;
+  *) fail "log lines carry an ISO timestamp prefix, got: $first" ;;
+esac
+
 # idempotent start: reports the live daemon, never a second process
 out="$("$DB" start --port "$port")"
 assert_contains "$out" "already running" "a second start reports, never doubles"
@@ -46,6 +54,8 @@ out="$("$DB" stop)"
 assert_contains "$out" "stopped" "stop reports"
 kill -0 "$pid2" 2>/dev/null && fail "stop must kill the daemon"
 [ ! -f "$AC_HOME/state/dashboard.pid" ] || fail "stop removes the pidfile"
+# a stopped daemon says WHY it went down - the log's last word is the reason
+assert_contains "$(cat "$AC_HOME/state/dashboard.log")" "shutdown: SIGTERM" "the log records the shutdown reason"
 out="$("$DB" stop)"
 assert_contains "$out" "not running" "a second stop is an idempotent no-op"
 

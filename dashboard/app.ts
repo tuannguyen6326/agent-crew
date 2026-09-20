@@ -97,6 +97,7 @@ import {
 } from "./lib.ts";
 export * from "./lib.ts";
 import { PAGE } from "./page.ts";
+import { watchHomes } from "./watch.ts";
 // ---------------------------------------------------------------------------
 // Records ledgers (dash-records): the fleet's records/ markdown ledgers, read
 // read-only via the shared renderMarkdown. The name allowlist below is the
@@ -1771,6 +1772,13 @@ async function configWrite(
 // Shell-outs to the owning scripts (the accounting stays in bash).
 // ---------------------------------------------------------------------------
 
+/** The daemon's log is a file read long after the fact (ac-dashboard.sh
+ *  start redirects stdout there), so every line the server writes carries
+ *  the instant it happened. */
+function slog(msg: string): void {
+  console.log(`${new Date().toISOString()} ${msg}`);
+}
+
 async function run(
   cmd: string[],
   env: Record<string, string>,
@@ -1787,7 +1795,7 @@ async function run(
 
 /** Cross-fleet survey as one JSON document - passed through untouched. */
 async function snapshot(): Promise<Response> {
-  const { code, out } = await snapshotResult();
+  const { code, out } = await snapshotResult.get();
   if (code !== 0)
     return json({ error: "ac-fleets.sh --json failed", code }, 502);
   return new Response(out, { headers: { "content-type": "application/json" } });
@@ -1798,9 +1806,9 @@ async function snapshot(): Promise<Response> {
  *  The TTL clock starts when the value LANDS, not when the loader was
  *  invoked - a loader slower than ttlMs still caches once it resolves,
  *  and concurrent callers share the one in-flight promise regardless. */
-export function ttlMemo<T>(ttlMs: number, loader: () => Promise<T>): () => Promise<T> {
+export function ttlMemo<T>(ttlMs: number, loader: () => Promise<T>): (() => Promise<T>) & { invalidate(): void } {
   let cached: { until: number; value: Promise<T> } | null = null;
-  return () => {
+  const get = () => {
     const now = Date.now();
     if (!cached || now >= cached.until) {
       const entry = { until: Infinity, value: loader() };
@@ -1811,6 +1819,61 @@ export function ttlMemo<T>(ttlMs: number, loader: () => Promise<T>): () => Promi
       cached = entry;
     }
     return cached.value;
+  };
+  // An in-flight load may have read the state from before the change, so
+  // it is dropped too: its callers still get it, the next call re-runs.
+  get.invalidate = () => { cached = null; };
+  return get;
+}
+
+/** A ttlMemo kept warm OFF the request path: once start()ed, a background
+ *  loop re-runs the loader every ttlMs and at once on invalidate(), and
+ *  get() answers from the last landed value without ever waiting on the
+ *  loader. Before the first value lands (cold start, or never started) the
+ *  plain ttlMemo answers. Refreshes never overlap: an invalidation during
+ *  one marks it dirty and one more run follows, since that gather may have
+ *  read the state from before the change. */
+export function warmMemo<T>(ttlMs: number, loader: () => Promise<T>): {
+  get(): Promise<T>;
+  invalidate(): Promise<void>;
+  start(onValue?: (value: T) => void): Promise<void>;
+  stop(): void;
+} {
+  const cold = ttlMemo(ttlMs, loader);
+  let warm: { value: T } | null = null;
+  let inflight: Promise<void> | null = null;
+  let dirty = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let onValue: ((value: T) => void) | undefined;
+  function refresh(): Promise<void> {
+    if (inflight) { dirty = true; return inflight; }
+    inflight = loader()
+      .then((v) => { warm = { value: v }; onValue?.(v); }, () => { /* the cold memo reports the failure */ })
+      .then(() => {
+        inflight = null;
+        if (dirty) { dirty = false; return refresh(); }
+      });
+    return inflight;
+  }
+  return {
+    async get() {
+      if (warm) return warm.value;
+      if (inflight) { await inflight; if (warm) return warm.value; }
+      return cold();
+    },
+    invalidate() {
+      cold.invalidate();
+      return timer ? refresh() : Promise.resolve();
+    },
+    start(cb) {
+      onValue = cb;
+      timer = setInterval(() => { void refresh(); }, ttlMs);
+      return refresh();
+    },
+    stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
   };
 }
 
@@ -1832,12 +1895,11 @@ export function ttlMemo<T>(ttlMs: number, loader: () => Promise<T>): () => Promi
 // every tick - the bug this constant used to have at 3000. Do not "tidy" it
 // back down without also raising POLL_MS.
 export const HOME_PATHS_TTL_MS = 12000;
-const allowedHomePaths = ttlMemo(HOME_PATHS_TTL_MS, async (): Promise<Set<string>> => {
-  const { code, out } = await run([`${BIN}/ac-fleets.sh`, "--paths"], {
-    AC_HOME,
-  });
+/** Every home path in an ac-fleets.sh survey (--paths or --json share the
+ *  {homes:[{path,crewdeputies:[...]}]} spine), crewdeputies included. Unparseable
+ *  input is an empty set: every drill-down 404s, which is the safe failure. */
+export function homePathsIn(json: string): Set<string> {
   const set = new Set<string>();
-  if (code !== 0) return set;
   try {
     const walk = (homes: any[]) => {
       for (const h of homes ?? []) {
@@ -1845,18 +1907,23 @@ const allowedHomePaths = ttlMemo(HOME_PATHS_TTL_MS, async (): Promise<Set<string
         walk(h?.crewdeputies ?? []);
       }
     };
-    walk(JSON.parse(out).homes);
-  } catch {
-    /* empty allowlist -> every drill-down 404s, which is the safe failure */
-  }
+    walk(JSON.parse(json).homes);
+  } catch { /* empty */ }
   return set;
+}
+const allowedHomePaths = ttlMemo(HOME_PATHS_TTL_MS, async (): Promise<Set<string>> => {
+  const { code, out } = await run([`${BIN}/ac-fleets.sh`, "--paths"], {
+    AC_HOME,
+  });
+  return code === 0 ? homePathsIn(out) : new Set<string>();
 });
 
-/** The raw `ac-fleets.sh --json` shell-out `snapshot()` passes through - its
- *  own ttlMemo cache, separate from allowedHomePaths' (each is a distinct
- *  full multi-home walk), so a steady-state poll hits both instead of
- *  neither. */
-const snapshotResult = ttlMemo(HOME_PATHS_TTL_MS, () =>
+/** The raw `ac-fleets.sh --json` shell-out `snapshot()` passes through - one
+ *  gather for EVERY home (the script walks them itself), kept warm by
+ *  dashboardMain's background loop so a poll never blocks on it; separate
+ *  from allowedHomePaths' cache (each is a distinct full multi-home walk),
+ *  so a steady-state poll hits both instead of neither. */
+const snapshotResult = warmMemo(HOME_PATHS_TTL_MS, () =>
   run([`${BIN}/ac-fleets.sh`, "--json"], { AC_HOME }),
 );
 
@@ -5228,14 +5295,14 @@ function startShareServer(): void {
   // idleTimeout > the 25s review long-poll hold: Bun's 10s default silently
   // drops a held connection (empty reply), which reads as a failed poll.
   shareServer = Bun.serve({ hostname: "0.0.0.0", port: sharePort, idleTimeout: 40, fetch: shareFetch });
-  console.log(`review share listening on 0.0.0.0:${sharePort} (token-gated /review/<token> only)`);
+  slog(`review share listening on 0.0.0.0:${sharePort} (token-gated /review/<token> only)`);
 }
 
 function stopShareServerIfIdle(): void {
   if (shareServer && shareIndex.size === 0) {
     shareServer.stop();
     shareServer = null;
-    console.log("review share listener stopped (no live shares)");
+    slog("review share listener stopped (no live shares)");
   }
 }
 
@@ -5364,6 +5431,24 @@ export function pastedPngFile(
   return null;
 }
 
+/** Escape on the annotation composer closes it only when nothing would be
+ * lost: text or a pasted image is the captain's work, and Cancel is the
+ * deliberate way to drop it. An IME's own Escape (cancelling a candidate)
+ * never reaches the card. Pure. */
+export function composerEscapeCloses(text: string, hasImage: boolean, composing: boolean): boolean {
+  if (composing) return false;
+  return text.trim() === "" && !hasImage;
+}
+
+/** The review chrome's "dashboard unreachable" banner text, or null while
+ * the outage is still short enough to be a blip: a dead daemon otherwise
+ * leaves the page looking healthy while every annotate POST fails. Three
+ * consecutive failed session polls (2s apart) is the line. Pure. */
+export function unreachableNotice(consecutiveFailures: number, since: string): string | null {
+  if (consecutiveFailures < 3) return null;
+  return "dashboard unreachable since " + since + " - annotations will not be saved";
+}
+
 /** The review page: artifact in a sandboxed srcdoc iframe (content via the
  * existing path-safe /api/artifact route) with an injected overlay - hover
  * highlight, click-to-pin - and a side panel fed from the session file.
@@ -5385,7 +5470,7 @@ export function reviewFrameHeaders(): Record<string, string> {
   };
 }
 
-function reviewPage(guest = false): Response {
+export function reviewPage(guest = false): Response {
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>agent-crew review</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -5409,7 +5494,7 @@ ${UX_BASE}
   #status{margin-left:auto;color:var(--fg2);font-size:12px;display:flex;align-items:center;gap:6px}
   #dot{width:8px;height:8px;border-radius:50%;background:var(--success)}
   #dot.ended{background:var(--stale)}
-  #paintguard{display:none;padding:8px 14px;background:var(--error);color:#fff;font:700 13px var(--ui);text-align:center}
+  #paintguard,#unreach{display:none;padding:8px 14px;background:var(--error);color:#fff;font:700 13px var(--ui);text-align:center}
   #main{flex:1;display:flex;min-height:0}
   #frame{flex:1;border:0;background:#fff}
   #panel{width:min(380px,42vw);border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0}
@@ -5495,6 +5580,7 @@ ${UX_BASE}
   <span id="status"><span id="dot"></span><span id="stxt"></span></span>
 </div>
 <div id="paintguard">&#9888;&#65039; No visible content detected in this artifact &mdash; the page may be blank or broken.</div>
+<div id="unreach"></div>
 <div id="main">
   <iframe id="frame" sandbox="allow-scripts"></iframe>
   <div id="panel">
@@ -5554,6 +5640,8 @@ let pendingAnchor = null, lastMtime = 0, anchorState = {}, lastSig = "", DIAGRAM
 ${reviewShouldRemount.toString()}
 ${buildReviewSrcdoc.toString()}
 ${pastedPngFile.toString()}
+${composerEscapeCloses.toString()}
+${unreachableNotice.toString()}
 // The iframe's own reader stylesheet, baked once server-side (review-page-missing-markdown-table-css):
 // THEME_VARS for the color tokens, a base body reset mirroring PAGE's own
 // plain body rule (the iframe has no ancestor document to inherit one from),
@@ -6203,7 +6291,7 @@ document.getElementById("ccancel").addEventListener("click", () => {
 });
 document.getElementById("ctext").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); document.getElementById("csend").click(); }
-  if (e.key === "Escape") composer.style.display = "none";
+  if (e.key === "Escape" && composerEscapeCloses(e.target.value, !!pendingCImage, e.isComposing)) composer.style.display = "none";
 });
 document.getElementById("csend").addEventListener("click", async () => {
   const text = document.getElementById("ctext").value.trim();
@@ -6328,8 +6416,24 @@ function esc(t){ const d = document.createElement("div"); d.textContent = t; ret
 function moderate(n, verdict){
   api("/api/review/moderate", { method: "POST", extra: "&n=" + n + "&verdict=" + verdict }).then(() => refresh(true));
 }
+// Only a REJECTED fetch counts as unreachable: a refused or errored reply
+// still proves the daemon is there to refuse.
+let failedPolls = 0, unreachableSince = null;
 async function refresh(force){
-  const s = await (await api("/api/review/session")).json();
+  let res;
+  try { res = await api("/api/review/session"); }
+  catch (err) {
+    failedPolls++;
+    if (!unreachableSince) unreachableSince = new Date().toLocaleTimeString();
+    const notice = unreachableNotice(failedPolls, unreachableSince);
+    const u = document.getElementById("unreach");
+    u.textContent = notice ?? "";
+    u.style.display = notice ? "block" : "none";
+    return;
+  }
+  failedPolls = 0; unreachableSince = null;
+  document.getElementById("unreach").style.display = "none";
+  const s = await res.json();
   if (s.artifactMtime && lastMtime && s.artifactMtime !== lastMtime) {
     await loadArtifact();
     setTimeout(checkAnchors, 400);
@@ -6493,6 +6597,12 @@ export function dashboardMain() {
   const port = parsePort(process.argv);
   mainPort = port; // the share listener (REVIEW SHARE) lives on port+1
   scanShares();    // re-arm durable shares across a dashboard restart
+  // Fleet-state watchers (dashboard/watch.ts): a status/meta/backlog/room
+  // write drops the snapshot memo and re-gathers at once, off the request
+  // path; the watched set follows each fresh survey, so a home added later
+  // is covered without a restart.
+  const fleetWatcher = watchHomes(() => { void snapshotResult.invalidate(); }, { log: slog });
+  void snapshotResult.start(({ code, out }) => { if (code === 0) fleetWatcher.sync([...homePathsIn(out)]); });
   // Each terminal socket is a live pty + herdr client; a buggy reconnect loop
   // must not fork-bomb the machine. 4 covers every real captain shape (a few
   // browser tabs), and the 429 names the limit.
@@ -6508,8 +6618,19 @@ export function dashboardMain() {
       if (reaping) return;
       reaping = true;
       for (const p of livePtys) try { p.kill(); } catch { /* already gone */ }
+      slog(`shutdown: ${sig}`);
       process.exit(sig === "SIGINT" ? 130 : 143);
     });
+  // Bun already dies on both; the handlers only make the log say why, since
+  // a daemon found dead an hour later has no terminal left to have shown it.
+  process.on("uncaughtException", (err) => {
+    slog(`shutdown: uncaught error - ${err?.stack ?? err}`);
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (err) => {
+    slog(`shutdown: unhandled rejection - ${(err as Error)?.stack ?? err}`);
+    process.exit(1);
+  });
   Bun.serve({
     hostname: "127.0.0.1",
     port,
@@ -7182,8 +7303,6 @@ export function dashboardMain() {
     },
   });
   // The launcher already printed the URL; confirm the bind succeeded.
-  console.log(
-    `agent-crew dashboard serving on http://127.0.0.1:${port}  (Ctrl-C to stop)`,
-  );
+  slog(`agent-crew dashboard serving on http://127.0.0.1:${port}  (Ctrl-C to stop)`);
 }
 

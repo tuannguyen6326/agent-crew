@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# dashboard.test.sh - thin wrapper so dashboard/app.test.ts (Bun) runs as part
-# of the canonical suite. Before this file, the dashboard's write-endpoint
+# dashboard.test.sh - thin wrapper so the dashboard's Bun tests (app.test.ts,
+# watch.test.ts) run as part of the canonical suite. Before this file, the dashboard's write-endpoint
 # security assertions (isEditableConfig, applyConfigWrite/applyDispatchWrite
 # refusing writes, parseArtifactPath traversal rejection, ...) were reachable
 # only by a manual `bun test`, so a regression in any of them kept
@@ -15,5 +15,5 @@
 
 command -v bun >/dev/null 2>&1 || { printf 'SKIP: bun not available - dashboard/app.test.ts skipped\n'; exit 0; }
 
-bun test "$ROOT/dashboard/app.test.ts"
+bun test "$ROOT/dashboard/app.test.ts" "$ROOT/dashboard/watch.test.ts"
 pass
