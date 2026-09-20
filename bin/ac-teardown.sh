@@ -722,8 +722,26 @@ mv "$meta" "$archive/meta"
 [ -f "$(ac_task_status "$id")" ] && mv "$(ac_task_status "$id")" "$archive/status"
 reap_watcher_stamps "$id"
 
-# Kill the session window (ignore if already gone).
-backend_kill_window "$id"
+# Kill the session window (ignore if already gone). A close that FAILED on
+# our own tab (the one non-zero, ac-backend.sh KILL OWNERSHIP PROOF) leaves a
+# live pane behind a record that already moved to the archive - so it is
+# said there, and the run goes on: lease and branch are handled below, and a
+# refusal here would strand them too. The handle is read BEFORE the call, which
+# sweeps it either way.
+pane_handle="$(cat "$(ac_pane_file "$id")" 2>/dev/null || true)"
+if ! backend_kill_window "$id"; then
+  case "$(ac_backend)" in
+    orca) close_cmd="orca terminal close --terminal ${pane_handle%% *}" ;;
+    *)
+      herdr_sess="${AC_HERDR_SESSION:-$(ac_config_read herdr-session "")}"
+      close_cmd="herdr tab close ${pane_handle#* }${herdr_sess:+ --session $herdr_sess}" ;;
+  esac
+  ac_warn "pane close FAILED for $id - a live pane may survive this teardown (handle: ${pane_handle:-none}); close it by hand: $close_cmd"
+  close_ts="$(ac_iso)"
+  close_line="warn: pane close failed - handle ${pane_handle:-none}; close by hand: $close_cmd"
+  printf '%s %s\n' "$close_ts" "$close_line" >>"$archive/status"
+  ac_status_timeline_mirror "$id" "$close_ts" "$close_line" 2>/dev/null || true
+fi
 sweep_task_verifiers
 
 # Return the leased worktree to the pool (reset discards; proof already ran).

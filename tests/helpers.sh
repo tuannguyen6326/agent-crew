@@ -590,6 +590,10 @@ case "${1:-} ${2:-}" in
     # record (exit 144, no output). SIGKILL because the killer behind those
     # incidents is undiagnosed - a test may not assume it is catchable.
     [ -f "$d/.kill-caller-on-tab-close" ] && kill -s KILL "$PPID"
+    # Fault injection: `.tab-close-fails` makes the close FAIL and leave the
+    # tab in place - the shape a proven-owned tab meets on a refused or
+    # timed-out close.
+    [ -f "$d/.tab-close-fails" ] && exit 1
     p=""; [ -f "$d/tabs/$3" ] && read -r p _ <"$d/tabs/$3"
     [ -n "$p" ] && rm -f "$d/panes/$p".*
     rm -f "$d/tabs/$3"; exit 0 ;;
