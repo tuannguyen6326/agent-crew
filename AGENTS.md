@@ -1044,6 +1044,7 @@ Worktrees are reused, not deleted: `return` resets to the freshest default branc
 An available-but-dirty slot is never silently reset: acquire and prune skip it, and only `remove --force` discards it.
 `bin/ac-session-start.sh` surfaces any such stuck slot in a `-- pool (worktree health) --` block (via `bin/ac-pool-health.sh`), naming the exact `remove --force <path>` to reclaim it; the block is silent when every pool is healthy.
 `list` shows the pool; `prune --yes` removes idle merged slots (dry-run without `--yes`); `remove` is deliberate single-slot removal.
+`lease <slot> --repo <p> --id <task> --holder <h>` durably leases an EXISTING slot state-only (no reset, no fetch) - the way to keep a long-lived tree (QA infra, a parked investigation) from `get` and `prune` without leaving it dirty for pool health to report as stuck; `return` releases it like any other lease (the `LEASE` block in `bin/ac-tree.sh` owns the contract).
 Editor access: open the generated `<repo>/.crew/<repo>.code-workspace` (regenerated on every slot mutation) - it lists the repo plus every currently leased worktree as folders, so VSCode/Cursor shows active task trees as repositories without idle pool slots filling the Git tab; return removes a slot from the generated file and the next lease adds it back with the new task label. `ac-tree.sh` does not control a live editor window, so reopen/reload when the editor does not apply external workspace-file changes itself.
 Never create worktrees by hand in a project repo.
 
