@@ -142,6 +142,39 @@
 # prose-only work. Completion-class ONLY: a captain-wait marker parks the pane
 # BLOCKED and is handled by the ask path, never here.
 #
+# STALE DEFERRAL (watch-stale-defer-on-declared-wait). The stale arm measured
+# idle time alone, and its one dedup (.stale-<id>) is cleared by any cosmetic
+# redraw - so a worker that had SAID why it is quiet, or one parked at a gate on
+# the captain, was re-reported stale every AC_STALE window. On the branch about
+# to emit stale: (never the healthy path, which pays nothing, and never ended:),
+# the worker's word is read first, in two forms (declared_wait owns the reads):
+#  - DECLARED WAIT: the LAST line of state/<id>.status (the line ac-crew-state.sh
+#    reports) is a captain-wait marker (AC_DECISION_RE: needs-decision:,
+#    blocked:, checks-passed:) or `paused:` - the AC_CAPTAIN_RE verbs that mean
+#    "stopped on purpose"; `done:` is NOT a wait (it waits on the chief's reap,
+#    which the stale wake exists to prompt), and this watcher's OWN wait-shaped
+#    notes (WATCH_ASK_NOTE, WATCH_ENDED_NOTE) are its verdicts, not the worker's
+#    word, so they never defer.
+#  - GATE PARKED: the line explains nothing, but the latest review findings file
+#    (the family's newest verify/codereview round, or the crew-ship run's
+#    findings/review.json - newest mtime wins) holds a finding whose `action`
+#    is exactly `ask-user` with no recorded `decision`, read by jq KEY - a
+#    description or branch name that merely contains the word parks nothing.
+#    LIMITATION, stated: the room is NOT consulted. The ship pipeline records the
+#    captain's decision ON the finding (bin/ac-ship.sh finish contract), so that
+#    pairing is by key; a verify round's findings.json carries no decision field
+#    and the room grammar has no finding-id token, so a decided-but-not-yet-
+#    re-reviewed verify ask-user keeps deferring until the next round's file
+#    replaces it - bounded by the restart rule below, never a cancellation.
+# A deferral RESTARTS the idle clock (.change-<id>, the stamp the arm measures
+# from - not merely .stale-<id>) and logs `deferred-stale:<id> <reason>` to the
+# arm log, ONCE per declaration (.deferred-<id> holds the key: the status line
+# plus the log's byte size, or the findings path plus its content hash). The
+# SAME declaration a full AC_STALE window later falls through to today's stale:
+# - the declaration itself went stale - and a NEW one defers again. The
+# declaration outranks the liveness verdict because it is what the worker said
+# about its own silence; it never outranks the clock twice.
+#
 # SUPERVISING-CHIEF QUIET (watch-chief-child-quiet). `stale` is documented as
 # the SOFT signal, but a wake IS this watcher's EXIT - so a merely-quiet pane
 # terminates it exactly like report:/gone:/ask: do and costs the chief the full
@@ -1421,6 +1454,63 @@ busy_family_of() {
   esac
 }
 
+latest_findings_of() {
+  # latest_findings_of <id> - the newest review findings file bearing on <id>,
+  # or return 1: the family's codereview rounds (bin/ac-verify.sh round_root;
+  # round ids sort by time, so an equal mtime goes to the later glob entry) and
+  # the crew-ship run's review step (bin/ac-ship.sh findings/<step>.json under
+  # the leased worktree's .crew/ship/current), newest mtime winning.
+  local id="$1" wt cand best="" best_m=0 m
+  wt="$(ac_meta_get "$state_dir/$id.meta" worktree 2>/dev/null || true)"
+  for cand in "$(ac_data_dir)/$(busy_family_of "$id")/verify/codereview"/*/findings.json \
+              "${wt:-/nonexistent}/.crew/ship/current/findings/review.json"; do
+    [ -f "$cand" ] || continue
+    m="$(ac_file_mtime "$cand")" || continue
+    [ "$m" -ge "$best_m" ] && { best="$cand"; best_m="$m"; }
+  done
+  [ -n "$best" ] || return 1
+  printf '%s\n' "$best"
+}
+
+# This watcher's OWN wait-shaped status notes. Written by the ask and ended
+# arms below and read back by declared_wait, which must not mistake the
+# watcher's verdict for the worker's word - one constant keeps the two in step.
+WATCH_ASK_NOTE="needs-decision: pane blocked on an interactive prompt"
+WATCH_ENDED_NOTE="blocked: ended its turn with no report line"
+
+declared_wait() {
+  # declared_wait <id> - print `<reason>\t<dedup key>` when <id>'s silence is
+  # EXPLAINED (contract: STALE DEFERRAL in the header), else return 1. The
+  # status log's last line is read first: a captain-wait marker
+  # (AC_DECISION_RE) or `paused:` - the one AC_CAPTAIN_RE completion verb that
+  # means stopped on purpose - explains a quiet pane when the WORKER wrote it;
+  # `done:` does not, it waits on the chief's reap, which the stale wake exists
+  # to prompt, and this watcher's own notes above are its verdicts, not the
+  # worker's word. The key is the line plus the log's byte size, so a
+  # re-appended identical line is a new declaration. Only when the line
+  # explains nothing are the review findings consulted, by KEY (a description
+  # that merely mentions the word must not park anything): an ask-user with no
+  # recorded captain decision.
+  local id="$1" f last wait_re verb
+  f="$(ac_task_status "$id")"
+  last="$(tail -n 1 "$f" 2>/dev/null | cut -d' ' -f2-)"
+  # The marker branch appends the pane line verbatim, TUI glyph prefix and all,
+  # so the anchoring is AC_DECISION_RE's own with paused added to its verb
+  # group (an overridden regex the substitution cannot see keeps its own set).
+  wait_re="${AC_DECISION_RE/(needs-decision|blocked|checks-passed):/(needs-decision|blocked|checks-passed|paused):}"
+  if [ -n "$last" ] && [ "$last" != "$WATCH_ASK_NOTE" ] && [ "$last" != "$WATCH_ENDED_NOTE" ] \
+      && grep -qE "$wait_re" <<<"$last"; then
+    verb="$(grep -oE '(needs-decision|blocked|checks-passed|paused):' <<<"$last" | head -n 1)"
+    printf 'declared-wait %s\t%s:%s\n' "${verb%:}" "$(wc -c <"$f" | tr -d ' ')" "$last"
+    return 0
+  fi
+  f="$(latest_findings_of "$id")" || return 1
+  jq -e '(if type == "array" then . else (.findings // []) end)
+         | any(.action == "ask-user" and ((.decision // "") == ""))' "$f" >/dev/null 2>&1 \
+    || return 1
+  printf 'gate-parked\t%s:%s\n' "$f" "$(cksum <"$f" | awk '{print $1}')"
+}
+
 chief_busy_declared() {
   # chief_busy_declared <fam> - 0 while <fam>'s roomchief has an UNEXPIRED busy
   # declaration: it is blocked inside ONE bounded synchronous call and cannot take
@@ -1845,7 +1935,7 @@ check_fleet() {
     if backend_agent_blocked "$id" 2>/dev/null; then
       if [ ! -e "$state_dir/.ask-$id" ]; then
         touch "$state_dir/.ask-$id"
-        ac_status_append "$id" "needs-decision: pane blocked on an interactive prompt"
+        ac_status_append "$id" "$WATCH_ASK_NOTE"
         queue_wake ask "$id" "agent blocked on an interactive prompt (answer or steer it)"
         emit_reason "ask:$id"
         return 0
@@ -2108,12 +2198,24 @@ check_fleet() {
           # (header: SUPERVISING-CHIEF QUIET), because a chief that obeys its
           # charter reports in PROSE and so can never earn the quiet anchor above.
           touch "$state_dir/.stale-$id"
-          ac_status_append "$id" "blocked: ended its turn with no report line"
+          ac_status_append "$id" "$WATCH_ENDED_NOTE"
           backend_mark_wait "$id" "ended its turn with no report line" 2>/dev/null || true
           queue_wake ended "$id" "ended its turn ${idle}s ago with no report line - read the pane, the ask may be prose"
           emit_reason "ended:$id"
           return 0
         else
+          # STALE DEFERRAL (header): the worker already said why it is quiet,
+          # or is parked at a gate on the captain - its word outranks the idle
+          # clock, ONCE per declaration. The TIMER restarts (not merely the
+          # dedup marker, which any redraw clears), so the same declaration a
+          # full window later falls through to the stale: below.
+          if dw="$(declared_wait "$id")" \
+              && [ "${dw#*	}" != "$(cat "$state_dir/.deferred-$id" 2>/dev/null || true)" ]; then
+            printf '%s\n' "${dw#*	}" >"$state_dir/.deferred-$id"
+            printf '%s\n' "$(ac_now)" >"$changed_file"
+            watch_log "deferred-stale:$id ${dw%%	*}"
+            continue
+          fi
           # SUPERVISING-CHIEF QUIET now guards this arm from one rung up, so
           # everything reaching here is a genuinely-unsupervised quiet pane:
           # today's soft stale:, unchanged.
