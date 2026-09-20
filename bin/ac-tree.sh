@@ -345,8 +345,17 @@ GUARD
 #   a trailer already in landed history costs a rewrite, which is a captain act.
 # WHO: everyone. The rule is about agent attribution in a public-source repo,
 #   not about who typed the commit.
-# NOT a human co-author: pairing attribution is legitimate and stays untouched.
-# Fail-OPEN on an unreadable message, and never suppressing a chained hook.
+# NOT a human co-author: pairing attribution is legitimate and stays untouched,
+#   and that includes a human whose name or address carries a vendor word - the
+#   agent tokens are matched WHOLE, against the NAME, never the email domain.
+# THE TRAILERS GIT PARSES, never the raw file: a verbose commit (`git commit -v`,
+#   commit.verbose=true) leaves the diff below the scissors line in this file,
+#   and a diff CONTEXT line starts with one space, so a raw grep refused any
+#   commit whose diff merely MENTIONED the trailer - including commits to the
+#   test that proves this hook. `git interpret-trailers --parse` returns the
+#   message's real trailers and nothing else.
+# Fail-OPEN on an unreadable or unparseable message, and never suppressing a
+#   chained hook.
 run_chained() {
   local prev; prev="$(dirname "$0")/commit-msg.ac-crew-prev"
   [ -x "$prev" ] && exec "$prev" "$@"
@@ -354,7 +363,8 @@ run_chained() {
 }
 msg="${1:-}"
 [ -n "$msg" ] && [ -r "$msg" ] || run_chained "$@"
-if grep -qiE '^[[:space:]]*co-authored-by:.*(claude|anthropic|openai|copilot|cursor|codex|\bgpt\b)' "$msg"; then
+trailers="$(git interpret-trailers --parse "$msg" 2>/dev/null)" || run_chained "$@"
+if printf '%s\n' "$trailers" | grep -qiE '^co-authored-by:[^<]*(^|[^[:alnum:]])(claude|anthropic|openai|chatgpt|gpt|copilot|cursor|codex|gemini|devin|amp|windsurf|codeium|aider|cline|junie|sourcegraph|cognition)([^[:alnum:]]|$)'; then
   printf 'ac-crew: REFUSED an agent co-author trailer in this commit message.\n' >&2
   printf 'ac-crew: AGENTS.md section 13 - never add an agent co-author line to a commit in a project repo.\n' >&2
   printf 'ac-crew: delete that trailer line and commit again. A HUMAN co-author is fine.\n' >&2

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# ac-commit-guard.test.sh - the fleet-wide guard against a git commit made
-# OUTSIDE a leased worktree (a crewmate/roomchief committing into the PRIMARY
-# checkout, the observed 5x failure). A pre-commit hook, installed ONCE at lease
-# time (ac-tree.sh get) into the SHARED git-common-dir/hooks, REFUSES such a
-# commit and passes everything legitimate. Covers AC1-AC9 + E1 (chain, never
-# clobber) + E2 (fail-open) from data/crewmate-edits-primary-checkout/spec.
+# ac-commit-guard.test.sh - the two guard hooks ac-tree.sh installs ONCE at
+# lease time into the SHARED git-common-dir/hooks. The pre-commit one refuses a
+# crewmate/roomchief commit made in the PRIMARY checkout (the observed 5x
+# failure) - AC1-AC9 + E1 (chain, never clobber) + E2 (fail-open) from
+# data/crewmate-edits-primary-checkout/spec. The commit-msg one refuses an
+# AGENT co-author trailer (AGENTS.md section 13) and passes everything else,
+# including a verbose-commit diff that merely mentions one.
 #
 # TEST SAFETY: every git repo here is a throwaway from helpers.sh make_repo /
 # $TMP - the hook is NEVER installed into the live primary .git or the live pool.
@@ -355,12 +356,38 @@ assert_eq "$(git -C "$tg_wt" rev-list --count HEAD)" "2" "the clean commit lande
 
 # A human co-author is not an agent one: the rule is about agent attribution in
 # a public-source repo, and refusing every Co-Authored-By would break pairing.
+# That includes a human whose NAME or EMAIL carries a vendor word - the tokens
+# are matched whole, against the name, never the address.
 printf 'two\n' >"$tg_wt/trailer-probe.txt"
 git -C "$tg_wt" add trailer-probe.txt
 git -C "$tg_wt" commit -q -m "feat: pairing
 
-Co-Authored-By: A Teammate <teammate@example.test>" \
-  || fail "a human co-author trailer must pass"
+Co-Authored-By: A Teammate <teammate@example.test>
+Co-Authored-By: Jane Doe <jane@cursor.com>
+Co-Authored-By: Anna Codexa <anna@example.test>" \
+  || fail "a human co-author trailer must pass, whatever the domain or a name that merely contains a vendor word"
 assert_eq "$(git -C "$tg_wt" rev-list --count HEAD)" "3" "the human-pairing commit landed"
+
+# A verbose commit (`git commit -v`, or commit.verbose=true) leaves the diff in
+# the message file below the scissors line when commit-msg runs. A diff CONTEXT
+# line carries one leading space, so a file that merely MENTIONS the trailer
+# used to refuse the commit - including a commit to this very test. The guard
+# reads the trailers git itself parses, never the raw file.
+printf 'Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n' >"$tg_wt/mentions-it.txt"
+git -C "$tg_wt" add mentions-it.txt
+GIT_EDITOR=true git -C "$tg_wt" commit -q -e -v -m "docs: a file that mentions the trailer" \
+  || fail "a verbose commit whose DIFF mentions the trailer must pass - the message carries none"
+assert_eq "$(git -C "$tg_wt" rev-list --count HEAD)" "4" "the verbose mention-only commit landed"
+
+# ...and the agent set is not one vendor: any current agent product in the
+# name refuses, by whole word.
+printf 'three\n' >"$tg_wt/trailer-probe.txt"
+git -C "$tg_wt" add trailer-probe.txt
+rc=0
+git -C "$tg_wt" commit -q -m "feat: other agent
+
+Co-Authored-By: Gemini <gemini@google.com>" >/dev/null 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail "an agent co-author from another vendor must be refused too"
+git -C "$tg_wt" reset -q HEAD trailer-probe.txt; git -C "$tg_wt" checkout -q trailer-probe.txt
 
 pass
