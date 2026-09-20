@@ -209,7 +209,16 @@ if [ -n "${VERIFY_PANE_DONE_STATUS:-}" ]; then
   exit 0
 fi
 transcript="$VERIFY_TRANSCRIPT"
-if [ "${VERIFY_BAD_OUTPUT:-0}" = 1 ]; then
+if grep -q -- '-----BEGIN REJECTED VERDICT-----' "$prompt" 2>/dev/null; then
+  # THE CORRECTION TURN: the facade relaunches this pane once with the
+  # rejected payload and the failed check; the stand-in answers per
+  # VERIFY_CORRECTION and keeps that prompt for the caller to inspect.
+  [ -z "${VERIFY_CORRECTION_PROMPT_CAPTURE:-}" ] || cp "$prompt" "$VERIFY_CORRECTION_PROMPT_CAPTURE"
+  case "${VERIFY_CORRECTION:-invalid}" in
+    valid) payload="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[],summary:"corrected envelope",risk_level:"low",risk_rationale:"bounded",reviewed_ref:$ref}')" ;;
+    *) payload='still-not-json' ;;
+  esac
+elif [ "${VERIFY_BAD_OUTPUT:-0}" = 1 ]; then
   payload='not-json'
 elif [ "$kind" = codereview ]; then
   if [ "${VERIFY_ASK_INCOMPLETE:-0}" = 1 ]; then
@@ -1153,11 +1162,18 @@ export VERIFY_CWD_CAPTURE="$TMP/ask-incomplete-cwd.capture"
 export VERIFY_TRANSCRIPT="$TMP/ask-incomplete-transcript.jsonl"
 before_returns="$(grep -c '^return ' "$tree_log" || true)"
 before_reaps="$(grep -c '^reap-pane ' "$pane_log" || true)"
+before_runs="$(grep -c '^run ' "$pane_log" || true)"
 rc=0
 VERIFY_ASK_INCOMPLETE=1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
   --family "$incomplete_ask_family" --caller "$caller" --intent "$intent" \
   --output "$incomplete_ask_output" >"$TMP/ask-incomplete.out" 2>"$TMP/ask-incomplete.err" || rc=$?
 assert_eq "$rc" "1" "ask-user without relay fields is an invalid verifier verdict"
+# A CONTENT failure buys no correction turn: filling in a missing question or
+# option IS finding content, which a correction pane is forbidden to change.
+assert_eq "$(grep -c '^run ' "$pane_log" || true)" "$((before_runs + 1))" \
+  "a content-class rejection (relay shape) launches no correction pane"
+assert_no_file "$(ls -d "$AC_HOME/data/$incomplete_ask_family/verify/codereview"/*/ | newest_round_dir)correction.meta" \
+  "a content-class rejection records no correction"
 assert_contains "$(cat "$(rejection_log "$incomplete_ask_family")")" "ask-user-relay-shape-incomplete: A1" \
   "the relay-shape rejection names its own clause and the finding that failed it"
 assert_no_file "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" "invalid ask-user reaps: meta removed, not orphaned"
@@ -1507,32 +1523,93 @@ assert_eq "$(grep -c '^run ' "$pane_log" || true)" "$before_runs" "refused retry
 assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$before_reaps" "refused retry does not reap incomplete QA pane"
 assert_file "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" "refused retry keeps incomplete QA meta"
 
-# (b) invalid -> reaped, not orphaned: an invalid verdict still FAILS, but since
-# the pane completed and its round evidence is durable under data/<family>/verify,
-# the run releases the pane, the lease, and the meta/handle rather than orphaning
-# them; only the round evidence is retained for inspection.
+# (b) invalid TWICE -> reaped, not orphaned: a schema-invalid verdict buys ONE
+# correction turn (a fresh pane handed the rejected payload plus the failed
+# check, told to fix the envelope only); when that answer is invalid too the
+# run FAILS exactly as before. The pane completed and its round evidence is
+# durable under data/<family>/verify, so the run releases the panes, the lease,
+# and the meta/handle rather than orphaning them; the round evidence - both
+# rejected payloads and the correction marker - is retained for inspection.
 bad_family=flow-v2-bad
 bad_output="$TMP/bad-review.json"
 export VERIFY_EXPECT_ID="$bad_family-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/bad-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/bad-prompt.capture"
+export VERIFY_CORRECTION_PROMPT_CAPTURE="$TMP/bad-correction-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/bad-cwd.capture"
 export VERIFY_TRANSCRIPT="$TMP/bad-transcript.jsonl"
 before_returns="$(grep -c '^return ' "$tree_log" || true)"
 before_reaps="$(grep -c '^reap-pane ' "$pane_log" || true)"
+before_runs="$(grep -c '^run ' "$pane_log" || true)"
 rc=0
 VERIFY_BAD_OUTPUT=1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
   --family "$bad_family" --caller "$caller" --intent "$intent" --output "$bad_output" \
   >"$TMP/bad.out" 2>"$TMP/bad.err" || rc=$?
 assert_eq "$rc" "1" "invalid verdict fails the verifier run"
+assert_no_file "$bad_output" "a twice-invalid verdict publishes nothing"
 assert_no_file "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" "invalid verdict reaps: meta removed"
 assert_no_file "$AC_HOME/state/$VERIFY_EXPECT_ID.status" "invalid verdict reaps: status removed"
 assert_no_file "$AC_HOME/state/.pane-$VERIFY_EXPECT_ID" "invalid verdict reaps: pane handle removed"
 assert_eq "$(grep -c '^return ' "$tree_log" || true)" "$((before_returns + 1))" "invalid verdict reaps: lease returned"
-assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$((before_reaps + 1))" "invalid verdict reaps: pane reaped"
+assert_eq "$(grep -c '^run ' "$pane_log" || true)" "$((before_runs + 2))" \
+  "a schema-invalid verdict gets exactly ONE correction turn - two pane runs, never a third"
+assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$((before_reaps + 2))" \
+  "invalid verdict reaps: the reviewer pane before the correction turn, the correction pane at the end"
 assert_contains "$(cat "$TMP/bad.err")" "$VERIFY_EXPECT_ID" "failure names the verifier id"
-bad_round="$(find "$AC_HOME/data/$bad_family/verify/codereview" -name pane-result.ndjson -type f | head -n 1)"
-assert_file "$bad_round" "invalid verdict retains the round's durable pane-result evidence"
+bad_round_dir="$(ls -d "$AC_HOME/data/$bad_family/verify/codereview"/*/ | newest_round_dir)"
+assert_eq "$(ls -d "$AC_HOME/data/$bad_family/verify/codereview"/*/ | wc -l | tr -d ' ')" "1" \
+  "the correction turn is part of the SAME round: one round dir, no reviewed_ref of its own"
+assert_file "${bad_round_dir}pane-result.ndjson" "invalid verdict retains the round's durable pane-result evidence"
+assert_file "${bad_round_dir}verdict.rejected" "the first rejected payload is retired beside the round evidence"
+assert_file "${bad_round_dir}correction-pane-result.ndjson" "the correction turn leaves its own pane stream"
+assert_contains "$(cat "${bad_round_dir}correction.meta")" "correction=1" \
+  "the round records that a correction turn happened"
+assert_contains "$(cat "${bad_round_dir}correction.meta")" "failed_check=no-json-verdict-object-in-final-message" \
+  "the marker names the check the reviewer's own output failed"
+assert_eq "$(grep -c 'verdict REJECTED' "${bad_round_dir}rejection.log")" "2" \
+  "both rejections leave their line: the reviewer's and the correction's"
+bad_corr_prompt="$(tr '\n' ' ' <"$VERIFY_CORRECTION_PROMPT_CAPTURE")"
+assert_contains "$bad_corr_prompt" "change no finding content" \
+  "the correction pane may fix only the envelope"
+assert_contains "$bad_corr_prompt" "no-json-verdict-object-in-final-message" \
+  "the correction pane is handed the concrete validation error"
+assert_contains "$bad_corr_prompt" "not-json" \
+  "the correction pane is handed the rejected payload itself"
+assert_contains "$(grep '^run ' "$pane_log" | tail -n 1)" "--label $VERIFY_EXPECT_ID-correction" \
+  "the correction pane is labelled as a correction, never as a review round"
+unset VERIFY_CORRECTION_PROMPT_CAPTURE
+
+# (c) invalid ONCE, corrected -> the corrected payload IS this round's verdict,
+# at the same reviewed_ref, and the receipt shows the correction happened.
+corr_family=flow-v2-corrected
+corr_output="$TMP/corrected-review.json"
+export VERIFY_EXPECT_ID="$corr_family-verify-codereview"
+export VERIFY_META_CAPTURE="$TMP/corr-meta.capture"
+export VERIFY_PROMPT_CAPTURE="$TMP/corr-prompt.capture"
+export VERIFY_CWD_CAPTURE="$TMP/corr-cwd.capture"
+export VERIFY_TRANSCRIPT="$TMP/corr-transcript.jsonl"
+before_returns="$(grep -c '^return ' "$tree_log" || true)"
+before_reaps="$(grep -c '^reap-pane ' "$pane_log" || true)"
+before_runs="$(grep -c '^run ' "$pane_log" || true)"
+rc=0
+VERIFY_BAD_OUTPUT=1 VERIFY_CORRECTION=valid "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$base" \
+  --family "$corr_family" --caller "$caller" --intent "$intent" --output "$corr_output" \
+  >"$TMP/corr.out" 2>"$TMP/corr.err" || rc=$?
+assert_eq "$rc" "0" "a corrected envelope completes the round: $(cat "$TMP/corr.err")"
+assert_eq "$(jq -r '.verdict' "$corr_output")" "pass" "the corrected payload is the round's verdict"
+assert_eq "$(jq -r '.reviewed_ref' "$corr_output")" "$target" "the corrected verdict binds the same reviewed_ref"
+assert_eq "$(jq -r '.correction.failed_check' "$corr_output")" "no-json-verdict-object-in-final-message" \
+  "the receipt says a correction happened and what the reviewer's output failed"
+assert_eq "$(grep -c '^run ' "$pane_log" || true)" "$((before_runs + 2))" "one review pane plus one correction pane"
+assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$((before_reaps + 2))" "both panes are reaped"
+assert_eq "$(grep -c '^return ' "$tree_log" || true)" "$((before_returns + 1))" "one lease, returned once"
+assert_eq "$(ls -d "$AC_HOME/data/$corr_family/verify/codereview"/*/ | wc -l | tr -d ' ')" "1" \
+  "the correction never opens a round of its own"
+assert_no_file "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" "a corrected completion removes the verifier meta"
+corr_round_dir="$(ls -d "$AC_HOME/data/$corr_family/verify/codereview"/*/ | newest_round_dir)"
+assert_file "${corr_round_dir}correction.meta" "the round records the correction turn"
+assert_file "${corr_round_dir}verdict.rejected" "the rejected first payload is retired, not deleted"
+assert_file "${corr_round_dir}correction-transcript.jsonl" "the correction turn's transcript is durable"
 
 # --- Story 3: dual-ref (separate E2E repo) lease + cleanup -------------------
 # A qa profile carrying an e2e block makes the facade lease a SECOND worktree

@@ -153,6 +153,12 @@
 #   kept at logs/review-agent-rN.json.rejected. The verifier writes the same
 #   kind of line on ITS side (bin/ac-verify.sh). Before this, a rejected round
 #   left no trace of why, so the caller's only move was to re-run the same ref.
+#   The facade also gives a reviewer output that fails an ENVELOPE check ONE
+#   correction turn before anything reaches this adapter (bin/ac-verify.sh,
+#   ONE CORRECTION TURN): the corrected object is that round's verdict at the
+#   same reviewed_ref, `.correction.failed_check` on the stored result says it
+#   happened, and the turn costs no invocation here - the facade returned
+#   once. A result this adapter still refuses fails closed exactly as above.
 # - FLOOR METADATA: round 2+ passes AC_FINDINGS_ROUND + AC_FINDINGS_DELTA
 #   (files changed since the IMMEDIATELY PREVIOUS round's reviewed ref) plus
 #   AC_FINDINGS_PRIOR_OPEN (that round's blocking ids) into

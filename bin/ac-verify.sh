@@ -119,6 +119,12 @@
 # undispositioned prior finding id, and 5 more produced no harvestable verdict
 # object at all, none of it visible afterwards. Writing the line is best effort
 # and never becomes a second failure mode.
+# A codereview verdict that fails an ENVELOPE check gets ONE correction turn
+# before it is rejected: a fresh pane, handed the rejected payload and the
+# failed check, fixes the wrapping and nothing else; the corrected object meets
+# the same predicate, in the same round, at the same reviewed_ref, and a second
+# failure fails closed as above. Content failures buy no turn. The ONE
+# CORRECTION TURN block (codereview_correction_turn) owns the contract.
 #
 # BUSY DECLARATION (verify-timeout-same-busy-window-defect, 2026-07-27 - the
 # pattern ac-gate.sh landed at 3bff898, whose header owns the reasoning): the
@@ -587,6 +593,99 @@ log_rejection() {
 die_reaped() {
   reap_verify_runtime
   ac_die "$1"
+}
+
+# ONE CORRECTION TURN (codereview only). A verdict that fails an ENVELOPE
+# check - no JSON object harvested, not an object, findings/resolved_ids/
+# scout_dispositions off-shape, a foreign reviewed_ref, risk_level or
+# risk_rationale off-type - used to be a dead round: the whole review budget
+# spent, nothing usable, and the caller left to re-run the same ref. The
+# review itself is not what failed, only its wrapping, so the rejected payload
+# and the concrete failed check go to a FRESH pane told to fix the envelope
+# and nothing else, exactly once. A CONTENT failure (an undispositioned prior
+# id, an ask-user with no relay fields) buys no turn: settling it is review
+# judgment, which a pane forbidden to change finding content cannot honestly
+# do, so it fails closed as before. The corrected object then meets the SAME
+# predicate; a second failure fails closed exactly as before. The turn is part
+# of THIS round - same round_dir, same reviewed_ref, one more pane the caller
+# never counts - and it is recorded twice: correction.meta beside the retired
+# payload (verdict.rejected), and `.correction` on the published result so the
+# receipt shows it happened.
+correction_eligible() {
+  case "$1" in
+    undispositioned-prior-finding-ids:*|ask-user-relay-shape-incomplete:*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+correction_check=""
+codereview_correction_turn() {
+  # codereview_correction_turn <failed-check> - relaunch once; on return $text
+  # and $json hold the correction pane's final message, $pane the live pane.
+  local why="$1" cprompt cresult cearly cpane ctab cpid crc cdone cstatus ctranscript deadline
+  cprompt="$round_dir/correction-prompt.md"
+  cresult="$round_dir/correction-pane-result.ndjson"
+  cearly="$round_dir/correction-pane.handle"
+  printf '%s\n' "$text" >"$round_dir/verdict.rejected"
+  printf 'correction=1\nfailed_check=%s\nat=%s\n' "$why" "$(ac_iso)" >"$round_dir/correction.meta"
+  correction_check="$why"
+  log_rejection "$why (one correction turn follows)"
+  cat >"$cprompt" <<EOF
+You are a CORRECTION pane for one independent code-review verdict, not a
+reviewer. The verdict below was REJECTED by the schema check named under
+Validation errors. Fix ONLY the envelope so it satisfies those errors and
+change no finding content: no id, description, severity, action, class,
+authority, evidence, file or line may change, and no finding may be added or
+dropped. Do not review, do not read the repository, do not run or edit
+anything.
+
+Required envelope, exactly one JSON object with no code fence:
+{"findings":[...],"summary":"...","risk_level":"low|medium|high","risk_rationale":"...","reviewed_ref":"$sha"}
+Optional top-level keys: resolved_ids (array of strings), scout_dispositions
+(array of {"ref":"...","verdict":"accepted|refuted","why":"..."}).
+Output ONLY the corrected object.
+
+Validation errors: $why
+-----BEGIN REJECTED VERDICT-----
+$text
+-----END REJECTED VERDICT-----
+EOF
+  # The reviewer's turn is over: one live pane per (family, kind) still holds.
+  reap_pane "$pane" || ac_warn "verifier $id: reviewer pane $pane did not close before the correction turn"
+  pane=""
+  printf '%s\n' "$(( $(ac_now) + ${AC_VERIFY_CORRECTION_TIMEOUT:-900} + 60 ))" >"$busy_decl" || true
+  set +e
+  "$pane_bin" run --cwd "$lease" --prompt-file "$cprompt" --kind "$kind" \
+    --label "$id-correction" --timeout "${AC_VERIFY_CORRECTION_TIMEOUT:-900}" \
+    --pane-file "$cearly" ${pane_tuning[@]+"${pane_tuning[@]}"} >"$cresult" 2>&1 &
+  cpid=$!
+  set -e
+  deadline=$(( $(date +%s) + ${AC_VERIFY_START_TIMEOUT:-30} ))
+  while [ ! -s "$cearly" ] && kill -0 "$cpid" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do
+    sleep 0.05
+  done
+  cpane=""; ctab=""
+  [ ! -s "$cearly" ] || read -r cpane ctab <"$cearly" || true
+  [ -n "$cpane" ] && [ -n "$ctab" ] \
+    || { wait "$cpid" 2>/dev/null || true; ac_die "verifier $id correction pane never published a pane handle; inspect $cresult and the round evidence under $round_dir"; }
+  publish_meta "$cpane" "$ctab"
+  pane="$cpane"
+  crc=0
+  wait "$cpid" || crc=$?
+  [ "$crc" = 0 ] \
+    || ac_die "verifier $id correction pane-agent failed with status $crc; inspect $cresult and the round evidence under $round_dir"
+  cdone="$(jq -c 'select(.event == "done")' "$cresult" 2>/dev/null | tail -n 1)" || true
+  [ -n "$cdone" ] \
+    || ac_die "verifier $id correction pane emitted no terminal result; inspect $cresult and the round evidence under $round_dir"
+  cstatus="$(jq -r '.status // ""' <<<"$cdone")"
+  [ "$cstatus" = ok ] \
+    || ac_die "verifier $id correction pane ended $cstatus; inspect $cresult and the round evidence under $round_dir"
+  ctranscript="$(jq -r '.transcript // ""' <<<"$cdone")"
+  [ -s "$ctranscript" ] \
+    || ac_die "verifier $id correction pane has no readable transcript; inspect $cresult and the round evidence under $round_dir"
+  cp "$ctranscript" "$round_dir/correction-transcript.jsonl"
+  text="$(ac_transcript_final "$ctranscript")"
+  json="$(printf '%s\n' "$text" | ac_verdict_json)"
 }
 
 reap_existing() {
@@ -1436,10 +1535,14 @@ export AC_WINDOW_FAMILY="$(ac_window_family "$family")"
 pane_early="$round_dir/pane.handle"
 pane_args=(run --cwd "$lease" --prompt-file "$prompt" --kind "$kind"
   --label "$id" --timeout "${AC_VERIFY_TIMEOUT:-7200}" --pane-file "$pane_early")
+# The harness/model/effort routing is shared with the correction turn, which
+# must answer on the same profile the round was dispatched to.
+pane_tuning=()
 if [ -n "$harness" ]; then
-  pane_args+=(--harness "$harness")
-  [ -z "$model" ] || pane_args+=(--model "$model")
-  [ -z "$effort" ] || pane_args+=(--effort "$effort")
+  pane_tuning+=(--harness "$harness")
+  [ -z "$model" ] || pane_tuning+=(--model "$model")
+  [ -z "$effort" ] || pane_tuning+=(--effort "$effort")
+  pane_args+=("${pane_tuning[@]}")
 fi
 # The fan-out ledger is the pane's --await-file (contract: AWAIT in
 # bin/ac-pane-agent.sh): the reviewer's turn cannot end for good until the
@@ -1568,7 +1671,9 @@ fi
 # harvest is a rejected verdict - the schema check below cannot catch it, since
 # `jq -e` over empty input exits 0.
 json="$(printf '%s\n' "$text" | ac_verdict_json)"
-[ -n "$json" ] \
+# codereview owns its empty-harvest case below: an empty harvest is an
+# envelope failure, and the correction turn is what it buys.
+[ "$kind" = codereview ] || [ -n "$json" ] \
   || { log_rejection "no-json-verdict-object-in-final-message"; \
        die_reaped "verifier $id produced no JSON verdict object; inspect $round_dir"; }
 
@@ -1691,7 +1796,11 @@ case "$kind" in
     # compound predicate they replace failed as one word, so a rejected round
     # could not say whether the schema, the ref, or an undispositioned prior id
     # sank it - and a caller that cannot see the cause just re-runs the ref.
-    reject_why="$(jq -r --arg ref "$sha" --argjson prior "${prior_open:-[]}" '
+    # One function because the SAME predicate grades the reviewer's output and
+    # the correction turn's (ONE CORRECTION TURN, above).
+    codereview_reject_why() {
+      [ -n "$json" ] || { printf 'no-json-verdict-object-in-final-message\n'; return 0; }
+      jq -r --arg ref "$sha" --argjson prior "${prior_open:-[]}" '
       def undispositioned: $prior - ([.findings[].id] + (.resolved_ids // []));
       def relay_incomplete:
         [.findings[]
@@ -1728,7 +1837,13 @@ case "$kind" in
       elif (.risk_rationale | type) != "string"
         then "risk_rationale-not-a-string (\(.risk_rationale | type))"
       else "" end
-    ' <<<"$json" 2>/dev/null)" || reject_why="unparseable-json"
+      ' <<<"$json" 2>/dev/null || printf 'unparseable-json\n'
+    }
+    reject_why="$(codereview_reject_why)"
+    if [ -n "$reject_why" ] && correction_eligible "$reject_why"; then
+      codereview_correction_turn "$reject_why"
+      reject_why="$(codereview_reject_why)"
+    fi
     [ -z "$reject_why" ] \
       || { rm -f "$output_tmp"; log_rejection "$reject_why"; die_reaped "verifier $id returned an invalid codereview verdict - failed check: $reject_why; inspect $round_dir"; }
     # CITATION CHECK: a fix finding names a file (and maybe a line) as the
@@ -1828,12 +1943,13 @@ EOF
     jq --slurpfile findings "$findings" --arg ref "$sha" --argjson warnings "$pane_warnings" \
        --argjson scoutlanes "${scout_count:-0}" --argjson scoutran "${scout_lanes_ran:-0}" \
        --argjson scoutobs "${scout_obs_total:-0}" \
-       --argjson scoutjudged "${scout_dispositioned:-0}" '
+       --argjson scoutjudged "${scout_dispositioned:-0}" --arg corr "$correction_check" '
       .findings = $findings[0]
       | .reviewed_ref = $ref
       | .verdict = (if ([.findings[].action] | index("ask-user")) != null then "ask-user"
                     elif ([.findings[].action] | index("fix")) != null then "fix"
                     else "pass" end)
+      | if $corr != "" then .correction = {failed_check: $corr} else . end
       | if ($warnings | length) > 0 then .warnings = $warnings else . end
       | if $scoutlanes > 0
         then .scouts = {lanes: $scoutlanes, returned: $scoutran, observations: $scoutobs, dispositioned: $scoutjudged}
