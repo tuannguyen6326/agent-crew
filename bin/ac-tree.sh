@@ -676,6 +676,13 @@ cmd_get() {
         || ac_die "get: epic branch $ebranch does not exist in $rname - cut it first: ac-epic-branch.sh create <epic> $rname"
       base_ref="$ebranch"
     fi
+    # The fence proved the branch by its FULL refname; the reset and the
+    # worktree add below resolve the SHORT name through git's DWIM order,
+    # where a same-named tag wins - so verify the exact string the loop will
+    # use, before any slot is touched, or the cause surfaces only as one
+    # "reset failed" per slot and a failed worktree add naming nothing.
+    git -C "$repo" rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null \
+      || ac_die "get: base ref $base_ref (named by the integration-branch record for $id on $rname) does not resolve to a commit - nothing was leased; fix the ref before retrying"
   fi
   local wt
   wt="$(with_pool_lock "$repo" acquire_slot "$repo" "$id" "$holder" "$owner" "$prefer" "$base_ref")"

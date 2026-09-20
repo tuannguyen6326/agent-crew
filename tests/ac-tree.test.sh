@@ -560,4 +560,27 @@ wtI2="$("$BIN/ac-tree.sh" get --repo "$repoI" --id i2 2>/dev/null)"
 assert_eq "$wtI2" "$wtI" "the recycled slot is reused"
 assert_eq "$(cat "$wtI2/.env")" "SECRET=2" "a recycled slot is re-seeded from the primary"
 
+# An EXPLICIT base ref (the integration-branch fence) is verified as a COMMIT
+# before any slot is touched. The fence proves the branch exists by its full
+# refname, but reset and worktree add resolve the SHORT name through git's
+# DWIM order, where a same-named tag wins - so a ref that passed the fence can
+# still fail every reset ("skip slot: reset failed" per slot, then a failed
+# worktree add) with the cause never named. The gate dies once, naming the ref
+# and the record that named it, and leases nothing.
+repoF="$(make_repo fence)"
+fF="$("$BIN/ac-tree.sh" get --repo "$repoF" --id f0 2>/dev/null)"
+"$BIN/ac-tree.sh" return "$fF" 2>/dev/null
+git -C "$repoF" branch -q feat/shadow
+git -C "$repoF" tag feat/shadow "$(printf 'x' | git -C "$repoF" hash-object -w --stdin)"
+printf -- '- [ ] shadow-s1 - story; feature:shadow (repo: fence)\n' >>"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/shadow"
+printf 'fence feat/shadow push=deferred\n' >"$AC_HOME/data/shadow/branches"
+outF="$("$BIN/ac-tree.sh" get --repo "$repoF" --id shadow-s1 --holder t 2>&1 || true)"
+assert_contains "$outF" "base ref feat/shadow" "the refusal names the ref"
+assert_contains "$outF" "does not resolve to a commit" "the refusal names the cause"
+assert_contains "$outF" "record for shadow-s1 on fence" "the refusal names where the ref came from"
+case "$outF" in *"reset failed"*) fail "the gate must fire BEFORE the acquire loop tries a slot" ;; esac
+assert_eq "$(ls "$repoF/.crew/slots" | wc -l | tr -d ' ')" "1" "an unresolvable base leases and creates no slot"
+assert_eq "$(sed -n 's/^leased=//p' "$repoF/.crew/slots/1-fence.meta")" "0" "the existing free slot stays available"
+
 pass
