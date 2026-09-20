@@ -33,7 +33,10 @@
 // - Intent switch: >=5 informative query terms read as content-lookup and
 //   run graded BM25 only; fewer read as name-lookup and add the title arm
 //   plus gentle boosts. Fusion normalizes BM25 min-max so boosts reorder
-//   near-ties, never graded relevance.
+//   near-ties, never graded relevance. An arm that relaxed AND->OR votes
+//   only when no vector list exists (its rows are dropped otherwise, counted
+//   as `relaxed_dropped`; carried on a vector-enabled run whose arm came
+//   back empty, `search_degraded` adds `keyword_relaxed_carried`).
 // - Every result carries its home-relative path, an evidence stamp, and the
 //   response carries create_safety - recall must never lose to grep on
 //   citability.
@@ -689,21 +692,25 @@ function ftsQuery(q: string) {
 }
 type Hit = { slug: string; title?: string; family?: string; type?: string; path?: string; score: number; evidence: string; snippet?: string; trust?: string; origin?: string };
 
-async function searchArm(db: Database, q: string, limit: number, boosts: boolean, useVector = true): Promise<{ hits: Hit[]; degraded?: string }> {
+async function searchArm(db: Database, q: string, limit: number, boosts: boolean, useVector = true): Promise<{ hits: Hit[]; degraded?: string; relaxed_dropped?: number }> {
   const { and, or, terms } = ftsQuery(q);
   if (!terms.length) return { hits: [] };
   if (terms.length >= 5) boosts = false; // intent: content-lookup - graded BM25 must not be reordered
   const run = (match: string) => db.query(
     `SELECT slug, title, snippet(chunks_fts, 0, '', '', '…', 14) snip, bm25(chunks_fts, 1.0, 2.5) s
      FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY s LIMIT 60`).all(match) as any[];
-  let kw: any[] = [];
+  // An arm that RELAXES AND->OR is a rescue, not evidence: an OR row matched
+  // any one term, yet enters fusion at full keyword weight. It votes only
+  // when no vector list exists (keyless, or the provider failed) and is
+  // dropped otherwise - measured outvoting a healthy vector winner.
+  let kw: any[] = [], kwRelaxed = false;
   try { kw = run(and); } catch {}
-  if (!kw.length) { try { kw = run(or); } catch {} }
-  let titleArm: any[] = [];
+  if (!kw.length) { try { kw = run(or); kwRelaxed = kw.length > 0; } catch {} }
+  let titleArm: any[] = [], titleRelaxed = false;
   if (boosts) {
     const runT = (m: string) => db.query(`SELECT slug, bm25(pages_fts, 2.0, 1.5) s FROM pages_fts WHERE pages_fts MATCH ? ORDER BY s LIMIT 30`).all(m) as any[];
     try { titleArm = runT(and); } catch {}
-    if (!titleArm.length) { try { titleArm = runT(or); } catch {} }
+    if (!titleArm.length) { try { titleArm = runT(or); titleRelaxed = titleArm.length > 0; } catch {} }
   }
   // vector arm
   let degraded: string | undefined;
@@ -726,6 +733,12 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
       }
     }
   } else if (!ec) degraded = "keyword_only_no_provider";
+  let relaxedDropped = 0;
+  if (vecScores.size) {
+    if (kwRelaxed) { relaxedDropped += kw.length; kw = []; }
+    if (titleRelaxed) { relaxedDropped += titleArm.length; titleArm = []; }
+  } else if (ec && useVector && (kwRelaxed || titleRelaxed))
+    degraded = (degraded ? degraded + ";" : "") + "keyword_relaxed_carried";
   // normalized fusion: boosts may only reorder near-ties, never graded relevance
   const norm = (rows: any[]) => {
     if (!rows.length) return new Map();
@@ -796,7 +809,7 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
       : m.type === "learned" ? "L3-promoted" : "unverified working material";
     return { slug, title: m.title, family: m.family, type: m.type, path: m.path, score, evidence, snippet: e.snip, trust };
   }).sort((a, b) => b.score - a.score).slice(0, limit);
-  return { hits, degraded };
+  return { hits, degraded, ...(relaxedDropped ? { relaxed_dropped: relaxedDropped } : {}) };
 }
 
 // Seconds, AC_BRAIN_RERANK_TIMEOUT to override; 10 rather than the embed
@@ -878,10 +891,10 @@ async function cmdRecall() {
     facts = db.query(sql).all(...p) as any[];
   }
   // search arm
-  let hits: Hit[] = [], degraded: string | undefined, reranked = false;
+  let hits: Hit[] = [], degraded: string | undefined, reranked = false, relaxedDropped = 0;
   if (q) {
     const r = await searchArm(db, q, limit, !flag("no-boosts"));
-    hits = r.hits; degraded = r.degraded;
+    hits = r.hits; degraded = r.degraded; relaxedDropped = r.relaxed_dropped ?? 0;
     const rr = await rerankHits(q, hits);
     hits = rr.hits;
     if (rr.reranked) reranked = true;
@@ -922,6 +935,7 @@ async function cmdRecall() {
   usageLog({ verb: "recall", q: q ?? null, entity: entity ?? null, hits: hits.length, ms });
   out({ protocol_version: 1, facts, total: facts.length, results: hits, create_safety, ...(reranked ? { reranked: true } : {}),
     ...(degraded ? { search_degraded: degraded } : {}),
+    ...(relaxedDropped ? { relaxed_dropped: relaxedDropped } : {}),
     ...(budget ? { budget_tokens: budget, budget_used, dropped_count: dropped } : {}), ms });
 }
 // deputy read-only arm: keyword-only (a deputy's embedding config is its own)
