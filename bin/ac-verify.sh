@@ -73,7 +73,15 @@
 # defect's own subject that never encodes the round it is reported in, so a
 # persisting defect re-reports under the identical string, while resolved_ids
 # stays the single separate "this prior id is CLOSED" channel - never a second
-# renumbering channel. Three places carry that contract, because prose in the
+# renumbering channel. A resolved_ids entry is honoured only when the round's
+# own COVERAGE backs it: the verdict declares top-level reviewed_paths (the
+# repo-relative paths the round actually reviewed), and a claim counts only when
+# the prior finding's file is in that scope AND the round reports nothing else
+# in that file - an ambiguous re-report (a moved line, a rewording) is not a
+# resolution. A claim the rule refuses is simply not a disposition, so the id
+# reads as undispositioned: a CONTENT failure that buys no correction turn. The
+# measurement that made the scope declaration necessary sits with the predicate
+# (codereview_reject_why). Three places carry that contract, because prose in the
 # history block alone demonstrably did not: the id-formation rule sits in the
 # CANONICAL prompt half (round 1 mints the strings later rounds bind to), the
 # literal output template gains a top-level resolved_ids slot once a history
@@ -621,7 +629,7 @@ die_reaped() {
 
 # ONE CORRECTION TURN (codereview only). A verdict that fails an ENVELOPE
 # check - no JSON object harvested, not an object, findings/resolved_ids/
-# scout_dispositions off-shape, a foreign reviewed_ref, risk_level or
+# reviewed_paths/scout_dispositions off-shape, a foreign reviewed_ref, risk_level or
 # risk_rationale off-type - used to be a dead round: the whole review budget
 # spent, nothing usable, and the caller left to re-run the same ref. The
 # review itself is not what failed, only its wrapping, so the rejected payload
@@ -665,7 +673,8 @@ anything.
 
 Required envelope, exactly one JSON object with no code fence:
 {"findings":[...],"summary":"...","risk_level":"low|medium|high","risk_rationale":"...","reviewed_ref":"$sha"}
-Optional top-level keys: resolved_ids (array of strings), scout_dispositions
+Optional top-level keys: resolved_ids (array of strings), reviewed_paths (array
+of repo-relative path strings), scout_dispositions
 (array of {"ref":"...","verdict":"accepted|refuted","why":"..."}).
 Output ONLY the corrected object.
 
@@ -1019,6 +1028,7 @@ case "$kind" in
     # much, never too little.
     prior_sha=""
     prior_open="[]"
+    prior_findings="[]"
     resolved_slot=""
     scope_review="Review exactly: git diff $base_sha $sha --"
     scope_duty="Review only the exact command above, never HEAD, working tree, or a three-dot
@@ -1027,7 +1037,7 @@ and out-of-scope boundary plus correctness, regressions, security, and test qual
 Report every finding you can defend in this pass, minor ones included; later
 rounds verify rather than rediscover."
     if [ -n "$history" ]; then
-      resolved_slot='"resolved_ids":[],'
+      resolved_slot='"resolved_ids":[],"reviewed_paths":[],'
       prior_ref="$(jq -r 'if type == "array" then (last.reviewed_ref // "")
         else (.reviewed_ref // "") end' "$history")"
       [ -z "$prior_ref" ] \
@@ -1056,6 +1066,13 @@ rounds verify rather than rediscover."
           | select(.action == "fix" or .action == "ask-user") | .id]
           | map(select(type == "string")) | unique' "$history" 2>/dev/null)" \
         || prior_open="[]"
+      # The same set with each finding's file: what a resolved_ids claim is
+      # checked against. Same fail direction as prior_open - a derivation
+      # that fails leaves nothing to back a claim, never a claim unchecked.
+      prior_findings="$(jq -c '[((if type == "array" then last else . end).findings[]?)
+          | select(.action == "fix" or .action == "ask-user") | select((.id | type) == "string")
+          | {id, file: ((.file // "") | tostring)}] | unique_by(.id)' "$history" 2>/dev/null)" \
+        || prior_findings="[]"
     fi
     if [ -n "$prior_sha" ]; then
       scope_review="Review exactly: git diff $prior_sha $sha --   (the fix delta since the prior verdict)
@@ -1156,6 +1173,10 @@ list it in top-level resolved_ids once verified fixed at this ref, settled by a
 ruling, or defensibly obsolete (reason in summary). Never renumber: a new id for
 a persisting defect reads as one dropped plus one invented, and the verdict is
 REJECTED. Prior PASS has no authority here.
+List in top-level reviewed_paths every repo-relative path you actually
+reviewed; a resolved_ids entry counts only when its finding's file is there and
+this round reports nothing else in that file - otherwise re-report the id
+(no-op once verified fixed).
 -----BEGIN STRUCTURED HISTORY-----
 $(cat "$history")
 -----END STRUCTURED HISTORY-----
@@ -1811,8 +1832,22 @@ case "$kind" in
     # resolved_ids - a silent drop is a schema violation, same fate as any
     # invalid verdict. prior_open is [] with no history or a legacy shape,
     # which makes the check vacuous there.
-    # resolved_ids is taken on the reviewer's WORD, and that residual is MEASURED
-    # rather than merely tolerated. Do NOT tighten it to "resolved_ids must be a
+    # A resolved_ids entry is honoured only when the round's own COVERAGE backs
+    # it (header: the disposition paragraph): the prior finding's file is in
+    # this verdict's reviewed_paths AND no other finding of this round names
+    # that file. Measured over this fleet home's 47 stored round dirs (29
+    # harvestable verdicts, 3 carrying a history): zero explicit resolved_ids
+    # claims exist to grade, while the pre-channel analogue - a prior open id
+    # silently dropped - happened 10 times, 8 of them with ANOTHER finding
+    # reported in the same file that round; no stored round recorded what it
+    # reviewed and its reviewed refs are gone from the object store, so the
+    # scope side was unmeasurable - hence the round now declares it. A claim
+    # the rule refuses is not a disposition: the id stays undispositioned
+    # (content failure, no correction turn), and the honest channel - re-report
+    # the id, no-op once verified fixed - costs the reviewer nothing. A prior
+    # finding with no file can never be backed and takes that channel too.
+    # Only ids in prior_open are graded; the rest stay inert as before. Do NOT
+    # tighten it to "resolved_ids must be a
     # subset of prior_open": replaying 138 stored real rounds that carried a
     # history (133 yielding a harvestable verdict), 111 emitted a non-empty
     # resolved_ids and 72 of those list an id outside prior_open - 270 of those
@@ -1825,11 +1860,10 @@ case "$kind" in
     # rule permits - and that intersection is load-bearing in 96 of the 112
     # rounds this predicate accepts. The derivation is not the place either: zero
     # ids were carried in a ledger as fix/ask-user yet missing from prior_open.
-    # Nor can any check here VERIFY the claim - deciding whether a prior finding
-    # is fixed at this ref IS the review, not something the validator holds
-    # evidence for - so the honest fix is a reviewer that re-reports what is
-    # still open, which the HISTORY block already demands by name ("re-report it
-    # under that SAME id string while unresolved").
+    # Nor can any check here VERIFY the claim itself - deciding whether a prior
+    # finding is fixed at this ref IS the review - so the coverage rule grades
+    # only what the verdict can be held to: that the round looked at the file
+    # and said nothing else about it.
     # reviewed_ref is checked as `(.reviewed_ref // $ref) == $ref`, not equality:
     # the echo is a SELF-REPORT of a value this facade already owns - it leased
     # the tree, detached and hard-reset it to $sha, and stamps
@@ -1845,8 +1879,19 @@ case "$kind" in
     # the correction turn's (ONE CORRECTION TURN, above).
     codereview_reject_why() {
       [ -n "$json" ] || { printf 'no-json-verdict-object-in-final-message\n'; return 0; }
-      jq -r --arg ref "$sha" --argjson prior "${prior_open:-[]}" '
-      def undispositioned: $prior - ([.findings[].id] + (.resolved_ids // []));
+      jq -r --arg ref "$sha" --argjson prior "${prior_open:-[]}" \
+        --argjson priorf "${prior_findings:-[]}" --arg lease "$lease" --arg repo "$main_repo" '
+      def norm: tostring | ltrimstr($lease + "/") | ltrimstr($repo + "/") | ltrimstr("./");
+      def unbacked:
+        ((.reviewed_paths // []) | map(norm)) as $scope
+        | [.findings[] | (.file // "") | norm | select(. != "")] as $reported
+        | [(.resolved_ids // [])[] as $id
+           | ($priorf | map(select(.id == $id)) | first) as $p
+           | select($p != null)
+           | ($p.file | norm) as $pf
+           | select($pf == "" or ($scope | index($pf)) == null or ($reported | index($pf)) != null)
+           | $id];
+      def undispositioned: $prior - ([.findings[].id] + ((.resolved_ids // []) - unbacked));
       def relay_incomplete:
         [.findings[]
          | select(.action == "ask-user")
@@ -1863,6 +1908,10 @@ case "$kind" in
       if type != "object" then "not-a-json-object"
       elif (.findings | type) != "array" then "findings-not-an-array (\(.findings | type))"
       elif ((.resolved_ids // []) | type) != "array" then "resolved_ids-not-an-array"
+      elif ((.reviewed_paths // [])
+            | if type != "array" then true
+              else any(type != "string" or (gsub("^\\s+|\\s+$"; "") == "")) end)
+        then "reviewed_paths-not-an-array-of-paths"
       elif ((.scout_dispositions // []) | type) != "array"
         then "scout_dispositions-not-an-array"
       elif ((.scout_dispositions // [])
@@ -1873,6 +1922,8 @@ case "$kind" in
         then "scout-disposition-shape-incomplete"
       elif (undispositioned | length) > 0
         then "undispositioned-prior-finding-ids: \(undispositioned | join(","))"
+             + (unbacked | if length > 0
+                then " (resolved_ids claim not backed by coverage: \(join(",")))" else "" end)
       elif (relay_incomplete | length) > 0
         then "ask-user-relay-shape-incomplete: \(relay_incomplete | join(","))"
       elif (.reviewed_ref // $ref) != $ref

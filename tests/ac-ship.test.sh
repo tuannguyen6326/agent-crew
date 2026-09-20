@@ -1054,6 +1054,23 @@ printf '[{"id":"A1","action":"ask-user","description":"decide?","decision":"do i
   | "$BIN/ac-ship.sh" findings test >/dev/null
 "$BIN/ac-ship.sh" finish checks-passed >/dev/null || fail "decided ask-user + no-op must not block finish"
 
+# A --tdd run finishes passed-with-override, and a test step actually TAKEN
+# retires the declaration (whichever way the step completes, the declaration
+# is no longer the evidence).
+"$BIN/ac-ship.sh" start --intent "gate tdd" --tdd >/dev/null
+tddrun="$grepo/.crew/ship/$(readlink "$grepo/.crew/ship/current")"
+printf '{"reviewer":"gate-test"}' | "$BIN/ac-ship.sh" meta review >/dev/null
+for s in intent rebase review document lint push pr; do "$BIN/ac-ship.sh" step "$s" completed >/dev/null; done
+out="$("$BIN/ac-ship.sh" finish checks-passed)" || fail "a --tdd run must finish"
+assert_contains "$out" "passed-with-override: tdd-declared" "the finish receipt names the declaration"
+assert_contains "$(cat "$tddrun/run.meta")" "attestation=passed-with-override:tdd-declared" \
+  "the durable finish receipt carries the declaration"
+"$BIN/ac-ship.sh" start --intent "gate tdd taken" --tdd >/dev/null
+tddrun2="$grepo/.crew/ship/$(readlink "$grepo/.crew/ship/current")"
+assert_file "$tddrun2/override" "declared at start"
+"$BIN/ac-ship.sh" step test completed >/dev/null
+assert_no_file "$tddrun2/override" "taking the test step clears the tdd-declared override"
+
 # --- FORMAT RUNS WHERE THE REVIEWER CAN SEE IT -------------------------------
 # `format` is not one of the 8 fixed steps - the runner's procedure decides
 # WHEN it fires - and it used to fire at step 7 (push). A formatter that
@@ -1641,6 +1658,9 @@ out="$("$BIN/ac-ship.sh" start --intent "lean tdd" --tdd)"
 assert_contains "$out" "test skipped" "start announces the --tdd test skip"
 rd_tdd="$repo/.crew/ship/$(readlink "$repo/.crew/ship/current")"
 assert_eq "$(awk -F'\t' '$1=="test"{print $2}' "$rd_tdd/steps.tsv")" "skipped" "--tdd skips test"
+assert_contains "$(cat "$rd_tdd/override")" "tdd-declared" \
+  "a --tdd declaration is an override: the test step was declared, not run"
+assert_no_file "$rd_lean/override" "a run that RUNS test carries no override"
 assert_eq "$(awk -F'\t' '$1=="lint"{print $2}' "$rd_tdd/steps.tsv")" "skipped" "--tdd leaves lint on its own default (skipped without --lint)"
 
 # The two flags are independent: --lint runs lint, --tdd skips test, same run.
@@ -1816,12 +1836,16 @@ assert_contains "$out" "SELF-APPROVED: review-residual r3" "acceptance prints th
 assert_eq "$(jq -r '.[0].action' "$caprun/findings/review.json")" "no-op" "the residual finding is now advisory"
 assert_eq "$(jq -r '.[0].residual_accepted' "$caprun/findings/review.json")" "true" "the acceptance is marked"
 assert_eq "$(jq -r '.[0].residual_grounds' "$caprun/findings/review.json")" "advisory nit, backlogged" "the grounds ride the wire"
+assert_contains "$(cat "$caprun/override")" "review-residual" \
+  "acceptance writes the override marker on the run state"
 assert_fails bash -c "'$BIN/ac-ship.sh' review-residual accept --grounds x" # nothing left to accept
 
 # --final-round grants exactly once past the cap.
 out="$(AC_CREW_ID=cap-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship.sh" review-agent --final-round)"
 assert_contains "$out" "review-agent round 4" "--final-round opens the one extra round"
 assert_file "$caprun/review.final-round" "the grant is durable"
+assert_no_file "$caprun/override" \
+  "a fresh review round re-judges the residual, so it clears the override marker"
 "$BIN/ac-ship.sh" step review fixing >/dev/null
 printf 'r5\n' >>"$caprepo/f.txt" && git -C "$caprepo" commit -qam "fix r5"
 rc=0
@@ -1850,6 +1874,30 @@ AC_CREW_ID=stk-implement AC_VERIFY_BIN="$capstub/ac-verify" "$BIN/ac-ship.sh" re
 out="$("$BIN/ac-ship.sh" review-residual accept --grounds "finding disputes a rule the code cites - chief judges it wrong")"
 assert_contains "$out" "SELF-APPROVED: review-residual" "same-ref-stuck acceptance prints the receipt"
 assert_eq "$(jq -r '.[0].action' "$stkrun/findings/review.json")" "no-op" "the disputed finding is now advisory"
+
+# --- OVERRIDE MARKER: an accepted failure is attested passed-with-override ----
+# Before this, nothing machine-readable told an accepted residual from a clean
+# pass: residual_accepted lived on individual findings the finish gate never
+# reads, run.meta got the same outcome=checks-passed, and the PR body's meta
+# inputs were written before the acceptance. ONE marker on the run state now
+# carries the kind, the receipt's sha and the reason, and every receipt a
+# reader gates on copies it rather than reading clean green.
+stk_receipt="$(printf '%s\n' "$out" | grep '^SELF-APPROVED:')"
+assert_file "$stkrun/override" "residual acceptance writes the override marker"
+assert_contains "$(cat "$stkrun/override")" "review-residual" "the marker names the override kind"
+assert_contains "$(cat "$stkrun/override")" "$(printf '%s' "$stk_receipt" | shasum -a 256 | awk '{print $1}')" \
+  "the marker binds the SELF-APPROVED receipt by its sha"
+assert_contains "$(cat "$stkrun/override")" "finding disputes a rule" "the marker carries the reason"
+assert_contains "$("$BIN/ac-ship.sh" status)" "override: review-residual" "status shows the override"
+"$BIN/ac-ship.sh" step review completed >/dev/null
+for s in intent rebase document push; do "$BIN/ac-ship.sh" step "$s" completed >/dev/null; done
+out="$("$BIN/ac-ship.sh" finish checks-passed)" \
+  || fail "a residual-accepted run still finishes - the acceptance IS the sanctioned release"
+assert_contains "$out" "passed-with-override: review-residual" "the finish receipt names the override"
+assert_contains "$(grep '^checks-passed:' <<<"$out")" "passed-with-override" \
+  "the chief-facing marker line carries it - never clean green"
+assert_contains "$(cat "$stkrun/run.meta")" "attestation=passed-with-override:review-residual" \
+  "the durable finish receipt carries it"
 cd "$repo" || fail "cd back from stkrepo"
 
 # --- review-round floor: round 3 uses round 2's reviewed_ref ------------------

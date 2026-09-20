@@ -341,6 +341,34 @@
 # only once a genuine run reached this gate, so a run that never reached
 # checks-passed has nothing for them to merge.
 #
+# OVERRIDE MARKER (authoritative): an APPROVED failure is attested as
+# passed-with-override, never as clean green. Two releases let a run finish
+# without the evidence the step exists for - `review-residual accept` (the
+# residual fix findings rewritten advisory on the chief's receipt) and `--tdd`
+# (the test step declared, not run) - and before this marker nothing
+# machine-readable told such a run from a clean one: residual_accepted lived
+# on individual findings the finish gate reads only for `action`, a --tdd
+# run's steps.tsv was byte-identical to `--skip test`, run.meta took the same
+# outcome=checks-passed, the PR body's meta inputs (findings/review.meta.json,
+# findings/test.meta.json) were written before the acceptance or not at all,
+# attest-check is run-independent, and ac-pr-check/ac-pr-merge/ac-merge-local/
+# ac-teardown read no ship run state at all. ONE marker on the run state now
+# carries it: <run>/override, one row per kind - `kind<TAB>at<TAB>
+# receipt_sha256<TAB>reason` - written at the moment of acceptance (kind
+# review-residual: the sha of the SELF-APPROVED receipt line + the grounds;
+# kind tdd-declared: the sha of the start note + the declaration), CLEARED when
+# the evidence it stands in for arrives - a fresh review round (review-agent,
+# the residual is re-judged) drops review-residual, the test step reaching
+# `completed` drops tdd-declared. A config change cannot stale it: a run's
+# config is frozen at start. Every receipt a reader gates on COPIES it rather
+# than reading green: `status` prints the rows, `finish checks-passed|passed`
+# appends `attestation=passed-with-override:<kinds>` beside outcome= in
+# run.meta and suffixes both its stdout line and the chief-facing
+# `checks-passed:` marker, and the live dashboard colours the run yellow.
+# The PR body's attestation line carries it verbatim (the crew-ship skill
+# owns that wording); the marker never BLOCKS finish - the acceptance IS the
+# sanctioned release - it only refuses to let it read as clean.
+#
 # Config, HOME-ONLY (resolver: ac-lib.sh ac_project_config_file):
 # $AC_HOME/projects/<name>.yaml is captain-owned and branch-immune.
 # The project repo is never a config source.
@@ -464,8 +492,36 @@ fresh_base() {
     || ac_die "fresh_base: merge-base against '$ref' failed - refusing to fall back to HEAD"
 }
 
+override_note() {
+  # override_note <run-dir> <kind> <receipt-line> <reason> - one row on the
+  # OVERRIDE MARKER (header). The reason is scrubbed of row-breaking
+  # whitespace so one row stays one override.
+  printf '%s\t%s\t%s\t%s\n' "$2" "$(ac_iso)" \
+    "$(printf '%s' "$3" | shasum -a 256 | awk '{print $1}')" \
+    "$(printf '%s' "$4" | tr '\t\n' '  ')" >>"$1/override"
+}
+
+override_clear() {
+  # override_clear <run-dir> <kind> - drop that kind's rows; the file goes
+  # with its last row so `-f` alone still answers "any override?".
+  local f="$1/override" tmp
+  [ -f "$f" ] || return 0
+  tmp="$(mktemp "$f.XXXXXX")" || ac_die "override: mktemp failed"
+  if ! awk -F'\t' -v k="$2" '$1 != k' "$f" >"$tmp"; then
+    rm -f "$tmp"
+    ac_die "override: could not rewrite $f - failing closed"
+  fi
+  if [ -s "$tmp" ]; then mv "$tmp" "$f"; else rm -f "$tmp" "$f"; fi
+}
+
+override_kinds() {
+  # override_kinds <run-dir> -> comma-joined kinds, empty when clean.
+  [ -f "$1/override" ] || return 0
+  cut -f1 "$1/override" | paste -sd, -
+}
+
 cmd_start() {
-  local intent="" skip="" s target_in="" tref="" config_source="" config_sha want_lint=0 tdd=0 lintnote="" tddnote=""
+  local intent="" skip="" s target_in="" tref="" config_source="" config_sha want_lint=0 tdd=0 lintnote="" tddnote="" startline
   while [ $# -gt 0 ]; do
     case "$1" in
       --intent) intent="$2"; shift 2 ;;
@@ -570,7 +626,10 @@ cmd_start() {
   # Surface each skip so a green run is never mistaken for a linted or tested one.
   [ "$want_lint" = 0 ] && lintnote=' (lint skip-by-default: pass --lint to run it)'
   [ "$tdd" = 1 ] && tddnote=' (test skipped: --tdd declares the implement covered it)'
-  printf 'started run %s branch=%s base=%s%s%s%s\n' "$id" "$branch" "${base:0:12}" "${tref:+ target=$tref}" "$lintnote" "$tddnote"
+  startline="$(printf 'started run %s branch=%s base=%s%s%s%s' "$id" "$branch" "${base:0:12}" "${tref:+ target=$tref}" "$lintnote" "$tddnote")"
+  [ "$tdd" = 0 ] || override_note "$rd" tdd-declared "$startline" \
+    "test step declared by --tdd, suite not run by this pipeline"
+  printf '%s\n' "$startline"
 }
 
 watch_open() {
@@ -696,6 +755,7 @@ cmd_step() {
     ac_die "step: could not update the steps ledger ($rd/steps.tsv) - failing closed"
   fi
   ac_lock_release "$rd/.steps.lock"
+  [ "$name" != test ] || [ "$status" != completed ] || override_clear "$rd" tdd-declared
   printf '%s step=%s status=%s%s\n' "$(ac_iso)" "$name" "$status" "${note:+ note=$note}" >>"$rd/logs/run.log"
   # Ensure the live dashboard whenever a step goes ACTIVE - start-only
   # auto-open missed runs that reopen after finish (hold-and-fix) or lose
@@ -1458,6 +1518,7 @@ cmd_review_agent() {
     args+=(--history "$history_file")
   fi
   review_invocation_record "$rd" "$round" "$head"
+  override_clear "$rd" review-residual
   "$verify" "${args[@]}" >/dev/null \
     || { review_invocation_outcome "$rd" dead-pane; retire_rejected_result "$result"; ac_die "independent review round $round failed; inspect the verifier round evidence under $(review_verify_evidence_dir "$family")"; }
   [ -s "$result" ] \
@@ -1565,7 +1626,7 @@ cmd_review_residual() {
   # correctness/security/data-loss finding - that carve-out is
   # non-overridable; only --final-round or a captain re-route remains.
   require_run
-  local action="${1:-}" grounds="" rd f rounds max_rounds carve nfix tmp last_ref cur_head
+  local action="${1:-}" grounds="" rd f rounds max_rounds carve nfix tmp last_ref cur_head receipt
   [ "$action" = accept ] || ac_die "usage: ac-ship.sh review-residual accept --grounds '<text>'"
   shift
   while [ $# -gt 0 ]; do
@@ -1613,8 +1674,10 @@ cmd_review_residual() {
   fi
   printf '%s review residual accepted (%s finding(s)) at rounds=%s grounds=%s\n' \
     "$(ac_iso)" "$nfix" "$rounds" "$grounds" >>"$rd/logs/run.log"
+  receipt="$(printf 'SELF-APPROVED: review-residual r%s - decision: accepted - grounds: %s' "$rounds" "$grounds")"
+  override_note "$rd" review-residual "$receipt" "$grounds"
   printf 'review-residual: %s finding(s) accepted as advisory - post this receipt to the family room:\n' "$nfix"
-  printf 'SELF-APPROVED: review-residual r%s - decision: accepted - grounds: %s\n' "$rounds" "$grounds"
+  printf '%s\n' "$receipt"
 }
 
 cmd_fix_report() {
@@ -1673,6 +1736,8 @@ cmd_status() {
   rd="$(run_dir)"
   printf 'run: %s\n' "$(basename "$rd")"
   sed 's/^/  /' "$rd/run.meta"
+  [ ! -f "$rd/override" ] || awk -F'\t' \
+    '{ printf "override: %s at=%s receipt_sha256=%s reason=%s\n", $1, $2, $3, $4 }' "$rd/override"
   printf 'steps:\n'
   awk -F'\t' '{ printf "  %-10s %-18s %s\n", $1, $2, ($3 + 0 > 0 ? "fix-rounds=" $3 : "") }' "$rd/steps.tsv"
   local f
@@ -1801,7 +1866,13 @@ cmd_finish() {
   # (header: TDD ATTESTATION).
   printf 'outcome=%s\n' "$outcome" >>"$rd/run.meta"
   printf 'finished_at=%s\n' "$(ac_iso)" >>"$rd/run.meta"
-  printf 'run %s: %s\n' "$(basename "$rd")" "$outcome"
+  local kinds=""
+  case "$outcome" in
+    checks-passed|passed)
+      kinds="$(override_kinds "$rd")"
+      [ -z "$kinds" ] || printf 'attestation=passed-with-override:%s\n' "$kinds" >>"$rd/run.meta" ;;
+  esac
+  printf 'run %s: %s%s\n' "$(basename "$rd")" "$outcome" "${kinds:+ (passed-with-override: $kinds)}"
   # The crew-ship completion signal: an anchored checks-passed: marker
   # (AC_CAPTAIN_RE) that wakes the chief and stamps the pane as awaiting the
   # captain's merge (AC_DECISION_RE). Only checks-passed - passed means already
@@ -1813,10 +1884,11 @@ cmd_finish() {
     local pr_status
     pr_status="$(awk -F'\t' '$1 == "pr" { print $2 }' "$rd/steps.tsv")"
     if [ "$pr_status" = completed ]; then
-      printf 'checks-passed: %s PR raised, awaiting the captain'\''s merge\n' "$(basename "$rd")"
+      printf 'checks-passed: %s PR raised, awaiting the captain'\''s merge%s\n' \
+        "$(basename "$rd")" "${kinds:+ - passed-with-override: $kinds}"
     else
-      printf 'checks-passed: %s validated, no PR raised (pr step %s) - awaiting the captain\n' \
-        "$(basename "$rd")" "$pr_status"
+      printf 'checks-passed: %s validated, no PR raised (pr step %s) - awaiting the captain%s\n' \
+        "$(basename "$rd")" "$pr_status" "${kinds:+ - passed-with-override: $kinds}"
     fi
   fi
   return 0

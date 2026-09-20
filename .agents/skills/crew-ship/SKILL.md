@@ -284,7 +284,12 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    `## Intent`, `## What Changed`, `## Risk Assessment` (from `meta
    review`), `## Testing` (from `meta test`), `## Pipeline` (issue -> fix
    -> verification narrative per round). End with the signature line
-   `Validated by agent-crew crew-ship`.
+   `Validated by agent-crew crew-ship` - unless `bin/ac-ship.sh status`
+   prints an `override:` row (a `review-residual` acceptance or a `--tdd`
+   declaration; the `bin/ac-ship.sh` header's OVERRIDE MARKER block owns
+   it): then the signature is `Validated by agent-crew crew-ship -
+   passed-with-override: <kind> (<reason>; receipt <receipt_sha256>)`,
+   one per row, copied verbatim. An approved failure never signs as clean.
    Keep the body under ~63,000 bytes: drop the OLDEST `## Pipeline` rounds
    first, then `## Testing`, and leave a `(truncated)` marker.
    The body PUBLISHES: it must carry no absolute home paths (quote run

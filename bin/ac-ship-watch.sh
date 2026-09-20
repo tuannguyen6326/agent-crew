@@ -33,6 +33,7 @@ idle_limit() { printf '%s' "${AC_SHIP_WATCH_IDLE:-1800}"; }
 outcome_color() {
   case "$1" in
     running) printf '%s' "$c_cyn" ;;
+    *"passed-with-override"*) printf '%s' "$c_yel" ;;
     checks-passed|passed) printf '%s' "$c_grn" ;;
     failed) printf '%s' "$c_red" ;;
     *) printf '%s' "$c_dim" ;;
@@ -45,6 +46,9 @@ render_header() {
   intent="$(ac_meta_get "$rd/run.meta" intent)"
   branch="$(ac_meta_get "$rd/run.meta" branch)"
   outcome="$(ac_meta_get "$rd/run.meta" outcome)"
+  # An accepted failure never renders as clean green (ac-ship.sh OVERRIDE MARKER).
+  [ ! -f "$rd/override" ] \
+    || outcome="$outcome passed-with-override:$(cut -f1 "$rd/override" | paste -sd, -)"
   printf '%sac-ship%s %s%s%s  %srun %s%s  [%s%s%s]\n' \
     "$c_b" "$c_r" "$c_cyn" "$branch" "$c_r" "$c_dim" "$id" "$c_r" \
     "$(outcome_color "$outcome")" "$outcome" "$c_r"
