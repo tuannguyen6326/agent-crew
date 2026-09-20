@@ -500,4 +500,32 @@ if command -v lsof >/dev/null 2>&1; then
   assert_eq "$(sed -n 's/^leased=//p' "$repoS/.crew/slots/1-selfkill.meta")" "0" "the inside return still releases the slot"
 fi
 
+# return by SLOT NAME: list and pool health print the slot id as the thing to
+# act on, so return takes it too - resolved in the pool of --repo, or of the
+# repo the cwd is in. A bare name that is no directory and no slot dies
+# naming it; anything with a path separator stays a path.
+repoN="$(make_repo byname)"
+wtN="$("$BIN/ac-tree.sh" get --repo "$repoN" --id n1 2>/dev/null)"
+metaN="$repoN/.crew/slots/1-byname.meta"
+"$BIN/ac-tree.sh" return 1-byname --repo "$repoN" 2>/dev/null \
+  || fail "return must accept a slot name with --repo"
+assert_eq "$(sed -n 's/^leased=//p' "$metaN")" "0" "return by name releases the slot"
+"$BIN/ac-tree.sh" get --repo "$repoN" --id n2 >/dev/null 2>&1
+(cd "$repoN" && "$BIN/ac-tree.sh" return 1-byname 2>/dev/null) \
+  || fail "return must resolve a slot name in the repo the cwd is in"
+assert_eq "$(sed -n 's/^leased=//p' "$metaN")" "0" "return by name from inside the repo releases the slot"
+"$BIN/ac-tree.sh" get --repo "$repoN" --id n3 >/dev/null 2>&1
+idN="$(sed -n 's/^lease_id=//p' "$metaN")"
+assert_fails "$BIN/ac-tree.sh" return 1-byname --repo "$repoN" --if-lease-id not-this-one
+assert_eq "$(sed -n 's/^leased=//p' "$metaN")" "1" "a by-name return keeps the lease-id refusal"
+printf 'junk\n' >"$wtN/junk.txt"
+assert_fails "$BIN/ac-tree.sh" return 1-byname --repo "$repoN"
+"$BIN/ac-tree.sh" return 1-byname --repo "$repoN" --force --if-lease-id "$idN" 2>/dev/null \
+  || fail "return by name must honor --force and --if-lease-id together"
+assert_no_file "$wtN/junk.txt" "a by-name forced return resets the tree"
+outN="$("$BIN/ac-tree.sh" return 9-byname --repo "$repoN" 2>&1 || true)"
+assert_contains "$outN" "no such slot 9-byname" "an unknown slot name dies naming it"
+outN="$("$BIN/ac-tree.sh" return sub/1-byname --repo "$repoN" 2>&1 || true)"
+assert_contains "$outN" "no such directory: sub/1-byname" "a name with a separator is a path, never a slot lookup"
+
 pass

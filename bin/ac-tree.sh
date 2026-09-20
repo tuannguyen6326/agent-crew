@@ -15,7 +15,8 @@
 #   ac-tree.sh get    --repo <path> [--id <task>] [--holder <label>]
 #                     [--owner <pid>] [--prefer <path-or-slot-n>]
 #   ac-tree.sh list   --repo <path>
-#   ac-tree.sh return <worktree-path> [--force] [--if-lease-id <id>]
+#   ac-tree.sh return <worktree-path | slot-name> [--repo <path>] [--force]
+#                     [--if-lease-id <id>]
 #   ac-tree.sh prune  --repo <path> [--yes]
 #   ac-tree.sh remove <worktree-path> [--force] [--include-leased]
 #
@@ -35,6 +36,11 @@
 # the append stays a silent no-op until the meta exists - which also keeps a
 # verifier's lease (a distinct id that never gets a crew meta) out of it, and
 # never mints a stray meta file for one.
+#
+# return <slot-name>: the slot id `list` and ac-pool-health.sh print (e.g.
+# `3-repo`), resolved in the pool of --repo, else of the repo the cwd is in.
+# The argument is tried as a path first; a bare name that is no directory is
+# a slot lookup, and anything carrying a path separator stays path-only.
 #
 # return --if-lease-id <id>: bind the return to the acquisition that took the
 # slot. A slot is identified by PATH, and a path is REUSED, so a return that
@@ -926,15 +932,26 @@ list_slots() {
 # --- return ------------------------------------------------------------------
 
 cmd_return() {
-  local wt="" force=0 repo want_lease=""
+  local wt="" force=0 repo="" want_lease=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force=1; shift ;;
       --if-lease-id) want_lease="$2"; shift 2 ;;
+      --repo) repo="$2"; shift 2 ;;
       *) wt="$1"; shift ;;
     esac
   done
-  [ -n "$wt" ] || ac_die "return: worktree path required"
+  [ -n "$wt" ] || ac_die "return: worktree path or slot name required"
+  # A bare slot name (what list/pool-health print) resolves in the pool of
+  # --repo, else of the repo the cwd is in; a separator makes it path-only.
+  if [ ! -d "$wt" ]; then
+    case "$wt" in
+      */*) ac_die "return: no such directory: $wt" ;;
+    esac
+    repo="$(resolve_repo "${repo:-$PWD}")"
+    [ -f "$(slot_meta "$repo" "$wt")" ] || ac_die "return: no such slot $wt in the pool of $repo"
+    wt="$(slot_path "$repo" "$wt")"
+  fi
   [ -d "$wt" ] || ac_die "return: no such directory: $wt"
   wt="$(cd "$wt" && pwd -P)"
   repo="$(ac_repo_root "$wt")" || ac_die "return: not a git worktree: $wt"
