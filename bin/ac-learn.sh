@@ -76,6 +76,13 @@
 # consumed records from `## Pending`, and maintain one canonical fleet-local
 # pointer under `## Distilled`:
 #   - [distilled -> <name>] sources=<n> updated=<date> (...)
+# The archive block is also where a source's QUOTES are checked: a `(by: <id>,
+# first-hand)` bullet names a task whose report.md the machine can open, so
+# each backtick/double-quoted fragment of >= 6 words absent from that report
+# (whitespace-normalized) gets a `quote-unverified: <fragment>` line under the
+# bullet and the land line carries the count (learn_quote_unverified). It is
+# visibility, never a gate: a paraphrase wearing quotes still lands, and a
+# bullet with no openable source is not judged at all.
 # The rewrite is EXACT over every frame this writer can itself emit: outside the
 # consumed records and that pointer row it reproduces the ledger byte for byte -
 # blank separators, and the surplus seam blanks an older ledger accreted,
@@ -952,7 +959,7 @@ cmd_land() {
   [ -n "$cand" ] || ac_die "usage: ac-learn.sh land <candidate-file>"
   [ -f "$cand" ] || ac_die "no candidate file at $cand"
 
-  local kind approved run plan candidate_copy captured
+  local kind approved run plan candidate_copy captured unverified
   kind="$(candidate_header "$cand" kind)"
   approved="$(candidate_header "$cand" approved)"
   [ -n "$approved" ] || ac_die "refusing to land an UNAPPROVED candidate ($cand): no 'approved:' header - the captain gate (Q6) must approve first"
@@ -961,12 +968,14 @@ cmd_land() {
   IFS=$'\t' read -r run plan candidate_copy < <(
     learn_prepare_candidate_plan "$cand" legacy-captain
   )
+  unverified="$(learn_quote_unverified_count "$plan" "$run")"
   ac_maintenance_apply "$plan" "$run" \
     || ac_die "maintenance transaction refused candidate plan at $plan"
   if ! ac_learn_reset "$captured"; then
     ac_warn "landed $kind, but a newer Learning generation exists; its cadence was preserved instead of reset"
   fi
-  printf 'landed %s through maintenance transaction %s\n' "$kind" "$run"
+  printf 'landed %s through maintenance transaction %s%s\n' "$kind" "$run" \
+    "$([ "$unverified" -gt 0 ] && printf ' (quote-unverified: %s)' "$unverified")"
 }
 
 # --- always-loaded staleness: the aging signal --------------------------------
@@ -1642,12 +1651,47 @@ learn_pointer_evidence_check() {
   ac_die "refusing to publish a pointer that contradicts its own evidence: this transaction would add $((claimed - ${was:-0})) source(s) to '[distilled -> $name]' (sources=${was:-0} -> $claimed) while records/learnings-archive/$name.md gains $((declared - had)) (source-count sum $had -> $declared). Nothing written. The two totals may legitimately differ - the pointer aggregates rows that predate the archive - but each land must add the SAME number to both; a duplicated pointer row in records/learnings.md is what inflates the ledger side."
 }
 
+# learn_quote_unverified <bullet> - each backtick/double-quoted fragment of
+# >= 6 words in a `(by: <id>, first-hand)` bullet that is not verbatim
+# (whitespace-normalized) in that task's report.md, one per line. Silent when
+# the bullet names no task or no report resolves: only a source the machine
+# can open is checked, and the answer is visibility in the archive, never a
+# gate - gating a paraphrase is the captain's call.
+learn_quote_unverified() {
+  local bullet="$1" id sub hay frag
+  id="$(printf '%s\n' "$bullet" | sed -n 's/.*(by: \([a-z0-9][a-z0-9-]*\), first-hand).*/\1/p')"
+  [ -n "$id" ] || return 0
+  local -a roots=("$(ac_data_dir)/$id" "$(ac_data_dir)/archive"/*/"$id")
+  sub="$(ac_stage_dir_for_id "$id")"
+  [ -z "$sub" ] || roots+=("$(ac_data_dir)/$sub")
+  hay="$(find "${roots[@]}" -maxdepth 3 -name report.md -type f -exec cat {} + 2>/dev/null \
+    | tr -s '[:space:]' ' ')"
+  [ -n "$hay" ] || return 0
+  while IFS= read -r frag; do
+    frag="$(printf '%s' "${frag:1:${#frag}-2}" | tr -s '[:space:]' ' ')"
+    [ "$(printf '%s\n' "$frag" | wc -w)" -ge 6 ] || continue
+    case "$hay" in *"$frag"*) ;; *) printf '%s\n' "$frag" ;; esac
+  done < <(printf '%s\n' "$bullet" | grep -oE '`[^`]+`|"[^"]+"' || true)
+}
+
+learn_quote_unverified_count() {
+  # learn_quote_unverified_count <plan> <run> - the `quote-unverified:` lines
+  # the plan's append-archive action adds (staged minus live), for the land line.
+  local plan="$1" run="$2" staged target live=0
+  staged="$(jq -r '.actions[] | select(.op == "append-archive") | .staged' "$plan")"
+  [ -n "$staged" ] || { printf '0\n'; return 0; }
+  target="$(jq -r '.actions[] | select(.op == "append-archive") | .target' "$plan")"
+  [ ! -f "$(ac_home)/$target" ] \
+    || live="$(grep -c '^quote-unverified: ' "$(ac_home)/$target" || true)"
+  printf '%s\n' "$(( $(grep -c '^quote-unverified: ' "$run/$staged" || true) - live ))"
+}
+
 learn_archive_stage() {
   # learn_archive_stage <candidate> <skill> <archive> <out> <txid> <gate-rel>
   #                     <candidate-rel>
   local cand="$1" name="$2" archive="$3" out="$4" txid="$5" gate_rel="$6"
   local candidate_rel="$7"
-  local count=0 date hook bullet
+  local count=0 date hook bullet flags
   [ ! -f "$archive" ] || cp "$archive" "$out"
   if [ ! -f "$archive" ]; then
     printf '# Learning Evidence: %s\n' "$name" >"$out"
@@ -1663,6 +1707,8 @@ learn_archive_stage() {
     while IFS=$'\t' read -r date hook bullet; do
       [ -n "$bullet" ] || continue
       printf '### %s\n\n%s\n\n' "$date" "$bullet"
+      flags="$(learn_quote_unverified "$bullet")"
+      [ -z "$flags" ] || printf '%s\n\n' "$(printf '%s\n' "$flags" | sed 's/^/quote-unverified: /')"
     done < <(candidate_section "$cand" sources)
   } >>"$out"
 }
@@ -1978,7 +2024,7 @@ learn_auto_apply_candidates() {
   # honestly answers ask-captain are each an absence of judgment, not a
   # rendered one, and are indistinguishable from each other at this layer.
   local run="$1" cand kind subject prepared plan manifest receipt gate gate_out
-  local decision prep_err rc=0 reason gate_rc
+  local decision prep_err rc=0 reason gate_rc unverified
   local found=0
   gate="${AC_GATE:-$(dirname "$0")/ac-gate.sh}"
   for cand in "$run"/candidate-*.md; do
@@ -2047,12 +2093,14 @@ $gate_out"
     fi
     case "$decision" in
       continue)
+        unverified="$(learn_quote_unverified_count "$plan" "$run")"
         if ! ac_maintenance_apply "$plan" "$run"; then
           ac_warn "continue receipt for $subject became stale or its transaction could not complete; obtain a fresh gate decision"
           rc=1
           continue
         fi
-        printf '  auto-applied: %s\n' "$subject" ;;
+        printf '  auto-applied: %s%s\n' "$subject" \
+          "$([ "$unverified" -gt 0 ] && printf ' (quote-unverified: %s)' "$unverified")" ;;
       revise)
         printf '  revise: %s (sources preserved; no captain question)\n' "$subject" ;;
       ask-captain)
