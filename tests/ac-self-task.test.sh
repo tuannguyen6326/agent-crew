@@ -294,6 +294,25 @@ assert_no_file "$state/lf1.meta" "the refused start leaves no task in flight"
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
   "a 127 driver failure must never reach the pane-open step - that is the fail-OPEN this closes"
 
+# --- the pane OPEN failing: named, and nothing left behind -------------------
+# A stopped herdr server fails the tab create itself. Under errexit that death
+# is SILENT (the chief sees rc=1 and an unrelated pool WARN), and the partial
+# start used to leave its seeded status file on disk - so a retry reads as a
+# task already in flight in every fleet view.
+touch "$FAKE_HERDR/.server-stopped"
+rc=0; err="$("$BIN/ac-self-task.sh" start sdown "$repo" 2>&1 1>/dev/null)" || rc=$?
+rm -f "$FAKE_HERDR/.server-stopped"
+[ "$rc" != 0 ] || fail "a pane that cannot be opened must fail the start"
+assert_contains "$err" "could not open the pane" "the failure NAMES what could not be done"
+assert_contains "$err" "herdr server is not running" \
+  "the backend can say why it refused, so the failure says it"
+assert_contains "$err" "attach the session" "the reason carries the call that fixes it"
+assert_no_file "$state/sdown.status" "the trap removes the status file the start seeded"
+assert_no_file "$state/sdown.meta" "the trap removes the partial meta"
+assert_no_file "$AC_HOME/data/sdown" "a start that never wrote a meta mints no task dir"
+assert_eq "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null | awk -F'\t' '$3=="sdown"{print $2}')" \
+  "available" "the trap gives the lease back"
+
 # --- the knowledge-loop gate at landing --------------------------------------
 # The solo contract owes three writes per slice and no chief asks whether
 # they happened: teardown of a landed kind=self task REFUSES while a lesson,

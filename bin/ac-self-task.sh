@@ -49,10 +49,15 @@
 #      claude -> .claude/CLAUDE.md; codex/opencode/pi/cursor -> AGENTS.md) -
 #      a solo session is not only claude,
 #   3. open the labelled herdr tab and run `tail -f` on the progress log in it -
-#      the pane's ONLY job is to show the chief's own progress,
+#      the pane's ONLY job is to show the chief's own progress. A pane that
+#      cannot be opened FAILS the start saying so, and names the backend's own
+#      reason where the backend has one it can state (a stopped herdr server,
+#      plus the call that fixes it),
 #   4. write the COMPLETE state/<id>.meta with kind=self.
 #   Until step 4 an EXIT trap gives the lease back, reaps the tab and removes
-#   the partial meta, so a failure leaves nothing half-open. The trap covers a
+#   BOTH the partial meta and the status file step 1 seeded - a left-behind
+#   status file reads as a task in flight in every fleet view, and a retry of
+#   the same id would then append to a dead slice's log. The trap covers a
 #   window that is a few syscalls wide - there is no harness to boot here, so
 #   ac-spawn.sh's pre-meta claim (which exists for its AC_SPAWN_SETTLE-wide gap)
 #   would be machinery with no gap to protect.
@@ -193,8 +198,22 @@ self_cleanup() {
   else
     "$bin_dir/ac-tree.sh" return "$worktree" --force >/dev/null 2>&1 || true
   fi
-  rm -f "$meta"
+  rm -f "$meta" "$status_file"
   [ -z "$window" ] || backend_kill_window "$id" || true
+}
+
+self_backend_why() {
+  # The ONE backend fault that names itself: herdr answers `status server` from
+  # the CLIENT when the socket has no server behind it (the same reading
+  # backend_window_alive_herdr's positive-absence arm makes), and a stopped
+  # server is what a chief can actually act on. The fix is attaching the
+  # session - `herdr --help` lists no `server start`, only `server stop`, and
+  # a bare `herdr` launches or attaches the persistent session - so it is the
+  # CAPTAIN's call, never one this script makes for them.
+  [ "$backend" = herdr ] || return 0
+  case "$(herdr_cli status server --json 2>/dev/null | jq -r '.running' 2>/dev/null)" in
+    false) printf ': the herdr server is not running - attach the session (run `herdr`) and try again' ;;
+  esac
 }
 
 # 1. The progress log, before the pane that tails it exists.
@@ -266,7 +285,15 @@ if [ "$backend" = orca ]; then
     || ac_die "orca pane placement failed for $id at $worktree"
   printf '%s\n' "$placed" >"$(ac_pane_file "$id")"
 else
-  AC_WINDOW_FAMILY="" backend_window_new "$id" "$worktree"
+  # The SUBSHELL is what keeps this failure speakable: the driver reports its
+  # own faults with ac_die, which EXITS - in the parent that ends the start
+  # wherever it happened, leaving the chief a bare rc=1 under the pool's WARN
+  # (measured 2026-09-21 against a stopped herdr server). Contained here, the
+  # driver's reason still prints and the start gets to say what it was doing.
+  # Nothing is lost by containing it: the driver's only effect is the pane
+  # handle it writes to disk.
+  ( AC_WINDOW_FAMILY="" backend_window_new "$id" "$worktree" ) \
+    || ac_die "could not open the pane for $id on the $backend backend$(self_backend_why)"
   backend_send_line "$id" "tail -f $(printf '%q' "$status_file")" \
     || ac_warn "the pane may not have started tailing $status_file - peek it (bin/ac-peek.sh $id)"
 fi
