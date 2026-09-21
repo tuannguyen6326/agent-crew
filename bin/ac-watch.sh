@@ -142,6 +142,21 @@
 # prose-only work. Completion-class ONLY: a captain-wait marker parks the pane
 # BLOCKED and is handled by the ask path, never here.
 #
+# JEV NOTE (the System One net, config/jev). On the two quiet-arm wakes -
+# the loud ended: and the soft stale: - and ONLY there, the watcher asks
+# bin/ac-jev.sh the compact-adviser `done` question over the bounded pane
+# tail plus the task's last status line, and appends ` jev=<choice> p=<p>`
+# to the wake PAYLOAD when the knob is `on`. The exit-reason token, the
+# status-log note (declared_wait reads it), the dedup markers and the
+# BLOCKED stamp are untouched, so every consumer of the reason line is
+# unchanged; only the drained record and the inbox show the note. Absent or
+# off is byte-identical (the adapter prints nothing and makes no request);
+# shadow logs the answer for the captain's agreement read and shows nothing;
+# a failed answer is one `jev:` line in the arm log and today's payload.
+# The call sits past the deferral reads and the dedup marker, so it costs
+# one bounded request per quiet EPISODE and nothing while a pane is healthy
+# or busy. It is a net under the marker channel, never a replacement for
+# AC_CAPTAIN_RE or the ac-done.sh push - the agent's own word stays primary.
 # STALE DEFERRAL (watch-stale-defer-on-declared-wait). The stale arm measured
 # idle time alone, and its one dedup (.stale-<id>) is cleared by any cosmetic
 # redraw - so a worker that had SAID why it is quiet, or one parked at a gate on
@@ -1478,6 +1493,30 @@ latest_findings_of() {
 WATCH_ASK_NOTE="needs-decision: pane blocked on an interactive prompt"
 WATCH_ENDED_NOTE="blocked: ended its turn with no report line"
 
+jev_note() {
+  # jev_note <id> <tail> - the System One net on the quiet arm (header: JEV
+  # NOTE): asks bin/ac-jev.sh the compact-adviser `done` question over the
+  # pane tail plus the last status line and prints ` jev=<choice> p=<p>` for
+  # the wake PAYLOAD, or nothing. Nothing is the common case: config/jev off
+  # or absent, shadow (logged, not shown), any failure - the adapter owns the
+  # knob and the fail direction, and its one reason line lands in the arm log
+  # so a failing net is visible without ever changing a wake.
+  local f out err
+  f="$(mktemp "${TMPDIR:-/tmp}/ac-watch-jev.XXXXXX")" || return 0
+  { printf '%s\n' "$2"; printf 'status: %s\n' "$(tail -n 1 "$state_dir/$1.status" 2>/dev/null || true)"; } >"$f"
+  out="$("$(dirname "$0")/ac-jev.sh" ask --site watch --state-file "$f" \
+    --choice done \
+    --instructions "Decide whether the assistant's latest unit of work in this pane is finished." \
+    --criteria finished='Finished and reported, including a question, choice, or blocker fully stated and handed to whoever must act next.' \
+      not_finished='The assistant still owes a next step it can take now.' \
+      unclear='Not enough reliable evidence.' 2>"$f.err")" || out=''
+  err="$(head -n 1 "$f.err" 2>/dev/null || true)"
+  rm -f "$f" "$f.err"
+  [ -z "$err" ] || watch_log "$err ($1)"
+  [ -n "$out" ] || return 0
+  jq -r '.done | " jev=\(.choice) p=\(.p[.choice])"' <<<"$out" 2>/dev/null || true
+}
+
 declared_wait() {
   # declared_wait <id> - print `<reason>\t<dedup key>` when <id>'s silence is
   # EXPLAINED (contract: STALE DEFERRAL in the header), else return 1. The
@@ -2200,7 +2239,7 @@ check_fleet() {
           touch "$state_dir/.stale-$id"
           ac_status_append "$id" "$WATCH_ENDED_NOTE"
           backend_mark_wait "$id" "ended its turn with no report line" 2>/dev/null || true
-          queue_wake ended "$id" "ended its turn ${idle}s ago with no report line - read the pane, the ask may be prose"
+          queue_wake ended "$id" "ended its turn ${idle}s ago with no report line - read the pane, the ask may be prose$(jev_note "$id" "$tail")"
           emit_reason "ended:$id"
           return 0
         else
@@ -2220,7 +2259,7 @@ check_fleet() {
           # everything reaching here is a genuinely-unsupervised quiet pane:
           # today's soft stale:, unchanged.
           touch "$state_dir/.stale-$id"
-          queue_wake stale "$id" "quiet for ${idle}s with no report line"
+          queue_wake stale "$id" "quiet for ${idle}s with no report line$(jev_note "$id" "$tail")"
           emit_reason "stale:$id"
           return 0
         fi
