@@ -3966,6 +3966,7 @@ var CFG_SECTIONS=[
   {id:'parallelism', title:'Parallelism', keys:['room-parallel']},
   {id:'learning', title:'Learning', keys:['learn-every','curate-every']},
   {id:'remote', title:'Remote', keys:['remote-mirror','remote-poll-interval','slack-channel','slack-captain-id']},
+  {id:'systemone', title:'System One', keys:['jev','jev-provider']},
   {id:'identity', title:'Identity', keys:['captain']}
 ];
 // Browser-local appearance controls (palette cycle + background dialog);

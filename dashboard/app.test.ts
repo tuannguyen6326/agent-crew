@@ -969,6 +969,27 @@ test("isEditableConfig passes exactly the editable knobs and rejects everything 
   expect(isEditableConfig("")).toBe(false);
 });
 
+// --- dash-config: the System One knobs (config/jev) ------------------------
+
+test("the System One knobs are editable, constrained, and placed in a config section", () => {
+  // jev: the adapter's off/shadow/on knob - a closed set, so the UI offers a
+  // select and the write can never produce a value bin/ac-jev.sh reads as off
+  // with a reason line.
+  expect(isEditableConfig("jev")).toBe(true);
+  expect(CONFIG_KNOB_META["jev"].options).toEqual(["off", "shadow", "on"]);
+  expect(isEditableConfig("jev-provider")).toBe(true);
+  // Only the gateway providers are offered: the captain ruled the local Laya
+  // sandbox out of the distro (2026-09-21), so the UI never suggests it.
+  expect(CONFIG_KNOB_META["jev-provider"].options).toEqual(["openrouter", "typesafe", "opencode"]);
+  expect(isEditableConfig("jev-laya-port")).toBe(false);
+  // An allowlisted knob with no section is invisible in the UI: every editable
+  // knob must be a key of some CFG_SECTIONS entry in page.ts.
+  const page = readFileSync(new URL("./page.ts", import.meta.url), "utf8");
+  const start = page.indexOf("var CFG_SECTIONS=[");
+  const sections = page.slice(start, page.indexOf("\n];", start));
+  for (const name of EDITABLE_CONFIG) expect(sections.includes(`'${name}'`)).toBe(true);
+});
+
 // --- dash-config: write path + durable receipt -----------------------------
 
 function tmpHome(): string {

@@ -1334,6 +1334,8 @@ export const EDITABLE_CONFIG = [
   "captain",
   "slack-captain-id",
   "slack-channel",
+  "jev",
+  "jev-provider",
 ] as const;
 
 /** True iff `name` is exactly one editable knob (no path, no traversal; never a
@@ -1382,6 +1384,8 @@ export const CONFIG_KNOB_META: Record<(typeof EDITABLE_CONFIG)[number], KnobMeta
   captain: { desc: "How the fleet addresses the human (e.g. TN); absent = captain." },
   "slack-captain-id": { desc: "Slack member id the remote channel treats as the captain." },
   "slack-channel": { desc: "Slack channel id remote orders are read from." },
+  jev: { desc: "System One adapter (bin/ac-jev.sh): off (default) = no request, byte-identical behaviour; shadow = ask and log to state/jev-shadow.jsonl, show nothing; on = also annotate wakes and print proposals.", options: ["off", "shadow", "on"] },
+  "jev-provider": { desc: "Which gateway serves Jev: openrouter (default, the existing providers.json key, model typesafe/jev-1.13), typesafe (direct key), opencode (Zen).", options: ["openrouter", "typesafe", "opencode"] },
 };
 
 export interface ConfigKnob {
