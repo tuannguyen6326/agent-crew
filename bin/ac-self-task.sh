@@ -256,6 +256,9 @@ ac_seed_ports_env "$worktree" "$project_name" >/dev/null \
 # with something to match). The slice id and project are the query. The hits
 # print to the session AND land on the status record - the durable channel
 # the pane tails - so the read survives the start's stdout scrolling away.
+# The record's LAST line is what every fleet view shows as the slice's state
+# (ac-crew-state.sh reports it), so a state line closes the block: hits in the
+# middle of the log read as knowledge, hits at its end read as the status.
 recall="$(printf '{"prompt":"%s %s"}' "$(printf '%s' "$id" | tr '-' ' ')" "$project_name" \
   | "$bin_dir/ac-prompt-recall.sh" 2>/dev/null || true)"
 [ -z "$recall" ] || {
@@ -263,6 +266,7 @@ recall="$(printf '{"prompt":"%s %s"}' "$(printf '%s' "$id" | tr '-' ' ')" "$proj
   printf '%s\n' "$recall" | sed -n 's/^- /brain: /p' | while IFS= read -r line; do
     ac_status_append "$id" "$line" || true
   done
+  ac_status_append "$id" "working: fleet memory read, opening the pane"
 }
 
 # 3. The pane. Refused rather than doubled when the backend cannot answer for an
