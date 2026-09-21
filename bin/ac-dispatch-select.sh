@@ -15,6 +15,17 @@
 #   ac-dispatch-select.sh --pane <qa|gate|codereview|roomchief> --list
 #   ac-dispatch-select.sh --pane <qa|gate|codereview|roomchief> --rule <number|default>
 #   ac-dispatch-select.sh --pane qa --receipt <number|default>
+#   ac-dispatch-select.sh --propose <brief-file>   # `propose: rule=<n> p=<p> state_sha=<sha>`
+#
+# --propose is the ONE place prose is judged by a MODEL, and it judges
+# nothing: it asks bin/ac-jev.sh (config/jev - off by default, then shadow,
+# then on) one choice question whose options are the rule numbers and whose
+# criteria are the `when` clauses verbatim, with the brief as the state, and
+# prints one `propose:` line only under `on`. The orchestrator still reads
+# --list and passes --rule itself; a proposal is a hint beside the list,
+# never a resolution, so the dispatcher's own contract (below) stands: it
+# never evaluates prose. `state_sha` is the key `ac-jev.sh label` takes to
+# record the rule the orchestrator actually chose.
 #
 # --pane without a trailing operation is the JUDGMENT-FREE half of this
 # resolver: a caller with no selector to offer. Four kinds may be ROUTED
@@ -409,5 +420,23 @@ case "${1:-}" in
       fallback
     fi
     ;;
-  *) ac_die "usage: ac-dispatch-select.sh [--list | --rule <n> | --pane <kind> [--list|--rule <selection>|--receipt <selection>]]" ;;
+  --propose)
+    brief="${2:-}"
+    [ -n "$brief" ] && [ -f "$brief" ] || ac_die "usage: ac-dispatch-select.sh --propose <brief-file>"
+    [ -f "$cfg" ] || ac_die "no dispatch config at $cfg"
+    ac_require jq
+    jq -e . "$cfg" >/dev/null 2>&1 || ac_die "invalid JSON: $cfg"
+    crit=()
+    while IFS=$'\t' read -r n when; do crit+=("$n=$when"); done \
+      < <(jq -r '.rules // [] | to_entries[] | "\(.key + 1)\t\(.value.when)"' "$cfg")
+    [ "${#crit[@]}" -gt 0 ] || ac_die "no rules in $cfg"
+    out="$("$(dirname "$0")/ac-jev.sh" ask --site dispatch --state-file "$brief" --choice rule \
+      --instructions 'Which dispatch rule describes the task in the state? Each option is one rule'"'"'s when clause.' \
+      --criteria "${crit[@]}")"
+    [ -n "$out" ] || exit 0
+    printf 'propose: rule=%s p=%s state_sha=%s\n' \
+      "$(jq -r '.rule.choice' <<<"$out")" "$(jq -r '.rule | .p[.choice]' <<<"$out")" \
+      "$("$(dirname "$0")/ac-jev.sh" sha --state-file "$brief")"
+    ;;
+  *) ac_die "usage: ac-dispatch-select.sh [--list | --rule <n> | --propose <brief-file> | --pane <kind> [--list|--rule <selection>|--receipt <selection>]]" ;;
 esac

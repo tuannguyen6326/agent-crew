@@ -195,4 +195,7 @@ assert_contains "$st" "provider=openrouter" "status provider"
 assert_contains "$st" "key=present" "status key"
 assert_contains "$st" "$log" "status log path"
 
+# 12. sha is the state_sha the records carry, computed by the adapter alone.
+assert_eq "$("$BIN/ac-jev.sh" sha --state-file "$TMP/state.txt")" "$(jq -r '.state_sha' <"$log" | tail -n1)" "sha matches the record"
+
 pass

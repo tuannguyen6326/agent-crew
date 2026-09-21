@@ -355,4 +355,52 @@ lanes_cfg '{"lanes": [{"harness": "codex", "model": "gpt-5.6-sol"}, {"harness": 
 assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview-scout --lanes | wc -l | tr -d ' ')" "2" \
   "same harness, different model is not a duplicate"
 
+# --- --propose: the System One rule proposer (config/jev) ------------------
+# The chief still judges the prose `when` clauses and passes --rule; --propose
+# only prints what the model would pick, and only under config/jev=on.
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{"rules": [
+  {"when": "A trivial mechanical edit: rote rename, typo, one-line fix.", "use": {"harness": "claude", "model": "haiku"}},
+  {"when": "A standard implementation with clear requirements, an accepted plan exists.", "use": {"harness": "claude", "model": "sonnet"}}
+]}
+EOF
+mkdir -p "$TMP/stubbin"
+cat >"$TMP/stubbin/curl" <<'EOF'
+#!/usr/bin/env bash
+out=""; data=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; -d) data="$2"; shift ;; esac; shift; done
+cat "${data#@}" >"$FAKE_BODY"
+n="$(cat "$FAKE_HITS" 2>/dev/null || printf 0)"; printf '%s\n' "$((n + 1))" >"$FAKE_HITS"
+cat "$FAKE_RESP" >"$out"
+printf '200'
+EOF
+chmod +x "$TMP/stubbin/curl"
+export PATH="$TMP/stubbin:$PATH" FAKE_BODY="$TMP/body" FAKE_HITS="$TMP/hits" FAKE_RESP="$TMP/resp"
+printf '%s\n' '{"model":"m","answers":{"rule":{"type":"choice","choice":"2","probabilities":{"1":0.19,"2":0.81},"confidence":0.7}},"usage":{"input_tokens":1,"output_tokens":0}}' >"$FAKE_RESP"
+printf '{"openrouter":{"api_key":"sk-or-TEST"}}\n' >"$AC_HOME/config/providers.json"
+printf '# Task\nImplement the adapter per the accepted spec; multi-file, plan exists.\n' >"$TMP/brief.md"
+hits() { cat "$FAKE_HITS" 2>/dev/null || printf 0; }
+
+out="$("$BIN/ac-dispatch-select.sh" --propose "$TMP/brief.md" 2>&1)" || fail "propose: absent knob must exit 0"
+assert_eq "$out" "" "propose: absent knob prints nothing"
+assert_eq "$(hits)" "0" "propose: absent knob makes no request"
+
+printf 'shadow\n' >"$AC_HOME/config/jev"
+out="$("$BIN/ac-dispatch-select.sh" --propose "$TMP/brief.md" 2>/dev/null)"
+assert_eq "$out" "" "propose: shadow prints nothing"
+assert_eq "$(hits)" "1" "propose: shadow makes one request"
+assert_eq "$(jq -r '.questions.rule.criteria["1"]' "$FAKE_BODY")" "A trivial mechanical edit: rote rename, typo, one-line fix." "propose: rule 1 when clause is the criterion"
+assert_eq "$(jq -r '.questions.rule.criteria | keys | join(",")' "$FAKE_BODY")" "1,2" "propose: one option per rule"
+assert_contains "$(jq -r '.state' "$FAKE_BODY")" "Implement the adapter per the accepted spec" "propose: the brief is the state"
+assert_eq "$(jq -r '.site' "$AC_HOME/state/jev-shadow.jsonl")" "dispatch" "propose: shadow record site"
+
+printf 'on\n' >"$AC_HOME/config/jev"
+sha="$("$BIN/ac-jev.sh" sha --state-file "$TMP/brief.md")"
+assert_eq "$("$BIN/ac-dispatch-select.sh" --propose "$TMP/brief.md" 2>/dev/null)" "propose: rule=2 p=0.81 state_sha=$sha" \
+  "propose: on prints the picked rule, its probability and the label key"
+assert_fails "$BIN/ac-dispatch-select.sh" --propose
+assert_fails "$BIN/ac-dispatch-select.sh" --propose "$TMP/nope.md"
+rm -f "$AC_HOME/config/crew-dispatch.json"
+assert_fails "$BIN/ac-dispatch-select.sh" --propose "$TMP/brief.md"
+
 pass
