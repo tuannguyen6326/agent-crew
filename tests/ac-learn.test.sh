@@ -816,7 +816,10 @@ cat >"$FAKE_RESP" <<'EOF'
  "owner_2":{"type":"choice","choice":"learnings","probabilities":{"backlog":0,"room":0,"learnings":0.9,"captain":0,"projects":0,"repo_knowledge":0.05,"project_docs":0,"distro_task":0.05,"none":0},"confidence":0.85},
  "dup_2":{"type":"choice","choice":"read-the-room-first","probabilities":{"new":0.1,"unclear":0.02,"read-the-room-first":0.88,"prove-tests-bite":0},"confidence":0.8},
  "owner_3":{"type":"choice","choice":"none","probabilities":{"backlog":0,"room":0,"learnings":0,"captain":0,"projects":0,"repo_knowledge":0,"project_docs":0,"distro_task":0,"none":1},"confidence":1},
- "dup_3":{"type":"choice","choice":"new","probabilities":{"new":0.6,"unclear":0.4,"read-the-room-first":0,"prove-tests-bite":0},"confidence":0.3}
+ "dup_3":{"type":"choice","choice":"new","probabilities":{"new":0.6,"unclear":0.4,"read-the-room-first":0,"prove-tests-bite":0},"confidence":0.3},
+ "worth_1":{"type":"choice","choice":"durable","probabilities":{"durable":0.9,"routine":0.05,"unclear":0.05},"confidence":0.85},
+ "worth_2":{"type":"choice","choice":"routine","probabilities":{"durable":0.2,"routine":0.75,"unclear":0.05},"confidence":0.7},
+ "worth_3":{"type":"choice","choice":"unclear","probabilities":{"durable":0.3,"routine":0.3,"unclear":0.4},"confidence":0.1}
 },"usage":{"input_tokens":1,"output_tokens":0}}
 EOF
 printf '{"openrouter":{"api_key":"sk-or-TEST"}}\n' >"$AC_HOME/config/providers.json"
@@ -836,7 +839,8 @@ printf 'shadow\n' >"$AC_HOME/config/jev"
 out="$(printf '%s\n' "$lines" | "$BIN/ac-learn.sh" route-propose 2>/dev/null)"
 assert_eq "$out" "" "route-propose: shadow prints nothing"
 assert_eq "$(rphits)" "1" "route-propose: one request for every line"
-assert_eq "$(jq -r '.questions | keys | join(",")' "$FAKE_BODY")" "dup_1,dup_2,dup_3,owner_1,owner_2,owner_3" "route-propose: two questions per line"
+assert_eq "$(jq -r '.questions | keys | join(",")' "$FAKE_BODY")" "dup_1,dup_2,dup_3,owner_1,owner_2,owner_3,worth_1,worth_2,worth_3" "route-propose: three questions per line"
+assert_eq "$(jq -r '.questions.worth_1.criteria | keys | join(",")' "$FAKE_BODY")" "durable,routine,unclear" "route-propose: the worth verdicts"
 assert_eq "$(jq -r '.questions.owner_1.criteria | keys | length' "$FAKE_BODY")" "9" "route-propose: nine owners"
 assert_eq "$(jq -r '.questions.dup_2.criteria | keys | join(",")' "$FAKE_BODY")" "new,prove-tests-bite,read-the-room-first,unclear" "route-propose: dup options are new, unclear and every learned entry"
 assert_contains "$(jq -r '.questions.dup_2.criteria["read-the-room-first"]' "$FAKE_BODY")" "Read the family room before you review" "route-propose: an entry's body is its criterion"
@@ -845,9 +849,9 @@ assert_eq "$(tail -n1 "$AC_HOME/state/jev-shadow.jsonl" | jq -r '.site')" "learn
 
 printf 'on\n' >"$AC_HOME/config/jev"
 out="$(printf '%s\n' "$lines" | "$BIN/ac-learn.sh" route-propose 2>/dev/null)"
-assert_eq "$(printf '%s\n' "$out" | sed -n 1p)" "1	owner=repo_knowledge p=0.93	dup-of=none" "route-propose: a repo fact routes to repo-knowledge, new"
-assert_eq "$(printf '%s\n' "$out" | sed -n 2p)" "2	owner=learnings p=0.9	dup-of=read-the-room-first p=0.88" "route-propose: a duplicate lesson names the entry it repeats"
-assert_eq "$(printf '%s\n' "$out" | sed -n 3p)" "3	owner=none p=1	dup-of=none" "route-propose: noise routes nowhere"
+assert_eq "$(printf '%s\n' "$out" | sed -n 1p)" "1	owner=repo_knowledge p=0.93	dup-of=none	worth=durable p=0.9" "route-propose: a repo fact routes to repo-knowledge, new, durable"
+assert_eq "$(printf '%s\n' "$out" | sed -n 2p)" "2	owner=learnings p=0.9	dup-of=read-the-room-first p=0.88	worth=routine p=0.75" "route-propose: a duplicate lesson names the entry it repeats and its worth"
+assert_eq "$(printf '%s\n' "$out" | sed -n 3p)" "3	owner=none p=1	dup-of=none	worth=unclear p=0.4" "route-propose: noise routes nowhere; unclear worth is printed, never hidden"
 assert_contains "$(printf '%s\n' "$out" | sed -n 4p)" "state_sha=" "route-propose: the label key closes the output"
 assert_eq "$(grep -c . "$AC_HOME/records/learnings.md" 2>/dev/null || printf 0)" "$(grep -c . "$AC_HOME/records/learnings.md" 2>/dev/null || printf 0)" "route-propose: never writes the ledger"
 rm -f "$AC_HOME/config/jev"

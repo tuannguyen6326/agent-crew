@@ -185,12 +185,22 @@
 # new / unclear / every `## <slug>` entry of the always-loaded
 # CREWMATE-learned.md - the transaction refuses only a duplicate NAME
 # (cmd_note, the 4096-byte budget), this asks whether the LESSON is already
-# there. Under on it prints one TAB-separated line per input line,
-# `<n>\towner=<o> p=<p>\tdup-of=<slug|none>[ p=<p>]`, then `state_sha=<sha>`
-# for `ac-jev.sh label --site learn-route`; off or absent prints nothing and
-# makes no request; shadow logs only. It proposes and writes no ledger: the
-# chief still runs ac-know.sh add and ac-learn.sh note with its own hands,
-# and a repo fact is VERIFIED by a cited act, never by this answer.
+# there - and `worth`: durable (the next crewmate would get it wrong
+# untold) / routine (a habit every crewmate is already told) / unclear,
+# because every Pending line is first-hand evidence the next distill pays
+# to read, and a routine one is a cost, not a gift. Under on it prints one
+# TAB-separated line per input line,
+# `<n>\towner=<o> p=<p>\tdup-of=<slug|none>[ p=<p>]\tworth=<w> p=<p>`, then
+# `state_sha=<sha>` for `ac-jev.sh label --site learn-route`; off or absent
+# prints nothing and makes no request; shadow logs only. It proposes and
+# writes no ledger: the chief still runs ac-know.sh add and ac-learn.sh note
+# with its own hands, and a repo fact is VERIFIED by a cited act, never by
+# this answer. WHEN A CHIEF LETS THIS GATE THE PEN (a captain standing rule
+# in records/captain.md, since AGENTS.md folds `## Lessons` VERBATIM), the
+# fail direction is toward WRITING: only owner=none, dup-of=<entry>, or
+# worth=routine drops a line, `unclear` on any question keeps it, and every
+# dropped line is receipted to the room - a lost lesson is lost for good, a
+# spare line costs one distill read.
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-backend.sh"   # the suite gate opens the run its own pane
@@ -1191,13 +1201,14 @@ cmd_reinforce() {
 cmd_route_propose() {
   # route-propose - the System One route proposer (header: ROUTE-PROPOSE).
   # Stdin: candidate lines, one per line (a report's `## Lessons` bullets at
-  # landing, a /debrief's candidates). Two questions per line in ONE request
+  # landing, a /debrief's candidates). Three questions per line in ONE request
   # to bin/ac-jev.sh: `owner` over the nine debrief destinations
-  # (.agents/skills/debrief/SKILL.md route table) and `dup` over new /
-  # unclear / every `## <slug>` entry of the always-loaded CREWMATE-learned.md
-  # (the transaction refuses only a duplicate NAME; this asks about the
-  # LESSON). Under on: one TAB-separated line per input line,
-  # `<n>\towner=<o> p=<p>\tdup-of=<slug|none>[ p=<p>]`, then `state_sha=<sha>`
+  # (.agents/skills/debrief/SKILL.md route table), `dup` over new / unclear /
+  # every `## <slug>` entry of the always-loaded CREWMATE-learned.md (the
+  # transaction refuses only a duplicate NAME; this asks about the LESSON),
+  # and `worth` - durable / routine / unclear - whether the line earns a
+  # Pending line at all. Under on: one TAB-separated line per input line,
+  # `<n>\towner=<o> p=<p>\tdup-of=<slug|none>[ p=<p>]\tworth=<w> p=<p>`, then `state_sha=<sha>`
   # for `ac-jev.sh label --site learn-route`. Writes no ledger, ever: the
   # chief still runs ac-know.sh add / ac-learn.sh note with its own hands.
   local lines learned state n line slug body out
@@ -1232,16 +1243,21 @@ cmd_route_propose() {
           distro_task='A generalizable agent-crew behavior change that should become a tracked task.' \
           none='Nothing durable: status chatter, thanks, noise.' \
         --choice "dup_$i" --instructions "Does candidate line [$i] restate an existing always-loaded lesson? Pick the entry it repeats, or new." \
-        --criteria "${dup[@]}")
+        --criteria "${dup[@]}" \
+        --choice "worth_$i" --instructions "Is candidate line [$i] worth a line in the fleet's learning ledger, which the next Learning distill reads as first-hand evidence?" \
+        --criteria durable='Durable: something the next crewmate would get wrong without being told, specific to a mechanism, a condition, or a tool.' \
+          routine='Routine: a good habit every crewmate is already told or would do unprompted; true but not worth a ledger line.' \
+          unclear='Not enough reliable evidence.')
   done <<<"$lines"
   out="$("$(dirname "$0")/ac-jev.sh" ask --site learn-route --state-file "$state" "${q[@]}")" || out=''
   if [ -n "$out" ]; then
     for n in $(seq 1 "$i"); do
-      jq -r --arg o "owner_$n" --arg d "dup_$n" --arg n "$n" '
-        .[$o] as $ow | .[$d] as $du
+      jq -r --arg o "owner_$n" --arg d "dup_$n" --arg w "worth_$n" --arg n "$n" '
+        .[$o] as $ow | .[$d] as $du | .[$w] as $wo
         | $n + "\towner=" + $ow.choice + " p=" + ($ow.p[$ow.choice] | tostring)
           + "\tdup-of=" + (if $du.choice == "new" or $du.choice == "unclear" then "none"
-                             else $du.choice + " p=" + ($du.p[$du.choice] | tostring) end)' <<<"$out"
+                             else $du.choice + " p=" + ($du.p[$du.choice] | tostring) end)
+          + "\tworth=" + $wo.choice + " p=" + ($wo.p[$wo.choice] | tostring)' <<<"$out"
     done
     printf 'state_sha=%s\n' "$("$(dirname "$0")/ac-jev.sh" sha --state-file "$state")"
   fi
