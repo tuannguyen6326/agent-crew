@@ -859,4 +859,32 @@ err="$(run_backend tmux 'backend_target x1' 2>&1 || true)"
 assert_contains "$err" "valid backends: herdr, orca" "rejection names the valid backend set"
 assert_fails run_backend screen 'backend_target x1'
 
+# --- the startup sequence is bounded on EVERY arm -----------------------------
+# A dialog the driver answers but that does not clear (a key the screen ignores,
+# a prompt that redraws) used to spin the sequence forever: the answered arm
+# jumped the budget check at the loop's foot. It was unreachable on herdr while
+# the driver named nothing; naming dialogs makes it the ordinary path, so the
+# bound is asserted, not assumed. A regression HANGS rather than fails, so this
+# runs the sequence detached and kills it.
+seqlog="$TMP/seq-answers"
+: >"$seqlog"
+( run_backend herdr '
+    a() { printf "x\n" >>"'"$seqlog"'"; return 0; }   # answered, never clears
+    k() { :; }
+    u() { return 0; }
+    ac_startup_dialogs a k u p1 codex
+  ' >/dev/null 2>&1 ) &
+seqpid=$!
+waited=0
+while kill -0 "$seqpid" 2>/dev/null && [ "$waited" -lt 8 ]; do sleep 1; waited=$((waited + 1)); done
+if kill -0 "$seqpid" 2>/dev/null; then
+  kill -9 "$seqpid" 2>/dev/null || true
+  fail "an answered dialog that never clears must not loop past the budget"
+fi
+wait "$seqpid" 2>/dev/null || true
+answers="$(wc -l <"$seqlog" | tr -d ' ')"
+[ "$answers" -ge 1 ] || fail "the sequence must answer at least once before giving up"
+[ "$answers" -le 4 ] \
+  || fail "answers must be bounded by AC_STARTUP_DIALOG_BUDGET (2 here); got $answers"
+
 pass

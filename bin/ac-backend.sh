@@ -1394,16 +1394,20 @@ ac_startup_dialogs() {
   # gets the registry's blind key exactly once (ac_harness_startup_key -
   # codex's trust dialog wants Enter); nothing pending ends the sequence as
   # soon as the harness is observed UP or SHELL (the came-up and ready gates
-  # own what follows), and only an UNOBSERVABLE pane keeps it polling, to
-  # the budget. A pane neither backend can classify answers 3 on the first
-  # call: the blind key, once, and out.
+  # own what follows). A pane neither backend can classify answers 3 on the
+  # first call: the blind key, once, and out.
+  # EVERY waiting arm spends the SAME budget, answered included: a dialog the
+  # driver answers but that does not clear (a key the screen ignores, a prompt
+  # that redraws) is not progress, and an unbounded answered arm would press
+  # that key once a second for the life of the spawn.
   local answer="$1" send="$2" upfn="$3" h="$4" harness="$5"
   local key rc up i=0 pressed=0 budget="${AC_STARTUP_DIALOG_BUDGET:-15}"
   key="$(ac_harness_startup_key "$harness")"
   while :; do
     rc=0; "$answer" "$h" || rc=$?
     case "$rc" in
-      0) sleep 1; continue ;;
+      0) [ "$i" -lt "$budget" ] || return 0   # answering is not progress on its own
+         sleep 1; i=$((i + 1)); continue ;;
       1) up=0; "$upfn" "$h" || up=$?
          [ "$up" = 2 ] || return 0 ;;
       2) if [ -n "$key" ] && [ "$pressed" = 0 ]; then
