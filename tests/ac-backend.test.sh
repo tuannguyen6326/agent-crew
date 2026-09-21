@@ -504,6 +504,49 @@ assert_contains "$(grep -e 'tab focus tK1' -e 'pane send-keys pK1' "$FAKE_HERDR/
   "tab focus tK1" "send_key focuses the tab BEFORE the key, never after"
 assert_contains "$(cat "$FAKE_HERDR/log")" "pane send-keys pK1 enter" "the key still reaches the pane"
 
+# --- named startup dialogs (contract: ac-backend.sh, backend_dialog_answer) ---------
+# herdr 0.9.1 NAMES the dialog a pane is parked on (`agent explain --json` ->
+# matched_rule.id + state), so the driver answers the ones it knows a measured
+# key for and reports the rest rather than guessing a keystroke.
+
+printf 'pD1\n' >"$FAKE_HERDR/tabs/tD1"; : >"$FAKE_HERDR/panes/pD1.buf"
+printf 'tD1\n' >"$FAKE_HERDR/panes/pD1.tab"
+printf 'pD1 tD1\n' >"$AC_HOME/state/.pane-sd1"
+printf 'blocked startup_update\n' >"$FAKE_HERDR/panes/pD1.explain"
+: >"$FAKE_HERDR/log"
+run_backend herdr 'backend_dialog_answer sd1' || fail "a named dialog with a known key is answered (0)"
+assert_contains "$(cat "$FAKE_HERDR/log")" "pane send-keys pD1 2" \
+  "codex's update prompt is answered with 2 (Skip until next version)"
+case "$(cat "$FAKE_HERDR/log")" in
+  *"pane send-keys pD1 enter"*) fail "a bare Enter on the update prompt is 'Update now' - it runs the upgrade" ;;
+esac
+
+# A blocked dialog the driver knows no measured key for: reported (2), never
+# guessed at - the caller falls back to the registry's blind key.
+printf 'blocked trust_directory\n' >"$FAKE_HERDR/panes/pD1.explain"
+: >"$FAKE_HERDR/log"
+rc=0; run_backend herdr 'backend_dialog_answer_pane pD1' || rc=$?
+assert_eq "$rc" "2" "a blocked rule with no measured key is reported (2)"
+case "$(cat "$FAKE_HERDR/log")" in
+  *"send-keys"*) fail "an unmapped dialog must receive no keystroke from the driver" ;;
+esac
+
+# Not blocked at all: nothing is pending (1), whatever rule matched.
+printf 'idle osc_title_idle\n' >"$FAKE_HERDR/panes/pD1.explain"
+rc=0; run_backend herdr 'backend_dialog_answer_pane pD1' || rc=$?
+assert_eq "$rc" "1" "an idle pane has no dialog pending (1)"
+printf 'working screen_working_fallback\n' >"$FAKE_HERDR/panes/pD1.explain"
+rc=0; run_backend herdr 'backend_dialog_answer_pane pD1' || rc=$?
+assert_eq "$rc" "1" "a working pane has no dialog pending (1)"
+
+# explain cannot answer (no agent in the pane, or a binary too old to carry the
+# verb): UNOBSERVABLE (3), which is the pre-0.9.1 behaviour - the blind key stays.
+rm -f "$FAKE_HERDR/panes/pD1.explain"
+rc=0; run_backend herdr 'backend_dialog_answer_pane pD1' || rc=$?
+assert_eq "$rc" "3" "a failed explain is unobservable (3), never 'no dialog'"
+rc=0; run_backend herdr 'backend_dialog_answer_pane ""' || rc=$?
+assert_eq "$rc" "3" "an empty pane id is unobservable (3)"
+
 # --- captain-wait stamp: mark/clear, ask-reader suppression, kill sweep --------------
 # Contract: ac-backend.sh CAPTAIN-WAIT STAMP.
 

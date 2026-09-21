@@ -320,7 +320,7 @@ rc=0; run_backend orca 'backend_dialog_answer o1' || rc=$?
 assert_eq "$rc" "3" "an unreachable backend is unobservable (3)"
 rm -f "$FAKE_ORCA/.unreachable"
 rc=0; run_backend herdr 'backend_dialog_answer_pane p1' || rc=$?
-assert_eq "$rc" "3" "herdr names no dialog: always unobservable (3), the blind key stays"
+assert_eq "$rc" "3" "a pane herdr hosts no agent in is unobservable (3), the blind key stays"
 
 # --- the startup SEQUENCE both launchers run ------------------------------------
 # Named dialogs are answered as they appear (update, then hooks review), the
@@ -344,8 +344,8 @@ assert_eq "$(grep -c -- '--enter' "$FAKE_ORCA/log")" "1" "an unnamed dialog gets
 : >"$FAKE_ORCA/log"
 run_backend orca 'backend_startup_dialogs o1 claude'
 case "$(cat "$FAKE_ORCA/log")" in *"terminal send"*) fail "claude with nothing pending must receive no keystroke" ;; esac
-# herdr: the blind key right away (pre-contract behaviour), and only for a
-# harness whose registry names one.
+# herdr on a pane it can classify nothing in: the blind key right away, and
+# only for a harness whose registry names one.
 : >"$FAKE_HERDR/log"
 run_backend herdr 'backend_startup_dialogs_pane p1 codex'
 assert_contains "$(cat "$FAKE_HERDR/log")" "send-keys p1 enter" "herdr presses the registry key at once"

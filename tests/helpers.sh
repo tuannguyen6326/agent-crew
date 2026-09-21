@@ -444,6 +444,17 @@ hold_close() {
 #                                 CREATE a tab - i.e. the one where proceeding
 #                                 past a window-collision guard really does open
 #                                 a second window
+#   $FAKE_HERDR/panes/<p>.explain  "<state> [<rule-id>]" - what `agent explain
+#                                 --json` reports for this pane: herdr 0.9.1's
+#                                 own screen classifier, which NAMES the
+#                                 detection rule that matched (matched_rule.id,
+#                                 e.g. codex's `startup_update`). Absent means
+#                                 herdr knows no agent in that pane, and the
+#                                 call then FAILS with its agent_not_found
+#                                 envelope on stderr, exit 1 - measured against
+#                                 herdr 0.9.1 on a bare shell pane. A binary
+#                                 too old to carry the verb fails too (usage
+#                                 error), which the driver reads the same way
 #   $FAKE_HERDR/panes/<p>.status  agent_status served by `pane get`
 #                                 (tests write `blocked` to simulate an ask)
 #   $FAKE_HERDR/.pane-idle-by-default  seeds EVERY new pane's `.status` with
@@ -706,6 +717,20 @@ case "${1:-} ${2:-}" in
         printf '\n' >>"$d/panes/$p.buf"
         [ -f "$d/.die-on-bare-enter" ] && : >"$d/panes/$p.dead"
       fi
+    fi
+    exit 0 ;;
+  "agent explain")
+    p="$3"
+    [ -f "$d/panes/$p.explain" ] || {
+      printf '{"error":{"code":"agent_not_found","message":"agent target %s not found"},"id":"cli:agent:explain"}\n' \
+        "$p" >&2
+      exit 1; }
+    read -r st rule <"$d/panes/$p.explain" || true
+    if [ -n "${rule:-}" ]; then
+      printf '{"state":"%s","matched_rule":{"id":"%s","priority":950,"region":"bottom_non_empty_lines(20)","state":"%s"},"fallback_reason":null}\n' \
+        "$st" "$rule" "$st"
+    else
+      printf '{"state":"%s","matched_rule":null,"fallback_reason":"default_known_agent_idle_fallback"}\n' "$st"
     fi
     exit 0 ;;
 esac

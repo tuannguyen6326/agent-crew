@@ -1174,9 +1174,10 @@ deliver_kickoff() {
   # backend_startup_dialogs, contract in ac-backend.sh's header). Dialogs the
   # backend can NAME are answered with the key safe on each (orca names
   # codex's update and hooks-review prompts, where the registry's blind Enter
-  # would run the upgrade - the measured incident); an unnamed one gets that
+  # would run the upgrade - the measured incident; herdr names its own rules
+  # through `agent explain`); one the driver cannot answer by name gets that
   # blind key once (ac_harness_startup_key: codex's trust dialog, never the
-  # prompt); a backend that names none (herdr) presses it right away. It is
+  # prompt). It is
   # the first thing typed at a BUILT-IN pane, and a CUSTOM launch-<harness>
   # template gets none, its TUI being unknown - that suppression is this
   # caller's, not the registry's. It runs BEFORE the came-up gate on purpose:

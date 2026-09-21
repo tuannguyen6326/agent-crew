@@ -65,27 +65,29 @@
 #                                     stays UNVERIFIED for the same reason.
 #   backend_dialog_answer <id>        answer the STARTUP DIALOG the pane is
 #   backend_dialog_answer_pane <pane-id>
-#                                     parked on, BY NAME, where the backend
-#                                     can name it (orca: agentWait.reason).
+#                                     parked on, BY NAME - both backends name
+#                                     it now (orca: agentWait.reason; herdr
+#                                     0.9.1+: `agent explain`'s matched_rule).
 #                                     Four states: 0 answered one dialog
 #                                     (another may follow - call again),
-#                                     1 nothing pending, 2 a dialog the
-#                                     driver cannot name (the caller falls
-#                                     back to the registry's blind key),
-#                                     3 unobservable (herdr always: it names
-#                                     none, so the blind key stays). Exists
-#                                     because the blind key is WRONG on some
-#                                     dialogs: codex's update prompt takes
-#                                     Enter as "Update now" and runs the
-#                                     upgrade (measured incident).
+#                                     1 nothing pending, 2 a named dialog the
+#                                     driver knows no MEASURED key for (the
+#                                     caller falls back to the registry's
+#                                     blind key), 3 unobservable - the pane
+#                                     could not be classified at all, so the
+#                                     blind key stays. Exists because the
+#                                     blind key is WRONG on some dialogs:
+#                                     codex's update prompt takes Enter as
+#                                     "Update now" and runs the upgrade
+#                                     (measured incident).
 #   backend_startup_dialogs <id> <harness>
 #   backend_startup_dialogs_pane <pane-id> <harness>
 #                                     the startup sequence every launcher
 #                                     runs before its composer-ready wait:
 #                                     answer named dialogs as they appear,
 #                                     press the registry's blind key once
-#                                     for an unnamed one (or right away on a
-#                                     backend that names none), stop once
+#                                     for one the driver cannot answer by
+#                                     name, stop once
 #                                     the harness is observed up or down,
 #                                     bounded by AC_STARTUP_DIALOG_BUDGET.
 #   backend_harness_up <id>           did a harness actually COME UP in the
@@ -1261,13 +1263,32 @@ backend_agent_idle_herdr() {
   backend_agent_idle_pane_herdr "$(herdr_pane "$1")"
 }
 
-backend_dialog_answer_herdr()      { return 3; }
+backend_dialog_answer_herdr()      { backend_dialog_answer_pane_herdr "$(herdr_pane "$1")"; }
 backend_dialog_answer_pane_herdr() {
-  # herdr names no dialog (pane get carries agent_status only, and a
-  # startup dialog reads as a working TUI there), so every call is
-  # UNOBSERVABLE (3): the caller keeps the registry's blind key, exactly
-  # the pre-contract behaviour on this backend.
-  return 3
+  # STARTUP DIALOGS BY NAME (contract: this file's header, backend_dialog_answer).
+  # herdr 0.9.1 classifies the screen against its own detection manifests and
+  # NAMES the rule that matched (`agent explain --json`: matched_rule.id plus
+  # the state that rule asserts) - `pane get`'s agent_status alone never could.
+  # Only a rule whose safe key is MEASURED gets a keystroke: codex's
+  # `startup_update` takes 2 ("Skip until next version"), the key orca measured
+  # on that SAME codex prompt (bin/ac-backend-orca.sh, codex-update-prompt) -
+  # one external actor, two backends watching it. The blind Enter is exactly
+  # wrong there: its highlighted default is "Update now", which ran the upgrade
+  # and left a crewmate mid-install. Every other blocked rule is reported
+  # unknown (2) so the caller keeps the registry's blind key - a guessed
+  # keystroke is worse than the key the caller already had.
+  local pane="$1" out state rule
+  [ -n "$pane" ] || return 3
+  out="$(herdr_cli agent explain "$pane" --json 2>/dev/null)" || return 3
+  state="$(jq -r '.state // empty' <<<"$out" 2>/dev/null)"
+  [ -n "$state" ] || return 3
+  [ "$state" = blocked ] || return 1
+  rule="$(jq -r '.matched_rule.id // empty' <<<"$out" 2>/dev/null)"
+  case "$rule" in
+    startup_update) ;;
+    *) return 2 ;;
+  esac
+  backend_send_key_pane_herdr "$pane" 2 || return 3
 }
 
 backend_harness_up_herdr() { backend_harness_up_pane_herdr "$(herdr_pane "$1")"; }
@@ -1374,8 +1395,8 @@ ac_startup_dialogs() {
   # codex's trust dialog wants Enter); nothing pending ends the sequence as
   # soon as the harness is observed UP or SHELL (the came-up and ready gates
   # own what follows), and only an UNOBSERVABLE pane keeps it polling, to
-  # the budget. A backend that names no dialog (herdr) answers 3 on the
-  # first call: the blind key, once, and out - the pre-contract behaviour.
+  # the budget. A pane neither backend can classify answers 3 on the first
+  # call: the blind key, once, and out.
   local answer="$1" send="$2" upfn="$3" h="$4" harness="$5"
   local key rc up i=0 pressed=0 budget="${AC_STARTUP_DIALOG_BUDGET:-15}"
   key="$(ac_harness_startup_key "$harness")"
