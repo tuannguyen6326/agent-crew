@@ -7,6 +7,7 @@
 #   ac-learn.sh suite [<task-id>]
 #   ac-learn.sh run
 #   ac-learn.sh note <line>...          # place landing lessons under `## Pending`
+#   ac-learn.sh route-propose < lines    # System One owner/dup proposal per line (config/jev)
 #   ac-learn.sh land <candidate-file>   # compatibility-only manual landing
 #   ac-learn.sh promote <skill-name>    # fail-closed compatibility command
 #   ac-learn.sh maintenance status|resume <txid>|abandon <txid>
@@ -172,6 +173,24 @@
 # rides ac_records_backup's reversibility floor and each planning run keeps a
 # backup/CREWMATE-learned.md.prev copy.
 
+#
+# ROUTE-PROPOSE (the System One route proposer, config/jev). The landing
+# split - a `## Lessons` line that VERIFIES something about the codebase goes
+# to repo-knowledge, only its method half to the ledger - and the /debrief
+# route table (.agents/skills/debrief/SKILL.md) are the same closed-set
+# question, judged by the chief's eyes alone, and a repo fact that lands in
+# the ledger by mistake is never recovered downstream. `route-propose` reads
+# candidate lines on stdin and asks bin/ac-jev.sh two questions per line in
+# ONE request: `owner` over the nine debrief destinations, and `dup` over
+# new / unclear / every `## <slug>` entry of the always-loaded
+# CREWMATE-learned.md - the transaction refuses only a duplicate NAME
+# (cmd_note, the 4096-byte budget), this asks whether the LESSON is already
+# there. Under on it prints one TAB-separated line per input line,
+# `<n>\towner=<o> p=<p>\tdup-of=<slug|none>[ p=<p>]`, then `state_sha=<sha>`
+# for `ac-jev.sh label --site learn-route`; off or absent prints nothing and
+# makes no request; shadow logs only. It proposes and writes no ledger: the
+# chief still runs ac-know.sh add and ac-learn.sh note with its own hands,
+# and a repo fact is VERIFIED by a cited act, never by this answer.
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-backend.sh"   # the suite gate opens the run its own pane
@@ -1168,6 +1187,66 @@ cmd_reinforce() {
 }
 
 # --- note: the one placing append onto the ledger ----------------------------
+
+cmd_route_propose() {
+  # route-propose - the System One route proposer (header: ROUTE-PROPOSE).
+  # Stdin: candidate lines, one per line (a report's `## Lessons` bullets at
+  # landing, a /debrief's candidates). Two questions per line in ONE request
+  # to bin/ac-jev.sh: `owner` over the nine debrief destinations
+  # (.agents/skills/debrief/SKILL.md route table) and `dup` over new /
+  # unclear / every `## <slug>` entry of the always-loaded CREWMATE-learned.md
+  # (the transaction refuses only a duplicate NAME; this asks about the
+  # LESSON). Under on: one TAB-separated line per input line,
+  # `<n>\towner=<o> p=<p>\tdup-of=<slug|none>[ p=<p>]`, then `state_sha=<sha>`
+  # for `ac-jev.sh label --site learn-route`. Writes no ledger, ever: the
+  # chief still runs ac-know.sh add / ac-learn.sh note with its own hands.
+  local lines learned state n line slug body out
+  lines="$(cat)"
+  [ -n "$(printf '%s' "$lines" | tr -d '[:space:]')" ] || return 0
+  state="$(mktemp "${TMPDIR:-/tmp}/ac-learn-route.XXXXXX")"
+  { printf 'CANDIDATE LINES:\n'; n=0
+    while IFS= read -r line; do [ -n "$line" ] || continue; n=$((n + 1)); printf '[%d] %s\n' "$n" "$line"; done <<<"$lines"
+  } >"$state"
+  local -a dup=(new='A lesson no existing entry already states.' unclear='Not enough reliable evidence.')
+  learned="$(ac_home)/CREWMATE-learned.md"
+  if [ -f "$learned" ]; then
+    while IFS=$'\t' read -r slug body; do dup+=("$slug=$body"); done < <(awk '
+      /^## when to reach for a learned skill/ { if (slug != "") printf "%s\t%s\n", slug, body; slug = ""; next }
+      /^## / { if (slug != "") printf "%s\t%s\n", slug, body; slug = substr($0, 4); body = ""; next }
+      slug != "" && /^\(learned / { next }
+      slug != "" && NF { body = (body == "" ? $0 : body " " $0) }
+      END { if (slug != "") printf "%s\t%s\n", slug, body }
+    ' "$learned")
+  fi
+  local -a q=() ; local i=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue; i=$((i + 1))
+    q+=(--choice "owner_$i" --instructions "Which durable record owns candidate line [$i]?" \
+        --criteria backlog='Task index, status, completion evidence, undone or newly discovered work (records/backlog.md).' \
+          room='Family narrative, a decision, a gate, a handback, or an unresolved captain choice (data/<family>/room.md).' \
+          learnings='A durable fleet-local gotcha or METHOD lesson about how to work (records/learnings.md).' \
+          captain='A captain preference or standing decision (records/captain.md).' \
+          projects='A project registration, +yolo posture, or retirement (records/projects.md).' \
+          repo_knowledge='A VERIFIED fact about a project codebase - a call graph, a script behavior, a column, a flag (records/repo-knowledge).' \
+          project_docs='Project-intrinsic build, test, architecture or convention knowledge that belongs in that project own AGENTS.md through a task.' \
+          distro_task='A generalizable agent-crew behavior change that should become a tracked task.' \
+          none='Nothing durable: status chatter, thanks, noise.' \
+        --choice "dup_$i" --instructions "Does candidate line [$i] restate an existing always-loaded lesson? Pick the entry it repeats, or new." \
+        --criteria "${dup[@]}")
+  done <<<"$lines"
+  out="$("$(dirname "$0")/ac-jev.sh" ask --site learn-route --state-file "$state" "${q[@]}")" || out=''
+  if [ -n "$out" ]; then
+    for n in $(seq 1 "$i"); do
+      jq -r --arg o "owner_$n" --arg d "dup_$n" --arg n "$n" '
+        .[$o] as $ow | .[$d] as $du
+        | $n + "\towner=" + $ow.choice + " p=" + ($ow.p[$ow.choice] | tostring)
+          + "\tdup-of=" + (if $du.choice == "new" or $du.choice == "unclear" then "none"
+                             else $du.choice + " p=" + ($du.p[$du.choice] | tostring) end)' <<<"$out"
+    done
+    printf 'state_sha=%s\n' "$("$(dirname "$0")/ac-jev.sh" sha --state-file "$state")"
+  fi
+  rm -f "$state"
+}
 
 cmd_note() {
   # cmd_note <line>...
@@ -2799,6 +2878,7 @@ case "$cmd" in
   suite) shift; cmd_suite "$@" ;;
   run) shift; cmd_run "$@" ;;
   note) shift; cmd_note "$@" ;;
+  route-propose) cmd_route_propose ;;
   land) shift; cmd_land "$@" ;;
   promote) shift; cmd_promote "$@" ;;
   maintenance) shift; cmd_maintenance "$@" ;;

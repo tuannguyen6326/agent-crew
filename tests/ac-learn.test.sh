@@ -772,4 +772,84 @@ awk '/^cmd_run\(\)/{f=1} f&&/always-loaded-staleness/{found=1} f&&/^}/{exit} END
 
 rm -f "$ALW"
 
+# --- route-propose: the System One route proposer for lesson lines ---------
+# Stdin lines (a report's ## Lessons bullets, a debrief's candidates) get two
+# questions each in ONE request: owner (the nine debrief destinations) and
+# dup (new, unclear, or one of the always-loaded CREWMATE-learned.md entries).
+# Off/absent prints nothing and makes no request; shadow logs; on prints one
+# line per input line plus the state_sha label key. Never writes a ledger.
+cat >"$AC_HOME/CREWMATE-learned.md" <<'EOF'
+# Fleet-learned crewmate lessons
+<!-- written only by ac-learn.sh transactions; captains edit CREWMATE.md instead -->
+
+## read-the-room-first
+
+Read the family room before you review - the chief's ruling lives there, not in the brief.
+
+(learned 2026-08-05)
+
+## prove-tests-bite
+
+Before trusting green, prove each new assertion actually bites.
+
+(learned 2026-08-05)
+
+## when to reach for a learned skill
+- when a red needs attribution -> use skill characterise-the-failure
+EOF
+mkdir -p "$TMP/rpbin"
+cat >"$TMP/rpbin/curl" <<'EOF'
+#!/usr/bin/env bash
+out=""; data=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; -d) data="$2"; shift ;; esac; shift; done
+cat "${data#@}" >"$FAKE_BODY"
+n="$(cat "$FAKE_HITS" 2>/dev/null || printf 0)"; printf '%s\n' "$((n + 1))" >"$FAKE_HITS"
+cat "$FAKE_RESP" >"$out"
+printf '200'
+EOF
+chmod +x "$TMP/rpbin/curl"
+export PATH="$TMP/rpbin:$PATH" FAKE_BODY="$TMP/rp-body" FAKE_HITS="$TMP/rp-hits" FAKE_RESP="$TMP/rp-resp"
+cat >"$FAKE_RESP" <<'EOF'
+{"model":"m","answers":{
+ "owner_1":{"type":"choice","choice":"repo_knowledge","probabilities":{"backlog":0,"room":0,"learnings":0.05,"captain":0,"projects":0,"repo_knowledge":0.93,"project_docs":0.02,"distro_task":0,"none":0},"confidence":0.9},
+ "dup_1":{"type":"choice","choice":"new","probabilities":{"new":0.97,"unclear":0.02,"read-the-room-first":0.01,"prove-tests-bite":0},"confidence":0.9},
+ "owner_2":{"type":"choice","choice":"learnings","probabilities":{"backlog":0,"room":0,"learnings":0.9,"captain":0,"projects":0,"repo_knowledge":0.05,"project_docs":0,"distro_task":0.05,"none":0},"confidence":0.85},
+ "dup_2":{"type":"choice","choice":"read-the-room-first","probabilities":{"new":0.1,"unclear":0.02,"read-the-room-first":0.88,"prove-tests-bite":0},"confidence":0.8},
+ "owner_3":{"type":"choice","choice":"none","probabilities":{"backlog":0,"room":0,"learnings":0,"captain":0,"projects":0,"repo_knowledge":0,"project_docs":0,"distro_task":0,"none":1},"confidence":1},
+ "dup_3":{"type":"choice","choice":"new","probabilities":{"new":0.6,"unclear":0.4,"read-the-room-first":0,"prove-tests-bite":0},"confidence":0.3}
+},"usage":{"input_tokens":1,"output_tokens":0}}
+EOF
+printf '{"openrouter":{"api_key":"sk-or-TEST"}}\n' >"$AC_HOME/config/providers.json"
+rphits() { cat "$FAKE_HITS" 2>/dev/null || printf 0; }
+lines='- ac-tree.sh get fail-closes on a missing epic branch: exit 2, no slot leased
+- Always read the family room before reviewing; the ruling is there, not in the brief
+- Thanks chief, all done here'
+
+rm -f "$AC_HOME/config/jev"
+out="$(printf '%s\n' "$lines" | "$BIN/ac-learn.sh" route-propose 2>&1)" || fail "route-propose: absent knob must exit 0"
+assert_eq "$out" "" "route-propose: absent knob prints nothing"
+assert_eq "$(rphits)" "0" "route-propose: absent knob makes no request"
+out="$(printf '' | "$BIN/ac-learn.sh" route-propose 2>&1)" || fail "route-propose: empty stdin must exit 0"
+assert_eq "$out" "" "route-propose: empty stdin prints nothing"
+
+printf 'shadow\n' >"$AC_HOME/config/jev"
+out="$(printf '%s\n' "$lines" | "$BIN/ac-learn.sh" route-propose 2>/dev/null)"
+assert_eq "$out" "" "route-propose: shadow prints nothing"
+assert_eq "$(rphits)" "1" "route-propose: one request for every line"
+assert_eq "$(jq -r '.questions | keys | join(",")' "$FAKE_BODY")" "dup_1,dup_2,dup_3,owner_1,owner_2,owner_3" "route-propose: two questions per line"
+assert_eq "$(jq -r '.questions.owner_1.criteria | keys | length' "$FAKE_BODY")" "9" "route-propose: nine owners"
+assert_eq "$(jq -r '.questions.dup_2.criteria | keys | join(",")' "$FAKE_BODY")" "new,prove-tests-bite,read-the-room-first,unclear" "route-propose: dup options are new, unclear and every learned entry"
+assert_contains "$(jq -r '.questions.dup_2.criteria["read-the-room-first"]' "$FAKE_BODY")" "Read the family room before you review" "route-propose: an entry's body is its criterion"
+assert_contains "$(jq -r '.state' "$FAKE_BODY")" "[2] - Always read the family room" "route-propose: lines are numbered in the state"
+assert_eq "$(tail -n1 "$AC_HOME/state/jev-shadow.jsonl" | jq -r '.site')" "learn-route" "route-propose: shadow record site"
+
+printf 'on\n' >"$AC_HOME/config/jev"
+out="$(printf '%s\n' "$lines" | "$BIN/ac-learn.sh" route-propose 2>/dev/null)"
+assert_eq "$(printf '%s\n' "$out" | sed -n 1p)" "1	owner=repo_knowledge p=0.93	dup-of=none" "route-propose: a repo fact routes to repo-knowledge, new"
+assert_eq "$(printf '%s\n' "$out" | sed -n 2p)" "2	owner=learnings p=0.9	dup-of=read-the-room-first p=0.88" "route-propose: a duplicate lesson names the entry it repeats"
+assert_eq "$(printf '%s\n' "$out" | sed -n 3p)" "3	owner=none p=1	dup-of=none" "route-propose: noise routes nowhere"
+assert_contains "$(printf '%s\n' "$out" | sed -n 4p)" "state_sha=" "route-propose: the label key closes the output"
+assert_eq "$(grep -c . "$AC_HOME/records/learnings.md" 2>/dev/null || printf 0)" "$(grep -c . "$AC_HOME/records/learnings.md" 2>/dev/null || printf 0)" "route-propose: never writes the ledger"
+rm -f "$AC_HOME/config/jev"
+
 pass
