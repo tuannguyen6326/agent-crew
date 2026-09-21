@@ -38,6 +38,7 @@
 #                               #   -plan/-review/-ship/-design/-chief/-rN
 #                               #   suffixes), and the blocked-by graph among
 #                               #   the epic's stories is ACYCLIC
+#   ac-ready.sh overlap --semantic '<order text>'  # the System One fold-or-mint proposer
 #   ac-ready.sh overlap <path>... # the intake file-interlock check (read-
 #                               #   only, prints NOTHING when clean). Per
 #                               #   path, one line per hit:
@@ -130,6 +131,24 @@
 # colon, lowercase). Done lines marked `[failed]`/`[abandoned]` are terminal
 # but never satisfy a blocker. `[@held]` anywhere among a row's `[...]` groups
 # is a captain hold - visible, never scheduled, cleared only by the captain.
+#
+# OVERLAP --semantic (the System One fold-or-mint proposer, config/jev). The
+# path interlock above answers "same FILE surface"; section 9's rule is wider
+# - "the same file surface, the same mechanism, or the same defect class, not
+# the same wording" - and reading every open row for it was the chief's eyes
+# alone. `overlap --semantic '<order text>'` asks bin/ac-jev.sh one choice
+# question per OPEN row (In flight + Queued, never Done), all in ONE request
+# over one state (the order, then every open row's line and body), and under
+# `on` prints the rows the model calls related - `overlap-flying  <id>  p=<p>`
+# for In flight (never folded into: its brief is fixed), `fold-candidate  <id>
+# p=<p>` for Queued - in ledger order, closed by `state_sha=<sha>`, the key
+# `ac-jev.sh label --site overlap` takes for the fold/mint the chief really
+# made. Off or absent prints nothing and makes no request; shadow logs only.
+# It proposes: folding stays the chief's read of the row, and an In flight
+# row stays off limits whatever the model says. A ledger whose open rows
+# exceed the adapter's request cap is one reason line and no proposal, the
+# adapter's own fail direction; chunking is not built until a fleet's ledger
+# needs it.
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 
@@ -365,9 +384,60 @@ cmd_validate() {
   return "$rc"
 }
 
+cmd_overlap_semantic() {
+  # overlap --semantic '<order text>' - the System One fold-or-mint proposer
+  # (header: OVERLAP --semantic). One choice question per OPEN row (In flight
+  # + Queued, never Done), all in ONE request over one state: the order plus
+  # every open row's line and body. Prints only under config/jev=on:
+  # `overlap-flying  <id>  p=<p>` for an In flight row the model calls
+  # related (never folded into - its brief is fixed), `fold-candidate  <id>
+  # p=<p>` for a Queued one, ledger order, then `state_sha=<sha>` - the key
+  # `ac-jev.sh label --site overlap` takes for the chief's real fold/mint.
+  local order="$1" f rows id sec rest out
+  [ -n "$order" ] || ac_die "usage: ac-ready.sh overlap --semantic '<order text>'"
+  f="$(ac_records_dir)/backlog.md"
+  [ -f "$f" ] || return 0
+  rows="$(awk "$AC_DONELINE_AWK"'
+    /^## In flight/ { sec = "in flight"; next }
+    /^## Queued/    { sec = "queued"; next }
+    /^## /          { sec = ""; next }
+    sec == "" { next }
+    /^- \[/ { ac_doneline($0, o); id = o["id"]; if (id != "") printf "%s\t%s\t%s\n", id, sec, $0; next }
+    /^[ \t]+[^ \t]/ && id != "" { sub(/^[ \t]+/, ""); printf "%s\t%s\tbody\t%s\n", id, sec, $0 }
+  ' "$f")"
+  [ -n "$rows" ] || return 0
+  local state; state="$(mktemp "${TMPDIR:-/tmp}/ac-ready-semantic.XXXXXX")"
+  {
+    printf 'ORDER:\n%s\n\nOPEN ROWS:\n' "$order"
+    while IFS=$'\t' read -r id sec rest; do
+      case "$rest" in body*) printf '  %s\n' "${rest#body	}" ;; *) printf '[%s] (%s) %s\n' "$id" "$sec" "$rest" ;; esac
+    done <<<"$rows"
+  } >"$state"
+  local -a q=()
+  while IFS=$'\t' read -r id sec rest; do
+    case "$rest" in body*) continue ;; esac
+    q+=(--choice "$id" \
+        --instructions "Is the backlog row [$id] related to the ORDER? Related means the same file surface, the same mechanism, or the same defect class, not the same wording." \
+        --criteria related='Related: the same file surface, the same mechanism, or the same defect class, not the same wording.' \
+          unrelated='Unrelated: a different surface, mechanism and defect class.' \
+          unclear='Not enough reliable evidence.')
+  done <<<"$rows"
+  out="$("$(dirname "$0")/ac-jev.sh" ask --site overlap --state-file "$state" "${q[@]}")" || out=''
+  if [ -n "$out" ]; then
+    while IFS=$'\t' read -r id sec rest; do
+      case "$rest" in body*) continue ;; esac
+      jq -r --arg id "$id" --arg tag "$([ "$sec" = queued ] && printf fold-candidate || printf overlap-flying)" \
+        '.[$id] | select(.choice == "related") | "\($tag)  \($id)  p=\(.p.related)"' <<<"$out"
+    done <<<"$rows"
+    printf 'state_sha=%s\n' "$("$(dirname "$0")/ac-jev.sh" sha --state-file "$state")"
+  fi
+  rm -f "$state"
+}
+
 cmd_overlap() {
   # The intake file-interlock check; the header above owns the verb, the
   # ledger's shape and windows are ac-lib.sh's landing-ledger block.
+  [ "${1:-}" != --semantic ] || { cmd_overlap_semantic "${2:-}"; return 0; }
   [ "$#" -gt 0 ] || ac_die "usage: ac-ready.sh overlap <path>..."
   local hits fam age p repo def b changed bf id
   hits="$(ac_landing_overlaps 604800 '' "$@")"

@@ -389,3 +389,64 @@ assert_contains "$out" "READY  domstory (epic:dompay) {domain:payments" \
   "a story INHERITS its epic row's domain in the report"
 q="$("$BIN/ac-ready.sh" queued)"
 assert_eq "$q" "plainrow" "queued never offers a domain row - promote is its only start"
+
+# overlap --semantic: the System One fold-or-mint proposer (config/jev). One
+# choice question per OPEN row over the order text, all in one request; under
+# on it prints Queued rows the model calls related as fold-candidate and In
+# flight rows as overlap-flying; Done rows are never asked about.
+cat >"$AC_HOME/records/backlog.md" <<'DEOF'
+## In flight
+- [ ] wf1 - watcher stale arm misses prose asks raised inside a long summary (repo: agent-crew, since 2026-09-01)
+  the ended-turn discriminator is the backend idle status, not the tail text
+
+## Queued
+- [ ] q1 - CREWMATE-learned.md refuses only a duplicate NAME, not a duplicate lesson (repo: agent-crew)
+- [ ] q2 - dashboard review page font colour (repo: agent-crew)
+
+## Done
+- [x] d1 - something old (repo: agent-crew) - local main (merged 2026-08-01)
+DEOF
+mkdir -p "$TMP/stubbin"
+cat >"$TMP/stubbin/curl" <<'EOF'
+#!/usr/bin/env bash
+out=""; data=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; -d) data="$2"; shift ;; esac; shift; done
+cat "${data#@}" >"$FAKE_BODY"
+n="$(cat "$FAKE_HITS" 2>/dev/null || printf 0)"; printf '%s\n' "$((n + 1))" >"$FAKE_HITS"
+cat "$FAKE_RESP" >"$out"
+printf '200'
+EOF
+chmod +x "$TMP/stubbin/curl"
+export PATH="$TMP/stubbin:$PATH" FAKE_BODY="$TMP/body" FAKE_HITS="$TMP/hits" FAKE_RESP="$TMP/resp"
+printf '%s\n' '{"model":"m","answers":{"wf1":{"type":"choice","choice":"related","probabilities":{"related":0.9,"unrelated":0.05,"unclear":0.05},"confidence":0.8},"q1":{"type":"choice","choice":"related","probabilities":{"related":0.7,"unrelated":0.2,"unclear":0.1},"confidence":0.6},"q2":{"type":"choice","choice":"unrelated","probabilities":{"related":0.1,"unrelated":0.8,"unclear":0.1},"confidence":0.7}},"usage":{"input_tokens":1,"output_tokens":0}}' >"$FAKE_RESP"
+printf '{"openrouter":{"api_key":"sk-or-TEST"}}\n' >"$AC_HOME/config/providers.json"
+hits() { cat "$FAKE_HITS" 2>/dev/null || printf 0; }
+order='a crewmate that asks the chief a question in prose is read as merely quiet'
+
+rm -f "$AC_HOME/config/jev"
+out="$("$BIN/ac-ready.sh" overlap --semantic "$order" 2>&1)" || fail "semantic: absent knob must exit 0"
+assert_eq "$out" "" "semantic: absent knob prints nothing"
+assert_eq "$(hits)" "0" "semantic: absent knob makes no request"
+
+printf 'shadow\n' >"$AC_HOME/config/jev"
+out="$("$BIN/ac-ready.sh" overlap --semantic "$order" 2>/dev/null)"
+assert_eq "$out" "" "semantic: shadow prints nothing"
+assert_eq "$(hits)" "1" "semantic: one request for every open row"
+assert_eq "$(jq -r '.questions | keys | join(",")' "$FAKE_BODY")" "q1,q2,wf1" "semantic: one question per open row, none for Done"
+assert_eq "$(jq -r '.questions.q1.criteria | keys | join(",")' "$FAKE_BODY")" "related,unclear,unrelated" "semantic: the three verdicts"
+assert_contains "$(jq -r '.questions.q1.criteria.related' "$FAKE_BODY")" "same file surface, the same mechanism, or the same defect class" "semantic: section 9's rule is the criterion"
+st="$(jq -r '.state' "$FAKE_BODY")"
+assert_contains "$st" "$order" "semantic: the order is in the state"
+assert_contains "$st" "watcher stale arm misses prose asks" "semantic: the row line is in the state"
+assert_contains "$st" "the ended-turn discriminator is the backend idle status" "semantic: the row body is in the state"
+case "$st" in *"something old"*) fail "semantic: a Done row must not be in the state" ;; esac
+assert_eq "$(tail -n1 "$AC_HOME/state/jev-shadow.jsonl" | jq -r '.site')" "overlap" "semantic: shadow record site"
+
+printf 'on\n' >"$AC_HOME/config/jev"
+out="$("$BIN/ac-ready.sh" overlap --semantic "$order" 2>/dev/null)"
+assert_eq "$(printf '%s\n' "$out" | sed -n 1p)" "overlap-flying  wf1  p=0.9" "semantic: an In flight related row is overlap-flying, ledger order first"
+assert_eq "$(printf '%s\n' "$out" | sed -n 2p)" "fold-candidate  q1  p=0.7" "semantic: a Queued related row is a fold candidate"
+case "$out" in *q2*) fail "semantic: an unrelated row is not printed" ;; esac
+assert_contains "$(printf '%s\n' "$out" | tail -n1)" "state_sha=" "semantic: the label key closes the output"
+assert_fails "$BIN/ac-ready.sh" overlap --semantic
+assert_fails "$BIN/ac-ready.sh" overlap --semantic ""
