@@ -1606,7 +1606,7 @@ HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there i
   # scope pair already uses at :1372-1373/:1400, so no new pattern appears.
   dom_env=""
   [ -z "$dom" ] || dom_env="AC_DOMAIN=$(printf '%q' "$dom") "
-  # THE SOLO CHIEF SECTION (captain ruling 2026-09-16, AGENTS.md section 5).
+  # THE SOLO CHIEF SECTION (captain ruling 2026-09-16, solo-session skill).
   # Emitted only on --solo, so an ordinary roomchief's prompt stays
   # byte-identical; like the domain section, every clause is a contract that
   # lives nowhere the chief would otherwise read it at kickoff.
