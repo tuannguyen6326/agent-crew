@@ -1,6 +1,6 @@
 ---
 name: gate-review
-description: Build the ONE consolidated pre-implement review page for a captain-required gate - a single self-contained HTML file reviewed in rich-review, letting the captain approve/veto a whole staged task without asking anything back. Use at a CAPTAIN-REQUIRED pre-implement gate on a substantial task (AGENTS.md section 5), or when the captain asks for the rich review.
+description: Build the ONE consolidated pre-implement review page for a captain-required gate - a single self-contained HTML file reviewed in rich-review, letting the captain approve/veto a whole staged task without asking anything back. Use at a CAPTAIN-REQUIRED pre-implement gate on a substantial task (`staged-gates` skill), or when the captain asks for the rich review.
 ---
 
 # gate-review

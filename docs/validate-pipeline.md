@@ -113,7 +113,7 @@ qa gates the MERGE, not the push: with `qa.require_for_ship: true` in the fleet-
 On a SCOPED project (one whose repo-knowledge record declares scopes and whose config carries a `qa.scopes` block) a run proves ONE scope+app, so its marker is `passed/<sha>.<scope>.<app>` and also binds that pair in the body. The gate refuses a half-migrated project and surfaces which valid pairs passed rather than deriving coverage from the diff.
 A frozen versioned store manifest is always present, including the empty-store case. Reviewed fixture packs may expose several selectors; read-write selectors are retry-idempotent. QA writes curation candidates and test-only regression proposals only after the behavioral verdict. Curation is visible but non-gating and reaches the shared store only through chief-reviewed base-manifest installation.
 A `failed` verdict returns defects to execution; it fixes on the crew branch, re-runs invalidated delivery/review evidence, and re-runs QA.
-Authorities: the `bin/ac-qa.sh` header, the `crew-qa` skill, AGENTS.md section 5 (qa triage law), and `docs/qa-attestation.md` (full runtime/report/reuse contract and opt-in live smoke).
+Authorities: the `bin/ac-qa.sh` header, the `crew-qa` skill, the `intake-triage` skill (qa triage law), and `docs/qa-attestation.md` (full runtime/report/reuse contract and opt-in live smoke).
 
 ## Push safety
 

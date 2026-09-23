@@ -29,16 +29,18 @@ Four judgment rules bind every chief and crewmate; the `judgment-rules` skill ho
 
 | Path | Purpose |
 |---|---|
-| `bin/` | All tooling; each script's header comment is its authoritative spec. |
-| `state/` | Volatile runtime signals: `<id>.meta`, `<id>.status`, `.wake-spool[.<family>]/`, watcher internals. Gitignored. |
-| `records/` | Fleet ledgers (`backlog.md`, `projects.md`, `captain.md`, `learnings.md`, `crewdeputies.md`, `crewdomains.md`), `repo-knowledge/<name>.md` (`bin/ac-know.sh`), `scenes/` (`bin/ac-scene.sh`), `standing-jobs.md` (`bin/ac-standing-jobs.sh`), `rig.json` (`bin/ac-rig.sh`). Gitignored. |
-| `data/` | Task dirs - flat `<id>/`, staged `<family>/<stage>/`, fan-out `<family>/tasks/<slug>/`, each with `brief.md`/`report.md`, plus `<family>/room.md`; `bin/ac-brief.sh` owns the layout, `bin/ac-archive.sh` the closed-family archive. Gitignored. |
-| `projects/` | Project clones (read-only to you), each beside its captain-owned pipeline config `<name>.yaml`. Gitignored. |
-| `config/` | Local per-fleet config (`backend`, `crew-harness`, `launch-<harness>`, `crew-dispatch.json`, ...). Gitignored. |
-| `crewdomains/`, `crewdeputies/` | Domain packages and deputy homes (`deputies-domains` skill). Gitignored. |
-| `skills/` | Per-fleet learned skills (`ac_skills_dir`), seeded into crew worktrees; `skills-archive/` holds retired ones. Gitignored. |
+| `bin/` | All tooling; each script's header is its authoritative spec. |
+| `state/` | Volatile runtime signals (metas, status logs, wake spools). |
+| `records/` | Fleet ledgers, `repo-knowledge/`, `scenes/`, `standing-jobs.md`, `rig.json` - each owned by its `bin/` script. |
+| `data/` | Task dirs and family rooms; `bin/ac-brief.sh` owns the layout. |
+| `projects/` | Project clones (read-only to you) and their captain-owned `<name>.yaml`. |
+| `config/` | Per-fleet config knobs. |
+| `skills/` | Per-fleet learned skills, seeded into crew worktrees. |
+| `crewdomains/`, `crewdeputies/` | Domain packages and deputy homes (`deputies-domains` skill). |
 | `.agents/skills/` | Skills you load (`.claude/skills` symlinks here); schema in section 12. |
-| `<repo>/.crew/` | Inside each project repo: worktree pool, ship runs, qa runs. Auto-gitignored. |
+| `<repo>/.crew/` | Inside each project repo: worktree pool, ship runs, qa runs. |
+
+The fleet-state dirs `state/`, `records/`, `data/`, `projects/`, `config/` and `crewdomains/` are gitignored (`.gitignore`); `.crew/` is auto-gitignored in each project repo.
 
 ## 3. Session start
 
@@ -74,20 +76,14 @@ staged:  crewchief -> design crewmate -> execution crewmate
 
 ## 6. Worktrees (in-repo pool)
 
-`bin/ac-tree.sh` pools detached-HEAD worktrees inside each project repo under `.crew/worktrees/<n>` (an orca fleet leases Orca-managed worktrees instead).
-Worktrees are reused, never deleted by hand, and a dirty slot is never silently reset; the header owns `get`/`lease`/`return`/`prune`/`remove` and the generated `<repo>/.crew/<repo>.code-workspace`.
-Never create worktrees by hand in a project repo.
+`bin/ac-tree.sh` owns the pooled worktrees under `<repo>/.crew/worktrees/<n>` (its header is the spec; orca fleets lease Orca-managed worktrees): reused, never deleted or created by hand, and a dirty slot is never silently reset.
 
 ## 7. Supervision protocol
 
-Arm `bin/ac-watch.sh` whenever crew is in flight, as the harness's OWN background task - NEVER `nohup`/`&`/`disown` it inside a tool call, which orphans it so its exit wakes no one.
-On claude, the Stop hook `bin/ac-watch-autoarm.sh` holds and re-arms a watcher for you.
-On any wake: `bin/ac-wake-drain.sh`, act on each wake (peek, steer, unblock, escalate, teardown), then re-arm before the turn ends; `bin/ac-watch.sh --once` is the foreground fallback.
-The wake vocabulary and what each reason means (`report`, `push`, `ask`, `ended`, `stale`, `gone`, `unobservable` - a backend read failure, never a death - and `heartbeat`) are owned by the `bin/ac-watch.sh` header.
-Crewmates push completion with `bin/ac-done.sh`; the pane markers (`done:`, `blocked:`, `needs-decision:`, `failed:`) are the backup channel.
-Inspect with `bin/ac-peek.sh`, `bin/ac-crew-state.sh`, `bin/ac-follow.sh`, `bin/ac-session.sh`; steer with `bin/ac-send.sh`.
-A `kind=self` meta is excluded from supervision but stays in accounting - every fleet view lists it (`ac_meta_is_self`).
-Other hooks guard you too: `bin/ac-turnend-guard.sh` (Stop), `bin/ac-watch-policy-hook.sh` (refuses killing watchers), `bin/ac-ledger-guard.sh` (scoped sessions cannot edit the ledgers), `bin/ac-primary-guard.sh` (worktree sessions cannot edit the primary checkout).
+Arm `bin/ac-watch.sh` whenever crew is in flight, as the harness's OWN background task - NEVER `nohup`/`&`/`disown` it inside a tool call, which orphans it so its exit wakes no one (on claude the Stop hook `bin/ac-watch-autoarm.sh` does this for you).
+On any wake: `bin/ac-wake-drain.sh`, act on each wake, then re-arm before the turn ends; an `unobservable` wake is a backend read failure, never a death.
+Wake reasons and the full protocol live in the `bin/ac-watch.sh` header and the `task-lifecycle` skill; a `kind=self` meta is excluded from supervision but stays in accounting - every fleet view lists it.
+Stop, PreToolUse and prompt hooks back this up: `ac-turnend-guard.sh`, `ac-watch-policy-hook.sh`, `ac-ledger-guard.sh`, `ac-primary-guard.sh`, `ac-delegation-guard.sh`.
 
 ## 8. Escalation etiquette
 
@@ -138,19 +134,13 @@ Load the skill BEFORE the work it names.
 | act harness-specifically (spawn, interrupt, resume) | `harness-operations` |
 | handle a `remote-order <rid>` wake | `remote-orders` |
 
-Captain-invocable and crew skills (each `SKILL.md` owns its contract):
-- `crew-ship` - the validation pipeline (crewmates run it; you audit its state).
-- `crew-verify` - one independent exact-ref code review round through `bin/ac-verify.sh codereview`, run by the worker itself.
-- `crew-qa` - standalone behavioral verification through `bin/ac-qa.sh`; `domain-e2e` - proof through a domain's maintained e2e suite.
-- `document` - judge, author and sync the docs a delivered change needs.
-- `diagram-design` - vendored editorial diagram system (MIT, upstream `cathrynlavery/diagram-design`); reach for it instead of Mermaid whenever a captain-facing artifact (stage report, gate-review page, rich-review HTML) needs a diagram.
-- `brainstorm` - captain-invocable ideation with a dedicated brainstorm roomchief; the chief alone mints its rows, requirements.md and scene.
-- `order-direct` / `order-staged` / `order-design` - captain pins on flow; `order-design` stops after the design gates.
-- `rich-review`, `bearings`, `ac-brain`, `domain-knowledge` - review loop, status report, home memory engine, crewdomain knowledge.
+Crew and captain-invocable skills (each `SKILL.md` owns its contract): `crew-ship`, `crew-verify`, `crew-qa`, `domain-e2e`, `document`, `rich-review`, `bearings`, `ac-brain`, `domain-knowledge`, `order-direct` / `order-staged` / `order-design` (captain flow pins), and:
+- `brainstorm` - captain-invocable ideation with a dedicated brainstorm roomchief; the chief alone mints what it drafts.
+- `diagram-design` - reach for it instead of Mermaid whenever a captain-facing artifact (stage report, gate-review page, rich-review HTML) needs a diagram.
 - `debrief` - the manual reset-time catch-all; /debrief stays the catch-all while landing remains the primary learning mechanism.
 
 Catalog schema: every package under `.agents/skills/` is an Agent Skills spec package ([spec](https://agentskills.io/specification)) - dir name equals frontmatter `name`, a trigger-rich `description` of at most 1024 chars, only standard frontmatter keys (never `user-invocable`), string-only `metadata:`, `references/` for docs, `assets/` for runtime artifacts, and `SKILL.md` under 500 lines; `tests/ac-skills-catalog.test.sh` enforces it.
-Crew worktrees are seeded only with `AC_CREW_SKILLS` plus the fleet's learned skills; the operator skills above stay chief-only.
+Crew worktrees are seeded only with `AC_CREW_SKILLS` (`bin/ac-lib.sh`) plus the fleet's learned skills; every other skill here is chief-only.
 
 ## 13. Editing this repo
 

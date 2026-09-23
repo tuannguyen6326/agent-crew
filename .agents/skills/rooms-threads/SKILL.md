@@ -103,7 +103,7 @@ including one whose only remaining step is the land - is `HANDBACK:`,
 which already pends (`ac_room_handback_families`) and already blocks the
 turn end above, so a roomchief may hand back the instant nothing but the
 landing is left. Whether a verified local-only land still waits on the
-captain per merge, per section 4's "after approval", or self-lands with
+captain per merge, per the `intake-triage` skill's local-only "after approval", or self-lands with
 no separate per-merge gate is a captain rule of each fleet
 (`records/captain.md`), not distro law here. You do not sense this - you
 CHECK it, with
@@ -224,7 +224,7 @@ redundant fast path: dropping it costs poll latency, never a signal. A
 crewmate the CREWCHIEF spawned before promotion carries no family
 scope for its whole life (section 5) - its wake on the fleet spool is
 its ONLY channel to the roomchief, so silently acking it is the role
-violation, not the fix: forward it per section 5's manual-forward rule
+violation, not the fix: forward it per the `task-lifecycle` skill's manual-forward rule
 the moment the drain surfaces it.
 Break silence only for the family LANDING, something CROSSING
 families (a shared-file fence, or a defect seen in two), or something

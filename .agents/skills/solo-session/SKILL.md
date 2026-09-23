@@ -7,6 +7,11 @@ description: The two sanctioned ways a chief-side or captain-driven session writ
 
 Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points here; "section N" below means that section of `AGENTS.md`.
 
+## What the tools enforce
+
+Under `AC_SOLO=1`, `bin/ac-wake-drain.sh` (drain and ack) and `bin/ac-watch.sh` refuse, and the two Stop hooks stand down.
+Spawning crew or roomchiefs, steering panes with `bin/ac-send.sh`, and answering gates with `bin/ac-gate.sh` are NOT refused by any tool - those prohibitions hold only by this session's own discipline.
+
 ## Self-task, solo chief and solo session
 
 A SMALL chief-side edit - the sanctioned no-invisible-tasks exception
