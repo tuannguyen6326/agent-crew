@@ -3721,4 +3721,10 @@ rm -rf "$AC_HOME/data/dsw" "$AC_HOME/data/gp" "$AC_HOME/data/gf" "$AC_HOME/data/
 reset_state
 rm -f "$state"/*.status
 
+# A SOLO session (AC_SOLO=1) never arms a watcher: supervision, the wake spool
+# and the fleet's one remote poller belong to the chief session.
+rc=0; out="$(AC_SOLO=1 bash "$BIN/ac-watch.sh" --once 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "a solo session's watcher must refuse"
+assert_contains "$out" "solo" "the refusal names the solo session"
+
 pass

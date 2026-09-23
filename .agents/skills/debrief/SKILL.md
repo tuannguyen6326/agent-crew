@@ -36,7 +36,7 @@ Classify every candidate as duplicate, superseding, obsolete, or genuinely new.
 Route each candidate to exactly one durable owner:
 
 - Task index, status, completion evidence, and undone work go to `records/backlog.md`.
-- Family narrative, decisions, gates, and handbacks go through `bin/ac-room.sh post` to `data/<family>/room.md` for an UNPROMOTED family; a PROMOTED family with a live roomchief owns its own room, and `bin/ac-room.sh post` now REFUSES an unscoped write of its TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/R1-DISPOSITION/DECIDED receipts into it (AGENTS.md section 8) - route those to the roomchief instead of posting directly.
+- Family narrative, decisions, gates, and handbacks go through `bin/ac-room.sh post` to `data/<family>/room.md` for an UNPROMOTED family; a PROMOTED family with a live roomchief owns its own room, and `bin/ac-room.sh post` now REFUSES an unscoped write of its TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/R1-DISPOSITION/DECIDED receipts into it (`rooms-threads` skill) - route those to the roomchief instead of posting directly.
 - Every unresolved captain choice becomes a `GATE:` or `ASK:` in its family room, and the backlog line records the blocked status or dependency when that choice blocks work.
 - Durable fleet-local gotchas and lessons go to `records/learnings.md` through `bin/ac-learn.sh note`, never a hand-append: it places them under `## Pending`, the only section the next Learning transaction reads, while an append at end-of-file lands after `## Distilled`, where that transaction deletes it.
 - Captain preferences and standing decisions go to `records/captain.md`.

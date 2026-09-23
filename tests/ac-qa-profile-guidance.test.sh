@@ -47,7 +47,7 @@ assert_contains "$config_doc" 'a chief-owned repair path, never normal verifier 
 # execution set, conditional UT receipt reuse, frozen manifest grammar, and
 # final full-flow requirement without turning dispatch into behavior policy.
 qa_doc="$(<"$ROOT/docs/qa-attestation.md")"
-agents_doc="$(<"$ROOT/AGENTS.md")"
+agents_doc="$(<"$ROOT/.agents/skills/intake-triage/SKILL.md")"
 
 assert_contains "$qa_skill" 'api | db | workflow | web' \
   "crew-qa names the closed tier set"
@@ -80,10 +80,10 @@ assert_contains "$qa_doc" '`agentcrew.qa-testplan-manifest/v1`' \
 assert_contains "$qa_doc" 'minimum(full-flow receipt `started_at`)' \
   "public QA doc states the mechanical final-group ordering rule"
 assert_contains "$agents_doc" 'BOOTED deliverable' \
-  "AGENTS.md carries the booted-boundary evidence rule"
+  "intake guidance carries the booted-boundary evidence rule"
 assert_contains "$agents_doc" 'only when the frozen coverage manifest selects a `ut` row' \
-  "AGENTS.md makes ship-receipt qualification conditional on UT coverage"
+  "intake guidance makes ship-receipt qualification conditional on UT coverage"
 assert_contains "$agents_doc" 'Dispatch remains model routing only' \
-  "AGENTS.md keeps dispatch rules out of QA behavior policy"
+  "intake guidance keeps dispatch rules out of QA behavior policy"
 
 printf 'ok - qa-profile-guidance doc/skill reconciliation\n'

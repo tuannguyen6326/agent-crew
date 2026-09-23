@@ -8,7 +8,8 @@
 # Prints each queued wake as `<kind> <id> <payload>`, then the unacknowledged
 # completions of the tasks in this session's scope, then a `WATCHER-DOWN`
 # warning when crew is in flight but the liveness beacon is stale. Run at
-# session start and whenever the harness is woken.
+# session start and whenever the harness is woken. A solo session (AC_SOLO=1)
+# is refused both forms: the records it would consume are the chief's.
 #
 # Each wake line may be followed by ONE indented `  status <id>: <text>`
 # context line (annotate_wakes owns the rules): a `report` carries its marker
@@ -116,6 +117,10 @@ state_dir="$(ac_state_dir)"
 scope="${AC_SCOPE:-}"
 
 ack_stamp() { printf '%s/.ack-%s\n' "$state_dir" "$1"; }
+
+# A solo session shares this home with the chief, so either form would act on
+# the CHIEF's records: a drain consumes its wakes, an ack silences its items.
+[ "${AC_SOLO:-}" != 1 ] || ac_die "a solo session (AC_SOLO=1) never drains or acks wakes - they belong to the chief session (solo-session skill)"
 
 # The no-arg drain is the primary form; `ack` is the only argument form, and
 # it ONLY stamps - it never drains, so silencing an item can never consume a

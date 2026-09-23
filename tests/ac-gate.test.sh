@@ -597,7 +597,7 @@ assert_contains "$(cat "$TMP/err")" "second-chief unavailable" "the floor names 
 assert_contains "$(cat "$TMP/err")" "NOT approval" "the floor says unavailability is NOT approval"
 # repo-deep-review F24: the message must not unconditionally authorize
 # self-approval - it must name the pre-implement gate's captain-required case
-# (AGENTS.md tier item 5), since a roomchief may be reading this at exactly
+# (staged-gates skill, pre-implement tier item 5), since a roomchief may be reading this at exactly
 # that gate.
 assert_contains "$(cat "$TMP/err")" "CAPTAIN-REQUIRED" "the floor names the pre-implement gate's captain-required case on engine failure"
 # the prompt is written before the arm ever runs, so an unavailable second

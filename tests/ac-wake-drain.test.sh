@@ -853,4 +853,13 @@ rc=0
 PATH="$stub:$PATH" env -u AC_SCOPE bash "$fakebin/ac-wake-drain.sh" bogus >/dev/null 2>&1 || rc=$?
 [ "$rc" -ne 0 ] || fail "an unknown argument must die"
 
+# A SOLO session (AC_SOLO=1) sits beside the chief: a drain from it would
+# CONSUME the chief's wake records, which nothing can un-consume.
+reset_state
+seed '' solo1 "done: shipped"
+rc=0; out="$(PATH="$stub:$PATH" AC_SOLO=1 bash "$fakebin/ac-wake-drain.sh" 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "a solo session's drain must refuse"
+assert_contains "$out" "solo" "the refusal names the solo session"
+assert_eq "$(spool_records "$state/.wake-spool")" "1" "a refused solo drain leaves the chief's record in the spool"
+
 pass

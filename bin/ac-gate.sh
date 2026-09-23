@@ -1173,7 +1173,7 @@ fail_gate() {
     printf 'gate[%s] %s/%s: engine did not produce a valid second-chief review (%s)\n' \
       "$engine" "$family" "$stage" "$1" >&2
     printf 'second-chief unavailable: unavailability is NOT approval and does not downgrade route=second-chief; retry, gather evidence and re-route honestly, or escalate\n' >&2
-    printf 'IF THIS IS THE PRE-IMPLEMENT GATE (the last report before implement: plan when present, else architecture, else spec): unresolved route=second-chief is CAPTAIN-REQUIRED (AGENTS.md tier item 5)\n' >&2
+    printf 'IF THIS IS THE PRE-IMPLEMENT GATE (the last report before implement: plan when present, else architecture, else spec): unresolved route=second-chief is CAPTAIN-REQUIRED (staged-gates skill, pre-implement tier item 5)\n' >&2
   fi
   if [ "$raw_written" = 1 ]; then
     printf 'raw judge response preserved at: %s\n' "$raw_log" >&2

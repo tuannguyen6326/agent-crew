@@ -7,7 +7,7 @@ description: Decompose a multi-deliverable order into an epic - a gated story ma
 
 Epics decompose an order into independently-landable stories, each intaken
 as its own direct/staged task and push-scheduled off landing checkpoints.
-AGENTS.md section 5 holds the invariants (epic = multi-landable, the map is
+The `intake-triage` skill holds the invariants (epic = multi-landable, the map is
 gated, scheduling is push-only, the cap protects captain attention); this
 skill is the full mechanics. `bin/ac-ready.sh`'s header owns the scheduler
 primitive and the `blocked-by` grammar.
@@ -19,8 +19,8 @@ captain says "epic") is an EPIC. Late detection follows the upgrade rule: a
 staged task whose design stage reveals separable deliverables is STOPPED and
 re-intaken as an epic. A MECHANICAL trigger applies too: an order landing in
 N > 1 repositories, each as its own PR/local merge with no shared commit, is
-an epic by default with counted evidence in the triage receipt (AGENTS.md
-section 5).
+an epic by default with counted evidence in the triage receipt (`intake-triage`
+skill).
 
 Independently-landable = each deliverable could merge as its OWN PR. Sharing
 a subsystem or even a FILE never collapses deliverables into one task -

@@ -134,18 +134,12 @@ assert_not_contains "$skill" "src|flow|mode|rev|qa|promote" "no duplicated token
 # --- catalog registration ------------------------------------------------------
 assert_contains "$(<"$ROOT/AGENTS.md")" '`brainstorm` - captain-invocable ideation' "AGENTS.md section 12 lists the skill"
 assert_contains "$(<"$ROOT/docs/architecture.md")" '`brainstorm` (captain ideation' "architecture.md lists the skill"
-assert_contains "$(<"$ROOT/AGENTS.md")" "one decision question at a time" \
-  "AGENTS.md keeps the brainstorm cadence synchronized"
-assert_contains "$(<"$ROOT/AGENTS.md")" "the section-5 PO artifact, authored here instead of re-asked at intake" \
-  "AGENTS.md section 12 names the requirements.md output"
-assert_contains "$(<"$ROOT/AGENTS.md")" '`inputs: <path>[, <path>]` is a row' \
-  "section 9 owns the inputs clause the skill writes"
-assert_contains "$(<"$ROOT/AGENTS.md")" "HAS DONE the PO step" \
-  "section 5 adopts a brainstorm-accepted requirements.md instead of re-interviewing"
-assert_contains "$(<"$ROOT/AGENTS.md")" "A RECORD ROW is the one row born in" \
-  "section 9 owns the Done-only record row the skill writes"
-assert_contains "$(<"$ROOT/AGENTS.md")" "At close the chief also leaves the TRAIL" \
-  "AGENTS.md section 12 carries the trail duty"
+assert_contains "$(<"$ROOT/docs/backlog.md")" '`inputs: <path>[, <path>]` is a row' \
+  "the backlog grammar owns the inputs clause the skill writes"
+assert_contains "$(<"$ROOT/.agents/skills/intake-triage/SKILL.md")" "HAS DONE the PO step" \
+  "intake adopts a brainstorm-accepted requirements.md instead of re-interviewing"
+assert_contains "$(<"$ROOT/docs/backlog.md")" "A RECORD ROW is the one row born in" \
+  "the backlog grammar owns the Done-only record row the skill writes"
 assert_contains "$(<"$ROOT/.agents/skills/order-staged/SKILL.md")" "which IS this step" \
   "order-staged adopts the brainstorm-authored requirements.md"
 assert_contains "$(<"$ROOT/.agents/skills/order-design/SKILL.md")" "IS this step: adopt it" \

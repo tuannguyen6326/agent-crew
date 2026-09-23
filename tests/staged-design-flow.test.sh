@@ -3,7 +3,7 @@
 # wiring (docs/staged-design-flow-spec.md, Assumptions: briefs + operating
 # guidance + focused regression tests, no new parser). The brief-side channel
 # is covered by ac-brief.test.sh; this file pins the other two: the spec doc
-# is tracked and Accepted, and the guidance channel (AGENTS.md section 5)
+# is tracked and Accepted, and the guidance channel (the staged-gates skill)
 # carries the stage-admission receipt grammar, the hash-anchor freshness
 # obligation, and the fail-closed mechanical pre-implement re-hash.
 
@@ -29,7 +29,7 @@ assert_contains "$spec" "internals can change without breaking consumers that ho
 assert_contains "$spec" "TDD Shape" \
   "the spec owns the plan TDD shape"
 
-agents="$(cat "$ROOT/AGENTS.md")"
+agents="$(cat "$ROOT/.agents/skills/staged-gates/SKILL.md")"
 assert_contains "$agents" "STAGE-ADMISSION: stage=<spec|architecture|plan>" \
   "guidance carries the stage-admission receipt grammar"
 assert_contains "$agents" "silence is neither admission nor a skip" \

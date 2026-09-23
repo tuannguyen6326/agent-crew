@@ -206,7 +206,7 @@ cmd_post() {
     GATE*|ASK*|TRIAGE*|SELF-APPROVED*|LANDED*|HANDBACK:*|R1-DISPOSITION*|DECIDED*|STAGE-ADMISSION:*)
       if [ "${AC_SCOPE:-}" != "$family" ] && [ "${AC_ROOM_PROMOTE_RECEIPT:-}" != "1" ] \
         && ac_roomchief_live "$(ac_state_dir)" "$family"; then
-        ac_die "post: $family has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (AGENTS.md: 'Two chiefs on one family is a role violation, not extra help')"
+        ac_die "post: $family has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (rooms-threads skill: 'Two chiefs on one family is a role violation, not extra help')"
       fi
       ;;
   esac
