@@ -908,10 +908,11 @@ printf 'pSW\n' >"$wt13/.crew/ship/srun/watch.pane"
 # Execution-triggered verifiers live in fleet state, not in the caller's
 # worktree. Teardown attributes modern records by caller=, archives them, and
 # preserves an explicit artifact before cleaning incomplete QA.
+# An epic story's family is not its task id; its verifier slot is keyed by caller.
 vreview=t13-verify-codereview
 cat >"$AC_HOME/state/$vreview.meta" <<EOF
 kind=verify-codereview
-family=t13
+family=t13-epic
 caller=t13
 worktree=
 leases=
@@ -939,6 +940,7 @@ worktree=
 leases=
 EOF
 printf 'pOTHERVERIFY tOV\n' >"$AC_HOME/state/.pane-other-verify-codereview"
+mkdir -p "$AC_HOME/state/.verify-t13-codereview.lock.d" "$AC_HOME/state/.verify-other-codereview.lock.d"
 # A pane the close does NOT take on: it still resolves afterwards (the fake
 # keeps a pane with a .buf alive), which is what reap-pane's `closed` reports.
 mkdir -p "$wt13/.crew/qa/qstuck"
@@ -963,6 +965,8 @@ assert_file "$AC_HOME/state/archive/$vreview/meta" "caller-linked codereview met
 assert_file "$AC_HOME/state/archive/$vqa/meta" "caller-linked QA meta is archived"
 assert_file "$vqa_evidence/incomplete-run.md" "incomplete QA is preserved before explicit teardown"
 assert_file "$AC_HOME/state/other-verify-codereview.meta" "co-tenant verifier meta survives"
+assert_no_file "$AC_HOME/state/.verify-t13-codereview.lock.d" "the caller's leftover verifier slot is cleared"
+[ -d "$AC_HOME/state/.verify-other-codereview.lock.d" ] || fail "a co-tenant caller's verifier slot survives"
 case "$log" in *"pane close pOTHER"*) fail "a run attributed to ANOTHER task must never be reaped" ;; esac
 case "$log" in *"pane close pNAMELESS"*) fail "an unattributable run must never be reaped" ;; esac
 assert_contains "$out" "pNAMELESS" "an unattributable pane is warned by id"

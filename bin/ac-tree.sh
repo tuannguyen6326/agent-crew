@@ -977,7 +977,7 @@ append_lease_to_crew_meta() {
   # - state/<id>.meta does not exist YET - the FIRST lease of a spawn or a
   #   self task always predates its own crew meta (ac-spawn.sh/
   #   ac-self-task.sh write worktree=/leases= only after this call returns),
-  #   and a verifier's distinct id (`<family>-verify-<kind>[-e2e]`) never gets
+  #   and a verifier's distinct id (`<caller>-verify-<kind>[-e2e]`) never gets
   #   one at all - ac_meta_set would CREATE the file were it called
   #   unconditionally, minting a stray meta nothing ever tears down.
   # No pool lock: ac_meta_set is an unlocked atomic rewrite, but a spawn takes

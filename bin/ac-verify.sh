@@ -435,11 +435,13 @@ case "$state_dir" in */state) fleet_home=${state_dir%/state} ;; *) ac_die "fleet
 data_dir="$fleet_home/data"
 mkdir -p "$data_dir" "$state_dir"
 
-id="$family-verify-$kind"
+# One slot per CALLER, never per family: an epic's stories share one family
+# across repos, and a family slot queued every story behind its siblings.
+id="$caller-verify-$kind"
 meta="$state_dir/$id.meta"
 status_file="$state_dir/$id.status"
 pane_handle="$state_dir/.pane-$id"
-lock="$state_dir/.verify-$family-$kind.lock.d"
+lock="$state_dir/.verify-$caller-$kind.lock.d"
 release_lock() {
   if [ "$lock_held" = 1 ]; then
     ac_lock_release "$lock" 2>/dev/null || true
