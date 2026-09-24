@@ -2821,7 +2821,7 @@ cmd_autoroom() {
   # the next checkpoint simply retries.
   local n every meta lock ref outcome spawn_out held
 
-  # Promoting a roomchief is a CREWCHIEF act (AGENTS.md section 8): a scoped
+  # Promoting a roomchief is a CREWCHIEF act (rooms-threads skill): a scoped
   # session - a roomchief, or a family drain - never promotes a fleet-level
   # chief, and its AC_SCOPE would leak into the spawn.
   [ -z "${AC_SCOPE:-}" ] || return 0

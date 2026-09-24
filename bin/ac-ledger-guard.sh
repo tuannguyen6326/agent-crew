@@ -7,7 +7,7 @@
 # payload JSON on stdin and inspects .tool_name / .tool_input. Pure bash + jq,
 # no other runtime - the sibling of ac-delegation-guard.sh, same shape.
 #
-# WHY IT EXISTS. AGENTS.md section 8 states the roomchief charter in prose
+# WHY IT EXISTS. AGENTS.md section 8 once stated the roomchief charter in prose
 # only ("it never touches the backlog/registry - the crewchief keeps those"):
 # nothing mechanically held it. A roomchief with no fleet-wide context can
 # renumber an epic rollup or move a line while the crewchief is mid-decision,

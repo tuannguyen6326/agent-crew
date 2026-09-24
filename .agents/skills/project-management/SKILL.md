@@ -1,6 +1,6 @@
 ---
 name: project-management
-description: Crewchief fleet-level project lifecycle judgment - add, clone, create, initialize, change the +yolo posture of, retire, or remove a project registered in records/projects.md. Load before any such lifecycle action. Removal is destructive and always requires explicit captain confirmation after the exact target and its unlanded-work preflight are resolved. Does not own per-task delivery-mode triage (AGENTS.md section 4) or CrewDeputy home clones (CrewDeputy provisioning and convergence own them).
+description: Crewchief fleet-level project lifecycle judgment - add, clone, create, initialize, change the +yolo posture of, retire, or remove a project registered in records/projects.md. Load before any such lifecycle action. Removal is destructive and always requires explicit captain confirmation after the exact target and its unlanded-work preflight are resolved. Does not own per-task delivery-mode triage (the intake-triage skill) or CrewDeputy home clones (CrewDeputy provisioning and convergence own them).
 ---
 
 # project-management

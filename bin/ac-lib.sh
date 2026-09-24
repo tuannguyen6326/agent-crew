@@ -984,7 +984,7 @@ ac_stage_dir_for_id() {
     *-chief)  fam="${base%-chief}";  stage=chief ;;
     *)
       # A bare revision id (<family>-rN, no stage suffix) is a same-stage
-      # implement revision per section 5 - it nests as <family>/implement-rN.
+      # implement revision per the bin/ac-brief.sh layout - it nests as <family>/implement-rN.
       # Direct -rN ids stay usable: ac_task_dir falls back to the flat dir
       # when no such nested brief exists.
       [ -n "$rev" ] && printf '%s/implement%s\n' "$base" "$rev"

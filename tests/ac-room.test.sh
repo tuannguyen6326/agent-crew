@@ -749,8 +749,8 @@ assert_contains "$(cat "$AC_HOME/data/ownfam/room.md")" "recorded upstream for t
   "prose mentioning STAGE-ADMISSION without the colon posts fine under a live roomchief"
 
 # HANDBACK-REFUSED: stays allowed unscoped through the SAME live roomchief -
-# it is the CREWCHIEF refusing its roomchief's hand-back (AGENTS.md section
-# 8), always posted while that roomchief is still alive and never confused
+# it is the CREWCHIEF refusing its roomchief's hand-back (rooms-threads
+# skill), always posted while that roomchief is still alive and never confused
 # with the roomchief's own HANDBACK: (review-confirmed 2026-07-30, CR-001: a
 # broader HANDBACK* match would refuse this and deadlock the turn-end guard's
 # only way to clear an owed hand-back without demoting the family).
