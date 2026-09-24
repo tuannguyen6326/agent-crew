@@ -535,8 +535,8 @@ intent="$TMP/intent.md"
 printf 'Implement the target behavior.\n' >"$intent"
 output="$TMP/review.json"
 family=flow-v2
-caller=flow-v2-implement
-export VERIFY_EXPECT_ID="$family-verify-codereview"
+caller="$family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 mkdir -p "$AC_HOME/data/$family"
 cat >"$AC_HOME/data/$family/room.md" <<'EOF'
 # Room: flow-v2
@@ -782,7 +782,8 @@ assert_contains "$(cat "$VERIFY_PANE_LOG")" "wsfam=parent-fam" \
 # .risk_level/.reviewed_ref/.risk_rationale.
 warn_family=flow-v2-warn
 warn_output="$TMP/warn-review.json"
-export VERIFY_EXPECT_ID="$warn_family-verify-codereview"
+caller="$warn_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/warn-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/warn-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/warn-cwd.capture"
@@ -807,7 +808,8 @@ history_output="$TMP/history-review.json"
 history_input="$TMP/review-history.json"
 jq -n '[{id:"old-1",action:"fix",description:"prior issue",evidence:"resolved in the new ref"}]' \
   >"$history_input"
-export VERIFY_EXPECT_ID="$history_family-verify-codereview"
+caller="$history_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/history-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/history-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/history-cwd.capture"
@@ -847,7 +849,8 @@ jq -n --arg ref "$base" '[{round:1, reviewed_ref:$ref, verdict:"fix", risk_level
 # Undispositioned: a clean verdict that neither re-reports CR-1 nor resolves
 # it is rejected fail-closed (CR-2 is no-op and owes no disposition).
 open_family=flow-v2-ledger-open
-export VERIFY_EXPECT_ID="$open_family-verify-codereview"
+caller="$open_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-open-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-open-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-open-cwd.capture"
@@ -873,7 +876,8 @@ assert_eq "$(wc -l <"$rej" | tr -d ' ')" "1" "one rejection, one line"
 # survives into the durable result for audit.
 ledger_family=flow-v2-ledger
 ledger_output="$TMP/ledger-review.json"
-export VERIFY_EXPECT_ID="$ledger_family-verify-codereview"
+caller="$ledger_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-cwd.capture"
@@ -905,7 +909,8 @@ assert_eq "$(jq -r '.verdict' "$ledger_output")" "pass" "a fully dispositioned c
 # in prior_open. The predicate's own comment carries the full measurement.
 superset_family=flow-v2-ledger-superset
 superset_output="$TMP/ledger-superset-review.json"
-export VERIFY_EXPECT_ID="$superset_family-verify-codereview"
+caller="$superset_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-superset-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-superset-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-superset-cwd.capture"
@@ -980,7 +985,8 @@ assert_contains "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" "reviewed_paths" 
 
 # (i) fails: the claimed finding's file is not in the declared scope.
 unrev_family=flow-v2-ledger-unreviewed
-export VERIFY_EXPECT_ID="$unrev_family-verify-codereview"
+caller="$unrev_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-unrev-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-unrev-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-unrev-cwd.capture"
@@ -1000,7 +1006,8 @@ assert_no_file "$(dirname "$rej")/correction.meta" "no correction pane ran for a
 
 # (i) fails by omission: no reviewed_paths at all backs no claim.
 absent_family=flow-v2-ledger-noscope
-export VERIFY_EXPECT_ID="$absent_family-verify-codereview"
+caller="$absent_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-noscope-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-noscope-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-noscope-cwd.capture"
@@ -1015,7 +1022,8 @@ assert_contains "$(cat "$(rejection_log "$absent_family")")" "undispositioned-pr
 # (ii) fails: the round reports something else in the claimed file - a moved
 # line or a reworded re-report is ambiguity, not resolution.
 beside_family=flow-v2-ledger-beside
-export VERIFY_EXPECT_ID="$beside_family-verify-codereview"
+caller="$beside_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-beside-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-beside-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-beside-cwd.capture"
@@ -1030,7 +1038,8 @@ assert_contains "$(cat "$(rejection_log "$beside_family")")" "undispositioned-pr
 # Off-shape reviewed_paths is an ENVELOPE failure like the other optional keys:
 # it buys the one correction turn, then the same predicate grades the result.
 shape_family=flow-v2-ledger-scope-shape
-export VERIFY_EXPECT_ID="$shape_family-verify-codereview"
+caller="$shape_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-shape-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-shape-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-shape-cwd.capture"
@@ -1056,7 +1065,8 @@ jq -n --arg ref "$base" '[
 
 carry_family=flow-v2-ledger-carry
 carry_output="$TMP/ledger-carry-review.json"
-export VERIFY_EXPECT_ID="$carry_family-verify-codereview"
+caller="$carry_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-carry-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-carry-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-carry-cwd.capture"
@@ -1092,7 +1102,8 @@ jq -n --arg ref "$rewritten" '[{round:1, reviewed_ref:$ref, verdict:"fix", risk_
   >"$rewritten_ledger"
 rewritten_family=flow-v2-ledger-rewritten
 rewritten_output="$TMP/ledger-rewritten-review.json"
-export VERIFY_EXPECT_ID="$rewritten_family-verify-codereview"
+caller="$rewritten_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ledger-rewritten-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ledger-rewritten-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ledger-rewritten-cwd.capture"
@@ -1159,7 +1170,8 @@ refuse_history "fix/ask-user finding with no string id" \
 # FOREIGN object was harvested out of the transcript, not a formatting slip.
 omit_family=flow-v2-omit-ref
 omit_output="$TMP/omit-review.json"
-export VERIFY_EXPECT_ID="$omit_family-verify-codereview"
+caller="$omit_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/omit-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/omit-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/omit-cwd.capture"
@@ -1176,7 +1188,8 @@ assert_eq "$(jq -r '.reviewed_ref' "$omit_output")" "$target" \
 
 wrong_family=flow-v2-wrong-ref
 wrong_output="$TMP/wrong-review.json"
-export VERIFY_EXPECT_ID="$wrong_family-verify-codereview"
+caller="$wrong_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/wrong-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/wrong-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/wrong-cwd.capture"
@@ -1194,7 +1207,7 @@ case "$(cat "$rej")" in *undispositioned*) fail "the rejection line must discrim
 unset VERIFY_WRONG_REF
 
 # --- VERIFIER SLOT REFUSAL ---------------------------------------------------
-# The family/kind slot is taken before anything durable exists: the holder
+# The caller/kind slot is taken before anything durable exists: the holder
 # leases a worktree and hard-resets it to the exact ref before publish_meta
 # runs, so for that whole window every id-keyed reader answers "no crewmate
 # meta" and the slot reads as a DEAD leftover. The refusal must therefore hand
@@ -1202,21 +1215,41 @@ unset VERIFY_WRONG_REF
 # the lock dir already records - or the next move is a hand-typed rm -rf on a
 # lock whose holder is still checking out (the near-miss this pins).
 held_family=verify-slot-held
-held_lock="$AC_HOME/state/.verify-$held_family-codereview.lock.d"
+held_caller="$held_family-implement"
+held_lock="$AC_HOME/state/.verify-$held_caller-codereview.lock.d"
 mkdir -p "$held_lock"
 printf '%s\n' "$$" >"$held_lock/pid"
 rc=0
 held_out="$(AC_VERIFY_LOCK_TIMEOUT=0 "$BIN/ac-verify.sh" codereview --repo "$repo" \
-  --ref "$target" --base "$base" --family "$held_family" --caller "$caller" \
+  --ref "$target" --base "$base" --family "$held_family" --caller "$held_caller" \
   --intent "$intent" --output "$TMP/held-review.json" 2>&1)" || rc=$?
-[ "$rc" -ne 0 ] || fail "a held verifier slot must still refuse the second caller"
+[ "$rc" -ne 0 ] || fail "a held verifier slot must still refuse a second run for the same caller"
 assert_contains "$held_out" "pid $$" \
   "the refusal names the holder pid, the one fact that settles live-vs-dead"
-assert_contains "$held_out" "$held_family-verify-codereview.meta" \
+assert_contains "$held_out" "$held_caller-verify-codereview.meta" \
   "the refusal names where the holder's record appears, so an absent meta is not read as death"
-assert_no_file "$AC_HOME/state/$held_family-verify-codereview.meta" \
+assert_no_file "$AC_HOME/state/$held_caller-verify-codereview.meta" \
   "a refused caller publishes no record of its own"
 rm -rf "$held_lock"
+
+# The slot is the CALLER's, not the family's: an epic's stories share one
+# family across repos, and a family-wide slot serialized every story's review
+# behind whichever sibling was mid-round (pviam-p2, 2026-09-24).
+# DISPUTED: the caller holding the slot (a sibling vs this one).
+# HELD-CONSTANT: family, kind, repo, ref, base, intent, live holder pid.
+sib_family=verify-slot-sibling
+sib_locks="$AC_HOME/state/.verify-$sib_family-codereview.lock.d $AC_HOME/state/.verify-$sib_family-story-a-codereview.lock.d"
+for l in $sib_locks; do mkdir -p "$l"; printf '%s\n' "$$" >"$l/pid"; done
+caller="$sib_family-story-b"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
+AC_VERIFY_LOCK_TIMEOUT=0 "$BIN/ac-verify.sh" codereview --repo "$repo" \
+  --ref "$target" --base "$base" --family "$sib_family" --caller "$caller" \
+  --intent "$intent" --output "$TMP/sibling-review.json" >/dev/null \
+  || fail "a sibling caller's live slot in the same family must not block this caller"
+assert_eq "$(jq -r .verdict "$TMP/sibling-review.json")" "pass" "the unblocked sibling review completes"
+assert_contains "$(cat "$VERIFY_META_CAPTURE")" "caller=$caller" \
+  "the verifier record is the caller's own"
+for l in $sib_locks; do assert_file "$l/pid" "a sibling's slot is left untouched"; rm -rf "$l"; done
 
 # --- CONTEXT NEUTRALIZATION --------------------------------------------------
 # The verifier harness launches inside the project worktree, so the repo's own
@@ -1238,7 +1271,8 @@ git clone -q "$repo" "$ctx_lease"
 mkdir -p "$ctx_lease/.claude"
 printf 'seeded crewmate layer\n' >"$ctx_lease/.claude/CLAUDE.md"
 ctx_family=flow-v2-ctx
-export VERIFY_EXPECT_ID="$ctx_family-verify-codereview"
+caller="$ctx_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ctx-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ctx-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ctx-cwd.capture"
@@ -1281,7 +1315,8 @@ export VERIFY_REF="$target"
 # ask-user is a completed review only when it carries the captain-relay shape.
 ask_family=flow-v2-ask
 ask_output="$TMP/ask-review.json"
-export VERIFY_EXPECT_ID="$ask_family-verify-codereview"
+caller="$ask_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ask-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ask-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ask-cwd.capture"
@@ -1293,7 +1328,8 @@ assert_eq "$(jq -r '.findings[0].options | length' "$ask_output")" "2" "ask-user
 
 incomplete_ask_family=flow-v2-ask-incomplete
 incomplete_ask_output="$TMP/ask-incomplete-review.json"
-export VERIFY_EXPECT_ID="$incomplete_ask_family-verify-codereview"
+caller="$incomplete_ask_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ask-incomplete-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ask-incomplete-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ask-incomplete-cwd.capture"
@@ -1328,7 +1364,8 @@ assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$((before_reaps + 1))"
 # reaped, meta/handle removed.
 pane_rc_family=flow-v2-pane-rc-death
 pane_rc_output="$TMP/pane-rc-review.json"
-export VERIFY_EXPECT_ID="$pane_rc_family-verify-codereview"
+caller="$pane_rc_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/pane-rc-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/pane-rc-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/pane-rc-cwd.capture"
@@ -1349,7 +1386,8 @@ assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$((before_reaps + 1))"
 
 pane_closed_family=flow-v2-pane-closed
 pane_closed_output="$TMP/pane-closed-review.json"
-export VERIFY_EXPECT_ID="$pane_closed_family-verify-codereview"
+caller="$pane_closed_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/pane-closed-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/pane-closed-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/pane-closed-cwd.capture"
@@ -1378,7 +1416,8 @@ assert_eq "$(grep -c '^reap-pane ' "$pane_log" || true)" "$((before_reaps + 1))"
 # ac_die and ac-ship.sh refusal tells a human to open.
 killed_family=flow-v2-driver-killed
 killed_output="$TMP/killed-review.json"
-export VERIFY_EXPECT_ID="$killed_family-verify-codereview"
+caller="$killed_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/killed-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/killed-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/killed-cwd.capture"
@@ -1428,7 +1467,8 @@ rm -f "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" "$AC_HOME/state/$VERIFY_EXPECT_ID.
 # stay at the path the refusal names.
 noisy_family=flow-v2-noisy-stream
 noisy_output="$TMP/noisy-review.json"
-export VERIFY_EXPECT_ID="$noisy_family-verify-codereview"
+caller="$noisy_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/noisy-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/noisy-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/noisy-cwd.capture"
@@ -1451,7 +1491,8 @@ assert_contains "$(cat "${noisy_round}pane-result.ndjson")" '"event":"done"' \
 # the verdict over, so refusing here would discard a round that is entirely fine.
 tail_family=flow-v2-trailing-noise
 tail_output="$TMP/tail-review.json"
-export VERIFY_EXPECT_ID="$tail_family-verify-codereview"
+caller="$tail_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/tail-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/tail-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/tail-cwd.capture"
@@ -1496,7 +1537,8 @@ assert_eq "$(jq -r '.verdict' "$stale_out")" "pass" "the previous verdict is nam
 for prose_mode in tail fence; do
   prose_family="flow-v2-prose-$prose_mode"
   prose_output="$TMP/prose-$prose_mode.json"
-  export VERIFY_EXPECT_ID="$prose_family-verify-codereview"
+  caller="$prose_family-implement"
+  export VERIFY_EXPECT_ID="$caller-verify-codereview"
   export VERIFY_META_CAPTURE="$TMP/prose-$prose_mode-meta.capture"
   export VERIFY_PROMPT_CAPTURE="$TMP/prose-$prose_mode-prompt.capture"
   export VERIFY_CWD_CAPTURE="$TMP/prose-$prose_mode-cwd.capture"
@@ -1516,7 +1558,8 @@ qa_report="$TMP/qa-stage/report.md"
 qa_profile="$TMP/default-qa-profile/profile.json"
 printf 'Run the QA cases.\n' >"$qa_brief"
 make_profile_bundle "$(dirname "$qa_profile")" "$target" verify-source
-export VERIFY_EXPECT_ID="$qa_family-verify-qa"
+caller="$qa_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-qa"
 export VERIFY_META_CAPTURE="$TMP/qa-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/qa-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/qa-cwd.capture"
@@ -1546,7 +1589,8 @@ qa_derived_family=flow-v2-qa-derived
 qa_derived_output="$TMP/qa-derived.json"
 qa_derived_evidence="$TMP/qa-derived-evidence"
 qa_derived_report="$TMP/qa-derived-stage/report.md"
-export VERIFY_EXPECT_ID="$qa_derived_family-verify-qa"
+caller="$qa_derived_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-qa"
 export VERIFY_META_CAPTURE="$TMP/qa-derived-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/qa-derived-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/qa-derived-cwd.capture"
@@ -1572,7 +1616,8 @@ qa_prof_evidence="$TMP/qa-prof-evidence"
 qa_prof_profile="$TMP/frozen-qa-profile/profile.json"
 qa_prof_report="$TMP/qa-prof-stage/report.md"
 make_profile_bundle "$(dirname "$qa_prof_profile")" "$target" verify-source
-export VERIFY_EXPECT_ID="$qa_prof_family-verify-qa"
+caller="$qa_prof_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-qa"
 export VERIFY_META_CAPTURE="$TMP/qa-prof-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/qa-prof-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/qa-prof-cwd.capture"
@@ -1591,7 +1636,8 @@ qa_route_profile="$TMP/routed-qa-profile/profile.json"
 qa_route_report="$TMP/qa-route-stage/report.md"
 make_profile_bundle "$(dirname "$qa_route_profile")" "$target" verify-source
 add_profile_routing "$(dirname "$qa_route_profile")" 1 opencode openrouter/z-ai/glm-5.2 ""
-export VERIFY_EXPECT_ID="$qa_route_family-verify-qa"
+caller="$qa_route_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-qa"
 export VERIFY_META_CAPTURE="$TMP/qa-route-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/qa-route-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/qa-route-cwd.capture"
@@ -1628,7 +1674,8 @@ assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --bas
 qa_bad_family=flow-v2-qa-bad
 qa_bad_output="$TMP/qa-bad.json"
 qa_bad_evidence="$TMP/qa-bad-evidence"
-export VERIFY_EXPECT_ID="$qa_bad_family-verify-qa"
+caller="$qa_bad_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-qa"
 export VERIFY_META_CAPTURE="$TMP/qa-bad-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/qa-bad-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/qa-bad-cwd.capture"
@@ -1670,7 +1717,8 @@ assert_file "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" "refused retry keeps incompl
 # rejected payloads and the correction marker - is retained for inspection.
 bad_family=flow-v2-bad
 bad_output="$TMP/bad-review.json"
-export VERIFY_EXPECT_ID="$bad_family-verify-codereview"
+caller="$bad_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/bad-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/bad-prompt.capture"
 export VERIFY_CORRECTION_PROMPT_CAPTURE="$TMP/bad-correction-prompt.capture"
@@ -1721,7 +1769,8 @@ unset VERIFY_CORRECTION_PROMPT_CAPTURE
 # at the same reviewed_ref, and the receipt shows the correction happened.
 corr_family=flow-v2-corrected
 corr_output="$TMP/corrected-review.json"
-export VERIFY_EXPECT_ID="$corr_family-verify-codereview"
+caller="$corr_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/corr-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/corr-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/corr-cwd.capture"
@@ -1768,7 +1817,8 @@ make_profile_bundle "$(dirname "$dual_profile")" "$target" \
   verify-source/orchid/orchid-service "$e2e_src" "$e2e_ref" orchid orchid-service
 
 dual_family=flow-v2-dual
-export VERIFY_EXPECT_ID="$dual_family-verify-qa"
+caller="$dual_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-qa"
 export VERIFY_META_CAPTURE="$TMP/dual-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/dual-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/dual-cwd.capture"
@@ -1805,7 +1855,8 @@ abort_profile="$TMP/dual-abort-profile/profile.json"
 make_profile_bundle "$(dirname "$abort_profile")" "$target" k "$e2e_src" \
   "0000000000000000000000000000000000000000"
 abort_family=flow-v2-dual-abort
-export VERIFY_EXPECT_ID="$abort_family-verify-qa"
+caller="$abort_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-qa"
 before_returns="$(grep -c '^return ' "$tree_log" || true)"
 rc=0
 VERIFY_QA_RUN=1 "$BIN/ac-verify.sh" qa --repo "$repo" --ref "$target" \
@@ -1814,7 +1865,7 @@ VERIFY_QA_RUN=1 "$BIN/ac-verify.sh" qa --repo "$repo" --ref "$target" \
   --report "$TMP/dual-abort-report.md" --profile "$abort_profile" \
   >"$TMP/dual-abort.out" 2>"$TMP/dual-abort.err" || rc=$?
 assert_eq "$rc" "1" "an unresolvable E2E ref aborts the run before spawning"
-assert_no_file "$AC_HOME/state/$abort_family-verify-qa.meta" "pre-spawn abort leaves no verifier meta"
+assert_no_file "$AC_HOME/state/$caller-verify-qa.meta" "pre-spawn abort leaves no verifier meta"
 assert_eq "$(grep -c '^return ' "$tree_log")" "$((before_returns + 2))" "pre-spawn abort releases BOTH partial leases"
 unset VERIFY_E2E_REPO VERIFY_E2E_WORKTREE
 
@@ -1823,7 +1874,8 @@ unset VERIFY_E2E_REPO VERIFY_E2E_WORKTREE
 # the canonical facade-error report.
 mismatch_family=flow-v2-qa-mismatch
 mismatch_report="$TMP/qa-mismatch-stage/report.md"
-export VERIFY_EXPECT_ID="$mismatch_family-verify-qa"
+caller="$mismatch_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-qa"
 export VERIFY_META_CAPTURE="$TMP/qa-mismatch-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/qa-mismatch-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/qa-mismatch-cwd.capture"
@@ -1863,7 +1915,8 @@ bp_round() {
   local n="$1"; shift
   rm -rf "$TMP/bp-qa-profile" "$TMP/bp-evidence-$n" "$TMP/bp-stage-$n"
   make_profile_bundle "$(dirname "$bp_profile")" "$target" verify-source
-  export VERIFY_EXPECT_ID="$bp_family-$n-verify-qa"
+  caller="$bp_family-$n-implement"
+  export VERIFY_EXPECT_ID="$caller-verify-qa"
   env VERIFY_QA_RUN=1 "$@" "$BIN/ac-verify.sh" qa --repo "$repo" --ref "$target" \
     --family "$bp_family-$n" --caller "$caller" --brief "$bp_brief" \
     --output "$TMP/bp-$n.json" --evidence-dir "$TMP/bp-evidence-$n" \
@@ -1913,7 +1966,8 @@ assert_contains "$(cat "$TMP/bp-stage-noship/report.md")" "not-qualifies" \
 # Same pane-profile shape qa's routed profile uses; the caller (a chief, or a
 # dispatch-resolved rule) picks the reviewer's engine explicitly.
 cr_h_family="crhrn"
-export VERIFY_EXPECT_ID="$cr_h_family-verify-codereview"
+caller="$cr_h_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/cr-h-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/cr-h-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/cr-h-cwd.capture"
@@ -1936,7 +1990,8 @@ assert_fails "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --bas
 make_fake_orca
 printf 'orca\n' >"$AC_HOME/config/backend"
 ocr_family="ocr"
-export VERIFY_EXPECT_ID="$ocr_family-verify-codereview"
+caller="$ocr_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview"
 export VERIFY_META_CAPTURE="$TMP/ocr-meta.capture"
 export VERIFY_PROMPT_CAPTURE="$TMP/ocr-prompt.capture"
 export VERIFY_CWD_CAPTURE="$TMP/ocr-cwd.capture"
@@ -1951,7 +2006,7 @@ case "$ocr_wt" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "orca-backend verifier must
 assert_eq "$(grep -c . "$tree_log" 2>/dev/null || true)" "$tree_log_before" \
   "an orca verifier round never touches the crew-tree pool"
 [ ! -d "$ocr_wt" ] || fail "the orca verifier worktree must be released after the round"
-git -C "$repo" show-ref --verify -q "refs/heads/crew/$ocr_family-verify-codereview" \
+git -C "$repo" show-ref --verify -q "refs/heads/crew/$caller-verify-codereview" \
   && fail "a verifier round must leave no crew/<id> branch behind"
 printf 'herdr\n' >"$AC_HOME/config/backend"
 
@@ -1959,7 +2014,8 @@ printf 'herdr\n' >"$AC_HOME/config/backend"
 # the one thing the facade can verify without re-reviewing, and exactly the
 # hallucinated-reference class that otherwise buys a fix round on nothing.
 cite_out="$TMP/cite.json"
-export VERIFY_EXPECT_ID="$family-verify-codereview" VERIFY_REF="$target"
+caller="$family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview" VERIFY_REF="$target"
 cite_err="$(VERIFY_FIX_FILE=file.txt VERIFY_FIX_LINE=1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
   --family "$family" --caller "$caller" --base "$base" --intent "$intent" --output "$cite_out" 2>&1 >/dev/null)" \
   || fail "a fix finding citing a real file and line at the ref is accepted: $cite_err"
@@ -2006,7 +2062,8 @@ mkdir -p "$VERIFY_SCOUT_DIR"
 # production default (900s) each would hold the suite for a quarter hour.
 export AC_VERIFY_SCOUT_TIMEOUT=2
 scout_family=flow-v2-scout
-export VERIFY_EXPECT_ID="$scout_family-verify-codereview" VERIFY_REF="$target"
+caller="$scout_family-implement"
+export VERIFY_EXPECT_ID="$caller-verify-codereview" VERIFY_REF="$target"
 cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 {
   "rules": [{"when": "anything", "use": {"harness": "claude"}}],

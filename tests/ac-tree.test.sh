@@ -354,7 +354,7 @@ assert_eq "$(awk -F= '$1=="lease_ids"{print $2}' "$AC_HOME/state/t9.meta")" "$id
 assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9.meta")" "$wtM1" \
   "worktree= (the primary tree) is untouched by the append"
 
-# A verifier's distinct id (grammar: bin/ac-verify.sh, <family>-verify-<kind>
+# A verifier's distinct id (grammar: bin/ac-verify.sh, <caller>-verify-<kind>
 # and its -e2e companion) never gets a crew meta - get must mint none for it.
 "$BIN/ac-tree.sh" get --repo "$repoM" --id fam-verify-codereview --holder verify >/dev/null 2>&1
 assert_no_file "$AC_HOME/state/fam-verify-codereview.meta" "no stray meta for a verifier id"

@@ -591,9 +591,9 @@ archive_and_reap_verifier() {
         || ac_warn "could not return verifier worktree $lease_v; inspect $varchive/meta"
     fi
   done
-  family_v="$(ac_meta_get "$varchive/meta" family)"
+  caller_v="$(ac_meta_get "$varchive/meta" caller)"
   kind_v="$(ac_meta_get "$varchive/meta" kind)"; kind_v="${kind_v#verify-}"
-  rmdir "$state_dir/.verify-$family_v-$kind_v.lock.d" 2>/dev/null || true
+  rmdir "$state_dir/.verify-$caller_v-$kind_v.lock.d" 2>/dev/null || true
 }
 
 prepare_task_verifiers() {
