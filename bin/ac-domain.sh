@@ -84,7 +84,7 @@
 # not merely one the fleet has: QA works the domain's view of the clone, and a
 # repository outside that view is one the domain's own sessions cannot reach.
 #
-# Which route a task takes is AGENTS.md section 5's to say; this verb only
+# Which route a task takes is the intake-triage skill's to say; this verb only
 # records the answer. Nothing here mints an attestation: the profile-driven
 # route (`ac-verify qa`) remains the only producer of the pass marker
 # `qa.require_for_ship` gates a merge on.

@@ -1,11 +1,11 @@
 ---
 name: gate-review
-description: Build the ONE consolidated pre-implement review page for a captain-required gate - a single self-contained HTML file reviewed in rich-review, letting the captain approve/veto a whole staged task without asking anything back. Use at a CAPTAIN-REQUIRED pre-implement gate on a substantial task (AGENTS.md section 5), or when the captain asks for the rich review.
+description: Build the ONE consolidated pre-implement review page for a captain-required gate - a single self-contained HTML file reviewed in rich-review, letting the captain approve/veto a whole staged task without asking anything back. Use at a CAPTAIN-REQUIRED pre-implement gate on a substantial task (`staged-gates` skill), or when the captain asks for the rich review.
 ---
 
 # gate-review
 
-The pre-implement gate law lives in AGENTS.md section 5: whether a gate is
+The pre-implement gate law lives in the `staged-gates` skill: whether a gate is
 CAPTAIN-REQUIRED (vs auto), and that the tier is never waived by `+yolo`.
 This skill is the HOW for the rich path - the consolidated review page you
 offer at a captain-required gate on a substantial task, so the captain
@@ -40,4 +40,4 @@ The captain annotates inline; you poll, apply, `--agent-reply`, loop.
 "Approve" said in chat or in rich-review IS the gate - never silence, never a
 proceed on no answer.
 Putting approve/veto/revise to the captain in chat follows the select
-rule - AGENTS.md section 8 (`AskUserQuestion`).
+rule - the `rooms-threads` skill (`AskUserQuestion`).

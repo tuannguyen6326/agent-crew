@@ -478,9 +478,8 @@ tmp_after="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'ac-fleets-*' 2>/dev/null 
 assert_eq "$tmp_after" "$tmp_before" "no ac-fleets-*.XXXXXX temp files survive a --json run"
 
 # -- the SELF-TASK class: listed, but owing no watcher coverage ------------------
-# AGENTS.md:1055 "A `kind=self` meta ... is the ONE class excluded from
-# supervision: its pane holds a `tail -f` and no agent" and :1056 "It stays in
-# ACCOUNTING (every fleet view lists it)". Both halves bind at once, so a home
+# AGENTS.md section 7: "A `kind=self` meta is excluded from
+# supervision but stays in accounting - every fleet view lists it". Both halves bind at once, so a home
 # whose in-flight set is entirely self tasks LISTS them and still reads as a
 # home with no supervision gap - the down-watcher line keeps its benign
 # qualifier and the cross-fleet alarm stays 0.

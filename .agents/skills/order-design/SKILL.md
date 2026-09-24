@@ -5,7 +5,7 @@ description: Captain starts a DESIGN-FIRST task - PO requirements from the capta
 
 # order-design
 
-The captain invoked this order with `/order-design` - that IS the captain's own words at the top of the flow precedence ladder (AGENTS.md section 5): flow is PINNED to `staged`, and the flow STOPS at the implement boundary.
+The captain invoked this order with `/order-design` - that IS the captain's own words at the top of the flow precedence ladder (`intake-triage` skill): flow is PINNED to `staged`, and the flow STOPS at the implement boundary.
 Design runs and gates now; implementation is a LATER captain order.
 Nothing here invents new machinery - every stage below is the staged flow's own design mechanics, verbatim; the only new behavior is where the flow stops.
 
@@ -32,5 +32,5 @@ Nothing here invents new machinery - every stage below is the staged flow's own 
    - post `DESIGN-COMPLETE: reports=<paths>` to the room - a RECEIPT, never a pending `GATE:` (the captain's inbox must not carry a forever item for work that is deliberately parked);
    - a promoted roomchief hands back and is demoted; the room stays open history for the implement leg.
 
-6. The later captain order ("implement <id>", any wording naming the row) restarts the family at the execution stage: reopen the room, brief `--stage implement` with requirements.md and every accepted report under `## Inputs`, and re-hash each admitted report against its `GATE-ROUTING:` receipt sha - unchanged reports proceed on the recorded gate pass; ANY mismatch reopens the earliest mismatched stage first (section 5's mechanical pre-implement rule, unchanged).
+6. The later captain order ("implement <id>", any wording naming the row) restarts the family at the execution stage: reopen the room, brief `--stage implement` with requirements.md and every accepted report under `## Inputs`, and re-hash each admitted report against its `GATE-ROUTING:` receipt sha - unchanged reports proceed on the recorded gate pass; ANY mismatch reopens the earliest mismatched stage first (the `staged-gates` skill's mechanical pre-implement rule, unchanged).
    Execution then owns implement + delivery (+ qa per pins) exactly as staged law says.

@@ -6,7 +6,7 @@ description: Captain starts a task with flow PINNED to staged (design -> executi
 # order-staged
 
 The captain invoked this order with `/order-staged` - that IS the captain's
-own words at the top of the flow precedence ladder (AGENTS.md section 5):
+own words at the top of the flow precedence ladder (`intake-triage` skill):
 flow is PINNED to `staged`. Do not re-triage the flow; everything else
 (mode, promote, WHICH design sub-stages the task needs) you still triage
 yourself.
@@ -17,7 +17,7 @@ yourself.
    `--promote <yes|no>` pins the promotion decision, and `--qa <yes|no>`
    pins whether the task carries a `<family>-qa` stage - an independent
    behavioral proof run AFTER ship that gates the merge, never the push
-   (AGENTS.md section 5). A pin is the captain's own words for THAT
+   (`intake-triage` skill). A pin is the captain's own words for THAT
    dimension; every unpinned dimension you still triage yourself with
    receipts (for qa, the triage signals are user-facing/DB/financial/
    captain-critical). The REST of the arguments is the captain's order,
@@ -38,7 +38,7 @@ yourself.
    `## Inputs` and the spec report's Trace IDs trace to its lines.
 
 3. Run the section-5 intake exactly as law: WRITE the pinned dimensions
-   onto the backlog row as its delivery-contract token group (section 9
+   onto the backlog row as its delivery-contract token group (`docs/backlog.md`
    grammar) - `src:cap flow:staged rev:yes` plus a token per flag the
    captain gave (e.g. `[src:cap flow:staged mode:crew-ship rev:yes qa:yes]`);
    the pin IS the record that skips the escalation ask, today and on every
@@ -52,7 +52,7 @@ yourself.
    `second-chief`; a low-consequence, evidence-clear report stays chief-owned,
    while captain-owned authority goes directly to a pending captain gate.
    Any ASK this intake puts to the captain follows the select rule -
-   AGENTS.md section 8 (`AskUserQuestion`).
+   the `rooms-threads` skill (`AskUserQuestion`).
 4. After the pre-implement gate, spawn one execution crewmate. It owns TDD,
    code, self-review, commit, independent review, checks, docs, and delivery.
    Its self-review is plugin-first over the full diff (project-provided plugins

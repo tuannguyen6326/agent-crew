@@ -589,7 +589,7 @@ rm -f "$AC_HOME/records/captain.md"
 # "## Fleet standing rules" - two contradicting instructions in one document,
 # left for the crewmate to resolve at the last step of delivery. AGENTS.md
 # is explicit that who lands a verified local-only branch is a per-fleet call,
-# not distro law (AGENTS.md:826-829) - so step 7 must name that authority
+# not distro law (rooms-threads skill, room lifecycle) - so step 7 must name that authority
 # instead of asserting a direction, while still stating the reversible
 # fail-closed default for a fleet with no such rule.
 cat >"$AC_HOME/records/captain.md" <<'CAP'

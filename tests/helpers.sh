@@ -79,6 +79,9 @@ mkdir -p "$AC_CLAUDE_TRANSCRIPT_ROOT"
 # ambiguity (tests/ac-ship.test.sh's "homeless crewmate" cases) silently pass
 # or fail against the OPERATOR'S live fleet's project config instead of the
 # case under test.
+# AC_SOLO/AC_CHIEF_SOLO mark a solo session, which the drain, the watcher and
+# the session hooks answer differently - a suite run from one must not inherit it.
+unset AC_SOLO AC_CHIEF_SOLO
 unset AC_SCOPE AC_WATCH_ONLY AC_WATCH_SKIP AC_FLEET_MODEL AC_FLEET_EFFORT \
       AC_FLEET_STATE AC_FLEET_SCOPE \
       AC_FLEET_NAME AC_FLEET_REVIEW AC_CREW_ID \

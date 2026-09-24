@@ -166,7 +166,7 @@ cmd_post() {
   # A promoted family's OWN receipts - intake TRIAGE, gate escalation/
   # self-judgment, hand-back, captain decision - belong to whichever chief is
   # actually running that family's stages: the LIVE roomchief, once one
-  # exists (AGENTS.md section 5 for TRIAGE; section 8, "Two chiefs on one
+  # exists (`intake-triage` skill for TRIAGE; `rooms-threads` skill, "Two chiefs on one
   # family is a role violation, not extra help"). Refuse a post of one of
   # those verbs when this call is NOT the family's own roomchief (AC_SCOPE,
   # never the actor STRING - a live roomchief posts under more than one
@@ -192,7 +192,7 @@ cmd_post() {
   # answers NOT LIVE, whether truly not live or merely uncertain - the same
   # fail-safe direction its other callers use, and the right one here:
   # refusing a real write is worse than missing a rare duplicate.
-  # STAGE-ADMISSION (AGENTS.md section 5, the staged-design-flow spec's
+  # STAGE-ADMISSION (`staged-gates` skill, the staged-design-flow spec's
   # canonical stage set) is guarded like the verbs it rides with: a promoted
   # family's admission receipts belong to its live roomchief; the crewchief's
   # own pre-promote receipts pass because the guard fails open with no live
@@ -206,7 +206,7 @@ cmd_post() {
     GATE*|ASK*|TRIAGE*|SELF-APPROVED*|LANDED*|HANDBACK:*|R1-DISPOSITION*|DECIDED*|STAGE-ADMISSION:*)
       if [ "${AC_SCOPE:-}" != "$family" ] && [ "${AC_ROOM_PROMOTE_RECEIPT:-}" != "1" ] \
         && ac_roomchief_live "$(ac_state_dir)" "$family"; then
-        ac_die "post: $family has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (AGENTS.md: 'Two chiefs on one family is a role violation, not extra help')"
+        ac_die "post: $family has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (rooms-threads skill: 'Two chiefs on one family is a role violation, not extra help')"
       fi
       ;;
   esac

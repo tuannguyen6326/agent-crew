@@ -3,6 +3,8 @@
 #
 # Usage: ac-watch.sh [--once | --release <pid>]
 #
+# Refused in a solo session (AC_SOLO=1): supervision belongs to the chief.
+#
 # Polls every crewmate pane on an interval, absorbs benign activity in bash,
 # and only surfaces ACTIONABLE events: a captain-relevant report line
 # (AC_CAPTAIN_RE), a stage report.md appearing or advancing (the ARTIFACT
@@ -800,6 +802,10 @@ set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-backend.sh"
 . "$(dirname "$0")/ac-wake-lib.sh"
+
+# A solo session shares this home with the chief: its watcher would publish
+# into the chief's spool, whose records only the chief may consume.
+[ "${AC_SOLO:-}" != 1 ] || ac_die "a solo session (AC_SOLO=1) never arms a watcher - supervision belongs to the chief session (solo-session skill)"
 
 state_dir="$(ac_state_dir)"
 

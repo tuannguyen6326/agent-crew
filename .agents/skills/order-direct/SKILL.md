@@ -6,7 +6,7 @@ description: Captain starts a task with flow PINNED to direct (crewchief -> one 
 # order-direct
 
 The captain invoked this order with `/order-direct` - that IS the captain's
-own words at the top of the flow precedence ladder (AGENTS.md section 5):
+own words at the top of the flow precedence ladder (`intake-triage` skill):
 flow is PINNED to `direct`. Do not re-triage the flow; everything else
 (mode, promote) you still triage yourself.
 
@@ -21,7 +21,7 @@ flow is PINNED to `direct`. Do not re-triage the flow; everything else
    `--promote <yes|no>` pins the promotion decision, and `--qa <yes|no>`
    pins whether the change gets a crew-qa gate - an independent behavioral
    proof the implementer runs AFTER ship (it gates the merge, never the
-   push; AGENTS.md section 5). A pin is the captain's own words for THAT
+   push; `intake-triage` skill). A pin is the captain's own words for THAT
    dimension; every unpinned dimension you still triage yourself with
    receipts (for qa, the triage signals are user-facing/DB/financial/
    captain-critical). The REST of the arguments is the captain's order,
@@ -32,7 +32,7 @@ flow is PINNED to `direct`. Do not re-triage the flow; everything else
    order wants `/brainstorm` or a staged flow, not a direct crewmate).
 
 3. Run the section-5 intake exactly as law: WRITE the pinned dimensions
-   onto the backlog row as its delivery-contract token group (section 9
+   onto the backlog row as its delivery-contract token group (`docs/backlog.md`
    grammar) - `src:cap flow:direct` plus a token per flag the captain gave
    (e.g. `[src:cap flow:direct mode:crew-ship rev:yes qa:no]`); the pin IS
    the record that skips the escalation ask, today and on every future
@@ -50,5 +50,5 @@ flow is PINNED to `direct`. Do not re-triage the flow; everything else
    requirement questions, STOP and upgrade to staged - but because the
    captain pinned direct, upgrading is an ASK (why + options + lean),
    not a self-decision.
-   That ASK follows the select rule - AGENTS.md section 8
+   That ASK follows the select rule - the `rooms-threads` skill
    (`AskUserQuestion`).

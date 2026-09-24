@@ -279,7 +279,7 @@ else
       review_line="yes (pinned on the backlog row)"
     else
       [ "$captain_requested_set" = 1 ] \
-        || ac_die "review=yes on direct + $mode is the CAPTAIN's call, not a chief's (AGENTS.md: 'no by default, optional yes when the captain requests independent review'); if they asked for it, PIN rev:yes on the backlog row's contract group or re-run with --captain-requested '<their words, or the order ref>' - if they did not, drop --review yes"
+        || ac_die "review=yes on direct + $mode is the CAPTAIN's call, not a chief's (delivery-review skill: 'no by default, optional yes when the captain requests independent review'); if they asked for it, PIN rev:yes on the backlog row's contract group or re-run with --captain-requested '<their words, or the order ref>' - if they did not, drop --review yes"
       [ -n "$captain_requested" ] \
         || ac_die "--captain-requested needs a non-empty ref: name the captain words or order this review carries out"
       review_line="yes (captain-requested: $captain_requested)"

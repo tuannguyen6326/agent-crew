@@ -126,10 +126,10 @@ the crewchief then:
    is pre-consent the escalation gate never re-asks; an UNSETTLED
    dimension stays off the row for intake to triage later), the one-line
    description, the `inputs:` clause naming what this brainstorm minted
-   for it (section 9), `(repo: <name>)`.
+   for it (`docs/backlog.md`), `(repo: <name>)`.
 2. Reads every row back to the captain VERBATIM and waits for the yes -
    per row or batch, but real; a pin written without the captain's word is
-   the exact drift the contract grammar exists to stop (section 9).
+   the exact drift the contract grammar exists to stop (`docs/backlog.md`).
 3. Appends the confirmed rows to `## Queued` in `records/backlog.md`,
    byte-identical to what was read back, then demotes/tears down the
    roomchief; the room stays as the durable journal.
@@ -144,7 +144,7 @@ A brainstorm IS the product-owner interview - the captain settling in their
 own words what the work must satisfy - so a thread that ends in an
 ORDER-SHAPED row (something to build, with requirements the conversation
 settled) also ends in `data/<family>/requirements.md`: the same PO artifact
-section 5's PO STEP names, authored HERE instead of re-asked at intake. A
+the `intake-triage` skill's PO STEP names, authored HERE instead of re-asked at intake. A
 scout row ("needs a scout to answer") settles no requirements and gets no
 file - the question it carries IS its brief. A thread that went
 further still - boundaries drawn, acceptance criteria named - ends as a SPEC
@@ -161,7 +161,7 @@ accepted here live outranks a stage report waiting for its gate. The shape:
    drifts, and the captain accepted the bytes, not the gist.
    Every requirements line carries its CITE
    (the captain's words verbatim, an answer already recorded `DECIDED:`, a
-   standing rule), exactly as section 5 demands of the PO artifact.
+   standing rule), exactly as the `intake-triage` skill demands of the PO artifact.
 2. At minting, the crewchief reads each draft back for the captain's yes
    like any row - then, and only then, MATERIALIZES it as
    `data/<family>/requirements.md`, and `data/<family>/spec/report.md` when
@@ -173,7 +173,7 @@ accepted here live outranks a stage report waiting for its gate. The shape:
    durable original. The captain's yes journaled in the brainstorm room is
    the gate receipt - each file enters no gate-route.
 3. The row LINKS what was minted: `inputs: data/<family>/requirements.md`,
-   plus `, data/<family>/spec/report.md` when there is one (section 9 owns
+   plus `, data/<family>/spec/report.md` when there is one (`docs/backlog.md` owns
    the clause). The link is the point - the family's first brief lifts those
    paths into its `## Inputs` without hunting for them, and a captain
    reading the ledger sees what the row already stands on.
@@ -226,7 +226,7 @@ by one actor:
    data/brainstorm-<slug>/room.md (reported <date>)`, its one line naming what
    came of it (`3 rows minted: a,b,c`, or `no rows - <why>`). It passed
    through neither In flight nor Queued because a brainstorm is not a task: it
-   is a RECORD ROW written straight to Done (section 9 owns the shape), the
+   is a RECORD ROW written straight to Done (`docs/backlog.md` owns the shape), the
    ledger's own answer to "was this already thought about?".
 
 "No rows" is a fully valid ending. Grammar, gate, and triage law stay where

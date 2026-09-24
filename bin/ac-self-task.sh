@@ -2,8 +2,8 @@
 # ac-self-task.sh - make a SMALL chief-side edit VISIBLE. The authoritative
 # spec for the chief-self-but-visible mechanism. A SOLO session (AC_SOLO=1)
 # uses the SAME verb per slice with no size cap - the cap below binds the
-# CHIEF's self-exception; the solo contract is AGENTS.md section 5's SOLO
-# SESSION block. A SOLO CHIEF (a roomchief promoted --solo, AC_SCOPE set) uses
+# CHIEF's self-exception; the solo contract is the solo-session
+# skill. A SOLO CHIEF (a roomchief promoted --solo, AC_SCOPE set) uses
 # it the same way for its family's slices: the meta then carries
 # fleet_scope=<family>, and at landing the teardown gate reads the family
 # room's `LANDED: <id>` receipt where a Done row would be (bin/ac-lib.sh

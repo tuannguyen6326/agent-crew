@@ -64,7 +64,7 @@
 #             tighter 90s warn-only advisory); state/.watcher-owner names the
 #             holder pid. A down watcher is benign - and totals.watchers_down
 #             stays silent - only when `crew.supervised` is 0. That count is
-#             crew.count minus the kind=self metas, which AGENTS.md:1055-1056
+#             crew.count minus the kind=self metas, which AGENTS.md section 7
 #             keeps LISTED while excluding them from supervision, so a home
 #             running only chief self tasks is not a coverage gap.
 #   wakes   - queued wakes across the WHOLE home: spool records in
@@ -206,7 +206,7 @@ emit_home() {
         fi
       else
         crew_count=$((crew_count + 1))
-        # AGENTS.md:1055 - a kind=self meta is LISTED (crew_count) but owes no
+        # AGENTS.md section 7 - a kind=self meta is LISTED (crew_count) but owes no
         # watcher coverage, so the supervision predicate counts it apart. Read
         # off the kind already in hand: ac_meta_is_self would fork a second awk
         # per meta on the path every dashboard refresh walks (measured 2.25ms).
