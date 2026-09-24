@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-github.sh - the GitHub intake DETECTOR: polls a project clone's own
 # `origin` remote for open issues/PRs and posts a crew-authored verdict back
-# to a PR. It is a detector only - AGENTS.md section 5's L1-L4 design
+# to a PR. It is a detector only - the intake-triage skill's GitHub-intake design
 # constraints bind every call here:
 #
 #   L1 it never mints a records/backlog.md row itself (fold-or-mint needs

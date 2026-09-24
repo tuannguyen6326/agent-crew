@@ -2325,7 +2325,7 @@ cmd_tick() {
   # unrecoverable direction. Refuse instead.
   [ "$#" -le 1 ] || ac_die "tick takes at most one landing id (got: $*)"
   if [ -n "$key" ]; then
-    # The task-id grammar (AGENTS.md section 5, "pick a short id [a-z0-9-]") -
+    # The task-id grammar (task-lifecycle skill step 1, "pick a short id") -
     # not valid_slug, which is the agentskills SKILL-name rule. Whitespace here
     # would corrupt the stamp file's TSV line grammar, so refuse it loudly: an
     # unticked landing with a message beats a silently unreadable ledger.

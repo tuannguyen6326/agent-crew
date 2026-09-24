@@ -2,7 +2,8 @@
 # ac-spawn.sh - spawn a crewmate: lease an in-repo worktree, open a window on
 # the session backend (a herdr tab), and launch
 # the harness with the brief. Also spawns crewdeputies: persistent supervisors
-# that run in their own seeded home instead of a project worktree.
+# that run in their own seeded home instead of a project worktree. Refused in
+# a solo session (AC_SOLO=1), whose one write path is ac-self-task.sh.
 #
 # Usage: ac-spawn.sh <id> <project-name-or-dir> [--scout] [--mode <m>]
 #                    [--harness <claude|codex|opencode|pi|cursor|custom>] [--model <name>]
@@ -24,8 +25,8 @@
 # in the agent-crew checkout (no worktree lease, no brief - the room IS
 # the brief) with AC_SCOPE=<family> exported.
 #
-# --solo promotes a SOLO CHIEF (captain ruling 2026-09-16, AGENTS.md section
-# 5): the same roomchief session, for a family the crewchief judged too small
+# --solo promotes a SOLO CHIEF (captain ruling 2026-09-16, solo-session
+# skill): the same roomchief session, for a family the crewchief judged too small
 # to cost a crewmate, that WORKS ITS OWN SLICES through ac-self-task.sh under
 # every other roomchief duty. Roomchief-only (refused on a crew spawn - a
 # crewmate has no such mode). Its meta stays kind=roomchief and gains solo=1
@@ -540,7 +541,7 @@
 #   - OWNERSHIP is the FAMILY, never the id, because ac_crew_branch collapses
 #     every stage/revision id in a family onto ONE branch (ac-lib.sh). A live
 #     sibling means the branch is being worked: the fresh-execution-crewmate
-#     recovery of AGENTS.md section 5 continues that exact branch, and refusing
+#     recovery of the delivery-review skill continues that exact branch, and refusing
 #     it would tell the operator to delete a ref holding live unlanded work.
 #     Membership is ac_family_owned (bin/ac-lib.sh), using ac_family_of_id -
 #     the same derivation the branch name itself comes from, so owner and
@@ -558,6 +559,8 @@ set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-backend.sh"
 . "$(dirname "$0")/ac-wake-lib.sh"
+
+[ "${AC_SOLO:-}" != 1 ] || ac_die "a solo session (AC_SOLO=1) never spawns crew or roomchiefs - its write path is bin/ac-self-task.sh, and crew work goes to the chief via bin/ac-remote.sh order (solo-session skill)"
 [ ! -x "$(dirname "$0")/ac-guard.sh" ] || "$(dirname "$0")/ac-guard.sh" || true  # warn-only advisory
 ac_require git
 
@@ -1771,7 +1774,7 @@ if [ "$crewdeputy" = 1 ]; then
   # The idle and return-channel clauses ride inline (the roomchief prompt above
   # is the precedent) so both contracts travel with the LIVE deputy even when
   # its charter brief is thin. They are stated twice by design - here and in
-  # AGENTS.md section 5 - and must stay in sync.
+  # the deputies-domains skill - and must stay in sync.
   prompt="You are agent-crew crewdeputy $id. Your home is $home_dir (AC_HOME). Read and follow the brief at $brief; run bin/ac-session-start.sh in your current directory first. You are IDLE BY DEFAULT: act only on work routed to you or already recorded in your own home, then WAIT - an empty queue is healthy, and you never invent work (no self-directed survey, audit or refactor sweep). Answer every routed order (a pane line prefixed [chief-order ...]) on the DURABLE return channel with bin/ac-deputy.sh report '<text>' [--doc <abs-path>], never only in chat, and return only phase changes the parent must act on - done, blocked, needs-decision, failed, paused - never your home's routine churn."
   backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$home_dir") $launch"
   deliver_kickoff "$id" "$harness" "$prompt"

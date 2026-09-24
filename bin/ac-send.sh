@@ -4,6 +4,8 @@
 # Usage: ac-send.sh <id> [--force] '<text>'
 #        ac-send.sh <id> --key <Enter|Escape|C-c>
 #
+# Refused in a solo session (AC_SOLO=1): the crew belongs to the chief.
+#
 # Fail-closed, three ways:
 # - refuses when the crewmate meta or window is missing, so a message can
 #   never land in the wrong pane.
@@ -114,6 +116,8 @@
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-backend.sh"
+
+[ "${AC_SOLO:-}" != 1 ] || ac_die "a solo session (AC_SOLO=1) never steers a pane - the crew belongs to the chief session; hand it the order with bin/ac-remote.sh order (solo-session skill)"
 [ ! -x "$(dirname "$0")/ac-guard.sh" ] || "$(dirname "$0")/ac-guard.sh" || true  # warn-only advisory
 
 ac_arrival_refusal() {

@@ -374,4 +374,9 @@ err="$("$BIN/ac-send.sh" cother 'the text that was actually sent' 2>&1)" \
 assert_contains "$err" "arrival REFUTED" "the verdict is unchanged for a wrong arrival too"
 case "$err" in *TRUNCATED*) fail "an unrelated arrival must not be reported as a truncation" ;; esac
 
+# A SOLO session (AC_SOLO=1) never steers a pane - the crew is the chief's.
+err="$(AC_SOLO=1 "$BIN/ac-send.sh" cother 'hello' 2>&1)" \
+  && fail "a solo session's send must refuse"
+assert_contains "$err" "solo session (AC_SOLO=1)" "the refusal names the solo session"
+
 pass

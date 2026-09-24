@@ -109,7 +109,7 @@ if [ "${AC_SOLO:-}" = 1 ]; then
 EOF
 fi
 # A SOLO CHIEF (AC_CHIEF_SOLO=1 beside AC_SCOPE) is a roomchief that works its
-# family's slices itself (captain ruling 2026-09-16, AGENTS.md section 5).
+# family's slices itself (captain ruling 2026-09-16, solo-session skill).
 # Nothing else it loads at start says so, so the digest does; the scoped
 # rail below (no fleet lock, its own spool) is unchanged.
 if [ "${AC_CHIEF_SOLO:-}" = 1 ] && [ -n "${AC_SCOPE:-}" ]; then

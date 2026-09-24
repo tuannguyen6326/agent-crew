@@ -258,7 +258,7 @@ EOF
     [ -e "$entry" ] || continue
     base="$(basename "$entry")"
     # Structural entries, not knobs: a directory, a dotted receipt log, and
-    # the *.prev captain-veto sidecar (AGENTS.md section 10). Reporting these
+    # the *.prev captain-veto sidecar (delivery-review skill). Reporting these
     # would train the reader to ignore the verb.
     [ -d "$entry" ] && continue
     case "$base" in .* | *.prev) continue ;; esac

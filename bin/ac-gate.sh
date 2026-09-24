@@ -13,8 +13,8 @@
 # continue|revise|ask-captain; R2: continue|chief-decide|ask-captain);
 # proposes the next process; records its grounds; and NEVER applies that decision.
 # The owning chief reads the advice and makes the final workflow call, recorded in
-# its SELF-APPROVED / GATE-PASSED / GATE-LOOPED / GATE: receipt (AGENTS.md section
-# 5). The second-chief decision is substantive but ADVISORY - not a machine
+# its SELF-APPROVED / GATE-PASSED / GATE-LOOPED / GATE: receipt (staged-gates
+# skill). The second-chief decision is substantive but ADVISORY - not a machine
 # verdict, it routes no work.
 #
 # POSITIONAL SCOPE is staged design only: spec | architecture | plan | design.

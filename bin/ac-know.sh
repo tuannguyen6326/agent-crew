@@ -830,7 +830,7 @@ $matches"
 
 # --- recall: the TIERED read across the knowledge layers ------------------------
 #
-# (knowledge-read-has-no-tiered-recall) AGENTS.md section-5 intake says to grep
+# (knowledge-read-has-no-tiered-recall) the section-5 intake law said to grep
 # records/repo-knowledge/<project>.md by the order's QUESTION. Measured on
 # drydock 2026-08-09 that is a flat scan over 383KB / 487 entries with no
 # ranking and no budget: a common term returns dozens of thousand-character
@@ -956,7 +956,7 @@ cmd_recall() {
 
   if [ "$printed" -eq 0 ]; then
     printf 'no hit in any layer for: %s (needed %s of its distinctive terms)\n' "$query" "$floor"
-    printf '(state the absence explicitly in the brief - AGENTS.md section 5)\n'
+    printf '(state the absence explicitly in the brief - intake-triage skill)\n'
     return 0
   fi
   printf -- '-- %s scene(s), %s fact(s) shown' "$n_scene" "$n_fact"

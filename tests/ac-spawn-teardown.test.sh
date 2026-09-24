@@ -1813,4 +1813,11 @@ assert_no_file "$AC_HOME/state/tpr.meta" "the accepted teardown archives the met
 assert_contains "$(cat "$AC_HOME/state/archive/tpr/status")" "captain: ok to done" \
   "the captain's acceptance words are durable on the task record"
 
+# A SOLO session (AC_SOLO=1) never spawns crew or roomchiefs - its one write
+# path is ac-self-task.sh; handing work to crew goes through the chief.
+err="$(AC_SOLO=1 "$BIN/ac-spawn.sh" tsx "$repo" --harness fake 2>&1)" \
+  && fail "a solo session's spawn must refuse"
+assert_contains "$err" "solo session (AC_SOLO=1)" "the refusal names the solo session"
+assert_no_file "$AC_HOME/state/tsx.meta" "a refused solo spawn writes no meta"
+
 pass
