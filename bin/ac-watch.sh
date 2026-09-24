@@ -1532,11 +1532,14 @@ compact_note() {
   # compact_note <id> - the COMPACT NOTE (header): ` compact=advise ...` when
   # the crewmate's own claude transcript (meta session_id) is judged ready for
   # /compact, else nothing. AC_COMPACT_ADVISE is the test seam.
-  local sid tx out
+  local sid tx out err
   sid="$(ac_meta_get "$state_dir/$1.meta" session_id 2>/dev/null || true)"
   [ -n "$sid" ] || return 0
   tx="$(ac_claude_transcript_path "$sid" 2>/dev/null)" || return 0
-  out="$("${AC_COMPACT_ADVISE:-$(dirname "$0")/ac-compact-advise.sh}" "$tx" --role crew 2>/dev/null)" || out=''
+  err="$(mktemp "${TMPDIR:-/tmp}/ac-watch-compact.XXXXXX")" || return 0
+  out="$("${AC_COMPACT_ADVISE:-$(dirname "$0")/ac-compact-advise.sh}" "$tx" --role crew 2>"$err")" || out=''
+  [ ! -s "$err" ] || watch_log "$(head -n 1 "$err") ($1)"
+  rm -f "$err"
   [ -z "$out" ] || printf ' %s' "$out"
 }
 

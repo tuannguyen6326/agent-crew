@@ -46,9 +46,9 @@ resp() { # resp <P(finished)> <P(hands_on)>
     usage: {input_tokens: 400, output_tokens: 40}}' >"$FAKE_RESP"
 }
 
-transcript() { # transcript <file> <context tokens>
+transcript() { # transcript <file> <context tokens> [user text]
   {
-    printf '{"type":"user","message":{"role":"user","content":"fix the flaky test"}}\n'
+    jq -nc --arg u "${3:-fix the flaky test}" '{type: "user", message: {role: "user", content: $u}}'
     jq -nc --argjson t "$2" '{type: "assistant", message: {role: "assistant", model: "claude-opus-5-5",
       content: [{type: "text", text: "Fixed and committed; the suite is green."}],
       usage: {input_tokens: 10, cache_read_input_tokens: ($t - 110), cache_creation_input_tokens: 100, output_tokens: 50}}}'
@@ -118,6 +118,32 @@ out="$(hook "$TMP/elsewhere" "$(jq -c '.session_id = "s-2"' <<<"$payload")" AC_S
 assert_eq "$out" "" "a worker-shaped session is left to the watcher"
 out="$(hook "$AC_HOME" 'not json' AC_SOLO=)" || fail "garbage stdin must exit 0"
 assert_eq "$out" "" "garbage stdin prints nothing"
+
+# 8b. A solo session is judged from any cwd with the crew weight: the same
+#     coordinating answer that advised the chief stays under the floor here.
+out="$(hook "$TMP/elsewhere" "$(jq -c '.session_id = "s-3"' <<<"$payload")" AC_SOLO=1)"
+assert_eq "$out" "" "a coordinating solo turn is under the crew floor"
+resp 0.96 0.9
+out="$(hook "$TMP/elsewhere" "$(jq -c '.session_id = "s-4"' <<<"$payload")" AC_SOLO=1)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "/compact" "a hands-on solo turn is advised"
+
+# 8c. The window: AC_COMPACT_WINDOW beats config/compact-window beats 200000.
+printf '1000000\n' >"$AC_HOME/config/compact-window"
+out="$("$ADV" "$tx" --role chief 2>/dev/null)"
+assert_contains "$out" "floor=0.875 usage=0.15" "config/compact-window sets the denominator"
+out="$(AC_COMPACT_WINDOW=300000 "$ADV" "$tx" --role chief 2>/dev/null)"
+assert_contains "$out" "floor=0.7 usage=0.5" "AC_COMPACT_WINDOW wins over the config file"
+rm -f "$AC_HOME/config/compact-window"
+
+# 8d. Secrets never leave the machine in the state.
+sec="$TMP/secret.jsonl"
+transcript "$sec" 150000 'cat .env gave PASSWORD=hunter2hunter and sk-abcdefghijklmnop and eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4f'
+"$ADV" "$sec" --role chief >/dev/null 2>&1
+st="$(jq -r .state "$FAKE_BODY")"
+for leak in hunter2hunter sk-abcdefghijklmnop eyJhbGciOiJIUzI1; do
+  case "$st" in *"$leak"*) fail "a secret reached the provider: $leak" ;; esac
+done
+assert_contains "$st" "[redacted]" "the redaction marker stands in for the secrets"
 
 # 9. Wiring: the claude Stop hooks include the adviser.
 case "$(jq -r '[.hooks.Stop[].hooks[].command] | .[]' "$ROOT/.claude/settings.json")" in

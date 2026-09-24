@@ -93,6 +93,7 @@ AC_VERIFY_TREE_BIN  sibling-path override: ac-tree fake driver
 AC_VERIFY_QA_RELAY_BIN  sibling-path override: qa relay fake driver
 AC_GATE             sibling-path override: ac-gate.sh fake driver
 AC_CURATE           sibling-path override: ac-curate.sh fake driver
+AC_COMPACT_ADVISE   sibling-path override: ac-compact-advise.sh fake driver
 AC_TEARDOWN_QA_TIMEOUT  test-only shortener (ac-teardown.sh header says so)
 "
 
