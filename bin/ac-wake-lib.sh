@@ -544,7 +544,7 @@ ac_watcher_nudge() {
 #
 # A decision settles one open item (oldest first) whether it is the bare
 # `DECIDED:` form, the captain-attribution `DECIDED <family>:` form (the
-# section-8 echo that disambiguates one chat stream across many tasks), or the
+# rooms-threads attribution echo that disambiguates one chat stream across many tasks), or the
 # paren-attribution `DECIDED (<attr>):` form a captain actually writes (e.g.
 # `DECIDED (captain):`, and the two may combine as `DECIDED <family> (<attr>):`).
 # The optional ` <family>` uses the same [A-Za-z0-9_-] charset the family
@@ -575,7 +575,7 @@ ac_watcher_nudge() {
 # There is deliberately no "delivered, awaiting the crewchief to land" verb:
 # `GATE:` covers waiting on the captain, `HANDBACK:` (ac_room_handback_families
 # below) already covers waiting on the crewchief, including the land-only
-# case. See AGENTS.md section 8, room lifecycle, near the HANDBACK sentences.
+# case. See the rooms-threads skill, room lifecycle, near the HANDBACK sentences.
 
 ac_room_review_rulings() {
   # ac_room_review_rulings <room-file> - stable, file-order projection for an
@@ -622,7 +622,7 @@ ac_room_pending() {
   # this function: ac_room_review_rulings and ac_room_handback_families read
   # the same room grammar and share the identical `[^]]*` / `[^>]*` shape, so
   # the whole file stays internally consistent. No actor name may contain `>` - ids
-  # are [a-z0-9-] (AGENTS.md section 5) and a family is [a-zA-Z0-9_-]
+  # are [a-z0-9-] (task-lifecycle skill) and a family is [a-zA-Z0-9_-]
   # (ac-room.sh cmd_post) - so pinning it excludes no legitimate entry.
   [ "$#" -gt 0 ] || { printf '0\n'; return 0; }   # no files: never awk's stdin
   awk '
@@ -672,8 +672,8 @@ ac_room_handback_families() {
   #
   # BATCHED BY DESIGN - it takes N files and makes ONE awk pass, because its
   # heaviest consumer is ac-turnend-guard.sh, which sweeps the WHOLE room set on
-  # every fleet turn end. Rooms are records and are never deleted (AGENTS.md
-  # section 8), so the set only grows: a per-room fork would put an unbounded,
+  # every fleet turn end. Rooms are records and are never deleted (rooms-threads
+  # skill), so the set only grows: a per-room fork would put an unbounded,
   # daily-growing cost on the one hook that always runs. ac-statusline.sh's
   # no-fork budget is the same concern, stated for a far less frequent path.
   #

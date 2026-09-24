@@ -231,7 +231,7 @@ scout_report_present() {
 
 pr_ready_dependent() {
   # First OPEN backlog row whose blocked-by list names this task. The
-  # canonical grammar is comma-joined ids with no spaces (section 9), but
+  # canonical grammar is comma-joined ids with no spaces (docs/backlog.md), but
   # this scan is a FAIL-CLOSED control, so it reads WIDER than the grammar:
   # the list is everything after blocked-by: up to the ` - <reason>` arm,
   # split on commas AND whitespace - a hand-written `blocked-by: a, b` (which

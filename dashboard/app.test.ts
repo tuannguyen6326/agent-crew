@@ -2950,7 +2950,7 @@ test("familyPaneIds: own tasks + verify panes in, chief/self/other families out"
     { id: "greet2-chief", text: "kind=roomchief\nwindow=herdr:pane-w1:p1\n" },
     { id: "greet2", text: "kind=ship\nwindow=herdr:pane-w1:p2\n" },
     { id: "greet2-design", text: "kind=scout\nwindow=herdr:pane-w1:p3\n" },
-    // intra-family fan-out sub-deliverable (AGENTS.md section 5): a
+    // intra-family fan-out sub-deliverable (rooms-threads skill): a
     // <family>-<slug> id whose slug is not a reserved stage suffix.
     { id: "greet2-frontend", text: "kind=ship\nwindow=herdr:pane-w1:p4\n" },
     { id: "greet2-verify-codereview", text: "kind=verify-codereview\nfamily=greet2\n" },

@@ -62,7 +62,7 @@ out="$("$BIN/ac-ready.sh")"
 assert_contains "$out" "READY  report (epic:payv2)" "raised cap releases the story"
 rm -f "$AC_HOME/config/epic-parallel"
 
-# Marker POSITION, not prose - AGENTS.md section 9 puts the terminal marker
+# Marker POSITION, not prose - docs/backlog.md puts the terminal marker
 # immediately after the id. A live incident (2026-07-22, drydock) showed an
 # in-flight epic story documenting its own two terminal states in prose
 # (SETTLED-FAIL->[failed] - a convention every two-terminal-state story
@@ -90,7 +90,7 @@ perl -0777 -pi -e 's/(## Queued\n)/$1- [ ] abandonme-dep - depends on abandonme;
 out="$("$BIN/ac-ready.sh")"
 assert_contains "$out" "STUCK  abandonme-dep blocker abandonme abandoned" "a legit [abandoned] marker at the grammar position still stalls its dependent"
 
-# A blocked-by line that slips the pinned grammar (AGENTS.md section 9) reads
+# A blocked-by line that slips the pinned grammar (docs/backlog.md) reads
 # MALFORMED, never READY. Empty blockers mean "nothing to wait on" here, so a
 # missing space, a double space or a capital B used to make the whole
 # dependency VANISH - and under the standing autonomous-drain rule the chief
@@ -146,7 +146,7 @@ assert_contains "$out" "BRIEF  src/app.js named in in-flight data/livetask/brief
 case "$out" in *deadtask*) fail "a brief with no live meta is not in flight" ;; esac
 assert_eq "$("$BIN/ac-ready.sh" overlap docs/clean.md)" "" "clean path prints nothing"
 
-# The room the overlap hit names is REQUIRED READING (AGENTS.md section 5), and
+# The room the overlap hit names is REQUIRED READING (intake-triage skill), and
 # an overlapping family has landed - the exact class bin/ac-archive.sh moves.
 # The pointer must therefore resolve to where the room actually IS, or the
 # intake check sends the next chief to a path that no longer exists.
@@ -187,7 +187,7 @@ assert_eq "$("$BIN/ac-ready.sh" watch-set solowork)" "solowork" \
 assert_eq "$("$BIN/ac-ready.sh" watch-set neverheard)" "neverheard" \
   "a family with no backlog line still computes to exactly its id (safe default)"
 
-# Intra-family fan-out (AGENTS.md section 5): a roomchief fanning out into one
+# Intra-family fan-out (rooms-threads skill): a roomchief fanning out into one
 # execution crewmate per sub-deliverable spawns `<family>-<slug>` ids directly
 # (never a backlog `epic:` story), so watch-set for the family still computes
 # to EXACTLY the family id - the same non-epic case as `solowork` above. That
@@ -294,7 +294,7 @@ assert_contains "$out" "HELD   heldcampaign" "(b) a held row still appears in th
 # degrades from a genuine hold to a malformed misdiagnosis. Assert the FULL
 # distinguishing message instead of the shared prefix, and assert the
 # malformed shape is absent.
-assert_contains "$out" "HELD   heldcampaign - captain hold; release is a captain act (AGENTS.md section 9)" "(round 7) a leading-run [@held] row reports the genuine captain-hold message in full, not just the HELD prefix a malformed misdiagnosis also shares"
+assert_contains "$out" "HELD   heldcampaign - captain hold; release is a captain act (docs/backlog.md)" "(round 7) a leading-run [@held] row reports the genuine captain-hold message in full, not just the HELD prefix a malformed misdiagnosis also shares"
 case "$out" in *"HELD   heldcampaign hold malformed"*) fail "(round 7) a leading-run [@held] row must never be misdiagnosed as hold malformed" ;; esac
 assert_contains "$out" "HELD   typoheld hold malformed" "(c) a mis-typed hold token yields HELD, never READY"
 assert_contains "$out" "READY  mentionsheld" "(d) a row that merely mentions the hold feature in prose is not held"
@@ -323,11 +323,11 @@ case "$out" in *"HELD   quoteexact"*) fail "(round 5, B1) quoting the exact toke
 case "$out" in *"HELD   quotebare"*) fail "(round 5, B2) quoting a mis-typed shape in a code span must never read as malformed" ;; esac
 case "$out" in *"READY  wrongplace"*) fail "(round 5, residual) an out-of-position bare token must never silently read READY" ;; esac
 case "$out" in *"STUCK  wrongplace"*) fail "(round 5, residual) an out-of-position hold-shaped group is not the dependency token - never STUCK" ;; esac
-# The DATED arm (AGENTS.md section 9): the ONE hold that releases itself. It
+# The DATED arm (docs/backlog.md): the ONE hold that releases itself. It
 # inherits every property of the bare token - leading-run position, sentinel,
 # code-span exemption - and adds exactly one: the date decides, and a date
 # that is not a date is a mis-typed hold, never an accidental release.
-assert_contains "$out" "HELD   datedfuture - captain hold until 2099-01-01; it releases itself on that date (AGENTS.md section 9)" "an unexpired dated hold is HELD, and the line names the date so the captain need not open the ledger"
+assert_contains "$out" "HELD   datedfuture - captain hold until 2099-01-01; it releases itself on that date (docs/backlog.md)" "an unexpired dated hold is HELD, and the line names the date so the captain need not open the ledger"
 assert_contains "$out" "READY  datedpast" "a dated hold whose date has passed is READY again, with no hand-edit"
 assert_contains "$out" "HELD   datedbad hold malformed" "a dated hold whose date is not a date falls to malformed, never READY"
 assert_contains "$out" "HELD   datedslash hold malformed" "a dated hold with the wrong date separator falls to malformed, never READY"
@@ -434,7 +434,7 @@ assert_eq "$out" "" "semantic: shadow prints nothing"
 assert_eq "$(hits)" "1" "semantic: one request for every open row"
 assert_eq "$(jq -r '.questions | keys | join(",")' "$FAKE_BODY")" "q1,q2,wf1" "semantic: one question per open row, none for Done"
 assert_eq "$(jq -r '.questions.q1.criteria | keys | join(",")' "$FAKE_BODY")" "related,unclear,unrelated" "semantic: the three verdicts"
-assert_contains "$(jq -r '.questions.q1.criteria.related' "$FAKE_BODY")" "same file surface, the same mechanism, or the same defect class" "semantic: section 9's rule is the criterion"
+assert_contains "$(jq -r '.questions.q1.criteria.related' "$FAKE_BODY")" "same file surface, the same mechanism, or the same defect class" "semantic: docs/backlog.md's rule is the criterion"
 st="$(jq -r '.state' "$FAKE_BODY")"
 assert_contains "$st" "$order" "semantic: the order is in the state"
 assert_contains "$st" "watcher stale arm misses prose asks" "semantic: the row line is in the state"

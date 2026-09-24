@@ -479,7 +479,7 @@ assert_file "$STATE/remote-threads/fam-archived.thread" \
 
 # Reopen: a family CLOSED, landed (Done line migrated to the archive), and
 # later REOPENED - a fresh OPEN backlog.md line (spawn moves it back to In
-# flight, AGENTS.md section 9) - must win over the archived Done line. Without
+# flight, docs/backlog.md) - must win over the archived Done line. Without
 # this, a reopened family whose Done line already reached the archive would
 # stay terminal (unpolled) forever, since a chief can never move it back out.
 printf 'thread_ts=1700005006.000006\n' >"$STATE/remote-threads/fam-reopened.thread"

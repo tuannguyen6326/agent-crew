@@ -116,7 +116,7 @@ case "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null || true)" in
 esac
 
 # a LIVE family sibling owns the branch => start proceeds (the same <fam>-r2
-# recovery property AGENTS.md section 5 sanctions on the spawn side).
+# recovery property the delivery-review skill sanctions on the spawn side).
 "$BIN/ac-self-task.sh" start s4 "$repo" >/dev/null
 git -C "$repo" branch crew/s4 main
 "$BIN/ac-self-task.sh" start s4-r2 "$repo" >/dev/null

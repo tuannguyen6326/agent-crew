@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ac-pool-health.sh - render the worktree-pool health ride-along for the
-# session-start digest (AGENTS.md section 6): per project repo, how many
+# session-start digest (task-lifecycle skill): per project repo, how many
 # .crew/slots pool slots are leasable vs stuck available-dirty (unleasable
 # until a chief runs `ac-tree.sh remove --force <path>` - `get` skips a dirty
 # slot by design and never resets it silently, and this script never does

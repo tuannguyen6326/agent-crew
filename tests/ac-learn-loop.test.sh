@@ -622,7 +622,7 @@ STUB
     # its real section - the lift must not mistake the quote for the opener.
     printf -- '- [x] fam-fenced - report quotes the Lessons heading in a fence - local main (merged 2026-07-16)\n'
     # A fan-out sub-task report at data/<family>/tasks/<slug>/report.md
-    # (depth 3, AGENTS.md section 8 layout) - the lift must still reach it.
+    # (depth 3, bin/ac-brief.sh layout) - the lift must still reach it.
     printf -- '- [x] fam-fanout - fan-out sub-task report at depth 3 - local main (merged 2026-07-16)\n'
   } >"$backlog"
 
@@ -683,7 +683,7 @@ nope
 FENCEDEOF
 
   # fam-fanout: a fan-out sub-task report at depth 3
-  # (data/<family>/tasks/<slug>/report.md, AGENTS.md section 8 layout).
+  # (data/<family>/tasks/<slug>/report.md, bin/ac-brief.sh layout).
   mkdir -p "$AC_HOME/data/fam-fanout/tasks/slug1"
   printf '# Report\n\n## Notes\n\nfan-out sub-task report.\n\n## Lessons\n\n- nested-fanout lesson from depth three\n' \
     >"$AC_HOME/data/fam-fanout/tasks/slug1/report.md"

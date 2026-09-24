@@ -783,7 +783,7 @@ rm -f "$state"/*.meta "$state"/.pane-* "$state"/.seen-* \
   "$state"/.hash-* "$state"/.change-* "$state"/.stale-* "$state"/.last-watcher-beat*
 rm -rf "$state"/.wake-spool*
 
-# Intra-family fan-out (AGENTS.md section 5): a roomchief that spawns one
+# Intra-family fan-out (rooms-threads skill): a roomchief that spawns one
 # execution crewmate per independently-landable sub-deliverable arms with
 # AC_WATCH_ONLY=$(ac-ready.sh watch-set <family>) - for a non-epic family
 # (no backlog stories) that computes to EXACTLY the family id, and
@@ -2805,8 +2805,8 @@ case "$out" in *scq-chief*) fail "the supervising chief still must not wake" ;; 
 # (4) `ended:` IS SUPPRESSED TOO - a deliberate REVERSAL of what this case
 # asserted before ("an ended turn is never suppressed by a live crewmate",
 # watch-idle-loud-wake). The reversal closes a RULE CONFLICT: the roomchief
-# charter injected into every chief prompt (bin/ac-spawn.sh:1021, AGENTS.md
-# section 8) ORDERS the chief to keep AC_CAPTAIN_RE marker verbs out of its pane
+# charter injected into every chief prompt (the bin/ac-spawn.sh roomchief
+# prompt) ORDERS the chief to keep AC_CAPTAIN_RE marker verbs out of its pane
 # prose, while the only quiet path an ended turn had - COMPLETION ALREADY
 # REPORTED - REQUIRES exactly such a marker in .seen-<id>. A chief that OBEYS
 # its charter therefore never qualified, so it woke the crewchief forever.

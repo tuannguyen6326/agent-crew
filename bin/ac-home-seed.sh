@@ -90,8 +90,8 @@ printf '# Projects\n\n' >"$home_dir/records/projects.md"
 printf '# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n' >"$home_dir/records/backlog.md"
 
 # Carry the captain's recorded style/preferences (records/captain.md) so the
-# crewdeputy's captain-facing prose - room and remote narrative, the CLAUDE.md
-# section 8 voice - matches the fleet from its first turn. Config knobs above
+# crewdeputy's captain-facing prose - room and remote narrative, the rooms-threads
+# skill's STYLE voice - matches the fleet from its first turn. Config knobs above
 # stay CONVERGED (parent wins every session); this is a one-time SEED-COPY, like
 # CREWMATE.md: the deputy owns the file afterwards and may add domain-local
 # rules, so a later session never clobbers them. Absent parent copy -> the

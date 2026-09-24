@@ -99,7 +99,7 @@ case "$got" in *"|failed|"*) fail "no fixture line carries a real [failed] marke
 
 # --- blocked-by: a grammar slip reads MALFORMED, never "no blockers" ---------
 #
-# AGENTS.md section 9 pins `blocked-by: id1,id2 - reason` (one space,
+# docs/backlog.md pins `blocked-by: id1,id2 - reason` (one space,
 # lowercase, comma-joined, no spaces). Every slip used to parse to an EMPTY
 # blockers field, and ac-ready.sh reads empty blockers as READY - so under the
 # standing autonomous-drain rule a chief starts a story whose dependency is

@@ -307,7 +307,7 @@ handback_owed() {
   # The HANDBACK grammar is NOT copied here: ac_room_handback_families
   # (ac-wake-lib.sh) owns it and answers for N rooms in ONE awk pass. That
   # batching is the point - this runs on EVERY fleet turn end and rooms are
-  # never deleted (AGENTS.md section 8), so any per-room cost grows without
+  # never deleted (rooms-threads skill), so any per-room cost grows without
   # bound on the one hook that always runs. `ac-room.sh list` computes the
   # same state, but it is the whole-fleet lister (~5 forks per room, plus the
   # pending count and the last-entry column this needs none of, measured

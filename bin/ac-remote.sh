@@ -746,7 +746,7 @@ cmd_push_pending() {
     hash="$(printf '%s' "$lines" | shasum -a 256 | awk '{print $1}')"
     prev="$(ac_meta_get "$stamp" "$family")"
     [ "$hash" = "$prev" ] && continue
-    # Header follows the captain's Slack rules (AGENTS.md section 8):
+    # Header follows the captain's Slack rules (rooms-threads skill, STYLE):
     # `*[UTC+7 ts] [VERB] [<family>]*`, Vietnamese framing, ids and grammar
     # verbs verbatim; the pending record lines drop their ISO prefix and
     # render as bullets (the room keeps the raw record).

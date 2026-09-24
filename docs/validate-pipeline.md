@@ -1,7 +1,7 @@
 # crew-ship pipeline
 
 An 8-step hold-and-fix validation pipeline run agent-side: the crewmate IS the pipeline runner, `bin/ac-ship.sh` is the durable state machine, and the `crew-ship` skill is the operating procedure.
-Authoritative contracts: the `bin/ac-ship.sh` header (state machine + commands), `.agents/skills/crew-ship/SKILL.md` (the runner's procedure), AGENTS.md section 10 (fleet law).
+Authoritative contracts: the `bin/ac-ship.sh` header (state machine + commands), `.agents/skills/crew-ship/SKILL.md` (the runner's procedure), the `delivery-review` skill (fleet law).
 This doc is the map, not the law.
 
 ## Steps (fixed order, not configurable)

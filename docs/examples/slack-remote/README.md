@@ -64,7 +64,7 @@ To see the raw JSON instead, run `"$AC_HOME/config/remote-poll"` directly - any 
 - Every decision is receipted `DECIDED:` to the family room AND echoed back into the Slack thread.
 - Pending captain items (gates, asks) are pushed at wake-drain as ONE batched message per family thread; replying inside a family's thread binds your answer to that family mechanically.
 - Tasks spawned from a remote order are linked (`ac-remote.sh link`) so their landing posts a follow-up into the thread that asked.
-- Destructive confirmations (`--force` discard, repo deletion) are refused remotely - the fleet replies "answer in the terminal" (AGENTS.md section 8).
+- Destructive confirmations (`--force` discard, repo deletion) are refused remotely - the fleet replies "answer in the terminal" (`rooms-threads` skill).
 
 ## Security notes
 

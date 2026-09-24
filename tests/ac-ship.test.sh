@@ -877,7 +877,7 @@ commands:
 EOF
 
 # finish leaves the attestation in place - the chief's post-handback
-# attest-check (AGENTS.md section 5) is its reader, and only staleness may
+# attest-check (task-lifecycle skill) is its reader, and only staleness may
 # take it away.
 "$BIN/ac-ship.sh" attest-test >/dev/null 2>&1 || fail "attest before finish"
 attruns="$(grep -c run "$attlog")"

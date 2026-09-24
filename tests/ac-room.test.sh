@@ -280,7 +280,7 @@ okpad="${okline%%okchk*}"
 assert_eq "${#okpad}" "20" "neither-case status field stays 20 chars wide"
 case "$okline" in "ok"*) : ;; *) fail "neither case must start with ok" ;; esac
 
-# Bug 2: the captain-attribution form `DECIDED <family>: <answer>` (section 8,
+# Bug 2: the captain-attribution form `DECIDED <family>: <answer>` (rooms-threads,
 # to disambiguate one chat stream across many tasks) settles a pending item,
 # exactly like the bare `DECIDED:` form.
 "$BIN/ac-room.sh" post attrib crewchief "GATE: spec awaiting captain" >/dev/null
@@ -736,7 +736,7 @@ assert_fails "$BIN/ac-room.sh" handback ownfam "landed, please close"
 # a real captain-answer DECIDED posted unscoped, with NO
 # AC_ROOM_PROMOTE_RECEIPT declaration, must be refused exactly like TRIAGE.
 assert_fails "$BIN/ac-room.sh" post ownfam crewchief "DECIDED: approve, duplicate captain answer"
-# STAGE-ADMISSION (section 5's stage-set receipt) is family-owned like TRIAGE:
+# STAGE-ADMISSION (the staged-gates skill's stage-set receipt) is family-owned like TRIAGE:
 # an unscoped post into a promoted family would let a second chief rewrite the
 # canonical stage set under the live roomchief.
 assert_fails "$BIN/ac-room.sh" post ownfam crewchief \

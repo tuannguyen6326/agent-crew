@@ -108,8 +108,8 @@
 # project set at creation time, and a silent empty view is the wrong default. A
 # project the fleet lacks refuses the whole command; a project whose .yaml the
 # fleet lacks gets its clone link alone and is named on stdout, because a
-# project with no pipeline config is a supported state (AGENTS.md section 4
-# calls it a direct-pr case) and refusing would make the view un-buildable.
+# project with no pipeline config is a supported state (the intake-triage
+# skill calls it a direct-pr case) and refusing would make the view un-buildable.
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"

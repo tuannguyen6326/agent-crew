@@ -281,7 +281,7 @@ if [ -n "$stale_lines" ]; then
 fi
 
 # Pool-health ride-along: surface stuck available-dirty worktree-pool slots
-# (AGENTS.md section 6) with the exact reclaim command. Silent when every
+# (task-lifecycle skill) with the exact reclaim command. Silent when every
 # scanned pool is healthy; the script owns the whole block (ac-pool-health.sh).
 "$bin_dir/ac-pool-health.sh"
 

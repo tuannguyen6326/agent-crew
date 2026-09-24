@@ -100,7 +100,7 @@
 # remain cleanup inputs only. The validated object routes `.findings` to
 # `findings review` and advisory risk fields to `meta review`.
 #
-# REVIEW-ROUND CONVERGENCE (AGENTS.md section 5 carries
+# REVIEW-ROUND CONVERGENCE (the delivery-review skill carries
 # the policy, this header the mechanics). Three gates on review-agent:
 # - ENTRY: a round opens only with the test step completed this run or a
 #   FRESH attestation (attest_conditions; a bare --tdd declaration does not

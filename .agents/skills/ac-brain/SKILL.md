@@ -1,13 +1,13 @@
 ---
 name: ac-brain
-description: Query and maintain the per-home memory engine - recall (hybrid search over the home's records with citations and trust labels), remember/forget working-memory facts with provenance, entity cards, context_pack for session rehydrate, delta for cheap wakes, links-to reverse lookups, sync, doctor, and the one expensive synthesize verb. Use when hunting fleet context the tier reads did not answer, before minting a family (create_safety), on wakes, after compaction, or to record a durable session fact. Additive tool - the section-5 knowledge law is unchanged.
+description: Query and maintain the per-home memory engine - recall (hybrid search over the home's records with citations and trust labels), remember/forget working-memory facts with provenance, entity cards, context_pack for session rehydrate, delta for cheap wakes, links-to reverse lookups, sync, doctor, and the one expensive synthesize verb. Use when hunting fleet context the tier reads did not answer, before minting a family (create_safety), on wakes, after compaction, or to record a durable session fact. Additive tool - the intake-triage knowledge-read law is unchanged.
 ---
 
 # ac-brain
 
 The per-home memory engine: an index over what this home has already written, plus a small working-memory facts store.
 `bin/ac-brain-engine.ts`'s header is the authoritative spec; `bin/ac-brain.sh` is the CLI; every verb prints one JSON value.
-POSTURE: this is an AVAILABLE TOOL - the section-5 intake law (tier-ranked `ac-know recall` reads, cites, heat) is unchanged and stays first; reach here when those reads return empty or the question spans history they do not cover.
+POSTURE: this is an AVAILABLE TOOL - the `intake-triage` skill's intake law (tier-ranked `ac-know recall` reads, cites, heat) is unchanged and stays first; reach here when those reads return empty or the question spans history they do not cover.
 
 ## When to reach for it
 

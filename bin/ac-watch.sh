@@ -217,8 +217,8 @@
 # BOTH ARMS, and this REVERSES watch-idle-loud-wake's original "`ended:` stays
 # loud however busy the family is" (ended-wake-refires-on-a-prose-reporting-
 # chief). What the reversal closes is a RULE CONFLICT, not a missing case: the
-# roomchief charter injected into every chief prompt (bin/ac-spawn.sh:1018, and
-# AGENTS.md section 8) ORDERS the chief to keep AC_CAPTAIN_RE marker verbs out of
+# roomchief charter injected into every chief prompt (the bin/ac-spawn.sh
+# roomchief prompt) ORDERS the chief to keep AC_CAPTAIN_RE marker verbs out of
 # its room and pane prose, while the ONE quiet path an ended turn had -
 # COMPLETION ALREADY REPORTED above - REQUIRES exactly such a marker in
 # .seen-<id>. A chief that OBEYS its charter has no .seen-<id> at all, so it

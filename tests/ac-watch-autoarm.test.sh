@@ -244,7 +244,7 @@ assert_contains "$(last_trace)" "reason=work-finished" "...distinguishably from 
 
 # --- the arm ENV is reconstructed per session kind ---------------------------
 # A chief arming by hand sets AC_WATCH_SKIP=<promoted families> on the FLEET
-# watcher and AC_WATCH_ONLY=<watch set> on a scoped one (AGENTS.md section 7).
+# watcher and AC_WATCH_ONLY=<watch set> on a scoped one (rooms-threads skill).
 # With the hook owning the arm, an UNSKIPPED fleet watcher covers a promoted
 # family's panes alongside that family's own scoped watcher, and the two share
 # the per-id dedup marker - so the family's wake lands in whichever spool won

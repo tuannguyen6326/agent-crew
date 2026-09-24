@@ -87,8 +87,8 @@ assert_fails_with "no clone" -- "$dom" new ghosts --scope s --charter c --projec
 assert_no_file "$(pkg ghosts)" "AC-1.5: an unknown project leaves no partial package"
 assert_eq "$(grep -c 'ghosts' "$dreg" || true)" "0" "and mints no registry line"
 
-# A project with no pipeline config is a SUPPORTED state (AGENTS.md section 4
-# calls it a direct-pr case), so the clone link is created alone and said so -
+# A project with no pipeline config is a SUPPORTED state (the intake-triage
+# skill calls it a direct-pr case), so the clone link is created alone and said so -
 # refusing would make the view un-buildable for it.
 make_clone gamma --no-yaml
 out="$("$dom" new infra --scope 'infra' --charter 'infra domain' --projects gamma)"

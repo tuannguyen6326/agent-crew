@@ -106,7 +106,7 @@
 # CLOSED (the crewchief's own lifecycle bookkeeping about the family's
 # existence), CORRECTION (the crewchief retracting its own prior entry) and
 # HANDBACK-REFUSED: (the crewchief refusing its roomchief's hand-back,
-# always unscoped while that roomchief is still live - AGENTS.md section 8)
+# always unscoped while that roomchief is still live - rooms-threads skill)
 # are deliberately NOT in the guarded set. DECIDED is guarded like the rest,
 # with ONE named exception: ac-spawn.sh's cap-gate exemption receipt is
 # itself a bare, unscoped `DECIDED:` posted the instant a roomchief is
@@ -175,7 +175,7 @@ cmd_post() {
   # CORRECTION stay unguarded - see the header block for why. `HANDBACK:*`
   # (colon-precise, never the broader `HANDBACK*`) deliberately excludes
   # HANDBACK-REFUSED: - that receipt is the CREWCHIEF refusing its
-  # roomchief's hand-back (AGENTS.md section 8; ac_room_handback_families,
+  # roomchief's hand-back (rooms-threads skill; ac_room_handback_families,
   # bin/ac-wake-lib.sh:607), always posted unscoped while the roomchief it is
   # refusing is still live, and it is the turn-end guard's only way to clear
   # an owed hand-back without demoting the family (bin/ac-turnend-guard.sh:
@@ -247,9 +247,9 @@ cmd_post() {
   # Deliberately NOT a classifier: it fires on ANY markerless post under these
   # two conditions, ordinary status narrative included - the omission is what
   # must become visible, not whether the prose LOOKS like an escalation. The
-  # verb set is section 8's closed grammar list plus this file's own
+  # verb set is the rooms-threads skill's closed grammar list plus this file's own
   # receipt-only additions (GATE-PASSED/GATE-LOOPED/GATE-VERIFY covered by the
-  # GATE prefix) plus section 5's STAGE-ADMISSION (the staged-design-flow
+  # GATE prefix) plus the staged-gates skill's STAGE-ADMISSION (the staged-design-flow
   # spec's stage-set receipt - a real marker, so warning on it is noise).
   if [ "$actor" = "$chief" ] && [ "$pending" = "0" ]; then
     case "$text" in

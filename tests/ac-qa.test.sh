@@ -1924,7 +1924,7 @@ assert_no_file "$fake/records" "no AC_HOME: the scope-map read mints no stray re
 # map - behind the notice that was already printed. So the fixture below is
 # deliberately hostile: the checkout DOES carry a projects/<name>.yaml, and the
 # run must still refuse to read it, because a non-home is not a config source
-# (AGENTS.md section 10: the pipeline config is HOME-ONLY and captain-owned).
+# (delivery-review skill: the pipeline config is HOME-ONLY and captain-owned).
 mkdir -p "$fake/projects"
 printf 'qa:
   serve: "echo default-fleet-serve"

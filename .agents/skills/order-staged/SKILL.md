@@ -24,7 +24,7 @@ yourself.
    verbatim.
    Staged review is always `yes`; `--review no` is invalid and no review flag
    is needed.
-2. PO STEP first (the section-5 REQUIREMENTS CHECK clause is the
+2. PO STEP first (the `intake-triage` REQUIREMENTS CHECK clause is the
    authoritative contract): run the brief-without-guessing test on the
    order and route by guess count (0 -> draft; 1-4 -> ONE bundled clarify
    exchange with the captain; >=5 -> propose `/brainstorm` and stop). When
@@ -37,13 +37,13 @@ yourself.
    STARTS before that file exists; the design brief links it under
    `## Inputs` and the spec report's Trace IDs trace to its lines.
 
-3. Run the section-5 intake exactly as law: WRITE the pinned dimensions
+3. Run the `intake-triage` intake exactly as law: WRITE the pinned dimensions
    onto the backlog row as its delivery-contract token group (`docs/backlog.md`
    grammar) - `src:cap flow:staged rev:yes` plus a token per flag the
    captain gave (e.g. `[src:cap flow:staged mode:crew-ship rev:yes qa:yes]`);
    the pin IS the record that skips the escalation ask, today and on every
    future touch of this row. Unpinned heavy dimensions your OWN triage
-   wants still go through the section-5 escalation ask before you mint
+   wants still go through the `intake-triage` escalation ask before you mint
    them. Then the TRIAGE
    receipt to the family room WITH your reasoning for mode/promote, qa (when
    unpinned), and for the design sub-stages you keep or drop, then start

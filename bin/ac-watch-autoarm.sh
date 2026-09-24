@@ -61,7 +61,7 @@
 # predecessor's watcher still gets the `already running` prefix it globs on).
 #
 # THE ARM ENV is reconstructed on every pass, exactly as the chief would set it
-# by hand (AGENTS.md section 7): a SCOPED roomchief session arms with
+# by hand (rooms-threads skill): a SCOPED roomchief session arms with
 # AC_WATCH_ONLY=<its watch set> (ac-ready.sh watch-set), an UNSCOPED crewchief
 # session with AC_WATCH_SKIP=<the promoted families>. Arming the fleet watcher
 # UNSKIPPED puts BOTH watchers on a promoted family's panes, and they share the

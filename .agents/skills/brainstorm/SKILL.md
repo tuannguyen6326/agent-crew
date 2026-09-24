@@ -46,7 +46,7 @@ promote, nothing new (mechanics: `bin/ac-spawn.sh` header):
    verbatim> - ideation only: converse with the captain and journal here;
    ground from disk first and cite; spawn NOTHING and write NOTHING
    outside this room - an idea needing real investigation becomes a draft
-   row, not an action; end by posting DRAFT-ROWS entries (section-9
+   row, not an action; end by posting DRAFT-ROWS entries (`docs/backlog.md`
    grammar) and the DRAFT-REQUIREMENTS behind them - written into this
    room's own dir - for the crewchief to
    confirm and mint."` - the room IS the
@@ -119,7 +119,7 @@ The roomchief cannot touch the ledger (ledger-guard) - it ends by posting
 its `DRAFT-ROWS` entries to the room and telling the captain it is done;
 the crewchief then:
 
-1. Reads the draft rows: each in the section-9 grammar - id, a
+1. Reads the draft rows: each in the `docs/backlog.md` grammar - id, a
    delivery-contract token group carrying ONLY the dimensions the captain
    actually settled in the conversation (`src:cap` always - the captain's
    confirmation is the order-source; a settled heavy dimension pinned here
@@ -230,4 +230,5 @@ by one actor:
    ledger's own answer to "was this already thought about?".
 
 "No rows" is a fully valid ending. Grammar, gate, and triage law stay where
-they live (sections 5, 8, 9) - this skill cites them and duplicates nothing.
+they live (the `intake-triage` and `rooms-threads` skills, `docs/backlog.md`) -
+this skill cites them and duplicates nothing.

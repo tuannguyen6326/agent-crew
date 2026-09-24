@@ -2,7 +2,7 @@
 # ac-task.sh <verb> - every ROUTINE mutation of records/backlog.md as a verb
 # instead of a model rewriting markdown. Authoritative spec for the verbs, the
 # lock, the body block and the archives; the LINE grammar itself stays owned by
-# AGENTS.md section 9 + AC_DONELINE_AWK, and the contract vocabulary by
+# docs/backlog.md + AC_DONELINE_AWK, and the contract vocabulary by
 # ac_contract_lint. This script EMITS what they parse and never invents a
 # second dialect.
 #
@@ -35,7 +35,7 @@
 #    A malformed date fails CLOSED (HELD) exactly like every other hold slip.
 #
 # RESIDUAL: `hold --why <text>` appends the reason as ordinary prose at the end
-# of the line, where AGENTS.md section 9 puts it, and `unhold` removes the
+# of the line, where docs/backlog.md puts it, and `unhold` removes the
 # TOKEN only - the prose stays, because nothing on disk records which trailing
 # words were the hold's. A chief that wants the stale reason gone edits it.
 #
@@ -237,7 +237,7 @@ cmd_start() {
   find_row "$id" || ac_die "no row for '$id'"
   [ "$ROW_SEC" = queued ] || { printf 'already: %s is in %s\n' "$id" "$ROW_SEC"; return 0; }
   hold_fields "${L[$ROW_I]}"
-  [ -z "$HF_MALFORMED" ] || ac_die "$id carries a malformed hold-shaped group - fix the line by hand (AGENTS.md section 9)"
+  [ -z "$HF_MALFORMED" ] || ac_die "$id carries a malformed hold-shaped group - fix the line by hand (docs/backlog.md)"
   if [ -n "$HF_HOLD" ]; then
     # An EXPIRED dated hold is exactly what ac-ready offers as READY, so start
     # must take it; the spent token is stripped - the date WAS the release,
@@ -248,7 +248,7 @@ cmd_start() {
       L[$ROW_I]="${SH_PRE}${SH_POST}"
       spent=" (hold until $HF_UNTIL expired - token stripped)"
     else
-      ac_die "$id is held - release it before starting (AGENTS.md section 9)"
+      ac_die "$id is held - release it before starting (docs/backlog.md)"
     fi
   fi
   for ((i = ROW_I; i <= ROW_END; i++)); do block+=("${L[$i]}"); done
@@ -305,7 +305,7 @@ cmd_hold() {
   find_row "$id" || ac_die "no row for '$id'"
   [ "$ROW_SEC" != done ] || ac_die "$id is Done - a hold schedules nothing"
   hold_fields "${L[$ROW_I]}"
-  [ -z "$HF_MALFORMED" ] || ac_die "$id carries a malformed hold-shaped group - fix the line by hand before re-holding (AGENTS.md section 9)"
+  [ -z "$HF_MALFORMED" ] || ac_die "$id carries a malformed hold-shaped group - fix the line by hand before re-holding (docs/backlog.md)"
   line="${L[$ROW_I]}"
   if split_hold "$line"; then line="${SH_PRE}${SH_POST}"; fi
   line="- [ ] $id $token${line#"- [ ] $id"}"
@@ -322,7 +322,7 @@ cmd_unhold() {
   load
   find_row "$id" || ac_die "no row for '$id'"
   hold_fields "${L[$ROW_I]}"
-  [ -z "$HF_MALFORMED" ] || ac_die "$id carries a malformed hold-shaped group - fix the line by hand (AGENTS.md section 9)"
+  [ -z "$HF_MALFORMED" ] || ac_die "$id carries a malformed hold-shaped group - fix the line by hand (docs/backlog.md)"
   if [ -z "$HF_HOLD" ]; then printf 'already: %s carries no hold\n' "$id"; return 0; fi
   split_hold "${L[$ROW_I]}" || ac_die "internal: parser saw a hold that the leading-run walk cannot find on: ${L[$ROW_I]}"
   L[$ROW_I]="${SH_PRE}${SH_POST}"

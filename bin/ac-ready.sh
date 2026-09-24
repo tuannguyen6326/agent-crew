@@ -70,7 +70,7 @@
 #                           still flying (the parser fills blockers_malformed;
 #                           AC_DONELINE_AWK in ac-lib.sh owns that detection).
 # HELD   <id> - captain hold - ... - the row carries the `[@held]` token
-#                           (AGENTS.md section 9) as one of its `[...]`
+#                           (docs/backlog.md) as one of its `[...]`
 #                           groups, OR a mis-typed attempt at it - sentinel
 #                           present but wrong ("@hold" as well as "@held"),
 #                           OR the sentinel forgotten outright (a ONE-WORD
@@ -126,14 +126,14 @@
 #                           anything else is not a dated hold: it reads
 #                           `hold malformed`, the same fail-closed direction
 #                           as every other slip, never an accidental release.
-# Backlog grammar (AGENTS.md section 9): story lines carry `epic:<id>`;
+# Backlog grammar (docs/backlog.md): story lines carry `epic:<id>`;
 # `blocked-by: id1,id2 - reason` (comma-joined, no spaces, one space after the
 # colon, lowercase). Done lines marked `[failed]`/`[abandoned]` are terminal
 # but never satisfy a blocker. `[@held]` anywhere among a row's `[...]` groups
 # is a captain hold - visible, never scheduled, cleared only by the captain.
 #
 # OVERLAP --semantic (the System One fold-or-mint proposer, config/jev). The
-# path interlock above answers "same FILE surface"; section 9's rule is wider
+# path interlock above answers "same FILE surface"; docs/backlog.md's rule is wider
 # - "the same file surface, the same mechanism, or the same defect class, not
 # the same wording" - and reading every open row for it was the chief's eyes
 # alone. `overlap --semantic '<order text>'` asks bin/ac-jev.sh one choice
@@ -206,7 +206,7 @@ cmd_report() {
     {
       sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; dom = $10; contract = $9
       # A DATED hold releases itself: HELD before its date, READY on and after
-      # it (AGENTS.md section 9). ISO dates compare correctly as strings.
+      # it (docs/backlog.md). ISO dates compare correctly as strings.
       if (hold != "" && $11 != "" && $11 <= today) hold = ""
       state[id] = sec
       mark[id] = marker
@@ -222,7 +222,7 @@ cmd_report() {
         # one-character slip authorized starting a story whose blocker still
         # flies. Named here, never scheduled, until the line is fixed.
         if (qbad[id] != "") {
-          printf "STUCK  %s blocked-by malformed - fix the line (AGENTS.md section 9: `blocked-by: id1,id2 - reason`)\n", id
+          printf "STUCK  %s blocked-by malformed - fix the line (docs/backlog.md: `blocked-by: id1,id2 - reason`)\n", id
           continue
         }
         # A captain hold - well-formed or mis-typed, wherever it sits among
@@ -230,14 +230,14 @@ cmd_report() {
         # fail-closed direction as blocked-by malformed above; it never falls
         # through to a blocker/READY check.
         if (qholdbad[id] != "") {
-          printf "HELD   %s hold malformed - fix the line: needs `[@held]` exactly, positioned in the leading run of `[...]` groups right after the id, or wrapped in backticks if it is only a mention (AGENTS.md section 9)\n", id
+          printf "HELD   %s hold malformed - fix the line: needs `[@held]` exactly, positioned in the leading run of `[...]` groups right after the id, or wrapped in backticks if it is only a mention (docs/backlog.md)\n", id
           continue
         }
         if (qhold[id] != "") {
           if (quntil[id] != "")
-            printf "HELD   %s - captain hold until %s; it releases itself on that date (AGENTS.md section 9)\n", id, quntil[id]
+            printf "HELD   %s - captain hold until %s; it releases itself on that date (docs/backlog.md)\n", id, quntil[id]
           else
-            printf "HELD   %s - captain hold; release is a captain act (AGENTS.md section 9)\n", id
+            printf "HELD   %s - captain hold; release is a captain act (docs/backlog.md)\n", id
           continue
         }
         # An item with no blockers and no epic is trivially READY - it has no

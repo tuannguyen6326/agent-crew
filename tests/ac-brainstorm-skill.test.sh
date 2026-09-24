@@ -8,7 +8,7 @@
 # CREWCHIEF alone mints), grounding duty (recall/scenes/learnings + overlap
 # first), the verbatim-confirm row minting with settled-dimensions-only
 # pins, "no rows" as a valid outcome, the upstream boundary (never starts
-# execution), and the split rule (cite sections 5/8/9, never duplicate
+# execution), and the split rule (cite intake-triage/rooms-threads/docs/backlog.md, never duplicate
 # their grammar).
 
 set -euo pipefail
@@ -87,7 +87,7 @@ assert_contains "$skill" "no universal approval rounds" \
 
 # --- artifacts: requirements.md always, spec when the thread earned one ------
 assert_contains "$skill" "DRAFT-REQUIREMENTS" "the PO artifact is drafted in the room beside the rows"
-assert_contains "$skill" "data/<family>/requirements.md" "the artifact is the section-5 PO file, not a private shape"
+assert_contains "$skill" "data/<family>/requirements.md" "the artifact is the intake-triage PO file, not a private shape"
 assert_contains "$skill" "IS the staged PO step" "an accepted requirements.md discharges the staged PO step"
 assert_contains "$skill" "settles no requirements" "a scout row carries no PO ceremony"
 assert_contains "$skill" "The pin stays the captain's" "no unconditional flow pin - settled dimensions only"
@@ -128,7 +128,7 @@ assert_contains "$skill" "no rows - <why>" "the empty outcome is what the record
 assert_contains "$skill" "never starts execution" "brainstorm is upstream of every execution flow"
 assert_contains "$skill" "duplicates nothing" "grammar/gate/triage stay cited, not copied"
 # the split rule bites: the skill must not carry its own copy of the closed
-# contract vocabulary (that lives in section 9 / ac_contract_lint alone)
+# contract vocabulary (that lives in docs/backlog.md / ac_contract_lint alone)
 assert_not_contains "$skill" "src|flow|mode|rev|qa|promote" "no duplicated token vocabulary"
 
 # --- catalog registration ------------------------------------------------------

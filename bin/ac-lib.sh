@@ -690,8 +690,8 @@ ac_domain_name_ok() {
 }
 
 ac_backlog_id_ok() {
-  # ac_backlog_id_ok <id> - 0 when <id> is a legal backlog row id (AGENTS.md
-  # section 9: [a-z0-9-]). Callers interpolate ids into awk REGEXES, where an
+  # ac_backlog_id_ok <id> - 0 when <id> is a legal backlog row id (task-lifecycle
+  # skill step 1: [a-z0-9-]). Callers interpolate ids into awk REGEXES, where an
   # unvalidated `.` or `*` stops being a literal and starts matching other
   # rows - so the charset check is what makes the id a literal again.
   case "$1" in ''|*/*|.|..) return 1 ;; esac
@@ -1002,7 +1002,7 @@ ac_task_dir() {
   # flat dir - callers that need the brief check for it themselves.
   #
   # A roomchief (<family>-chief) never has a brief - the room IS its brief
-  # (AGENTS.md section 8) - so the nested chief dir is accepted on its
+  # (rooms-threads skill) - so the nested chief dir is accepted on its
   # FAMILY existing on disk instead (a promoted family always has
   # data/<family>/room.md before its roomchief is ever spawned), never on the
   # chief dir itself existing: ac_status_timeline_mirror's own mkdir is what
@@ -1095,7 +1095,7 @@ ac_room_file() {
 
 # --- backlog Done-line grammar: the ONE parser three sites share --------------
 #
-# AUTHORITATIVE for how a `records/backlog.md` line (AGENTS.md section 9) is
+# AUTHORITATIVE for how a `records/backlog.md` line (docs/backlog.md) is
 # decomposed into fields. THREE awk sites parse this line - ac-ready.sh's
 # snapshot(), ac-curate.sh's _backlog_plan(), ac-learn.sh's
 # learn_retro_snapshot() - and their private copies DRIFTED (the learn parser
@@ -1364,7 +1364,7 @@ function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, f
     hpos = gend + 1
   }
   # blocked-by is read STRICTLY and its slips are detected LENIENTLY. The
-  # strict shape is the pinned one (AGENTS.md section 9, `blocked-by: id1,id2 -
+  # strict shape is the pinned one (docs/backlog.md, `blocked-by: id1,id2 -
   # reason`): one space, lowercase, comma-joined with no empty component, and
   # ended by whitespace or end-of-line. Anything else leaves blockers EMPTY -
   # which ac-ready.sh reads as READY - so a one-character slip would authorize
@@ -2474,7 +2474,7 @@ ac_seed_crew_settings() {
 # (rich-review, bearings, debrief) is captain/crewchief-facing and stays out
 # of crew worktrees. crew-qa and domain-e2e are seeded together because which
 # one a crewmate needs is decided by the DOMAIN of the task it was spawned for
-# (AGENTS.md section 5), not by anything the seed can see at lease time.
+# (intake-triage skill), not by anything the seed can see at lease time.
 AC_CREW_SKILLS="${AC_CREW_SKILLS:-crew-ship crew-verify crew-qa domain-e2e document}"
 
 ac_seed_crew_skills() {

@@ -323,7 +323,7 @@ learn_lessons_lift() {
   tmp="$(mktemp)"
   # -maxdepth 3: a family's own report.md, one stage level under it, and a
   # fan-out sub-task's report at data/<family>/tasks/<slug>/report.md - the
-  # layout AGENTS.md section 8 makes law. Deeper is not a stage or a fan-out
+  # layout bin/ac-brief.sh makes law. Deeper is not a stage or a fan-out
   # slot, and an unbounded walk would follow whatever a task happened to
   # leave in its dir.
   for rep in $(find "$base" -maxdepth 3 -name report.md -type f 2>/dev/null | sort); do

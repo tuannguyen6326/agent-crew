@@ -51,12 +51,12 @@ assert_contains "$("$BIN/ac-statusline.sh")" "1⚑" "pending gate counted"
 "$BIN/ac-room.sh" post t1 captain "DECIDED: approve" >/dev/null
 assert_contains "$("$BIN/ac-statusline.sh")" "0⚑" "decided clears pending"
 
-# The badge must accept the ATTRIBUTED form too. It is not exotic: section 8's
+# The badge must accept the ATTRIBUTED form too. It is not exotic: the rooms-threads
 # attribution echo and the remote-orders skill both MANDATE `DECIDED <family>:`,
 # so on a remote fleet effectively every ruling wears it. A badge that cannot
 # count it is stuck forever - room.md is append-only and `close` does not erase
 # the phantom - which contradicts `ac-room.sh list` on the same bytes and trains
-# the captain to stop reading the one surface AGENTS.md section 8 needs at zero.
+# the captain to stop reading the one surface the rooms-threads skill needs at zero.
 # Reuse t1: the statusline SUMS every room, so a fresh family would shift the
 # total. assert_eq on the WHOLE string - "0⚑" alone also matches "10⚑".
 "$BIN/ac-room.sh" post t1 crewchief "GATE: plan awaiting captain" >/dev/null

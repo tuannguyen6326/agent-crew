@@ -5123,7 +5123,7 @@ export function reviewWakeText(file: string, payload: string): string {
 /** The family a review artifact belongs to: <home>/data/<family>/... names the
  * family whose spool should get the wake when that family is promoted (its
  * roomchief drains state/.wake-spool.<family>/ - routing straight there skips
- * the crewchief-forward hop AGENTS.md section 8 would otherwise require).
+ * the crewchief-forward hop the rooms-threads skill would otherwise require).
  * Pooled .lavish worktree pages and anything outside data/ have no family.
  * Archived families (data/archive/<fam>) return null: a closed family has no
  * roomchief, so its feedback belongs to the fleet chief. */

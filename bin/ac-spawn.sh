@@ -2053,7 +2053,7 @@ ac_status_append "$id" "working: spawned"
 # 2026-07-18: learning-loop-impl-s1 posts in the learning-loop-impl
 # thread). Unscoped spawns fall back to the id's own family. Best-effort -
 # spawn never fails on the mirror, config/remote-mirror=off silences it.
-# Announce follows the captain's Slack rules (AGENTS.md section 8):
+# Announce follows the captain's Slack rules (rooms-threads skill, STYLE):
 # `*[UTC+7 ts] [VERB] [<family>]*` header, Vietnamese framing, identifiers
 # verbatim.
 if [ "$(ac_config_read remote-mirror off)" = "on" ]; then

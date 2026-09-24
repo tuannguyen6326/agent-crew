@@ -14,7 +14,7 @@ Nothing here invents new machinery - every stage below is the staged flow's own 
    Staged review is always `yes`.
    The REST of the arguments is the captain's order, verbatim.
 
-2. PO STEP (the section-5 REQUIREMENTS CHECK, grown into an artifact - that clause is the authoritative contract, this is only the activation): run the brief-without-guessing test on the order.
+2. PO STEP (the `intake-triage` skill's REQUIREMENTS CHECK, grown into an artifact - that clause is the authoritative contract, this is only the activation): run the brief-without-guessing test on the order.
    Route by guess count: 0 -> draft; 1-4 -> ONE bundled clarify exchange with the captain first, select etiquette; >=5 or the deliverable itself a guess -> propose `/brainstorm` and stop.
    When the family is promoted, the ROOMCHIEF owns this interview in its own thread - the crewchief only promotes and hands the order over.
    Then write `data/<family>/requirements.md` (every line cite-carrying) and get the captain's LIVE acceptance - that acceptance is the whole gate. A requirements.md the row's `inputs:` already names, authored and accepted in a `/brainstorm`, IS this step: adopt it rather than re-interviewing settled ground.

@@ -7,8 +7,8 @@
 #     window/lease/meta exists - and the ref itself is never touched,
 #   - a crew/<family> ref a LIVE family sibling owns => the spawn proceeds:
 #     ac_crew_branch collapses every stage/revision id in a family onto ONE
-#     branch, so the fresh-crewmate-on-the-crew-branch recovery of AGENTS.md
-#     section 5 legitimately continues it.
+#     branch, so the fresh-crewmate-on-the-crew-branch recovery of the
+#     delivery-review skill legitimately continues it.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
@@ -62,7 +62,7 @@ esac
 
 # --- a LIVE family sibling owns the branch => no refusal -----------------------
 # c2 is in flight and commits on crew/c2; c2-r2 is the fresh execution crewmate
-# that continues that same branch (AGENTS.md section 5 recovery). Refusing it
+# that continues that same branch (delivery-review skill recovery). Refusing it
 # would tell the operator to delete a branch holding live unlanded work.
 "$BIN/ac-brief.sh" c2 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" c2 "$repo" --harness claude >/dev/null 2>&1

@@ -27,7 +27,7 @@
 #   gate-agent   design-gate judge engine         (ac-gate.sh)
 #   gate-model   the judge's model                (ac-gate.sh)
 #   gate-effort  the judge's reasoning effort     (ac-gate.sh)
-#   promote      roomchief promotion policy       (AGENTS.md section 8)
+#   promote      roomchief promotion policy       (rooms-threads skill)
 #   flow         direct/staged pin                (AGENTS.md section 5)
 # config/backend is written as `herdr` unasked - the default backend (orca is
 # the per-fleet opt-in).
