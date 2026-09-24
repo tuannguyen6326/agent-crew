@@ -557,4 +557,45 @@ assert_eq "$(git -C "$rne" symbolic-ref --short HEAD)" "main" "checkout stays on
 git -C "$rne" rev-parse -q --verify MERGE_HEAD >/dev/null \
   && fail "MERGE_HEAD must not remain after a refused --no-ff commit"
 
+# ---- Case: the qa gate and the merge see the SAME head ----------------------
+# A git shim advances crew/<id> the moment the merge runs - a crewmate commit
+# landing between the gate and the merge. Only the attested sha may land.
+real_git="$(command -v git)"
+race_shim="$TMP/race-shim"
+mkdir -p "$race_shim"
+for race_mode in ff no-ff; do
+  rrace="$(make_repo "race-$race_mode")"
+  add_crew "$rrace" "rc-$race_mode"
+  mk_meta "rc-$race_mode" "$rrace"
+  printf 'qa:\n  require_for_ship: true\n' >"$AC_HOME/projects/race-$race_mode.yaml"
+  printf '/.crew/\n' >>"$rrace/.git/info/exclude"
+  gated="$(git -C "$rrace" rev-parse "crew/rc-$race_mode")"
+  mkdir -p "$rrace/.crew/qa/passed"
+  printf 'schema=agentcrew.qa-attestation/v2\noutcome=passed\nrun=r\ntask=t\ncompleted_at=2026-07-24T00:00:00Z\nsource_sha=%s\nprofile_key=race-%s\nprofile_sha256=p\nconfig_sha256=c\ncases_passed=1\ncases_total=1\n' \
+    "$gated" "$race_mode" >"$rrace/.crew/qa/passed/$gated"
+  [ "$race_mode" = no-ff ] && diverge_main "$rrace" side.txt "main moved"
+  cat >"$race_shim/git" <<EOF
+#!/usr/bin/env bash
+case " \$* " in
+  *" merge "*)
+    if [ ! -e "$rrace/.raced" ]; then
+      : >"$rrace/.raced"
+      late="\$("$real_git" -C "$rrace" commit-tree "crew/rc-$race_mode^{tree}" -p "crew/rc-$race_mode" -m late)"
+      "$real_git" -C "$rrace" update-ref "refs/heads/crew/rc-$race_mode" "\$late"
+    fi ;;
+esac
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$race_shim/git"
+  flag=""; [ "$race_mode" = no-ff ] && flag=--no-ff
+  PATH="$race_shim:$PATH" "$BIN/ac-merge-local.sh" "rc-$race_mode" $flag >/dev/null 2>&1 \
+    || fail "$race_mode: the gated head must still land"
+  assert_file "$rrace/.raced"
+  late="$(git -C "$rrace" rev-parse "crew/rc-$race_mode")"
+  [ "$late" != "$gated" ] || fail "fixture broken: the shim must have advanced the branch"
+  git -C "$rrace" merge-base --is-ancestor "$gated" main || fail "$race_mode: the attested head must be on main"
+  git -C "$rrace" merge-base --is-ancestor "$late" main \
+    && fail "$race_mode: a commit pushed after the qa gate must not ride the merge"
+done
+
 pass

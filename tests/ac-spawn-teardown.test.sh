@@ -470,6 +470,24 @@ git -C "$repo9" merge-base --is-ancestor crew/t9 origin/main 2>/dev/null \
 "$BIN/ac-teardown.sh" t9 >/dev/null || fail "local-only landed work needs no --force"
 assert_file "$AC_HOME/state/archive/t9/meta"
 
+# t9d: a LANDED head proves nothing about the tree. Follow-up edits made after
+# the landing live only in the worktree, and the pool return below the gate is
+# --force - so a dirty tree must refuse even when the branch is landed.
+"$BIN/ac-brief.sh" t9d proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9d "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt9d="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9d.meta")"
+git -C "$wt9d" checkout -q -b crew/t9d
+printf 'landed\n' >"$wt9d/landed.txt"
+git -C "$wt9d" add -A
+git -C "$wt9d" -c user.email=t@t -c user.name=t commit -qm "landed work"
+git -C "$repo9" merge -q --ff-only crew/t9d
+printf 'follow-up\n' >"$wt9d/followup.txt"
+out="$("$BIN/ac-teardown.sh" t9d 2>&1)" && fail "teardown must refuse a dirty tree even when the branch is landed"
+assert_contains "$out" "uncommitted changes" "the refusal names the dirty tree"
+assert_file "$wt9d/followup.txt"
+assert_file "$AC_HOME/state/t9d.meta"
+"$BIN/ac-teardown.sh" t9d --force >/dev/null 2>&1 || fail "--force still discards a dirty landed tree"
+
 # t10: push mode - only ORIGIN contains the head; local main stays behind.
 # The brief IS the mode record now: spawn refuses a flag that contradicts it
 # (delivery-contract-on-the-row), so the brief carries direct-pr from the

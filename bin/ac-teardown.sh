@@ -13,9 +13,9 @@
 #   branch the scout created is landed (same containment proof as ship
 #   tasks) - a scout steered mid-flight into writing code cannot have its
 #   committed work silently discarded; ac-promote.sh <id> converts it to a
-#   ship task instead - and when it created NO branch, its worktree is clean
-#   (the ship sibling's rule, mirrored: uncommitted work dies just as silently
-#   at the pool return);
+#   ship task instead - and its worktree is clean, branch or not (the ship
+#   sibling's rule, mirrored: uncommitted work dies just as silently at the
+#   pool return);
 # - ship tasks: the work is landed - the crew/<id> branch head is contained in
 #   the default branch (local or origin), reachable from any remote branch, or
 #   the recorded PR was merged (pr_merged=1 in the meta) - and the worktree is
@@ -363,10 +363,9 @@ landed_proof() {
       return 1
     fi
     # The ship sibling's rule, mirrored: work the scout EDITED but never
-    # committed dies just as silently at the pool return.
-    if [ -z "$shead" ] && [ -d "$worktree" ] \
-      && [ -n "$(git -C "$worktree" status --porcelain 2>/dev/null)" ]; then
-      printf 'worktree is dirty and no %s branch exists\n' "$branch" >&2
+    # committed dies just as silently at the pool return, landed branch or not.
+    if [ -d "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain 2>/dev/null)" ]; then
+      printf 'worktree is dirty: uncommitted changes that %s does not hold; commit them or --force to discard\n' "$branch" >&2
       return 1
     fi
     return 0
@@ -382,12 +381,15 @@ landed_proof() {
     fi
     return 0
   fi
+  # A landed head says nothing about edits made after it, and every path past
+  # this gate returns the worktree with --force: dirty refuses before landed.
+  if [ -d "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain 2>/dev/null)" ]; then
+    printf 'worktree is dirty: uncommitted changes that %s does not hold; commit them or --force to discard\n' "$branch" >&2
+    return 1
+  fi
   head_landed "$head" && return 0
   printf 'branch %s (%s) is not landed: not in %s (local or origin), no containing remote branch, no merged PR\n' \
     "$branch" "${head:0:12}" "$(ac_default_branch "$project_dir")" >&2
-  if [ -d "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain 2>/dev/null)" ]; then
-    printf 'worktree also has uncommitted changes\n' >&2
-  fi
   return 1
 }
 
@@ -779,8 +781,8 @@ if [ "$kind" != crewdeputy ] && [ "$kind" != roomchief ]; then
     fi
     sweep_pane_agents "$lease"
     ac_port_slot_release "$lease"
-    # --force: the landed-work proof (or the captain's explicit --force)
-    # already authorized discarding whatever is left in the tree.
+    # --force: the landed-work proof (landed head AND clean tree) or the
+    # captain's explicit --force already authorized discarding the tree.
     if [ -n "$lease_id" ]; then
       "$bin_dir/ac-tree.sh" return "$lease" --force --if-lease-id "$lease_id" >/dev/null 2>&1 \
         || ac_warn "could not return worktree $lease (it may have been re-leased); check the pool with ac-tree.sh list"

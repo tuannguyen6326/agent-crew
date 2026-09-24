@@ -65,6 +65,7 @@ fi
 # qa run (ac_qa_gate_ok finds no marker for the new sha). When qa is not
 # required this is a clean no-op with no gh dependency.
 project_dir="$(ac_meta_get "$meta" project_dir)"
+head_sha=""
 if [ -n "$project_dir" ] && [ -d "$project_dir" ] && ac_qa_required "$project_dir"; then
   head_sha="$(gh pr view "$url" --json headRefOid -q .headRefOid 2>/dev/null || true)"
   [ -n "$head_sha" ] || ac_die "merge blocked: qa.require_for_ship is enforced but the PR head SHA could not be resolved (gh pr view failed or returned empty) - run crew-qa and retry once the head resolves"
@@ -91,6 +92,10 @@ ac_knowledge_warn "$family" "$project_dir"
 merge_args=(pr merge "$url")
 if [ -n "$method" ]; then merge_args+=("$method"); fi
 if [ "${#extra[@]}" -gt 0 ]; then merge_args+=("${extra[@]}"); fi
+# The qa gate judged head_sha; without the pin, a push landing between the
+# gate and this call would merge commits no attestation covers. A moved head
+# makes gh refuse, and the read-back below then reports the merge unproven.
+if [ -n "$head_sha" ]; then merge_args+=(--match-head-commit "$head_sha"); fi
 # Only the ATTEMPT is bookkept before the merge call. pr= itself rides the
 # PROOF alone, because pr= is exactly --pr-ready's precondition in
 # ac-teardown.sh: writing it for an unproven attempt would arm that landing

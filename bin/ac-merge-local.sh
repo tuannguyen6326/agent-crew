@@ -141,7 +141,11 @@ if [ "$epic_mode" = 1 ]; then
     printf 'qa.require_for_ship: deferred to the epic gate (epic-branch landing)\n'
   fi
 else
-  ac_qa_gate_ok "$project_dir" "$(git -C "$project_dir" rev-parse "refs/heads/$branch")" "$id" \
+  # The merge below takes this sha, never the branch name: a crewmate commit
+  # landing between the gate and the merge must not ride an attestation it
+  # never earned.
+  land_sha="$(git -C "$project_dir" rev-parse "refs/heads/$branch")"
+  ac_qa_gate_ok "$project_dir" "$land_sha" "$id" \
     || ac_die "local merge blocked by qa.require_for_ship (see message above)"
 fi
 
@@ -178,7 +182,7 @@ if [ "$noff" = "--no-ff" ]; then
   # never touched, and `merge --abort` itself fails here ("no merge to
   # abort"), so it must not be called - the refusal instead says the merge
   # never started and quotes git's own reason.
-  if ! err="$(git -C "$project_dir" merge --no-ff --no-commit "$branch" 2>&1 >/dev/null)"; then
+  if ! err="$(git -C "$project_dir" merge --no-ff --no-commit -m "Merge branch '$branch'" "$land_sha" 2>&1 >/dev/null)"; then
     if git -C "$project_dir" rev-parse -q --verify MERGE_HEAD >/dev/null; then
       conflicts="$(git -C "$project_dir" diff --name-only --diff-filter=U | tr '\n' ' ')"
       git -C "$project_dir" merge --abort
@@ -271,7 +275,7 @@ else
     [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
     ac_status_append "$id" "merged: local $target (epic)"
   else
-    if ! err="$(git -C "$project_dir" merge --ff-only "$branch" 2>&1 >/dev/null)"; then
+    if ! err="$(git -C "$project_dir" merge --ff-only "$land_sha" 2>&1 >/dev/null)"; then
       ac_die "fast-forward of $branch failed: $err ($default untouched)"
     fi
     [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"

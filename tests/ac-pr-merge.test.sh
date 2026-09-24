@@ -192,6 +192,10 @@ GHVIEW="$head"
 out="$(merge q1 "$url" 2>&1)"
 assert_contains "$out" "merged $url" "exact-sha pass -> merge proceeds"
 assert_contains "$(cat "$AC_HOME/state/q1.meta")" "pr_merged=1" "meta records the gated merge"
+# The gate read the head BEFORE the merge; a push in between must not ride an
+# attestation it never earned, so the merge is pinned to the gated sha.
+assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--match-head-commit]\n[%s]\n' "$url" "$head")" \
+  "a qa-gated merge is pinned to the attested head"
 
 # (e) a project that does NOT require qa still merges with an unresolved head.
 noqarepo="$(make_repo noqarepo)"                          # no fleet-home config -> qa not enforced
