@@ -118,4 +118,27 @@ case "$(jq -r '[.hooks.UserPromptSubmit[]?.hooks[]?.command] | .[]' "$cl")" in
   *) fail "claude UserPromptSubmit wiring misses ac-prompt-recall.sh" ;;
 esac
 
+# --- 11. pending wakes: a chief meets its queue at the prompt, not at Stop -----
+# The turn-end guard refuses a turn end while wakes are queued, so a chief that
+# answered the captain first only learned of them after doing the work. The
+# hook PEEKS - the drain consumes records, and a hook must never do that.
+spool="$AC_HOME/state/.wake-spool"
+mkdir -p "$spool"
+printf '1\treport\tcrew-a\tdone: shipped\n' >"$spool/1.1.000001"
+out="$(run_hook "$AC_HOME" '{"prompt":"ok"}' AC_SOLO=)"
+assert_contains "$out" "1 queued wake" "a chief is told its queued wakes even on a prompt the recall gates skip"
+assert_contains "$out" "ac-wake-drain.sh" "the line names the drain to run"
+assert_eq "$(find "$spool" -type f | wc -l | tr -d ' ')" "1" "the peek never consumes a record"
+out="$(run_hook "$TMP/elsewhere" '{"prompt":"ok"}' AC_SOLO=1)"
+case "$out" in *"queued wake"*) fail "a solo session owns no wakes and must not be told to drain: $out" ;; esac
+out="$(run_hook "$TMP/elsewhere" '{"prompt":"ok"}' AC_SOLO=)"
+[ -z "$out" ] || fail "a worker-shaped session stays silent: $out"
+out="$(run_hook "$AC_HOME" '{"prompt":"ok"}' AC_SOLO= AC_SCOPE=fam-one)"
+case "$out" in *"queued wake"*) fail "a roomchief is not told of the FLEET spool: $out" ;; esac
+mkdir -p "$AC_HOME/state/.wake-spool.fam-one"
+printf '1\treport\tfam-one-x\tdone: y\n' >"$AC_HOME/state/.wake-spool.fam-one/1.1.000001"
+out="$(run_hook "$AC_HOME" '{"prompt":"ok"}' AC_SOLO= AC_SCOPE=fam-one)"
+assert_contains "$out" "1 queued wake" "a roomchief is told of its own family spool"
+rm -rf "$spool" "$AC_HOME/state/.wake-spool.fam-one"
+
 pass

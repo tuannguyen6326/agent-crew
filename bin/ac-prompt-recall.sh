@@ -11,7 +11,7 @@
 # Stdin: the harness payload; the prompt is read from .prompt (claude, codex,
 # cursor) with .user_message/.text as fallbacks. Stdout: at most ONE short
 # block - the top hits with path, trust label and snippet, plus a freshness
-# line - which the harness hands the model as context. Empty stdout is the
+# line (after the pending-wake line below, when there is one) - which the harness hands the model as context. Empty stdout is the
 # common case and means "nothing to add".
 #
 # SCOPE is the session's SHAPE, never the registration: the fleet settings
@@ -21,6 +21,10 @@
 # cwd is the fleet home (crewchief or a scoped roomchief) - and is silent
 # for everything else: a crewmate's prompts are briefs the chief already
 # grounded and cited, and recalling again there is noise on top of cost.
+#
+# PENDING WAKES ride the same hook for a chief-shaped session only: one line
+# counting the records in its own spool (the family spool under AC_SCOPE),
+# printed ahead of every recall gate below. A solo session owns no wakes.
 #
 # NOISE GATES, because a per-prompt reader pays context on every turn: no
 # brain (DB existence is the opt-in), config/brain-prompt-recall=off (the
@@ -54,6 +58,16 @@ else
   home_p="$(cd "$home" 2>/dev/null && pwd -P || true)"
   [ -n "$here" ] && [ "$here" = "$home_p" ] || exit 0
   by="${AC_SCOPE:+${AC_SCOPE}-chief}"; by="${by:-crewchief}"
+fi
+
+# A chief's queued wakes, PEEKED before any recall gate: the turn-end guard
+# refuses a turn end while they wait, so without this a chief learns of them
+# only after acting on the prompt. Never the drain - it consumes the records.
+if [ "$by" != solo ] && . "$(dirname "$0")/ac-wake-lib.sh" 2>/dev/null; then
+  spool="$(ac_wake_spool_path "$(ac_state_dir)" "${AC_SCOPE:-}")"
+  n=0
+  for r in "$spool"/*; do [ -f "$r" ] && n=$((n + 1)); done
+  [ "$n" -eq 0 ] || printf 'agent-crew: %s queued wake(s) wait in this session'"'"'s spool - run bin/ac-wake-drain.sh and handle them before acting on this prompt.\n' "$n"
 fi
 
 [ -f "$home/state/brain.sqlite" ] || exit 0

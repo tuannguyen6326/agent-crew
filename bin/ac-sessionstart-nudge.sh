@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ac-sessionstart-nudge.sh - one-line "run session-start" reminder (Claude Code
 # SessionStart hook). Wired in .claude/settings.json for source startup|resume|
-# clear. CLAUDE.md section 3 says the crewchief must run bin/ac-session-start.sh
+# clear|compact (compact gets its own re-orientation arm below). CLAUDE.md
+# section 3 says the crewchief must run bin/ac-session-start.sh
 # first, every session; nothing native caught a session that forgot - the
 # turn-end guard enforces the WATCHER, not the digest. This prints the reminder
 # into the fresh session's context.
@@ -48,6 +49,30 @@ if [ "${AC_SOLO:-}" = 1 ]; then
   if . "$(dirname "$0")/ac-lib.sh" 2>/dev/null; then ac_self_tasks_in_flight 2>/dev/null || true; fi
   exit 0
 fi
+
+# THE COMPACT ARM also precedes the gates: a chief that compacts still holds
+# its own LIVE lock - the very state the ordinary nudge is silenced by - so a
+# compacted chief used to get nothing at all. Everything it needs is on disk;
+# this only names where. The source rides the harness payload on stdin; the
+# bounded read keeps a caller that never closes stdin from hanging init.
+payload=""
+[ -t 0 ] || IFS= read -r -t 2 payload || true
+case "$payload" in *'"source":"compact"'*|*'"source": "compact"'*)
+  if [ -n "${AC_CREW_ID:-}" ]; then
+    printf 'agent-crew: this crewmate session was COMPACTED - re-read your brief (the path your kickoff named) and your status log before continuing; `git log --oneline` and `git status` show where the tree stands.\n'
+    exit 0
+  fi
+  if [ -n "${AC_HOME:-}" ] && . "$(dirname "$0")/ac-lib.sh" 2>/dev/null && ac_home >/dev/null 2>&1; then
+    printf 'agent-crew: this session was COMPACTED - what lived only in the conversation is gone. Rebuild footing from disk before acting: `bin/ac-brain.sh context_pack%s`, then reload the AGENTS.md section-12 skill for the work in flight.\n' \
+      "${AC_SCOPE:+ --entities data/$AC_SCOPE/room}"
+    if . "$(dirname "$0")/ac-wake-lib.sh" 2>/dev/null; then
+      n=0
+      for r in "$(ac_wake_spool_path "$(ac_state_dir)" "${AC_SCOPE:-}")"/*; do [ -f "$r" ] && n=$((n + 1)); done
+      [ "$n" -eq 0 ] || printf 'agent-crew: %s queued wake(s) wait - run bin/ac-wake-drain.sh and handle them.\n' "$n"
+    fi
+    exit 0
+  fi ;;
+esac
 # THE ONE STATE NO ac- HOOK CAN OTHERWISE REPORT. With AC_HOME absent, ac_home
 # refuses by design and all four claude hooks - the turn-end guard, the watcher
 # auto-arm, the prompt recall and this nudge - swallow that refusal into exit 0

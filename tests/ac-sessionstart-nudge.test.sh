@@ -210,5 +210,38 @@ case "$out" in *"$sig"*) fail "the homeless signal must never fire while AC_HOME
 assert_eq "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" 1 \
   "AC_HOME set: exactly one line - the healthy path gains nothing"
 
+# --- COMPACT: a compacted session re-grounds from disk -----------------------
+# A chief that compacts still holds its own live lock, which is exactly the
+# state the ordinary nudge is silenced by - so without its own arm a compacted
+# chief got nothing at all.
+compact() { # compact <cwd> [env...]
+  local cwd="$1"; shift
+  rc=0; out="$(cd "$cwd" && printf '{"source":"compact"}' | env "$@" "$NUDGE" 2>/dev/null)" || rc=$?
+}
+printf 'pid=%s\nsince=2026-07-18T00:00:00Z\n' "$$" >"$g/state/.session-lock"
+compact "$g" AC_HOME="$g"
+assert_eq "$rc" 0 "compacted chief: exit 0"
+assert_contains "$out" "COMPACTED" "a compacted chief under its own live lock is re-oriented"
+assert_contains "$out" "ac-brain.sh context_pack" "the re-orientation names the rebuild command"
+case "$out" in *"queued wake"*) fail "no wake is pending, none is claimed: $out" ;; esac
+mkdir -p "$g/state/.wake-spool"; printf 'x\n' >"$g/state/.wake-spool/1.1.000001"
+compact "$g" AC_HOME="$g"
+assert_contains "$out" "1 queued wake" "a compacted chief is told its pending wakes"
+rm -rf "$g/state/.wake-spool"
+compact "$g" AC_HOME="$g" AC_SCOPE=fam-x
+assert_contains "$out" "--entities data/fam-x/room" "a compacted roomchief rebuilds from its own room"
+# The ordinary startup path under the same live lock stays silent.
+rc=0; out="$(printf '{"source":"startup"}' | AC_HOME="$g" "$NUDGE" 2>/dev/null)" || rc=$?
+[ -z "$out" ] || fail "startup under a live lock is still silent (got: $out)"
+rm -f "$g/state/.session-lock"
+# A crewmate is homeless in a linked worktree: it is pointed back at its brief.
+compact "$wt" AC_HOME= AC_CREW_ID=crew-z
+assert_eq "$rc" 0 "compacted crewmate: exit 0"
+assert_contains "$out" "brief" "a compacted crewmate is sent back to its brief"
+case "$out" in *"$sig"*) fail "a crewmate is not a chief that lost its home" ;; esac
+case "$(jq -r '.hooks.SessionStart[].matcher' "$ROOT/.claude/settings.json")" in
+  *compact*) ;;
+  *) fail "claude SessionStart wiring must fire on compact" ;;
+esac
 
 pass
