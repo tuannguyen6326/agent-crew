@@ -495,4 +495,14 @@ out="$("$BIN/ac-teardown.sh" sch-fix --no-fact 'fixture' 2>&1)" \
 assert_contains "$(cat "$AC_HOME/data/sch-fix/timeline.log")" "lessons=yes" \
   "the gate reads the (by: <id>, attribution the crewmate contract already mandates"
 
+# The prompt hook also peeks a chief's queued wakes, so its stdout is no
+# longer recall hits alone: a queued wake with zero hits must not be recorded
+# as a fleet-memory read.
+mkdir -p "$state/.wake-spool"; printf 'x\n' >"$state/.wake-spool/1.1.000001"
+(cd "$AC_HOME" && "$BIN/ac-self-task.sh" start s-peek "$repo" >/dev/null)
+case "$(cat "$state/s-peek.status" 2>/dev/null)" in
+  *"fleet memory read"*) fail "a wake-count line is not a fleet-memory read" ;;
+esac
+rm -rf "$state/.wake-spool"
+
 pass

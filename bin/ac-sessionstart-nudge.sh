@@ -56,7 +56,7 @@ fi
 # this only names where. The source rides the harness payload on stdin; the
 # bounded read keeps a caller that never closes stdin from hanging init.
 payload=""
-[ -t 0 ] || IFS= read -r -t 2 payload || true
+[ -t 0 ] || IFS= read -r -t 1 payload || true
 case "$payload" in *'"source":"compact"'*|*'"source": "compact"'*)
   if [ -n "${AC_CREW_ID:-}" ]; then
     printf 'agent-crew: this crewmate session was COMPACTED - re-read your brief (the path your kickoff named) and your status log before continuing; `git log --oneline` and `git status` show where the tree stands.\n'

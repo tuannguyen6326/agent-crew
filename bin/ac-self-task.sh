@@ -259,8 +259,10 @@ ac_seed_ports_env "$worktree" "$project_name" >/dev/null \
 # The record's LAST line is what every fleet view shows as the slice's state
 # (ac-crew-state.sh reports it), so a state line closes the block: hits in the
 # middle of the log read as knowledge, hits at its end read as the status.
+# The hook's `agent-crew:` pending-wake line is not a recall hit, so it is
+# dropped here or a queued wake alone would read as a memory read.
 recall="$(printf '{"prompt":"%s %s"}' "$(printf '%s' "$id" | tr '-' ' ')" "$project_name" \
-  | "$bin_dir/ac-prompt-recall.sh" 2>/dev/null || true)"
+  | "$bin_dir/ac-prompt-recall.sh" 2>/dev/null | grep -v '^agent-crew: ' || true)"
 [ -z "$recall" ] || {
   printf '%s\n' "$recall"
   printf '%s\n' "$recall" | sed -n 's/^- /brain: /p' | while IFS= read -r line; do
