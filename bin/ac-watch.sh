@@ -159,6 +159,11 @@
 # one bounded request per quiet EPISODE and nothing while a pane is healthy
 # or busy. It is a net under the marker channel, never a replacement for
 # AC_CAPTAIN_RE or the ac-done.sh push - the agent's own word stays primary.
+# COMPACT NOTE rides the same two wakes: when the task meta names a claude
+# session_id, bin/ac-compact-advise.sh judges that crewmate's own transcript
+# (its header owns the questions, score, floor and knob) and a ready verdict
+# appends ` compact=advise score=<s> floor=<f> usage=<u>` - a hint for the
+# chief, who may `ac-send.sh <id> /compact`; the watcher never sends it.
 # STALE DEFERRAL (watch-stale-defer-on-declared-wait). The stale arm measured
 # idle time alone, and its one dedup (.stale-<id>) is cleared by any cosmetic
 # redraw - so a worker that had SAID why it is quiet, or one parked at a gate on
@@ -1523,6 +1528,18 @@ jev_note() {
   jq -r '.done | " jev=\(.choice) p=\(.p[.choice])"' <<<"$out" 2>/dev/null || true
 }
 
+compact_note() {
+  # compact_note <id> - the COMPACT NOTE (header): ` compact=advise ...` when
+  # the crewmate's own claude transcript (meta session_id) is judged ready for
+  # /compact, else nothing. AC_COMPACT_ADVISE is the test seam.
+  local sid tx out
+  sid="$(ac_meta_get "$state_dir/$1.meta" session_id 2>/dev/null || true)"
+  [ -n "$sid" ] || return 0
+  tx="$(ac_claude_transcript_path "$sid" 2>/dev/null)" || return 0
+  out="$("${AC_COMPACT_ADVISE:-$(dirname "$0")/ac-compact-advise.sh}" "$tx" --role crew 2>/dev/null)" || out=''
+  [ -z "$out" ] || printf ' %s' "$out"
+}
+
 declared_wait() {
   # declared_wait <id> - print `<reason>\t<dedup key>` when <id>'s silence is
   # EXPLAINED (contract: STALE DEFERRAL in the header), else return 1. The
@@ -2245,7 +2262,7 @@ check_fleet() {
           touch "$state_dir/.stale-$id"
           ac_status_append "$id" "$WATCH_ENDED_NOTE"
           backend_mark_wait "$id" "ended its turn with no report line" 2>/dev/null || true
-          queue_wake ended "$id" "ended its turn ${idle}s ago with no report line - read the pane, the ask may be prose$(jev_note "$id" "$tail")"
+          queue_wake ended "$id" "ended its turn ${idle}s ago with no report line - read the pane, the ask may be prose$(jev_note "$id" "$tail")$(compact_note "$id")"
           emit_reason "ended:$id"
           return 0
         else
@@ -2265,7 +2282,7 @@ check_fleet() {
           # everything reaching here is a genuinely-unsupervised quiet pane:
           # today's soft stale:, unchanged.
           touch "$state_dir/.stale-$id"
-          queue_wake stale "$id" "quiet for ${idle}s with no report line$(jev_note "$id" "$tail")"
+          queue_wake stale "$id" "quiet for ${idle}s with no report line$(jev_note "$id" "$tail")$(compact_note "$id")"
           emit_reason "stale:$id"
           return 0
         fi

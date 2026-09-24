@@ -2680,6 +2680,28 @@ assert_contains "$out" "stale:elw2" "a working pane still produces today's stale
 case "$out" in *ended:elw2*) fail "a working pane must never produce the loud ended: wake" ;; esac
 assert_no_file "$FAKE_HERDR/panes/pELW2.reported" "a merely-quiet working pane is never stamped"
 assert_contains "$(fleet_spool)" "quiet for" "the stale wake payload is unchanged"
+
+# COMPACT NOTE: a quiet claude crewmate whose transcript the compact adviser
+# judges ready rides ` compact=advise ...` on its wake, so the chief can send
+# it /compact.
+cat >"$TMP/fake-compact" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$TMP_CALLS"
+printf 'compact=advise score=0.912 floor=0.575 usage=0.75\n'
+FAKE
+chmod +x "$TMP/fake-compact"
+mkdir -p "$AC_CLAUDE_TRANSCRIPT_ROOT/wt-cmp"; : >"$AC_CLAUDE_TRANSCRIPT_ROOT/wt-cmp/sess-cmp.jsonl"
+printf 'window=crew:cmp\nbackend=herdr\nsession_id=sess-cmp\n' >"$state/cmp.meta"
+seed_pane cmp pCMP tCMP
+printf 'all tests green, committed\n' >>"$(fake_pane_buf cmp)"
+bash "$BIN/ac-watch.sh" --once >/dev/null
+rm -rf "$state"/.wake-spool*
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-cmp"
+printf 'working\n' >"$FAKE_HERDR/panes/pCMP.status"
+TMP_CALLS="$TMP/compact-calls" AC_COMPACT_ADVISE="$TMP/fake-compact" bash "$BIN/ac-watch.sh" --once >/dev/null
+assert_contains "$(fleet_spool)" "compact=advise score=0.912" "the quiet wake carries the compact advice"
+assert_contains "$(cat "$TMP/compact-calls" 2>/dev/null)" "sess-cmp.jsonl --role crew" "the adviser judges the crewmate's own transcript as crew"
+rm -f "$state/cmp.meta" "$TMP/compact-calls"; rm -rf "$state"/.wake-spool*
 reset_state
 rm -f "$state"/.captain-wait-* "$state"/*.status
 rm -rf "$AC_HOME/data/elw"

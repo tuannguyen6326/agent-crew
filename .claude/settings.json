@@ -74,6 +74,14 @@
         "hooks": [
           {
             "type": "command",
+            "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-compact-advise.sh; [ -x \"$h\" ] || exit 0; \"$h\" --hook"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
             "command": "h=\"$CLAUDE_PROJECT_DIR\"/bin/ac-watch-autoarm.sh; [ -x \"$h\" ] || exit 0; \"$h\"",
             "asyncRewake": true,
             "timeout": 3600
