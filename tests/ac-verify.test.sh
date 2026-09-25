@@ -184,6 +184,13 @@ done
 # 3 with no done line at all.
 if [ "$kind" = codereview-scout ]; then
   n="${label##*-scout-}"
+  # `hang` is a lane still being placed when the round dies: its pane lands
+  # late and its turn never ends.
+  if [ "${VERIFY_SCOUT_MODE:-ok}" = hang ]; then
+    sleep 4
+    [ -z "$pane_file" ] || printf 'pLate%s tLate%s\n' "$n" "$n" >"$pane_file"
+    sleep 30; exit 0
+  fi
   [ -z "$pane_file" ] || printf 'pLane%s tLane%s\n' "$n" "$n" >"$pane_file"
   lane_ok() {
     jq -cn --arg l "$n" '{type:"assistant",message:{content:[{type:"text",text:({observations:[{file:"file.txt",line:($l|tonumber),what:"w",evidence:"e"}]}|tojson)}]}}' \
@@ -221,6 +228,13 @@ fi
 # pane-agent process itself failing (pane_rc!=0, meta/pane-handle already
 # published) and the pane-agent process exiting 0 but reporting a non-ok
 # terminal status (pane_closed/timeout/error alike).
+# A reviewer that triggers its lanes and dies the moment they are launched,
+# while they are still being placed.
+if [ "${VERIFY_SCOUT_EARLY:-0}" = 1 ]; then
+  sd0="$(grep -o "[^ ]*/scouts/launch-lanes.sh" "$prompt" | head -1)"
+  bash "$sd0" >/dev/null
+  i=0; until [ -s "${sd0%/launch-lanes.sh}/2.pid" ] || [ "$i" -ge 100 ]; do sleep 0.2; i=$((i + 1)); done
+fi
 [ -z "${VERIFY_PANE_EXIT_RC:-}" ] || exit "$VERIFY_PANE_EXIT_RC"
 # A third shape, and the only one the CALLER dies in: the turn stays in flight
 # long enough for the caller to be killed under it, then finishes alone.
@@ -497,6 +511,11 @@ fi
 # before its scout lanes finished, which the facade must refuse.
 if [ "${VERIFY_STALE_VERDICT:-0}" = 1 ]; then
   jq -cn --arg text "$payload" '{type:"assistant",timestamp:"2020-01-01T00:00:00Z",message:{content:[{type:"text",text:$text}]}}' >"$transcript"
+elif [ "${VERIFY_LATE_LANE_WRITE:-0}" = 1 ]; then
+  # A verdict written right after LANES DONE, then a lane's ndjson moving
+  # later - the pane_closed line a reaped lane appends.
+  jq -cn --arg text "$payload" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{type:"assistant",timestamp:$ts,message:{content:[{type:"text",text:$text}]}}' >"$transcript"
+  python3 -c 'import os,sys,time; p=sys.argv[1]; open(p,"a").write("{\"event\":\"done\",\"status\":\"pane_closed\"}\n"); os.utime(p,(time.time()+5,)*2)' "$sd/3.ndjson"
 else
   jq -cn --arg text "$payload" '{type:"assistant",message:{content:[{type:"text",text:$text}]}}' >"$transcript"
 fi
@@ -2226,6 +2245,30 @@ verify_orphans="$(pgrep -f "ac-verify.sh codereview .*--family $scout_family" 2>
 [ -z "$verify_orphans" ] \
   || fail "a refused round left its scout harvester running (pids: $verify_orphans)"
 
+# A LANE REAPED AFTER THE HARVEST moves its ndjson past a verdict that did wait
+# for LANES DONE; the fan-out finished when it was HARVESTED, so that verdict
+# stands.
+rm -rf "$AC_HOME/data/$scout_family"
+VERIFY_LATE_LANE_WRITE=1 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" \
+  --family "$scout_family" --caller "$caller" --base "$base" --intent "$intent" \
+  --output "$TMP/late-lane.json" >/dev/null 2>"$TMP/late-lane.err" \
+  || fail "a verdict written after the harvest must stand though a lane wrote later: $(cat "$TMP/late-lane.err")"
+
+# A ROUND THAT DIES WHILE LANES ARE STILL BEING PLACED leaves no lane running
+# and no pane open: a pane that lands after the die sweep was reaped by nobody.
+rm -rf "$AC_HOME/data/$scout_family"
+VERIFY_SCOUT_MODE=hang VERIFY_SCOUT_EARLY=1 VERIFY_PANE_EXIT_RC=1 "$BIN/ac-verify.sh" codereview \
+  --repo "$repo" --ref "$target" --family "$scout_family" --caller "$caller" --base "$base" \
+  --intent "$intent" --output "$TMP/hang.json" >/dev/null 2>&1 || true
+sleep 5
+hang_sd="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)scouts"
+for n in 1 2; do
+  [ ! -s "$hang_sd/$n.pane" ] || assert_contains "$(cat "$pane_log")" "reap-pane --pane pLate$n" \
+    "a lane pane that landed during the die is reaped"
+done
+[ -z "$(pgrep -f "$(basename "$(dirname "$hang_sd")")/scouts/prompt.md" 2>/dev/null || true)" ] \
+  || fail "a died round left scout lanes running"
+
 rm -rf "$AC_HOME/data/$scout_family"; rm -f "$AC_HOME/config/crew-dispatch.json"
 "$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
   --caller "$caller" --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
@@ -2253,7 +2296,7 @@ assert_contains "$out" "codereview-scout" "the silent-off case is named"
 rm -rf "$AC_HOME/data/$scout_family"
 cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 {"rules":[{"when":"x","use":{"harness":"claude"}}],
- "panes":{"codereview-scout":{"lanes":[{"harness":"codex","model":"m"},{"harness":"opencode","model":"n"}]}}}
+ "panes":{"codereview-scout":{"lanes":[{"harness":"claude","model":"m"},{"harness":"opencode","model":"n"}]}}}
 EOF
 env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" "$BIN/ac-verify.sh" codereview \
   --repo "$repo" --ref "$target" --family "$scout_family" --caller "$caller" \
@@ -2262,6 +2305,11 @@ env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" "$BIN/ac-verify.sh" codereview \
 jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)prompt.md"
 assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT LANES" \
   "the lanes must reach the prompt for a caller with no AC_HOME - that is every production caller"
+# A claude lane stays ONE-SHOT: as a pane SESSION it would share the lease's
+# Stop hook with the reviewer and every other claude lane, so one finishing
+# ends the others' turns mid-pass.
+assert_contains "$(cat "$(dirname "$jp")/scouts/commands.txt")" "run --exec --harness claude" \
+  "a claude lane runs one-shot, never as a pane session"
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
 pass

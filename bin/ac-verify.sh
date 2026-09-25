@@ -543,11 +543,25 @@ scout_harvest() {
   mv -f "$tmp" "$dir/lanes.tsv"
 }
 
-# reap_scout_panes <dir> - close every lane pane the fan-out published. A lane
-# pane outlives its own turn, so after the harvest (or on any die) nothing else
-# would ever close it.
+# reap_scout_panes <dir> [stop] - close every lane pane the fan-out published. A
+# lane pane outlives its own turn, so after the harvest (or on any die) nothing
+# else would ever close it. `stop` first ends the lane processes and waits for
+# them: a lane still being placed publishes its pane AFTER a bare sweep.
 reap_scout_panes() {
-  local f
+  local f pid i=0
+  if [ "${2:-}" = stop ]; then
+    for f in "$1"/*.pid; do
+      [ -s "$f" ] && kill -TERM "$(cat "$f")" 2>/dev/null || true
+    done
+    while [ "$i" -lt 20 ]; do
+      pid=""
+      for f in "$1"/*.pid; do
+        [ -s "$f" ] && kill -0 "$(cat "$f")" 2>/dev/null && pid=1
+      done
+      [ -n "$pid" ] || break
+      sleep 0.5; i=$((i + 1))
+    done
+  fi
   for f in "$1"/*.pane; do
     [ -s "$f" ] || continue
     reap_pane "$(awk 'NR == 1 { print $1 }' "$f")" || true
@@ -614,14 +628,13 @@ reap_verify_runtime() {
   # it sits after the verdict parses non-stale, so every ac_die between the
   # fan-out and there returned through here and left it polling to
   # AC_VERIFY_SCOUT_TIMEOUT+60 under pid 1. Killing it does not end the lanes
-  # it launched; closing their panes does (a pane lane then reports
-  # pane_closed), and a one-shot lane is bounded by its own --timeout.
+  # it launched, so the sweep below stops them before it closes their panes.
   if [ -n "${scout_pid:-}" ]; then
     kill -TERM "$scout_pid" 2>/dev/null || true
     wait "$scout_pid" 2>/dev/null || true
     scout_pid=""
   fi
-  [ ! -d "${scout_dir:-}" ] || reap_scout_panes "$scout_dir"
+  [ ! -d "${scout_dir:-}" ] || reap_scout_panes "$scout_dir" stop
   return_leases "$all_leases" || true
   rm -f "$pane_handle" "$meta" "$status_file" "$pane_early"
 }
@@ -1532,14 +1545,17 @@ EOF
       s_mflag=""; [ -z "$s_m" ] || s_mflag=" --model '$s_m'"
       s_eflag=""; [ -z "$s_e" ] || s_eflag=" --effort $s_e"
       s_label="$s_h"; [ -z "$s_m" ] || s_label="$s_h $s_m"
-      if ac_harness_pane_arm "$s_h" >/dev/null; then
+      # Only the CREWMATE arm makes a pane lane: a claude pane SESSION shares
+      # the lease's Stop hook with the reviewer and every other claude lane, so
+      # the first to finish would end the others' turns mid-pass.
+      if [ "$(ac_harness_pane_arm "$s_h" 2>/dev/null || true)" = crewmate ]; then
         s_arm="run --harness $s_h$s_mflag$s_eflag --label $id-scout-$scout_count --pane-file $scout_dir/$scout_count.pane"
       else
         s_arm="run --exec --harness $s_h$s_mflag$s_eflag --label $id-scout-$scout_count"
       fi
       s_cmd="GIT_OPTIONAL_LOCKS=0 $pane_bin $s_arm --kind codereview-scout --cwd $lease --prompt-file $scout_prompt --timeout ${AC_VERIFY_SCOUT_TIMEOUT:-900} > $scout_dir/$scout_count.ndjson 2>&1"
       printf 'LANE %s (%s):\n  %s\n' "$scout_count" "$s_label" "$s_cmd" >>"$scout_dir/commands.txt"
-      printf '%s &\n' "$s_cmd" >>"$scout_dir/run-lanes.sh"
+      printf '%s &\necho $! >%s/%s.pid\n' "$s_cmd" "$scout_dir" "$scout_count" >>"$scout_dir/run-lanes.sh"
     done <<EOF
 $scout_lanes
 EOF
@@ -1747,13 +1763,21 @@ text="$(ac_transcript_final "$transcript")"
 # whose final message predates the ledger; this is the caller's own check of
 # the same fact against the lanes themselves, so a verdict written before the
 # last lane finished is refused here even if the pane-side hold were bypassed.
+# The fan-out FINISHED when the ledger was written: a lane reaped after the
+# harvest appends pane_closed to its ndjson later, and a verdict that waited
+# for LANES DONE must not read as stale for it. No ledger (the pane never
+# waited for one) falls back to the lanes' own last write.
 if [ "${scout_count:-0}" -gt 0 ] && [ -d "$scout_dir" ]; then
   verdict_epoch="$(ac_transcript_final_epoch "$transcript" 2>/dev/null || true)"
   # `|| true` inside the group, not after the pipeline: with pipefail, a stat
   # on a glob that matched nothing (a fan-out that never ran) fails the whole
   # substitution and set -e ends the round silently - which is exactly what
   # a refusal branch below is supposed to say out loud instead.
-  lane_latest="$( { stat -f %m "$scout_dir"/*.ndjson 2>/dev/null || true; } | sort -n | tail -1)"
+  if [ -e "$scout_dir/lanes.tsv" ]; then
+    lane_latest="$(stat -f %m "$scout_dir/lanes.tsv" 2>/dev/null || true)"
+  else
+    lane_latest="$( { stat -f %m "$scout_dir"/*.ndjson 2>/dev/null || true; } | sort -n | tail -1)"
+  fi
   if [ -n "$verdict_epoch" ] && [ -n "$lane_latest" ] && [ "$verdict_epoch" -lt "$lane_latest" ]; then
     log_rejection "verdict-written-before-fan-out-finished"
     ac_die "verifier $id: the verdict was written at epoch $verdict_epoch, before the last scout lane finished at $lane_latest - a verdict reached without the fan-out's evidence is refused; inspect $scout_dir"
