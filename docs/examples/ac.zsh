@@ -56,18 +56,16 @@ _ac_home() {
   fi
   herdr status server >/dev/null 2>&1 || { (herdr server >/dev/null 2>&1 &); sleep 1; }
   # The chief (and a deputy opened as <fleet>/<deputy>) is a fleet-level pane:
-  # it joins the parent fleet's ROOT workspace "<fleet>", adopted by label
-  # (bin/ac-backend.sh FAMILY WORKSPACE GROUPING).
-  local label="$fleet" ws
-  ws=$(herdr workspace list 2>/dev/null | jq -r --arg l "$label" '.result.workspaces[]? | select(.label==$l) | .workspace_id' | head -1)
-  if [[ -z "$ws" ]]; then
-    herdr workspace create --label "$label" --no-focus >/dev/null 2>&1
-    ws=$(herdr workspace list 2>/dev/null | jq -r --arg l "$label" '.result.workspaces[]? | select(.label==$l) | .workspace_id' | head -1)
-  fi
+  # it joins the parent fleet's ROOT workspace "<fleet>" - a label the backend
+  # shares, so it is resolved and tidied by the backend's own functions
+  # (bin/ac-backend.sh FAMILY WORKSPACE GROUPING), never a second resolver.
+  local bin="$HOME/Work/agent-crew/bin" ws
+  ws=$(AC_HOME="$ach" bash -c '. "$1/ac-lib.sh" && . "$1/ac-backend.sh" && herdr_resolve_workspace "$2"' _ "$bin" "$fleet" 2>/dev/null)
   local -a wsarg; [[ -n "$ws" ]] && wsarg=(--workspace "$ws")
   local pane
   pane=$(herdr tab create "${wsarg[@]}" --label "ac-$fleet${deputy:+-$deputy}" --cwd "$ach" --focus 2>/dev/null | jq -r '.result.root_pane.pane_id // empty')
   [[ -n "$pane" ]] && herdr pane run "$pane" "cd $ach && AC_HOME=$ach exec $harness" >/dev/null 2>&1
+  [[ -n "$ws" ]] && AC_HOME="$ach" bash -c '. "$1/ac-lib.sh" && . "$1/ac-backend.sh" && herdr_close_default_tabs "$2"' _ "$bin" "$ws" >/dev/null 2>&1
   herdr
 }
 

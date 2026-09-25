@@ -14,6 +14,8 @@ command -v zsh >/dev/null 2>&1 || { printf 'SKIP: zsh not available\n'; exit 0; 
 make_fake_herdr
 home="$TMP/h"
 mkdir -p "$home/Work/ac-homes/lab/state" "$home/Work/ac-homes/lab/crewdeputies/mob/state"
+# The launcher resolves the distro at ~/Work/agent-crew, the installed layout.
+ln -s "$ROOT" "$home/Work/agent-crew"
 
 launch() { # launch <fleet> <deputy>
   env -u HERDR_ENV HOME="$home" PATH="$TMP/stubbin:$PATH" \
@@ -31,5 +33,13 @@ case "$(cat "$FAKE_HERDR"/tabs/* 2>/dev/null)" in
   *ac-lab-mob*) ;;
   *) fail "the deputy launch opens its own ac-lab-mob tab" ;;
 esac
+
+# The root label is SHARED with the backend's fleet-level panes, so the
+# launcher resolves it the backend's way (herdr_resolve_workspace): an
+# existing label is adopted, never re-created beside a twin.
+printf 'lab' >"$FAKE_HERDR/ws.w90"
+before="$(ls "$FAKE_HERDR"/ws.* | wc -l | tr -d ' ')"
+launch lab ''
+assert_eq "$(ls "$FAKE_HERDR"/ws.* | wc -l | tr -d ' ')" "$before" "a launch beside twins adopts one instead of minting another"
 
 pass
