@@ -24,7 +24,7 @@ A read never creates the file or the directory, so a homeless reader (a crewmate
 
 | File | Controls |
 | --- | --- |
-| `config/crew-harness` | Default crewmate harness; absent = `claude`. The built-in registry is `AC_HARNESS_RE` in `bin/ac-harness.sh` (`claude`, `codex`, `opencode`, `pi`, `cursor-agent`); any other name needs its own `config/launch-<h>` template. |
+| `config/crew-harness` | Default crewmate harness; absent = `claude`. The built-in harnesses are `claude`, `codex`, `opencode`, `pi` and `cursor` (`bin/ac-harness.sh`; cursor's process name is `cursor-agent`); any other name needs its own `config/launch-<h>` template. |
 | `config/model` | Fleet-wide default crewmate model when `--model` is absent; absent = the harness default. A per-spawn `--model` always wins. Also the last rung for non-verification pane agents (`bin/ac-pane-agent.sh`: flag > `AC_FLEET_MODEL` > `config/model`). |
 | `config/effort` | Fleet-wide default reasoning effort when `--effort` is absent: `low`, `medium`, `high`, `xhigh`, `max` or `ultracode`; absent = the harness default. An invalid value fails the spawn. Per-harness mapping (claude `--effort`, codex `model_reasoning_effort`, pi `--thinking`) and the `ultracode` slash-line behavior are in the `bin/ac-spawn.sh` header. |
 | `config/launch-<harness>` | Launch command template that replaces the built-in one for that harness. Placeholders `__BRIEF__` and `__ID__` are substituted; a custom template may also read `$AC_PROMPT` (the kickoff prompt). Owner: the `bin/ac-spawn.sh` header. |

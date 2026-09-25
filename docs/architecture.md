@@ -296,7 +296,7 @@ It runs `bin/dashboard.ts`, a shim that re-exports `dashboard/app.ts` and calls 
 | `dashboard/watch.ts` | File watchers on `state/`, `records/backlog.md` and room files that drop the snapshot memo early. |
 | `dashboard/assets/` | Vendored xterm.js. |
 
-The server shells out only to fixed survey scripts (`ac-fleets.sh --json`, `ac-room.sh list|show`, `ac_domain_tally`) and never re-derives a count.
+Its data layer shells out only to fixed survey scripts (`ac-fleets.sh --json`, `ac-room.sh list|show`, `ac_domain_tally`) and never re-derives a count.
 Its writes are the ones its header names: one allowlisted config knob, the fixed-name dispatch table, whiteboard scenes and their Notify-crew wake, review sessions, and the fast-forward-only project pull through `bin/ac-repo-pull.sh`.
 Paths are gated by `realpathSync` against the home, and requests by local `Host` and `Origin` checks (`localHostOk`, `originOk`).
 `bin/ac-review.sh` and the `rich-review` skill drive its review API; `bin/ac-fleets.sh` and `bin/ac-dash.sh` are the terminal views of the same survey.

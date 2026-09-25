@@ -2,7 +2,7 @@
 
 Every executable and library under `bin/` has one row below, grouped by area.
 Each script's header comment is its authoritative spec; this page is only the map, and a row that disagrees with its header is a doc bug.
-The usage column is taken from the header's own Usage block and lists every verb the script dispatches.
+The usage column lists every verb the script dispatches; the header owns the contract.
 Rows name fail-closed behavior, the callers that matter, and where a script refuses a SOLO session (`AC_SOLO=1`).
 
 ## Fleet and session
