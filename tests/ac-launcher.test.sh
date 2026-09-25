@@ -42,4 +42,25 @@ before="$(ls "$FAKE_HERDR"/ws.* | wc -l | tr -d ' ')"
 launch lab ''
 assert_eq "$(ls "$FAKE_HERDR"/ws.* | wc -l | tr -d ' ')" "$before" "a launch beside twins adopts one instead of minting another"
 
+# A fleet pinned to a herdr session: the launcher's own tab and the backend's
+# workspace resolution must address that ONE session, or the chief's tab
+# lands in a different server's workspace. A logging wrapper records argv.
+mkdir -p "$TMP/logbin"
+cat >"$TMP/logbin/herdr" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$TMP/herdr.argv"
+exec "$TMP/stubbin/herdr" "\$@"
+EOF
+chmod +x "$TMP/logbin/herdr"
+mkdir -p "$home/Work/ac-homes/sess/state" "$home/Work/ac-homes/sess/config"
+printf 's1\n' >"$home/Work/ac-homes/sess/config/herdr-session"
+env -u HERDR_ENV -u AC_HERDR_SESSION HOME="$home" PATH="$TMP/logbin:$TMP/stubbin:$PATH" \
+  zsh -f -c "source '$ROOT/docs/examples/ac.zsh'; _ac_home sess true '' herdr ''" >/dev/null 2>&1 || true
+calls="$(grep -E '(^|--session [^ ]+ )(workspace create|tab create|pane run)' "$TMP/herdr.argv" 2>/dev/null)"
+[ -n "$calls" ] || fail "the pinned-session launch made no workspace/tab calls"
+case "$(printf '%s\n' "$calls" | grep -v -- '--session s1')" in
+  '') ;;
+  *) fail "every workspace/tab call must address the fleet's session s1: $calls" ;;
+esac
+
 pass
