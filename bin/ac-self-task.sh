@@ -19,7 +19,7 @@
 # the one command that fixes exactly that, and nothing else.
 #
 # WHAT IT IS NOT. This is VISIBILITY, not an execution engine. It launches no
-# harness, reads no brief, seeds no crewmate instructions, opens no room, runs
+# harness, reads no brief, opens no room, runs
 # no gate, no review and no stage. There is no promote tier below room and no
 # config knob here. The CHIEF does the work in the leased worktree with its own
 # hands, and the whole mechanism is: a lease, a pane, a meta, a progress log.

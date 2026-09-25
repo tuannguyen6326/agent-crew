@@ -54,6 +54,8 @@
 #   ac-ship.sh config <dotted.key>
 #   ac-ship.sh fix-report <step>          (markdown handoff for a fixer)
 #   ac-ship.sh review-agent               (independent exact-ref verifier)
+#   ac-ship.sh review-residual accept --grounds '<text>'
+#                                         (owning chief accepts a capped review residual)
 #   ac-ship.sh status
 #   ac-ship.sh finish <checks-passed|passed|failed|cancelled>
 #

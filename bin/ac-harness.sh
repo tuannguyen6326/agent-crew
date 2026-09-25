@@ -47,8 +47,9 @@ AC_BUSY_RE="${AC_BUSY_RE:-esc (to )?interrupt|Working…|Working\.\.\.|Ctrl\+c:c
 ac_harness_instruction_file() {
   # ac_harness_instruction_file <harness> - the instruction file the SPAWNED
   # harness actually loads, relative to its worktree (verified per harness:
-  # AGENTS.md for codex and opencode, .claude/CLAUDE.md for claude - the seed
-  # block in the task-lifecycle skill's step 3 records the live verifications). FAIL-CLOSED
+  # AGENTS.md for codex, opencode, pi and cursor, .claude/CLAUDE.md for
+  # claude - the seed block in the task-lifecycle skill's step 3 records the
+  # live verifications). FAIL-CLOSED
   # (audit-f5): the retired `*)` arm handed .claude/CLAUDE.md to anything
   # unknown, so a new harness silently received a file it never reads and its
   # crewmates ran without the fleet layer. A CUSTOM harness keeps

@@ -8,7 +8,7 @@
 # Usage: ac-spawn.sh <id> <project-name-or-dir> [--scout] [--mode <m>]
 #                    [--harness <claude|codex|opencode|pi|cursor|custom>] [--model <name>]
 #                    [--effort <low|medium|high|xhigh|max|ultracode>]
-#                    [--backend <herdr>]
+#                    [--backend <herdr|orca>]
 #                    [--resume-from <old-task-id>]
 #                    [--base-branch <b>]
 #        ac-spawn.sh <id> <project> --recover        (reopen a destroyed pane)

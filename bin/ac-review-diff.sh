@@ -2,7 +2,7 @@
 # ac-review-diff.sh - show a crewmate's change as a diff against the
 # authoritative base (merge-base with the default branch).
 #
-# Usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph]
+# Usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph | --graph-data]
 #                               [--tree <worktree>]
 #
 # Modes (default = committed-only, base -> branch tip: the chief/roomchief

@@ -4,8 +4,9 @@
 # this file. Sourced, not an entrypoint.
 #
 # Backend selection: $AC_BACKEND (consumers export it from the task meta's
-# `backend=` key), else config/backend, else herdr - and every value other
-# than `herdr`/`orca` is refused. tmux and wezterm support was removed
+# `backend=` key), else config/backend, else the fleet's config/backend
+# found through AC_FLEET_STATE (a homeless crewmate's channel), else herdr -
+# and every value other than `herdr`/`orca` is refused. tmux and wezterm support was removed
 # 2026-07-17 by captain order: one contract, one test surface - both survive
 # the orca driver (per-fleet config/backend picks the driver; the contract
 # below and its tests stay singular).

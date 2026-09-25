@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ac-pane-agent.sh - run ONE agent turn in a herdr pane, for the mechanisms
+# ac-pane-agent.sh - run ONE agent turn in a backend pane, for the mechanisms
 # that verify: the ship pipeline's reviewer, qa, the learning scout, the gate
 # judge. THREE ARMS, chosen by the caller's mode and the resolved harness: the
 # SESSION arm (default, claude) runs a claude session - visible, steerable, real
@@ -34,7 +34,8 @@
 # own default. That is item 5 of HARNESS ARMS discharged at its only entry
 # point - a profile's model was authored FOR the profile's harness, and this is
 # the one place another harness could otherwise inherit it. The gate needs it
-# because its FALLBACK rungs must name engines its profile did not.
+# because its one engine can come from AC_GATE_AGENT or config/gate-agent,
+# which a profile did not name.
 #
 # PANE PROFILE (the authoritative contract): which harness+model+effort a pane
 # agent runs is DISPATCHED per --kind, from config/crew-dispatch.json's `panes`

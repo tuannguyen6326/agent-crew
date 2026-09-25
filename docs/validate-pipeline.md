@@ -176,7 +176,7 @@ bin/ac-ship.sh finish <checks-passed|passed|failed|cancelled>
 ```
 
 - `checks-passed` = validated but unmerged, the crew's stop point.
-- `passed` = merged; it additionally requires HEAD reachable from the default ref, so a squash merge fails closed and should use `checks-passed`.
+- `passed` = merged; it additionally requires HEAD reachable from the run's delivery target (the default ref when no `--target` was pinned), so a squash merge fails closed and should use `checks-passed`.
 - Both refuse unless every non-skipped step is `completed`, no `fix` finding or undecided `ask-user` remains, and a completed review still covers HEAD.
 - `failed` and `cancelled` are always allowed.
 

@@ -45,12 +45,14 @@
 #                                                #   the room shows HANDBACK in
 #                                                #   `list` until DEMOTED/CLOSED
 #   ac-room.sh gate-route <family> <stage>       # derive and append one
+#     (alias: route-gate)                        #
 #     --report <file> --uncertainty <yes|no>     # GATE-ROUTING receipt:
 #     --consequence <low|high>                   # captain authority wins;
 #     --authority <chief|captain>                # else uncertainty OR high
 #     --grounds <text...>                        # consequence -> second-chief;
 #                                                # else -> chief
 #   ac-room.sh gate-verify <family> <stage>      # append one structured
+#     (alias: verify-gate)                       #
 #     --round <1|2> --report <file>              # GATE-VERIFY chief-pass
 #     --grounds <text...>                        # receipt before a gate pane
 #   ac-room.sh disposition <family> <stage>      # append one structured

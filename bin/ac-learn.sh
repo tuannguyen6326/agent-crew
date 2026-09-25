@@ -11,6 +11,9 @@
 #   ac-learn.sh land <candidate-file>   # compatibility-only manual landing
 #   ac-learn.sh promote <skill-name>    # fail-closed compatibility command
 #   ac-learn.sh maintenance status|resume <txid>|abandon <txid>
+#   ac-learn.sh rotate-pending          # archive Pending past config/learn-pending-budget
+#   ac-learn.sh stale                   # report-only age grade of the always-loaded layer
+#   ac-learn.sh reinforce <slug> --evidence '<line>'  # refresh one learned entry's clock
 #
 # `tick` advances the lock-protected Learning generation/cadence and reports the
 # resulting count. A keyed landing tick is idempotent through state/.learn-ticks.
@@ -30,7 +33,8 @@
 # auto-repaired; the gate HOLDS and prints the one line naming the defect and
 # its remedy, same contract as the suite gate.
 #
-# A DUE `autoroom` ALSO promotes nothing until the FULL SUITE is green for the
+# In a fleet that pins config/learn-suite-gate=on (default off), a DUE
+# `autoroom` ALSO promotes nothing until the FULL SUITE is green for the
 # current cycle and tree: it starts `suite` as its own paned task and HOLDS,
 # printing what it is waiting on. `suite` runs the bare tests/run-suite.sh and
 # records one verdict. The gate's contract is above learn_suite_record.

@@ -3,7 +3,9 @@
 // Launched by bin/ac-dashboard.sh via the bin/dashboard.ts shim, which imports
 // this module and calls dashboardMain().
 // Serves ONE self-contained SPA shell (inline CSS + inline vanilla JS, no
-// framework, no CDN, no external asset) over 127.0.0.1 only. The shell hosts a
+// framework, no external asset in the shell itself) over 127.0.0.1 only; the
+// mermaid renderer (jsdelivr) and the whiteboard (esm.sh, WHITEBOARD_CDN) load
+// from pinned CDN URLs on demand. The shell hosts a
 // real-route desktop web app (guide §4): every non-/api GET path returns the
 // same shell so a deep link or reload of a client route is refresh-safe, and the
 // client History-API router resolves the path (unknown -> in-app not-found, never
@@ -15,8 +17,9 @@
 // receipt line); the dispatch-editor (dash-crew-dispatch) POST /api/dispatch
 // validates and atomic-writes the FIXED-name config/crew-dispatch.json (JSON +
 // shape validation -> realpathSync gate -> tmp+rename -> receipt); plus the
-// whiteboard scene writes and the review-session writes documented at their
-// routes below. Otherwise the
+// whiteboard scene writes, the review-session writes, POST /api/repo/pull
+// (an FF-only clone sync) and POST /api/reveal (reveal in Finder), each
+// documented at its route below. Otherwise the
 // server writes nothing, locks nothing, drives no backend (each write is a
 // security boundary, not a general write). Its data layer shells
 // out ONLY to the fixed read-only survey scripts (ac-fleets.sh --json,
@@ -151,7 +154,8 @@ export function learningsCiteFamily(text: string, family: string): boolean {
 // ---------------------------------------------------------------------------
 // Crewdomains (dash-domain-records): read-only render of records/crewdomains.md
 // (the routing table, bin/ac-lib.sh:461-550) and each registered package at
-// crewdomains/<name>/ (the four-member shape, bin/ac-domain.sh's `new` header).
+// crewdomains/<name>/ (the three-member shape plus the optional `qa-repo`,
+// bin/ac-domain.sh's `new` header).
 // The tally is the ONE piece of accounting this file never re-derives: it
 // shells out to the fleet's own ac_domain_tally (bin/ac-lib.sh:625) instead of
 // counting backlog lines a second way.

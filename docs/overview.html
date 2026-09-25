@@ -325,9 +325,10 @@
   <p>agent-crew is an <strong>agent distro</strong>: instructions, skills and bash tooling,
   run by an LLM harness pointed at a fleet home (<code>AC_HOME</code>). There is no app and no
   build step; running a supported harness in the checkout, with <code>AC_HOME</code> set,
-  is the installation. The crewchief never does project work itself: every task goes to a
-  crewmate in its own git worktree and backend pane, and finished work lands as a PR, an
-  approved local merge, or a report.</p>
+  is the installation. The crewchief's real project work goes to a crewmate in its own git
+  worktree and backend pane - the only code a chief writes itself is a visible self-task
+  (a small chief-side edit, or a <code>--solo</code> chief working its family's slices) - and
+  finished work lands as a PR, an approved local merge, or a report.</p>
   <h3>Roles</h3>
   <div class="vocab">
     <div class="v you"><b>captain</b>the human the fleet serves — owns captain-required gates, every PR merge, and every call the crew could not make</div>
