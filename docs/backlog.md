@@ -143,7 +143,7 @@ would otherwise leave the ledger silent about a question already thought
 through. It carries no delivery-contract group: no flow, mode or review was
 ever chosen for it.
 
-Keep it current: spawn moves an item to In flight; teardown moves it to Done or back to Queued.
+Keep it current: at spawn the chief moves an item to In flight; at teardown the chief moves it to Done or back to Queued (`bin/ac-spawn.sh` and `bin/ac-teardown.sh` never write the ledger themselves).
 
 Make those routine moves with `bin/ac-task.sh` (its header is the authoritative
 spec) rather than by re-generating markdown: `add`, `start`, `done`, `hold`,

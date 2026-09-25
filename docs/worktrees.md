@@ -1,135 +1,109 @@
-# In-repo worktree pool
+# Worktrees
 
-A task's isolated checkout is leased per the fleet's session backend
-(`config/backend`), and the two mechanisms are deliberately different shapes:
+Every task works in its own isolated checkout, never in the project's primary checkout.
+How that checkout is leased depends on the fleet's session backend (`config/backend`, see [configuration.md](configuration.md)):
 
-- **herdr fleets** lease from the POOL this document describes - reusable
-  detached-HEAD worktrees inside the project repo, returned rather than
-  deleted, so dependency and build caches survive between tasks.
-- **orca fleets** lease an ORCA-MANAGED worktree per task instead, created
-  and removed through the Orca CLI so every task tree is a first-class node
-  in the Orca sidebar beside its diffs. `bin/ac-backend-orca.sh`
-  (`orca_worktree_lease` / `orca_worktree_release`) is that half's
-  authoritative spec: `crew/<id>` cut from the repo's LIVE CHECKOUT branch
-  at its freshest tip (`ac_freshest_ref`, local vs origin) - or, when the
-  checkout is DETACHED, from HEAD's exact commit, since a detached checkout
-  can sit ahead of its own branch ref with no named ref to compare against -
-  or from an explicit `--base-branch` override when `ac-self-task.sh start` /
-  `ac-spawn.sh` name one, repo-defined setup hooks run, the primary
-  checkout's `node_modules` carried over as a copy-on-write clone, and the
-  whole worktree removed at teardown.
+- **herdr fleets** lease from the in-repo worktree POOL: reusable detached-HEAD worktrees inside the project repo, returned rather than deleted, so dependency and build caches survive between tasks.
+- **orca fleets** lease one Orca-managed worktree per task, created and removed through the Orca CLI, so each task tree is its own node in the Orca sidebar.
 
-Verifier rounds (`ac-verify.sh` codereview and qa) follow the same rule as
-crew leases - the isolated exact-ref checkout comes from whichever mechanism
-the fleet's backend names, and on orca the CLI-minted branch is dropped right
-after the detach, since a verifier branch is never a deliverable.
+This page is a map; the specs are the header of `bin/ac-tree.sh` (the pool) and `orca_worktree_lease` / `orca_worktree_release` in `bin/ac-backend-orca.sh`.
+See also [concepts.md](concepts.md), [architecture.md](architecture.md) and [scripts.md](scripts.md).
 
-`bin/ac-tree.sh` pools reusable detached-HEAD git worktrees INSIDE each
-project repo; its header comment is the authoritative spec.
+## The pool (herdr fleets)
 
-## Layout
+### Layout
 
 ```
 <repo>/.crew/
-├── worktrees/<n>/      # worktree working dirs (numeric slots, detached HEAD)
-├── slots/<n>.meta      # per-slot state (key=value, atomic rewrite)
-├── lock/               # mkdir lock guarding slot state (stale-owner healing)
-├── config              # optional: max_trees=<n> (default 8)
-└── <repo>.code-workspace  # GENERATED active-task workspace file (see below)
+├── worktrees/<n>/           # slot working dirs, detached HEAD; <n> is <number>-<repo-name>
+├── slots/<n>.meta           # per-slot state (key=value, atomic rewrite), incl. lease_id=
+├── lock/                    # mkdir lock guarding slot state
+├── config                   # optional: max_trees=<n>
+└── <repo>.code-workspace    # GENERATED editor workspace (see below)
 ```
 
-Editors (VSCode/Cursor) do not auto-discover the nested worktrees as
-repositories (default repository scan depth is 1, and `.crew/` is ignored).
-Open the generated `<repo>/.crew/<repo>.code-workspace` instead: a multi-root
-workspace listing the repo plus one folder per currently leased worktree, so
-each active task tree shows up as its own repository in the source-control
-panel without idle pool slots filling the Git tab. Folder names carry the lease
-(`wt<n> - <task>`). Returning a slot removes it from the generated file; leasing
-it again adds it back with the new task label. `ac-tree.sh` does not control a
-live editor window, so an editor that does not reload external workspace-file
-changes must reopen or reload the workspace to apply the new folder list.
-It is regenerated after every slot mutation (get/return/prune/remove) - never
-hand-edit it.
+Legacy slots named by a bare number stay valid; new slots get `<number>-<repo-name>`.
+The pool cap is `AC_MAX_TREES`, else `max_trees=` in `.crew/config`, else 8.
 
-`/.crew/` is auto-appended to the repo's `.gitignore` on first use (with a
-newline guard so an unterminated final line is never corrupted), so the pool
-never shows up in the project's `git status` beyond that one line (commit it
-to make the exclusion permanent for every clone).
+`/.crew/` is ignored per clone through `.git/info/exclude`, so the pool never appears in `git status` and the rule is never committed upstream.
 
-## Invariants
-
-- **Detached HEAD, no branches**: worktrees are created with `git worktree
-  add --detach` and reset to the FRESHEST default-branch ref - whichever of
-  local vs `origin/<branch>` is ahead; origin wins on true divergence.
-  Crewmates create their own `crew/<id>` branches.
-- **Reuse over recreate**: `return` resets (`checkout --detach --force` +
-  `reset --hard` + `clean -fd`) and releases; it never deletes, so ignored
-  files - dependency and build caches - survive between tasks.
-- **Locked mutations**: get, prune, remove and list run under the pool lock;
-  `return` CLAIMS its slot under that same lock first - re-owning the lease to
-  the returning process - because its proc-kill and tree reset are too long to
-  hold a 30s lock across (an `lsof` of the whole tree, a kill grace of up to
-  4s, a full reset). Either way the slot is off limits to everything else:
-  prune can never delete a slot a concurrent get just leased, and no acquire
-  can re-lease a slot a return is resetting.
-- **Leases with self-healing owners**: `get --id <task> --holder <label>`
-  marks the slot leased; `--owner <pid>` optionally records a liveness token,
-  and a lease whose owner pid is provably dead is reclaimed on the next
-  acquire (dead crewmates cannot wedge the pool). Ownerless leases are
-  durable and only cleared by `return`.
-- **Lease identity**: each acquisition mints an opaque `lease_id` into the
-  slot meta, and releasing clears it. `return --if-lease-id <id>` refuses
-  before anything destructive runs when the slot no longer holds that id -
-  a return arriving after the slot was re-leased would otherwise kill the
-  processes and reset the tree of whichever task holds it now, which
-  `--force` does not cover (it authorizes discarding the CALLER's leftovers).
-  `ac-spawn.sh` records the ids as `lease_ids=` beside `leases=` and
-  `ac-teardown.sh` pops the two in lockstep. Omitting the flag keeps the old
-  unconditional behavior, so a pool predating the id needs no migration.
-- **Fail closed on unknown state**: a slot meta with no readable lease state
-  (a half-written file) is skipped, never handed out.
-- **Dirty protection**: dirty slots are never silently reset - acquire skips
-  them, prune skips them, `return` and `remove` demand `--force` to discard.
-- **Resets pinned to the check that authorized them**: the HEAD and porcelain
-  read at check time are re-read immediately before the reset, and a tree that
-  moved in between is SKIPPED, not destroyed - so work written while a return
-  is in its unlocked kill grace, or by a process still alive in a slot being
-  reclaimed, survives. An un-forced `return` on such a tree refuses with
-  `changed after it was verified clean` and resets nothing; `--force` is
-  pinned to nothing, since its authority is the caller's own word to discard
-  whatever is there.
-- **Landed-work protection**: `remove` also refuses a LEASED slot without
-  `--include-leased`, and without `--force` both a clean slot whose HEAD is
-  not merged into the default branch and a broken slot whose contents git
-  cannot check at all. `remove` is the deliberate exit for a slot the pool
-  declines to heal, so it reaches a broken worktree that cannot answer
-  `rev-parse` - the pool path names the repo, git still confirms it.
-- **Verified prune**: `prune` is dry-run without `--yes` and only removes
-  idle, clean, process-free slots whose HEAD is merged into the default ref
-  as verified against the LIVE remote - a failed fetch or a stale
-  `origin/<branch>` tracking ref means "cannot verify", and the slot is
-  skipped rather than guessed at. The same rule covers the process check
-  itself: `lsof` missing means prune cannot look, which is not the same answer
-  as "nobody is there", so the slot is skipped instead of removed.
-- **Process hygiene**: return, prune and remove terminate (or, for prune,
-  refuse to touch) processes still running inside the worktree, so detached
-  servers never keep working in a recycled tree. A kill then WAITS, bounded at
-  2s, for the pids it SIGKILLed to leave the process table before the next git
-  command runs - SIGKILL is asynchronous, and the next command takes
-  `index.lock`.
-- **Self-healing pool**: worktrees whose directory vanished, and orphan dirs
-  from partial creates, are healed by get/list/prune, and `git worktree prune`
-  keeps git's own bookkeeping in sync. A slot whose dir survives with a dead
-  gitdir pointer is NOT healed: git can no longer report what is in it, so it
-  may be unlanded work - the slot is named instead, with the exact `remove`
-  that reclaims it.
-
-## Command summary
+### Commands
 
 | Command | Effect |
 |---|---|
-| `get --repo <p> [--id <task>] [--holder <l>] [--owner <pid>]` | Acquire (reuse or grow, cap `max_trees`/`AC_MAX_TREES`); prints ONLY the path on stdout. |
-| `list --repo <p>` | `slot  state[ dirty]  task  path` per slot (heals vanished slots first). |
-| `return <path> [--force]` | Reset to the freshest default ref + release; refuses without resetting when the tree changed after it was verified clean; `--force` discards dirty work and skips that check. |
-| `prune --repo <p> [--yes]` | Remove idle, clean, merged (remote-verified), process-free slots (dry-run default). |
-| `remove <path> [--force] [--include-leased]` | Deliberate removal of one slot; `--force` discards dirty/unmerged/broken work, `--include-leased` takes a leased slot. |
+| `get --repo <p> [--id <task>] [--holder <l>] [--owner <pid>] [--prefer <path-or-slot-n>]` | Lease a slot (reuse an available one or grow up to the cap), reset it to the freshest base ref, and print only its path. |
+| `lease <slot-or-path> --repo <p> [--id <task>] [--holder <l>]` | Durably lease an EXISTING slot, state only: no fetch, reset, clean or checkout. |
+| `list --repo <p>` | One row per slot: state (`leased`/`available`/`broken`, plus ` dirty`), task, path, lease age data. |
+| `return <path-or-slot-name> [--repo <p>] [--force] [--if-lease-id <id>]` | Kill processes in the tree, reset it, release the lease. |
+| `prune --repo <p> [--yes]` | Remove idle, clean, merged, process-free slots; a dry run without `--yes`. |
+| `remove <path> [--force] [--include-leased]` | Deliberately remove one slot. |
+
+`ac-spawn.sh` leases with `get --id <id> --holder crew:<id>`, `ac-self-task.sh` with `--holder self:<id>`, and a herdr verifier round with `--holder verify`.
+A spawn that resumes an earlier session passes `--prefer` with the old slot, because claude keys sessions by working directory; if that slot is not available, `get` leases another one and prints one `prefer:` warning line.
+
+### What `get` does
+
+- Resets the slot to the FRESHEST default-branch ref: whichever of the local branch and `origin/<branch>` is ahead, origin winning on true divergence.
+- Cuts the slot from a recorded integration branch instead when the task id belongs to an epic or feature that records one for this repo, and refuses outright when that branch is missing - never a silent fall back to the default branch.
+- On the first lease, installs two shared guard hooks into the default git-common-dir `hooks/` directory, so one install covers the primary checkout and every linked worktree:
+  - a `pre-commit` that refuses a commit in the PRIMARY checkout when `AC_CREW_ID` or `AC_SCOPE` is set (a crewmate or roomchief; the captain carries neither);
+  - a `commit-msg` that refuses an agent `Co-authored-by:` trailer, read through `git interpret-trailers --parse` and matched against the trailer name only, so a human co-author passes.
+- An existing project hook is copied aside to `<hook>.ac-crew-prev` and chained, never clobbered; a symlinked hook or a set `core.hooksPath` skips the install fail-open.
+- Seeds ignored runtime files from the primary checkout when the project commits a `.worktreeinclude` manifest (read from the slot's HEAD; absolute, escaping, `.crew` and symlink entries are refused).
+- When `state/<id>.meta` already exists for `--id`, appends the new path and its `lease_id` to that meta's `leases=` / `lease_ids=`, which is how `ac-teardown.sh` later returns every tree a task holds.
+
+### Invariants
+
+- **Detached HEAD, reused.** The pool creates no branches (`crew/<id>` is the crewmate's own), and `return` resets and releases a tree, never deletes it; `git clean` runs without `-x`, so ignored caches survive.
+- **Leases.** A lease with an `--owner` pid that is provably dead is reclaimed on the next acquire; a lease with no owner is durable and only `return` clears it.
+  Spawn records no owner, so crew leases are durable.
+- **Lease identity.** Every acquisition mints an opaque `lease_id`.
+  `return --if-lease-id <id>` refuses before anything destructive when the slot no longer holds that id, so a late return cannot reset a slot another task now holds; `--force` does not override this.
+  `ac-teardown.sh` passes it for every lease it recorded.
+- **Dirty slots are never silently reset.** Acquire and prune skip them; `return` and `remove` need `--force` to discard.
+- **Resets are pinned.** HEAD and porcelain read at check time are re-read just before the reset, and a tree that changed in between is skipped: an un-forced `return` then refuses with `changed after it was verified clean`.
+  `--force` is pinned to nothing.
+- **Locked mutations.** Pool state changes run under the pool lock; `return` claims its slot under it, then kills and resets unlocked.
+- **Process hygiene.** `return` and `remove` kill processes still running in the tree; `prune` skips a slot with live processes, or when `lsof` is unavailable to check.
+- **Verified prune.** `prune` removes only unleased, clean, process-free slots whose HEAD is merged into the default branch as verified against the live remote; a failed fetch or stale tracking ref skips the slot.
+- **Deliberate remove.** `remove` refuses a leased slot without `--include-leased`, and without `--force` refuses a dirty slot, a clean slot with unmerged commits, and a broken slot git cannot read.
+- **Self-healing, never over possible work.** Vanished slot directories and orphans from partial creates are healed by `get`, `list` and `prune`; a directory with an unreadable gitdir is only named, with the `remove` command that reclaims it.
+
+### `lease`: keeping a tree alive across tasks
+
+`get` always resets the tree; `lease` instead stamps the same durable lease state and touches nothing, for a tree that must outlive one task (QA infrastructure, a parked investigation).
+It refuses an unknown slot, a slot leased to a live holder, or an unreadable lease state.
+`get` and `prune` skip the leased slot; `return` releases it and DOES reset the tree, so return a parked tree only when it may be discarded.
+
+### Pool health
+
+`bin/ac-pool-health.sh` feeds the session-start digest a `-- pool (worktree health) --` block, read only through `ac-tree.sh list`.
+It names slots that are dirty, broken, or durably leased past an age threshold, each with the exact `remove` command to run, and never reclaims anything itself.
+
+### Editor workspace
+
+Open the generated `<repo>/.crew/<repo>.code-workspace` in VSCode or Cursor: it lists the repo (`<repo> (main)`) plus one folder per LEASED slot, named `wt<n> - <task>`, so active task trees appear in source control without idle slots filling the Git tab.
+It is regenerated after every slot mutation; never hand-edit it.
+`ac-tree.sh` does not control a live editor window, so reload the workspace if your editor does not pick up external changes.
+
+## Orca leases (orca fleets)
+
+`orca_worktree_lease <id> <repo> [<base-branch>]` creates one worktree per task through `orca worktree create` with repo setup hooks run and no lineage parent, then:
+
+- cuts it from the repo's LIVE CHECKOUT branch at its freshest tip (`ac_freshest_ref`, local vs origin), or from HEAD's exact commit when the checkout is detached;
+- lets an explicit `--base-branch` (from `ac-spawn.sh` or `ac-self-task.sh start`) name the branch instead, still resolved to its freshest tip;
+- switches the checkout to `crew/<id>` (adopting an existing one on a respawn) and deletes the branch name the CLI minted;
+- copies the primary checkout's `node_modules` into the worktree (a clone where the filesystem supports it, never a symlink) when setup did not produce one.
+
+`orca_worktree_release <path>` removes the worktree through the Orca CLI at teardown; unlike a pool slot, nothing is kept.
+
+## Verifier rounds
+
+`ac-verify.sh` codereview and qa rounds lease their isolated checkout the same way the fleet's crew does: from the pool with holder `verify` on herdr, or an Orca-managed worktree on orca.
+The round then detaches to its exact ref, and on orca drops the `crew/<id>` branch at once, because a verifier branch is never a deliverable.
+The lease is returned (herdr, `return --force`) or released (orca) when the round is harvested.
+
+## For contributors
+
+Never create worktrees by hand in a project repo.
+Pool behavior changes go in `bin/ac-tree.sh`, with its header updated in the same diff and a colocated test under `tests/`.

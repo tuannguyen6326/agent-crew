@@ -1,8 +1,11 @@
 # QA Attestation Contract
 
 This document summarizes the public runtime contract implemented by
-`bin/ac-qa.sh`, `bin/ac-verify.sh`, and the merge helpers. The script headers
-remain authoritative for command-level details.
+`bin/ac-qa.sh`, `bin/ac-verify.sh`, `bin/ac-qa-lib.sh`, and the merge helpers.
+The script headers and the `crew-qa` skill remain authoritative for
+command-level details. For where QA sits in delivery, see
+[validate-pipeline.md](validate-pipeline.md) and [concepts.md](concepts.md);
+for the `qa:` config keys, see [configuration.md](configuration.md).
 
 ## Independent QA boundary
 
@@ -44,6 +47,8 @@ test plan + frozen coverage manifest -> baseline -> infra/service/workers
           -> evidence -> findings/verdict -> curation receipt
 ```
 
+The run's fixed step order is
+`pin testplan baseline infra serve cases e2e evidence verdict`.
 Project commands and safe concurrent checks are supervised subprocesses in that
 pane. They are not crewmates, subagents, or separately reviewed sessions.
 Idempotent retries may stay in the pane while the original harness process,
@@ -93,14 +98,9 @@ empty versioned manifest.
 
 ## Boundary policy (captain ruling, 2026-07-25)
 
-Verbatim policy:
-
-```text
-QA policy:
-  client-facing / API / integration / E2E / Database
-  khong dung hoac rerun UT
-QA phai boot service roi kiem tra behavior qua client/API/integration boundary.
-```
+The ruling, as quoted in the `bin/ac-qa.sh` header (BOUNDARY POLICY): QA must
+boot the service and check behavior through the client/API/integration
+boundary, and QA never runs or re-runs unit tests.
 
 What it changes, mechanically:
 
@@ -261,7 +261,8 @@ ledgers, evidence paths, and the v2 marker before deriving:
 }
 ```
 
-`retry_reason` appears only for an unverifiable capacity-limited round.
+`routing` appears only for a routed round, and `retry_reason` only for an
+unverifiable capacity-limited round.
 Evidence paths exist below the caller-owned export after leases are returned.
 
 Every terminal facade path atomically publishes `report.md` beside the QA
@@ -326,10 +327,13 @@ prose-only amendments must preserve them. Current implementation behavior alone
 is not authority. Without an accepted contract, record `unverifiable` or an
 `ask-user` finding.
 
-Every new task-local harness is classified as `repo-regression`,
-`e2e-regression`, `fixture-pack`, `evidence-only`, or `retire`. QA may export
-one test-only `regression-proposal.patch`; execution applies/refines and reviews
-it, then a fresh QA round proves the landed test and product behavior.
+Every new task-local harness is classified with `ac-qa.sh harness-classify` as
+`repo-regression`, `e2e-regression`, `fixture-pack`, `evidence-only`, or
+`retire`. QA may register one test-only patch with
+`ac-qa.sh regression-proposal <patch>`, which exports it as
+`regression-proposal.patch` in the evidence directory; execution
+applies/refines and reviews it, then a fresh QA round proves the landed test
+and product behavior.
 
 ## Non-gating curation
 
@@ -342,8 +346,8 @@ ac-qa.sh curation <completed|skipped|failed> [--note '<reason>']
 
 The pane never edits the shared store. A chief may install a reviewed candidate
 with `store-install`; the candidate's base-manifest hash prevents overwriting a
-concurrent accepted update. Missing curation exports as
-`failed/not-recorded`. Curation never changes the behavioral verdict or
+concurrent accepted update. Missing curation exports as `curation=failed`
+with note `not-recorded`. Curation never changes the behavioral verdict or
 creates/invalidates an attestation.
 
 ## Durable workflow engines
@@ -360,10 +364,10 @@ Static inspection alone is not workflow evidence.
 
 The unit tests use deterministic fakes and are not production proof. On a host
 with a configured pane runtime and a deliberately disposable local fixture
-repository, run one opt-in smoke:
+repository, run one manual smoke (no test or environment switch runs it for
+you):
 
 ```text
-AC_QA_LIVE_SMOKE=1 \
 bin/ac-qa.sh agent \
   --home <absolute-fleet-home> \
   --target <fixture-exact-sha> \
