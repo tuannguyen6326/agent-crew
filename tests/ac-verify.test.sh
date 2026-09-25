@@ -2180,6 +2180,11 @@ assert_contains "$(cat "$sdir/prompt.md")" "Your working directory $VERIFY_WORKT
   "the lane is told its cwd holds the reviewed bytes"
 assert_contains "$(cat "$sdir/prompt.md")" '`find /`' "the lane is kept off host-wide search"
 assert_contains "$(cat "$sdir/prompt.md")" "git show $target:<path>" "...and told where neutralized instruction files really live"
+assert_contains "$(cat "$sdir/prompt.md")" "Trace, do not skim" "the lane is told how to look, not only what to report"
+# The reviewer never runs a lane, so it is shown each lane's label, not the
+# ~700-byte command line it is forbidden to run.
+assert_contains "$(cat "$jp")" "LANE 1 (codex gpt-5.6-sol)" "the reviewer sees each lane's label"
+case "$(cat "$jp")" in *"--kind codereview-scout"*) fail "the reviewer prompt must not carry the lane command lines" ;; esac
 
 # NO SECOND LEASE - the whole point of running the lanes in the round's own
 # worktree. Counted against the tree driver's log, which records every `get`.
@@ -2192,6 +2197,22 @@ assert_eq "$(( $(grep -c '^get ' "$VERIFY_TREE_LOG" 2>/dev/null || echo 0) - sco
 assert_eq "$(jq -r '.scouts.lanes' "$scout_out")" "3" "lanes configured"
 assert_eq "$(jq -r '.scouts.returned' "$scout_out")" "2" "lanes that came back with observations"
 assert_eq "$(jq -r '.scouts.observations' "$scout_out")" "2" "observations across those lanes"
+
+# ROUND 2+ LANES READ THE FIX DELTA, like the reviewer: a lane still handed the
+# whole base..ref diff re-reported what round 1 already judged, and the
+# reviewer had to refute each one as "not in the fix delta". It is also told
+# what earlier rounds raised, so it reports one again only if it is still broken.
+rm -rf "$AC_HOME/data/$scout_family"
+jq -n --arg ref "$base" '[{round:1, reviewed_ref:$ref, verdict:"fix", risk_level:"high",
+  findings:[{id:"CR-1",severity:"error",action:"fix",description:"prior bug in the value writer",authority_class:"internal",authority:"f.txt:1",file:"value.txt"}]}]' \
+  >"$TMP/scout-history.json"
+"$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --family "$scout_family" \
+  --caller "$caller" --base "$base" --intent "$intent" --history "$TMP/scout-history.json" \
+  --output "$TMP/scout-r2.json" >/dev/null 2>&1 || true
+r2="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)scouts/prompt.md"
+assert_contains "$(cat "$r2")" "Review exactly: git diff $base $target --   (the fix delta since the prior verdict" \
+  "a round 2+ lane reviews the fix delta"
+assert_contains "$(cat "$r2")" "CR-1 (value.txt): prior bug in the value writer" "...told what earlier rounds raised"
 
 # NOTHING BACK FROM A CONFIGURED FAN-OUT IS NOW A REFUSAL, not a note. It used
 # to pass, on the grounds that lanes are advisory - and that is what let a
