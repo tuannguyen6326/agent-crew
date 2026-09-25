@@ -33,8 +33,10 @@ _ac_home() {
     ach="$ach/crewdeputies/$deputy"
     [[ -d "$ach" ]] || { print -u2 "ac: no deputy home at $ach"; return 1 }
   fi
-  # backend ladder: --backend flag > the home's config/backend > herdr
-  [[ -n "$backend" ]] || backend="$(cat "$ach/config/backend" 2>/dev/null)"
+  # backend ladder: --backend flag > the home's config/backend > herdr; knobs
+  # are read through ac_config_read (trimmed) exactly as bin/ac-backend.sh does.
+  local bin="$HOME/Work/agent-crew/bin"
+  [[ -n "$backend" ]] || backend="$(AC_HOME="$ach" bash -c '. "$1/ac-lib.sh" && ac_config_read backend ""' _ "$bin" 2>/dev/null)"
   backend="${backend:-herdr}"
   case "$backend" in
     herdr|orca) ;;
@@ -57,7 +59,6 @@ _ac_home() {
   # One herdr session for every call below, resolved the way bin/ac-backend.sh
   # herdr_cli does (AC_HERDR_SESSION > the home's config/herdr-session), so the
   # chief's tab and the workspace the backend resolves live on one server.
-  local bin="$HOME/Work/agent-crew/bin"
   local sess="${AC_HERDR_SESSION:-$(AC_HOME="$ach" bash -c '. "$1/ac-lib.sh" && ac_config_read herdr-session ""' _ "$bin" 2>/dev/null)}"
   local -a sarg; [[ -n "$sess" ]] && sarg=(--session "$sess")
   herdr "${sarg[@]}" status server >/dev/null 2>&1 || { (herdr "${sarg[@]}" server >/dev/null 2>&1 &); sleep 1; }

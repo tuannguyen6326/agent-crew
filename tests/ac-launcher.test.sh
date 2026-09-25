@@ -72,4 +72,18 @@ env -u HERDR_ENV -u AC_HERDR_SESSION HOME="$home" PATH="$TMP/logbin:$TMP/stubbin
 grep -q -- '--session s1 tab create' "$TMP/herdr.argv" \
   || fail "a CRLF/space-padded session knob must still address s1: $(cat "$TMP/herdr.argv")"
 
+# AC_HERDR_SESSION outranks the knob, as in herdr_cli.
+: >"$TMP/herdr.argv"
+env -u HERDR_ENV AC_HERDR_SESSION=env1 HOME="$home" PATH="$TMP/logbin:$TMP/stubbin:$PATH" \
+  zsh -f -c "source '$ROOT/docs/examples/ac.zsh'; _ac_home sess true '' herdr ''" >/dev/null 2>&1 || true
+grep -q -- '--session env1 tab create' "$TMP/herdr.argv" \
+  || fail "AC_HERDR_SESSION must win over config/herdr-session: $(cat "$TMP/herdr.argv")"
+
+# config/backend is read like ac_backend reads it: a CRLF-saved "herdr" is herdr.
+mkdir -p "$home/Work/ac-homes/crlf/state" "$home/Work/ac-homes/crlf/config"
+printf 'herdr\r\n' >"$home/Work/ac-homes/crlf/config/backend"
+err="$(env -u HERDR_ENV -u AC_HERDR_SESSION HOME="$home" PATH="$TMP/stubbin:$PATH" \
+  zsh -f -c "source '$ROOT/docs/examples/ac.zsh'; _ac_home crlf true '' '' ''" 2>&1 >/dev/null || true)"
+case "$err" in *"unknown backend"*) fail "a CRLF-saved config/backend must read as herdr: $err" ;; esac
+
 pass
