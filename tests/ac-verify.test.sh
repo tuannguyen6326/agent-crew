@@ -165,19 +165,38 @@ if [ "${1:-}" = reap-pane ]; then
 fi
 [ "${1:-}" = run ] || exit 2
 shift
-cwd=""; prompt=""; pane_file=""; kind=""
+cwd=""; prompt=""; pane_file=""; kind=""; label=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --cwd) cwd="$2"; shift ;;
     --prompt-file) prompt="$2"; shift ;;
     --pane-file) pane_file="$2"; shift ;;
     --kind) kind="$2"; shift ;;
-    --label|--timeout|--model|--effort|--harness|--await-file) shift ;;
+    --label) label="$2"; shift ;;
+    --timeout|--model|--effort|--harness|--await-file) shift ;;
     --exec) ;;
     *) printf 'unexpected pane arg: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
 done
+# A SCOUT LANE, launched by the facade once the reviewer triggers it: lanes 1
+# and 2 observe, lane 3 times out; `partial` keeps lane 1 only and leaves lane
+# 3 with no done line at all.
+if [ "$kind" = codereview-scout ]; then
+  n="${label##*-scout-}"
+  [ -z "$pane_file" ] || printf 'pLane%s tLane%s\n' "$n" "$n" >"$pane_file"
+  lane_ok() {
+    jq -cn --arg l "$n" '{type:"assistant",message:{content:[{type:"text",text:({observations:[{file:"file.txt",line:($l|tonumber),what:"w",evidence:"e"}]}|tojson)}]}}' \
+      >"$VERIFY_SCOUT_DIR/lane-$n.jsonl"
+    printf '{"event":"done","status":"ok","transcript":"%s"}\n' "$VERIFY_SCOUT_DIR/lane-$n.jsonl"
+  }
+  case "${VERIFY_SCOUT_MODE:-ok}:$n" in
+    ok:1|ok:2|partial:1) lane_ok ;;
+    partial:3) : ;;
+    *) printf '{"event":"done","status":"timeout"}\n' ;;
+  esac
+  exit 0
+fi
 printf 'pVerify tVerify\n' >"$pane_file"
 meta="$AC_FLEET_STATE/$VERIFY_EXPECT_ID.meta"
 i=0
@@ -241,23 +260,15 @@ elif [ "$kind" = codereview ]; then
       '{findings:[{id:"F1",severity:"error",action:"fix",class:"correctness",description:"real bug",authority_class:"internal",authority:"spec",evidence:"seen",file:$f}
                   | if $l != "" then .line = ($l | tonumber) else . end],summary:"one fix",risk_level:"medium",risk_rationale:"fix owed",reviewed_ref:$ref}')"
   else
-    # THE SUBAGENTS RAN. Each lane command redirects its own ndjson into the
-    # scouts dir, so that raw artifact is what a fanned-out round leaves; this
-    # stand-in writes it, and the facade's own harvest is what the test measures.
+    # THE REVIEWER TRIGGERS THE LANES and collects them; the facade runs them.
+    # `skip` is a reviewer that never triggers - the fan-out the round paid for
+    # never happens.
     if grep -q "INDEPENDENT SCOUT LANES" "$prompt" 2>/dev/null; then
-      sd="$(grep -o "[^ ]*/scouts" "$prompt" | head -1)"
-      : >"$sd/.emitted"
-      lane_tr() {
-        printf '%s\n' "$1" >>"$sd/.emitted"
-        jq -cn --arg l "$1" '{type:"assistant",message:{content:[{type:"text",text:({observations:[{file:"file.txt",line:($l|tonumber),what:"w",evidence:"e"}]}|tojson)}]}}' \
-          >"$VERIFY_SCOUT_DIR/lane-$1.jsonl"
-        printf '{"event":"done","status":"ok","transcript":"%s"}\n' "$VERIFY_SCOUT_DIR/lane-$1.jsonl" >"$sd/$1.ndjson"
-      }
-      case "${VERIFY_SCOUT_MODE:-ok}" in
-        skip) : ;;
-        partial) lane_tr 1; printf '{"event":"done","status":"timeout"}\n' >"$sd/2.ndjson" ;;
-        *) lane_tr 1; lane_tr 2; printf '{"event":"done","status":"timeout"}\n' >"$sd/3.ndjson" ;;
-      esac
+      sd="$(grep -o "[^ ]*/scouts/launch-lanes.sh" "$prompt" | head -1)"; sd="${sd%/launch-lanes.sh}"
+      if [ "${VERIFY_SCOUT_MODE:-ok}" != skip ]; then
+        bash "$sd/launch-lanes.sh" >/dev/null
+        while bash "$sd/wait-lanes.sh" | grep -q '^PENDING'; do :; done
+      fi
     fi
     clean="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[],summary:"clean",risk_level:"low",risk_rationale:"bounded",reviewed_ref:$ref}')"
     # A COMPLIANT reviewer dispositions every observation the fan-out produced,
@@ -265,10 +276,10 @@ elif [ "$kind" = codereview ]; then
     # and does the same, so the facade's dispositioned-observations floor holds
     # for the ordinary cases. VERIFY_SCOUT_JUDGE overrides it to exercise the
     # floor's own failure modes.
-    if [ -n "${sd:-}" ] && [ -f "$sd/.emitted" ]; then
-      disp="$(while read -r ln; do [ -n "$ln" ] || continue; \
+    if [ -n "${sd:-}" ] && ls "$sd"/[0-9]*.json >/dev/null 2>&1; then
+      disp="$(for f in "$sd"/[0-9]*.json; do ln="$(basename "$f" .json)"; \
                 printf '{"ref":"lane %s obs 1","verdict":"accepted","why":"reported"}\n' "$ln"; \
-              done <"$sd/.emitted" | jq -cs '.')"
+              done | jq -cs '.')"
       clean="$(jq -c --argjson d "${disp:-[]}" '.scout_dispositions = $d' <<<"$clean")"
     fi
     # The judge's disposition of the lanes, when the fixture asks for one.
@@ -2049,12 +2060,11 @@ assert_eq "$(jq -r '.findings[] | select(.id=="A2") | .impact | length' "$dec_ou
 assert_eq "$(jq -r '.findings[] | select(.id=="A3") | has("axis"), has("decider"), has("impact")' "$dec_out" | paste -sd, -)" "false,false,false" \
   "a malformed axis, blank decider and mismatched impact are dropped, not defaulted"
 
-# --- SCOUT LANES: the REVIEWER runs them, the facade counts what it left ----
+# --- SCOUT LANES: the REVIEWER triggers them, the facade runs and counts them -
 # ac-verify resolves which lanes a fleet configured, stages their shared
-# prompt, and writes the exact commands into the reviewer's prompt. The
-# reviewer runs them over the round's OWN lease - no second worktree - and
-# leaves each harvest in <round>/scouts/. The facade counts those FILES: the
-# reviewer ran the lanes, so its own account of them is an interested party's.
+# prompt, and hands the reviewer one command that launches them and one that
+# collects them. The lanes run over the round's OWN lease - no second worktree
+# - and each harvest lands in <round>/scouts/. The facade counts those FILES.
 export VERIFY_SCOUT_DIR="$TMP/scouts"
 mkdir -p "$VERIFY_SCOUT_DIR"
 # The background harvester waits up to the scout budget for lanes that never
@@ -2086,42 +2096,33 @@ scout_gets_before="$(grep -c '^get ' "$VERIFY_TREE_LOG" 2>/dev/null || echo 0)"
 sdir="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)scouts"
 jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)prompt.md"
 
-# The commands the reviewer is told to run: pane-agent ONE-SHOT turns, never
-# the crewmate contract - a crewmate would mint a state/<id>.meta and the
-# watcher would demand supervision for a pane holding no brief and no task.
+# THE REVIEWER TRIGGERS, THE FACADE RUNS. A lane the reviewer ran itself -
+# directly, or through a subagent - was a child of the reviewer's own turn: a
+# harness that backgrounds subagents (claude does, whatever the prompt says)
+# let that turn end with every lane still running and nobody holding them.
+# The trigger returns at once and the lanes belong to this facade's harvester.
 assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT LANES" "the reviewer's prompt carries the fan-out"
-# ONE BLOCKING COMMAND, not N the reviewer may background. Told to run several
-# commands "in parallel if you can", a reviewer ran them as background tasks and
-# ENDED ITS TURN while two were still going - and a lane is a child of that
-# turn, so both died unwritten and their completion notice was queued for a turn
-# that never came. The runner launches every lane and waits, so the turn cannot
-# end before the lanes do.
-# ONE SUBAGENT PER LANE, and the reviewer launches them. A lane takes minutes,
-# and a minutes-long command in the REVIEWER's own turn is what killed nine
-# rounds - the turn ended mid-call, every time, whatever the command was. A
-# subagent's turn is its own, so the long call lives there instead, the harness
-# does the waiting, and the lanes run at the same time rather than one round's
-# worth of wall clock before the review starts.
-assert_contains "$(cat "$jp")" "subagent" "the reviewer is told to fan out through subagents"
-assert_contains "$(cat "$jp")" "in parallel" "...all at once"
-# SYNCHRONOUSLY. Left to itself a reviewer launched all three in the
-# BACKGROUND, was handed "async_launched" at once, reviewed for two minutes and
-# ended its turn - no verdict, three lanes still running with nobody left to
-# read them. The instruction says so, and the refusal below is what makes it
-# binding.
-assert_contains "$(cat "$jp")" "background" "...and never in the background"
-case "$(cat "$jp")" in
-  *"bash $sdir/run-lanes.sh"*) fail "the reviewer must not run the fan-out in its own turn" ;;
-esac
-assert_file "$sdir/run-lanes.sh" "the runner still exists, as the record of what ran"
+assert_contains "$(cat "$jp")" "bash $sdir/launch-lanes.sh" "the reviewer is handed the one trigger"
+assert_contains "$(cat "$jp")" "bash $sdir/wait-lanes.sh" "...and the one collector"
+assert_contains "$(cat "$jp")" "PENDING" "...which it re-runs until the observations arrive"
+case "$(cat "$jp")" in *"subagent per lane"*) fail "the reviewer must not be told to fan out through subagents" ;; esac
+case "$(cat "$jp")" in *"bash $sdir/run-lanes.sh"*) fail "the reviewer must not run the lanes in its own turn" ;; esac
+assert_file "$sdir/launch.request" "the reviewer's trigger is on the record"
+bash -n "$sdir/launch-lanes.sh" || fail "the trigger must be valid bash - the reviewer runs it verbatim"
+bash -n "$sdir/wait-lanes.sh" || fail "the collector must be valid bash - the reviewer runs it verbatim"
 # ...and the pane is launched with the ledger as its --await-file, so the
 # reviewer's turn cannot end for good until the fan-out is harvested
 # (contract: AWAIT in bin/ac-pane-agent.sh).
 assert_contains "$(cat "$pane_log")" "--await-file $sdir/lanes.tsv" "the reviewer pane awaits the fan-out ledger"
 assert_contains "$(cat "$sdir/run-lanes.sh")" "wait" "the runner waits for every lane it started"
-bash -n "$sdir/run-lanes.sh" || fail "the staged runner must be valid bash - the reviewer runs it verbatim"
+bash -n "$sdir/run-lanes.sh" || fail "the staged runner must be valid bash"
 assert_eq "$(grep -c ' &$' "$sdir/run-lanes.sh")" "3" "every lane starts concurrently"
-assert_contains "$(cat "$sdir/commands.txt")" "run --exec --harness codex" "lane 1 is a one-shot pane-agent turn"
+# EACH LANE IS A PANE where its harness has an interactive arm - visible and
+# steerable beside the reviewer - and a one-shot where it has none.
+assert_contains "$(cat "$sdir/commands.txt")" "run --harness codex" "lane 1 is a pane turn"
+assert_contains "$(cat "$sdir/commands.txt")" "--label $VERIFY_EXPECT_ID-scout-1" "...labelled as this round's lane"
+assert_contains "$(cat "$sdir/commands.txt")" "--pane-file $sdir/1.pane" "...publishing its pane for the reap"
+assert_contains "$(cat "$sdir/commands.txt")" "run --exec --harness agy" "a harness with no pane arm runs one-shot"
 assert_contains "$(cat "$sdir/commands.txt")" "--kind codereview-scout" "...under its own kind"
 assert_contains "$(cat "$sdir/commands.txt")" "--model 'qwen3.7-plus'" "a lane's model rides as a quoted flag"
 # Lane 3's model carries SPACES, which this whole wire exists to survive: the
@@ -2131,14 +2132,10 @@ assert_contains "$(cat "$sdir/commands.txt")" "--model 'qwen3.7-plus'" "a lane's
 assert_contains "$(cat "$sdir/commands.txt")" "--model 'Gemini 3.8 Flash (High)'" \
   "a model name with spaces reaches the lane whole"
 assert_contains "$(cat "$sdir/commands.txt")" "--effort high" "a configured effort rides its lane"
-# A lane places NO pane - it is a background process whose stdout the caller
-# already captures - so the reviewer is told to close nothing, and the command
-# names no --pane-file. The pane the lanes used to open belonged to whichever
-# backend the LANE's own environment resolved, which for a pane-run caller
-# carrying no AC_HOME was herdr, whatever backend the fleet actually runs.
-case "$(cat "$sdir/commands.txt")" in *reap-pane*) fail "a lane has no pane to reap" ;; esac
-case "$(cat "$sdir/commands.txt")" in *--pane-file*) fail "a one-shot lane publishes no pane identity" ;; esac
-assert_contains "$(cat "$jp")" "status --porcelain" "...and to check the tree before reviewing"
+for p in pLane1 pLane2; do
+  assert_contains "$(cat "$pane_log")" "reap-pane --pane $p" "the facade reaps lane pane $p once harvested"
+done
+assert_contains "$(cat "$jp")" "status --porcelain" "...and to check the tree once the lanes are back"
 assert_contains "$(cat "$sdir/commands.txt")" "--cwd $VERIFY_WORKTREE" "every command names the round's own lease"
 assert_contains "$(cat "$jp")" "scout_dispositions" "the prompt names the key the reviewer answers in"
 # ...and asks for provenance ON the finding: a reader of findings alone must

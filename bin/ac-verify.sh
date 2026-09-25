@@ -543,27 +543,45 @@ scout_harvest() {
   mv -f "$tmp" "$dir/lanes.tsv"
 }
 
+# reap_scout_panes <dir> - close every lane pane the fan-out published. A lane
+# pane outlives its own turn, so after the harvest (or on any die) nothing else
+# would ever close it.
+reap_scout_panes() {
+  local f
+  for f in "$1"/*.pane; do
+    [ -s "$f" ] || continue
+    reap_pane "$(awk 'NR == 1 { print $1 }' "$f")" || true
+  done
+}
+
 # scout_await_then_harvest <dir> <count> <budget-seconds> - the BACKGROUND
-# harvester. Polls until every lane's ndjson carries a done line, or the budget
-# runs out, then harvests once. Its only durable output is lanes.tsv, which is
-# the pane agent's --await-file: the reviewer's turn cannot end for good until
-# this has run, so a fan-out the reviewer launched asynchronously is still
-# waited for - by this process, on the reviewer's behalf.
+# harvester, and the lanes' OWNER. It waits for the reviewer's trigger, runs the
+# lanes as its own children, polls until every lane's ndjson carries a done
+# line or the budget runs out, harvests once and reaps the lane panes. Its only
+# durable output is lanes.tsv, which is the pane agent's --await-file: the
+# reviewer's turn cannot end for good until this has run. Lanes launched from
+# the reviewer's own turn died with it; launched here they belong to the round.
 scout_await_then_harvest() {
   local dir="$1" count="$2" budget="$3" waited=0 n ready tick
-  while [ "$waited" -lt "$budget" ]; do
+  # Poll no coarser than the budget itself: a 5s tick against a 2s budget
+  # is a 5s wait, and a suite runs this a dozen times.
+  tick=5; [ "$budget" -lt 5 ] && tick=1
+  while [ ! -e "$dir/launch.request" ] && [ "$waited" -lt "$budget" ]; do
+    sleep "$tick"; waited=$((waited + tick))
+  done
+  [ -e "$dir/launch.request" ] && bash "$dir/run-lanes.sh" >/dev/null 2>&1 &
+  waited=0
+  while [ -e "$dir/launch.request" ] && [ "$waited" -lt "$budget" ]; do
     ready=1; n=0
     while [ "$n" -lt "$count" ]; do
       n=$((n + 1))
       grep -q '"event":"done"' "$dir/$n.ndjson" 2>/dev/null || { ready=0; break; }
     done
     [ "$ready" = 1 ] && break
-    # Poll no coarser than the budget itself: a 5s tick against a 2s budget
-    # is a 5s wait, and a suite runs this a dozen times.
-    tick=5; [ "$budget" -lt 5 ] && tick=1
     sleep "$tick"; waited=$((waited + tick))
   done
   scout_harvest "$dir" "$count"
+  reap_scout_panes "$dir"
 }
 
 # REJECTED verdict: the pane completed, its transcript is durably copied, so
@@ -592,22 +610,18 @@ reap_verify_runtime() {
       >"$round_dir/pane-scrollback.txt" 2>/dev/null || true
   fi
   [ -z "$pane" ] || reap_pane "$pane" || true
-  # The lanes need no sweep of their own: a one-shot places no pane, so a
-  # fan-out this process abandons leaves background processes bounded by their
-  # own --timeout and nothing for anyone to reap.
-  #
-  # The HARVESTER is not one of them. It is this process's own background child
-  # and the only `wait` on it sits after the verdict parses non-stale, so every
-  # ac_die between the fan-out and there returned through here and left it
-  # polling to AC_VERIFY_SCOUT_TIMEOUT+60 under pid 1. A bare pid is the whole
-  # reap: the lanes are launched by the REVIEWER PANE (run-lanes.sh, SCOUT
-  # LANES above), never by the harvester, whose own children are one `sleep`
-  # per tick - there is no group here to need a negative-pid kill.
+  # The HARVESTER is this process's own background child and the only `wait` on
+  # it sits after the verdict parses non-stale, so every ac_die between the
+  # fan-out and there returned through here and left it polling to
+  # AC_VERIFY_SCOUT_TIMEOUT+60 under pid 1. Killing it does not end the lanes
+  # it launched; closing their panes does (a pane lane then reports
+  # pane_closed), and a one-shot lane is bounded by its own --timeout.
   if [ -n "${scout_pid:-}" ]; then
     kill -TERM "$scout_pid" 2>/dev/null || true
     wait "$scout_pid" 2>/dev/null || true
     scout_pid=""
   fi
+  [ ! -d "${scout_dir:-}" ] || reap_scout_panes "$scout_dir"
   return_leases "$all_leases" || true
   rm -f "$pane_handle" "$meta" "$status_file" "$pane_early"
 }
@@ -1401,29 +1415,34 @@ worktree; read their true content at the exact ref via git show %s:<path>.\n' "$
 fi
 
 # --- SCOUT LANES (the authoritative contract) ---------------------------------
-# Independent OBSERVERS, run BY THE REVIEWER ITSELF. This facade resolves which
-# lanes a fleet configured, stages the one prompt they share, and writes the
-# exact commands into the reviewer's own prompt; the reviewer runs them, reads
-# what comes back, and then reviews. Each lane is one model, once, READ-ONLY,
-# over the SAME lease this round already holds - no second worktree, no second
-# neutralization, the same bytes the reviewer reads.
+# Independent OBSERVERS, TRIGGERED BY THE REVIEWER and RUN BY THIS FACADE. This
+# facade resolves which lanes a fleet configured and stages the one prompt they
+# share; the reviewer runs launch-lanes.sh first (it only drops launch.request),
+# the background harvester then runs the lanes as ITS OWN children, and the
+# reviewer collects them with wait-lanes.sh - a foreground call bounded under a
+# shell tool's ceiling, re-run on PENDING - before it writes its verdict. The
+# reviewer never runs a lane itself: a lane that is a child of the reviewer's
+# turn, or of a subagent the harness backgrounded, died when that turn ended.
+# Each lane is one model, once, READ-ONLY, over the SAME lease this round
+# already holds - no second worktree, no second neutralization, the same bytes
+# the reviewer reads.
 #
-# They are pane-agent ONE-SHOT turns, never crewmates: their process exit is
-# the turn end and their stdout is the whole answer, so they mint no
-# state/<id>.meta and the watcher is never asked to supervise a pane that
-# holds no brief, no branch and no task.
+# A lane is a pane-agent PANE turn wherever its harness has an interactive arm
+# (ac_harness_pane_arm), labelled <id>-scout-<n> beside the reviewer in the
+# family workspace, and a ONE-SHOT turn where it has none. Never a crewmate:
+# pane-agent mints no state/<id>.meta, so the watcher is never asked to
+# supervise a pane that holds no brief, no branch and no task. The harvester
+# reaps the lane panes once harvested, and reap_verify_runtime on any die.
 #
 # They mint no id, no action and no severity either. The reviewer reports an
 # observation under its OWN id or refutes it by name, which is what keeps one
 # id space, one interdiff and one disposition ledger however many models read
 # the diff.
 #
-# WHAT THE REVIEWER OWES BACK, and why it is a FILE rather than a claim: the
-# reviewer is the one running the lanes, so its own account of them is the
-# account of an interested party. It writes each lane's harvest into
-# <round>/scouts/, and this facade COUNTS those files after the pane exits.
-# A reviewer that skips a lane, or judges nothing, leaves a directory that
-# says so.
+# WHAT COUNTS is a FILE rather than a claim: each lane's harvest lands in
+# <round>/scouts/, and this facade COUNTS those files after the pane exits, so
+# a reviewer that never triggers the lanes, or judges nothing, leaves a
+# directory that says so.
 #
 # ABSENT IS OFF. No panes.codereview-scout entry means no instructions in the
 # prompt and no scouts dir - the single-reviewer round is unchanged.
@@ -1506,72 +1525,72 @@ EOF
       s_mflag=""; [ -z "$s_m" ] || s_mflag=" --model '$s_m'"
       s_eflag=""; [ -z "$s_e" ] || s_eflag=" --effort $s_e"
       s_label="$s_h"; [ -z "$s_m" ] || s_label="$s_h $s_m"
-      printf 'LANE %s (%s):\n  GIT_OPTIONAL_LOCKS=0 %s run --exec --harness %s%s%s --kind codereview-scout --cwd %s --prompt-file %s --timeout %s > %s/%s.ndjson 2>&1\n' \
-        "$scout_count" "$s_label" \
-        "$pane_bin" "$s_h" "$s_mflag" "$s_eflag" \
-        "$lease" "$scout_prompt" \
-        "${AC_VERIFY_SCOUT_TIMEOUT:-900}" "$scout_dir" "$scout_count" \
-        >>"$scout_dir/commands.txt"
-      # ...and the same line into the RUNNER, backgrounded there so the lanes
-      # are concurrent, with one `wait` below that makes the whole fan-out a
-      # single blocking command.
-      printf 'GIT_OPTIONAL_LOCKS=0 %s run --exec --harness %s%s%s --kind codereview-scout --cwd %s --prompt-file %s --timeout %s > %s/%s.ndjson 2>&1 &\n' \
-        "$pane_bin" "$s_h" "$s_mflag" "$s_eflag" \
-        "$lease" "$scout_prompt" \
-        "${AC_VERIFY_SCOUT_TIMEOUT:-900}" "$scout_dir" "$scout_count" \
-        >>"$scout_dir/run-lanes.sh"
+      if ac_harness_pane_arm "$s_h" >/dev/null; then
+        s_arm="run --harness $s_h$s_mflag$s_eflag --label $id-scout-$scout_count --pane-file $scout_dir/$scout_count.pane"
+      else
+        s_arm="run --exec --harness $s_h$s_mflag$s_eflag"
+      fi
+      s_cmd="GIT_OPTIONAL_LOCKS=0 $pane_bin $s_arm --kind codereview-scout --cwd $lease --prompt-file $scout_prompt --timeout ${AC_VERIFY_SCOUT_TIMEOUT:-900} > $scout_dir/$scout_count.ndjson 2>&1"
+      printf 'LANE %s (%s):\n  %s\n' "$scout_count" "$s_label" "$s_cmd" >>"$scout_dir/commands.txt"
+      printf '%s &\n' "$s_cmd" >>"$scout_dir/run-lanes.sh"
     done <<EOF
 $scout_lanes
 EOF
-    # ONE BLOCKING COMMAND. Told to run N commands "in parallel if you can", a
-    # reviewer ran them as background TASKS and ended its turn with two still in
-    # flight - and a lane is a child of that turn, so both died unwritten and
-    # their completion notice was queued for a turn that never came. A runner
-    # that waits cannot be backgrounded into that shape: the turn cannot end
-    # before the lanes do.
     if [ "$scout_count" -gt 0 ]; then
       printf 'wait\n' >>"$scout_dir/run-lanes.sh"
       chmod +x "$scout_dir/run-lanes.sh" 2>/dev/null || true
+      printf '#!/usr/bin/env bash\n: >%s/launch.request\necho "%s scout lane(s) launching as panes - review now, then collect with: bash %s/wait-lanes.sh"\n' \
+        "$scout_dir" "$scout_count" "$scout_dir" >"$scout_dir/launch-lanes.sh"
+      # One call waits at most 540s: under the 10-minute ceiling claude puts on
+      # a single shell call, so the collector never dies inside its own wait.
+      cat >"$scout_dir/wait-lanes.sh" <<EOF
+#!/usr/bin/env bash
+d=$scout_dir
+[ -e "\$d/launch.request" ] || { echo "NOT LAUNCHED - run: bash \$d/launch-lanes.sh"; exit 0; }
+i=0
+while [ ! -s "\$d/lanes.tsv" ] && [ "\$i" -lt 540 ]; do sleep 1; i=\$((i + 1)); done
+[ -s "\$d/lanes.tsv" ] || { echo "PENDING - lanes still running; run this same command again"; exit 0; }
+echo "LANES DONE"
+while IFS=\$'\\t' read -r n st obs; do
+  echo "LANE \$n (\$st, \$obs observation(s)):"
+  cat "\$d/\$n.json" 2>/dev/null || echo '(no observations)'
+done <"\$d/lanes.tsv"
+EOF
+      chmod +x "$scout_dir/launch-lanes.sh" "$scout_dir/wait-lanes.sh" 2>/dev/null || true
     else
       rm -rf "$scout_dir"
     fi
   fi
 fi
 
-# THE REVIEWER FANS OUT THE LANES, one subagent each (contract: SCOUT LANES
-# above); this script harvests what they leave behind, after the round.
-# Appended here, after the lease exists, for the same reason the
-# neutralization note is: every command names the lease path.
+# THE REVIEWER TRIGGERS THE LANES; this facade's harvester runs them
+# (contract: SCOUT LANES above). Appended here, after the lease exists, for the
+# same reason the neutralization note is: every command names the lease path.
 if [ "$kind" = codereview ] && [ "${scout_count:-0}" -gt 0 ] && [ -s "$scout_dir/commands.txt" ]; then
   {
-    printf '\nINDEPENDENT SCOUT LANES - fan these out BEFORE you review\n'
+    printf '\nINDEPENDENT SCOUT LANES - launch these FIRST, before you review\n'
     printf '%s other model(s) are configured to read this same diff. They are\n' "$scout_count"
     printf 'OBSERVERS: they mint no id, no severity and no action.\n\n'
-    printf 'LAUNCH THEM AS SUBAGENTS, all in parallel, one subagent per lane, in\n'
-    printf 'a SINGLE message. Give each subagent exactly one of the commands below,\n'
-    printf 'verbatim, plus this instruction: run it, then reply with nothing but the\n'
-    printf 'bare JSON object its output contains.\n\n'
-    printf 'WAIT FOR ALL OF THEM before you write your verdict, and do NOT launch\n'
-    printf 'them in the background: a backgrounded fan-out hands you\n'
-    printf '"async_launched" at once, and a verdict written before the observations\n'
-    printf 'arrive is a verdict built on nothing. A round whose configured lanes all\n'
-    printf 'come back empty is REFUSED.\n\n'
-    printf 'They come back to you in a LATER turn. When they do, write your COMPLETE\n'
-    printf 'verdict JSON again in that turn, scout_dispositions included: only the\n'
-    printf 'last message of your last turn is harvested, so a verdict written\n'
-    printf 'before they returned is not the one that counts, and a reply that only\n'
-    printf 'acknowledges them is no verdict at all.\n\n'
-    printf 'Do NOT run these commands yourself either. Each takes minutes, and a\n'
-    printf 'call that long inside YOUR OWN turn is what has ended this round\n'
-    printf 'mid-pass every time before now - whatever the command was. A subagent\n'
-    printf 'turn is its own, so the waiting happens there and the lanes run at the\n'
-    printf 'same time as each other.\n\n'
+    printf 'FIRST, run this one command. It returns at once; the lanes open as\n'
+    printf 'their own panes and run WHILE you review:\n'
+    printf '  bash %s/launch-lanes.sh\n' "$scout_dir"
+    printf 'Never run the lane commands yourself and never hand them to a\n'
+    printf 'subagent - they are listed below only as the record of what runs:\n\n'
     cat "$scout_dir/commands.txt"
     printf '\n'
-    printf 'Then CHECK THE TREE before you review: git -C %s status --porcelain\n' "$lease"
+    printf 'Then do your own review of the diff.\n\n'
+    printf 'Then COLLECT, in the FOREGROUND, never in the background, with a\n'
+    printf 'shell-call timeout of 10 minutes if your shell tool takes one:\n'
+    printf '  bash %s/wait-lanes.sh\n' "$scout_dir"
+    printf 'It waits up to 9 minutes and prints either every lane'"'"'s observations\n'
+    printf 'or a line starting PENDING - on PENDING run the SAME command again, as\n'
+    printf 'many times as it takes. Write your verdict only after it prints LANES\n'
+    printf 'DONE: a verdict written before the observations arrive is REFUSED, and\n'
+    printf 'so is a round whose configured lanes all come back empty.\n\n'
+    printf 'Then CHECK THE TREE: git -C %s status --porcelain\n' "$lease"
     printf 'must be empty. A lane that wrote into this worktree corrupted the bytes\n'
-    printf 'you are about to review - restore with git -C %s reset --hard %s then\n' "$lease" "$sha"
-    printf 'git -C %s clean -fdq, and say so in your summary.\n\n' "$lease"
+    printf 'you reviewed - restore with git -C %s reset --hard %s then\n' "$lease" "$sha"
+    printf 'git -C %s clean -fdq, re-check what you read, and say so in your summary.\n\n' "$lease"
     printf 'Then REVIEW. Every observation is EVIDENCE, never a finding: report it\n'
     printf 'as your own finding under your own id, or REFUTE it. List every refusal\n'
     printf 'in scout_dispositions with one line saying what you read that the\n'

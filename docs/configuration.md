@@ -128,7 +128,7 @@ Owner: the `bin/ac-dispatch-select.sh` header.
   The routable kinds are `qa`, `gate`, `codereview` and `roomchief`; each takes either a flat profile or a routed `rules[]` + `default`.
   `gate`, `codereview` and `roomchief` require a routed `default`; for `qa` it stays optional and an unselected routed lookup resolves nothing.
 - `panes.qa` rules are chosen by the execution caller (`ac-qa.sh agent --qa-rule <number|default>`) and frozen into the QA profile.
-- `panes.codereview-scout.lanes[]` lists read-only scout lanes the code reviewer runs before it judges (`ac-dispatch-select.sh --pane <kind> --lanes`); absent = off. Owner: SCOUT LANES in the `bin/ac-verify.sh` header.
+- `panes.codereview-scout.lanes[]` lists read-only scout lanes the code reviewer triggers, as their own panes, before it judges (`ac-dispatch-select.sh --pane <kind> --lanes`); absent = off. Owner: SCOUT LANES in the `bin/ac-verify.sh` header.
 - `panes.brain` sets the `ac-brain synthesize` harness profile.
 - An entry that exists but fails validation dies rather than falling back; an absent entry falls through to the pane agent's own ladder.
 - A file with only `panes` still makes `ac-spawn.sh` require explicit crewmate dispatch, so keep top-level `rules`/`default` if crewmates use the same file.

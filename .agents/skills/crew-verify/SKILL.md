@@ -164,8 +164,9 @@ grant one final round is theirs to say.
 
 ## Scout lanes
 
-When the fleet configures `panes.codereview-scout.lanes[]`, the round fans out
-read-only scout models before the reviewer judges.
+When the fleet configures `panes.codereview-scout.lanes[]`, the reviewer triggers
+read-only scout models before it judges, each in its own pane labelled
+`<caller>-verify-codereview-scout-<n>`, closed by the facade once harvested.
 You see them as `scouts/` under the round's evidence dir and as `scouts:` in
 the result; they mint nothing, and you touch nothing there.
 A round held "awaiting lanes.tsv" is the facade waiting for that fan-out on the

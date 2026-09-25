@@ -107,7 +107,8 @@
 # through the NDJSON error protocol and BEFORE a pane is placed, unless this
 # script has an implemented arm for it IN THE MODE ASKED FOR:
 #   SESSION (no --exec, harness claude): claude, and only claude.
-#   CREWMATE (no --exec, harness codex | opencode): the crewmate contract.
+#   CREWMATE (no --exec, harness codex | opencode | pi | cursor): the crewmate
+#     contract (pi and cursor on captain order - ac_harness_pane_arm).
 #   ONE-SHOT (--exec): codex, claude, opencode, pi, cursor, agy - their `codex exec
 #     -s read-only` / `claude -p` / `opencode run` / `pi -p` /
 #     `cursor-agent -p --trust` forms (oneshot_launch below, which owns the
@@ -129,7 +130,7 @@
 # stdout is the final message, both of which the caller captures directly - so a
 # pane held nothing the turn depended on, took no part in observing it, and had
 # to be reaped by somebody. It also could not be placed correctly: a one-shot's
-# callers are themselves PANES (the gate judge, a review round's scout lanes),
+# callers were PANES (the gate judge, and review scout lanes the reviewer ran),
 # and a pane carries no AC_HOME, so the backend resolved to the herdr default
 # and opened herdr panes for an ORCA fleet, one per lane per round, owned by
 # nobody. `--pane-file` is therefore refused with `--exec`, and the `done`
@@ -992,8 +993,8 @@ fi
 [ -f "$PF" ] || fail "prompt file missing: $PF"
 # A ONE-SHOT NEEDS NO BACKEND AT ALL. Its turn is a process whose exit ends it
 # and whose stdout the caller already captures, so a pane bought nothing and
-# cost something real: the callers that run one (the gate judge, a review
-# round's scout lanes) are themselves PANES, which carry no AC_HOME, so this
+# cost something real: the callers that ran one (the gate judge, and review
+# scout lanes the reviewer ran) were PANES, which carry no AC_HOME, so this
 # resolution fell through to the herdr default and opened herdr panes for an
 # ORCA fleet - panes nobody owned, on the wrong backend, accumulating one per
 # lane per round.
@@ -1630,8 +1631,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     marker_age="$(( $(date +%s) - $(stat -f %m "$MARKER" 2>/dev/null || date +%s) ))"
     rm -f "$MARKER"
     # AWAIT: the agent ended a turn, but work it started is still in flight -
-    # a reviewer's scout subagents, launched asynchronously by a tool that
-    # takes no flag to wait. Consume this marker and keep polling: the
+    # a reviewer's scout lanes, which it triggered and has not collected yet. Consume this marker and keep polling: the
     # completing work wakes the agent, it finishes with its evidence, and the
     # marker it fires THEN is the one that ends the turn. Without this hold
     # the round was harvested and the pane reaped with the lanes still running.
