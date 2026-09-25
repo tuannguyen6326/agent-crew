@@ -2,7 +2,8 @@
 # ac-review-diff.sh - show a crewmate's change as a diff against the
 # authoritative base (merge-base with the default branch).
 #
-# Usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph | --graph-data]
+# Usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph | --graph-data
+#                               | --commit <sha> | --ref <branch>]
 #                               [--tree <worktree>]
 #
 # Modes (default = committed-only, base -> branch tip: the chief/roomchief
@@ -55,7 +56,7 @@ diff_base_ref() {
 }
 
 id="${1:-}"; mode=committed; tree=""; gref=""
-[ -n "$id" ] || ac_die "usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked] [--tree <worktree>]"
+[ -n "$id" ] || ac_die "usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph | --graph-data | --commit <sha> | --ref <branch>] [--tree <worktree>]"
 shift
 while [ $# -gt 0 ]; do
   case "$1" in

@@ -29,7 +29,7 @@ Owner: [`AGENTS.md`](../AGENTS.md) section 1.
 
 The crewchief is the harness session running at the fleet home on `AGENTS.md`.
 It triages orders, writes briefs, spawns and supervises workers, and lands their work.
-It never does project work itself: no editing project files, no project builds, no commits in project repos.
+Real project work goes to a crewmate; the one exception is a visible self-task (`bin/ac-self-task.sh`), a small chief-side edit made in a leased worktree.
 It is read-only over `projects/` except for a short list of sanctioned writes (fetch, safe fast-forward syncs, `bin/ac-merge-local.sh`, pool operations via `bin/ac-tree.sh`, and the deferred push inside `bin/ac-feature.sh ship`).
 
 Owner: [`AGENTS.md`](../AGENTS.md) section 1.

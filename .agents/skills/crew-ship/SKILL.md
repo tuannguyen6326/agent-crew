@@ -307,7 +307,8 @@ Finish: `bin/ac-ship.sh finish <checks-passed|passed|failed|cancelled>`
 `checks-passed`/`passed` are FAIL CLOSED: finish refuses unless every
 non-skipped step is `completed` and no `fix` finding (or undecided
 `ask-user`) remains, and `passed` additionally requires HEAD merged into
-the default branch - it names whatever is outstanding. `failed`/`cancelled`
+the run's delivery target (the default branch when no `--target` was
+pinned) - it names whatever is outstanding. `failed`/`cancelled`
 are always allowed. (Contract: the `bin/ac-ship.sh` header FINISH block.)
 
 ## After ship: qa gate (only when a `<family>-qa` stage was triaged in)

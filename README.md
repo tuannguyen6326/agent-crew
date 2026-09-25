@@ -13,7 +13,7 @@ Every task is delegated to a disposable crewmate agent in its own git worktree a
 | Role | Job |
 |---|---|
 | **captain** | You. Approves PRs, answers escalations, owns every irreversible call. |
-| **crewchief** | Your fleet-level thread. Triages every order, writes the backlog, promotes families to roomchiefs, and never does project work itself. |
+| **crewchief** | Your fleet-level thread. Triages every order, writes the backlog, promotes families to roomchiefs, and hands real project work to crewmates - its only own code is a visible self-task. |
 | **roomchief** | A scoped crewchief owning one task family in its own thread (`bin/ac-spawn.sh --roomchief <family>`). Promoted with `--solo` it is a **solo chief**: for a family too small to cost a crewmate, it works the slices itself through `bin/ac-self-task.sh`, under mandatory independent review. |
 | **crewmate** | Disposable worker: one task, one worktree, one pane, then teardown. |
 | **pane agent** | One visible, one-shot agent turn in its own pane - runs the independent code reviewer and the QA verifier. Never a crewmate, never a backlog row. |

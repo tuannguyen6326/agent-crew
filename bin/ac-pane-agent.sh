@@ -336,7 +336,7 @@
 # non-bypassable, which is worse than a guard that says what it is.
 # THE GUARD IS ADVISORY, AND A DETERMINED CHIEF CAN BYPASS IT. This script is
 # an executable any chief may invoke with --captain, and a chief can write
-# straight to the herdr pane without coming near it at all. That is the
+# straight to the backend pane without coming near it at all. That is the
 # captain's decision rather than an oversight: it stops the accidental steer,
 # not the deliberate one. A later reader who finds a bypass has found
 # DOCUMENTED BEHAVIOUR, not a defect - so do not "harden" this into a

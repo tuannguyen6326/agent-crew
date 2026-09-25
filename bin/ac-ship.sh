@@ -48,7 +48,8 @@
 #   ac-ship.sh attest-check               (verifier's freshness query:
 #                                              0 fresh / 1 stale / 2 none)
 #   ac-ship.sh push                       (lease + patch-id guarded push)
-#   ac-ship.sh base                       (fresh merge-base vs default)
+#   ac-ship.sh base                       (fresh merge-base vs the run's target,
+#                                          else the default ref)
 #   ac-ship.sh evidence-dir               (resolved test-evidence dir)
 #   ac-ship.sh skip-remaining             (empty diff: skip what's left)
 #   ac-ship.sh config <dotted.key>
@@ -334,7 +335,8 @@
 #   4. the documented checks-passed vs passed split is enforced -
 #      checks-passed = validated but UNMERGED (the crew's stop
 #      point; needs 1+2+3 only), passed = MERGED and so ADDITIONALLY requires
-#      merged evidence: HEAD reachable from the default ref (ac_default_ref).
+#      merged evidence: HEAD reachable from the run's delivery target (the
+#      default ref, ac_default_ref, when no --target was pinned).
 #      A squash merge rewrites history and is not an ancestor, so `passed` then
 #      fails CLOSED - use checks-passed; the merge helpers own the merge record.
 # failed and cancelled are ALWAYS allowed - a crew must never be trapped unable
