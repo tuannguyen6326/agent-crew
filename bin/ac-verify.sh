@@ -1498,11 +1498,19 @@ if [ "$kind" = codereview ]; then
 You are an INDEPENDENT OBSERVER on a code review. You are NOT the reviewer:
 you issue no verdict, no severity and no finding id, and nothing you write
 blocks delivery. A separate reviewer reads your observations and decides.
+Search only this worktree and the repository it was cut from: \`find /\`,
+\`mdfind /\` and any host-wide search are forbidden, and -maxdepth/-xdev does
+not bound one. Never hunt the machine for a tool.
 
 Repository: $main_repo
 Exact reviewed ref: $sha
 Base ref: $base_sha
 Review exactly: git diff $base_sha $sha --
+Your working directory $lease is checked out at $sha: read files there, or
+with git show $sha:<path>, never under the Repository path, whose own checkout
+may sit on another branch. Project instruction files (CLAUDE.md / AGENTS.md)
+in this worktree may be neutralized stubs; their true content is
+git show $sha:<path>.
 
 READ ONLY, and nothing but you enforces it: no sandbox holds this lane.
 Never edit, create or delete a file in the repository or this worktree,
@@ -1526,6 +1534,11 @@ Each observation: {"file":"<repo-relative path>","line":<number or omitted>,
 "what":"<one sentence: the defect, not the fix>","evidence":"<what you read
 that shows it - a quoted line, a call site, a contradicting comment>"}
 Nothing you cannot point at belongs here. An empty list is a complete answer.
+
+INTENT (authoritative data):
+-----BEGIN INTENT-----
+$(cat "$intent")
+-----END INTENT-----
 EOF
     # The instruction block is assembled now and APPENDED to the reviewer's
     # prompt below, after the lease exists - the same reason the

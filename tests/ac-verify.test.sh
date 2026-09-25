@@ -2170,6 +2170,16 @@ assert_contains "$(cat "$sdir/prompt.md")" "READ ONLY" "...and forbids writing"
 # A pane lane's own contract writes its answer file outside the repository, so
 # the ban is scoped to the repository rather than contradicting that write.
 assert_contains "$(cat "$sdir/prompt.md")" "Never edit, create or delete a file in the repository" "...scoped to the repository"
+# A lane judges "deviations from the stated intent" only if it is GIVEN the
+# intent, reads the reviewed bytes only if it is told its cwd holds them (the
+# Repository path is the primary checkout, on whatever branch it happens to
+# be), and stays off the host like the reviewer does.
+assert_contains "$(cat "$sdir/prompt.md")" "-----BEGIN INTENT-----" "the lane is given the intent"
+assert_contains "$(cat "$sdir/prompt.md")" "Implement the target behavior." "...verbatim"
+assert_contains "$(cat "$sdir/prompt.md")" "Your working directory $VERIFY_WORKTREE is checked out at $target" \
+  "the lane is told its cwd holds the reviewed bytes"
+assert_contains "$(cat "$sdir/prompt.md")" '`find /`' "the lane is kept off host-wide search"
+assert_contains "$(cat "$sdir/prompt.md")" "git show $target:<path>" "...and told where neutralized instruction files really live"
 
 # NO SECOND LEASE - the whole point of running the lanes in the round's own
 # worktree. Counted against the tree driver's log, which records every `get`.
