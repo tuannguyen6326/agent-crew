@@ -15,7 +15,7 @@
 #                          session-start goes read-only under it
 #   --backend=<b>       -> where the chief OPENS: herdr | orca. Default ladder
 #                          (same as ac-spawn): flag > the home's config/backend
-#                          > herdr. herdr attaches the "<fleet> (crewchief)"
+#                          > herdr. herdr attaches the fleet's root "<fleet>"
 #                          workspace; orca runs the chief inline in the CURRENT
 #                          terminal (Orca-native when launched from an Orca
 #                          terminal - there is no herdr surface to attach)
@@ -55,17 +55,14 @@ _ac_home() {
     return
   fi
   herdr status server >/dev/null 2>&1 || { (herdr server >/dev/null 2>&1 &); sleep 1; }
-  # crewchief joins the roomchiefs in the fleet's "<fleet> (crewchief)" group
-  local label="$fleet (crewchief)" ws
+  # The chief (and a deputy opened as <fleet>/<deputy>) is a fleet-level pane:
+  # it joins the parent fleet's ROOT workspace "<fleet>", adopted by label
+  # (bin/ac-backend.sh FAMILY WORKSPACE GROUPING).
+  local label="$fleet" ws
   ws=$(herdr workspace list 2>/dev/null | jq -r --arg l "$label" '.result.workspaces[]? | select(.label==$l) | .workspace_id' | head -1)
   if [[ -z "$ws" ]]; then
     herdr workspace create --label "$label" --no-focus >/dev/null 2>&1
     ws=$(herdr workspace list 2>/dev/null | jq -r --arg l "$label" '.result.workspaces[]? | select(.label==$l) | .workspace_id' | head -1)
-  fi
-  # pin it as the chiefs workspace so roomchiefs/crewdeputies land beside the crewchief
-  if [[ -n "$ws" ]]; then
-    mkdir -p "$ach/config"
-    print -r -- "$ws" >| "$ach/config/herdr-workspace-chiefs"
   fi
   local -a wsarg; [[ -n "$ws" ]] && wsarg=(--workspace "$ws")
   local pane
