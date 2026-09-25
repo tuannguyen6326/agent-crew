@@ -2123,6 +2123,7 @@ assert_contains "$(cat "$sdir/commands.txt")" "run --harness codex" "lane 1 is a
 assert_contains "$(cat "$sdir/commands.txt")" "--label $VERIFY_EXPECT_ID-scout-1" "...labelled as this round's lane"
 assert_contains "$(cat "$sdir/commands.txt")" "--pane-file $sdir/1.pane" "...publishing its pane for the reap"
 assert_contains "$(cat "$sdir/commands.txt")" "run --exec --harness agy" "a harness with no pane arm runs one-shot"
+assert_contains "$(cat "$sdir/commands.txt")" "--label $VERIFY_EXPECT_ID-scout-3" "...still labelled as this round's lane"
 assert_contains "$(cat "$sdir/commands.txt")" "--kind codereview-scout" "...under its own kind"
 assert_contains "$(cat "$sdir/commands.txt")" "--model 'qwen3.7-plus'" "a lane's model rides as a quoted flag"
 # Lane 3's model carries SPACES, which this whole wire exists to survive: the
@@ -2147,6 +2148,9 @@ assert_eq "$(ls "$AC_HOME/state"/*scout*.meta 2>/dev/null | wc -l | tr -d ' ')" 
 assert_file "$sdir/prompt.md" "the lanes share one staged prompt"
 assert_contains "$(cat "$sdir/prompt.md")" "You are NOT the reviewer" "the scout prompt refuses the reviewer role"
 assert_contains "$(cat "$sdir/prompt.md")" "READ ONLY" "...and forbids writing"
+# A pane lane's own contract writes its answer file outside the repository, so
+# the ban is scoped to the repository rather than contradicting that write.
+assert_contains "$(cat "$sdir/prompt.md")" "Never edit, create or delete a file in the repository" "...scoped to the repository"
 
 # NO SECOND LEASE - the whole point of running the lanes in the round's own
 # worktree. Counted against the tree driver's log, which records every `get`.
@@ -2195,6 +2199,8 @@ out="$(VERIFY_SCOUT_MODE=partial "$BIN/ac-verify.sh" codereview --repo "$repo" -
   --family "$scout_family" --caller "$caller" --base "$base" --intent "$intent" \
   --output "$scout_out" 2>&1 >/dev/null)" || fail "a partial fan-out must not fail the round"
 assert_eq "$(jq -r '.scouts.returned' "$scout_out")" "1" "one lane returned"
+assert_contains "$(cat "$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)scouts/lanes.tsv")" \
+  "no-done-line" "a lane that never ended its turn is on the ledger as such"
 assert_contains "$out" "1 of 3 configured scout lanes" "...and the missing one is named"
 
 # ABSENT IS OFF: no entry, no instructions in the prompt, no scouts dir.

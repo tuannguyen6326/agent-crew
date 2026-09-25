@@ -206,7 +206,7 @@ captain redirects a task whose crewmate is already in flight -
   crew-qa skill.
   MORE THAN ONE MODEL MAY LOOK, and exactly one still judges. A fleet that
   configures `panes.codereview-scout.lanes[]` gives each review round a set of
-  SCOUT lanes - one model per lane, read-only, over the round's own lease -
+  SCOUT lanes - one model per lane, read-only by prompt, over the round's own lease -
   which the REVIEWER triggers and the facade runs beside it, as pane-agent
   pane turns (one-shot where a harness has no pane arm) and never as crewmates. They mint nothing: the
   reviewer reports an observation under its own id or refutes it by name, so

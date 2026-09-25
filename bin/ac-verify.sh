@@ -1423,9 +1423,12 @@ fi
 # shell tool's ceiling, re-run on PENDING - before it writes its verdict. The
 # reviewer never runs a lane itself: a lane that is a child of the reviewer's
 # turn, or of a subagent the harness backgrounded, died when that turn ended.
-# Each lane is one model, once, READ-ONLY, over the SAME lease this round
-# already holds - no second worktree, no second neutralization, the same bytes
-# the reviewer reads.
+# Each lane is one model, once, over the SAME lease this round already holds -
+# no second worktree, no second neutralization, the same bytes the reviewer
+# reads. READ-ONLY is the scout PROMPT's law and the reviewer's tree check,
+# never a sandbox: a pane lane runs its harness's interactive launch (no
+# `codex exec -s read-only`, no `-p`) and must write its own answer file, and
+# the captain accepted that trade for visible lanes (captain 2026-09-25).
 #
 # A lane is a pane-agent PANE turn wherever its harness has an interactive arm
 # (ac_harness_pane_arm), labelled <id>-scout-<n> beside the reviewer in the
@@ -1488,9 +1491,13 @@ Exact reviewed ref: $sha
 Base ref: $base_sha
 Review exactly: git diff $base_sha $sha --
 
-READ ONLY. Never edit, create or delete a file, never commit, never run a
-build, test, linter or any state-mutating command. Inspect with git and by
-reading files.
+READ ONLY, and nothing but you enforces it: no sandbox holds this lane.
+Never edit, create or delete a file in the repository or this worktree,
+never commit, never checkout, reset or stash, never run a build, test,
+linter, installer or any state-mutating command. Inspect with git and by
+reading files. The one write you may make is the answer file your own turn
+instructions name, outside the repository. A lane that writes into the
+worktree corrupts the bytes the reviewer is judging.
 
 Report only what would BREAK, LEAK or BEHAVE WRONG if this shipped:
 correctness defects, security holes, a claim in the code or its comments that
@@ -1528,7 +1535,7 @@ EOF
       if ac_harness_pane_arm "$s_h" >/dev/null; then
         s_arm="run --harness $s_h$s_mflag$s_eflag --label $id-scout-$scout_count --pane-file $scout_dir/$scout_count.pane"
       else
-        s_arm="run --exec --harness $s_h$s_mflag$s_eflag"
+        s_arm="run --exec --harness $s_h$s_mflag$s_eflag --label $id-scout-$scout_count"
       fi
       s_cmd="GIT_OPTIONAL_LOCKS=0 $pane_bin $s_arm --kind codereview-scout --cwd $lease --prompt-file $scout_prompt --timeout ${AC_VERIFY_SCOUT_TIMEOUT:-900} > $scout_dir/$scout_count.ndjson 2>&1"
       printf 'LANE %s (%s):\n  %s\n' "$scout_count" "$s_label" "$s_cmd" >>"$scout_dir/commands.txt"
@@ -1588,9 +1595,11 @@ if [ "$kind" = codereview ] && [ "${scout_count:-0}" -gt 0 ] && [ -s "$scout_dir
     printf 'DONE: a verdict written before the observations arrive is REFUSED, and\n'
     printf 'so is a round whose configured lanes all come back empty.\n\n'
     printf 'Then CHECK THE TREE: git -C %s status --porcelain\n' "$lease"
-    printf 'must be empty. A lane that wrote into this worktree corrupted the bytes\n'
-    printf 'you reviewed - restore with git -C %s reset --hard %s then\n' "$lease" "$sha"
-    printf 'git -C %s clean -fdq, re-check what you read, and say so in your summary.\n\n' "$lease"
+    printf 'must show nothing beyond the instruction files this facade neutralized.\n'
+    printf 'A lane that wrote into this worktree corrupted the bytes you reviewed -\n'
+    printf 'restore each path it touched with git -C %s checkout %s -- <path>\n' "$lease" "$sha"
+    printf '(delete any file it created), never a whole-tree reset, which would undo\n'
+    printf 'the neutralization; then re-check what you read and say so in your summary.\n\n'
     printf 'Then REVIEW. Every observation is EVIDENCE, never a finding: report it\n'
     printf 'as your own finding under your own id, or REFUTE it. List every refusal\n'
     printf 'in scout_dispositions with one line saying what you read that the\n'
@@ -1633,8 +1642,8 @@ if [ -n "$harness" ]; then
 fi
 # The fan-out ledger is the pane's --await-file (contract: AWAIT in
 # bin/ac-pane-agent.sh): the reviewer's turn cannot end for good until the
-# background harvester below has written it, so subagents the reviewer
-# launched asynchronously are waited for on its behalf.
+# background harvester below has written it, so a reviewer that ends its turn
+# before collecting the lanes it triggered is held, not harvested.
 [ "${scout_count:-0}" -gt 0 ] && pane_args+=(--await-file "$scout_dir/lanes.tsv")
 # BUSY DECLARATION (see the header): the pane call below blocks this process -
 # a roomchief among its callers - for up to AC_VERIFY_TIMEOUT, so declare that

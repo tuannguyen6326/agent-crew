@@ -364,13 +364,15 @@
 #
 # AWAIT (the authoritative contract): `--await-file <path>` says a turn end is
 # NOT the end of the turn while that file is absent. The recorded reason: a
-# reviewer that fans its scout lanes out as subagents ends its turn at once,
-# because the Agent tool launches asynchronously and takes no flag to wait -
+# reviewer that fanned its scout lanes out as subagents ended its turn at once,
+# because the Agent tool launched asynchronously and took no flag to wait -
 # so the Stop-hook marker fired, the round was harvested and the pane reaped
 # with three lanes still running and nobody left to read them. While the file
 # is absent a marker is CONSUMED and the poll continues, and the idle fallback
-# holds the same way; the completing work wakes the agent, it finishes with
-# its evidence, and the marker it fires then ends the turn. The caller owns
+# holds the same way; an agent still waiting on that work (a collector call,
+# a background task) resumes when it lands, finishes with its evidence, and
+# the marker it fires then ends the turn. An agent that ended its turn with
+# nothing pending is held until --timeout: nothing here wakes it. The caller owns
 # the file and writes it when the awaited work is done (ac-verify.sh writes
 # the fan-out ledger there). --timeout still bounds the whole wait.
 #
@@ -977,12 +979,11 @@ if [ "$EXEC" = 1 ]; then
   fi
 else
   # The interactive arm map is the harness registry's (ac_harness_pane_arm,
-  # bin/ac-harness.sh): claude as a pane SESSION, codex/opencode through the
-  # CREWMATE contract - exactly the harnesses VERIFIED to complete under it
-  # (harness-facts.md). A third harness is not guessed at: it is refused
-  # until somebody verifies the same thing about it.
+  # bin/ac-harness.sh): claude as a pane SESSION, codex/opencode/pi/cursor
+  # through the CREWMATE contract. A harness outside it is not guessed at: it
+  # is refused until somebody verifies the same thing about it.
   ARM="$(ac_harness_pane_arm "$HARNESS")" \
-    || fail "harness '$HARNESS' has no arm here for an interactive turn (armed: claude as a pane SESSION; codex and opencode through the CREWMATE contract) - arming another means VERIFYING that it writes its final message where its brief tells it to and announces its own completion; see HARNESS ARMS in bin/ac-pane-agent.sh"
+    || fail "harness '$HARNESS' has no arm here for an interactive turn (armed: claude as a pane SESSION; codex, opencode, pi and cursor through the CREWMATE contract) - arming another means VERIFYING that it writes its final message where its brief tells it to and announces its own completion; see HARNESS ARMS in bin/ac-pane-agent.sh"
 fi
 # Same refusal, same grounds as --exec above: neither codex nor opencode pins a
 # caller-minted session id (harness-facts.md Resume bullets), so this arm opens
