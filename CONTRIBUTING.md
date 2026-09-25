@@ -70,7 +70,7 @@ bash tests/dashboard.test.sh       # dashboard Bun tests (skips cleanly without 
 bin/ac-lint.sh                     # opt-in: bash -n + shellcheck over changed files
 ```
 
-- `tests/run-suite.sh` exits 0 when all pass, 1 when any test fails, and 2 when it cannot proceed (bad arguments, no test files, or an empty `--changed` selection).
+- `tests/run-suite.sh` exits 0 when all pass, 1 when any test fails, 2 when it cannot proceed (bad arguments, no test files, or an empty `--changed` selection), and 3 when it refuses to run because SIGINT is ignored in an async invocation it cannot reset.
 - `--changed` maps `bin/<name>.sh` to `tests/<name>.test.sh` over staged, unstaged and untracked changes; a changed shared library narrows to its sourcers' tests, and anything it cannot map confidently widens to the full set and says why.
 - `--changed` ignores files outside `bin/*.sh` and `tests/*.sh`, so a change to `dashboard/*.ts`, `bin/*.ts`, docs or skills selects nothing on its own; run the relevant test file directly.
 - On a clean, fully committed tree `--changed` has nothing to read and exits 2 without running anything.
