@@ -2,109 +2,95 @@
 
 A thread per task. A fleet that ships.
 
-agent-crew is an **agent distro**: a portable directory of instructions, skills, and bash tooling that turns a terminal coding agent (Claude Code first) into a fleet orchestrator.
-You command it through threads: one fleet-level crewchief, plus a roomchief thread per promoted task family.
-Every task is delegated to disposable crewmate agents, each in its own herdr tab and its own git worktree, supervised by a zero-token watcher, delivering reviewed PRs, local merges, or reports.
+agent-crew is an **agent distro**: a directory of instructions, skills, and bash tooling that turns a terminal coding agent (Claude Code first) into a fleet orchestrator.
 There is no app and no build step - the checkout is the product.
+Running a supported harness in a fleet home, with `AC_HOME` pointed at that home, IS the installation.
+You talk to one crewchief thread, plus one roomchief thread per task family.
+Every task is delegated to a disposable crewmate agent in its own git worktree and its own backend pane, supervised by a zero-token bash watcher, and delivered as a reviewed PR, a local merge, or a report.
 
-## The crew
+## Roles
 
 | Role | Job |
 |---|---|
 | **captain** | You. Approves PRs, answers escalations, owns every irreversible call. |
-| **crewchief** | Your fleet-level thread. Triages orders, promotes families to roomchiefs, merges nothing without your word. |
-| **roomchief** | A scoped crewchief owning one promoted task family in its own thread (`ac-spawn.sh --roomchief <family>`). Promoted `--solo` it is a **solo chief**: a family too small to cost a crewmate, whose slices the chief works itself under a mandatory independent review. |
-| **crewmate** | Disposable worker: one task, one in-repo worktree, one herdr tab, then teardown. |
-| **pane agent** | One visible agent turn in its own tab - runs the independent code reviewer and the QA agent. |
-| **second chief** | Independent model invoked for uncertain or high-consequence design decisions in one fresh session per round - advises, never applies. |
-| **crewdeputy / crewdomain** | Domain supervision: a deputy runs its own nested fleet home (isolation); a domain is durable backlog + knowledge state inside this fleet (no session). |
+| **crewchief** | Your fleet-level thread. Triages every order, writes the backlog, promotes families to roomchiefs, and never does project work itself. |
+| **roomchief** | A scoped crewchief owning one task family in its own thread (`bin/ac-spawn.sh --roomchief <family>`). Promoted with `--solo` it is a **solo chief**: for a family too small to cost a crewmate, it works the slices itself through `bin/ac-self-task.sh`, under mandatory independent review. |
+| **crewmate** | Disposable worker: one task, one worktree, one pane, then teardown. |
+| **pane agent** | One visible, one-shot agent turn in its own pane - runs the independent code reviewer and the QA verifier. Never a crewmate, never a backlog row. |
+| **second chief** | An independent model invoked in a fresh session per round for uncertain or high-consequence design gates - advises, never applies. |
+| **crewdeputy / crewdomain** | Domain supervision. A crewdeputy runs its own nested fleet home with its own clones and session (isolation); a crewdomain is durable knowledge plus a routed slice of this fleet's backlog (no session). |
+| **solo session** | A second session beside the chief (`AC_SOLO=1`, opened with `ac <fleet> --solo`) for pair-coding with the captain one slice at a time. It never spawns, steers, or supervises crew. |
 
 ## Prerequisites
 
-- macOS or Linux with `bash` and `git`
-- `herdr` - the session backend (`brew install herdr`); nothing spawns without it
-- `jq`, and `gh` (authenticated) for the PR steps
-- A harness: Claude Code first-class; `codex` and `opencode` are supported crewmate harnesses
-- Optional: `bun` (web dashboard), `docker` (crew-qa infra), `node` (QA screenshots), `shellcheck` (lint)
+- macOS or Linux with `bash`, `git`, and `jq`.
+- `gh`, authenticated, for the PR steps.
+- A session backend, chosen per fleet in `config/backend`:
+  - `herdr` (the default, `brew install herdr`);
+  - `orca` (install the Orca app - its CLI ships with it).
+- A harness: `claude` (first-class), `codex`, `opencode`, `pi`, or `cursor`; a custom harness is launchable through a `config/launch-<harness>` template.
+- Optional: `bun` (web dashboard and review loop), `docker` (crew-qa infra), `node` (QA screenshots), `shellcheck` (opt-in lint).
+- `zsh` for the optional `ac` launcher (`docs/examples/ac.zsh`).
 
-`bin/ac-bootstrap.sh` is the toolchain doctor - it re-checks all of this any time.
+`bin/ac-bootstrap.sh` is the toolchain doctor.
+It prints one `OK:`/`MISSING:`/`OPTIONAL:` line per tool and exits non-zero when a required tool is missing.
+It also enforces a floor table - `git` 2.15.0, `jq` 1.6, `herdr` 0.8.0, and `bun` 1.3.5 (optional tier) - and reports an older build as `BELOW-FLOOR:` or a failed capability probe as `NO-CAPABILITY:`.
+Every session start re-runs it.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/tuannguyen6326/agent-crew.git && cd agent-crew
-bin/ac-fleet-new.sh lab                       # creates ~/Work/ac-homes/lab
-AC_HOME=~/Work/ac-homes/lab claude            # or your harness - AGENTS.md is the operating manual it reads
+git clone https://github.com/tuannguyen6326/agent-crew.git ~/Work/agent-crew
+cd ~/Work/agent-crew
+bin/ac-setup.sh          # toolchain doctor, homes container, the `ac` launcher (asks before it writes)
+source ~/.config/zsh/ac.zsh   # or the path you chose; add it to ~/.zshrc yourself
+bin/ac-fleet-new.sh lab  # asks one line per config knob, creates ~/Work/ac-homes/lab
+ac lab                   # opens the crewchief on the lab fleet
 ```
 
-The checkout is the tooling, never the home: `AC_HOME` is required, and the tooling refuses by name rather than writing fleet state into the checkout.
-Then, to the crewchief:
+Then tell the crewchief what to do, for example "add project myapp from <git url>" and then "fix the login bug in myapp".
 
-1. "Add project myapp" - it clones into `projects/myapp` and registers it in `records/projects.md`.
-2. "Fix the login bug" - it writes a brief, spawns a crewmate in `projects/myapp/.crew/worktrees/1`, and supervises.
-3. The crewmate validates through the crew-ship pipeline and opens a PR; you approve; the crewchief merges and tears down.
+`AC_HOME` is required: the tooling refuses to run without it rather than writing fleet state into the checkout.
+The full first-run walk - projects, the first order, watching, landing, and the solo session - is in [docs/getting-started.md](docs/getting-started.md).
 
-To run SEVERAL fleets - each its own home, backlog and crew - set the machine up once and add a fleet per domain:
+## How it works
 
-```bash
-bin/ac-setup.sh          # toolchain doctor, homes container, the `ac` launcher
-bin/ac-fleet-new.sh lab  # asks one line per config knob, then: ac lab
-```
+- **One home per fleet.** A home (`state/`, `data/`, `records/`, `config/`, `projects/`) is whatever `AC_HOME` points at; it symlinks the executable core (`bin/`, `AGENTS.md`, `CLAUDE.md`, `.claude/`) back to the checkout, and all persistent truth lives on disk there.
+- **Triage before work.** Every order gets a flow (`direct` or `staged`), a delivery mode (`crew-ship`, `direct-pr`, `feature-pr`, `local-only`), and review/qa obligations, receipted to the family room; heavy choices ask the captain first.
+- **Pooled in-repo worktrees.** `bin/ac-tree.sh` leases detached-HEAD worktrees under `<repo>/.crew/worktrees/<n>` and reuses them, so build caches survive between tasks (orca fleets lease Orca-managed worktrees instead).
+- **Push-first completion, zero-token watcher.** A finished agent announces itself with `bin/ac-done.sh`; `bin/ac-watch.sh` polls panes in bash and wakes the chief only for actionable events, as durable records in a wake spool.
+- **Rooms keep many tasks legible.** Each family has `data/<family>/room.md` holding its triage, gates, asks, and decisions; `bin/ac-room.sh list` is the captain's inbox.
+- **Guarded delivery.** `crew-ship` runs an 8-step hold-and-fix pipeline (intent, rebase, review, test, document, lint, push, pr); reviews are exact-ref pane agents; QA is optional behavioral proof after delivery.
+- **Fail-closed everywhere.** `bin/ac-teardown.sh` refuses to destroy unlanded work, and harness hooks block a turn that would leave crew in flight unwatched.
 
-Both are interactive captain tools and ask before they write.
+The concepts behind each bullet are in [docs/concepts.md](docs/concepts.md).
 
 ## Web dashboard
 
 ```bash
-bin/ac-dashboard.sh          # Bun, no build step -> http://127.0.0.1:8787
+bin/ac-dashboard.sh      # Bun, no build step -> http://127.0.0.1:8787 (foreground; start|stop|status for a daemon)
 ```
 
-Every fleet's processes, backlog, artifacts, review sessions, whiteboards, records, domains, learning and config in a browser - read-only except a few guarded writes.
-It also hosts the native rich-review loop: the captain pins comments onto an HTML or markdown artifact at `/review`, the agent receives them over a blocking poll (`bin/ac-review.sh`), and mermaid diagrams open in an embedded Excalidraw editor.
-Screenshots live in `docs/overview.html` (the visual overview).
-
-## How it works
-
-```
-captain (you)
-   │ talks to
-crewchief (harness on a fleet home)   state/ data/ records/ = truth on disk
-   │ promotes & routes                herdr panes           = message bus
-roomchiefs (one per task family)
-   │ brief, spawn & supervise
-crewmates (one herdr tab + one in-repo worktree each)
-   │ validate via crew-ship pipeline
-PRs / local merges / reports
-
-flows (picked per order):
-  direct:  chief -> execution (IMPLEMENT + DELIVERY)
-  staged:  chief -> design (admitted spec/architecture/plan stages, gated) -> execution
-  epic:    order -> story map (gated) -> stories, push-scheduled
-  review:  required for staged and crew-ship; optional for direct-pr/local-only
-  qa:      optional behavioral proof after delivery; gates merge, not push
-```
-
-- **One home per fleet**: a home (`state/`, `data/`, `records/`, `config/`, `projects/`) is whatever `AC_HOME` points at, one per domain under a container. It is REQUIRED - unset is refused, never silently this checkout. `bin/ac-fleet-new.sh` creates one; the `ac` launcher opens it.
-- **Worktrees in-repo**: `bin/ac-tree.sh` pools detached-HEAD worktrees under `<repo>/.crew/worktrees/<n>`, auto-gitignored; returning resets and reuses instead of deleting, so build caches survive between tasks.
-- **Push-first completion**: a finished agent announces itself with `bin/ac-done.sh` - one durable wake record plus a nudge that ends the watcher's poll wait - so the orchestrator wakes in milliseconds. The watcher stays as the backup that catches an agent which crashed or forgot.
-- **Zero-token watcher**: `bin/ac-watch.sh` polls panes in bash, absorbs noise, and wakes the chief only for actionable events - published durably to `state/.wake-spool/`, one file per record, one spool per consumer scope.
-- **Rooms keep many tasks legible to one captain**: every task family gets `data/<family>/room.md` - gates, escalations and decisions on the record rather than lost in chat; `bin/ac-room.sh list` is the captain's inbox.
-- **Design reports are risk-routed**: the chief records `GATE-ROUTING` for every report; uncertainty or high consequence invokes one fresh second-chief agent, clear low-risk work stays chief-owned, and captain-owned choices go directly to the captain. Invoked R1/R2 rounds are hash-bound to the same decision context the chief has.
-- **Fail-closed everywhere**: `bin/ac-teardown.sh` refuses to destroy unlanded work; a Stop hook blocks any turn that would leave crew in flight unwatched; merge helpers can require a passing QA attestation.
-- **Validation pipeline**: crewmates run the `crew-ship` skill - 8 hold-and-fix steps (intent, rebase, review, test, document, lint, push, pr) executed agent-side with durable state in `<repo>/.crew/ship/`.
+It shows every fleet's crew, backlog, rooms, artifacts, and config in a browser, and hosts the native rich-review loop (`/review`) and the whiteboard (`/whiteboard`).
+It is read-only over task state except a few guarded writes.
 
 ## Docs
 
-- `AGENTS.md` - the operating manual (what the crewchief actually follows); `CLAUDE.md` symlinks to it.
-- `docs/overview.html` - self-contained animated visual overview (open in a browser, or review with `/rich-review`).
-- `docs/architecture.md` - components and data flow.
-- `docs/staged-design-flow-spec.md` - the native spec/architecture/plan report contracts, stage-admission receipts, gates, and efficiency rules.
-- `docs/scripts.md` - the map of every `bin/` script; each script's own header stays its authoritative spec.
-- `docs/configuration.md` - every config file and env var.
-- `docs/worktrees.md` - the in-repo worktree pool.
-- `docs/validate-pipeline.md` - the crew-ship pipeline reference.
-- `docs/qa-attestation.md` - the QA evidence and attestation contract.
-- [CONTRIBUTING.md](CONTRIBUTING.md) - ground rules, which file owns what, and the dev loop.
+| Doc | What it covers |
+|---|---|
+| [docs/getting-started.md](docs/getting-started.md) | The full first-run walk for a user. |
+| [docs/concepts.md](docs/concepts.md) | Roles, flows, modes, rooms, gates, and the ideas behind them. |
+| [docs/architecture.md](docs/architecture.md) | Components and data flow. |
+| [docs/configuration.md](docs/configuration.md) | Every config file, per-project yaml key, and environment variable. |
+| [docs/scripts.md](docs/scripts.md) | The map of every `bin/` script; each script's header stays its authoritative spec. |
+| [docs/worktrees.md](docs/worktrees.md) | The in-repo worktree pool. |
+| [docs/validate-pipeline.md](docs/validate-pipeline.md) | The crew-ship pipeline reference. |
+| [docs/qa-attestation.md](docs/qa-attestation.md) | The QA evidence and attestation contract. |
+| [docs/staged-design-flow-spec.md](docs/staged-design-flow-spec.md) | Spec/architecture/plan report contracts, stage admission, and gates. |
+| [docs/backlog.md](docs/backlog.md) | The `records/backlog.md` grammar. |
+| [docs/overview.html](docs/overview.html) | A self-contained visual overview; open it in a browser. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Ground rules, which file owns what, and the dev loop. |
+| [AGENTS.md](AGENTS.md) | The chief's law: a ~15 KB index the crewchief follows, pointing into the skills under `.agents/skills/`. `CLAUDE.md` symlinks to it. |
 
 ## License
 
