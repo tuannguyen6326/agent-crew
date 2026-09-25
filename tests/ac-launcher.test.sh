@@ -63,4 +63,13 @@ case "$(printf '%s\n' "$calls" | grep -v -- '--session s1')" in
   *) fail "every workspace/tab call must address the fleet's session s1: $calls" ;;
 esac
 
+# The knob is read the way herdr_cli reads it (ac_config_read trims a trailing
+# CR and surrounding spaces), so a CRLF-saved file names the same session.
+: >"$TMP/herdr.argv"
+printf ' s1 \r\n' >"$home/Work/ac-homes/sess/config/herdr-session"
+env -u HERDR_ENV -u AC_HERDR_SESSION HOME="$home" PATH="$TMP/logbin:$TMP/stubbin:$PATH" \
+  zsh -f -c "source '$ROOT/docs/examples/ac.zsh'; _ac_home sess true '' herdr ''" >/dev/null 2>&1 || true
+grep -q -- '--session s1 tab create' "$TMP/herdr.argv" \
+  || fail "a CRLF/space-padded session knob must still address s1: $(cat "$TMP/herdr.argv")"
+
 pass

@@ -57,14 +57,15 @@ _ac_home() {
   # One herdr session for every call below, resolved the way bin/ac-backend.sh
   # herdr_cli does (AC_HERDR_SESSION > the home's config/herdr-session), so the
   # chief's tab and the workspace the backend resolves live on one server.
-  local sess="${AC_HERDR_SESSION:-$(cat "$ach/config/herdr-session" 2>/dev/null)}"
+  local bin="$HOME/Work/agent-crew/bin"
+  local sess="${AC_HERDR_SESSION:-$(AC_HOME="$ach" bash -c '. "$1/ac-lib.sh" && ac_config_read herdr-session ""' _ "$bin" 2>/dev/null)}"
   local -a sarg; [[ -n "$sess" ]] && sarg=(--session "$sess")
   herdr "${sarg[@]}" status server >/dev/null 2>&1 || { (herdr "${sarg[@]}" server >/dev/null 2>&1 &); sleep 1; }
   # The chief (and a deputy opened as <fleet>/<deputy>) is a fleet-level pane:
   # it joins the parent fleet's ROOT workspace "<fleet>" - a label the backend
   # shares, so it is resolved and tidied by the backend's own functions
   # (bin/ac-backend.sh FAMILY WORKSPACE GROUPING), never a second resolver.
-  local bin="$HOME/Work/agent-crew/bin" ws
+  local ws
   ws=$(AC_HOME="$ach" AC_BACKEND=herdr AC_HERDR_SESSION="$sess" bash -c '. "$1/ac-lib.sh" && . "$1/ac-backend.sh" && herdr_resolve_workspace "$2"' _ "$bin" "$fleet")
   [[ -n "$ws" ]] || print -u2 "ac: could not resolve the '$fleet' workspace - opening the chief outside it"
   local -a wsarg; [[ -n "$ws" ]] && wsarg=(--workspace "$ws")
