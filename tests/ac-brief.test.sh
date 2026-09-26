@@ -82,6 +82,10 @@ assert_contains "$(cat "$brief")" "git restore" \
   "execution brief forbids the restore form too"
 assert_contains "$(cat "$brief")" "git reset --hard" \
   "execution brief forbids the hard reset too"
+# "Never touch other worktrees" is a rule about FILES; a raw
+# `git worktree remove --force` or prune bypasses every lease guard the pool has.
+assert_contains "$(cat "$brief")" "Never administer the worktree pool" \
+  "execution brief forbids administering the pool"
 assert_contains "$(cat "$brief")" "Captain: captain" "captain defaults to the role word"
 assert_fails "$BIN/ac-brief.sh" task-1 myproj
 
@@ -140,6 +144,7 @@ assert_fails "$BIN/ac-brief.sh" task-4 myproj --mode bogus
 scout="$AC_HOME/data/scout-1/brief.md"
 assert_contains "$(cat "$scout")" "report.md" "scout brief demands a report"
 assert_contains "$(cat "$scout")" "NEVER open a PR" "scout brief forbids PRs"
+assert_contains "$(cat "$scout")" "Never administer the worktree pool" "scout brief forbids administering the pool"
 
 # Completion discipline: every brief teaches BOTH channels - the printed marker
 # line (the watcher's backup) and the push that wakes the chief now. The push

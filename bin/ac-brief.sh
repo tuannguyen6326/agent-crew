@@ -412,6 +412,18 @@ resets from a REF. Leave the edit where it is; the captain owns that tree.
 EOF
 }
 
+pool_rule() {
+  # pool_rule - owed to every seed: "never touch other worktrees" is a rule
+  # about files, while a raw `git worktree remove --force` or prune bypasses
+  # every lease guard the pool keeps.
+  cat <<EOF
+Never administer the worktree pool: do not create, remove, return, prune or move
+a slot (\`git worktree add|remove|prune\`, \`bin/ac-tree.sh\`), and never write into
+a sibling slot. Verifier and qa checkouts come only through \`bin/ac-verify.sh\` /
+\`bin/ac-qa.sh\`; needing any other checkout is a \`blocked:\` line saying why.
+EOF
+}
+
 knowledge() {
   # knowledge - the REPO-KNOWLEDGE block every brief carries (contract:
   # bin/ac-know.sh). It bakes RUNNABLE COMMAND LINES, not a bare path: the
@@ -608,6 +620,7 @@ Captain: $captain
 
 Write your findings to $task_dir/report.md.
 $(primary_accident)
+$(pool_rule)
 $(knowledge)
 $(standing_rules)
 
@@ -636,6 +649,7 @@ ground every requirement in reality. Ambiguities you cannot resolve from
 the code are \`needs-decision:\` questions - never invent product behavior.
 $(design_contract)
 $(primary_accident)
+$(pool_rule)
 $(knowledge)
 $(standing_rules)
 
@@ -674,6 +688,7 @@ smallest useful diagram when the Diagram Rule applies, else a reasoned
 belong to the captain are \`needs-decision:\` questions.
 $(design_contract)
 $(primary_accident)
+$(pool_rule)
 $(knowledge)
 $(standing_rules)
 
@@ -706,6 +721,7 @@ it by reading the real code; a plan that names wrong files is a failed
 plan.
 $(design_contract)
 $(primary_accident)
+$(pool_rule)
 $(knowledge)
 $(standing_rules)
 
@@ -759,6 +775,7 @@ resolve from the code is a \`needs-decision: <question>\` - never invent
 product behavior.
 $(design_contract)
 $(primary_accident)
+$(pool_rule)
 $(knowledge)
 $(standing_rules)
 
@@ -819,6 +836,7 @@ This obligation is UNCONDITIONAL: it fires at every ending - \`done:\`,
 You are in a disposable git worktree at detached HEAD on the clean default branch.
 Create or continue branch \`$crew_branch\` before your first commit and commit all work there.
 Never touch the primary checkout or other worktrees.
+$(pool_rule)
 Concretely: \`git rev-parse --show-toplevel\` prints YOUR worktree - commit only
 there, on \`$crew_branch\`. Its \`git-common-dir\` parent is the PRIMARY checkout,
 shared by every worktree; never commit there (a pre-commit guard refuses it).
