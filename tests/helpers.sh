@@ -380,6 +380,15 @@ hold_close() {
 #                                 never auto-submits; `pane read` prints the
 #                                 transcript, then a non-empty composer
 #                                 rendered as "> <input>" (a TUI input box)
+#   $FAKE_HERDR/panes/<p>.claude-composer  render the composer the way claude
+#                                 does (measured on 2.1.283): the input between
+#                                 two horizontal rules after a `❯` glyph, and an
+#                                 EMPTY composer showing a dim (SGR 2) hint that
+#                                 is not input - styled only under --ansi
+#   $FAKE_HERDR/panes/<p>.keep-tail  "<n>" - send-text keeps only the LAST <n>
+#                                 characters, the tail a long send into claude
+#                                 leaves in its composer (measured live)
+#   `pane send-keys <p> ctrl+u` clears the composer
 #   $FAKE_HERDR/panes/<p>.drop-enters  strand knob: "<count> [<pattern>]" -
 #                                 the next <count> enters whose composer
 #                                 matches <pattern> (default: any) are
@@ -683,7 +692,14 @@ case "${1:-} ${2:-}" in
   "pane read")
     [ -f "$d/panes/$3.buf" ] || exit 1
     cat "$d/panes/$3.buf"
-    if [ -s "$d/panes/$3.in" ]; then printf '> '; cat "$d/panes/$3.in"; printf '\n'; fi
+    if [ -f "$d/panes/$3.claude-composer" ]; then
+      rule='────────────────────────────────'
+      printf '%s\n❯ ' "$rule"
+      if [ -s "$d/panes/$3.in" ]; then cat "$d/panes/$3.in"
+      else case "$*" in *--ansi*) printf '\033[2mTry "how does <filepath> work?"\033[0m' ;; *) printf 'Try "how does <filepath> work?"' ;; esac
+      fi
+      printf '\n%s\n  ? for shortcuts\n' "$rule"
+    elif [ -s "$d/panes/$3.in" ]; then printf '> '; cat "$d/panes/$3.in"; printf '\n'; fi
     exit 0 ;;
   "pane send-text")
     p="$3"; shift 3
@@ -695,7 +711,13 @@ case "${1:-} ${2:-}" in
         exit 0
       fi
     fi
-    printf '%s' "$*" >>"$d/panes/$p.in"
+    if [ -f "$d/panes/$p.keep-tail" ]; then
+      t="$*"; n="$(cat "$d/panes/$p.keep-tail")"
+      [ "${#t}" -le "$n" ] || t="${t:$(( ${#t} - n ))}"
+      printf '%s' "$t" >>"$d/panes/$p.in"
+    else
+      printf '%s' "$*" >>"$d/panes/$p.in"
+    fi
     if [ -f "$d/.die-on-text" ]; then
       pat="$(cat "$d/.die-on-text")"
       case "$*" in *"$pat"*) : >"$d/panes/$p.dead" ;; esac
@@ -703,6 +725,7 @@ case "${1:-} ${2:-}" in
     exit 0 ;;
   "pane send-keys")
     p="$3"
+    [ "${4:-}" != ctrl+u ] || { : >"$d/panes/$p.in"; exit 0; }
     if [ "${4:-}" = enter ] && [ -f "$d/panes/$p.buf" ]; then
       if [ -f "$d/panes/$p.drop-enters" ]; then
         read -r cnt pat <"$d/panes/$p.drop-enters" || true

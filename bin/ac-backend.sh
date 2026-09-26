@@ -1053,6 +1053,50 @@ herdr_submit_verified_pane() {
 
 backend_submit_verified_herdr() { herdr_submit_verified_pane "$(herdr_pane "$1")"; }
 
+herdr_composer_text_pane() {
+  # herdr_composer_text_pane <pane> <lines> - the text a claude composer holds:
+  # the rows between the LAST TWO horizontal rules of the styled screen, with
+  # the dim (SGR 2) hint an EMPTY composer shows, the `❯` glyph and every
+  # escape removed (shape measured on claude 2.1.283). Exit 1 when the screen
+  # carries no such structure, so the caller keeps its unproven path.
+  local cap r1 r2
+  cap="$(herdr_cli pane read "$1" --source recent --lines 200 --ansi 2>/dev/null)" || return 1
+  cap="$(printf '%s\n' "$cap" | tail -n "$2")"
+  r2="$(printf '%s\n' "$cap" | LC_ALL=C grep -n '\(─\)\{8,\}' | tail -1 | cut -d: -f1)"
+  r1="$(printf '%s\n' "$cap" | LC_ALL=C grep -n '\(─\)\{8,\}' | tail -2 | head -1 | cut -d: -f1)"
+  [ -n "$r1" ] && [ -n "$r2" ] && [ "$r1" -lt "$r2" ] || return 1
+  printf '%s\n' "$cap" | sed -n "$((r1 + 1)),$((r2 - 1))p" \
+    | LC_ALL=C sed -e $'s/\x1b\\[2m[^\x1b]*//g' -e $'s/\x1b\\[[0-9;]*m//g' -e $'s/\r//g' -e '1s/^[[:space:]]*❯//'
+}
+
+herdr_composer_shows() {
+  # herdr_composer_shows <text> <composer> - 0 when the composer holds exactly
+  # <text> (whitespace ignored: it soft-wraps) or only the `[Pasted text #N]` /
+  # `[Pasted text #N +M lines]` placeholders claude expands on submit. A
+  # shorter tail - what a long send leaves - or a placeholder plus a remainder
+  # is not the message.
+  local want got
+  want="$(printf '%s' "$1" | LC_ALL=C tr -d '[:space:]')"
+  got="$(printf '%s' "$2" | LC_ALL=C tr -d '[:space:]')"
+  [ -n "$want" ] && [ -n "$got" ] || return 1
+  [ "$got" = "$want" ] && return 0
+  [ -z "$(printf '%s' "$got" | sed -E 's/\[Pastedtext#[0-9]+(\+[0-9]+lines?)?\]//g')" ]
+}
+
+herdr_composer_clear_pane() {
+  # herdr_composer_clear_pane <pane> <presses> - ctrl+u (never ctrl+c, which
+  # interrupts a running turn) deletes one wrapped row per press (measured);
+  # 0 only once the composer reads empty again.
+  local i=0 t
+  while [ "$i" -lt "$2" ]; do
+    herdr_cli pane send-keys "$1" ctrl+u >/dev/null 2>&1 || return 1
+    i=$((i + 1))
+    t="$(herdr_composer_text_pane "$1" "$2")" || return 1
+    [ -n "$(printf '%s' "$t" | LC_ALL=C tr -d '[:space:]')" ] || return 0
+  done
+  return 1
+}
+
 backend_send_line_herdr() {
   # herdr's `pane send-text` does NOT auto-submit; Enter goes separately and
   # is VERIFIED (header: delivery verification). On a strand: focus the tab
@@ -1060,11 +1104,33 @@ backend_send_line_herdr() {
   # The retry's status is the verdict, and its two failure modes get their own
   # message: exit 1 says the text is stranded, exit 2 says the pane could not
   # be read at all - claiming a strand there is the very lie this verifies.
+  # A CLAUDE composer is proven BEFORE Enter (exit 3 when it is not): a long
+  # send lands there as its tail, and Enter would submit that tail as the whole
+  # instruction; a draft already in it is never typed over.
   local id="$1"
   shift
-  local text="$*" rc=0
-  herdr_cli pane send-text "$(herdr_pane "$id")" "$text" >/dev/null 2>&1
+  local text="$*" rc=0 pane proof=0 pre post rows
+  pane="$(herdr_pane "$id")"
+  if [ "$(ac_meta_get "$(ac_task_meta "$id")" harness 2>/dev/null)" = claude ] \
+    && pre="$(herdr_composer_text_pane "$pane" 20)"; then
+    if [ -n "$(printf '%s' "$pre" | LC_ALL=C tr -d '[:space:]')" ]; then
+      printf 'ac-backend: the composer of %s holds an unsent draft - NOTHING was typed or submitted, so the draft is untouched; send it or clear it first (peek: ac-peek.sh %s)\n' \
+        "$(backend_target_herdr "$id")" "$id" >&2
+      return 3
+    fi
+    proof=1
+  fi
+  herdr_cli pane send-text "$pane" "$text" >/dev/null 2>&1
   sleep "${AC_SEND_SETTLE:-0.4}"
+  if [ "$proof" = 1 ]; then
+    rows=$(( ${#text} / 40 + 8 )); [ "$rows" -ge 20 ] || rows=20; [ "$rows" -le 200 ] || rows=200
+    if ! post="$(herdr_composer_text_pane "$pane" "$rows")" || ! herdr_composer_shows "$text" "$post"; then
+      if herdr_composer_clear_pane "$pane" "$rows"; then post=cleared; else post="NOT cleared - peek it (ac-peek.sh $id)"; fi
+      printf 'ac-backend: the composer of %s did not show the whole message before Enter (a long send lands as its tail) - NOTHING was submitted, draft %s; write the instruction to a file and send a short pointer to it\n' \
+        "$(backend_target_herdr "$id")" "$post" >&2
+      return 3
+    fi
+  fi
   backend_submit_verified_herdr "$id" && return 0
   backend_focus_herdr "$id"
   backend_submit_verified_herdr "$id" || rc=$?

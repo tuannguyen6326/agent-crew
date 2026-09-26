@@ -209,6 +209,7 @@ else
   case "$send_rc" in
     0) ;;
     2) ac_die "delivery UNVERIFIED for $id - the pane could not be read, so the submit was neither confirmed nor refuted (see stderr above)" ;;
+    3) ac_die "delivery REFUSED for $id - nothing was submitted (see stderr above)" ;;
     *) ac_die "delivery NOT confirmed for $id - the text likely sits stranded in the composer (see stderr above)" ;;
   esac
   # ARRIVAL CHECK (contract: ac-lib.sh claude transcript arrival check). A

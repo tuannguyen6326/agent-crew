@@ -374,6 +374,30 @@ err="$("$BIN/ac-send.sh" cother 'the text that was actually sent' 2>&1)" \
 assert_contains "$err" "arrival REFUTED" "the verdict is unchanged for a wrong arrival too"
 case "$err" in *TRUNCATED*) fail "an unrelated arrival must not be reported as a truncation" ;; esac
 
+# A LONG send into a claude composer lands as its TAIL (measured live on claude
+# 2.1.283: 4.7KB typed, the composer kept the last ~480 chars, mid-word), and
+# the Enter after it submitted that tail as the whole instruction. The composer
+# must PROVE it holds the message before Enter; an empty composer shows a dim
+# hint that is not a draft, and a real draft is never typed over.
+mk_claude_crewmate ctail pCTL tCTL "dddddddd-dddd-dddd-dddd-dddddddddddd"
+: >"$FAKE_HERDR/panes/pCTL.claude-composer"
+long="$(printf 'instruction %03d, ' $(seq 1 60))"
+printf '40\n' >"$FAKE_HERDR/panes/pCTL.keep-tail"
+err="$("$BIN/ac-send.sh" ctail "$long" 2>&1)" && fail "a composer holding only the tail must not be submitted"
+assert_contains "$err" "NOTHING was submitted" "the refusal says nothing went out"
+assert_contains "$err" "pointer" "...and names the file-pointer remedy"
+[ -z "$(tr -d '[:space:]' <"$FAKE_HERDR/panes/pCTL.buf")" ] || fail "the tail must never reach the transcript"
+[ -s "$FAKE_HERDR/panes/pCTL.in" ] && fail "the refused tail is cleared from the composer"
+rm -f "$FAKE_HERDR/panes/pCTL.keep-tail"
+mk_turn "dddddddd-dddd-dddd-dddd-dddddddddddd" "$long"
+out="$("$BIN/ac-send.sh" ctail "$long")" || fail "a composer showing the whole message submits it"
+assert_contains "$(cat "$FAKE_HERDR/panes/pCTL.buf")" "instruction 060" "the whole message went out"
+printf 'a captain draft in progress' >"$FAKE_HERDR/panes/pCTL.in"
+err="$("$BIN/ac-send.sh" ctail 'short steer' 2>&1)" && fail "a composer holding a draft must not be typed into"
+assert_contains "$(cat "$FAKE_HERDR/panes/pCTL.in")" "a captain draft in progress" "the draft is left untouched"
+case "$(cat "$FAKE_HERDR/panes/pCTL.in")" in *"short steer"*) fail "nothing may be typed after a draft" ;; esac
+: >"$FAKE_HERDR/panes/pCTL.in"
+
 # A SOLO session (AC_SOLO=1) never steers a pane - the crew is the chief's.
 err="$(AC_SOLO=1 "$BIN/ac-send.sh" cother 'hello' 2>&1)" \
   && fail "a solo session's send must refuse"
