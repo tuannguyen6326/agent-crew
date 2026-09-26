@@ -198,6 +198,16 @@ assert_contains "$(cat "$TMP/hook.err")" "crew still in flight" \
 assert_contains "$(last_trace)" "verdict=handed-back" "the budget handback is traced too"
 assert_contains "$(last_trace)" "reason=budget-spent-crew-in-flight" "...naming the branch that actually fired"
 
+# The budget bounds the LAST arm too: an arm lasts at least AC_HEARTBEAT, so
+# one started with less than that left can run past the hook's own timeout,
+# and a hook killed at its timeout wakes nobody.
+stub_watch 'heartbeat' 'heartbeat' 'ask:t1'
+rc=0
+( cd "$AC_HOME" && printf '{}' | AC_AUTOARM_BUDGET=100 AC_HEARTBEAT=600 "$hook" >/dev/null 2>"$TMP/hook.err" ) || rc=$?
+assert_eq "$rc" "2" "a budget too short for another arm hands coverage back"
+assert_eq "$(calls)" "1" "no arm starts that could not end inside the budget"
+assert_contains "$(cat "$TMP/hook.err")" "budget spent" "and the handback says why"
+
 # --- the same exhaustion, but owed() fires on its OTHER branch --------------
 # owed() is also true with ZERO crew in flight when unscoped and standing
 # remote-poll coverage is wired (config/remote-poll executable). The message

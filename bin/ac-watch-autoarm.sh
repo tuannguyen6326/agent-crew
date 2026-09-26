@@ -47,8 +47,9 @@
 #   anything else    -> print that reason to stderr and exit 2, which wakes the
 #                       chief with the reason already in front of it.
 # The loop is bounded by AC_AUTOARM_BUDGET (default 3000s, under the hook
-# timeout) and ends in exit 2 as well, so coverage is handed back to a live
-# chief rather than lapsing silently when the budget runs out.
+# timeout): no arm starts unless a full AC_HEARTBEAT still fits inside it. It
+# ends in exit 2 as well, so coverage is handed back to a live chief rather
+# than lapsing silently when the budget runs out.
 #
 # EVERY ARM THIS HOOK MAKES IS MARKED BOUNDED (AC_AUTOARM=1, recorded by
 # ac-watch.sh in its lock dir). The watcher dies with this firing, so a CHIEF
@@ -280,8 +281,10 @@ while owed; do
 
   case "$reason" in
     heartbeat)
-      # Silent re-arm - the tokenless half of this hook.
-      [ "$(( $(date -u +%s) - started ))" -lt "$budget" ] || break
+      # Silent re-arm - the tokenless half of this hook. An arm lasts at least
+      # AC_HEARTBEAT, so one started with less than that left could outlive
+      # the hook timeout, and a hook killed there wakes nobody.
+      [ "$(( $(date -u +%s) - started + ${AC_HEARTBEAT:-600} ))" -le "$budget" ] || break
       continue ;;
     'already running'*|'refused: a live watcher'*)
       # The chief armed one by hand, or a previous hook still holds it. The
