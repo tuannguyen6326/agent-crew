@@ -26,7 +26,10 @@
 #   on stderr instead of reporting "sent to <target>" - and it names WHICH of
 #   the two reasons it was, because the next move differs: text STRANDED in
 #   the composer is resubmitted, while a pane that could not be READ leaves
-#   the submit neither confirmed nor refuted and is peeked at first.
+#   the submit neither confirmed nor refuted and is peeked at first. A claude
+#   composer on herdr is proven BEFORE the Enter: one that shows only part of
+#   the message (a long send lands as its tail) or already holds a draft is
+#   REFUSED with nothing submitted - send a short pointer to a file instead.
 # - ARRIVAL is verified too, on TOP of the submit check above (contract:
 #   ac-lib.sh claude transcript arrival check) - a confirmed submit only
 #   proves the composer reacted to Enter, never that the text which ARRIVED

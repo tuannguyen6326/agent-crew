@@ -5,6 +5,9 @@
 # Default merge method is --squash; flags after -- are passed to `gh pr merge`
 # (e.g. -- --merge or -- --rebase). --repo/-R overrides are rejected: the URL
 # is the single source of truth for where the merge lands.
+# The merge is pinned (--match-head-commit) to the head ac-pr-check.sh
+# recorded - the head the captain approved - and refused when the PR's head
+# has moved since; the merged head is recorded as pr_merged_head.
 #
 # Landing interlock (contract: ac-lib.sh's landing-ledger block): BEFORE the
 # merge it prints one LANDING-OVERLAP warning per PR file another family

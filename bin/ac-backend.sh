@@ -23,8 +23,11 @@
 #                                     focused retry, then non-zero + stderr -
 #                                     exit 1 the text is stranded in the
 #                                     composer, exit 2 the pane could not be
-#                                     READ so nothing was observed; the CALLER
-#                                     decides what each of the two means
+#                                     READ so nothing was observed, exit 3
+#                                     (herdr, claude panes) the composer did
+#                                     not prove the whole message or held a
+#                                     draft, so NOTHING was submitted; the
+#                                     CALLER decides what each one means
 #   backend_submit_verified <id>      press Enter, ack by capture-change; the
 #                                     resubmit primitive for callers retrying
 #                                     a stranded line (re-TYPING would append
