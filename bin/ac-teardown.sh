@@ -20,6 +20,9 @@
 #   the default branch (local or origin), reachable from any remote branch, or
 #   the recorded PR was merged (pr_merged=1 in the meta) - and the worktree is
 #   clean.
+# Both kinds also prove the worktree's OWN HEAD: pool slots start on a
+# detached HEAD and the return is --force, so a commit no branch carries - or
+# one made past crew/<id> - is refused unless something landed contains it.
 # --pr-ready '<words>' is the OTHER PR proof: done does not wait for the
 # merge. When the recorded PR is ready to merge (CI green, review done), the
 # chief asks the captain, and the captain's acceptance - quoted as the flag's
@@ -210,6 +213,20 @@ crew_branch_head() {
   printf '%s\n' "$h"
 }
 
+worktree_head_unlanded() {
+  # worktree_head_unlanded [<covering-head>] - print the worktree's own HEAD,
+  # exit 0, when it holds commits that neither <covering-head> nor any landed
+  # ref carries; exit 1 when it holds nothing at risk or there is no tree.
+  local wt_head
+  [ -d "$worktree" ] || return 1
+  wt_head="$(git -C "$worktree" rev-parse --verify --quiet HEAD 2>/dev/null)" || return 1
+  if [ -n "${1:-}" ] && git -C "$worktree" merge-base --is-ancestor "$wt_head" "$1" 2>/dev/null; then
+    return 1
+  fi
+  head_landed "$wt_head" && return 1
+  printf '%s\n' "$wt_head"
+}
+
 scout_report_present() {
   # scout_report_present <id> <task_dir> - does the scout's report exist?
   # A plain scout writes report.md in its own dir. A merged `--stage design`
@@ -348,7 +365,7 @@ landed_proof() {
     # Staged-flow scouts nest under their family (ac_task_dir resolves both).
     # The resolver's ambiguity die exits the substitution, not this function
     # (landed_proof runs errexit-suppressed) - propagate it as a refusal.
-    local task_dir shead
+    local task_dir shead unlanded
     task_dir="$(ac_task_dir "$id")" || return 1
     if ! scout_report_present "$id" "$task_dir"; then
       printf 'scout report missing: no report.md at %s (nor merged-design sub-stage reports)\n' "$task_dir" >&2
@@ -368,15 +385,24 @@ landed_proof() {
       printf 'worktree is dirty: uncommitted changes that %s does not hold; commit them or --force to discard\n' "$branch" >&2
       return 1
     fi
+    if unlanded="$(worktree_head_unlanded "$shead")"; then
+      printf 'worktree HEAD %s holds commits nothing landed contains; put them on %s and promote it (ac-promote.sh %s), or --force to discard\n' \
+        "${unlanded:0:12}" "$branch" "$id" >&2
+      return 1
+    fi
     return 0
   fi
   # Ship task: landed proof on the crew branch head, plus a clean worktree.
-  local head
+  local head unlanded
   head="$(crew_branch_head)"
   if [ -z "$head" ]; then
-    # No branch was created; a clean worktree at default HEAD holds nothing.
     if [ -d "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain 2>/dev/null)" ]; then
       printf 'worktree is dirty and no %s branch exists\n' "$branch" >&2
+      return 1
+    fi
+    if unlanded="$(worktree_head_unlanded)"; then
+      printf 'worktree HEAD %s holds commits no branch carries and nothing landed contains; put them on %s (git -C %s branch %s %s) and land it, or --force to discard\n' \
+        "${unlanded:0:12}" "$branch" "$worktree" "$branch" "${unlanded:0:12}" >&2
       return 1
     fi
     return 0
@@ -387,10 +413,17 @@ landed_proof() {
     printf 'worktree is dirty: uncommitted changes that %s does not hold; commit them or --force to discard\n' "$branch" >&2
     return 1
   fi
-  head_landed "$head" && return 0
-  printf 'branch %s (%s) is not landed: not in %s (local or origin), no containing remote branch, no merged PR\n' \
-    "$branch" "${head:0:12}" "$(ac_default_branch "$project_dir")" >&2
-  return 1
+  if ! head_landed "$head"; then
+    printf 'branch %s (%s) is not landed: not in %s (local or origin), no containing remote branch, no merged PR\n' \
+      "$branch" "${head:0:12}" "$(ac_default_branch "$project_dir")" >&2
+    return 1
+  fi
+  if unlanded="$(worktree_head_unlanded "$head")"; then
+    printf 'worktree HEAD %s is past the landed %s (%s) and nothing landed contains it; move %s to it and land that, or --force to discard\n' \
+      "${unlanded:0:12}" "$branch" "${head:0:12}" "$branch" >&2
+    return 1
+  fi
+  return 0
 }
 
 reap_watcher_stamps() {

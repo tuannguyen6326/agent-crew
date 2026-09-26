@@ -488,6 +488,41 @@ assert_file "$wt9d/followup.txt"
 assert_file "$AC_HOME/state/t9d.meta"
 "$BIN/ac-teardown.sh" t9d --force >/dev/null 2>&1 || fail "--force still discards a dirty landed tree"
 
+# The landed proof must test the head the worktree actually HOLDS, not only
+# crew/<id>: pool slots start on a detached HEAD, and the return below the gate
+# is --force, so a commit no branch carries was orphaned in silence.
+"$BIN/ac-brief.sh" t9f proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9f "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+"$BIN/ac-teardown.sh" t9f >/dev/null 2>&1 || fail "a fresh slot with no branch and no commit needs no --force"
+
+"$BIN/ac-brief.sh" t9h proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9h "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt9h="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9h.meta")"
+printf 'detached\n' >"$wt9h/detached.txt"
+git -C "$wt9h" add -A
+git -C "$wt9h" -c user.email=t@t -c user.name=t commit -qm "work on the detached HEAD"
+h9h="$(git -C "$wt9h" rev-parse HEAD)"
+out="$("$BIN/ac-teardown.sh" t9h 2>&1)" && fail "teardown must refuse a detached commit no branch carries"
+assert_contains "$out" "${h9h:0:12}" "the refusal names the orphaned head"
+assert_file "$AC_HOME/state/t9h.meta"
+"$BIN/ac-teardown.sh" t9h --force >/dev/null 2>&1 || fail "--force still discards a detached commit"
+
+"$BIN/ac-brief.sh" t9e proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9e "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt9e="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9e.meta")"
+git -C "$wt9e" checkout -q -b crew/t9e
+printf 't9e landed\n' >"$wt9e/t9e-landed.txt"
+git -C "$wt9e" add -A
+git -C "$wt9e" -c user.email=t@t -c user.name=t commit -qm "landed work"
+git -C "$repo9" merge -q --ff-only crew/t9e
+git -C "$wt9e" checkout -q --detach
+printf 'after the landing\n' >"$wt9e/t9e-after.txt"
+git -C "$wt9e" add -A
+git -C "$wt9e" -c user.email=t@t -c user.name=t commit -qm "work past the landed branch"
+out="$("$BIN/ac-teardown.sh" t9e 2>&1)" && fail "teardown must refuse a commit past the landed crew branch"
+assert_contains "$out" "$(git -C "$wt9e" rev-parse --short=12 HEAD)" "the refusal names the unlanded head"
+"$BIN/ac-teardown.sh" t9e --force >/dev/null 2>&1 || fail "--force still discards work past a landed branch"
+
 # t10: push mode - only ORIGIN contains the head; local main stays behind.
 # The brief IS the mode record now: spawn refuses a flag that contradicts it
 # (delivery-contract-on-the-row), so the brief carries direct-pr from the
