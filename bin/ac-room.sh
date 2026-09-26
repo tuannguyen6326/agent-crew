@@ -165,6 +165,12 @@ cmd_post() {
   # rather than at close, in another chief session.
   ac_room_marker_malformed "$text" \
     && ac_die "post: '$text' opens with a GATE/ASK/DECIDED verb but is not well-formed (needs a colon, after an optional word and/or (parenthetical)) - fix the message; a malformed marker settles/opens nothing and can hang this room PENDING forever"
+  # Every room reader pins an entry by its LINE shape, so a continuation line
+  # that looks like `- [stamp] actor> ` is read as an entry of its own - a
+  # quoted `captain> DECIDED:` would settle a real gate. Refused here because
+  # this is the one writer that can keep that shape off later lines.
+  printf '%s\n' "$text" | tail -n +2 | grep -qE '^- \[[^]]*\] [^>]*> ' \
+    && ac_die "post: a continuation line of the message has the shape of a room entry ('- [stamp] actor> ...') and every room reader would count it as its own entry - quote it indented or without the leading '- '"
   # A promoted family's OWN receipts - intake TRIAGE, gate escalation/
   # self-judgment, hand-back, captain decision - belong to whichever chief is
   # actually running that family's stages: the LIVE roomchief, once one

@@ -645,8 +645,9 @@ ac_room_marker_malformed() {
   # before a line counts as an answered/pending item. Anchored on the raw
   # MESSAGE (no `- [<iso>] <actor>> ` room-line prefix - the caller has not
   # written the line yet) and only its first line: a multi-line message's
-  # later lines never carry that prefix in the room file either, so
-  # ac_room_pending never reads them as a marker regardless of their content.
+  # later lines never carry that prefix in the room file either - cmd_post
+  # refuses a continuation line of that shape - so ac_room_pending never
+  # reads them as a marker regardless of their content.
   # ac-room.sh cmd_post is the ONE caller: it REFUSES a malformed marker at
   # authoring time, before the mis-shaped line can hang a room PENDING
   # forever - a DASH where the grammar needs a colon (`DECIDED (captain:
