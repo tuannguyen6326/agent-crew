@@ -2641,6 +2641,23 @@ ac_window_family() {
 
 # --- git helpers ----------------------------------------------------------------
 
+ac_worktree_status() {
+  # ac_worktree_status <wt> - everything a destructive gate must count as work
+  # in a tree: the porcelain with any submodule ignore setting overridden, plus
+  # an edit to a file whose assume-unchanged or skip-worktree bit hides it from
+  # `git status` (git-update-index). The exit status is git status's own; the
+  # hidden-bit scan only adds `H  <path>` lines.
+  local rc=0 line path blob
+  git -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
+  while IFS= read -r line; do
+    path="${line#? }"
+    [ -f "$1/$path" ] || continue
+    blob="$(git -C "$1" ls-files -s -- "$path" 2>/dev/null | awk 'NR == 1 { print $2 }')"
+    [ "$(git -C "$1" hash-object -- "$path" 2>/dev/null)" = "$blob" ] || printf 'H  %s\n' "$path"
+  done < <(git -C "$1" ls-files -v 2>/dev/null | grep -E '^([a-z]|S) ')
+  return "$rc"
+}
+
 ac_repo_root() {
   # ac_repo_root <dir> - MAIN worktree root, even when <dir> is a linked worktree.
   local common

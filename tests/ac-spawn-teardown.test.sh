@@ -523,6 +523,21 @@ out="$("$BIN/ac-teardown.sh" t9e 2>&1)" && fail "teardown must refuse a commit p
 assert_contains "$out" "$(git -C "$wt9e" rev-parse --short=12 HEAD)" "the refusal names the unlanded head"
 "$BIN/ac-teardown.sh" t9e --force >/dev/null 2>&1 || fail "--force still discards work past a landed branch"
 
+# An edit git status hides (assume-unchanged) is uncommitted work all the same.
+"$BIN/ac-brief.sh" t9u proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9u "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt9u="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9u.meta")"
+git -C "$wt9u" checkout -q -b crew/t9u
+printf 't9u landed\n' >"$wt9u/t9u.txt"
+git -C "$wt9u" add -A
+git -C "$wt9u" -c user.email=t@t -c user.name=t commit -qm "landed work"
+git -C "$repo9" merge -q --ff-only crew/t9u
+git -C "$wt9u" update-index --assume-unchanged t9u.txt
+printf 'hidden follow-up\n' >>"$wt9u/t9u.txt"
+out="$("$BIN/ac-teardown.sh" t9u 2>&1)" && fail "teardown must refuse an edit hidden behind assume-unchanged"
+assert_contains "$out" "uncommitted changes" "the hidden edit reads as uncommitted work"
+"$BIN/ac-teardown.sh" t9u --force >/dev/null 2>&1 || fail "--force still discards a hidden edit"
+
 # t10: push mode - only ORIGIN contains the head; local main stays behind.
 # The brief IS the mode record now: spawn refuses a flag that contradicts it
 # (delivery-contract-on-the-row), so the brief carries direct-pr from the

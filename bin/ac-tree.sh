@@ -455,7 +455,7 @@ fetch_origin() {
   fi
 }
 
-is_dirty() { [ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]; }
+is_dirty() { [ -n "$(ac_worktree_status "$1")" ]; }
 
 caller_ancestors() {
   # This process and every ancestor up to pid 1, one per line. Non-zero when
@@ -503,7 +503,7 @@ verified_state() {
   # nothing, so a tree that went unreadable between two reads cannot compare
   # equal to the clean one it was verified as.
   git -C "$1" rev-parse HEAD 2>/dev/null || printf 'head-unreadable\n'
-  git -C "$1" status --porcelain 2>/dev/null || printf 'status-unreadable\n'
+  ac_worktree_status "$1" || printf 'status-unreadable\n'
 }
 
 reset_if_unchanged() {

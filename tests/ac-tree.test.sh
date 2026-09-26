@@ -60,6 +60,16 @@ printf 'unlanded\n' >>"$wt1/file.txt"
 wt4="$("$BIN/ac-tree.sh" get --repo "$repo" --id t4 2>/dev/null)"
 assert_eq "$wt4" "$repo/.crew/worktrees/3-repo" "dirty slot skipped, pool grew"
 
+# Hidden edits are dirt too: `git status` skips a file flagged assume-unchanged
+# (git-update-index, "USING ASSUME UNCHANGED BIT"), and a return would reset it.
+git -C "$wt2" update-index --assume-unchanged file.txt
+printf 'hidden edit\n' >>"$wt2/file.txt"
+[ -z "$(git -C "$wt2" status --porcelain)" ] || fail "fixture: status must be blind to the assume-unchanged edit"
+assert_fails "$BIN/ac-tree.sh" return "$wt2"
+assert_contains "$(cat "$wt2/file.txt")" "hidden edit" "the hidden edit survives the refused return"
+git -C "$wt2" update-index --no-assume-unchanged file.txt
+git -C "$wt2" checkout -- file.txt
+
 # Remove: refuses a leased slot without --include-leased.
 assert_fails "$BIN/ac-tree.sh" remove "$wt2"
 

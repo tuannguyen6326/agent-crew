@@ -300,7 +300,7 @@ head_landed() {
     # would be destroyed as "landed": both refuse. pr_head is enforced when
     # recorded (ac-pr-check writes it when gh answers); absent, the clean
     # tree is the floor.
-    dirty="$(git -C "$worktree" status --porcelain 2>/dev/null || true)"
+    dirty="$(ac_worktree_status "$worktree" || true)"
     [ -z "$dirty" ] \
       || ac_die "--pr-ready refused: the worktree holds uncommitted work the accepted PR cannot contain - commit and push it (then re-record the PR head), or discard it deliberately, before the acceptance lands:
 $dirty"
@@ -388,7 +388,7 @@ landed_proof() {
     fi
     # The ship sibling's rule, mirrored: work the scout EDITED but never
     # committed dies just as silently at the pool return, landed branch or not.
-    if [ -d "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain 2>/dev/null)" ]; then
+    if [ -d "$worktree" ] && [ -n "$(ac_worktree_status "$worktree")" ]; then
       printf 'worktree is dirty: uncommitted changes that %s does not hold; commit them or --force to discard\n' "$branch" >&2
       return 1
     fi
@@ -403,7 +403,7 @@ landed_proof() {
   local head unlanded
   head="$(crew_branch_head)"
   if [ -z "$head" ]; then
-    if [ -d "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain 2>/dev/null)" ]; then
+    if [ -d "$worktree" ] && [ -n "$(ac_worktree_status "$worktree")" ]; then
       printf 'worktree is dirty and no %s branch exists\n' "$branch" >&2
       return 1
     fi
@@ -416,7 +416,7 @@ landed_proof() {
   fi
   # A landed head says nothing about edits made after it, and every path past
   # this gate returns the worktree with --force: dirty refuses before landed.
-  if [ -d "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain 2>/dev/null)" ]; then
+  if [ -d "$worktree" ] && [ -n "$(ac_worktree_status "$worktree")" ]; then
     printf 'worktree is dirty: uncommitted changes that %s does not hold; commit them or --force to discard\n' "$branch" >&2
     return 1
   fi
