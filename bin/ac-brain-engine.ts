@@ -1131,11 +1131,16 @@ function cmdForget() {
 // ---------- entity / context_pack / delta ----------
 function entityCard(db: Database, name: string) {
   const n = name.toLowerCase();
-  const byAlias = db.query("SELECT p.* FROM aliases a JOIN pages p ON p.slug=a.slug WHERE a.alias=?").all(n) as any[];
+  // An exact slug is the page itself: a dedup alias from a duplicate's slug
+  // outlives that duplicate diverging into its own page, so no alias may
+  // outrank it. A bare family name resolves to its room page.
+  const bySlug = db.query("SELECT * FROM pages WHERE (slug=? OR slug=?) AND deleted_at IS NULL").all(n, "data/" + n + "/room") as any[];
+  const byAlias = db.query("SELECT p.* FROM aliases a JOIN pages p ON p.slug=a.slug WHERE a.alias=? AND p.deleted_at IS NULL").all(n) as any[];
   const byTitle = db.query("SELECT * FROM pages WHERE lower(title)=? AND deleted_at IS NULL").all(n) as any[];
-  // a bare family name resolves to its room page, the family's own entity
-  const bySlug = db.query("SELECT * FROM pages WHERE (slug=? OR slug=? OR slug LIKE ?) AND deleted_at IS NULL").all(n, "data/" + n + "/room", "%/" + n) as any[];
-  const best = byAlias[0] || byTitle[0] || bySlug[0];
+  // A basename is a guess only when one page carries it - the same rule
+  // link resolution applies to an ambiguous basename.
+  const byBase = db.query("SELECT * FROM pages WHERE slug LIKE ? AND deleted_at IS NULL LIMIT 2").all("%/" + n) as any[];
+  const best = bySlug[0] || byAlias[0] || byTitle[0] || (byBase.length === 1 ? byBase[0] : undefined);
   if (!best) return null;
   const edges = db.query("SELECT to_slug, type FROM links WHERE from_slug=? AND resolved=1 LIMIT 10").all(best.slug);
   const facts = db.query(`SELECT id, fact, kind, provenance, agent FROM facts WHERE entity=? AND ${ACTIVE_FACT} ORDER BY created_at DESC LIMIT 10`).all(best.slug, iso());

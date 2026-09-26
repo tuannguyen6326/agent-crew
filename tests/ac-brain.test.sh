@@ -536,4 +536,21 @@ case "$rr" in *'"reranked":true'*) fail "a cut rerank must not stamp reranked" ;
 assert_contains "$rr" "quokka" "...and the fused order still comes back"
 rm -f "$AC_HOME/config/brain.json"; rm -rf "$AC_HOME/data/rr"
 
+# --- entity(): an exact slug is the page itself ------------------------------
+# A dedup leaves an alias from the duplicate's slug to its canonical page, and
+# that alias outlives the duplicate diverging into a page of its own - it must
+# never outrank the exact slug. A bare basename two pages share is ambiguous,
+# and a guess between them is the one link resolution refuses.
+mkdir -p "$AC_HOME/data/fam-tw/deep"
+printf '# Twin probe\nThe twinned entity probe body stays byte-identical at first.\n' >"$AC_HOME/data/fam-tw/twin.md"
+printf '# Twin probe\nThe twinned entity probe body stays byte-identical at first.\n' >"$AC_HOME/data/fam-tw/deep/twin.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+printf '# Deep twin\nThe deep twin has since diverged into a page of its own.\n' >"$AC_HOME/data/fam-tw/deep/twin.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+et="$("$BRAIN" entity data/fam-tw/deep/twin --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$et" | j "['card']['slug']")" "data/fam-tw/deep/twin" "a diverged duplicate resolves to itself, not its stale alias"
+eb="$("$BRAIN" entity twin --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$eb" | j "['found']")" "False" "a basename two pages share resolves to neither"
+rm -rf "$AC_HOME/data/fam-tw"
+
 pass
