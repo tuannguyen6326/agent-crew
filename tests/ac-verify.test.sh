@@ -800,6 +800,16 @@ AC_FLEET_SCOPE=parent-fam \
 assert_contains "$(cat "$VERIFY_PANE_LOG")" "wsfam=parent-fam" \
   "scoped: the reviewer pane resolves the scope's workspace, not the raw task id"
 
+# The review base is the FORK POINT, never the raw ref: a base branch that
+# advanced after the fork would put its own new commits into the reviewed diff
+# as reversions. The advanced base's only parent is the fork, so the round must
+# review exactly fork..target.
+advanced="$(git -C "$repo" commit-tree "$base^{tree}" -p "$base" -m "base advanced after the fork")"
+"$BIN/ac-verify.sh" codereview --repo "$repo" --ref "$target" --base "$advanced" \
+  --family "$family" --caller "$caller" --intent "$intent" --output "$output.forkpoint" >/dev/null
+assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Base ref: $base" "the review base is the fork point"
+assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "git diff $base $target" "...and the reviewed diff starts there"
+
 
 # CONTRADICTION CHECK surfacing (bin/ac-pane-agent.sh CONTRADICTION CHECK
 # emits a "warning" event, this caller reads it): must reach a human on BOTH

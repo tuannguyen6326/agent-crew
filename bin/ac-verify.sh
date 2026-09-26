@@ -56,8 +56,9 @@
 # own durable run state or in-tree infra may still be active - still retains
 # its pane/meta/lease for chief recovery or task teardown.
 # Code review snapshots the family room per round, scans decision-bearing
-# rulings before unrelated history, reviews the exact supplied base-to-ref
-# range through one direct agent-native full pass, and emits compact JSON.
+# rulings before unrelated history, reviews the range from the fork point
+# (merge-base of the supplied base and ref) to the exact ref through one
+# direct agent-native full pass, and emits compact JSON.
 # A structured --history ledger NARROWS round 2+ to the interdiff scope: the
 # last entry's reviewed_ref becomes the round's review obligation (the fix
 # delta, reviewed as rigorously as a first pass, following each fix's blast
@@ -402,6 +403,10 @@ sha="$(git -C "$repo" rev-parse --verify "${ref}^{commit}" 2>/dev/null)" \
 if [ "$kind" = codereview ]; then
   base_sha="$(git -C "$repo" rev-parse --verify "${base}^{commit}" 2>/dev/null)" \
     || ac_die "base does not resolve to a commit: $base"
+  # Review from the FORK POINT: a base branch that advanced after the fork
+  # would show the reviewer its own newer commits as reversions.
+  base_sha="$(git -C "$repo" merge-base "$base_sha" "$sha" 2>/dev/null)" \
+    || ac_die "base $base shares no history with $ref - nothing to diff against"
 else
   base_sha=""
 fi
