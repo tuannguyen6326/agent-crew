@@ -553,4 +553,16 @@ eb="$("$BRAIN" entity twin --home "$AC_HOME" --compact)"
 assert_eq "$(printf '%s' "$eb" | j "['found']")" "False" "a basename two pages share resolves to neither"
 rm -rf "$AC_HOME/data/fam-tw"
 
+# --- recall --since is a TIME, not a string prefix ---------------------------
+# created_at carries milliseconds while a fleet stamp (ac_iso) does not, so a
+# raw text compare dropped a fact made in the same second as the bound, and a
+# relative bound like 7d matched nothing at all.
+"$BRAIN" remember "the since probe fact rides a millisecond stamp" --provenance t --agent since-probe --home "$AC_HOME" --compact >/dev/null
+sec="$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT substr(created_at,1,19) || 'Z' FROM facts WHERE agent='since-probe'")"
+assert_contains "$("$BRAIN" recall --agent since-probe --since "$sec" --home "$AC_HOME" --compact)" "since probe fact" \
+  "a bound without milliseconds keeps a fact from that same second"
+assert_contains "$("$BRAIN" recall --agent since-probe --since 7d --home "$AC_HOME" --compact)" "since probe fact" \
+  "a relative bound is a duration back from now"
+if bad="$("$BRAIN" recall --since junk --home "$AC_HOME" --compact 2>&1)"; then fail "an unreadable --since must refuse (got: $bad)"; fi
+
 pass

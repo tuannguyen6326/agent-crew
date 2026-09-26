@@ -81,14 +81,14 @@
 //
 // CLI: ac-brain.sh is the wrapper; every command prints ONE JSON value.
 //   sync [--rebuild] [--dry-run] [--no-embed] [--force-reconcile] [--break-lease]
-//   recall [--query q] [--entity slug] [--agent a] [--since iso] [--limit n]
+//   recall [--query q] [--entity slug] [--agent a] [--since iso|7d] [--limit n]
 //          [--budget-tokens n] [--no-boosts] [--deputy id]
 //          (no --query: facts plus a browse of the store - the newest 50
 //          pages as slug/title/type/family/path/mtime/size and page_count)
 //   remember <fact> --provenance p --agent a [--entity slug] [--kind k] [--ttl 30d|iso]
 //   forget <id> [--reason r]      entity <name>       links-to <target>
 //   context_pack --entities a,b [--budget-tokens n]
-//   delta --agent a --session s [--since iso]
+//   delta --agent a --session s [--since iso|7d]
 //   synthesize <question>         doctor              stats
 //   serve                         (MCP stdio, the seven verbs)
 // Errors: {"protocol_version":1,"error":<code>,"message":...,"suggestion":...}
@@ -130,6 +130,16 @@ const USAGE_LOG = join(HOME, "state", "brain-usage.jsonl");
 const CONFIG = join(HOME, "config", "brain.json");
 
 const iso = (ms?: number) => new Date(ms ?? Date.now()).toISOString();
+// A --since bound is a TIME: stamps are compared as millisecond ISO text, so
+// an ISO without milliseconds (every ac_iso stamp) or a relative duration
+// (7d, 12h, 30m) is normalized to that form first, and anything else refuses.
+function parseSince(v: string): string {
+  const rel = /^(\d+)([smhdw])$/.exec(v);
+  if (rel) return iso(Date.now() - Number(rel[1]) * { s: 1e3, m: 6e4, h: 3.6e6, d: 8.64e7, w: 6.048e8 }[rel[2] as "s"]);
+  const ms = Date.parse(v);
+  if (Number.isNaN(ms)) die("invalid_params", `unreadable --since: ${v}`, "pass an ISO time (2026-09-26T08:00:00Z) or a duration (7d, 12h, 30m)");
+  return iso(ms);
+}
 
 function die(code: string, message: string, suggestion: string): never {
   console.log(JSON.stringify({ protocol_version: 1, error: code, message, suggestion }));
@@ -948,7 +958,8 @@ function packToBudget<T>(items: T[], cost: (x: T) => number, budget: number): { 
 async function cmdRecall() {
   const db = openDb();
   const t0 = performance.now();
-  const q = opt("query"), entity = opt("entity"), agent = opt("agent"), since = opt("since");
+  const q = opt("query"), entity = opt("entity"), agent = opt("agent");
+  const since = opt("since") ? parseSince(opt("since")!) : undefined;
   const limit = Math.min(Number(opt("limit", "8")), 50);
   const budget = opt("budget-tokens") ? Number(opt("budget-tokens")) : undefined;
   // facts arm
@@ -1228,7 +1239,7 @@ function cmdDelta() {
   const agent = opt("agent"), session = opt("session");
   if (!agent || !session) die("invalid_params", "delta needs an identity", "ac-brain delta --agent <pane-or-chief-id> --session <room-or-session-id>");
   const db = openDb();
-  const explicit = opt("since");
+  const explicit = opt("since") ? parseSince(opt("since")!) : undefined;
   const cur = db.query("SELECT * FROM cursors WHERE agent=? AND session=?").get(agent, session) as any;
   if (!cur && !explicit) {
     db.run("INSERT INTO cursors(agent,session,since_utc,since_slug,fact_since,fact_id,updated_at) VALUES(?,?,?,?,?,0,?)",
