@@ -5139,6 +5139,24 @@ export function reviewWakeFamily(homePath: string, file: string): string | null 
   return /^[a-zA-Z0-9_-]+$/.test(seg) ? seg : null;
 }
 
+/** The task a pooled worktree page belongs to, and that task's family: the
+ * slot meta names the lessee (ac-tree.sh), and the task's own meta in THIS home
+ * gives its scope - fleet_scope for scoped work, else the id's family. A page
+ * outside a pool slot, an idle slot, or a task this home does not run names
+ * no one, and its feedback stays with the fleet chief. */
+export function reviewWakeTask(homePath: string, file: string): { task: string; family: string } | null {
+  const m = /^(.*)\/\.crew\/worktrees\/([^/]+)\//.exec(file);
+  if (!m) return null;
+  let slot = "", taskMeta = "";
+  try { slot = readFileSync(`${m[1]}/.crew/slots/${m[2]}.meta`, "utf8"); } catch { return null; }
+  if (metaValue(slot, "leased") !== "1") return null;
+  const task = metaValue(slot, "task");
+  if (!/^[a-z0-9-]+$/.test(task)) return null;
+  try { taskMeta = readFileSync(`${homePath}/state/${task}.meta`, "utf8"); } catch { return null; }
+  const family = metaValue(taskMeta, "fleet_scope") || familyOfTaskId(task);
+  return /^[a-zA-Z0-9_-]+$/.test(family) ? { task, family } : null;
+}
+
 // Live long-polls per artifact file and the dedupe set for published wakes.
 // A message that lands while a poller holds the line needs NO wake (the poll
 // delivers it); with nobody listening the FIRST message publishes ONE wake -
@@ -5261,13 +5279,16 @@ async function reviewsAllHomes(): Promise<Response> {
 function publishReviewWake(homePath: string, file: string, text: string): void {
   const { id, payload } = reviewWakeParts(file, text);
   const binDir = new URL("../bin/", import.meta.url).pathname;
-  const full = reviewWakeText(file, payload);
   // Scope routing: a PROMOTED family's artifact wakes its own roomchief
-  // directly (the family spool only that chief drains); everything else -
-  // unpromoted families, pooled .lavish pages, archived families - wakes the
-  // fleet. The chief-pane meta is the promotion predicate teardown archives,
-  // so a demoted family falls back to the fleet spool by itself.
-  const fam = reviewWakeFamily(homePath, file);
+  // directly (the family spool only that chief drains) - a data/<family> page
+  // by its path, a crewmate's pooled page by the task leasing its slot, named
+  // in the text so the roomchief knows whose page it is; everything else -
+  // unpromoted families, idle slots, archived families - wakes the fleet. The
+  // chief-pane meta is the promotion predicate teardown archives, so a demoted
+  // family falls back to the fleet spool by itself.
+  const owner = reviewWakeFamily(homePath, file) ? null : reviewWakeTask(homePath, file);
+  const fam = reviewWakeFamily(homePath, file) ?? owner?.family ?? null;
+  const full = reviewWakeText(file, payload) + (owner ? ` task=${owner.task}` : "");
   const scope = fam && existsSync(`${homePath}/state/${fam}-chief.meta`) ? fam : "";
   // Test seam, DOUBLE-KEYED like every exec hook here (audit-f8): an
   // inherited env var alone must never make production exec an arbitrary

@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -3024,6 +3024,30 @@ test("reviewWakeFamily: data/<family> names the scope; pooled, archived, and off
   expect(reviewWakeFamily(h, "/home/fleet/data/loose.html")).toBeNull();
   // segment outside the id charset never becomes a spool name
   expect(reviewWakeFamily(h, "/home/fleet/data/we ird/x.html")).toBeNull();
+});
+
+test("reviewWakeTask: a leased pooled page names its task and that task's family", () => {
+  // A crewmate's review page lives in its pool slot, outside data/, so the
+  // path alone names no family and its feedback woke the fleet chief even
+  // when a roomchief owned the family.
+  const root = mkdtempSync(`${tmpdir()}/ac-dash-wake-task-`);
+  const home = `${root}/home`, repo = `${root}/repo`;
+  mkdirSync(`${home}/state`, { recursive: true });
+  mkdirSync(`${repo}/.crew/slots`, { recursive: true });
+  mkdirSync(`${repo}/.crew/worktrees/1-repo/.lavish`, { recursive: true });
+  const page = `${repo}/.crew/worktrees/1-repo/.lavish/page.html`;
+  writeFileSync(`${repo}/.crew/slots/1-repo.meta`, "leased=1\ntask=story-a\n");
+  writeFileSync(`${home}/state/story-a.meta`, "kind=ship\nfleet_scope=epic-x\n");
+  expect(reviewWakeTask(home, page)).toEqual({ task: "story-a", family: "epic-x" });
+  writeFileSync(`${home}/state/story-a.meta`, "kind=ship\n");
+  expect(reviewWakeTask(home, page)).toEqual({ task: "story-a", family: "story-a" });
+  // an idle slot, or a task this home does not run, names no one
+  writeFileSync(`${repo}/.crew/slots/1-repo.meta`, "leased=0\ntask=story-a\n");
+  expect(reviewWakeTask(home, page)).toBeNull();
+  writeFileSync(`${repo}/.crew/slots/1-repo.meta`, "leased=1\ntask=other\n");
+  expect(reviewWakeTask(home, page)).toBeNull();
+  expect(reviewWakeTask(home, `${home}/data/fam/report.html`)).toBeNull();
+  rmSync(root, { recursive: true, force: true });
 });
 
 // --- whiteboard Notify-crew wake (dash-wb-notify) ---------------------------
