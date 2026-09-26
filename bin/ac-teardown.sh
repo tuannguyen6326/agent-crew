@@ -18,8 +18,8 @@
 #   pool return);
 # - ship tasks: the work is landed - the crew/<id> branch head is contained in
 #   the default branch (local or origin), reachable from any remote branch, or
-#   the recorded PR was merged (pr_merged=1 in the meta) - and the worktree is
-#   clean.
+#   the recorded PR was merged (pr_merged=1 in the meta; when pr_merged_head is
+#   recorded, only a head it contains) - and the worktree is clean.
 # Both kinds also prove the worktree's OWN HEAD: pool slots start on a
 # detached HEAD and the return is --force, so a commit no branch carries - or
 # one made past crew/<id> - is refused unless something landed contains it.
@@ -277,8 +277,15 @@ head_landed() {
   # projects (crew-ship, direct-pr) land on origin. Checking only the
   # freshest ref (ac_default_ref: origin wins) reported a local-only
   # project's fully merged work as unlanded.
-  local head="$1" ref eb ebranch dep dirty pr_head ledger
-  [ "$(ac_meta_get "$meta" pr_merged)" = "1" ] && return 0
+  local head="$1" ref eb ebranch dep dirty pr_head ledger merged_head
+  # A merged PR proves the head it merged and what that head contains, never
+  # a commit made after it; a record that predates pr_merged_head keeps the
+  # bare proof.
+  if [ "$(ac_meta_get "$meta" pr_merged)" = "1" ]; then
+    merged_head="$(ac_meta_get "$meta" pr_merged_head)"
+    [ -z "$merged_head" ] && return 0
+    git -C "$project_dir" merge-base --is-ancestor "$head" "$merged_head" 2>/dev/null && return 0
+  fi
   # The OTHER PR proof: done does not wait for the merge. A ready-to-merge PR
   # the captain accepted in chat lands the task - the caller carries that
   # acceptance as --pr-ready '<the captain's words>', and the merge stays the

@@ -76,6 +76,18 @@ if [ -n "$project_dir" ] && [ -d "$project_dir" ] && ac_qa_required "$project_di
     || ac_die "merge blocked by qa.require_for_ship (see message above)"
 fi
 
+# The captain approves THE PR as ac-pr-check.sh recorded it, qa or not: a
+# recorded head pins the merge, so a push landing between that approval and
+# this call cannot merge commits nobody approved, and a head that already
+# moved refuses here with the re-record command rather than at gh.
+rec_head="$(ac_meta_get "$meta" pr_head)"
+if [ -n "$rec_head" ] && [ "$(ac_meta_get "$meta" pr)" = "$url" ]; then
+  live_head="${head_sha:-$(gh pr view "$url" --json headRefOid -q .headRefOid 2>/dev/null || true)}"
+  [ -z "$live_head" ] || [ "$live_head" = "$rec_head" ] \
+    || ac_die "merge refused: the PR head moved since it was recorded (recorded ${rec_head:0:12}, now ${live_head:0:12}) - the approval covered the recorded head; re-record it (bin/ac-pr-check.sh $id $url) and ask again"
+  head_sha="$rec_head"
+fi
+
 # Landing interlock: warn on <24h foreign-family overlaps before the merge,
 # record the landed files after it (header + ac-lib.sh landing-ledger block).
 family="$(ac_family_of_id "$id")"
@@ -92,9 +104,10 @@ ac_knowledge_warn "$family" "$project_dir"
 merge_args=(pr merge "$url")
 if [ -n "$method" ]; then merge_args+=("$method"); fi
 if [ "${#extra[@]}" -gt 0 ]; then merge_args+=("${extra[@]}"); fi
-# The qa gate judged head_sha; without the pin, a push landing between the
-# gate and this call would merge commits no attestation covers. A moved head
-# makes gh refuse, and the read-back below then reports the merge unproven.
+# head_sha is what the qa gate judged or the captain approved; without the
+# pin, a push landing between that and this call would merge commits neither
+# covers. A moved head makes gh refuse, and the read-back below then reports
+# the merge unproven.
 if [ -n "$head_sha" ]; then merge_args+=(--match-head-commit "$head_sha"); fi
 # Only the ATTEMPT is bookkept before the merge call. pr= itself rides the
 # PROOF alone, because pr= is exactly --pr-ready's precondition in
@@ -127,5 +140,9 @@ fi
 [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
 ac_meta_set "$meta" pr "$url"
 ac_meta_set "$meta" pr_merged 1
+# The head the forge merged, so teardown's merged proof covers that head and
+# nothing committed after it.
+merged_head="$(gh pr view "$url" --json headRefOid -q .headRefOid 2>/dev/null || true)"
+[ -z "$merged_head" ] || ac_meta_set "$meta" pr_merged_head "$merged_head"
 ac_status_append "$id" "merged: $url"
 printf 'merged %s\n' "$url"

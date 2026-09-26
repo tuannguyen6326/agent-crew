@@ -1852,6 +1852,27 @@ assert_no_file "$AC_HOME/state/tpr.meta" "the accepted teardown archives the met
 assert_contains "$(cat "$AC_HOME/state/archive/tpr/status")" "captain: ok to done" \
   "the captain's acceptance words are durable on the task record"
 
+# A MERGED PR proves only the head that was merged: commits past it on
+# crew/<id> were never part of the PR, and the teardown would destroy them as
+# landed. A record with no merged head keeps the old proof.
+"$BIN/ac-brief.sh" tpm proj --mode direct-pr >/dev/null
+"$BIN/ac-spawn.sh" tpm "$repo" --harness fake >/dev/null 2>&1
+pmwt="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/tpm.meta")"
+git -C "$pmwt" checkout -q -b crew/tpm
+printf 'merged work\n' >"$pmwt/tpm-merged.txt"
+git -C "$pmwt" add -A
+git -C "$pmwt" -c user.email=t@t -c user.name=t commit -qm "merged work"
+printf 'pr=https://github.com/o/r/pull/10\npr_merged=1\npr_merged_head=%s\n' "$(git -C "$pmwt" rev-parse HEAD)" \
+  >>"$AC_HOME/state/tpm.meta"
+printf 'after the merge\n' >"$pmwt/tpm-after.txt"
+git -C "$pmwt" add -A
+git -C "$pmwt" -c user.email=t@t -c user.name=t commit -qm "work after the merge"
+err="$("$BIN/ac-teardown.sh" tpm 2>&1 1>/dev/null)" && fail "commits past the merged PR head must refuse the teardown"
+assert_contains "$err" "not landed" "the refusal says the branch is not landed"
+assert_file "$AC_HOME/state/tpm.meta" "the refusal tears nothing down"
+git -C "$pmwt" reset -q --hard HEAD~1
+"$BIN/ac-teardown.sh" tpm >/dev/null 2>&1 || fail "a branch at the merged PR head lands by the merge"
+
 # A SOLO session (AC_SOLO=1) never spawns crew or roomchiefs - its one write
 # path is ac-self-task.sh; handing work to crew goes through the chief.
 err="$(AC_SOLO=1 "$BIN/ac-spawn.sh" tsx "$repo" --harness fake 2>&1)" \

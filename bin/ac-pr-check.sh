@@ -3,9 +3,9 @@
 #
 # Usage: ac-pr-check.sh <id> <github-pr-url>
 # Records pr= (the captain-facing PR link) and pr_head= (the PR's head SHA at
-# record time) on the task meta. Informational only: nothing currently reads
-# either field back - teardown's landed check gates on pr_merged=1, set
-# separately by ac-pr-merge.sh.
+# record time) on the task meta - the head the captain is asked to approve.
+# ac-pr-merge.sh pins its merge to pr_head, and ac-teardown.sh's --pr-ready
+# refuses commits past it.
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"

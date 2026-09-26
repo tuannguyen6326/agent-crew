@@ -122,6 +122,25 @@ assert_contains "$(cat "$AC_HOME/state/t3.meta")" "pr_merged=1" "the proof reach
 assert_contains "$(cat "$AC_HOME/state/t3.meta")" "pr=$url" "pr= rides the proof"
 GHMERGEFAIL=""
 
+# The captain approves THE PR as recorded: a recorded pr_head pins the merge
+# even when qa is not required, so a push between the approval and the merge
+# cannot land commits nobody approved; a head that already moved refuses before
+# the call; and the merged head is recorded so teardown can bind to it.
+printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t5.meta"
+merge t5 "$url" >/dev/null || fail "a merge at the recorded head proceeds"
+assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--match-head-commit]\n[abc111]\n' "$url")" \
+  "the recorded PR head pins the merge"
+printf 'backend=tmux\npr=https://github.com/acme/widget/pull/8\npr_head=abc111\n' >"$AC_HOME/state/t6.meta"
+merge t6 "$url" >/dev/null
+assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n' "$url")" "another PR's head never pins this one"
+printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t7.meta"
+: >"$GHLOG"
+out="$(GHVIEW=def222 merge t7 "$url" 2>&1)" && fail "a PR head that moved since it was recorded must refuse"
+assert_contains "$out" "moved since it was recorded" "the refusal names the moved head"
+assert_eq "$(argv)" "" "a moved head never reaches the merge call"
+GHVIEW=abc111 merge t7 "$url" >/dev/null
+assert_contains "$(cat "$AC_HOME/state/t7.meta")" "pr_merged_head=abc111" "the merged head is recorded"
+
 # Tail passes through verbatim; a method flag in the tail is not doubled.
 merge t1 "$url" -- --squash --admin >/dev/null
 assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--admin]\n' "$url")" "tail verbatim, --squash not doubled"
