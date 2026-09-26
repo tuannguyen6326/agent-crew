@@ -133,6 +133,22 @@ assert_eq "$(embed_calls)" "$((c0 + 1))" "...exactly one text went to the provid
 vo2="$("$BRAIN" recall --query "zzq" --home "$AC_HOME" --compact)"
 case "$vo2" in *search_degraded*) fail "a rebuilt index must still serve the vector arm: $vo2" ;; esac
 assert_eq "$(printf '%s' "$vo2" | j "['results'][0]['slug']")" "data/leaf/room" "the re-attached and re-embedded vectors rank as before"
+
+# --- a normal sync reuses a changed page's unchanged-chunk vectors ------------
+# Editing one section of a page deletes and reinserts all of its chunks; the
+# chunks whose text did not change must keep their vectors, not re-buy them.
+mkdir -p "$AC_HOME/data/multi"
+printf '# Multi\n## One\nThe first section of the multi page, long enough to chunk.\n## Two\nThe second section of the multi page, long enough to chunk.\n## Three\nThe third section of the multi page, long enough to chunk.\n' \
+  >"$AC_HOME/data/multi/room.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+c1="$(embed_calls)"
+printf '# Multi\n## One\nThe first section of the multi page, long enough to chunk.\n## Two\nThe second section, now reworded so its text hash moves.\n## Three\nThe third section of the multi page, long enough to chunk.\n' \
+  >"$AC_HOME/data/multi/room.md"
+ns="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$ns" | j "['reattached']")" "2" "the page's unchanged chunks keep their vectors"
+assert_eq "$(printf '%s' "$ns" | j "['embedded']")" "1" "only the reworded chunk re-embeds"
+assert_eq "$(embed_calls)" "$((c1 + 1))" "...exactly one text went to the provider"
+rm -rf "$AC_HOME/data/multi"
 stub_down
 
 # the dims guard's remedy is that rebuild: a width change must not refuse it

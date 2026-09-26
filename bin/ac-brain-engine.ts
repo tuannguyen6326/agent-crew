@@ -559,6 +559,16 @@ function syncInner(db: Database, t0: number) {
     changed++;
   }
   if (dry) { out({ dry_run: true, files: files.length, would_change: changed, skipped_mtime: skippedMtime, skipped_hash: skippedHash }); return; }
+  // A changed page reinserts all of its chunks; the vectors of the ones whose
+  // text, model and width did not change ride the same temp table a rebuild
+  // uses and are re-attached below, so an edit re-embeds only what it changed.
+  if (!rebuild && ec && batch.length) {
+    db.run("DROP TABLE IF EXISTS temp.kept_vectors");
+    db.run(`CREATE TEMP TABLE kept_vectors AS SELECT text_hash, embedding FROM chunks WHERE embedding IS NOT NULL
+      AND text_hash IS NOT NULL AND embed_model=? AND embed_dims=? AND slug IN (SELECT value FROM json_each(?))`,
+      [ec.model, ec.dims, JSON.stringify(batch.map(b => b.slug))]);
+    db.run("CREATE INDEX temp.idx_kept_vectors ON kept_vectors(text_hash)");
+  }
 
   const tx = db.transaction((items: Item[]) => {
     for (const it of items) {
@@ -578,7 +588,7 @@ function syncInner(db: Database, t0: number) {
   });
   tx(batch);
   let reattached = 0;
-  if (rebuild && ec) {
+  if (ec && (rebuild || batch.length)) {
     reattached = db.run(`UPDATE chunks SET embedding=(SELECT embedding FROM kept_vectors k WHERE k.text_hash=chunks.text_hash LIMIT 1),
       embedded_at=?, embed_model=?, embed_dims=? WHERE embedding IS NULL AND text_hash IN (SELECT text_hash FROM kept_vectors)`,
       [iso(), ec.model, ec.dims]).changes;
