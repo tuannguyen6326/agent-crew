@@ -33,4 +33,13 @@ printf 'worktree=/tmp/x\nharness=fake\n' >"$AC_HOME/state/f1.meta"
 assert_fails "$BIN/ac-follow.sh" f1
 assert_fails "$BIN/ac-follow.sh" nosuch
 
+# The followed dir sits under the transcript root the pane's claude wrote to -
+# CLAUDE_CONFIG_DIR's, not a hard-wired ~/.claude. A stub python3 stands in
+# for the (endless) dir-mode renderer and just echoes what it was handed.
+fpy="$TMP/fakepy"; mkdir -p "$fpy"
+printf '#!/bin/sh\necho "renderer $*"\n' >"$fpy/python3"; chmod +x "$fpy/python3"
+printf 'worktree=/tmp/wt.x\nharness=claude\n' >"$AC_HOME/state/f2.meta"
+out="$(env -u AC_CLAUDE_TRANSCRIPT_ROOT PATH="$fpy:$PATH" CLAUDE_CONFIG_DIR="$TMP/cfg" "$BIN/ac-follow.sh" f2 2>&1)"
+assert_contains "$out" "renderer -u - dir $TMP/cfg/projects/-tmp-wt-x" "follows the transcripts under CLAUDE_CONFIG_DIR"
+
 pass

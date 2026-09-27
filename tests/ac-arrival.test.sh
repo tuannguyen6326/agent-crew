@@ -43,6 +43,18 @@ for h in codex opencode pi cursor made-up; do
     "$h has no arrival capability (per-harness, not a universal law)"
 done
 
+# --- ac_claude_transcript_root: seam, then CLAUDE_CONFIG_DIR, then ~/.claude -
+# A chief under a non-default config dir hands it to every pane
+# (ac_claude_config_env), so claude writes that pane's transcripts under it.
+
+root_of() { env -u AC_CLAUDE_TRANSCRIPT_ROOT "$@" bash -c ". '$BIN/ac-lib.sh'; ac_claude_transcript_root"; }
+assert_eq "$(root_of HOME=/h CLAUDE_CONFIG_DIR=/cfg/work)" "/cfg/work/projects" \
+  "a set CLAUDE_CONFIG_DIR is where claude keeps the transcripts"
+assert_eq "$(root_of -u CLAUDE_CONFIG_DIR HOME=/h)" "/h/.claude/projects" \
+  "no CLAUDE_CONFIG_DIR falls back to ~/.claude"
+assert_eq "$(root_of HOME=/h CLAUDE_CONFIG_DIR=/cfg AC_CLAUDE_TRANSCRIPT_ROOT=/seam)" "/seam" \
+  "the test seam still wins over both"
+
 # --- ac_claude_transcript_path: glob by session id, injectable root --------
 
 sid1="11111111-1111-1111-1111-111111111111"

@@ -8,7 +8,7 @@
 #   ac-follow.sh --render <jsonl>  # one-shot render of a transcript (tests)
 #
 # Resolution: the task meta gives worktree= (claude keys transcripts by cwd:
-# ~/.claude/projects/<slugified-worktree>/) and session_id=. The stream
+# <ac_claude_transcript_root>/<slugified-worktree>/) and session_id=. The stream
 # follows the DIRECTORY, auto-switching to the newest transcript when the
 # crewmate forks/starts sub-sessions. ctrl-c to stop; the crewmate is
 # never touched (read-only).
@@ -122,7 +122,7 @@ worktree="$(ac_meta_get "$meta" worktree)"
 
 # claude slugs the cwd: / and . become -
 slug="$(printf '%s' "$worktree" | sed 's/[/.]/-/g')"
-proj="$HOME/.claude/projects/$slug"
+proj="$(ac_claude_transcript_root)/$slug"
 [ -d "$proj" ] || ac_warn "no transcripts yet at $proj (crewmate still booting?)"
 printf '%s\n' "following $id ($proj) - ctrl-c to stop" >&2
 renderer dir "$proj"

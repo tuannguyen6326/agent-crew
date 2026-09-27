@@ -275,7 +275,7 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_SPAWN_META_CLAIM_STALE_GRACE` | 15 | Seconds after which a dead claimant's spawn meta-claim is reclaimable. |
 | `AC_SPAWN_META_CLAIM_TIMEOUT` | 30 | Seconds a spawn waits on a live meta-claim before refusing. |
 | `AC_ROOM_OVERCAP_REASON` | unset | Same as `ac-spawn.sh --roomchief --over-cap`: a captain sanction that promotes one chief past `config/room-parallel` for this spawn only. |
-| `AC_CLAUDE_TRANSCRIPT_ROOT` | `~/.claude/projects` | Root `ac_claude_transcript_path` globs to confirm a prompt arrived in a claude session. The test suite pins it to an empty directory. |
+| `AC_CLAUDE_TRANSCRIPT_ROOT` | `$CLAUDE_CONFIG_DIR/projects`, else `~/.claude/projects` | Root every claude transcript reader resolves through (`ac_claude_transcript_root`): the arrival probe, `ac-follow.sh` and `ac-pane-agent.sh`. The test suite pins it to an empty directory. |
 | `AC_CREW_SKILLS` | `crew-ship crew-verify crew-qa domain-e2e document` | Built-in skills symlinked into each crew worktree (`.claude/skills`, or `.agents/skills` for codex). |
 | `AC_MAX_TREES` | `<repo>/.crew/config` `max_trees=`, else 8 | Worktree pool cap per project repo (`bin/ac-tree.sh`). |
 | `AC_PORT_BASE` | 20000 | Base of the per-worktree port slots: slot `n` owns `AC_PORT_BASE + n*100` through `+99`, written to `<worktree>/.crew/ports.env`. |

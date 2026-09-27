@@ -1544,8 +1544,10 @@ ac_arrival_capable() {
 ac_claude_transcript_root() {
   # The claude session-transcript root. AC_CLAUDE_TRANSCRIPT_ROOT is the ONE
   # injectable seam this probe needs: hard-wired to $HOME/.claude/projects it
-  # could never be driven from the fake-backend test suite.
-  printf '%s\n' "${AC_CLAUDE_TRANSCRIPT_ROOT:-$HOME/.claude/projects}"
+  # could never be driven from the fake-backend test suite. Under a
+  # CLAUDE_CONFIG_DIR (which ac_claude_config_env hands every pane) claude
+  # keeps its transcripts there instead of ~/.claude.
+  printf '%s\n' "${AC_CLAUDE_TRANSCRIPT_ROOT:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects}"
 }
 
 ac_claude_transcript_path() {

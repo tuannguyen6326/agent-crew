@@ -1010,7 +1010,7 @@ if [ "$ARM" != oneshot ]; then
 fi
 
 SLUG=$(printf '%s' "$CWD" | sed 's/[/.]/-/g')
-PROJ="$HOME/.claude/projects/$SLUG"
+PROJ="$(ac_claude_transcript_root)/$SLUG"
 
 # 1. pre-seed workspace trust so the claude session starts undialoged. SESSION
 # arm only: the other two open no claude session, so there is no dialog to

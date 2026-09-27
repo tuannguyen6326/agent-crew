@@ -17,6 +17,9 @@ stub="$TMP/stubbin"
 mkdir -p "$stub"
 export HDLOG="$TMP/hd.log" FAKEHOME="$TMP/fakehome"
 mkdir -p "$FAKEHOME"
+# The helper resolves transcripts through ac_claude_transcript_root; the stub
+# claude writes them under the fake HOME every run below passes.
+export AC_CLAUDE_TRANSCRIPT_ROOT="$FAKEHOME/.claude/projects"
 
 cat >"$stub/herdr" <<'EOF'
 #!/usr/bin/env bash
