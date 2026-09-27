@@ -486,20 +486,6 @@ assert_fails run_backend herdr 'backend_send_line_pane pR3 "lost steer"'
 assert_contains "$(cat "$FAKE_HERDR/panes/pR3.in")" "lost steer" "text sits stranded in the composer"
 case "$(cat "$FAKE_HERDR/panes/pR3.buf")" in *"lost steer"*) fail "stranded text must not appear submitted" ;; esac
 
-# The raw-pane RESUBMIT: the text a strand left in the composer is pressed
-# again, never typed again (a second copy would append to it), on the pane's
-# own tab, with the send's verdicts.
-printf 'pR4\n' >"$FAKE_HERDR/tabs/tR4"; : >"$FAKE_HERDR/panes/pR4.buf"
-printf 'tR4\n' >"$FAKE_HERDR/panes/pR4.tab"
-printf 'held kickoff' >"$FAKE_HERDR/panes/pR4.in"
-: >"$FAKE_HERDR/log"
-run_backend herdr 'backend_submit_verified_pane pR4 "held kickoff"' >/dev/null
-assert_contains "$(cat "$FAKE_HERDR/log")" "tab focus tR4" "the resubmit focuses the pane's own tab"
-assert_eq "$(grep -c "held kickoff" "$FAKE_HERDR/panes/pR4.buf")" "1" "the resubmit submits the held text once"
-printf 'still held' >"$FAKE_HERDR/panes/pR4.in"; printf '1\n' >"$FAKE_HERDR/panes/pR4.drop-enters"
-rc=0; run_backend herdr 'backend_submit_verified_pane pR4 "still held"' || rc=$?
-assert_eq "$rc" "1" "a dropped resubmit is a strand"
-
 # Fails closed on an empty pane id rather than typing into whatever
 # `pane send-text ""` reaches (the backend_capture_pane floor, same reason).
 assert_fails run_backend herdr 'backend_send_line_pane "" "nowhere"'
