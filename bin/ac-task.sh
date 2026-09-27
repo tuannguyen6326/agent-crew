@@ -7,7 +7,8 @@
 # second dialect.
 #
 #   ac-task.sh add <id> <one-line> [--contract '<tokens>'] [--repo <name>]
-#   ac-task.sh start <id>                 # Queued -> In flight, stamps `since`
+#   ac-task.sh start <id>                 # Queued -> In flight, stamps `since`;
+#                                         # refuses while a blocker is not clean Done
 #   ac-task.sh done <id> <outcome> [--verb merged|reported|...]
 #   ac-task.sh hold <id> [--until <YYYY-MM-DD>] [--why <text>]
 #   ac-task.sh unhold <id>
@@ -91,6 +92,32 @@ hold_fields() {
   out="${out#*$'\t'}"
   HF_UNTIL="${out%%$'\t'*}"
   HF_MALFORMED="${out#*$'\t'}"
+}
+
+# unresolved_blocker <id> - the first of the row's blockers that is not a
+# clean Done row, as `<blocker> <why>`, or `blocked-by malformed`; empty when
+# the row may start. The same rule ac-ready.sh schedules by (docs/backlog.md),
+# read here because the scheduler only advises.
+unresolved_blocker() {
+  printf '%s\n' "${L[@]}" | awk -v want="$1" "$AC_DONELINE_AWK"'
+    /^## In flight/ { sec = "in flight"; next }
+    /^## Queued/    { sec = "queued";    next }
+    /^## Done/      { sec = "done";      next }
+    /^- \[[ x]\] / {
+      ac_doneline($0, o)
+      st[o["id"]] = sec; mk[o["id"]] = o["terminal"]
+      if (o["id"] == want) { bl = o["blockers"]; bad = o["blockers_malformed"] }
+    }
+    END {
+      if (bad != "") { print "blocked-by malformed"; exit }
+      m = split(bl, bs, ",")
+      for (j = 1; j <= m; j++) {
+        b = bs[j]
+        if (!(b in st)) { print b " (missing)"; exit }
+        if (mk[b] == "failed" || mk[b] == "abandoned") { print b " (" mk[b] ")"; exit }
+        if (st[b] != "done") { print b " (" st[b] ")"; exit }
+      }
+    }'
 }
 
 # split_hold <line> - the surgery half of what hold_fields judges: locate the
@@ -231,7 +258,7 @@ cmd_add() {
 }
 
 cmd_start() {
-  local id="${1:-}" i block=() spent=""
+  local id="${1:-}" i block=() spent="" blocker
   [ -n "$id" ] || ac_die "usage: ac-task.sh start <id>"
   load
   find_row "$id" || ac_die "no row for '$id'"
@@ -251,6 +278,8 @@ cmd_start() {
       ac_die "$id is held - release it before starting (docs/backlog.md)"
     fi
   fi
+  blocker="$(unresolved_blocker "$id")"
+  [ -z "$blocker" ] || ac_die "$id is blocked: $blocker - it starts only once every blocker is a clean Done row (docs/backlog.md)"
   for ((i = ROW_I; i <= ROW_END; i++)); do block+=("${L[$i]}"); done
   block[0]="$(stamp_since "${block[0]}")"
   splice_out "$ROW_I" $((ROW_END - ROW_I + 1))

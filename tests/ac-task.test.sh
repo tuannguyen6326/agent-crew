@@ -151,6 +151,26 @@ grep -F -- 'expiredrow' "$ledger" | grep -qF -- '[@held' \
   && fail "the spent dated token must be stripped when the row starts"
 "$BIN/ac-task.sh" done expiredrow 'x' >/dev/null
 
+# ---- start refuses a row whose blockers do not ALL resolve to a clean Done
+#      row - the same rule ac-ready.sh schedules by, enforced at the verb, since
+#      the scheduler only advises and a chief can name any id.
+awk '{ print } /^## Queued/ {
+  print "- [ ] onflying - waits on flying (repo: shop) blocked-by: flying - needs it"
+  print "- [ ] onfailed - waits on a failure (repo: shop) blocked-by: landed,sank - needs both"
+  print "- [ ] onghost - waits on nothing real (repo: shop) blocked-by: nosuchrow - typo"
+  print "- [ ] onbad - unreadable dependency (repo: shop) blocked-by: landed, flying - spaced"
+  print "- [ ] onlanded - waits on landed work (repo: shop) blocked-by: landed - done"
+} /^## Done/ { print "- [x] sank [failed] - it broke - why (2026-08-02)" }' "$ledger" >"$TMP/blk.md" && mv "$TMP/blk.md" "$ledger"
+cp "$ledger" "$TMP/before-blk.md"
+assert_fails_with "flying (in flight)" -- "$BIN/ac-task.sh" start onflying
+assert_fails_with "sank (failed)" -- "$BIN/ac-task.sh" start onfailed
+assert_fails_with "nosuchrow (missing)" -- "$BIN/ac-task.sh" start onghost
+assert_fails_with "blocked-by malformed" -- "$BIN/ac-task.sh" start onbad
+cmp -s "$TMP/before-blk.md" "$ledger" || fail "a blocker refusal must not touch the file"
+out="$("$BIN/ac-task.sh" start onlanded)"
+assert_contains "$out" "ok:" "a row whose blockers are all clean Done starts"
+grep -vE '^- \[[ x]\] (onflying|onfailed|onghost|onbad|onlanded|sank) ' "$ledger" >"$TMP/blk.md" && mv "$TMP/blk.md" "$ledger"
+
 # ---- a HAND-WRITTEN malformed until date fails CLOSED (HELD, never READY):
 #      hand-editing stays legal and a slip may not read as no-hold.
 awk '{ print } /^## Queued/ { print "- [ ] badhold [@held until soon] - hand-edited slip (repo: shop)" }' \
