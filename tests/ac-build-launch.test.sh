@@ -49,17 +49,23 @@ assert_eq "$(lib 'ac_build_launch claude "" "" r-9 s-123')" \
 # codex has no --effort (verified `codex --help`, codex-cli 0.144.6), so the
 # fleet's effort would otherwise be silently DROPPED and whatever the host's
 # ~/.codex/config.toml pins would decide the reasoning tier.
+# Every codex line also switches its startup update prompt off: codex 0.157
+# takes the keys typed at that prompt as its options while herdr reads it idle,
+# so a kickoff typed there lost its head up to the first `2` (Skip), and a `1`
+# would run `brew upgrade` (harness-facts.md, codex UPDATE PROMPT).
 assert_eq "$(lib 'ac_build_launch codex cmod high')" \
-  "codex -m cmod -c model_reasoning_effort=high" \
+  "codex -c check_for_update_on_startup=false -m cmod -c model_reasoning_effort=high" \
   "codex gets -m plus the effort as a -c config override"
 case "$(lib 'ac_build_launch codex cmod high')" in
   *--effort*) fail "codex must never get --effort: the flag does not exist" ;;
 esac
-assert_eq "$(lib 'ac_build_launch codex "" high')" "codex -c model_reasoning_effort=high" \
+assert_eq "$(lib 'ac_build_launch codex "" high')" \
+  "codex -c check_for_update_on_startup=false -c model_reasoning_effort=high" \
   "codex effort stands alone when no model is pinned"
-assert_eq "$(lib 'ac_build_launch codex cmod ""')" "codex -m cmod" \
+assert_eq "$(lib 'ac_build_launch codex cmod ""')" "codex -c check_for_update_on_startup=false -m cmod" \
   "an unset effort passes nothing, leaving codex's own default in charge"
-assert_eq "$(lib 'ac_build_launch codex "" ""')" "codex" "bare codex"
+assert_eq "$(lib 'ac_build_launch codex "" ""')" "codex -c check_for_update_on_startup=false" \
+  "bare codex still launches with the update prompt off"
 # opencode takes -m as well (`-m, --model <provider>/<model>`, `opencode --help`
 # on opencode 1.18.4), but its effort has NO route into the interactive TUI the
 # crewmate is launched with: `--variant` exists only on the `run` subcommand, so

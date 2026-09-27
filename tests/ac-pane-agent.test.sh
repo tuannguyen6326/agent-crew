@@ -1679,7 +1679,7 @@ creset
 out="$(crun --harness codex --kind codereview --label c1 --model gpt-5.6-sol --effort xhigh)"
 assert_contains "$out" '"event":"done","status":"ok"' "a codex verification turn completes"
 assert_contains "$out" '"source":"file"' "the ok event names the file harvest that produced it"
-assert_contains "$(cat "$HDLOG.cmd")" "codex -m gpt-5.6-sol -c model_reasoning_effort=xhigh" \
+assert_contains "$(cat "$HDLOG.cmd")" "codex -c check_for_update_on_startup=false -m gpt-5.6-sol -c model_reasoning_effort=xhigh" \
   "the INTERACTIVE launch line is composed by the shared mote, in codex's own dialect"
 case "$(cat "$HDLOG.cmd")" in *"codex exec"*) fail "the crewmate arm must not launch the one-shot form" ;; esac
 # NO positional prompt on the launch line - that shape is what made opencode
@@ -1745,7 +1745,7 @@ printf 'codex\n' >"$AC_HOME/config/codereview-agent"
 printf 'gpt-5.6-sol\n' >"$AC_HOME/config/codereview-model"
 printf 'xhigh\n' >"$AC_HOME/config/codereview-effort"
 out="$(crun --kind codereview --label c-agent-triple)"
-assert_contains "$(cat "$HDLOG.cmd")" "codex -m gpt-5.6-sol -c model_reasoning_effort=xhigh" \
+assert_contains "$(cat "$HDLOG.cmd")" "codex -c check_for_update_on_startup=false -m gpt-5.6-sol -c model_reasoning_effort=xhigh" \
   "the per-role agent/model/effort knobs resolve together, in the resolved harness's own dialect"
 rm -f "$AC_HOME/config/codereview-agent" "$AC_HOME/config/codereview-model" "$AC_HOME/config/codereview-effort"
 

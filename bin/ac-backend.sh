@@ -568,7 +568,11 @@ ac_build_launch() {
       [ -n "$m" ] && launch="$launch --model $m"
       [ -n "$e" ] && launch="$launch --effort $e" ;;
     codex)
-      launch="codex"
+      # The startup update prompt takes typed keys as its options while herdr
+      # reads it idle, so the kickoff typed after the ready gate lands IN it
+      # (harness-facts.md, codex UPDATE PROMPT); updating codex is the
+      # captain's act, never a pane's.
+      launch="codex -c check_for_update_on_startup=false"
       [ -n "$m" ] && launch="$launch -m $m"
       [ -n "$e" ] && launch="$launch -c model_reasoning_effort=$e" ;;
     opencode)
