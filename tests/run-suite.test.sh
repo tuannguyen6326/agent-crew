@@ -236,8 +236,9 @@ git -C "$splitrepo" config user.name test
 printf '#!/usr/bin/env bash\n# fixture ac-spawn\n' >"$splitrepo/bin/ac-spawn.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-teardown\n' >"$splitrepo/bin/ac-teardown.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-other, unrelated - proves the map NARROWS instead of widening\n' >"$splitrepo/bin/ac-other.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-qa-lib, pinned inside ac-qa.test.sh\n' >"$splitrepo/bin/ac-qa-lib.sh"
 printf '#!/usr/bin/env bash\n. "%s/tests/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/ac-other.test.sh"
-for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown; do
+for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-qa; do
   printf '#!/usr/bin/env bash\n. "%s/tests/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/$t.test.sh"
 done
 chmod +x "$splitrepo"/bin/*.sh "$splitrepo"/tests/*.test.sh
@@ -260,6 +261,16 @@ case "$out" in
   *"has no colocated test"*) fail "ac-spawn.sh must not print the false widen reason once its split-name map exists" ;;
 esac
 git -C "$splitrepo" checkout -q -- bin/ac-spawn.sh
+
+# ac-qa-lib.sh keeps its pins inside ac-qa.test.sh: touching it selects that
+# test, never a widen for want of an ac-qa-lib.test.sh.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-qa-lib.sh"
+res="$(run_runner --changed "$splitrepo/tests")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-qa-lib.sh's test must still be green"
+assert_contains "$out" "RUNNING ac-qa.test.sh" "ac-qa-lib.sh maps to ac-qa.test.sh"
+assert_contains "$out" "1/1 passed" "ac-qa-lib.sh selects exactly ac-qa.test.sh"
+git -C "$splitrepo" checkout -q -- bin/ac-qa-lib.sh
 
 # 2) touching bin/ac-teardown.sh alone selects its ONE mapped split-name test.
 printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-teardown.sh"
@@ -296,8 +307,9 @@ git -C "$splitrepo" checkout -q -- bin/ac-spawn.sh
 # A ported script keeps its bin/ac-<n>.sh entry (a shim) and moves its logic
 # to src/<n>.ts, whose Bun unit tests (tests/*.test.ts) run through ONE
 # wrapper, tests/src.test.sh. So src/<n>.ts selects that wrapper plus the
-# entry's black-box tests/ac-<n>.test.sh, a changed tests/*.test.ts selects
-# the wrapper, and a module other src/ files IMPORT is a shared library: it
+# black-box tests of every bin script that starts it (its entry, and any
+# other script running a mode of it), a changed tests/*.test.ts selects the
+# wrapper, and a module other src/ files IMPORT is a shared library: it
 # narrows to its importers' tests the way a sourced bash lib narrows to its
 # sourcers'. The fixture wrapper is a plain pass - no bun needed here.
 tsrepo="$TMP/fixture-changed-ts"
@@ -307,13 +319,25 @@ git -C "$tsrepo" config user.email test@test
 git -C "$tsrepo" config user.name test
 printf '#!/usr/bin/env bash\nexec bun "$root/src/qux.ts" -- "$@"\n' >"$tsrepo/bin/ac-qux.sh"
 # A bash script and its test that merely SHARE a src module's name - even
-# one whose comment names that module - are no entry of it: only a
-# bin/ac-<n>.sh that execs src/<n>.ts pairs with it.
+# one whose comment names that module - are no entry of it: only a bin
+# script with a non-comment line naming src/<n>.ts starts it.
 printf '#!/usr/bin/env bash\n# fixture bash lib; its TypeScript twin is src/util.ts\n' >"$tsrepo/bin/ac-util.sh"
 printf 'import { u } from "./util.ts";\n' >"$tsrepo/src/qux.ts"
 printf 'export const u = 1;\n' >"$tsrepo/src/util.ts"
 printf 'import { u } from "../src/util.ts";\n' >"$tsrepo/tests/util.test.ts"
-for t in ac-qux src ac-other ac-util; do
+# src/pth.ts has no entry of its own: two scripts run modes of it, the shape
+# of src/paths.ts under bin/ac-qa.sh and bin/ac-verify.sh.
+printf 'export const p = 1;\n' >"$tsrepo/src/pth.ts"
+# The long tail after the starting line is bin/ac-qa.sh's shape: a pipe that
+# stops reading at the first match SIGPIPEs its writer there.
+{
+  # shellcheck disable=SC2016 # fixture CONTENT, expanded only if the fixture ran
+  printf '#!/usr/bin/env bash\nwithin() { ( ac_bun_exec src/pth.ts within "$1" "$2" ); }\n'
+  awk 'BEGIN { for (i = 0; i < 20000; i++) print ": filler" }'
+} >"$tsrepo/bin/ac-check.sh"
+# shellcheck disable=SC2016 # fixture CONTENT, as above
+printf '#!/usr/bin/env bash\nport="$(ac_bun_exec src/pth.ts free-port)"\n' >"$tsrepo/bin/ac-audit.sh"
+for t in ac-qux src ac-other ac-util ac-check ac-audit; do
   printf '#!/usr/bin/env bash\n. "%s/tests/helpers.sh"\npass\n' "$ROOT" >"$tsrepo/tests/$t.test.sh"
 done
 chmod +x "$tsrepo"/bin/*.sh "$tsrepo"/tests/*.test.sh
@@ -344,6 +368,42 @@ assert_eq "$rc" "0" "--changed on a tests/*.test.ts change must still be green"
 assert_contains "$out" "RUNNING src.test.sh" "a changed Bun unit test must select its wrapper"
 assert_contains "$out" "1/1 passed" "a changed Bun unit test must select only the wrapper"
 git -C "$tsrepo" checkout -q -- tests/util.test.ts
+
+printf 'export const q = 2;\n' >>"$tsrepo/src/pth.ts"
+res="$(run_runner --changed "$tsrepo/tests")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on a module other scripts start must still be green"
+assert_contains "$out" "RUNNING ac-check.test.sh" "src/pth.ts must select the test of a script that runs a mode of it"
+assert_contains "$out" "RUNNING ac-audit.test.sh" "src/pth.ts must select EVERY starting script's test"
+assert_contains "$out" "3/3 passed" "src/pth.ts must select exactly the wrapper and its starters' tests, not widen"
+git -C "$tsrepo" checkout -q -- src/pth.ts
+
+# A starting script with no colocated test is unknown blast radius: widen,
+# naming the starter mechanism. Committed first, so the new script is not
+# itself a changed file widening on its own.
+# shellcheck disable=SC2016 # fixture CONTENT, as above
+printf '#!/usr/bin/env bash\nac_bun_exec src/pth.ts realpath "$1"\n' >"$tsrepo/bin/ac-nocheck.sh"
+git -C "$tsrepo" add -A
+git -C "$tsrepo" commit -q -m "a starter with no colocated test"
+printf 'export const q = 2;\n' >>"$tsrepo/src/pth.ts"
+res="$(run_runner --changed "$tsrepo/tests")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed widened by an untested starter must still be green"
+assert_contains "$out" "6/6 passed" "a module started by a script with no colocated test must WIDEN to the full set"
+assert_contains "$out" "src/pth.ts is started by a bin script that has no colocated test" "the widen reason must name the starter mechanism, not claim the module itself lacks a test"
+git -C "$tsrepo" checkout -q -- src/pth.ts
+
+# ...and still widens once another module imports it, making it a shared
+# library whose importers' tests alone would read as a safe narrowing.
+printf 'import { p } from "./pth.ts";\n' >"$tsrepo/src/imp.ts"
+git -C "$tsrepo" add -A
+git -C "$tsrepo" commit -q -m "an importer of the module"
+printf 'export const q = 2;\n' >>"$tsrepo/src/pth.ts"
+res="$(run_runner --changed "$tsrepo/tests")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_contains "$out" "6/6 passed" "an imported module with an untested starter must WIDEN, not narrow to its importers"
+assert_contains "$out" "src/pth.ts is started by a bin script that has no colocated test" "the imported module's widen names the starter mechanism too"
+git -C "$tsrepo" checkout -q -- src/pth.ts
 
 # --- --changed: a clean, fully-committed tree exits non-zero, runs nothing --
 #

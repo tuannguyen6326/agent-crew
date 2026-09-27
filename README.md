@@ -25,7 +25,7 @@ Every task is delegated to a disposable crewmate agent in its own git worktree a
 
 - macOS or Linux with `bash`, `git`, and `jq`.
 - `gh`, authenticated, for the PR steps.
-- `bun` (floor 1.3.5): the `bin/` entries ported to TypeScript under `src/` run on it, as do the web dashboard and the brain engine.
+- `bun` (floor 1.3.5): the TypeScript under `src/` runs on it - the ported `bin/` entries and the helpers other `bin/` scripts start - as do the web dashboard and the brain engine.
 - A session backend, chosen per fleet in `config/backend`:
   - `herdr` (the default, `brew install herdr`);
   - `orca` (install the Orca app - its CLI ships with it).

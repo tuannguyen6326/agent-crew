@@ -73,7 +73,7 @@ bin/ac-lint.sh                     # opt-in: bash -n + shellcheck over changed f
 
 - `tests/run-suite.sh` exits 0 when all pass, 1 when any test fails, 2 when it cannot proceed (bad arguments, no test files, or an empty `--changed` selection), and 3 when it refuses to run because SIGINT is ignored in an async invocation it cannot reset.
 - `--changed` maps `bin/<name>.sh` to `tests/<name>.test.sh` over staged, unstaged and untracked changes; a changed shared library narrows to its sourcers' tests, and anything it cannot map confidently widens to the full set and says why.
-- `src/<name>.ts` maps to `tests/src.test.sh` plus its entry's `tests/ac-<name>.test.sh`, a changed `tests/*.test.ts` maps to `tests/src.test.sh`, and a `src/` module other `src/` files import narrows to its importers' tests.
+- `src/<name>.ts` maps to `tests/src.test.sh` plus the tests of every `bin/*.sh` that starts it (its entry `bin/ac-<name>.sh`, and any script running a mode of it), widening when a starter has no test; a changed `tests/*.test.ts` maps to `tests/src.test.sh`, and a `src/` module other `src/` files import narrows to its importers' tests.
 - `--changed` ignores files outside `bin/*.sh`, `src/*.ts`, `tests/*.sh` and `tests/*.test.ts`, so a change to `dashboard/*.ts`, docs or skills selects nothing on its own; run the relevant test file directly.
 - On a clean, fully committed tree `--changed` has nothing to read and exits 2 without running anything.
 - The suite is not a per-change gate: per-change verification is the changed-file tests plus any do-not-break tests; the bare full run is a periodic task.

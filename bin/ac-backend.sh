@@ -134,7 +134,8 @@
 # above those two functions. It also owns the two herdr-specific pane-agent
 # workspace/tab helpers (ac_herdr_agents_workspace, ac_herdr_tab_open, moved
 # from ac-lib.sh by audit-f3, codebase-audit-2026-07-29 finding 3 - they are
-# inline python3 herdr wire parsing that never belonged in a general lib);
+# herdr wire calls and their jq/sed parsing, which never belonged in a
+# general lib);
 # their own comments sit above them, right after backend_window_alive.
 #
 # CAPTAIN-WAIT STAMP (the authoritative contract): a pane whose task waits on

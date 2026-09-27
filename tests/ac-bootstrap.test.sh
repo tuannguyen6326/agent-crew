@@ -352,7 +352,7 @@ assert_eq "$rc" "1" "a below-floor jq blocks"
 assert_contains "$out" "BELOW-FLOOR: jq" "an old jq is reported at BELOW-FLOOR grade"
 assert_contains "$out" "floor 1.6" "...naming the jq floor"
 
-# bun is REQUIRED - the ported bin/ entries exec the TypeScript under src/ -
+# bun is REQUIRED - bin/ runs the TypeScript under src/ on it -
 # so a bun at a fine version but lacking the API the dashboard/brain engine
 # call blocks, and an absent bun is MISSING.
 mkdir -p "$TMP/bun-nocap"
@@ -370,5 +370,22 @@ rc=0
 out="$(PATH="$TMP/single-nobun:$TMP/stubbin" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
 assert_eq "$rc" "1" "an absent bun blocks"
 assert_contains "$out" "MISSING: bun" "an absent bun is reported MISSING, not OPTIONAL"
+
+# The bun probe runs code at every session start, in whatever directory the
+# session opened: that cwd's bunfig.toml preload, or one BUN_OPTIONS names,
+# must not run inside the doctor.
+mkdir -p "$TMP/bunfig-cwd"
+for vec in cwd env; do
+  printf 'require("node:fs").appendFileSync("%s", "%s\\n");\n' "$TMP/bun-preload-ran" "$vec" >"$TMP/bunfig-cwd/$vec.ts"
+done
+printf 'preload = ["./cwd.ts"]\n' >"$TMP/bunfig-cwd/bunfig.toml"
+out="$(cd "$TMP/bunfig-cwd" && BUN_OPTIONS="--preload $TMP/bunfig-cwd/env.ts" PATH="$HEALTHY_PATH" "$BIN/ac-bootstrap.sh")"
+assert_contains "$out" "OK: bun" "the bun probe still answers away from the caller's cwd"
+[ ! -e "$TMP/bun-preload-ran" ] || fail "a caller's bun preload ran inside the doctor: $(tr '\n' ' ' <"$TMP/bun-preload-ran")"
+# ...and an exported CDPATH never sends the probe somewhere else when the
+# doctor runs by a relative path.
+mkdir -p "$TMP/cdp/bin"
+out="$(cd "$ROOT" && CDPATH="$TMP/cdp" PATH="$HEALTHY_PATH" bin/ac-bootstrap.sh 2>&1)"
+assert_contains "$out" "OK: bun" "an exported CDPATH never breaks the bun probe"
 
 pass

@@ -365,7 +365,7 @@ Internal wire variables and test seams take no row; they are declared with a one
 
 `bin/ac-bootstrap.sh` audits the toolchain and prints one line per check (`OK:`, `MISSING:`, `BELOW-FLOOR:`, `NO-CAPABILITY:`, `OPTIONAL:`, ...); a `MISSING:` exits 1.
 
-- Required: `git`, `jq`, `bun` (the `bin/` entries ported to `src/*.ts` exec it), `gh` (authenticated for PR and CI steps), and the backend `config/backend` names: `herdr` with its server running, or `orca` with its runtime ready.
+- Required: `git`, `jq`, `bun` (the TypeScript under `src/` runs on it: the ported `bin/` entries and the helpers other `bin/` scripts start), `gh` (authenticated for PR and CI steps), and the backend `config/backend` names: `herdr` with its server running, or `orca` with its runtime ready.
 - Optional: `node` (npx-driven helpers), `shellcheck` (`bin/ac-lint.sh`), `docker` (QA infra).
 
 Version floors, each tied to a call the fleet makes (FLOOR TABLE in the `bin/ac-bootstrap.sh` header):

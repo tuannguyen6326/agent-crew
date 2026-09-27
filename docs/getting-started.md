@@ -29,7 +29,7 @@ It prints one line per tool:
 | `INERT:` | A newer copy sits later on `PATH` than the one that answers; diagnostic only. |
 | `CHECK-FAILED:` | The copy on `PATH` did not report a parseable version; diagnostic only. |
 
-Required: `git` (floor 2.15.0), `jq` (floor 1.6), `bun` (floor 1.3.5; the `bin/` entries ported to `src/*.ts` run on it), `gh`, and the CLI of the fleet's configured session backend - `herdr` (floor 0.8.0, the default) or `orca`.
+Required: `git` (floor 2.15.0), `jq` (floor 1.6), `bun` (floor 1.3.5; the TypeScript under `src/` runs on it - the ported `bin/` entries and the helpers other `bin/` scripts start), `gh`, and the CLI of the fleet's configured session backend - `herdr` (floor 0.8.0, the default) or `orca`.
 Optional: `node`, `docker`, `shellcheck`.
 Pass `--quiet` to print problems only.
 

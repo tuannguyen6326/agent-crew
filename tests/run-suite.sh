@@ -39,10 +39,14 @@
 #                TypeScript maps the same way: src/<name>.ts selects
 #                tests/src.test.sh (the one wrapper running every Bun unit
 #                test, tests/*.test.ts - so a changed *.test.ts selects it
-#                too) plus its bin/ac-<name>.sh entry's black-box
-#                tests/ac-<name>.test.sh, and a src module other src files
-#                import is a shared library exactly like a sourced one
-#                (clause 1 below). AGENTS.md section 13's
+#                too) plus the mapped tests of every bin/*.sh STARTING it -
+#                one with a non-comment line naming src/<name>.ts: its
+#                bin/ac-<name>.sh entry, and any script running a mode of it
+#                (bin/ac-qa.sh runs src/paths.ts) - each resolved by the same
+#                mapping, one hop (bin/ac-lib.sh, a shared library starting
+#                src/pane-agent.ts, adds its own test, not its sourcers'). A
+#                src module other src files import is a shared library exactly
+#                like a sourced one (clause 1 below). AGENTS.md section 13's
 #                colocated-test-per-behavior rule makes this mechanical for
 #                the ordinary case. A small DOCUMENTED exception (split_map)
 #                covers the two highest-churn scripts the repo's own
@@ -107,8 +111,9 @@
 #                     bin/ac-qa-lib.sh (5 sourcers, all mapped -> selects
 #                     exactly 4 tests, not 88);
 #                  2. a changed owned file (bin/*.sh or tests/*.test.sh) with
-#                     no exact colocated test - unmapped code is unknown
-#                     blast radius, never read as "nothing to run".
+#                     no exact colocated test, or a src/*.ts with a starter
+#                     that has none - unmapped code is unknown blast radius,
+#                     never read as "nothing to run".
 #                Outside a git repo, or with no HEAD yet, --changed falls back
 #                to the full set. A file outside this runner's owned set
 #                (bin/*.sh, src/*.ts, tests/*.sh, tests/*.test.ts) is
@@ -318,6 +323,9 @@ split_map() {
       done
       ;;
     ac-teardown) printf '%s' "ac-spawn-teardown.test.sh" ;;
+    # A sourced lib whose pins live in its one real consumer's test; without
+    # this arm every src/ module it starts widened --changed to the full set.
+    ac-qa-lib) printf '%s' "ac-qa.test.sh" ;;
   esac
 }
 
@@ -329,20 +337,26 @@ map_owned_file() {
   # per-file case below and the shared-lib sourcer closure - a sourcer's own
   # test is found the SAME way a directly-changed file's is, never a second
   # mapping invented for the sourcer case.
-  local root="$1" f="$2" base mapped
+  local root="$1" f="$2" base mapped s m
   case "$f" in
     tests/*.test.sh) printf '%s' "${f#tests/}" ;;
     tests/*.test.ts) printf '%s' "src.test.sh" ;;
     src/*.ts)
-      # The entry's black-box test joins only when bin/ac-<n>.sh really execs
-      # this module: a bash script that merely shares its name (src/lib.ts vs
-      # bin/ac-lib.sh) is not its entry.
-      base="${f#src/}"; base="${base%.ts}"
-      printf '%s' "src.test.sh"
-      if grep -v '^[[:space:]]*#' "$root/bin/ac-$base.sh" 2>/dev/null | grep -qF "src/$base.ts" \
-        && [ -e "$root/tests/ac-$base.test.sh" ]; then
-        printf ' %s' "ac-$base.test.sh"
-      fi
+      # A starter is any bin script with a NON-comment line naming this
+      # module: a script that merely names it in a comment (bin/ac-lib.sh,
+      # twin of src/lib.ts) starts nothing. awk, not grep -v | grep -q: under
+      # pipefail an early grep -q exit can SIGPIPE the writer on a long
+      # script and read as no match. An untested starter maps the whole
+      # module to nothing, so the caller widens.
+      mapped="src.test.sh"
+      for s in "$root"/bin/*.sh; do
+        [ -e "$s" ] || continue
+        awk -v p="$f" '!/^[[:space:]]*#/ && index($0, p) { hit = 1; exit } END { exit !hit }' "$s" || continue
+        m="$(map_owned_file "$root" "bin/${s##*/}")"
+        [ -n "$m" ] || return 0
+        mapped="$mapped $m"
+      done
+      printf '%s' "$mapped"
       ;;
     bin/*.sh)
       base="${f#bin/}"; base="${base%.sh}"
@@ -384,6 +398,17 @@ select_changed() {
   selected=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    # Ahead of the shared-library branch, which reads an empty own mapping
+    # as a bash lib with no test of its own and would narrow to importers.
+    case "$f" in
+      src/*.ts)
+        if [ -z "$(map_owned_file "$changed_root" "$f")" ]; then
+          printf 'run-suite: --changed widens to the full suite - %s is started by a bin script that has no colocated test\n' "$f"
+          widen=1
+          continue
+        fi
+        ;;
+    esac
     sourcers="$(sourcers_of "$changed_root" "$f")"
     if [ -n "$sourcers" ]; then
       # Shared library: narrow to the UNION of its sourcers' own mapped

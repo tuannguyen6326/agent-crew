@@ -226,8 +226,9 @@ shadow_check() {
 #                   from the 1.6 manual on, not in 1.5's.
 #   bun    1.3.5  - `Bun.Terminal` (dashboard/app.ts's native pty) ships from
 #                   1.3.5 (bun.com/blog/bun-v1.3.5); `bun:sqlite`
-#                   (src/brain.ts) predates it. Required tier: the
-#                   ported bin/ entries exec the TypeScript under src/.
+#                   (src/brain.ts) predates it. Required tier: bin/ runs
+#                   the TypeScript under src/ - the ported entries and the
+#                   helpers other scripts start.
 # floor_of/cap_of/cap_probe are the table's three columns; build_check reads
 # them, so adding a row touches no caller.
 floor_of() {
@@ -261,7 +262,16 @@ cap_probe() {
       esac ;;
     git) git interpret-trailers --parse </dev/null >/dev/null 2>&1 ;;
     jq) [ "$(jq -rn --args '$ARGS.positional[0]' x 2>/dev/null)" = x ] ;;
-    bun) [ "$(bun -e 'import("bun:sqlite").then(() => console.log(typeof Bun.Terminal))' 2>/dev/null)" = function ] ;;
+    bun)
+      # bun -e loads its cwd's bunfig.toml (a preload runs code) and
+      # BUN_OPTIONS, and the doctor inherits its caller's cwd and
+      # environment: start it the way bin/ac-bun.sh does.
+      [ "$(
+        unset CDPATH
+        cd "$(ac_root)" || exit
+        for v in $(compgen -e); do [[ "$v" == BUN_* || "$v" == JSC_* ]] && unset "$v"; done
+        bun --no-env-file -e 'import("bun:sqlite").then(() => console.log(typeof Bun.Terminal))' 2>/dev/null
+      )" = function ] ;;
     *) return 0 ;;
   esac
 }
@@ -318,7 +328,7 @@ opt() {
 
 need git "brew install git"
 need jq "brew install jq (worktree pool state, herdr backend)"
-need bun "curl -fsSL https://bun.sh/install | bash (the bin/ entries ported to src/*.ts, the dashboard, the brain engine)"
+need bun "curl -fsSL https://bun.sh/install | bash (the TypeScript under src/ that bin/ runs, the dashboard, the brain engine)"
 
 # Session backend: the configured one is required, the others stay optional.
 backend="$(ac_config_read backend herdr)"
