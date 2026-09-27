@@ -192,6 +192,8 @@ assert_no_file "$AC_HOME/data/widget/review/brief.md" "normal flow scaffolds no 
 # path and tell the agent to run store-less (a wrong path is worse than none -
 # aa55baf's whole lesson), never leak a half-derived qa-store path.
 "$BIN/ac-brief.sh" widget-qa myproj --stage qa >/dev/null
+assert_contains "$(cat "$AC_HOME/data/widget/qa/brief.md")" "Never administer the worktree pool" \
+  "the qa charter forbids administering the pool too"
 qab="$(cat "$AC_HOME/data/widget/qa/brief.md")"
 assert_contains "$qab" "NEVER fix" "qa brief is verify-only"
 assert_contains "$qab" "verdict: passed|failed|unverifiable" "qa brief demands the 3-state verdict"

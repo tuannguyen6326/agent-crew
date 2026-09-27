@@ -950,6 +950,7 @@ $task_dir/report.md - first line \`verdict: passed|failed|unverifiable\`,
 the per-case evidence table, findings, and the QA_* envelope.
 Evidence lands in $task_dir/evidence/. Proposed e2e specs are a PATCH in
 the evidence dir, never a commit.
+$(pool_rule)
 $(knowledge)
 $(standing_rules)
 
