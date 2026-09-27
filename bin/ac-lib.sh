@@ -2663,8 +2663,11 @@ ac_worktree_status() {
   # skip-worktree bit hides it from `git status` (git-update-index). The exit
   # status is git status's own; the hidden-bit scan only adds `H  <path>`.
   # Paths are read NUL-delimited and matched literally: `ls-files -v` C-quotes
-  # a non-ASCII name, and a quoted name is no path on disk.
-  local rc=0 rec tag path mode blob f filemode sparse
+  # a non-ASCII name, and a quoted name is no path on disk. An operation git
+  # left in progress adds `O  <state>`: a stopped rebase or bisect can leave a
+  # clean tree, and no reset clears its state, so the next lessee's git trips
+  # on it.
+  local rc=0 rec tag path mode blob f filemode sparse gd op
   git -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
   filemode="$(git -C "$1" config --get core.fileMode 2>/dev/null || printf 'true')"
   sparse="$(git -C "$1" config --get core.sparseCheckout 2>/dev/null || printf 'false')"
@@ -2694,6 +2697,11 @@ ac_worktree_status() {
          fi ;;
     esac
   done < <(git -C "$1" ls-files -v -z 2>/dev/null)
+  if gd="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)"; then
+    for op in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG sequencer; do
+      [ ! -e "$gd/$op" ] || printf 'O  %s\n' "$op"
+    done
+  fi
   return "$rc"
 }
 

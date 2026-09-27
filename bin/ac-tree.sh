@@ -439,8 +439,12 @@ reset_worktree() {
   # keeps it, and a stale ports.env/serve.pid must never leak to the next
   # lessee of the slot.
   # Explicit status checks: callers must handle failure, set -e may be off.
+  # An interrupted rebase, cherry-pick or bisect survives checkout and reset.
   local repo="$1" wt="$2" ref="${3:-}"
   rm -rf "$wt/.crew/qa" 2>/dev/null || true
+  git -C "$wt" rebase --quit >/dev/null 2>&1 || true
+  git -C "$wt" cherry-pick --quit >/dev/null 2>&1 || true
+  git -C "$wt" bisect reset >/dev/null 2>&1 || true
   [ -n "$ref" ] || ref="$(freshest_ref "$repo")"
   git -C "$wt" checkout --detach --force --quiet "$ref" \
     && git -C "$wt" reset --hard --quiet "$ref" \

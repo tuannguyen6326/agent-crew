@@ -136,6 +136,30 @@ case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) ;; *) fail 
 git -C "$wt2" update-index --no-skip-worktree "エ.txt"
 git -C "$wt2" checkout -- "エ.txt"
 
+# An interrupted rebase or bisect leaves a CLEAN tree, and the reset a return
+# runs keeps its state dir - the next lessee's `git rebase` then refuses
+# ("there is already a rebase-merge directory", probed on git 2.55). It is work
+# in progress like any edit, never silently reset.
+git -C "$wt2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "mid-rebase work"
+GIT_SEQUENCE_EDITOR="sed -i.bak 's/^pick/edit/'" git -C "$wt2" -c user.email=t@t -c user.name=t rebase -q -i HEAD~1 >/dev/null 2>&1 || true
+[ -d "$(git -C "$wt2" rev-parse --git-dir)/rebase-merge" ] || fail "fixture: the rebase must stop mid-way"
+[ -z "$(git -C "$wt2" status --porcelain)" ] || fail "fixture: the stopped rebase leaves a clean tree"
+assert_fails "$BIN/ac-tree.sh" return "$wt2"
+[ -d "$(git -C "$wt2" rev-parse --git-dir)/rebase-merge" ] || fail "a refused return must keep the rebase"
+git -C "$wt2" rebase --abort
+# A FORCED return discards it with the rest of the slot - including the state
+# dir a plain reset keeps - so the next lessee's rebase runs.
+git -C "$wt2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "mid-rebase work"
+GIT_SEQUENCE_EDITOR="sed -i.bak 's/^pick/edit/'" git -C "$wt2" -c user.email=t@t -c user.name=t rebase -q -i HEAD~1 >/dev/null 2>&1 || true
+"$BIN/ac-tree.sh" return "$wt2" --force 2>/dev/null
+[ -e "$(git -C "$wt2" rev-parse --git-dir)/rebase-merge" ] && fail "a forced return must clear the interrupted rebase"
+wt2="$("$BIN/ac-tree.sh" get --repo "$repo" --id t2 --prefer 2 2>/dev/null)"
+assert_eq "$wt2" "$repo/.crew/worktrees/2-repo" "fixture: re-lease slot 2"
+git -C "$wt2" bisect start HEAD HEAD~1 >/dev/null 2>&1
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) ;; *) fail "a bisect in progress is work" ;; esac
+git -C "$wt2" bisect reset >/dev/null 2>&1
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) fail "fixture: the slot must be clean again" ;; esac
+
 # Remove: refuses a leased slot without --include-leased.
 assert_fails "$BIN/ac-tree.sh" remove "$wt2"
 
