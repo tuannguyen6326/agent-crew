@@ -3143,6 +3143,8 @@ ac_transcript_final_epoch() {
   local ts
   ts="$(jq -rs '[.[] | select(.type == "assistant")] | last | .timestamp // ""' "$1" 2>/dev/null || true)"
   [ -n "$ts" ] || return 1
-  python3 -c 'import sys,datetime; s=sys.argv[1].replace("Z","+00:00"); print(int(datetime.datetime.fromisoformat(s).timestamp()))' "$ts" 2>/dev/null
+  # A subshell, because ac_bun_exec execs; the stamp's grammar is the
+  # iso-epoch spec in src/pane-agent.ts.
+  ( . "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh" && ac_bun_exec src/pane-agent.ts iso-epoch "$ts" ) 2>/dev/null
 }
 

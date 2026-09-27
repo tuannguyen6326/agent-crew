@@ -1635,4 +1635,30 @@ assert_eq "$(lib "ac_domain_tally")" "3 1 2" \
   "the no-name summed tally spans every domain token, untokened rows excluded"
 rm -f "$AC_HOME/records/backlog.md"
 
+# --- ac_transcript_final_epoch: the LAST assistant message's ISO stamp --------
+# Two readers compare this number against a file mtime (the pane agent's await
+# hold, ac-verify's stale-verdict refusal), so the epoch is the whole contract:
+# whole seconds truncated toward zero, the stated offset honoured, a stamp with
+# no offset read as local time, and anything unparseable answers NOTHING with
+# status 1 - never a guess.
+tfe="$TMP/final-epoch.jsonl"
+tfe_at() {
+  printf '{"type":"assistant","timestamp":"2000-01-01T00:00:00Z","message":{}}\n{"type":"assistant","timestamp":"%s","message":{}}\n{"type":"user","timestamp":"2001-01-01T00:00:00Z"}\n' "$1" >"$tfe"
+  lib "ac_transcript_final_epoch '$tfe' || echo rc=\$?"
+}
+assert_eq "$(tfe_at 2026-07-20T10:00:00Z)" "1784541600" "a Z stamp is UTC, and the LAST assistant message decides"
+assert_eq "$(tfe_at 2026-07-20T10:00:00.123Z)" "1784541600" "fractional seconds are dropped"
+assert_eq "$(tfe_at 2026-07-20T10:00:00+07:00)" "1784516400" "a positive offset is honoured"
+assert_eq "$(tfe_at 2026-07-20T10:00:00-05:30)" "1784561400" "a negative half-hour offset is honoured"
+assert_eq "$(tfe_at '2026-07-20 10:00:00Z')" "1784541600" "a space may separate date and time"
+assert_eq "$(tfe_at 1969-12-31T23:59:59Z)" "-1" "a stamp before the epoch is negative"
+assert_eq "$(tfe_at 1969-12-31T23:59:59.5Z)" "0" "truncation is toward zero, not a floor"
+assert_eq "$(TZ=Asia/Ho_Chi_Minh tfe_at 2026-07-20T10:00:00)" "1784516400" "a stamp with no offset is local time"
+assert_eq "$(tfe_at 2026-02-30T00:00:00Z)" "rc=1" "an impossible date answers nothing"
+assert_eq "$(tfe_at yesterday)" "rc=1" "a non-ISO stamp answers nothing"
+assert_eq "$(tfe_at 2026-07-20T10:00:00ZZ)" "rc=1" "trailing garbage answers nothing"
+printf '{"type":"assistant","timestamp":"2026-07-20T10:00:00Z","message":{}}\n{"type":"assistant","message":{}}\n' >"$tfe"
+assert_eq "$(lib "ac_transcript_final_epoch '$tfe' || echo rc=\$?")" "rc=1" \
+  "a last assistant message with no stamp answers nothing, even when an earlier one had one"
+
 pass

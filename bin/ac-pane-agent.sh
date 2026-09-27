@@ -434,6 +434,10 @@
 set -u
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-backend.sh"   # backend_capture_pane: the scrollback harvest
+. "$(dirname "$0")/ac-bun.sh"
+# The JSON readers and writers (src/pane-agent.ts header). A subshell, because
+# ac_bun_exec execs.
+pa_ts() { ( ac_bun_exec src/pane-agent.ts "$@" ); }
 # Harden PATH: callers may start from launchd with a minimal environment.
 PATH="$PATH:/opt/homebrew/bin:$HOME/.local/bin"
 SES="${AC_HERDR_SESSION:-$(ac_config_read herdr-session default)}"
@@ -481,30 +485,20 @@ if [ "${1:-}" = steer ]; then
   # chief and a homeless caller share. A dead or recycled pane simply is not in
   # the list, so a stale handle can never steer a stranger.
   plan="$(herdr --session "$SES" pane list 2>/dev/null \
-    | SH="$SH" SP="$SP" python3 -c '
-import sys, json, os
-try:
-    panes = json.load(sys.stdin)["result"]["panes"]
-except Exception:
-    panes = []
-want, pid = os.environ["SH"], os.environ["SP"]
-def label(p): return p.get("label") or ""
-# A pane agent is exactly a pane THIS helper named at creation.
-agents = [p for p in panes if label(p).startswith("ac-") and "-agent:" in label(p)]
-if pid:
-    m = [p for p in agents if p.get("pane_id") == pid]
-    print("OK %s %s" % (m[0]["pane_id"], label(m[0])) if m else "NOTAGENT")
-else:
-    m = [p for p in agents if label(p) == want]
-    if not m:
-        print("NONE")
-    elif len(m) > 1:
-        print("AMBIG %d %s" % (len(m), " ".join(p["pane_id"] for p in m)))
-    else:
-        print("OK %s %s" % (m[0]["pane_id"], label(m[0])))
-for p in agents:
-    print("KNOWN", label(p), p["pane_id"])
-')"
+    | jq -Rrs --arg want "$SH" --arg pid "$SP" '
+      # A pane agent is exactly a pane THIS helper named at creation.
+      [(try fromjson catch null) | .result?.panes?[]? | objects
+       | {id: .pane_id, label: (.label // "")}
+       | select(.label | type == "string" and startswith("ac-") and contains("-agent:"))] as $agents
+      | (if $pid != "" then
+           ([$agents[] | select(.id == $pid)] | if length > 0 then "OK \(.[0].id) \(.[0].label)" else "NOTAGENT" end)
+         else
+           ([$agents[] | select(.label == $want)]
+            | if length == 0 then "NONE"
+              elif length > 1 then "AMBIG \(length) \(map(.id) | join(" "))"
+              else "OK \(.[0].id) \(.[0].label)" end)
+         end),
+        ($agents[] | "KNOWN \(.label) \(.id)")')"
   KNOWN="$(printf '%s\n' "$plan" | sed -n 's/^KNOWN \(.*\) [^ ]*$/\1/p' | paste -sd, - | sed 's/,/, /g')"
   read -r VKIND VPANE VREST <<EOF
 $(printf '%s\n' "$plan" | head -1)
@@ -578,31 +572,20 @@ if [ "${1:-}" = reap-pane ]; then
   plan="$(printf '%s\n===AC-SPLIT===\n%s\n' \
       "$(herdr --session "$SES" tab list 2>/dev/null || true)" \
       "$(herdr --session "$SES" pane list 2>/dev/null || true)" \
-    | RP="$RP" python3 -c '
-import sys, json, os
-raw = sys.stdin.read().split("===AC-SPLIT===")
-def load(s):
-    try: return json.loads(s)
-    except Exception: return {}
-tabs  = load(raw[0]).get("result", {}).get("tabs", [])  if len(raw) > 0 else []
-panes = load(raw[1]).get("result", {}).get("panes", []) if len(raw) > 1 else []
-target = os.environ["RP"]
-tab_of = {p.get("pane_id"): p.get("tab_id") for p in panes}
-ws_of  = {t.get("tab_id"): t.get("workspace_id") for t in tabs}
-T  = tab_of.get(target)
-WS = ws_of.get(T)
-# A sibling pane in the same tab keeps the tab; another tab in the same
-# workspace (a co-tenant reviewer/qa run, or the bare default "1" tab) keeps
-# the workspace. Close the workspace ONLY when the target tab is its last.
-siblings   = [p for p in panes if p.get("tab_id") == T and p.get("pane_id") != target]
-other_tabs = [t for t in tabs if WS and t.get("workspace_id") == WS and t.get("tab_id") != T]
-print("PANE", target)
-if T and not siblings:
-    if other_tabs:
-        print("TAB", T)
-    elif WS:
-        print("WS", WS)
-')"
+    | jq -Rrs --arg rp "$RP" '
+      split("===AC-SPLIT===") as $raw
+      | [$raw[0] | try fromjson catch null | .result?.tabs?[]? | objects] as $tabs
+      | [$raw[1] // "" | try fromjson catch null | .result?.panes?[]? | objects] as $panes
+      | ([$panes[] | select(.pane_id == $rp) | .tab_id] | last) as $tab
+      | ([$tabs[] | select(.tab_id == $tab) | .workspace_id] | last) as $ws
+      # A sibling pane in the same tab keeps the tab; another tab in the same
+      # workspace (a co-tenant reviewer/qa run, or the bare default "1" tab) keeps
+      # the workspace. Close the workspace ONLY when the target tab is its last.
+      | "PANE \($rp)",
+        if ($tab // "") == "" or any($panes[]; .tab_id == $tab and .pane_id != $rp) then empty
+        elif ($ws // "") == "" then empty
+        elif any($tabs[]; .workspace_id == $ws and .tab_id != $tab) then "TAB \($tab)"
+        else "WS \($ws)" end')"
   while read -r kind id; do
     [ -n "$kind" ] || continue
     case "$kind" in
@@ -648,37 +631,27 @@ if [ "${1:-}" = reap ]; then
   dry=0
   while [ $# -gt 0 ]; do case "$1" in --dry-run) dry=1 ;; *) fail "unknown arg $1" ;; esac; shift; done
   command -v herdr >/dev/null 2>&1 || { emit '{"event":"reap","panes":0,"tabs":0,"note":"herdr not on PATH"}'; exit 0; }
-  plan="$(printf '%s\n===AC-SPLIT===\n%s\n' \
+  lists="$(printf '%s\n===AC-SPLIT===\n%s\n' \
       "$(herdr --session "$SES" tab list 2>/dev/null || true)" \
-      "$(herdr --session "$SES" pane list 2>/dev/null || true)" \
-    | python3 -c '
-import sys, json, os, re
-from collections import defaultdict
-raw = sys.stdin.read().split("===AC-SPLIT===")
-def load(s):
-    try: return json.loads(s)
-    except Exception: return {}
-tabs  = load(raw[0]).get("result", {}).get("tabs", [])  if len(raw) > 0 else []
-panes = load(raw[1]).get("result", {}).get("panes", []) if len(raw) > 1 else []
-ours  = {t.get("tab_id"): (t.get("label") or "") for t in tabs
-         if re.match(r"ac-[a-z0-9-]+-agent(-|$)", t.get("label") or "")}
-by_tab = defaultdict(list)
-for p in panes:
-    by_tab[p.get("tab_id")].append(p)
-dead = set()
-for tid in ours:
-    for p in by_tab.get(tid, []):
-        cwd = p.get("cwd") or ""
-        if cwd and not os.path.isdir(cwd):
-            print("PANE", p.get("pane_id"), cwd)
-            dead.add(p.get("pane_id"))
-# A tab whose every pane is being reaped is left empty; close it too so the
-# sidebar does not fill with stubs. A tab with a surviving pane stays.
-for tid in ours:
-    ps = by_tab.get(tid, [])
-    if ps and all(p.get("pane_id") in dead for p in ps):
-        print("TAB", tid)
-')"
+      "$(herdr --session "$SES" pane list 2>/dev/null || true)")"
+  # shellcheck disable=SC2016  # a jq program: $raw and $panes are jq variables
+  ours='split("===AC-SPLIT===") as $raw
+    | [$raw[1] // "" | try fromjson catch null | .result?.panes?[]? | objects] as $panes
+    | [$raw[0] | try fromjson catch null | .result?.tabs?[]? | objects
+       | select(.label // "" | type == "string" and test("\\Aac-[a-z0-9-]+-agent(-|\\Z)")) | .tab_id]
+    | reduce .[] as $t ([]; if any(.[]; . == $t) then . else . + [$t] end)
+    | map(. as $t | {tab: $t, panes: [$panes[] | select(.tab_id == $t)]})'
+  # jq cannot stat, so our panes' cwds are checked here and the gone ones handed
+  # back. A cwd holding a newline never matches one, so it is never reaped.
+  gone="$(printf '%s' "$lists" | jq -Rrs "$ours"' | .[].panes[] | .cwd // empty | select(. != "")' \
+    | while IFS= read -r c; do [ -d "$c" ] || printf '%s\n' "$c"; done)"
+  plan="$(printf '%s' "$lists" | jq -Rrs --arg gone "$gone" "$ours"'
+    | ($gone | split("\n")) as $gone
+    | [.[].panes[] | select(.cwd // "" | . != "" and IN($gone[]))] as $dead
+    | ($dead[] | "PANE \(.pane_id) \(.cwd)"),
+      # A tab whose every pane is being reaped is left empty; close it too so the
+      # sidebar does not fill with stubs. A tab with a surviving pane stays.
+      (.[] | select(.panes != [] and all(.panes[]; .pane_id as $p | any($dead[]; .pane_id == $p))) | "TAB \(.tab)")')"
   npane=0; ntab=0
   while read -r kind id rest; do
     [ -n "$kind" ] || continue
@@ -1020,22 +993,7 @@ PROJ="$(ac_claude_transcript_root)/$SLUG"
 # mode that needs no claude trust must not do as a side effect. (The crewmate
 # arm's own startup dialog is codex's, answered at the pane - see the launch
 # step below; nothing of the user's global state is written for it.)
-[ "$ARM" != session ] || python3 - "$CWD" <<'PY' 2>/dev/null || true
-import json, os, sys
-p = os.path.expanduser('~/.claude.json')
-try:
-    d = json.load(open(p))
-except Exception:
-    sys.exit(0)
-e = d.setdefault('projects', {}).setdefault(sys.argv[1], {})
-if e.get('hasTrustDialogAccepted') and e.get('hasCompletedProjectOnboarding'):
-    sys.exit(0)
-e['hasTrustDialogAccepted'] = True
-e['hasCompletedProjectOnboarding'] = True
-tmp = p + '.ac-pane-agent'
-json.dump(d, open(tmp, 'w'), indent=2)
-os.replace(tmp, p)
-PY
+[ "$ARM" != session ] || pa_ts seed-trust "$CWD" 2>/dev/null || true
 
 # 2. Stop-hook marker (per invocation). DETERMINISTIC path (no mktemp: a
 # launchd-minimal PATH can make mktemp resolve empty, yielding `touch ''` in
@@ -1103,57 +1061,7 @@ fi
 LOCKED=0
 ac_lock_acquire "$SLOCK" 10 && LOCKED=1
 rc=0
-python3 - "$SETTINGS" "$MARKER" <<'PY' || rc=$?
-import json, os, re, sys
-
-path, marker = sys.argv[1], sys.argv[2]
-try:
-    d = json.load(open(path))
-    if not isinstance(d, dict):
-        raise ValueError
-except Exception:
-    d = {}                      # malformed / hand-edited: fail soft, never crash
-hooks = d.get("hooks")
-if not isinstance(hooks, dict):
-    hooks = {}
-stop = hooks.get("Stop")
-if not isinstance(stop, list):
-    stop = []
-
-# Drop OUR OWN entries whose pane agent is gone - matched on the marker path
-# shape this script writes and keyed on the pid in it. A LIVE agent's hook
-# always survives (its pid answers), so the concurrent case is safe; without
-# this the array would grow by one entry per run, forever.
-ours = re.compile(r"^touch '(?:.*/)?ac-pane-turnend\.[^/']*\.([0-9]+)'$")
-
-
-def dead_of_ours(group):
-    if not isinstance(group, dict):
-        return False
-    inner = group.get("hooks")
-    if not isinstance(inner, list) or len(inner) != 1 or not isinstance(inner[0], dict):
-        return False
-    m = ours.match(str(inner[0].get("command", "")))
-    if not m:
-        return False
-    try:
-        os.kill(int(m.group(1)), 0)
-    except ProcessLookupError:
-        return True
-    except Exception:
-        return False            # EPERM and friends: assume alive, keep the hook
-    return False
-
-
-stop = [g for g in stop if not dead_of_ours(g)]
-stop.append({"hooks": [{"type": "command", "command": "touch '%s'" % marker}]})
-hooks["Stop"] = stop
-d["hooks"] = hooks
-tmp = path + ".ac-pane-agent"
-with open(tmp, "w") as f:
-    json.dump(d, f)
-os.replace(tmp, path)
-PY
+pa_ts stop-hook "$SETTINGS" "$MARKER" || rc=$?
 [ "$LOCKED" = 1 ] && ac_lock_release "$SLOCK"
 [ "$rc" = 0 ] || fail "could not install the Stop hook into $SETTINGS"
 fi
@@ -1291,26 +1199,12 @@ else
 # back to label-only adoption - the same degrade direction the create path
 # already takes.
 agents_ws_create
-TAB=$(herdr --session "$SES" tab list 2>/dev/null | TL="$TABLABEL" WSID="${WS:-}" python3 -c "
-import sys, json, os
-try:
-    for t in json.load(sys.stdin)['result']['tabs']:
-        if t.get('label') != os.environ['TL']: continue
-        if os.environ['WSID'] and t.get('workspace_id') != os.environ['WSID']: continue
-        print(t['tab_id']); break
-except Exception:
-    pass
-" 2>/dev/null)
+TAB=$(herdr --session "$SES" tab list 2>/dev/null \
+  | jq -r --arg tl "$TABLABEL" --arg ws "${WS:-}" \
+      'first(.result.tabs[]? | select(.label == $tl and ($ws == "" or .workspace_id == $ws))) | .tab_id // empty' 2>/dev/null)
 if [ -n "$TAB" ]; then
-  OUT=$(herdr --session "$SES" pane list 2>/dev/null | TB="$TAB" python3 -c "
-import sys, json, os
-try:
-    for p in json.load(sys.stdin)['result']['panes']:
-        if p.get('tab_id') == os.environ['TB']:
-            print(p['pane_id']); break
-except Exception:
-    pass
-" 2>/dev/null)
+  OUT=$(herdr --session "$SES" pane list 2>/dev/null \
+    | jq -r --arg tab "$TAB" 'first(.result.panes[]? | select(.tab_id == $tab)) | .pane_id // empty' 2>/dev/null)
   P=$(herdr --session "$SES" pane split "${OUT:-}" --direction right --no-focus 2>/dev/null \
       | sed -n 's/.*"pane_id":"\([^"]*\)".*/\1/p' | head -1)
 else
@@ -1326,17 +1220,11 @@ fi
 herdr --session "$SES" pane rename "$P" "ac-$KIND-agent:$LABEL" >/dev/null 2>&1
 # Retire the workspace's default "1" tab once a real tab lives there -
 # herdr spawns it with the workspace and it lingers as sidebar junk.
-[ -n "$WS" ] && herdr --session "$SES" tab list 2>/dev/null | WSID="$WS" python3 -c "
-import sys, json, os
-try:
-    for t in json.load(sys.stdin)['result']['tabs']:
-        if t.get('workspace_id') == os.environ['WSID'] and t.get('label') == '1':
-            print(t['tab_id'])
-except Exception:
-    pass
-" 2>/dev/null | while read -r jt; do
-  herdr --session "$SES" tab close "$jt" >/dev/null 2>&1
-done
+[ -n "$WS" ] && herdr --session "$SES" tab list 2>/dev/null \
+  | jq -r --arg ws "$WS" '.result.tabs[]? | select(.workspace_id == $ws and .label == "1") | .tab_id' 2>/dev/null \
+  | while read -r jt; do
+      herdr --session "$SES" tab close "$jt" >/dev/null 2>&1
+    done
 fi
 
 # Publish the live backend identity before the agent is launched. The verifier
@@ -1541,12 +1429,7 @@ wrap_transcript() {
   # transcript in the exact jsonl shape ac_transcript_final (ac-pipeline-lib.sh)
   # already parses, so every caller reads its payload from the `transcript`
   # path whichever harvest produced it. Shared by the two text harvests below.
-  python3 -c '
-import json, sys
-print(json.dumps({"type": "assistant",
-                  "message": {"role": "assistant",
-                              "content": [{"type": "text", "text": sys.stdin.read()}]}}))
-' >"$1" 2>/dev/null || return 1
+  pa_ts wrap-transcript >"$1" 2>/dev/null || return 1
   [ -s "$1" ] || return 1
 }
 scrollback_transcript() {
@@ -1618,20 +1501,7 @@ final_message_settles() {
 }
 has_final_text() {
   [ -n "$TRANSCRIPT" ] || return 1
-  python3 - "$TRANSCRIPT" <<'PY' 2>/dev/null
-import json, sys
-final = ""
-for line in open(sys.argv[1]):
-    line = line.strip()
-    if not line: continue
-    try: d = json.loads(line)
-    except Exception: continue
-    if d.get("type") != "assistant": continue
-    msg = d.get("message") or {}
-    t = "".join(c.get("text", "") for c in (msg.get("content") or []) if isinstance(c, dict) and c.get("type") == "text")
-    if t.strip(): final = t
-sys.exit(0 if final else 1)
-PY
+  pa_ts has-final-text "$TRANSCRIPT" 2>/dev/null
 }
 i=0
 EXEC_ERR=""

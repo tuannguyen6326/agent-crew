@@ -183,6 +183,21 @@ printf '{"result":{"panes":[{"pane_id":"pP1","tab_id":"tP"}]}}\n' >"$HD_PANES"
 PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
   "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c3 >/dev/null
 assert_contains "$(cat "$HDLOG")" "pane split pP1" "same family workspace: round N splits into the existing tab"
+
+# Several candidates: the FIRST same-label tab in the family workspace is
+# adopted, its FIRST pane is split, and only THIS workspace's default "1" tabs
+# are swept afterwards.
+: >"$HDLOG"
+printf '{"result":{"tabs":[{"tab_id":"tWRONG","label":"ac-codereview-agent-famx","workspace_id":"wOTHER"},{"tab_id":"t1a","label":"1","workspace_id":"wP"},{"tab_id":"tP","label":"ac-codereview-agent-famx","workspace_id":"wP"},{"tab_id":"tP2","label":"ac-codereview-agent-famx","workspace_id":"wP"},{"tab_id":"t1b","label":"1","workspace_id":"wOTHER"},{"tab_id":"t1c","label":"1","workspace_id":"wP"}]}}\n' >"$HD_TABS"
+printf '{"result":{"panes":[{"pane_id":"pZ","tab_id":"tP2"},{"pane_id":"pP7","tab_id":"tP"},{"pane_id":"pP8","tab_id":"tP"}]}}\n' >"$HD_PANES"
+PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
+  "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c4 --pane-file "$TMP/adopt.pane" >/dev/null
+alog="$(cat "$HDLOG")"
+assert_eq "$(cat "$TMP/adopt.pane")" "pS1 tP" "the first same-label tab in the family workspace is the one adopted"
+assert_contains "$alog" "pane split pP7 --direction" "the adopted tab's first pane is the one split"
+assert_contains "$alog" "tab close t1a" "a default \"1\" tab in the family workspace is swept"
+assert_contains "$alog" "tab close t1c" "every default \"1\" tab in the family workspace is swept"
+case "$alog" in *"tab close t1b"*) fail "a default \"1\" tab in ANOTHER workspace must never be swept" ;; esac
 unset HD_TABS HD_PANES
 git -C "$repo" checkout -q main
 assert_contains "$log" "claude --permission-mode auto" "claude launched in the pane"
@@ -642,7 +657,7 @@ assert_contains "$(cat "$HDLOG")" "workspace create --label home · fam7 --no-fo
 fake="$TMP/fakecheckout"
 mkdir -p "$fake/bin" "$fake/src"
 cp "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$BIN/ac-pane-agent.sh" "$BIN/ac-dispatch-select.sh" "$BIN/ac-bun.sh" "$fake/bin/"
-cp "$ROOT/src/dispatch-select.ts" "$ROOT/src/lib.ts" "$fake/src/"
+cp "$ROOT/src/dispatch-select.ts" "$ROOT/src/lib.ts" "$ROOT/src/pane-agent.ts" "$fake/src/"
 echo '{"result":{"workspaces":[]}}' >"$WSLIST"
 : >"$HDLOG"
 env -u AC_HOME PATH="$stub:$PATH" HOME="$FAKEHOME" \
@@ -824,7 +839,7 @@ assert_contains "$out" '"status":"ok"' "agent A's turn still ends after a second
 # what degraded A to that fallback (or to a timeout) before.
 case "$out" in *"idle-fallback"*) fail "A's own Stop-hook marker must end its turn, not the idle fallback" ;; esac
 assert_contains "$(cat "$BOUT")" '"status":"ok"' "the second agent's own turn ends too"
-nstop() { python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["hooks"]["Stop"]))' "$1"; }
+nstop() { jq '.hooks.Stop | length' "$1"; }
 assert_eq "$(nstop "$repo4/.claude/settings.local.json")" "2" "both agents' Stop hooks live in the one file"
 assert_contains "$(cat "$repo4/.claude/settings.local.json")" 'Bash(ls:*)' \
   "a permission grant claude wrote itself is never destroyed by a pane agent"
@@ -846,6 +861,71 @@ out="$(PATH="$cstub:$PATH" HOME="$FAKEHOME" AC_TEST_AGENT_B=1 \
   "$BIN/ac-pane-agent.sh" run --cwd "$repo4" --prompt-file "$pf" --label soft --timeout 30)"
 assert_contains "$out" '"status":"ok"' "a malformed settings.local.json fails soft to a fresh file"
 assert_eq "$(nstop "$repo4/.claude/settings.local.json")" "1" "the fresh file carries our hook"
+
+# --- the two JSON writers keep the user's files byte-stable -------------------
+# settings.local.json and ~/.claude.json are the USER's files, rewritten in
+# place, so their exact serialization is the contract: one line with ", " and
+# ": " (settings) or a 2-space indent (~/.claude.json), non-ASCII escaped as
+# \uXXXX, number literals kept as written (1.0, 5e-05, a 17-digit integer, NaN),
+# key order kept, no trailing newline, and the mode a fresh 0666-minus-umask
+# file gets. Only OUR OWN dead hooks go; everything else is kept as it was.
+hrepo="$(make_repo hookbytes)"
+mkdir -p "$hrepo/.claude"
+hset="$hrepo/.claude/settings.local.json"
+own="$TMP/ac-pane-turnend.hookbytes-0a0b0c0d"
+printf '{"a":"caf\303\251","f":1.0,"e":0.00005,"big":100000000000000001,"n":NaN,"k":{"10":1,"2":2},"hooks":{"Stop":[%s,%s,%s,%s,%s,%s]},"z":[]}' \
+  "{\"hooks\":[{\"type\":\"command\",\"command\":\"touch '$own.99999999'\"}]}" \
+  "{\"hooks\":[{\"type\":\"command\",\"command\":\"touch '$own.99999999'\\n\"}]}" \
+  "{\"hooks\":[{\"type\":\"command\",\"command\":\"touch '$own.$$'\"}]}" \
+  "{\"hooks\":[{\"type\":\"command\",\"command\":\"touch '$own.1'\"}]}" \
+  "{\"hooks\":[{\"type\":\"command\",\"command\":\"touch '$own.2147483648'\"}]}" \
+  "{\"matcher\":\"\",\"hooks\":[{\"type\":\"command\",\"command\":\"echo hi\"},{\"type\":\"command\",\"command\":\"touch '$own.99999999'\"}]}" \
+  >"$hset"
+chmod 600 "$hset"
+out="$(umask 022; PATH="$cstub:$PATH" HOME="$FAKEHOME" AC_TEST_AGENT_B=1 \
+  "$BIN/ac-pane-agent.sh" run --cwd "$hrepo" --prompt-file "$pf" --label bytes --timeout 30)"
+assert_contains "$out" '"status":"ok"' "the merged-hook turn ends ok"
+hmark="$(sed -n "s/.*touch '\([^']*\)'.*/\1/p" "$hset")"
+printf '%s' "{\"a\": \"caf\\u00e9\", \"f\": 1.0, \"e\": 5e-05, \"big\": 100000000000000001, \"n\": NaN, \"k\": {\"10\": 1, \"2\": 2}, \"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"touch '$own.$$'\"}]}, {\"hooks\": [{\"type\": \"command\", \"command\": \"touch '$own.1'\"}]}, {\"hooks\": [{\"type\": \"command\", \"command\": \"touch '$own.2147483648'\"}]}, {\"matcher\": \"\", \"hooks\": [{\"type\": \"command\", \"command\": \"echo hi\"}, {\"type\": \"command\", \"command\": \"touch '$own.99999999'\"}]}, {\"hooks\": [{\"type\": \"command\", \"command\": \"touch '$hmark'\"}]}]}, \"z\": []}" >"$TMP/hookbytes.want"
+cmp -s "$hset" "$TMP/hookbytes.want" \
+  || fail "settings.local.json merge: want $(cat "$TMP/hookbytes.want") got $(cat "$hset")"
+assert_eq "$(stat -f %Lp "$hset")" "644" "the merged file takes a fresh file's mode"
+# A BOM makes the file unreadable JSON, which fails soft to a fresh object.
+printf '\357\273\277{"keep":1}' >"$hset"
+out="$(PATH="$cstub:$PATH" HOME="$FAKEHOME" AC_TEST_AGENT_B=1 \
+  "$BIN/ac-pane-agent.sh" run --cwd "$hrepo" --prompt-file "$pf" --label bom --timeout 30)"
+hmark="$(sed -n "s/.*touch '\([^']*\)'.*/\1/p" "$hset")"
+printf '%s' "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"touch '$hmark'\"}]}]}}" >"$TMP/hookbytes.want"
+cmp -s "$hset" "$TMP/hookbytes.want" \
+  || fail "settings.local.json with a BOM: want $(cat "$TMP/hookbytes.want") got $(cat "$hset")"
+
+# The trust seed: our entry gains both flags (a falsy [] counts as unset, an
+# existing key keeps its place), every other byte of the document survives the
+# 2-space re-serialization.
+trepo="$(make_repo trustbytes)"
+tjson="$FAKEHOME/.claude.json"
+printf '{"tips":{"10":1,"2":2},"name":"caf\303\251 \360\237\230\200","f":1.0,"e":0.00005,"big":100000000000000001,"n":NaN,"projects":{"/elsewhere":{"hasTrustDialogAccepted":false,"x":[]},"%s":{"hasCompletedProjectOnboarding":[],"keep":"x"}}}' "$trepo" >"$tjson"
+chmod 600 "$tjson"
+trun() {
+  PATH="$cstub:$PATH" HOME="$FAKEHOME" AC_TEST_AGENT_B=1 \
+    "$BIN/ac-pane-agent.sh" run --cwd "$trepo" --prompt-file "$pf" --label "$1" --timeout 30 >/dev/null
+}
+(umask 022; trun trust1)
+printf '{\n  "tips": {\n    "10": 1,\n    "2": 2\n  },\n  "name": "caf\\u00e9 \\ud83d\\ude00",\n  "f": 1.0,\n  "e": 5e-05,\n  "big": 100000000000000001,\n  "n": NaN,\n  "projects": {\n    "/elsewhere": {\n      "hasTrustDialogAccepted": false,\n      "x": []\n    },\n    "%s": {\n      "hasCompletedProjectOnboarding": true,\n      "keep": "x",\n      "hasTrustDialogAccepted": true\n    }\n  }\n}' "$trepo" >"$TMP/trust.want"
+cmp -s "$tjson" "$TMP/trust.want" || fail "~/.claude.json seed: want $(cat "$TMP/trust.want") got $(cat "$tjson")"
+assert_eq "$(stat -f %Lp "$tjson")" "644" "the seeded file takes a fresh file's mode"
+# Already trusted (any truthy pair), unreadable, or a BOM: the file is left
+# exactly as it was - not re-serialized, not re-moded.
+for tdoc in "{\"projects\":{\"$trepo\":{\"hasTrustDialogAccepted\":\"no\",\"hasCompletedProjectOnboarding\":1}}}" \
+            '{"projects":' $'\357\273\277{"projects":{}}'; do
+  printf '%s' "$tdoc" >"$tjson"; chmod 600 "$tjson"; cp -p "$tjson" "$TMP/trust.was"
+  trun trust-keep
+  cmp -s "$tjson" "$TMP/trust.was" || fail "~/.claude.json must be left untouched for: $tdoc"
+  assert_eq "$(stat -f %Lp "$tjson")" "600" "an untouched ~/.claude.json keeps its mode"
+done
+rm -f "$tjson"
+trun trust-none
+assert_no_file "$tjson" "a missing ~/.claude.json is never created"
 
 # --- reap: close OUR panes whose launch cwd is gone -----------------------------
 # A dedicated herdr stub with canned tab/pane lists, kept out of the shared stub
@@ -912,6 +992,44 @@ case "$log" in *"pC"*|*"tC"*) fail "a pane whose tab is not ours must never be t
 # (the no-herdr branch is left untested on purpose: line-35 PATH-hardening
 # appends /opt/homebrew/bin, so a PATH without herdr cannot be forced here
 # without also driving reap at the operator's REAL live session.)
+
+# The matcher is ANCHORED and exact: ac-<lowercase kind>-agent, then "-" or the
+# end. A regular FILE where the cwd should be is gone too; a pane with no
+# recorded cwd is never reaped and keeps its tab. Events come in tab order,
+# then pane order, and every tab close follows every pane close.
+cat >"$RTABS" <<EOF
+{"result":{"tabs":[
+ {"tab_id":"tX1","label":"ac-ship-agentX"},
+ {"tab_id":"tX2","label":"ac--agent"},
+ {"tab_id":"tX3","label":"ac-Ship-agent"},
+ {"tab_id":"tX4","label":"xac-ship-agent"},
+ {"tab_id":"tH"},
+ {"tab_id":"tE","label":"ac-n-agent"},
+ {"tab_id":"tF","label":"ac-qa-agent-f"},
+ {"tab_id":"tG","label":"ac-qa-agent-g"}]}}
+EOF
+cat >"$RPANES" <<EOF
+{"result":{"panes":[
+ {"pane_id":"pX1","tab_id":"tX1","cwd":"$deaddir"},
+ {"pane_id":"pX2","tab_id":"tX2","cwd":"$deaddir"},
+ {"pane_id":"pX3","tab_id":"tX3","cwd":"$deaddir"},
+ {"pane_id":"pX4","tab_id":"tX4","cwd":"$deaddir"},
+ {"pane_id":"pH","tab_id":"tH","cwd":"$deaddir"},
+ {"pane_id":"pG1","tab_id":"tG"},
+ {"pane_id":"pF1","tab_id":"tF","cwd":"$pf"},
+ {"pane_id":"pE","tab_id":"tE","cwd":"$deaddir/with space"},
+ {"pane_id":"pF2","tab_id":"tF","cwd":"$deaddir"},
+ {"pane_id":"pG2","tab_id":"tG","cwd":"$deaddir"}]}}
+EOF
+out="$(PATH="$rstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap --dry-run)"
+want="$(printf '{"event":"reap","pane":"%s","cwd":"%s","dry_run":1}\n' pE "$deaddir/with space" pF1 "$pf" pF2 "$deaddir" pG2 "$deaddir")
+{\"event\":\"reap-done\",\"panes\":4,\"tabs\":2,\"dry_run\":1}"
+assert_eq "$out" "$want" "reap plans exactly our dead panes, in tab then pane order"
+: >"$RLOG"
+PATH="$rstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap >/dev/null
+assert_eq "$(grep CLOSE- "$RLOG" | tr '\n' ' ')" \
+  "CLOSE-PANE pE CLOSE-PANE pF1 CLOSE-PANE pF2 CLOSE-PANE pG2 CLOSE-TAB tE CLOSE-TAB tF " \
+  "the dead panes close first, then only the tabs they emptied"
 
 # --- reap-pane: retire ONE known pane + tidy its tab / the shared workspace -----
 # Unlike `reap` (dead-cwd keyed), this targets a KNOWN pane id and adds the
@@ -1021,6 +1139,36 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "reap-pane with no pane id is a clean no-op"
 assert_contains "$out" '"note":"no pane id"' "reap-pane notes the missing pane id"
+
+# Whatever herdr's lists cannot place, only the pane itself closes: a pane in
+# no listed tab, a tab in no workspace, or lists that do not parse. A pane id
+# listed twice belongs to its LAST tab, and a tab id listed twice to its LAST
+# workspace.
+cat >"$TMP/pr-tabs2.json" <<'EOF'
+{"result":{"tabs":[
+ {"tab_id":"tNoWs","label":"ac-learning-agent-v"},
+ {"tab_id":"tDup","workspace_id":"wOld"},
+ {"tab_id":"tDup","workspace_id":"wDup"},
+ {"tab_id":"tDupCo","workspace_id":"wDup"}]}}
+EOF
+cat >"$TMP/pr-panes2.json" <<'EOF'
+{"result":{"panes":[
+ {"pane_id":"pNoWs","tab_id":"tNoWs"},
+ {"pane_id":"pDup","tab_id":"tElse"},
+ {"pane_id":"pDup","tab_id":"tDup"}]}}
+EOF
+printf 'not json\n' >"$TMP/pr-garbage.json"
+prun() {
+  : >"$PRLOG"
+  PATH="$pstub:$PATH" PRTABS="$1" PRPANES="$2" AC_HERDR_SESSION=test \
+    "$BIN/ac-pane-agent.sh" reap-pane --pane "$3" >/dev/null
+  grep CLOSE- "$PRLOG" | tr '\n' ' '
+}
+assert_eq "$(prun "$TMP/pr-tabs2.json" "$TMP/pr-panes2.json" pNope)" "CLOSE-PANE pNope " "an unlisted pane closes alone"
+assert_eq "$(prun "$TMP/pr-tabs2.json" "$TMP/pr-panes2.json" pNoWs)" "CLOSE-PANE pNoWs " "a tab in no workspace is left alone"
+assert_eq "$(prun "$TMP/pr-tabs2.json" "$TMP/pr-panes2.json" pDup)" "CLOSE-PANE pDup CLOSE-TAB tDup " \
+  "a twice-listed pane and tab each resolve to their last entry"
+assert_eq "$(prun "$TMP/pr-garbage.json" "$TMP/pr-garbage.json" pT)" "CLOSE-PANE pT " "unparseable lists close the pane alone"
 
 # --- steer: a chief steers a LIVE pane agent by its stable handle ----------------
 # The handle IS the pane label ac-<kind>-agent:<label> the run verb writes at
@@ -1134,6 +1282,28 @@ mk_agent_pane pQ1 tQ1 "ac-qa-agent:widget-flow"
 out="$("$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:widget-flow 'run case 3')"
 assert_contains "$out" "steered" "a qa pane agent still steers without --captain"
 assert_contains "$(cat "$FAKE_HERDR/panes/pQ1.buf")" "run case 3" "the qa steer is unchanged"
+
+# The live-agent registry is exactly the panes named ac-<kind>-agent:<label>,
+# in herdr's order; a label may carry spaces, and a pane list herdr cannot
+# serve is an EMPTY registry - the refusal still names which check failed.
+mk_agent_pane pW1 tW1 "ac-qa-agent:two words"
+mk_agent_pane pN1 tN1 "crew:not-an-agent"
+mk_agent_pane pN2 tN2 "ac-qa-agent-nocolon"
+err="$("$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:nope 'x' 2>&1)" && fail "an unknown handle must be refused"
+assert_contains "$err" "live pane agents: ac-gate-agent:widget-flow-spec, ac-qa-agent:widget-flow, ac-codereview-agent:ship-review-r1, ac-codereview-agent:ship-review-r1, ac-qa-agent:probe-task, ac-qa-agent:two words" \
+  "the refusal lists every live pane agent and nothing else, in herdr's order"
+err="$("$BIN/ac-pane-agent.sh" steer --agent ac-codereview-agent:ship-review-r1 'x' 2>&1)" && fail "an ambiguous handle must be refused"
+assert_contains "$err" "matches 2 live panes (pS1 pS2)" "the ambiguity names every matching pane"
+assert_eq "$("$BIN/ac-pane-agent.sh" steer --pane pW1 'spaced')" "steered ac-qa-agent:two words (pane pW1)" \
+  "a label with spaces resolves whole"
+: >"$FAKE_HERDR/.pane-api-down"
+err="$("$BIN/ac-pane-agent.sh" steer --pane pQ1 'x' 2>&1)" && fail "no pane list must refuse --pane"
+assert_contains "$err" "pane 'pQ1' is not a live pane agent" "without a pane list, --pane is refused as not an agent"
+assert_contains "$err" "live pane agents: none" "without a pane list, no agent is live"
+err="$("$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:widget-flow 'x' 2>&1)" && fail "no pane list must refuse --agent"
+assert_contains "$err" "no live pane agent named 'ac-qa-agent:widget-flow' - live pane agents: none" \
+  "without a pane list, a handle resolves to nothing"
+rm -f "$FAKE_HERDR/.pane-api-down"
 
 # --- the ONE-SHOT COMMAND arm (--exec) -------------------------------------------
 # A harness whose one-shot form is non-interactive (codex exec / claude -p /
@@ -1253,6 +1423,24 @@ touch "$XLOG.empty"
 out="$(xrun --exec --harness codex --kind gate --label g3 2>&1 || true)"
 assert_contains "$out" '"status":"error"' "empty stdout is a failed rung, not an ok turn"
 rm -f "$XLOG.empty"
+
+# The one-message transcript is written byte for byte: one line, ", " and ": "
+# separators, every byte outside printable ASCII escaped (a BOM, astral
+# characters as a surrogate pair, CR LF, DEL, NUL), and a trailing newline.
+# Stdout that is not valid UTF-8 cannot be wrapped, and the turn fails.
+wstub="$TMP/wrapbin"; mkdir -p "$wstub"
+export WRAP_PAYLOAD="$TMP/wrap.payload"
+printf '#!/usr/bin/env bash\ncat "$WRAP_PAYLOAD"\n' >"$wstub/codex"
+chmod +x "$wstub/codex"
+printf '\357\273\277caf\303\251 \360\237\230\200 \342\200\250 "q" \\ / \t|\r\n|\177|\001\000end' >"$WRAP_PAYLOAD"
+out="$(PATH="$wstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$xrepo" --prompt-file "$pf" --exec --harness codex --kind gate --label wrap1)"
+tr="$(printf '%s\n' "$out" | sed -n 's/.*"event":"done".*"transcript":"\([^"]*\)".*/\1/p')"
+printf '{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "\\ufeffcaf\\u00e9 \\ud83d\\ude00 \\u2028 \\"q\\" \\\\ / \\t|\\r\\n|\\u007f|\\u0001\\u0000end"}]}}\n' >"$TMP/wrap.want"
+cmp -s "$tr" "$TMP/wrap.want" || fail "wrapped transcript: want $(cat "$TMP/wrap.want") got $(cat "$tr")"
+printf 'bad\377' >"$WRAP_PAYLOAD"
+out="$(PATH="$wstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$xrepo" --prompt-file "$pf" --exec --harness codex --kind gate --label wrap2 2>&1 || true)"
+assert_contains "$out" '"status":"error"' "stdout that is not UTF-8 fails the turn"
+assert_contains "$out" "could not wrap the rung's stdout" "the refusal names the wrap"
 
 # Per-harness one-shot shapes, each in its OWN dialect (the three forms that
 # exist today - no speculative entries).
@@ -1814,6 +2002,7 @@ case "${1:-} ${2:-}" in
     # A turn that DIED mid-pass: its last assistant message carries a tool_use
     # and no text, exactly what a session killed after a Read leaves behind.
     [ -f "$HDLOG.toolend" ] && printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{}}]}}' >>"$t"
+    [ -z "${IDLE_TX:-}" ] || cp "$IDLE_TX" "$t"
     touch -t 200001010000 "$t" ;;
   "pane get") echo '{"result":{"pane":{"pane_id":"pP1","agent_status":"idle"}}}' ;;
   "pane read") echo 'idle pane scrollback' ;;
@@ -1885,6 +2074,25 @@ assert_eq "$irc" "1" "the refusal exits non-zero, so no caller reads it as a com
 : >"$TMP/idle-empty.md"
 out="$(irun --label idle-empty --deliverable "$TMP/idle-empty.md" || true)"
 case "$out" in *'"status":"ok"'*) fail "an empty deliverable must never report ok" ;; esac
+
+# The fallback's own question - is there ANY assistant text - answers no for a
+# transcript that is not UTF-8, for one holding a line that parses to a non-
+# object, and for text that is only Python-whitespace (U+001C counts), so the
+# pane is held to the caller's timeout. U+FEFF is NOT whitespace: that text
+# counts, and the fallback fires.
+itx="$TMP/idle-tx.jsonl"
+printf '%s\n%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"the verdict"}]}}' '[1]' >"$itx"
+out="$(IDLE_TX="$itx" irun --label hft-nonobject --timeout 12 || true)"
+assert_contains "$out" '"status":"timeout"' "a non-object line means no final text, so the fallback holds"
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"the verdict \377"}]}}\n' >"$itx"
+out="$(IDLE_TX="$itx" irun --label hft-notutf8 --timeout 12 || true)"
+assert_contains "$out" '"status":"timeout"' "a transcript that is not UTF-8 has no final text, so the fallback holds"
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":" \\u001c\\u00a0"}]}}\n' >"$itx"
+out="$(IDLE_TX="$itx" irun --label hft-blank --timeout 12 || true)"
+assert_contains "$out" '"status":"timeout"' "whitespace-only text is no final text, so the fallback holds"
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"\\ufeff"}]}}\n' >"$itx"
+out="$(IDLE_TX="$itx" irun --label hft-bom || true)"
+assert_contains "$out" 'idle-fallback used' "a lone U+FEFF is text, so the fallback fires"
 
 # Arg validation: no text, and no target, are usage errors.
 assert_fails "$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:probe-task
