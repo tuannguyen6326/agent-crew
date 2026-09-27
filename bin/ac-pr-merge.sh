@@ -6,8 +6,9 @@
 # (e.g. -- --merge or -- --rebase). --repo/-R overrides are rejected: the URL
 # is the single source of truth for where the merge lands.
 # The merge is pinned (--match-head-commit) to the head ac-pr-check.sh
-# recorded - the head the captain approved - and refused when the PR's head
-# has moved since; the merged head is recorded as pr_merged_head.
+# recorded for this PR - the head the captain approved - refused when none is
+# recorded or the PR's head has moved since; that pinned head is recorded as
+# pr_merged_head.
 #
 # Landing interlock (contract: ac-lib.sh's landing-ledger block): BEFORE the
 # merge it prints one LANDING-OVERLAP warning per PR file another family
@@ -84,12 +85,12 @@ fi
 # this call cannot merge commits nobody approved, and a head that already
 # moved refuses here with the re-record command rather than at gh.
 rec_head="$(ac_meta_get "$meta" pr_head)"
-if [ -n "$rec_head" ] && [ "$(ac_meta_get "$meta" pr)" = "$url" ]; then
-  live_head="${head_sha:-$(gh pr view "$url" --json headRefOid -q .headRefOid 2>/dev/null || true)}"
-  [ -z "$live_head" ] || [ "$live_head" = "$rec_head" ] \
-    || ac_die "merge refused: the PR head moved since it was recorded (recorded ${rec_head:0:12}, now ${live_head:0:12}) - the approval covered the recorded head; re-record it (bin/ac-pr-check.sh $id $url) and ask again"
-  head_sha="$rec_head"
-fi
+[ -n "$rec_head" ] && [ "$(ac_meta_get "$meta" pr)" = "$url" ] \
+  || ac_die "merge refused: no head is recorded for $url on $id, so no approved head can bind the merge - record it (bin/ac-pr-check.sh $id $url), have the captain approve that head, then merge"
+live_head="${head_sha:-$(gh pr view "$url" --json headRefOid -q .headRefOid 2>/dev/null || true)}"
+[ -z "$live_head" ] || [ "$live_head" = "$rec_head" ] \
+  || ac_die "merge refused: the PR head moved since it was recorded (recorded ${rec_head:0:12}, now ${live_head:0:12}) - the approval covered the recorded head; re-record it (bin/ac-pr-check.sh $id $url) and ask again"
+head_sha="$rec_head"
 
 # Landing interlock: warn on <24h foreign-family overlaps before the merge,
 # record the landed files after it (header + ac-lib.sh landing-ledger block).
@@ -111,7 +112,7 @@ if [ "${#extra[@]}" -gt 0 ]; then merge_args+=("${extra[@]}"); fi
 # pin, a push landing between that and this call would merge commits neither
 # covers. A moved head makes gh refuse, and the read-back below then reports
 # the merge unproven.
-if [ -n "$head_sha" ]; then merge_args+=(--match-head-commit "$head_sha"); fi
+merge_args+=(--match-head-commit "$head_sha")
 # Only the ATTEMPT is bookkept before the merge call. pr= itself rides the
 # PROOF alone, because pr= is exactly --pr-ready's precondition in
 # ac-teardown.sh: writing it for an unproven attempt would arm that landing
@@ -142,10 +143,9 @@ fi
   || printf 'note: the merge call failed (exit %s) but the PR is MERGED - an earlier attempt landed; recording the proof.\n' "$merge_rc"
 [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
 ac_meta_set "$meta" pr "$url"
+# The merge was pinned to head_sha, so a MERGED PR merged exactly that head:
+# teardown's merged proof covers it and nothing committed after it.
+ac_meta_set "$meta" pr_merged_head "$head_sha"
 ac_meta_set "$meta" pr_merged 1
-# The head the forge merged, so teardown's merged proof covers that head and
-# nothing committed after it.
-merged_head="$(gh pr view "$url" --json headRefOid -q .headRefOid 2>/dev/null || true)"
-[ -z "$merged_head" ] || ac_meta_set "$meta" pr_merged_head "$merged_head"
 ac_status_append "$id" "merged: $url"
 printf 'merged %s\n' "$url"

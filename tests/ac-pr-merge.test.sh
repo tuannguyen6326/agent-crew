@@ -64,7 +64,7 @@ EOF
 chmod +x "$stub/gh"
 
 url=https://github.com/acme/widget/pull/7
-printf 'backend=tmux\n' >"$AC_HOME/state/t1.meta"
+printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t1.meta"
 
 merge() { PATH="$stub:$PATH" "$BIN/ac-pr-merge.sh" "$@"; }
 argv() { cat "$GHLOG"; }
@@ -83,7 +83,7 @@ v2_marker() {
 # No tail: exactly `pr merge <url> --squash`, no trailing empty argument.
 out="$(merge t1 "$url")"
 assert_contains "$out" "merged $url" "merge reported"
-assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n' "$url")" "no-tail argv"
+assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--match-head-commit]\n[abc111]\n' "$url")" "no-tail argv"
 assert_contains "$(cat "$AC_HOME/state/t1.meta")" "pr_merged=1" "meta records merge"
 assert_contains "$(cat "$AC_HOME/state/t1.meta")" "pr=$url" "pr= rides the proven merge"
 
@@ -96,13 +96,13 @@ assert_contains "$(cat "$AC_HOME/state/t1.meta")" "pr=$url" "pr= rides the prove
 # the merge call (pr_attempt=) and pr= is written beside the proof alone -
 # a bogus URL can neither land a task nor overwrite ac-pr-check's validated
 # record.
-printf 'backend=tmux\n' >"$AC_HOME/state/t2.meta"
+printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t2.meta"
 GHMERGESTATE=OPEN
 out="$(merge t2 "$url" 2>&1)" && fail "an unproven merge outcome must exit non-zero" || true
 assert_contains "$out" "NOT proven" "the refusal names the unproven outcome"
 assert_contains "$out" "state=OPEN" "quoting the forge's own answer"
 grep -q "pr_merged=1" "$AC_HOME/state/t2.meta" && fail "an unproven outcome must not mark pr_merged" || true
-grep -q "^pr=" "$AC_HOME/state/t2.meta" && fail "an unproven outcome must not record pr= - it is --pr-ready's whole precondition" || true
+assert_eq "$(grep -c '^pr=' "$AC_HOME/state/t2.meta")" "1" "an unproven outcome leaves ac-pr-check's pr= record as it was"
 assert_contains "$(cat "$AC_HOME/state/t2.meta")" "pr_attempt=$url" "the attempt is still bookkept"
 GHMERGESTATE=fail
 out="$(merge t2 "$url" 2>&1)" && fail "an unreadable outcome must exit non-zero" || true
@@ -113,7 +113,7 @@ GHMERGESTATE=MERGED
 # that fails ("already merged") while the PR is provably MERGED - the proof
 # must still be recordable, or no scripted invocation can ever set
 # pr_merged=1 for that task.
-printf 'backend=tmux\n' >"$AC_HOME/state/t3.meta"
+printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t3.meta"
 GHMERGEFAIL=1
 out="$(merge t3 "$url" 2>&1)" || fail "a failed merge call over a MERGED PR must record the proof, not die"
 assert_contains "$out" "merged $url" "the proof is reported"
@@ -130,32 +130,40 @@ printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t5.meta"
 merge t5 "$url" >/dev/null || fail "a merge at the recorded head proceeds"
 assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--match-head-commit]\n[abc111]\n' "$url")" \
   "the recorded PR head pins the merge"
+# No recorded head for THIS PR means no head was ever put to the captain, so
+# nothing can bind the merge: refuse and name the record step.
 printf 'backend=tmux\npr=https://github.com/acme/widget/pull/8\npr_head=abc111\n' >"$AC_HOME/state/t6.meta"
-merge t6 "$url" >/dev/null
-assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n' "$url")" "another PR's head never pins this one"
+: >"$GHLOG"
+out="$(merge t6 "$url" 2>&1)" && fail "another PR's recorded head must not authorize this merge"
+assert_contains "$out" "ac-pr-check.sh t6 $url" "the refusal names the record step"
+assert_eq "$(argv)" "" "an unrecorded head never reaches the merge call"
+printf 'backend=tmux\n' >"$AC_HOME/state/t8.meta"
+out="$(merge t8 "$url" 2>&1)" && fail "a merge with no recorded head must refuse"
+grep -q "pr_merged=1" "$AC_HOME/state/t8.meta" && fail "a refused merge records no proof" || true
 printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t7.meta"
 : >"$GHLOG"
 out="$(GHVIEW=def222 merge t7 "$url" 2>&1)" && fail "a PR head that moved since it was recorded must refuse"
 assert_contains "$out" "moved since it was recorded" "the refusal names the moved head"
 assert_eq "$(argv)" "" "a moved head never reaches the merge call"
-GHVIEW=abc111 merge t7 "$url" >/dev/null
-assert_contains "$(cat "$AC_HOME/state/t7.meta")" "pr_merged_head=abc111" "the merged head is recorded"
+merge t7 "$url" >/dev/null
+assert_contains "$(cat "$AC_HOME/state/t7.meta")" "pr_merged_head=abc111" \
+  "the merged head is the pinned head, recorded even when the forge answers no head"
 
 # Tail passes through verbatim; a method flag in the tail is not doubled.
 merge t1 "$url" -- --squash --admin >/dev/null
-assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--admin]\n' "$url")" "tail verbatim, --squash not doubled"
+assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--admin]\n[--match-head-commit]\n[abc111]\n' "$url")" "tail verbatim, --squash not doubled"
 
 # The `-- --squash` workaround alone still yields a single --squash.
 merge t1 "$url" -- --squash >/dev/null
-assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n' "$url")" "-- --squash workaround"
+assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--match-head-commit]\n[abc111]\n' "$url")" "-- --squash workaround"
 
 # `-- --merge` replaces the default method.
 merge t1 "$url" -- --merge >/dev/null
-assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--merge]\n' "$url")" "-- --merge overrides method"
+assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--merge]\n[--match-head-commit]\n[abc111]\n' "$url")" "-- --merge overrides method"
 
 # A flag value containing a space survives quoting as one argv element.
 merge t1 "$url" -- --subject "release: two words" >/dev/null
-assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--subject]\n[release: two words]\n' "$url")" "spaced flag stays one arg"
+assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--subject]\n[release: two words]\n[--match-head-commit]\n[abc111]\n' "$url")" "spaced flag stays one arg"
 
 # --repo/-R overrides are still rejected.
 assert_fails merge t1 "$url" -- --repo acme/other
@@ -185,7 +193,7 @@ qa:
   require_for_ship: true
 YAML
 head="$(git -C "$qarepo" rev-parse HEAD)"
-printf 'backend=tmux\nproject_dir=%s\n' "$qarepo" >"$AC_HOME/state/q1.meta"
+printf 'backend=tmux\nproject_dir=%s\npr=%s\npr_head=%s\n' "$qarepo" "$url" "$head" >"$AC_HOME/state/q1.meta"
 
 # (a) gh pr view API failure -> merge REFUSED (gate reached without a head).
 GHVIEW=fail
@@ -218,7 +226,7 @@ assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--match-head-co
 
 # (e) a project that does NOT require qa still merges with an unresolved head.
 noqarepo="$(make_repo noqarepo)"                          # no fleet-home config -> qa not enforced
-printf 'backend=tmux\nproject_dir=%s\n' "$noqarepo" >"$AC_HOME/state/q2.meta"
+printf 'backend=tmux\nproject_dir=%s\npr=%s\npr_head=abc111\n' "$noqarepo" "$url" >"$AC_HOME/state/q2.meta"
 GHVIEW=fail
 out="$(merge q2 "$url" 2>&1)"
 assert_contains "$out" "merged $url" "qa not required -> unresolved head is no false refusal"
@@ -232,7 +240,7 @@ assert_contains "$out" "merged $url" "qa not required -> unresolved head is no f
 mkdir -p "$AC_HOME/records/repo-knowledge"
 grepo2="$(make_repo scopedqarepo)"
 ghead="$(git -C "$grepo2" rev-parse HEAD)"
-printf 'backend=tmux\nproject_dir=%s\n' "$grepo2" >"$AC_HOME/state/g1.meta"
+printf 'backend=tmux\nproject_dir=%s\npr=%s\npr_head=%s\n' "$grepo2" "$url" "$ghead" >"$AC_HOME/state/g1.meta"
 printf 'qa:\n  require_for_ship: true\n  scopes:\n    orchid:\n      seed: "true"\n' \
   >"$AC_HOME/projects/scopedqarepo.yaml"
 mkdir -p "$grepo2/.crew/qa/passed"
@@ -261,7 +269,7 @@ rm -f "$AC_HOME/projects/scopedqarepo.yaml" "$AC_HOME/records/repo-knowledge/sco
 # merges once both are present at the head.
 mrepo="$(make_repo matrixqarepo)"
 mhead="$(git -C "$mrepo" rev-parse HEAD)"
-printf 'backend=tmux\nproject_dir=%s\n' "$mrepo" >"$AC_HOME/state/m1.meta"
+printf 'backend=tmux\nproject_dir=%s\npr=%s\npr_head=%s\n' "$mrepo" "$url" "$mhead" >"$AC_HOME/state/m1.meta"
 printf 'qa:\n  require_for_ship: true\n' >"$AC_HOME/projects/matrixqarepo.yaml"
 mkdir -p "$AC_HOME/data/m1/qa" "$mrepo/.crew/qa/passed"
 printf '{"task":"m1","source_ref":"","required_profiles":[{"profile_key":"matrixqarepo/orchid/orchid-service"},{"profile_key":"matrixqarepo/cedar/cedar-service"}]}\n' \
@@ -290,7 +298,7 @@ rm -f "$AC_HOME/projects/matrixqarepo.yaml"; rm -rf "$AC_HOME/data/m1"
 GHVIEW=""
 GHPRFILES="$TMP/none.files"                              # unresolvable file list
 krepo="$(make_repo krepo)"
-printf 'backend=tmux\nproject_dir=%s\n' "$krepo" >"$AC_HOME/state/k1.meta"
+printf 'backend=tmux\nproject_dir=%s\npr=%s\npr_head=abc111\n' "$krepo" "$url" >"$AC_HOME/state/k1.meta"
 out="$(merge k1 "$url" 2>&1)"
 assert_contains "$out" "KNOWLEDGE-GAP: family k1" "an empty file list is still a landing that owes an entry"
 assert_contains "$out" "krepo" "the flag names the project"
