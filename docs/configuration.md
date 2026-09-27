@@ -281,7 +281,7 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_PORT_BASE` | 20000 | Base of the per-worktree port slots: slot `n` owns `AC_PORT_BASE + n*100` through `+99`, written to `<worktree>/.crew/ports.env`. |
 | `AC_POLL` | 15 | Watcher poll interval in seconds. |
 | `AC_HEARTBEAT` | 600 | Seconds with nothing actionable before the watcher exits `heartbeat`. |
-| `AC_STALE` | 240 | Quiet-pane seconds before a wake: `ended:` when the pane ended its turn, else `stale:`. |
+| `AC_STALE` | 240 | Quiet-pane seconds before a wake: `ended:` when the pane ended its turn (`limited:` when the provider usage limit stopped it), else `stale:`. |
 | `AC_BUSY_MAX` | 2700 | Seconds a pane may read busy with no turn end before one `stale:` wake per busy run; `0` disables. |
 | `AC_BUSY_RE` | built-in spinner patterns | Pane content that means "still working". |
 | `AC_DECISION_RE` | built-in | Captain-wait marker regex (the BLOCKED-stamp class, `bin/ac-lib.sh`). |

@@ -155,7 +155,7 @@ The fleet chief also drains, in place, the spool of any family whose roomchief i
 Records of a drainer that died mid-claim return to the spool: exactly-once normally, at-least-once across crashes.
 The drain then reports unacknowledged completions and prints `WATCHER-DOWN` when crew flies under a stale beacon.
 
-`bin/ac-watch.sh` costs no tokens while nothing happens; its header owns every arm and reason (marker, artifact, push, `gone`/`unobservable`, `ask`, `ended`, `stale`, `heartbeat`).
+`bin/ac-watch.sh` costs no tokens while nothing happens; its header owns every arm and reason (marker, artifact, push, `gone`/`unobservable`, `ask`, `ended`, `limited`, `stale`, `heartbeat`).
 Each watcher stamps `state/.last-watcher-beat[.<family>]` and stands it down on exit, and records its `AC_WATCH_SKIP` in `state/.watcher-config[<suffix>]` so an arm with a different config refuses.
 A roomchief arms with `AC_WATCH_ONLY` from `bin/ac-ready.sh watch-set <family>`; the fleet watcher revalidates its skip set every poll and covers a family directly when its roomchief is gone.
 A blocking caller (`ac-gate.sh`, `ac-verify.sh`) writes a self-expiring `state/.chief-busy-until.<family>` so a live roomchief inside one long call keeps its skip.

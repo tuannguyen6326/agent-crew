@@ -2681,6 +2681,34 @@ case "$out" in *ended:elw2*) fail "a working pane must never produce the loud en
 assert_no_file "$FAKE_HERDR/panes/pELW2.reported" "a merely-quiet working pane is never stamped"
 assert_contains "$(fleet_spool)" "quiet for" "the stale wake payload is unchanged"
 
+# USAGE LIMIT: a claude pane that ended its turn on the provider's usage-limit
+# error (the exact line a drydock agent got on 2026-09-20) is waiting on the
+# reset, not on the chief - `limited:` with the reset text, never `ended:`. The
+# same words in the agent's own prose are no limit.
+printf 'window=crew:lim\nbackend=herdr\n' >"$state/lim.meta"
+seed_pane lim pLIM tLIM
+printf "  \xe2\x8e\xbf  You've hit your weekly limit \xc2\xb7 resets 10pm (Asia/Saigon)\n" >>"$(fake_pane_buf lim)"
+printf 'window=crew:lim2\nbackend=herdr\n' >"$state/lim2.meta"
+seed_pane lim2 pLIM2 tLIM2
+printf "You've hit your weekly limit, so the watcher should say so.\n" >>"$(fake_pane_buf lim2)"
+bash "$BIN/ac-watch.sh" --once >/dev/null
+rm -rf "$state"/.wake-spool*
+now="$(date +%s)"
+printf '%s\n' "$(( now - 1000 ))" >"$state/.change-lim"
+printf 'idle\n' >"$FAKE_HERDR/panes/pLIM.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "limited:lim" "a pane stopped by the usage limit wakes as limited:"
+case "$out" in *ended:lim*) fail "a limited pane is not an ended turn waiting on the chief" ;; esac
+assert_contains "$(fleet_spool)" "resets 10pm (Asia/Saigon)" "the reset time rides the wake"
+assert_contains "$(cat "$state/lim.status")" "usage limit" "the limit is in the task's status log"
+rm -rf "$state"/.wake-spool*
+printf '%s\n' "$(( now - 1000 ))" >"$state/.change-lim2"
+printf 'idle\n' >"$FAKE_HERDR/panes/pLIM2.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "ended:lim2" "the limit's words in prose are an ordinary ended turn"
+rm -f "$state/lim.meta" "$state/lim2.meta"
+rm -rf "$state"/.wake-spool*
+
 # COMPACT NOTE: a quiet claude crewmate whose transcript the compact adviser
 # judges ready rides ` compact=advise ...` on its wake, so the chief can send
 # it /compact.

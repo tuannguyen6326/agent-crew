@@ -97,6 +97,14 @@
 # reaches either. So this is a CREWMATE net: a chief supervising a live crewmate
 # is quiet on this arm too, and SUPERVISING-CHIEF QUIET argues why.
 #
+# USAGE LIMIT. An ended turn whose pane tail carries claude's provider
+# usage-limit line (`You've hit your weekly limit · resets 10pm (<tz>)`, the
+# exact line a drydock agent stopped on 2026-09-20) is not waiting on the
+# chief: steering it only spends another refused turn, and it can do nothing
+# until the reset. It exits `limited:<id>` with that line as the payload
+# instead of `ended:`, under the same dedup and suppressions. The match is the
+# error's own `limit · ` shape, so the words in an agent's prose never trip it.
+#
 # BUSY-STALL BOUND (code-reviewer-plugin-has-no-self-timeout). The arms above
 # all read a pane that has gone QUIET; a pane hung INSIDE one tool call is the
 # opposite and was invisible to every one of them. Its harness keeps rendering
@@ -400,7 +408,8 @@
 # failure is stamped, the pane keeps being polled, and one outage costs one wake
 # and one status line; contract: ac-backend.sh WINDOW LIVENESS), `ask:<id>` (agent blocked on an
 # interactive prompt - herdr's pane state or Orca's agentWait), `ended:<id>` (the ENDED-TURN LOUD
-# WAKE above - a pane that finished its turn with no marker), `stale:<id>`
+# WAKE above - a pane that finished its turn with no marker), `limited:<id>`
+# (USAGE LIMIT above - an ended turn stopped by the provider), `stale:<id>`
 # (a pane merely quiet while working). Neither of those two is ever a chief
 # supervising a live crewmate, see SUPERVISING-CHIEF QUIET above. `remote:<rid>`
 # (new remote captain orders arrived), `remote-failed:<last-rid|none>` (the poll
@@ -1869,7 +1878,7 @@ check_fleet() {
   # One poll pass. Prints an exit reason and returns 0 when actionable.
   local meta id tail hash prev marker seen seen_hash seen_now idle changed_file skip_fam
   local busy_file busy_age
-  local task_dir report rhash sup alive_rc busy wait_file cov_rc
+  local task_dir report rhash sup alive_rc busy wait_file cov_rc limit
   # DELIBERATELY does NOT branch on ac_meta_is_verify. A verification agent is
   # excluded from ACCOUNTING (ac_chief_child_live, and the ac-room/
   # ac-teardown/ac-wake-drain/ac-fleets enumerators), NEVER from SUPERVISION:
@@ -2236,6 +2245,14 @@ check_fleet() {
       && ! ac_chief_gate_parked "$id" && ! ac_chief_child_live "$state_dir" "$id"; then
       if [ "$busy" = 0 ]; then
         if backend_agent_idle "$id" 2>/dev/null; then
+          limit="$(grep -oE "You('|’)ve hit your [a-z ]*limit · .*" <<<"$tail" | tail -n 1 || true)"
+          if [ -n "$limit" ]; then
+            touch "$state_dir/.stale-$id"
+            ac_status_append "$id" "stopped on the provider usage limit: $limit"
+            queue_wake limited "$id" "stopped on the provider usage limit ($limit) - it can do nothing until the reset; do not steer it"
+            emit_reason "limited:$id"
+            return 0
+          fi
           # COMPLETION ALREADY REPORTED (stale-signal-costs-a-hard-wake): the
           # pane ended its turn but .seen-<id> holds a chief-facing completion
           # (done/failed/paused/merged - an AC_CAPTAIN_RE match that is NOT

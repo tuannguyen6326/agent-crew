@@ -19,7 +19,8 @@ Do NOT classify these as stuck - they are healthy states:
 - a declared pause (the crewmate stamped `paused:` itself);
 - a captain gate (the task is waiting on a decision you owe the captain);
 - a blocked interactive prompt (a real dialog - answer it deliberately, do not "recover" it);
-- a completed-but-awaiting-landing task (the work is done and waiting to merge).
+- a completed-but-awaiting-landing task (the work is done and waiting to merge);
+- a `limited:` pane (stopped on the provider usage limit - it can do nothing until the reset its wake names, so a steer only spends a refused turn).
 
 ## The evidence ladder - escalate in order
 

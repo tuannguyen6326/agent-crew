@@ -161,7 +161,7 @@ Owner: [`rooms-threads`](../.agents/skills/rooms-threads/SKILL.md) skill, `bin/a
 ### The zero-token watcher
 
 `bin/ac-watch.sh` polls every pane in bash, absorbs benign output, and exits with one reason line only when something is actionable.
-Reasons include `report:`, `gone:`, `ask:`, `ended:`, `stale:`, `push:`, `unobservable:` and `heartbeat`; `unobservable` means the backend could not be read, never that the agent died.
+Reasons include `report:`, `gone:`, `ask:`, `ended:`, `limited:`, `stale:`, `push:`, `unobservable:` and `heartbeat`; `unobservable` means the backend could not be read, never that the agent died.
 The watcher must run as the harness's own background task so its exit wakes the chief; on claude the Stop hook `bin/ac-watch-autoarm.sh` holds and re-arms it automatically.
 
 Owners: `bin/ac-watch.sh` header, [`task-lifecycle`](../.agents/skills/task-lifecycle/SKILL.md) skill.
