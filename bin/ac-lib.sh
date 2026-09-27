@@ -2644,16 +2644,31 @@ ac_window_family() {
 ac_worktree_status() {
   # ac_worktree_status <wt> - everything a destructive gate must count as work
   # in a tree: the porcelain with any submodule ignore setting overridden, plus
-  # an edit to a file whose assume-unchanged or skip-worktree bit hides it from
-  # `git status` (git-update-index). The exit status is git status's own; the
-  # hidden-bit scan only adds `H  <path>` lines.
-  local rc=0 line path blob
+  # an edit, deletion or mode/type change to a file whose assume-unchanged or
+  # skip-worktree bit hides it from `git status` (git-update-index). The exit
+  # status is git status's own; the hidden-bit scan only adds `H  <path>`.
+  local rc=0 line tag path mode blob f filemode
   git -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
+  filemode="$(git -C "$1" config --get core.fileMode 2>/dev/null || printf 'true')"
   while IFS= read -r line; do
-    path="${line#? }"
-    [ -f "$1/$path" ] || continue
-    blob="$(git -C "$1" ls-files -s -- "$path" 2>/dev/null | awk 'NR == 1 { print $2 }')"
-    [ "$(git -C "$1" hash-object -- "$path" 2>/dev/null)" = "$blob" ] || printf 'H  %s\n' "$path"
+    tag="${line%% *}"; path="${line#? }"; f="$1/$path"
+    read -r mode blob _ <<<"$(git -C "$1" ls-files -s -- "$path" 2>/dev/null | head -n 1)"
+    [ "$mode" != 160000 ] || continue
+    if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+      # Absent under skip-worktree is a sparse checkout doing its job; absent
+      # under assume-unchanged is a deletion git status does not show.
+      [ "$tag" = S ] || printf 'H  %s\n' "$path"
+      continue
+    fi
+    case "$mode" in
+      120000) [ -L "$f" ] && [ "$(printf '%s' "$(readlink "$f")" | git -C "$1" hash-object --stdin)" = "$blob" ] \
+                || printf 'H  %s\n' "$path" ;;
+      *) if [ -L "$f" ] || [ ! -f "$f" ] \
+              || [ "$(git -C "$1" hash-object -- "$path" 2>/dev/null)" != "$blob" ] \
+              || { [ "$filemode" = true ] && { [ "$mode" = 100755 ] && [ ! -x "$f" ] || { [ "$mode" != 100755 ] && [ -x "$f" ]; }; }; }; then
+           printf 'H  %s\n' "$path"
+         fi ;;
+    esac
   done < <(git -C "$1" ls-files -v 2>/dev/null | grep -E '^([a-z]|S) ')
   return "$rc"
 }

@@ -69,6 +69,24 @@ assert_fails "$BIN/ac-tree.sh" return "$wt2"
 assert_contains "$(cat "$wt2/file.txt")" "hidden edit" "the hidden edit survives the refused return"
 git -C "$wt2" update-index --no-assume-unchanged file.txt
 git -C "$wt2" checkout -- file.txt
+# ...and so are the hidden edits that change no bytes: a deletion and an
+# executable-bit flip behind the same bit.
+git -C "$wt2" update-index --assume-unchanged file.txt
+rm "$wt2/file.txt"
+assert_fails "$BIN/ac-tree.sh" return "$wt2"
+git -C "$wt2" checkout -- file.txt 2>/dev/null || git -C "$wt2" show HEAD:file.txt >"$wt2/file.txt"
+chmod +x "$wt2/file.txt"
+assert_fails "$BIN/ac-tree.sh" return "$wt2"
+chmod -x "$wt2/file.txt"
+git -C "$wt2" update-index --no-assume-unchanged file.txt
+[ -z "$(git -C "$wt2" status --porcelain)" ] || fail "fixture: the tree must be clean again"
+# A skip-worktree file that is absent is a sparse checkout doing its job, not
+# a deletion: the tree stays clean (it is only listed, never returned here).
+git -C "$wt2" update-index --skip-worktree file.txt
+rm "$wt2/file.txt"
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) fail "an absent skip-worktree file must not read as dirty" ;; esac
+git -C "$wt2" update-index --no-skip-worktree file.txt
+git -C "$wt2" checkout -- file.txt
 
 # Remove: refuses a leased slot without --include-leased.
 assert_fails "$BIN/ac-tree.sh" remove "$wt2"
