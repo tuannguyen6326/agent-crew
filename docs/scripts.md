@@ -50,7 +50,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | `ac-send.sh <id> [--force] '<text>' \| <id> --key <Enter\|Escape\|C-c>` | Sends one literal line (submit and arrival verified) or one named key to a pane; also the marked order channel to a crewdeputy. Refuses a missing pane, text into a blocked prompt or dead shell without `--force`, and a refuted arrival. Refused in a SOLO session. Spec: `bin/ac-send.sh` header. |
 | `ac-peek.sh <id> [<lines>]` | Bounded tail of a crewmate pane (default 40 lines). Spec: `bin/ac-peek.sh` header. |
 | `ac-crew-state.sh <id>` | One deterministic current-state line: ship step, then gone/unobservable window, busy pane, last status line, idle. Spec: `bin/ac-crew-state.sh` header. |
-| `ac-follow.sh <id> \| --render <jsonl>` | Read-only realtime stream of a crewmate's claude transcript, following the transcript directory as sessions fork. Spec: `bin/ac-follow.sh` header. |
+| `ac-follow.sh <id> \| --render <jsonl>` | Read-only realtime stream of a crewmate's claude transcript, following the transcript directory as sessions fork. Spec: `bin/ac-follow.sh` header; what it prints: `src/follow.ts` header (the entry execs it). |
 | `ac-session.sh <id> [--talk]` | Prints a claude resume of a crewmate's session: forked safe view by default, `--talk` un-forked and refused while the crewmate is busy; works on archived tasks. Spec: `bin/ac-session.sh` header. |
 
 ## Supervision and wakes

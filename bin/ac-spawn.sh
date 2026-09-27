@@ -849,6 +849,14 @@ launch_session_id() {
     -e 's/.*--resume \([0-9a-f-]\{8,\}\).*/\1/p' | head -n1
 }
 
+uuid_v4() {
+  # uuid_v4 - a random RFC 4122 version-4 id for a host without uuidgen: 16
+  # random bytes with the version nibble set to 4 and the variant bits to 10.
+  local h
+  h="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" "$(( 0x${h:16:1} & 3 | 8 ))" "${h:17:3}" "${h:20:12}"
+}
+
 build_launch() {
   # build_launch <harness> - compose THIS spawn's launch command; reads $model,
   # $effort_flag and $resume_sid. Runs in a subshell: the caller recovers the
@@ -882,7 +890,7 @@ build_launch() {
     return 0
   fi
   if [ "$h" = "claude" ]; then
-    sid="$( (uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())') | tr '[:upper:]' '[:lower:]')"
+    sid="$( (uuidgen 2>/dev/null || uuid_v4) | tr '[:upper:]' '[:lower:]')"
   fi
   ac_build_launch "$h" "$model" "$effort_flag" "" "$sid"
 }

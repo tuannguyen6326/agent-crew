@@ -666,19 +666,13 @@ watch_open() {
     "'$bin_dir/ac-ship-watch.sh' --repo '$repo' --self-pane $p" >/dev/null 2>&1 || true
   printf '%s\n' "$p" >"$rd/watch.pane"
   if [ -n "$ws" ]; then
-    herdr --session "$ses" tab list 2>/dev/null | WSID="$ws" python3 -c "
-import sys, json, os
-try:
-    for t in json.load(sys.stdin)['result']['tabs']:
-        if t.get('workspace_id') == os.environ['WSID'] and t.get('label') == '1':
-            print(t['tab_id'])
-except Exception:
-    pass
-" 2>/dev/null | while read -r jt; do
-      # Same DEGRADE class: tidying herdr's default tab away is cosmetic, and
-      # this close is what the whole pipeline's exit status reports.
-      herdr --session "$ses" tab close "$jt" >/dev/null 2>&1 || true
-    done
+    # Same DEGRADE class: tidying herdr's default tab away is cosmetic, so a
+    # failed list or unreadable answer must not fail `start` under pipefail.
+    herdr --session "$ses" tab list 2>/dev/null \
+      | jq -r --arg ws "$ws" '.result.tabs[]? | select(.workspace_id == $ws and .label == "1") | .tab_id' 2>/dev/null \
+      | while read -r jt; do
+          herdr --session "$ses" tab close "$jt" >/dev/null 2>&1 || true
+        done || true
   fi
   return 0
 }
