@@ -35,7 +35,14 @@
 #                make every existing bare caller silently partial - a false
 #                green.
 #                Mapping: bin/<name>.sh <-> tests/<name>.test.sh (a changed
-#                tests/<name>.test.sh selects itself); AGENTS.md section 13's
+#                tests/<name>.test.sh selects itself). A ported script's
+#                TypeScript maps the same way: src/<name>.ts selects
+#                tests/src.test.sh (the one wrapper running every Bun unit
+#                test, tests/*.test.ts - so a changed *.test.ts selects it
+#                too) plus its bin/ac-<name>.sh entry's black-box
+#                tests/ac-<name>.test.sh, and a src module other src files
+#                import is a shared library exactly like a sourced one
+#                (clause 1 below). AGENTS.md section 13's
 #                colocated-test-per-behavior rule makes this mechanical for
 #                the ordinary case. A small DOCUMENTED exception (split_map)
 #                covers the two highest-churn scripts the repo's own
@@ -51,9 +58,11 @@
 #                WIDENS to the full set and prints why, never silently
 #                narrowing to nothing:
 #                  1. a changed file that is ITSELF dot-sourced by any OTHER
-#                     owned file (bin/*.sh or tests/*.sh) - a LIVE check
-#                     (grep for a line of the shape "^\s*\.\s+.*<basename>\""
-#                     in every other owned file), not a hand-maintained list:
+#                     owned file (bin/*.sh or tests/*.sh), or - a src/*.ts -
+#                     imported by another src/*.ts (from "./<basename>") - a
+#                     LIVE check (grep for a line of the shape
+#                     "^\s*\.\s+.*<basename>\"", or that import, in every other
+#                     owned file), not a hand-maintained list:
 #                     a list silently rots the day a new shared file joins and
 #                     nobody remembers to add it (gate-finding
 #                     run-suite-changed-file-selection, 2026-07-25 - an
@@ -102,8 +111,8 @@
 #                     blast radius, never read as "nothing to run".
 #                Outside a git repo, or with no HEAD yet, --changed falls back
 #                to the full set. A file outside this runner's owned set
-#                (bin/*.sh, tests/*.sh) is ignored, like ac-lint ignoring a
-#                changed README.
+#                (bin/*.sh, src/*.ts, tests/*.sh, tests/*.test.ts) is
+#                ignored, like ac-lint ignoring a changed README.
 #                EMPTY-SELECTION EXIT - NOT a widen: when the mapped selection
 #                comes out EMPTY (e.g. a clean, fully-committed tree - nothing
 #                uncommitted to read a changed set from), the runner exits 2
@@ -229,7 +238,8 @@ done
 sourcers_of() {
   # sourcers_of <changed_root> <rel-path> - echoes, one per line, the
   # relpath of every OTHER bin/*.sh or tests/*.sh under changed_root that
-  # dot-sources this file (tests/*.sh, not just tests/*.test.sh, so this also
+  # dot-sources this file - or, for a src/*.ts, every other src/*.ts that
+  # imports it (tests/*.sh, not just tests/*.test.sh, so this also
   # catches tests/helpers.sh and tests/stress.sh, neither of which matches
   # the tests/*.test.sh mapping case below). Empty output means the file is
   # not a shared library. LIVE, not a hand list: a list rots the day a new
@@ -242,6 +252,16 @@ sourcers_of() {
   # run-suite-changed-widens-on-any-shared-lib-so-the-ac-lib-split-buys-nothing-yet).
   local root="$1" relpath="$2" base base_re f
   base="${relpath##*/}"
+  case "$relpath" in
+    src/*.ts)
+      for f in "$root"/src/*.ts; do
+        [ -e "$f" ] || continue
+        case "$f" in */"$relpath") continue ;; esac
+        grep -qF "from \"./$base\"" "$f" && printf '%s\n' "${f#"$root"/}"
+      done
+      return 0
+      ;;
+  esac
   base_re="$(printf '%s' "$base" | sed 's/[.[\*^$]/\\&/g')"
   for f in "$root"/bin/*.sh "$root"/tests/*.sh; do
     [ -e "$f" ] || continue
@@ -312,6 +332,18 @@ map_owned_file() {
   local root="$1" f="$2" base mapped
   case "$f" in
     tests/*.test.sh) printf '%s' "${f#tests/}" ;;
+    tests/*.test.ts) printf '%s' "src.test.sh" ;;
+    src/*.ts)
+      # The entry's black-box test joins only when bin/ac-<n>.sh really execs
+      # this module: a bash script that merely shares its name (src/lib.ts vs
+      # bin/ac-lib.sh) is not its entry.
+      base="${f#src/}"; base="${base%.ts}"
+      printf '%s' "src.test.sh"
+      if grep -v '^[[:space:]]*#' "$root/bin/ac-$base.sh" 2>/dev/null | grep -qF "src/$base.ts" \
+        && [ -e "$root/tests/ac-$base.test.sh" ]; then
+        printf ' %s' "ac-$base.test.sh"
+      fi
+      ;;
     bin/*.sh)
       base="${f#bin/}"; base="${base%.sh}"
       if [ -e "$root/tests/$base.test.sh" ]; then
@@ -388,7 +420,7 @@ SOURCERS
       tests/*.test.sh)
         selected="$selected ${f#tests/}"
         ;;
-      bin/*.sh)
+      bin/*.sh | src/*.ts | tests/*.test.ts)
         mapped="$(map_owned_file "$changed_root" "$f")"
         if [ -n "$mapped" ]; then
           selected="$selected $mapped"

@@ -291,6 +291,60 @@ assert_contains "$out" "RUNNING ac-spawn-newconcern.test.sh" "a NEW ac-spawn-*.t
 assert_contains "$out" "5/5 passed" "must select the four original mapped tests PLUS the new one, not silently miss it"
 git -C "$splitrepo" checkout -q -- bin/ac-spawn.sh
 
+# --- --changed: TypeScript under src/ maps like bin/*.sh does ------------
+#
+# A ported script keeps its bin/ac-<n>.sh entry (a shim) and moves its logic
+# to src/<n>.ts, whose Bun unit tests (tests/*.test.ts) run through ONE
+# wrapper, tests/src.test.sh. So src/<n>.ts selects that wrapper plus the
+# entry's black-box tests/ac-<n>.test.sh, a changed tests/*.test.ts selects
+# the wrapper, and a module other src/ files IMPORT is a shared library: it
+# narrows to its importers' tests the way a sourced bash lib narrows to its
+# sourcers'. The fixture wrapper is a plain pass - no bun needed here.
+tsrepo="$TMP/fixture-changed-ts"
+mkdir -p "$tsrepo/bin" "$tsrepo/src" "$tsrepo/tests"
+git -C "$tsrepo" init -q
+git -C "$tsrepo" config user.email test@test
+git -C "$tsrepo" config user.name test
+printf '#!/usr/bin/env bash\nexec bun "$root/src/qux.ts" -- "$@"\n' >"$tsrepo/bin/ac-qux.sh"
+# A bash script and its test that merely SHARE a src module's name - even
+# one whose comment names that module - are no entry of it: only a
+# bin/ac-<n>.sh that execs src/<n>.ts pairs with it.
+printf '#!/usr/bin/env bash\n# fixture bash lib; its TypeScript twin is src/util.ts\n' >"$tsrepo/bin/ac-util.sh"
+printf 'import { u } from "./util.ts";\n' >"$tsrepo/src/qux.ts"
+printf 'export const u = 1;\n' >"$tsrepo/src/util.ts"
+printf 'import { u } from "../src/util.ts";\n' >"$tsrepo/tests/util.test.ts"
+for t in ac-qux src ac-other ac-util; do
+  printf '#!/usr/bin/env bash\n. "%s/tests/helpers.sh"\npass\n' "$ROOT" >"$tsrepo/tests/$t.test.sh"
+done
+chmod +x "$tsrepo"/bin/*.sh "$tsrepo"/tests/*.test.sh
+git -C "$tsrepo" add -A
+git -C "$tsrepo" commit -q -m baseline
+
+printf 'export const q = 2;\n' >>"$tsrepo/src/qux.ts"
+res="$(run_runner --changed "$tsrepo/tests")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on a src/*.ts change must still be green"
+assert_contains "$out" "RUNNING ac-qux.test.sh" "src/qux.ts must select its entry's black-box test"
+assert_contains "$out" "RUNNING src.test.sh" "src/qux.ts must select the Bun unit-test wrapper"
+assert_contains "$out" "2/2 passed" "src/qux.ts must select exactly its two tests, not widen"
+git -C "$tsrepo" checkout -q -- src/qux.ts
+
+printf 'export const v = 2;\n' >>"$tsrepo/src/util.ts"
+res="$(run_runner --changed "$tsrepo/tests")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on an imported src module must still be green"
+assert_contains "$out" "RUNNING ac-qux.test.sh" "an imported src module must select its importer's entry test"
+assert_contains "$out" "2/2 passed" "an imported src module must narrow to its importers' tests plus the wrapper"
+git -C "$tsrepo" checkout -q -- src/util.ts
+
+printf '// touched\n' >>"$tsrepo/tests/util.test.ts"
+res="$(run_runner --changed "$tsrepo/tests")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on a tests/*.test.ts change must still be green"
+assert_contains "$out" "RUNNING src.test.sh" "a changed Bun unit test must select its wrapper"
+assert_contains "$out" "1/1 passed" "a changed Bun unit test must select only the wrapper"
+git -C "$tsrepo" checkout -q -- tests/util.test.ts
+
 # --- --changed: a clean, fully-committed tree exits non-zero, runs nothing --
 #
 # DEFECT HISTORY: select_changed narrows `tests` in place; an empty
