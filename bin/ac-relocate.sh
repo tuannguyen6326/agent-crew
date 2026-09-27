@@ -113,7 +113,7 @@ fi
 
 settle="${AC_SPAWN_SETTLE:-8}"
 case "$settle" in ''|*[!0-9.]*|*.*.*) ac_die "AC_SPAWN_SETTLE must be a number: $settle" ;; esac
-backend_send_line "$id" "$resume" \
+AC_SEND_UNPROVEN=1 backend_send_line "$id" "$resume" \
   || ac_die "resume line NOT delivered to $id (see stderr above) - the session was never resumed; the new tab exists, so re-send it by hand: bin/ac-send.sh $id '$resume'"
 sleep "$settle"
 backend_send_line "$id" "$notice" \

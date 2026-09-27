@@ -1109,13 +1109,21 @@ backend_send_line_herdr() {
   # be read at all - claiming a strand there is the very lie this verifies.
   # A CLAUDE composer is proven BEFORE Enter (exit 3 when it is not): a long
   # send lands there as its tail, and Enter would submit that tail as the whole
-  # instruction; a draft already in it is never typed over.
+  # instruction; a draft already in it is never typed over, and a composer that
+  # cannot be seen at all is not typed into. AC_SEND_UNPROVEN=1 types without
+  # the proof: a caller typing a command into the pane's SHELL (a launch or
+  # resume line - no composer exists yet), or ac-send.sh --force.
   local id="$1"
   shift
   local text="$*" rc=0 pane proof=0 pre post rows
   pane="$(herdr_pane "$id")"
   if [ "$(ac_meta_get "$(ac_task_meta "$id")" harness 2>/dev/null)" = claude ] \
-    && pre="$(herdr_composer_text_pane "$pane" 20)"; then
+    && [ "${AC_SEND_UNPROVEN:-0}" != 1 ]; then
+    if ! pre="$(herdr_composer_text_pane "$pane" 20)"; then
+      printf 'ac-backend: cannot see the composer of %s (no claude composer on screen, or the pane could not be read) - NOTHING was typed; peek it (ac-peek.sh %s), or type anyway with ac-send.sh %s --force\n' \
+        "$(backend_target_herdr "$id")" "$id" "$id" >&2
+      return 3
+    fi
     if [ -n "$(printf '%s' "$pre" | LC_ALL=C tr -d '[:space:]')" ]; then
       printf 'ac-backend: the composer of %s holds an unsent draft - NOTHING was typed or submitted, so the draft is untouched; send it or clear it first (peek: ac-peek.sh %s)\n' \
         "$(backend_target_herdr "$id")" "$id" >&2

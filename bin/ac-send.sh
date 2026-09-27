@@ -28,8 +28,9 @@
 #   the composer is resubmitted, while a pane that could not be READ leaves
 #   the submit neither confirmed nor refuted and is peeked at first. A claude
 #   composer on herdr is proven BEFORE the Enter: one that shows only part of
-#   the message (a long send lands as its tail) or already holds a draft is
-#   REFUSED with nothing submitted - send a short pointer to a file instead.
+#   the message (a long send lands as its tail), already holds a draft, or is
+#   not on screen at all is REFUSED with nothing submitted - send a short
+#   pointer to a file instead; --force types without that proof.
 # - ARRIVAL is verified too, on TOP of the submit check above (contract:
 #   ac-lib.sh claude transcript arrival check) - a confirmed submit only
 #   proves the composer reacted to Enter, never that the text which ARRIVED
@@ -208,7 +209,7 @@ else
   # move differs (contract: ac-backend.sh delivery verification) - a strand is
   # resubmitted, an unreadable pane is peeked at first.
   send_rc=0
-  backend_send_line "$id" "$text" || send_rc=$?
+  AC_SEND_UNPROVEN="$force" backend_send_line "$id" "$text" || send_rc=$?
   case "$send_rc" in
     0) ;;
     2) ac_die "delivery UNVERIFIED for $id - the pane could not be read, so the submit was neither confirmed nor refuted (see stderr above)" ;;

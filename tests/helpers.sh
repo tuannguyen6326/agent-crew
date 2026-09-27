@@ -384,7 +384,10 @@ hold_close() {
 #                                 does (measured on 2.1.283): the input between
 #                                 two horizontal rules after a `❯` glyph, and an
 #                                 EMPTY composer showing a dim (SGR 2) hint that
-#                                 is not input - styled only under --ansi
+#                                 is not input - styled only under --ansi. A
+#                                 pane whose transcript holds a submitted
+#                                 `claude --...` launch line renders it too, so
+#                                 a spawned claude crewmate shows its composer
 #   $FAKE_HERDR/panes/<p>.keep-tail  "<n>" - send-text keeps only the LAST <n>
 #                                 characters, the tail a long send into claude
 #                                 leaves in its composer (measured live)
@@ -692,7 +695,7 @@ case "${1:-} ${2:-}" in
   "pane read")
     [ -f "$d/panes/$3.buf" ] || exit 1
     cat "$d/panes/$3.buf"
-    if [ -f "$d/panes/$3.claude-composer" ]; then
+    if [ -f "$d/panes/$3.claude-composer" ] || grep -q 'claude --' "$d/panes/$3.buf" 2>/dev/null; then
       rule='────────────────────────────────'
       printf '%s\n❯ ' "$rule"
       if [ -s "$d/panes/$3.in" ]; then cat "$d/panes/$3.in"

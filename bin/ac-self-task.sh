@@ -300,7 +300,7 @@ else
   # handle it writes to disk.
   ( AC_WINDOW_FAMILY="" backend_window_new "$id" "$worktree" ) \
     || ac_die "could not open the pane for $id on the $backend backend$(self_backend_why)"
-  backend_send_line "$id" "tail -f $(printf '%q' "$status_file")" \
+  AC_SEND_UNPROVEN=1 backend_send_line "$id" "tail -f $(printf '%q' "$status_file")" \
     || ac_warn "the pane may not have started tailing $status_file - peek it (bin/ac-peek.sh $id)"
 fi
 window="$(backend_target "$id")"

@@ -296,6 +296,7 @@ mk_claude_crewmate() {
   # harness/session_id make it ARRIVAL-CAPABLE (contract above).
   mk_crewmate "$1" "$2" "$3"
   printf 'harness=claude\nsession_id=%s\n' "$4" >>"$AC_HOME/state/$1.meta"
+  : >"$FAKE_HERDR/panes/$2.claude-composer"
 }
 
 mk_turn() {
@@ -397,6 +398,17 @@ err="$("$BIN/ac-send.sh" ctail 'short steer' 2>&1)" && fail "a composer holding 
 assert_contains "$(cat "$FAKE_HERDR/panes/pCTL.in")" "a captain draft in progress" "the draft is left untouched"
 case "$(cat "$FAKE_HERDR/panes/pCTL.in")" in *"short steer"*) fail "nothing may be typed after a draft" ;; esac
 : >"$FAKE_HERDR/panes/pCTL.in"
+
+# A claude pane whose composer cannot be SEEN (no rules on screen - a dialog,
+# a menu, an unreadable pane) proves nothing, so nothing is typed; --force is
+# the deliberate way to type into whatever is there.
+rm -f "$FAKE_HERDR/panes/pCTL.claude-composer"
+err="$("$BIN/ac-send.sh" ctail 'steer into the unknown' 2>&1)" && fail "an unseen claude composer must not be typed into"
+assert_contains "$err" "cannot see the composer" "the refusal says why"
+[ -s "$FAKE_HERDR/panes/pCTL.in" ] && fail "nothing is typed into an unseen composer"
+"$BIN/ac-send.sh" ctail --force 'forced steer' >/dev/null 2>&1 || true
+assert_contains "$(cat "$FAKE_HERDR/panes/pCTL.buf")" "forced steer" "--force types and submits without the proof"
+: >"$FAKE_HERDR/panes/pCTL.claude-composer"
 
 # A SOLO session (AC_SOLO=1) never steers a pane - the crew is the chief's.
 err="$(AC_SOLO=1 "$BIN/ac-send.sh" cother 'hello' 2>&1)" \

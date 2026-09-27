@@ -2630,7 +2630,7 @@ learn_suite_launch() {
   # (the pane could not be READ, so the line may or may not have gone through) on
   # purpose: killing a run that might be going costs one suite, while trusting an
   # unverified send costs the loop.
-  if ! backend_send_line "$id" \
+  if ! AC_SEND_UNPROVEN=1 backend_send_line "$id" \
     "AC_HOME=$(printf '%q' "$(ac_home)") $(printf '%q' "$root/bin/ac-learn.sh") suite $id"; then
     backend_kill_window "$id" 2>/dev/null || true
     rm -f "$meta" "$(ac_task_status "$id")"

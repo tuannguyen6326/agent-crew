@@ -1344,7 +1344,7 @@ if [ "$recover" = 1 ] && [ "$crewdeputy" = 0 ]; then
   backend_window_new "$id" "$rec_dir"
   unset AC_WINDOW_FAMILY
   window="$(backend_target "$id")"
-  backend_send_line "$id" "$(ac_claude_config_env)${codegraph_env}${env_prefix}$launch" \
+  AC_SEND_UNPROVEN=1 backend_send_line "$id" "$(ac_claude_config_env)${codegraph_env}${env_prefix}$launch" \
     || { backend_kill_window "$id" || true
          ac_die "--recover: resume line NOT delivered to $id (see stderr above) - the fresh pane was closed again; recover again once the backend answers"; }
   sleep "$settle"
@@ -1624,7 +1624,7 @@ REVIEW IS MANDATORY: nobody else reads your code, so every slice gets ONE indepe
 LANDING: land per the slice's mode (bin/ac-merge-local.sh, or a PR the captain merges), then post LANDED: $fam-<slug> - <outcome> to this room BEFORE bin/ac-teardown.sh $fam-<slug>: you may not write records/backlog.md (the ledger guard fences it), so that receipt is what the teardown gate reads where a Done row would be; the crewchief moves the family row at your hand-back. IF THE SLICE CANNOT LAND - main moved under it is the cheap way there, and ac-merge-local.sh withholds --no-ff from every scoped session on purpose - do NOT rebase to force it (a rebase changes the sha a review receipt binds by, so a clean one costs a whole extra review round): post UNLANDABLE: $fam-<slug> - <why>; crewchief to land (its OWN verb - HANDBACK: is this family's tenure-ending receipt and would flip the whole family), leave the slice IN FLIGHT, and tell the crewchief in your hand-back; the crewchief lands crew/$fam-<slug> --no-ff, and only THEN does bin/ac-teardown.sh $fam-<slug> pass, reading UNLANDABLE where LANDED would be. The gate still owes a lesson (bin/ac-learn.sh note) and a verified repo fact (bin/ac-know.sh add), or --no-lesson/--no-fact '<why>'; the lesson is read by its (by: $fam-<slug>, first-hand) attribution, so file it under whichever heading your family uses.
 HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from this session - edit with your own hands, or spawn a real crewmate when a slice outgrows you; never both on one slice."
   fi
-  backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$(ac_home)") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}${solo_env}$launch"
+  AC_SEND_UNPROVEN=1 backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$(ac_home)") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}${solo_env}$launch"
   deliver_kickoff "$id" "$harness" "$prompt"
 
   ac_meta_set "$meta" backend "$backend"
@@ -1776,7 +1776,7 @@ if [ "$crewdeputy" = 1 ]; then
   # its charter brief is thin. They are stated twice by design - here and in
   # the deputies-domains skill - and must stay in sync.
   prompt="You are agent-crew crewdeputy $id. Your home is $home_dir (AC_HOME). Read and follow the brief at $brief; run bin/ac-session-start.sh in your current directory first. You are IDLE BY DEFAULT: act only on work routed to you or already recorded in your own home, then WAIT - an empty queue is healthy, and you never invent work (no self-directed survey, audit or refactor sweep). Answer every routed order (a pane line prefixed [chief-order ...]) on the DURABLE return channel with bin/ac-deputy.sh report '<text>' [--doc <abs-path>], never only in chat, and return only phase changes the parent must act on - done, blocked, needs-decision, failed, paused - never your home's routine churn."
-  backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$home_dir") $launch"
+  AC_SEND_UNPROVEN=1 backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$home_dir") $launch"
   deliver_kickoff "$id" "$harness" "$prompt"
 
   ac_meta_set "$meta" backend "$backend"
@@ -2006,7 +2006,7 @@ if eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)"
   prompt="$prompt INTEGRATION BRANCH: this worktree is cut from $eb_branch and your work lands INTO $eb_branch, never the default branch - branch crew/$id from it as usual, and any PR you are told to open targets $eb_branch."
 fi
 fleet_env="$(crew_launch_env)"
-backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)$codegraph_env$fleet_env$launch"
+AC_SEND_UNPROVEN=1 backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)$codegraph_env$fleet_env$launch"
 deliver_kickoff "$id" "$harness" "$prompt"
 
 # Record fleet state.
