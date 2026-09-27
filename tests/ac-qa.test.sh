@@ -665,6 +665,47 @@ assert_fails "$QA" harness-classify "$reuse_stage/evidence/harness/probe.sh" \
   --evidence "$reuse_stage/evidence/OR-1" >/dev/null
 assert_eq "$(awk -F'\t' '{print $2}' "$reuse_run/regression-candidates.tsv")" \
   "fixture-pack" "a task-local harness gets exactly one promotion classification"
+
+# Evidence is judged and recorded RESOLVED, with python's os.path.realpath
+# semantics the check was written against: symlinks and `..` resolve
+# physically, and a missing component is kept as spelled while resolution
+# continues, so a `missing/..` spelling still reaches the file behind it.
+pc_root="$reuse_stage/evidence"
+pc_classify() {
+  "$QA" harness-classify "$reuse_stage/evidence/harness/probe.sh" \
+    --classification fixture-pack --target shared-service \
+    --invariant 'retry preserves one logical record' --evidence "$1"
+}
+# REFUSED, not the ledger: a refusal leaves the previous row, whose resolved
+# path the next assertion may expect too.
+pc_resolved() {
+  pc_classify "$1" >/dev/null 2>&1 || { printf 'REFUSED'; return 0; }
+  awk -F'\t' '{print $5}' "$reuse_run/regression-candidates.tsv"
+}
+mkdir -p "$pc_root/pc/sub/deeper" "$TMP/pc-outside" "$reuse_stage/evidence2"
+printf 'pc\n' >"$pc_root/pc/sub/f"
+printf 'pc\n' >"$pc_root/-"
+printf 'pc\n' >"$TMP/pc-outside/o"
+printf 'pc\n' >"$reuse_stage/evidence2/x"
+ln -s sub "$pc_root/pc/in"
+ln -s sub/deeper "$pc_root/pc/up"
+ln -s "$TMP/pc-outside" "$pc_root/pc/esc"
+ln -s nowhere "$pc_root/pc/dangle"
+ln -s "$pc_root" "$TMP/pc-alias"
+assert_eq "$(pc_resolved pc/sub/f)" "$pc_root/pc/sub/f" "relative evidence resolves under the root"
+assert_eq "$(pc_resolved pc/in/f)" "$pc_root/pc/sub/f" "an inside symlink is admitted and recorded resolved"
+assert_eq "$(pc_resolved pc/up/../f)" "$pc_root/pc/sub/f" ".. after a symlink leaves its target, not its spelling"
+assert_eq "$(pc_resolved pc/missing/../sub/f)" "$pc_root/pc/sub/f" "a missing component is kept as spelled, so missing/.. cancels out"
+assert_eq "$(pc_resolved "$TMP/pc-alias/pc/sub/f")" "$pc_root/pc/sub/f" "an alias of the root is inside it"
+assert_eq "$(pc_resolved "$pc_root")" "$pc_root" "the root itself is admissible evidence"
+assert_eq "$(pc_resolved pc/sub/)" "$pc_root/pc/sub" "a directory is recorded without its trailing slash"
+if [ -e "$pc_root/PC" ]; then
+  assert_eq "$(pc_resolved PC/sub/f)" "$pc_root/PC/sub/f" "a case-insensitive volume keeps the spelled case"
+fi
+for pc_bad in - pc/esc/o pc/esc/../sub/f pc/dangle pc/nothing ../evidence2/x \
+  "$reuse_stage/evidence2/x" "$TMP/pc-outside/o"; do
+  assert_fails_with "outside the declared evidence root" -- pc_classify "$pc_bad"
+done
 cat >"$TMP/tests-only.patch" <<'EOF'
 diff --git a/tests/retry.test.sh b/tests/retry.test.sh
 --- a/tests/retry.test.sh
@@ -740,6 +781,11 @@ assert_eq "$("$QA" infra detect)" "postgres,redis" "detect finds pg+redis from d
 "$QA" infra up >/dev/null
 grep -q ' up -d' "$DOCKER_ARGV_LOG" && fail "no-service infra up must not run docker compose up"
 assert_contains "$(cat "$rd2/ports.env")" "QA_BASE_URL=http://127.0.0.1:" "no-service up still allocates QA_PORT"
+pc_port="$(sed -n 's/^QA_PORT=//p' "$rd2/ports.env")"
+case "$pc_port" in ''|*[!0-9]*) fail "QA_PORT must be a bare port number, got '$pc_port'" ;; esac
+[ "$pc_port" -ge 1 ] && [ "$pc_port" -le 65535 ] || fail "QA_PORT out of range: $pc_port"
+printf 'QA_PORT=%s\nQA_BASE_URL=http://127.0.0.1:%s\n' "$pc_port" "$pc_port" | cmp -s - "$rd2/ports.env" \
+  || fail "a no-service ports.env is exactly the service's port pair: $(cat "$rd2/ports.env")"
 # unknown service fails closed.
 assert_fails "$QA" infra up --services postgres,mongo
 
@@ -1563,6 +1609,44 @@ bash -c ". '$BIN/ac-lib.sh'; . '$BIN/ac-pipeline-lib.sh'; . '$BIN/ac-qa-lib.sh';
 # (4) a different sha stays blocked (stale qa never satisfies a new head).
 assert_fails bash -c ". '$BIN/ac-lib.sh'; . '$BIN/ac-pipeline-lib.sh'; . '$BIN/ac-qa-lib.sh'; ac_qa_gate_ok '$repo' '0000000000000000000000000000000000000000'"
 
+# ac_qa_receipt_path_ok compares CANONICAL parents, resolved with python's
+# os.path.realpath semantics. <rc>:<stderr>, because a crash exits non-zero too.
+pc_receipt() {
+  local err rc=0
+  err="$(ac_qa_receipt_path_ok "$@" 2>&1 >/dev/null)" || rc=$?
+  printf '%s:%s' "$rc" "$err"
+}
+pcr="$TMP/pcr"
+pcr_rd="$pcr/run"
+mkdir -p "$pcr_rd/boundaries/C1/dir.env" "$pcr_rd/boundaries/C2" "$pcr/out"
+printf 'r\n' >"$pcr_rd/boundaries/C1/r.env"
+printf 'r\n' >"$pcr_rd/boundaries/C1/-"
+printf 'r\n' >"$pcr_rd/forged.env"
+printf 'r\n' >"$pcr/out/r.env"
+ln -s "$pcr_rd/forged.env" "$pcr_rd/boundaries/C1/link.env"
+ln -s "$pcr/out" "$pcr_rd/boundaries/C9"
+ln -s "$pcr_rd/boundaries/C1" "$pcr/alias"
+assert_eq "$(pc_receipt "$pcr_rd" C1 "$pcr_rd/boundaries/C1/r.env")" "0:" "a receipt in its own case dir"
+assert_eq "$(pc_receipt "$pcr_rd" C1 "$pcr_rd/boundaries/C2/../C1/r.env")" "0:" "the parent compares canonically"
+assert_eq "$(pc_receipt "$pcr_rd" C2/../C1 "$pcr_rd/boundaries/C1/r.env")" "0:" "so does the case dir"
+assert_eq "$(pc_receipt "$pcr_rd" C1 "$pcr/alias/r.env")" "0:" "an alias of the case dir is that dir"
+assert_eq "$(cd "$pcr_rd/boundaries/C1" && pc_receipt ../.. C1 r.env)" "0:" "relative arguments resolve against the cwd"
+assert_eq "$(cd "$pcr_rd/boundaries/C1" && pc_receipt ../.. C1 ./-)" "0:" "a file named - is reachable as ./-"
+assert_eq "$(cd "$pcr_rd/boundaries/C1" && pc_receipt ../.. C1 -)" "1:" "a bare - is never a receipt"
+assert_eq "$(pc_receipt "$pcr_rd" C9 "$pcr_rd/boundaries/C9/r.env")" "0:" "a symlinked case dir compares by its target"
+assert_eq "$(pc_receipt "$pcr_rd" "$pcr/out" "$pcr/out/r.env")" "0:" "an absolute case id replaces the run dir, as os.path.join does"
+assert_eq "$(pc_receipt "$pcr_rd" C1 "$pcr_rd/boundaries/C1/link.env")" "1:" "a symlinked receipt"
+assert_eq "$(pc_receipt "$pcr_rd" C1 "$pcr_rd/boundaries/C1/../../forged.env")" "1:" "a traversal out of the case dir"
+assert_eq "$(pc_receipt "$pcr_rd" C1 "$pcr_rd/boundaries/C3/../C1/r.env")" "1:" "a spelling through a missing dir is no file"
+assert_eq "$(pc_receipt "$pcr_rd" C1 "$pcr_rd/boundaries/C1/dir.env")" "1:" "a directory"
+assert_eq "$(pc_receipt "$pcr_rd" C1 "$pcr_rd/boundaries/C1/none.env")" "1:" "a missing receipt"
+assert_eq "$(pc_receipt "$pcr_rd" C2 "$pcr_rd/boundaries/C1/r.env")" "1:" "another case's receipt"
+assert_eq "$(pc_receipt "$pcr_rd" c1 "$pcr_rd/boundaries/C1/r.env")" "1:" "the case id as spelled, never case-folded"
+assert_eq "$(pc_receipt "" C1 "$pcr_rd/boundaries/C1/r.env")" "1:" "an empty run dir"
+assert_eq "$(pc_receipt "$pcr_rd" "" "$pcr_rd/boundaries/C1/r.env")" "1:" "an empty case id"
+assert_eq "$(pc_receipt "$pcr_rd" C1 "")" "1:" "an empty receipt path"
+assert_eq "$(pc_receipt "$pcr_rd" --help --version)" "1:" "flag-shaped arguments are plain paths"
+
 # reap without docker is a calm no-op (assertable only where docker is truly
 # absent; a dev machine with real docker exercises the live path).
 rm -f "$TMP/stub/docker"
@@ -1835,7 +1919,7 @@ assert_eq "$("$QA" store-dir)" "$sdir" "store-dir is stable across calls"
 # its sourced siblings alongside it.
 fake="$TMP/fakecheckout"
 mkdir -p "$fake/bin"
-cp "$BIN/ac-qa.sh" "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-pipeline-lib.sh" "$BIN/ac-qa-lib.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$fake/bin/"
+cp "$BIN/ac-qa.sh" "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-pipeline-lib.sh" "$BIN/ac-qa-lib.sh" "$BIN/ac-bun.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$fake/bin/"
 fake_qa="$fake/bin/ac-qa.sh"
 
 # Zero-writes proof (ac-fleets.test.sh style), scoped to the dirs this defect

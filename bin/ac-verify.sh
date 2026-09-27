@@ -159,6 +159,7 @@ bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$bin_dir/ac-pipeline-lib.sh"
 . "$bin_dir/ac-wake-lib.sh"
 . "$bin_dir/ac-qa-lib.sh"
+. "$bin_dir/ac-bun.sh"
 . "$bin_dir/ac-backend.sh"
 
 tree_bin="${AC_VERIFY_TREE_BIN:-$bin_dir/ac-tree.sh}"
@@ -781,19 +782,7 @@ reap_existing() {
 qa_path_within() {
   # qa_path_within <root> <candidate> - existing file/dir, symlink-resolved,
   # and still below the declared caller-owned evidence root.
-  python3 - "$1" "$2" <<'PY'
-import os
-import sys
-root, candidate = sys.argv[1:]
-root = os.path.realpath(root)
-candidate = candidate if os.path.isabs(candidate) else os.path.join(root, candidate)
-candidate = os.path.realpath(candidate)
-try:
-    inside = os.path.commonpath((root, candidate)) == root
-except ValueError:
-    inside = False
-raise SystemExit(0 if inside and (os.path.isfile(candidate) or os.path.isdir(candidate)) else 1)
-PY
+  ( ac_bun_exec src/paths.ts within "$1" "$2" )
 }
 
 qa_default_curation_receipt() {

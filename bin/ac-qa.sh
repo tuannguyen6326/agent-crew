@@ -610,6 +610,7 @@ set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-pipeline-lib.sh"
 . "$(dirname "$0")/ac-qa-lib.sh"
+. "$(dirname "$0")/ac-bun.sh"
 . "$(dirname "$0")/ac-backend.sh"   # ac_herdr_agents_workspace/ac_herdr_tab_open
 ac_require git jq
 
@@ -912,22 +913,8 @@ qa_evidence_path_ok() {
   # file or directory whose resolved path remains below the resolved evidence
   # root. realpath-style resolution rejects broken links and symlink escapes.
   local root="$1" path="$2"
-  python3 - "$root" "$path" <<'PY'
-import os
-import sys
-
-root, candidate = sys.argv[1:]
-if not root or not candidate or candidate == "-":
-    raise SystemExit(1)
-root = os.path.realpath(root)
-candidate = candidate if os.path.isabs(candidate) else os.path.join(root, candidate)
-candidate = os.path.realpath(candidate)
-try:
-    inside = os.path.commonpath((root, candidate)) == root
-except ValueError:
-    inside = False
-raise SystemExit(0 if inside and (os.path.isfile(candidate) or os.path.isdir(candidate)) else 1)
-PY
+  [ -n "$root" ] && [ -n "$path" ] && [ "$path" != - ] || return 1
+  ( ac_bun_exec src/paths.ts within "$root" "$path" )
 }
 
 qa_e2e_receipt_ok() {
@@ -2139,12 +2126,7 @@ cmd_harness_classify() {
   qa_evidence_path_ok "$(cmd_evidence_dir)" "$evidence" \
     || ac_die "harness-classify evidence is missing, broken, or outside the declared evidence root: $evidence"
   case "$evidence" in /*) ;; *) evidence="$(cmd_evidence_dir)/$evidence" ;; esac
-  evidence="$(python3 - "$evidence" <<'PY'
-import os
-import sys
-print(os.path.realpath(sys.argv[1]))
-PY
-)"
+  evidence="$(ac_bun_exec src/paths.ts realpath "$evidence")"
   ledger="$rd/regression-candidates.tsv"
   tmp="$(mktemp "$rd/.regression-candidates.XXXXXX")"
   [ ! -f "$ledger" ] || awk -F'\t' -v p="$path" '$1 != p' "$ledger" >"$tmp"
@@ -2429,7 +2411,7 @@ A need you got WRONG is re-declared deliberately: fix the testplan's '## Infra' 
       else
         printf '%s\n' "$svclist" >"$rd/infra.declared"
       fi
-      ac_require python3            # QA_PORT pick, even with zero backends
+      ac_require bun                # QA_PORT pick, even with zero backends
       if [ -z "$svclist" ]; then
         # Service needs no backend: allocate its port, boot no containers.
         ports_env "$rd" "$proj" ""
@@ -2528,7 +2510,7 @@ ports_env() {
   done
   # A free port for the service under test itself.
   local qa_port
-  qa_port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  qa_port="$(ac_bun_exec src/paths.ts free-port)"
   printf 'QA_PORT=%s\nQA_BASE_URL=http://127.0.0.1:%s\n' "$qa_port" "$qa_port" >>"$rd/ports.env"
 }
 

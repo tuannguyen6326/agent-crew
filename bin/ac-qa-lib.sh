@@ -28,7 +28,10 @@
 # ac_project_config_file, ac_repo_root, ...) and, for the scoped-config path,
 # ac-pipeline-lib.sh's ac_yaml_has/ac_yaml_get/ac_yaml_keys - checked with
 # `command -v` and skipped when absent, never assumed sourced. Never depended
-# on by another sub-lib.
+# on by another sub-lib. It sources bin/ac-bun.sh itself, because
+# ac_qa_receipt_path_ok resolves paths in src/paths.ts.
+
+. "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh"
 
 ac_qa_required() {
   # ac_qa_required <project-repo> - is the qa.require_for_ship merge gate
@@ -745,19 +748,7 @@ ac_qa_receipt_path_ok() {
   # traversal and symlink escapes; this canonical check is what the recorder,
   # the finish gate, and verifier reconciliation all share.
   local rd="$1" case_id="$2" path="$3"
-  python3 - "$rd" "$case_id" "$path" <<'PY'
-import os
-import sys
-
-rd, case_id, path = sys.argv[1:]
-if not rd or not case_id or not path or path == "-":
-    raise SystemExit(1)
-if os.path.islink(path) or not os.path.isfile(path):
-    raise SystemExit(1)
-expected = os.path.realpath(os.path.join(rd, "boundaries", case_id))
-parent = os.path.realpath(os.path.dirname(path))
-raise SystemExit(0 if parent == expected else 1)
-PY
+  ( ac_bun_exec src/paths.ts receipt-ok "$rd" "$case_id" "$path" )
 }
 
 ac_qa_browser_manifest_ok() {

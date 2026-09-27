@@ -41,6 +41,35 @@ cross_second_pick="$(ls -d "$cross_second_root"/*/ | newest_round_dir)"
 assert_eq "$(basename "$cross_second_pick")" "20260101T000001Z-5" \
   "cross-second case: the later timestamp still wins even carrying the smaller pid"
 
+# --- qa_path_within: python's os.path.realpath + commonpath ------------------
+# Only a finished QA export reaches it, so its contract is driven directly.
+# <rc>:<stderr>, because a crash exits non-zero too.
+. "$BIN/ac-bun.sh"
+eval "$(sed -n '/^qa_path_within() {/,/^}/p' "$BIN/ac-verify.sh")"
+pw_rc() {
+  local err rc=0
+  err="$(qa_path_within "$@" 2>&1 >/dev/null)" || rc=$?
+  printf '%s:%s' "$rc" "$err"
+}
+pw="$TMP/path-within"
+mkdir -p "$pw/root/sub" "$pw/root2" "$pw/out"
+printf 'x\n' >"$pw/root/f"
+printf 'x\n' >"$pw/root/-"
+printf 'x\n' >"$pw/root2/y"
+printf 'x\n' >"$pw/out/o"
+ln -s "$pw/out" "$pw/root/esc"
+ln -s nowhere "$pw/root/dangle"
+assert_eq "$(pw_rc "$pw/root" "$pw/root")" "0:" "the root is within itself"
+assert_eq "$(pw_rc "$pw/root" "")" "0:" "an empty candidate names the root"
+assert_eq "$(pw_rc "$pw/root" -)" "0:" "a file named - is an ordinary candidate here"
+assert_eq "$(pw_rc "$pw/root" missing/../f)" "0:" "a missing component is kept as spelled, so missing/.. cancels out"
+assert_eq "$(cd "$pw" && pw_rc root sub)" "0:" "a relative root resolves against the cwd"
+assert_eq "$(pw_rc "$pw/root" esc/o)" "1:" "a symlink escape"
+assert_eq "$(pw_rc "$pw/root" esc/../root/f)" "0:" ".. after a symlink leaves its target"
+assert_eq "$(pw_rc "$pw/root" dangle)" "1:" "a dangling link"
+assert_eq "$(pw_rc "$pw/root" ../root2/y)" "1:" "a relative traversal out"
+assert_eq "$(pw_rc "$pw/root" "$pw/root2/y")" "1:" "a sibling sharing the root's prefix"
+
 make_profile_bundle() {
   # make_profile_bundle <dir> <source-sha> <profile-key>
   #                     [<e2e-repo-path> <e2e-sha> <scope> <app>]

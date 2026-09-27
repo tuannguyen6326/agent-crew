@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-bun.sh - start a TypeScript module under bun so that nothing in the
-# caller's cwd or environment configures bun itself. Sourced by the bin/
-# entries whose logic lives in src/ or dashboard/; the module's half of the
+# caller's cwd or environment configures bun itself. Sourced by every bin/
+# script that starts a module under src/ or dashboard/; the module's half of the
 # protocol is enterCaller in src/lib.ts, and bunChild there starts a further
 # module the same way.
 #
