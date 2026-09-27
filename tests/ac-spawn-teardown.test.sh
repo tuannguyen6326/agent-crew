@@ -148,6 +148,19 @@ assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t2-r2.meta")" \
 grep -q -- "--resume $sid" "$(fake_pane_buf t2-r2)" || fail "resume launch line"
 "$BIN/ac-teardown.sh" t2-r2 --force >/dev/null 2>&1
 
+# A host without uuidgen still pins a lowercase v4 id: lowercase is what
+# launch_session_id reads back, v4 what claude's --session-id takes.
+mkdir -p "$TMP/nouuid"
+printf '#!/bin/sh\nexit 127\n' >"$TMP/nouuid/uuidgen"
+chmod +x "$TMP/nouuid/uuidgen"
+"$BIN/ac-brief.sh" t2u proj --mode local-only >/dev/null
+PATH="$TMP/nouuid:$PATH" "$BIN/ac-spawn.sh" t2u "$repo" --harness claude >/dev/null 2>&1
+sidu="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/t2u.meta")"
+printf '%s\n' "$sidu" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' \
+  || fail "without uuidgen the pinned session id must be a lowercase v4 UUID, got '$sidu'"
+grep -q -- "--session-id $sidu" "$(fake_pane_buf t2u)" || fail "the launch line pins that id"
+"$BIN/ac-teardown.sh" t2u --force >/dev/null 2>&1
+
 # Per-role pane-agent knobs thread onto the crewmate launch line so its homeless
 # codereview/qa panes can read config/<role>-<knob> (which config/ cannot resolve
 # in a crewmate). Only emitted when the fleet pins them. All THREE knobs per role

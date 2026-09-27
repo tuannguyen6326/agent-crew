@@ -725,6 +725,49 @@ wsp="$(sed -n "s/.*'\([^']*ac-ship-watch\.sh\)'.*/\1/p" "$WHLOG" | head -1)"
 case "$wsp" in /*) ;; *) fail "watch board must be absolute in the pane command, got '$wsp'" ;; esac
 cd "$repo" || fail "cd back"
 
+# The watch start also closes herdr's default "1" tabs of its OWN workspace,
+# read from the session-wide tab list. Here the workspace-scoped list the tab
+# opener sweeps is empty, so every close below is this sweep's.
+sstub="$TMP/sweepstub"; mkdir -p "$sstub"
+cat >"$sstub/herdr" <<'EOF'
+#!/usr/bin/env bash
+echo "herdr $*" >>"$WHLOG"
+[ "${1:-}" = --session ] && shift 2
+[ "$*" = "tab list" ] && { [ -z "${SWEEP_FAIL:-}" ] || exit 3; cat "$SWEEP_TABS"; exit 0; }
+case "${1:-} ${2:-}" in
+  "pane list") echo '{"result":{"panes":[]}}' ;;
+  "workspace get") exit 1 ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wW"}}}' ;;
+  "tab create") echo '{"result":{"tab":{"tab_id":"tW"},"root_pane":{"pane_id":"pW1"}}}' ;;
+esac
+exit 0
+EOF
+chmod +x "$sstub/herdr"
+export SWEEP_TABS="$TMP/sweep-tabs.json"
+srepo="$(make_repo sweeprepo)"
+cd "$srepo" || fail "cd sweeprepo"
+printf '%s' '{"result":{"tabs":[{"tab_id":"tJ","workspace_id":"wW","label":"1"},{"tab_id":"tO","workspace_id":"wO","label":"1"},{"tab_id":"tK","workspace_id":"wW","label":"keep"},{"tab_id":"tJ2","workspace_id":"wW","label":"1"}]}}' >"$SWEEP_TABS"
+: >"$WHLOG"
+PATH="$sstub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "sweep" >/dev/null
+assert_eq "$(sed -n 's/.* tab close //p' "$WHLOG" | paste -sd, -)" "tJ,tJ2" \
+  "only this workspace's \"1\" tabs are closed, in list order"
+PATH="$sstub:$PATH" "$BIN/ac-ship.sh" finish cancelled >/dev/null
+printf 'not json' >"$SWEEP_TABS"
+: >"$WHLOG"
+rc=0
+out="$(PATH="$sstub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "sweep garbage" 2>&1)" || rc=$?
+assert_eq "$rc" "0" "an unreadable tab list never fails the start"
+assert_contains "$out" "started run" "the start still reports its run"
+case "$out" in *$'\n'*) fail "an unreadable tab list must be swallowed without a word: $out" ;; esac
+case "$(cat "$WHLOG")" in *"tab close"*) fail "an unreadable tab list closes nothing" ;; esac
+PATH="$sstub:$PATH" "$BIN/ac-ship.sh" finish cancelled >/dev/null
+rc=0
+PATH="$sstub:$PATH" SWEEP_FAIL=1 AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "sweep down" >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "0" "a failed tab list never fails the start"
+PATH="$sstub:$PATH" "$BIN/ac-ship.sh" finish cancelled >/dev/null
+cd "$repo" || fail "cd back"
+
 # --- TDD attestation: attestation by execution, honored by the test step ---
 arepo="$(make_repo attrepo)"
 cd "$arepo" || fail "cd attrepo"
