@@ -677,9 +677,13 @@ cmd_get() {
   # base. It lives HERE (not in ac-spawn) so the documented mid-task
   # second-lease path a crewmate takes itself, and the --prefer resume lease,
   # ride the same fence. ac_epic_base_for (ac-lib.sh) owns the resolution.
-  local base_ref="" eb ebranch rname eb_deferred
+  local base_ref="" eb ebrc=1 ebranch rname eb_deferred
   rname="$(basename "$repo")"
-  if [ -n "$id" ] && eb="$(ac_epic_base_for "$id" "$rname")"; then
+  if [ -n "$id" ]; then
+    ebrc=0; eb="$(ac_epic_base_for "$id" "$rname")" || ebrc=$?
+  fi
+  [ "$ebrc" != 2 ] || ac_die "get: cannot read the ledger to resolve the epic-branch fence for $id"
+  if [ "$ebrc" = 0 ]; then
     ebranch="${eb%% *}"
     case " ${eb#"$ebranch"} " in *" push=deferred "*) eb_deferred=1 ;; *) eb_deferred=0 ;; esac
     if [ "$eb_deferred" = 1 ]; then
@@ -1251,8 +1255,12 @@ prune_pass() {
       # see - containment there is equally merged, or pool health ends up
       # recommending remove --force (the discard verb) for landed work.
       slot_task="$(ac_meta_get "$meta" task)"
-      eb_ok=0
-      if [ -n "$slot_task" ] && eb_p="$(ac_epic_base_for "$slot_task" "$(basename "$repo")" 2>/dev/null)"; then
+      eb_ok=0; eb_rc=1
+      if [ -n "$slot_task" ]; then
+        eb_rc=0; eb_p="$(ac_epic_base_for "$slot_task" "$(basename "$repo")" 2>/dev/null)" || eb_rc=$?
+      fi
+      [ "$eb_rc" != 2 ] || ac_die "prune: cannot read the ledger to resolve the epic-branch fence for $slot_task"
+      if [ "$eb_rc" = 0 ]; then
         eb_pb="${eb_p%% *}"
         if git -C "$repo" merge-base --is-ancestor "$(git -C "$wt" rev-parse HEAD)" "refs/heads/$eb_pb" 2>/dev/null \
           || git -C "$repo" merge-base --is-ancestor "$(git -C "$wt" rev-parse HEAD)" "refs/remotes/origin/$eb_pb" 2>/dev/null; then
@@ -1328,8 +1336,12 @@ remove_slot() {
     && ! git -C "$repo" merge-base --is-ancestor "$head" "$(ac_default_ref "$repo")" 2>/dev/null; then
     # Epic-landed slots count as merged too (epic-branch-mech, same arm as prune).
     rm_task="$(ac_meta_get "$(slot_meta "$repo" "$n")" task)"
-    rm_ok=0
-    if [ -n "$rm_task" ] && rm_eb="$(ac_epic_base_for "$rm_task" "$(basename "$repo")" 2>/dev/null)"; then
+    rm_ok=0; rm_rc=1
+    if [ -n "$rm_task" ]; then
+      rm_rc=0; rm_eb="$(ac_epic_base_for "$rm_task" "$(basename "$repo")" 2>/dev/null)" || rm_rc=$?
+    fi
+    [ "$rm_rc" != 2 ] || ac_die "remove: cannot read the ledger to resolve the epic-branch fence for $rm_task"
+    if [ "$rm_rc" = 0 ]; then
       rm_ebb="${rm_eb%% *}"
       if git -C "$repo" merge-base --is-ancestor "$head" "refs/heads/$rm_ebb" 2>/dev/null \
         || git -C "$repo" merge-base --is-ancestor "$head" "refs/remotes/origin/$rm_ebb" 2>/dev/null; then

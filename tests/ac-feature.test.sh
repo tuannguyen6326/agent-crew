@@ -228,6 +228,17 @@ assert_contains "$out" "partial feature" "an abandoned member without a captain 
 assert_contains "$out" "shipux-s2" "and names it"
 printf -- '- [2026-08-24T12:00:00Z] crewchief> DECIDED: feature-ship partial - shipux-s2 keep (captain word)\n' >>"$AC_HOME/data/shipux/room.md"
 
+# A ledger nobody can read shows no member terminal, so the ship stops at the
+# member check instead of moving on to the review gate as if none were open.
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$AC_HOME/records/backlog.md"
+  rc=0; out="$("$FT" ship shipux proj2 --dry-run 2>&1)" || rc=$?
+  chmod 644 "$AC_HOME/records/backlog.md"
+  [ "$rc" != 0 ] || fail "an unreadable ledger must refuse the ship"
+  case "$out" in *"no feature review round"* | *DRY-RUN*) fail "an unreadable ledger must stop the ship at the member check, got: $out" ;; esac
+fi
+
 # review round at the LOCAL tip: absent -> refuse with the exact command;
 # stale ref and open fix findings refuse too
 out="$("$FT" ship shipux proj2 --dry-run 2>&1 || true)"
@@ -266,6 +277,23 @@ mkdir -p "$AC_HOME/projects/proj2/.crew/qa/passed"
 : >"$AC_HOME/projects/proj2/.crew/qa/passed/$tipf"
 out="$("$FT" ship shipux proj2 --dry-run)"
 assert_contains "$out" -- "--base release" "the attestation at the tip satisfies the qa gate"
+
+# A hand edit can leave the ledger without its final newline; the last row is
+# still a row, so an open member there holds the ship like any other.
+cp "$AC_HOME/records/backlog.md" "$TMP/backlog.keep"
+printf -- '- [ ] shipux-s4 - open member, no trailing newline; feature:shipux (repo: proj2)' >>"$AC_HOME/records/backlog.md"
+out="$("$FT" ship shipux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "non-terminal members: shipux-s4" "an open member on an unterminated last line refuses the ship"
+mv "$TMP/backlog.keep" "$AC_HOME/records/backlog.md"
+
+# A byte that is not UTF-8 in ledger prose is no row and must not stop the
+# ship. The locale is forced: only a UTF-8 ctype makes awk die on a regex
+# test against such a line, so under C this would pass on any filter.
+cp "$AC_HOME/records/backlog.md" "$TMP/backlog.keep"
+printf '> caf\351 reviewed\n' >>"$AC_HOME/records/backlog.md"
+out="$(LC_ALL=en_US.UTF-8 "$FT" ship shipux proj2 --dry-run 2>&1 || true)"
+assert_contains "$out" "--base release" "a non-UTF-8 byte in ledger prose does not stop the ship"
+mv "$TMP/backlog.keep" "$AC_HOME/records/backlog.md"
 
 # --- slice 5: target drift refuses the ship --------------------------------------
 # advance checkoutux's target (release) PAST its cut - the ship refuses with

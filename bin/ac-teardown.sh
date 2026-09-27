@@ -277,7 +277,7 @@ head_landed() {
   # projects (crew-ship, direct-pr) land on origin. Checking only the
   # freshest ref (ac_default_ref: origin wins) reported a local-only
   # project's fully merged work as unlanded.
-  local head="$1" ref eb ebranch dep dirty pr_head ledger merged_head
+  local head="$1" ref eb ebrc ebranch dep dirty pr_head ledger merged_head
   # A merged PR proves the head it merged and what that head contains, never
   # a commit made after it; a record that predates pr_merged_head keeps the
   # bare proof.
@@ -324,7 +324,12 @@ $dirty"
   # recorded integration branch, which on a local-only repo exists ONLY
   # locally - containment there is landed proof exactly like the default's,
   # or every epic-landed story becomes an "unlanded" --force trap.
-  if eb="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)"; then
+  # An unreadable ledger only withholds this proof, never dies: head_landed
+  # also runs inside $(worktree_head_unlanded), where a die reads as "nothing
+  # at risk" and would let the worktree be discarded.
+  ebrc=0; eb="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)" || ebrc=$?
+  [ "$ebrc" != 2 ] || ac_warn "cannot read the ledger to resolve the epic-branch fence for $id - containment in an epic branch stays unproven"
+  if [ "$ebrc" = 0 ]; then
     ebranch="${eb%% *}"
     for ref in "refs/heads/$ebranch" "refs/remotes/origin/$ebranch"; do
       if git -C "$project_dir" merge-base --is-ancestor "$head" "$ref" 2>/dev/null; then
@@ -853,7 +858,9 @@ EOF
     # containment ourselves and use -D deliberately (else the stale branch
     # blocks this story's own -r2 spawn on the name-collision refusal).
     del_flag="-d"
-    if eb_del="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)"; then
+    ebrc=0; eb_del="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)" || ebrc=$?
+    [ "$ebrc" != 2 ] || ac_warn "cannot read the ledger to resolve the epic-branch fence for $id - $branch is deleted only if -d proves it merged"
+    if [ "$ebrc" = 0 ]; then
       eb_del_branch="${eb_del%% *}"
       if git -C "$project_dir" merge-base --is-ancestor "refs/heads/$branch" "refs/heads/$eb_del_branch" 2>/dev/null \
         || git -C "$project_dir" merge-base --is-ancestor "refs/heads/$branch" "refs/remotes/origin/$eb_del_branch" 2>/dev/null; then

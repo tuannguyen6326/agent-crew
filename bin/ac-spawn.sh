@@ -1506,7 +1506,8 @@ if [ -n "$roomchief_family" ]; then
   # creates no binding, exactly as it creates no slice membership.
   # Placed with the other pre-window refusals so a failure costs no window,
   # lease or meta and the promote stays retryable.
-  dom_pair="$(awk "$AC_DONELINE_AWK"'
+  dom_pair=""
+  [ ! -f "$(ac_records_dir)/backlog.md" ] || dom_pair="$(awk "$AC_DONELINE_AWK"'
     NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") d[o["id"]] = o["domain"] } next }
     /^- \[/ {
       ac_doneline($0, o)
@@ -1515,7 +1516,8 @@ if [ -n "$roomchief_family" ]; then
       printf "%s|%s\n", o["domain"], inh
       exit
     }
-  ' f="$fam" "$(ac_records_dir)/backlog.md" "$(ac_records_dir)/backlog.md" 2>/dev/null || true)"
+  ' f="$fam" "$(ac_records_dir)/backlog.md" "$(ac_records_dir)/backlog.md")" \
+    || ac_die "cannot read the ledger for the domain binding of $fam"
   dom_own="${dom_pair%%|*}"; dom_inh="${dom_pair#*|}"
   [ "$dom_pair" = "$dom_own" ] && dom_inh=""   # no row found: empty pair
   # ONE FAMILY, ONE DOMAIN: a story whose own token disagrees with its epic
@@ -2009,7 +2011,9 @@ prompt="You are an agent-crew crewmate. Read and follow the brief at $brief. Wor
 # itself was already cut from the recorded branch by ac-tree.sh's fence; this
 # line makes the base and the LANDING TARGET explicit so the crewmate never
 # re-derives them from room prose. Silent when the id has no record.
-if eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)"; then
+ebrc=0; eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)" || ebrc=$?
+[ "$ebrc" != 2 ] || ac_die "cannot read the ledger to resolve the epic-branch fence for $id"
+if [ "$ebrc" = 0 ]; then
   eb_branch="${eb_entry%% *}"
   prompt="$prompt INTEGRATION BRANCH: this worktree is cut from $eb_branch and your work lands INTO $eb_branch, never the default branch - branch crew/$id from it as usual, and any PR you are told to open targets $eb_branch."
 fi

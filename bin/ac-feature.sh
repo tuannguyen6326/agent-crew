@@ -162,7 +162,7 @@ cmd_ship() {
   local feature="$1" repo="$2" dry="${3:-}"
   local entry branch dir target tip target_tip base ledger room
   local gate_dir ships review review_cmd r_ref n_fix pr_url url
-  local line rid id rfeat repic term open_rows="" partials="" missing="" p container_contract
+  local rows line rid id rfeat repic term open_rows="" partials="" missing="" p container_contract
   chief_only ship
   ac_require jq
   entry="$(entry_or_die ship "$feature" "$repo")"
@@ -177,13 +177,15 @@ cmd_ship() {
 
   # --- 2. member terminality, epic-poisoned rows, partial receipts ------------
   ledger="$(ac_records_dir)/backlog.md"
-  while IFS= read -r line; do
-    case "$line" in "- ["*) : ;; *) continue ;; esac
-    rid="$(printf '%s\n' "$line" | awk "$AC_DONELINE_AWK"'
-      { ac_doneline($0, f); print f["id"] "\t" f["feature"] "\t" f["epic"] "\t" f["terminal"] }')"
+  # index, not /^- \[/: this pass sees prose lines too, and under a UTF-8
+  # ctype a regex test on a line that is not valid UTF-8 aborts awk.
+  rows="$(awk "$AC_DONELINE_AWK"'
+    index($0, "- [") == 1 { ac_doneline($0, f); print f["id"] "\t" f["feature"] "\t" f["epic"] "\t" f["terminal"] "\t" $0 }' "$ledger")"
+  while IFS= read -r rid; do
     id="${rid%%$'\t'*}"; rid="${rid#*$'\t'}"
     rfeat="${rid%%$'\t'*}"; rid="${rid#*$'\t'}"
-    repic="${rid%%$'\t'*}"; term="${rid#*$'\t'}"
+    repic="${rid%%$'\t'*}"; rid="${rid#*$'\t'}"
+    term="${rid%%$'\t'*}"; line="${rid#*$'\t'}"
     [ "$id" = "$feature" ] && continue
     [ "$rfeat" = "$feature" ] || continue
     [ -z "$repic" ] \
@@ -193,7 +195,7 @@ cmd_ship() {
       *) open_rows="$open_rows $id"; continue ;;
     esac
     case "$term" in failed | abandoned) partials="$partials $id" ;; esac
-  done <"$ledger"
+  done <<<"$rows"
   [ -z "$open_rows" ] \
     || ac_die "feature $feature has non-terminal members:${open_rows} - every member lands (or is failed/abandoned by the captain) before the feature ships"
   if [ -n "$partials" ]; then

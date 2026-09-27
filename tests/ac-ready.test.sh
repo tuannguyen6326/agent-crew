@@ -390,6 +390,16 @@ assert_contains "$out" "READY  domstory (epic:dompay) {domain:payments" \
 q="$("$BIN/ac-ready.sh" queued)"
 assert_eq "$q" "plainrow" "queued never offers a domain row - promote is its only start"
 
+# An unreadable ledger fails the report: an empty one is what "nothing to
+# start" looks like, and the hook callers turn a failure into a WARN line.
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$AC_HOME/records/backlog.md"
+  rc=0; "$BIN/ac-ready.sh" >/dev/null 2>&1 || rc=$?
+  chmod 644 "$AC_HOME/records/backlog.md"
+  [ "$rc" != 0 ] || fail "an unreadable ledger must fail the report, never print an empty one"
+fi
+
 # overlap --semantic: the System One fold-or-mint proposer (config/jev). One
 # choice question per OPEN row over the order text, all in one request; under
 # on it prints Queued rows the model calls related as fold-candidate and In

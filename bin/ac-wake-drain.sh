@@ -67,6 +67,8 @@
 # spawn. Every drain is a landing checkpoint, so this is also what makes the
 # trigger LEVEL-triggered rather than dependent on the crossing wake - and it
 # gives session-start the same trigger for free, since the digest runs a drain.
+# A scheduler run that fails prints one `WARN   scheduler unavailable` line:
+# its silence would read as an empty report, i.e. nothing to start.
 #
 # UNACKNOWLEDGED COMPLETIONS (the staged-flow blindness hotfix, 2026-07-20).
 # A wake is a one-shot: a marker deduped away, a wake published into the wrong
@@ -377,7 +379,8 @@ fi
 if [ -z "$scope" ]; then
   # Scheduler ride-along: every drain is a landing checkpoint - surface every
   # READY item and STUCK dependents (prints nothing when there is nothing).
-  "$(dirname "$0")/ac-ready.sh" 2>/dev/null || true
+  "$(dirname "$0")/ac-ready.sh" 2>/dev/null \
+    || printf 'WARN   scheduler unavailable: ac-ready.sh exited %s - run it to see why\n' "$?"
 
   # Remote push ride-along: with the remote transport configured, batch NEW
   # captain-pending items out to the remote channel (best-effort - a drain

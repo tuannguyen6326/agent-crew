@@ -82,13 +82,12 @@ dir="$AC_HOME/projects/$repo"
 # --- 2 + 3. story terminality and the partial-epic captain receipts -----------
 ledger="$(ac_records_dir)/backlog.md"
 open_rows="" partials=""
-while IFS= read -r line; do
-  case "$line" in
-    "- ["*) : ;;
-    *) continue ;;
-  esac
-  rid="$(printf '%s\n' "$line" | awk "$AC_DONELINE_AWK"'{ ac_doneline($0, f); print f["id"] "\t" f["epic"] "\t" f["terminal"] }')"
-  id="${rid%%$'\t'*}"; restf="${rid#*$'\t'}"; repic="${restf%%$'\t'*}"; term="${restf#*$'\t'}"
+# index, not /^- \[/: this pass sees prose lines too, and under a UTF-8 ctype
+# a regex test on a line that is not valid UTF-8 aborts awk.
+rows="$(awk "$AC_DONELINE_AWK"'index($0, "- [") == 1 { ac_doneline($0, f); print f["id"] "\t" f["epic"] "\t" f["terminal"] "\t" $0 }' "$ledger")"
+while IFS= read -r rid; do
+  id="${rid%%$'\t'*}"; restf="${rid#*$'\t'}"; repic="${restf%%$'\t'*}"; restf="${restf#*$'\t'}"
+  term="${restf%%$'\t'*}"; line="${restf#*$'\t'}"
   # The epic's OWN row closes AFTER the ship (its Done line records the exit),
   # so only STORY rows are held to terminality here.
   [ "$id" = "$epic" ] && continue
@@ -98,7 +97,7 @@ while IFS= read -r line; do
     *) open_rows="$open_rows $id"; continue ;;
   esac
   case "$term" in failed | abandoned) partials="$partials $id" ;; esac
-done <"$ledger"
+done <<<"$rows"
 [ -z "$open_rows" ] \
   || ac_die "epic $epic has non-terminal stories:${open_rows} - every story lands (or is failed/abandoned by the captain) before the epic exits"
 if [ -n "$partials" ]; then

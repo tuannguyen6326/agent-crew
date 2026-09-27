@@ -88,7 +88,9 @@ default="$(ac_default_branch "$project_dir")"
 # (the live epic practice). --no-ff onto an epic target is refused here: a
 # genuine merge commit belongs in a leased worktree, not the primary.
 target="$default"; epic_mode=0; epic_push=0; eb_deferred=0
-if eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")")"; then
+ebrc=0; eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")")" || ebrc=$?
+[ "$ebrc" != 2 ] || ac_die "cannot read the ledger to resolve the epic-branch fence for $id"
+if [ "$ebrc" = 0 ]; then
   target="${eb_entry%% *}"
   epic_mode=1
   case " ${eb_entry#"$target"} " in *" push=yes "*) epic_push=1 ;; esac

@@ -186,11 +186,11 @@ snapshot() {
 }
 
 report_lint() {
-  # One WARN line per contract violation across the QUEUED rows, printed after
+  # One WARN line per contract violation across the QUEUED rows, printed before
   # the report body. A judge, never a gate: an invalid token must be VISIBLE
   # at the scheduler while the row stays schedulable - enforcement belongs to
   # ac-brief.sh's escalation gate, which reads the same lint.
-  snapshot | awk 'BEGIN { FS = "\t" } $1 == "queued" && $9 != "" { printf "%s\t%s\n", $2, $9 }' \
+  printf '%s\n' "$1" | awk 'BEGIN { FS = "\t" } $1 == "queued" && $9 != "" { printf "%s\t%s\n", $2, $9 }' \
     | while IFS="$(printf '\t')" read -r lid lcon; do
         ac_contract_lint "$lcon" | while IFS= read -r v; do
           [ -n "$v" ] || continue
@@ -200,8 +200,10 @@ report_lint() {
 }
 
 cmd_report() {
-  report_lint
-  snapshot | awk -v cap="$cap" -v today="$(date +%Y-%m-%d)" '
+  local snap
+  snap="$(snapshot)"
+  report_lint "$snap"
+  printf '%s\n' "$snap" | awk -v cap="$cap" -v today="$(date +%Y-%m-%d)" '
     BEGIN { FS = "\t" }
     {
       sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; dom = $10; contract = $9
@@ -260,7 +262,7 @@ cmd_report() {
         started[qepic[id]]++
         # The contract rides the READY line as INFORMATION - a display, never a
         # scheduling condition: an invalid token must not stop the row, it must
-        # be visible (the lint lines below the report are the judge).
+        # be visible (the lint lines above the report are the judge).
         # A DOMAIN row is startable ONLY by promoting its domainchief - the
         # auto-fly rule is defined over this report, so the line must say the
         # start action or the chief flies it as an ordinary task and bypasses

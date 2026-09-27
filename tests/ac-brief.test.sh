@@ -643,4 +643,22 @@ out="$("$BIN/ac-brief.sh" wire-slice-a myproj --mode local-only 2>&1 || true)"
 assert_contains "$out" "already exists" \
   "an unscoped re-scaffold of a tasks/-nested id refuses instead of minting a flat twin"
 
+# --- the epic-branch fence: an unreadable ledger is not "no epic" ------------
+# Read as no fence, an epic story's direct-pr brief names the default branch
+# as its PR base; a scout skips every earlier ledger read. Skipped under root,
+# which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  printf -- '- [ ] fe-s1 - story; epic:fe (repo: myproj)\n' >>"$AC_HOME/records/backlog.md"
+  mkdir -p "$AC_HOME/data/fe"
+  printf 'myproj epic/fe\n' >"$AC_HOME/data/fe/branches"
+  chmod 000 "$AC_HOME/records/backlog.md"
+  rc=0; out="$("$BIN/ac-brief.sh" fe-s1 myproj --mode direct-pr 2>&1)" || rc=$?
+  rcs=0; outs="$("$BIN/ac-brief.sh" fe-s1 myproj --scout 2>&1)" || rcs=$?
+  chmod 644 "$AC_HOME/records/backlog.md"
+  [ "$rc" != 0 ] && [ "$rcs" != 0 ] || fail "an unreadable ledger must refuse the scaffold"
+  assert_contains "$out" "cannot read the ledger" "the direct-pr scaffold names the unreadable ledger"
+  assert_contains "$outs" "cannot read the ledger" "the scout scaffold names the unreadable ledger"
+  assert_no_file "$AC_HOME/data/fe-s1/brief.md" "an unreadable ledger scaffolds no brief"
+fi
+
 pass

@@ -97,7 +97,12 @@ defref="$(diff_base_ref "$worktree")"
 # Epic stories diff against the EPIC branch (epic-branch-mech): the default
 # merge-base would render every sibling story's commits as this story's diff.
 proj_name="$(ac_meta_get "$meta" project)"
-if [ -n "$proj_name" ] && eb="$(ac_epic_base_for "$id" "$proj_name" 2>/dev/null)"; then
+ebrc=1
+if [ -n "$proj_name" ]; then
+  ebrc=0; eb="$(ac_epic_base_for "$id" "$proj_name" 2>/dev/null)" || ebrc=$?
+fi
+[ "$ebrc" != 2 ] || ac_die "cannot read the ledger to resolve the epic-branch fence for $id"
+if [ "$ebrc" = 0 ]; then
   ebb="${eb%% *}"
   if git -C "$worktree" rev-parse --verify --quiet "refs/heads/$ebb" >/dev/null; then
     defref="$ebb"
