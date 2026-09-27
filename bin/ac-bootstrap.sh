@@ -226,8 +226,8 @@ shadow_check() {
 #                   from the 1.6 manual on, not in 1.5's.
 #   bun    1.3.5  - `Bun.Terminal` (dashboard/app.ts's native pty) ships from
 #                   1.3.5 (bun.com/blog/bun-v1.3.5); `bun:sqlite`
-#                   (bin/ac-brain-engine.ts) predates it. Optional tier, so
-#                   its lines are advisory.
+#                   (bin/ac-brain-engine.ts) predates it. Required tier: the
+#                   ported bin/ entries exec the TypeScript under src/.
 # floor_of/cap_of/cap_probe are the table's three columns; build_check reads
 # them, so adding a row touches no caller.
 floor_of() {
@@ -318,6 +318,7 @@ opt() {
 
 need git "brew install git"
 need jq "brew install jq (worktree pool state, herdr backend)"
+need bun "curl -fsSL https://bun.sh/install | bash (the bin/ entries ported to src/*.ts, the dashboard, the brain engine)"
 
 # Session backend: the configured one is required, the others stay optional.
 backend="$(ac_config_read backend herdr)"
@@ -444,7 +445,6 @@ else
   rc=1
 fi
 
-opt bun "web dashboard + native review loop (bin/ac-dashboard.sh runs bin/dashboard.ts)"
 opt node "npx-driven helpers (crew-qa's playwright screenshots)"
 # Not "dev only" any more: with no CI workflow, a local run is the ONLY thing
 # that ever lints this repo, so an absent shellcheck means nothing is checked.

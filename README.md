@@ -25,16 +25,17 @@ Every task is delegated to a disposable crewmate agent in its own git worktree a
 
 - macOS or Linux with `bash`, `git`, and `jq`.
 - `gh`, authenticated, for the PR steps.
+- `bun` (floor 1.3.5): the `bin/` entries ported to TypeScript under `src/` run on it, as do the web dashboard and the brain engine.
 - A session backend, chosen per fleet in `config/backend`:
   - `herdr` (the default, `brew install herdr`);
   - `orca` (install the Orca app - its CLI ships with it).
 - A harness: `claude` (first-class), `codex`, `opencode`, `pi`, or `cursor`; a custom harness is launchable through a `config/launch-<harness>` template.
-- Optional: `bun` (web dashboard and review loop), `docker` (crew-qa infra), `node` (QA screenshots), `shellcheck` (opt-in lint).
+- Optional: `docker` (crew-qa infra), `node` (QA screenshots), `shellcheck` (opt-in lint).
 - `zsh` for the optional `ac` launcher (`docs/examples/ac.zsh`).
 
 `bin/ac-bootstrap.sh` is the toolchain doctor.
 It prints one `OK:`/`MISSING:`/`OPTIONAL:` line per tool and exits non-zero when a required tool is missing.
-It also enforces a floor table - `git` 2.15.0, `jq` 1.6, `herdr` 0.8.0, and `bun` 1.3.5 (optional tier) - and reports an older build as `BELOW-FLOOR:` or a failed capability probe as `NO-CAPABILITY:`.
+It also enforces a floor table - `git` 2.15.0, `jq` 1.6, `herdr` 0.8.0, and `bun` 1.3.5 - and reports an older build as `BELOW-FLOOR:` or a failed capability probe as `NO-CAPABILITY:`.
 Every session start re-runs it.
 
 ## Quick start

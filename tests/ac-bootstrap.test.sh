@@ -25,7 +25,7 @@ make_fake_herdr
 # unrelated to PATH shadowing runs against this base, not the bare ambient
 # $PATH, from here on.
 mkdir -p "$TMP/single"
-for t in git jq gh dirname date mkdir head tail cat bash sort grep readlink mktemp sleep rm; do
+for t in git jq gh bun dirname date mkdir head tail cat bash sort grep readlink mktemp sleep rm; do
   p="$(command -v "$t" 2>/dev/null || true)"
   [ -n "$p" ] && ln -s "$p" "$TMP/single/$t"
 done
@@ -35,9 +35,16 @@ HEALTHY_PATH="$TMP/single:$TMP/stubbin"
 # fakes and must never see this host's real jq (a genuine shadow) leak in
 # as a third, uncontrolled copy alongside them.
 mkdir -p "$TMP/single-nojq"
-for t in git gh dirname date mkdir head tail cat bash sort grep readlink mktemp sleep rm; do
+for t in git gh bun dirname date mkdir head tail cat bash sort grep readlink mktemp sleep rm; do
   p="$(command -v "$t" 2>/dev/null || true)"
   [ -n "$p" ] && ln -s "$p" "$TMP/single-nojq/$t"
+done
+
+# Same base, minus bun: the required-bun scenarios at the end of this file.
+mkdir -p "$TMP/single-nobun"
+for t in git jq gh dirname date mkdir head tail cat bash sort grep readlink mktemp sleep rm; do
+  p="$(command -v "$t" 2>/dev/null || true)"
+  [ -n "$p" ] && ln -s "$p" "$TMP/single-nobun/$t"
 done
 
 # Healthy machine: exit 0, OK lines present.
@@ -65,7 +72,7 @@ assert_contains "$out" "NEEDS_GH_AUTH" "unauthenticated gh surfaces NEEDS_GH_AUT
 
 # Missing required tool: stub-only PATH with everything but herdr.
 mkdir -p "$TMP/thin"
-for t in git jq gh dirname date mkdir head tail cat sort grep readlink mktemp sleep rm; do
+for t in git jq gh bun dirname date mkdir head tail cat sort grep readlink mktemp sleep rm; do
   p="$(command -v "$t" 2>/dev/null || true)"
   [ -n "$p" ] && ln -s "$p" "$TMP/thin/$t"
 done
@@ -208,16 +215,16 @@ out="$(PATH="$shadow_path" "$BIN/ac-bootstrap.sh" --quiet)"
 case "$out" in *"jq installed but inert"*) fail "symlink dupes must not false-positive" ;; esac
 
 # The rule is uniform and tier-blind (there is no tier branching left in
-# the detector): the SAME shadow shape on bun ALSO prints INERT: and
-# ALSO leaves rc untouched.
-mkdir -p "$TMP/bun-old" "$TMP/bun-new"
-fake_ver "$TMP/bun-old/bun" "1.0.0"
-fake_ver "$TMP/bun-new/bun" "1.3.13"
-shadow_path="$TMP/bun-old:$TMP/single:$TMP/bun-new:$TMP/stubbin"
+# the detector): the SAME shadow shape on an OPTIONAL tool (node) ALSO
+# prints INERT: and ALSO leaves rc untouched.
+mkdir -p "$TMP/node-old" "$TMP/node-new"
+fake_ver "$TMP/node-old/node" "v18.0.0"
+fake_ver "$TMP/node-new/node" "v22.19.0"
+shadow_path="$TMP/node-old:$TMP/single:$TMP/node-new:$TMP/stubbin"
 out="$(PATH="$shadow_path" "$BIN/ac-bootstrap.sh" --quiet)"
 rc=$?
 assert_eq "$rc" "0" "an inert OPTIONAL tool must not set rc either"
-assert_contains "$out" "INERT: bun installed but inert" "bun shadow reported at INERT grade too"
+assert_contains "$out" "INERT: node installed but inert" "an optional tool's shadow is reported at INERT grade too"
 
 # A copy that will not report a parseable version is a CHECK FAILURE, not a
 # silent pass - and it must not be mistaken for "newer" or "older".
@@ -345,8 +352,9 @@ assert_eq "$rc" "1" "a below-floor jq blocks"
 assert_contains "$out" "BELOW-FLOOR: jq" "an old jq is reported at BELOW-FLOOR grade"
 assert_contains "$out" "floor 1.6" "...naming the jq floor"
 
-# An OPTIONAL tool's floor line is advisory, like its OPTIONAL: line - bun at
-# a fine version but lacking the API the dashboard/brain engine call.
+# bun is REQUIRED - the ported bin/ entries exec the TypeScript under src/ -
+# so a bun at a fine version but lacking the API the dashboard/brain engine
+# call blocks, and an absent bun is MISSING.
 mkdir -p "$TMP/bun-nocap"
 cat >"$TMP/bun-nocap/bun" <<'EOF'
 #!/usr/bin/env bash
@@ -356,7 +364,11 @@ EOF
 chmod +x "$TMP/bun-nocap/bun"
 rc=0
 out="$(PATH="$TMP/bun-nocap:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
-assert_eq "$rc" "0" "an optional tool's capability gap never sets rc"
-assert_contains "$out" "NO-CAPABILITY: bun" "an optional tool's gap is still reported"
+assert_eq "$rc" "1" "a required bun's capability gap blocks"
+assert_contains "$out" "NO-CAPABILITY: bun" "a required bun's gap is reported"
+rc=0
+out="$(PATH="$TMP/single-nobun:$TMP/stubbin" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+assert_eq "$rc" "1" "an absent bun blocks"
+assert_contains "$out" "MISSING: bun" "an absent bun is reported MISSING, not OPTIONAL"
 
 pass
