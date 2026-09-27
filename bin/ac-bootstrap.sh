@@ -226,7 +226,7 @@ shadow_check() {
 #                   from the 1.6 manual on, not in 1.5's.
 #   bun    1.3.5  - `Bun.Terminal` (dashboard/app.ts's native pty) ships from
 #                   1.3.5 (bun.com/blog/bun-v1.3.5); `bun:sqlite`
-#                   (bin/ac-brain-engine.ts) predates it. Required tier: the
+#                   (src/brain.ts) predates it. Required tier: the
 #                   ported bin/ entries exec the TypeScript under src/.
 # floor_of/cap_of/cap_probe are the table's three columns; build_check reads
 # them, so adding a row touches no caller.

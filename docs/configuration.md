@@ -79,9 +79,9 @@ The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspa
 | --- | --- |
 | `config/brain-auto-sync` | Valve for the shared brain-freshen slot (fleet watcher cycle and prompt-time recall): `on` (default) or `off`. The slot fires only when `state/brain.sqlite` exists, at most once per `AC_BRAIN_SYNC_IV`. |
 | `config/brain-prompt-recall` | Valve for prompt-time recall (`bin/ac-prompt-recall.sh`): `on` (default) or `off`. It fires only for a solo session or a chief whose cwd is the fleet home, and prints at most `AC_PROMPT_RECALL_LIMIT` hits. |
-| `config/brain.json` | Brain engine settings: `embedding` (`provider`, `model`, `dims`, `base_url`), `reranker`, `synthesize.api`, and the `excludes` list for sync. Edited from the dashboard's brain config panel. Owner: the `bin/ac-brain-engine.ts` header. |
+| `config/brain.json` | Brain engine settings: `embedding` (`provider`, `model`, `dims`, `base_url`), `reranker`, `synthesize.api`, and the `excludes` list for sync. Edited from the dashboard's brain config panel. Owner: the `src/brain.ts` header. |
 | `config/brain-agent`, `config/brain-model`, `config/brain-effort` | Harness, model and effort for `ac-brain synthesize` when `crew-dispatch.json` has no `panes.brain` entry; absent = `config/crew-harness` + `config/model`. `AC_BRAIN_SYNTH_CMD` overrides all of it. |
-| `config/providers.json` | Per-home secret store for LLM provider keys, one entry per provider name holding `api_key`. The brain engine reads an env var first, then this file; `bin/ac-jev.sh` reads its bearer key only from here. Edited from the dashboard's Providers panel. Keep it operator-only. |
+| `config/providers.json` | Per-home secret store for LLM provider keys, one entry per provider name holding `api_key`. The brain engine reads an env var first, then this file - never a `.env`, which no bun entry loads (`bin/ac-bun.sh`); `bin/ac-jev.sh` reads its bearer key only from here. Edited from the dashboard's Providers panel. Keep it operator-only. |
 
 ### System One adapter (jev) and compact advice
 
@@ -335,7 +335,7 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_BRAIN_EMBED_TIMEOUT` | 60 | Seconds one embedding call inside `ac-brain.sh sync` may take; past it the sync completes keyword-only. |
 | `AC_BRAIN_RERANK_TIMEOUT` | 10 | Seconds the rerank call inside `ac-brain.sh recall` may take; past it the fused order is returned unreranked. |
 | `AC_BRAIN_SYNTH_CMD` | unset | Overrides the one-shot command `ac-brain synthesize` runs, ahead of `panes.brain` and `config/brain-*`. |
-| `AC_BRAIN_PATTERN_FILE` | `~/.config/agent-crew/push-gate.patterns` | Pattern file the brain's pattern floor reads (`bin/ac-brain-engine.ts`). |
+| `AC_BRAIN_PATTERN_FILE` | `~/.config/agent-crew/push-gate.patterns` | Pattern file the brain's pattern floor reads (`src/brain.ts`). |
 | `AC_PROMPT_RECALL_LIMIT` | 3 | Max hits in the prompt-time recall block. |
 | `AC_JEV` | `config/jev`, else `off` | Per-session override of the System One adapter (`off`, `shadow`, `on`). |
 | `AC_JEV_ENDPOINT` | the provider's endpoint | Overrides only the URL `ac-jev.sh` posts to (tests, a local relay). |

@@ -5,7 +5,7 @@ import { test, expect, beforeEach, afterAll } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, existsSync, symlinkSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { envHome, configRead, stateDir } from "../src/lib.ts";
+import { envHome, configRead, stateDir, enterCaller, bunChild } from "../src/lib.ts";
 
 const LIB = join(import.meta.dir, "..", "src", "lib.ts");
 
@@ -179,4 +179,69 @@ test("envHome and configRead answer exactly what ac_home_resolve and ac_config_r
       expect(`${envHome()}|${configRead("crew-harness", "claude")}`).toBe(bash.stdout.toString());
     }
   }
+});
+
+test("enterCaller moves to the caller's cwd, its first argument", () => {
+  const here = process.cwd();
+  const d = tempDir("ac-lib-ts-enter-");
+  try {
+    expect(enterCaller([d, "--list", "x"])).toEqual({ args: ["--list", "x"], atCaller: true });
+    expect(process.cwd()).toBe(d);
+    expect(enterCaller(["", "a"])).toEqual({ args: ["a"], atCaller: false });
+    expect(enterCaller([])).toEqual({ args: [], atCaller: false });
+  } finally {
+    process.chdir(here);
+  }
+});
+
+test("bunChild starts a src module the way bin/ac-bun.sh does", () => {
+  const here = process.cwd();
+  process.env.BUN_OPTIONS = "--preload=/x.ts";
+  process.env.JSC_dumpOptions = "1";
+  try {
+    const root = join(import.meta.dir, "..");
+    enterCaller([""]);
+    expect(bunChild("src/brain.ts", ["stats"]).cmd).toEqual([process.execPath, "--no-env-file", join(root, "src/brain.ts"), "", "stats"]);
+    enterCaller([here]);
+    const c = bunChild("src/brain.ts", ["stats"]);
+    expect(c.cmd).toEqual([process.execPath, "--no-env-file", join(root, "src/brain.ts"), here, "stats"]);
+    expect(c.cwd).toBe(root);
+    expect(Object.keys(c.env).filter((k) => /^(BUN_|JSC_)/.test(k))).toEqual([]);
+  } finally {
+    delete process.env.BUN_OPTIONS;
+    delete process.env.JSC_dumpOptions;
+    process.chdir(here);
+  }
+});
+
+// Bun's process.cwd() drops a trailing backslash from the directory's name, so
+// a name it reports is trusted only once it stats as the directory actually
+// entered - never a same-named sibling.
+test("a home whose name Bun cannot report is refused, never read as its sibling", () => {
+  const base = tempDir("ac-lib-ts-bs-");
+  mkdirSync(join(base, "home\\"));
+  mkdirSync(join(base, "home"));
+  const r = runLib(`console.log(L.envHome())`, { AC_HOME: join(base, "home\\") });
+  expect(r.stdout).not.toBe(join(base, "home") + "\n");
+  expect(r.code).toBe(1);
+});
+
+test("a caller cwd Bun cannot report is not entered", () => {
+  const here = process.cwd();
+  const base = tempDir("ac-lib-ts-bscwd-");
+  mkdirSync(join(base, "wd\\"));
+  mkdirSync(join(base, "wd"));
+  try {
+    expect(enterCaller([join(base, "wd\\"), "x"])).toEqual({ args: ["x"], atCaller: false });
+    expect(process.cwd()).not.toBe(join(base, "wd"));
+  } finally {
+    process.chdir(here);
+  }
+});
+
+test("configRead drops NUL bytes, as the shell's $(...) did", () => {
+  const h = freshHome();
+  process.env.AC_HOME = h;
+  writeFileSync(join(h, "config", "crew-harness"), "co\u0000dex\n");
+  expect(configRead("crew-harness")).toBe("codex");
 });

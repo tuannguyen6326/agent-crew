@@ -244,7 +244,7 @@ assert_contains "$(cat "$AC_HOME/data/g-fampin/implement/brief.md")" "Review: ye
   || fail "G10: a pinned row scaffolds with neither declaration nor reason"
 
 # --- differential: the TS twin extracts byte-identically ----------------------
-# bin/dashboard.ts parseBacklogLine().contract is the browser-side twin of
+# dashboard/lib.ts parseBacklogLine().contract is the browser-side twin of
 # AC_DONELINE_AWK's f["contract"] - one grammar, two hosts. Drive BOTH parsers
 # over the same fixture lines and demand byte-identical answers, so the twins
 # cannot drift apart silently. Skips cleanly when bun is absent (house style:
@@ -274,7 +274,7 @@ LINES
     const lines = fs.readFileSync(process.argv[2], "utf8").split("\n");
     if (lines[lines.length - 1] === "") lines.pop();
     for (const l of lines) console.log(parseBacklogLine(l).contract);
-  ' "$ROOT/bin/dashboard.ts" "$diff_lines")"
+  ' "$ROOT/dashboard/lib.ts" "$diff_lines")"
   assert_eq "$ts_out" "$awk_out" "the TS twin and AC_DONELINE_AWK extract the contract byte-identically"
 else
   printf 'SKIP: bun not available - the awk/TS contract differential skipped\n'

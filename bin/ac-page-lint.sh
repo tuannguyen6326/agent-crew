@@ -52,8 +52,13 @@ for t in bun curl perl; do
     || { printf 'ac-page-lint.sh: %s not found\n' "$t" >&2; exit 3; }
 done
 
-root="$(cd "$(dirname "$0")/.." && pwd -P)"
+# cd -P: through a fleet home's symlinked bin/ the logical parent is the home.
+root="$(CDPATH= cd -P -- "$(dirname "$0")/.." && pwd -P)"
+. "$root/bin/ac-bun.sh"
 tmpdir="$(mktemp -d)" || { printf 'ac-page-lint.sh: mktemp failed\n' >&2; exit 3; }
+# bun build and curl run from here, never from the caller's cwd, which may be
+# gone or hold a bunfig.toml.
+cd "$tmpdir" || exit 3
 dash_pid=""
 cleanup() {
   [ -n "$dash_pid" ] && kill "$dash_pid" >/dev/null 2>&1
@@ -81,7 +86,7 @@ find_free_port() {
 port="$(find_free_port)" \
   || { printf 'ac-page-lint.sh: could not find a free port\n' >&2; exit 3; }
 
-bun run "$root/bin/dashboard.ts" --port "$port" >"$tmpdir/dashboard.log" 2>&1 &
+( ac_bun_exec dashboard/app.ts --port "$port" ) >"$tmpdir/dashboard.log" 2>&1 &
 dash_pid=$!
 
 ready=0

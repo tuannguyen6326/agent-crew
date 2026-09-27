@@ -1,7 +1,7 @@
 // app.ts - agent-crew local web dashboard (Bun runtime, no build step).
 //
-// Launched by bin/ac-dashboard.sh via the bin/dashboard.ts shim, which imports
-// this module and calls dashboardMain().
+// Launched by bin/ac-dashboard.sh through bin/ac-bun.sh; the import.meta.main
+// guard at the end of this module calls dashboardMain().
 // Serves ONE self-contained SPA shell (inline CSS + inline vanilla JS, no
 // framework, no external asset in the shell itself) over 127.0.0.1 only; the
 // mermaid renderer (jsdelivr) and the whiteboard (esm.sh, WHITEBOARD_CDN) load
@@ -83,9 +83,8 @@ const BIN = new URL("../bin", import.meta.url).pathname; // the fleet's bin/ (th
 const AC_HOME = process.env.AC_HOME ?? "";
 
 
-// The pure layer and the SPA shell live beside this file; the shim
-// (bin/dashboard.ts) re-exports this module, so re-exporting lib.ts here keeps
-// the historical single-module import surface (tests, ac-contract differential).
+// The pure layer and the SPA shell live beside this file; re-exporting lib.ts
+// here keeps the single-module import surface the tests use.
 import {
   ANSI_DARK, ANSI_LIGHT, ArtifactKind, ArtifactMeta, ArtifactNode, BacklogHit, 
   BacklogLineFields, BacklogView, FamilyDetail, FamilyPr, FamilyStage, FamilySubtask, 
@@ -100,6 +99,7 @@ import {
 } from "./lib.ts";
 export * from "./lib.ts";
 import { PAGE } from "./page.ts";
+import { bunChild, die, enterCaller } from "../src/lib.ts";
 import { watchHomes } from "./watch.ts";
 // ---------------------------------------------------------------------------
 // Records ledgers (dash-records): the fleet's records/ markdown ledgers, read
@@ -1898,7 +1898,7 @@ export function warmMemo<T>(ttlMs: number, loader: () => Promise<T>): {
  *  so the per-home crew/inbox/watcher/wakes/lock/cadence accounting --json
  *  computes for every home was calculated here and thrown away every time
  *  this cache expired. */
-// Must stay comfortably ABOVE the client's POLL_MS (dashboard.ts:3939, 5000)
+// Must stay comfortably ABOVE the client's POLL_MS (page.ts, 5000)
 // or a steady-state poll always lands after the cache has expired and misses
 // every tick - the bug this constant used to have at 3000. Do not "tidy" it
 // back down without also raising POLL_MS.
@@ -1957,7 +1957,7 @@ async function roomList(homePath: string): Promise<RoomRow[]> {
  *  threads, and per-family gate state (gate-dash-monitor). Crew rows + watcher
  *  come from the shell's snapshot poll, not here. */
 // LLM PROVIDER KEYS (admin) - per-home secret store <home>/config/providers.json
-// (0600, gitignored with config/). bin/ac-brain-engine.ts's PROVIDERS registry
+// (0600, gitignored with config/). src/brain.ts's PROVIDERS registry
 // is the authority for names/endpoints; this mirror exists because importing
 // the engine would execute its CLI dispatch. The API never returns a full key:
 // GET reports configured/masked/source only, POST sets or removes one entry.
@@ -2091,7 +2091,7 @@ async function providerModels(home: string, provider: string): Promise<Response>
   } catch { return json({ models: [] }); }
 }
 
-// Read-only KPI over the home's memory engine (bin/ac-brain-engine.ts owns
+// Read-only KPI over the home's memory engine (src/brain.ts owns
 // the schema); absent or unreadable reads as {present:false}, never an error.
 function brainStat(home: string) {
   const p = home + "/state/brain.sqlite";
@@ -6760,8 +6760,8 @@ function parsePort(argv: string[]): number {
   return 8787;
 }
 
-// The server entry: bin/dashboard.ts (the launcher shim) calls this under its
-// own import.meta.main guard, so importing this module stays side-effect-free.
+// The server entry: only the import.meta.main guard at the end of this module
+// calls it, so importing the module stays side-effect-free.
 export function dashboardMain() {
   const port = parsePort(process.argv);
   mainPort = port; // the share listener (REVIEW SHARE) lives on port+1
@@ -7057,9 +7057,10 @@ export function dashboardMain() {
         const p = url.searchParams.get("path");
         const q = url.searchParams.get("q") ?? "";
         if (!p) return json({ error: "path required" }, 400);
-        const argv = [process.execPath, BIN + "/ac-brain-engine.ts", "recall", "--home", p, "--limit", "10", "--by", "dashboard", "--compact"];
+        const argv = ["recall", "--home", p, "--limit", "10", "--by", "dashboard", "--compact"];
         if (q) argv.push("--query", q);
-        const proc = Bun.spawnSync(argv, { timeout: 30000 });
+        const engine = bunChild("src/brain.ts", argv);
+        const proc = Bun.spawnSync(engine.cmd, { cwd: engine.cwd, env: engine.env, timeout: 30000 });
         const text = new TextDecoder().decode(proc.stdout).trim();
         try { return json(JSON.parse(text)); } catch { return json({ error: "engine", detail: text.slice(0, 300) }, 500); }
       }
@@ -7067,7 +7068,8 @@ export function dashboardMain() {
         const p = url.searchParams.get("path");
         const q = url.searchParams.get("q") ?? "";
         if (!p || !q) return json({ error: "path and q required" }, 400);
-        const proc = Bun.spawnSync([process.execPath, BIN + "/ac-brain-engine.ts", "synthesize", q, "--home", p, "--by", "dashboard", "--compact"], { timeout: 180000 });
+        const engine = bunChild("src/brain.ts", ["synthesize", q, "--home", p, "--by", "dashboard", "--compact"]);
+        const proc = Bun.spawnSync(engine.cmd, { cwd: engine.cwd, env: engine.env, timeout: 180000 });
         const text = new TextDecoder().decode(proc.stdout).trim();
         try { return json(JSON.parse(text)); } catch { return json({ error: "engine", detail: text.slice(0, 300) }, 500); }
       }
@@ -7478,3 +7480,12 @@ export function dashboardMain() {
   slog(`agent-crew dashboard serving on http://127.0.0.1:${port}  (Ctrl-C to stop)`);
 }
 
+if (import.meta.main) {
+  // bin/ac-bun.sh started bun in the distro root; every child the server runs
+  // inherits the caller's cwd from here, and a relative AC_HOME needs it.
+  const { atCaller } = enterCaller(process.argv.slice(2));
+  const home = process.env.AC_HOME ?? "";
+  if (!atCaller && home !== "" && !home.startsWith("/"))
+    die("the current directory cannot be resolved, so a relative AC_HOME cannot be either");
+  dashboardMain();
+}

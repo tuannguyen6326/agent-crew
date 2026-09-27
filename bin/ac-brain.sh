@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# ac-brain.sh - CLI for the per-home memory engine (bin/ac-brain-engine.ts is
-# the authoritative spec; this wrapper only resolves the home and execs bun).
+# ac-brain.sh - CLI for the per-home memory engine (src/brain.ts is the
+# authoritative spec; this entry only resolves the home and starts it through
+# bin/ac-bun.sh, so nothing in the caller's cwd or environment configures bun).
 #
 # Usage: ac-brain.sh <verb> [args...] [--home <abs path>]
 # Verbs: sync recall remember forget entity context_pack delta links-to
@@ -11,7 +12,7 @@
 # (serve is the optional MCP stdio surface for harnesses that want it).
 set -euo pipefail
 
-engine="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ac-brain-engine.ts"
+. "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh"
 command -v bun >/dev/null 2>&1 || {
   printf '{"error":"unavailable","message":"bun not on PATH","suggestion":"install bun (https://bun.sh) - the engine runs on it"}\n'
   exit 1
@@ -31,4 +32,5 @@ home="${home:-${AC_HOME-}}"
   exit 1
 }
 
-exec bun "$engine" "${argv[@]}" --home "$home"
+# ${argv[@]+...}: bash 3.2 calls an empty array unbound under set -u.
+ac_bun_exec src/brain.ts ${argv[@]+"${argv[@]}"} --home "$home"

@@ -565,4 +565,32 @@ assert_contains "$("$BRAIN" recall --agent since-probe --since 7d --home "$AC_HO
   "a relative bound is a duration back from now"
 if bad="$("$BRAIN" recall --since junk --home "$AC_HOME" --compact 2>&1)"; then fail "an unreadable --since must refuse (got: $bad)"; fi
 
+# --- the caller's cwd configures nothing -------------------------------------
+# The prompt-recall hook runs the engine from a solo session's cwd, often a
+# project worktree: its .env, bunfig.toml preload and tsconfig paths must not
+# reach the engine - neither through the shim nor through serve's re-exec - and
+# a relative --home still resolves against that cwd.
+ctrap="$TMP/brain-cwd-trap"
+mkdir -p "$ctrap"
+printf 'console.log("PRELOAD-RAN");\n' >"$ctrap/p.ts"
+printf 'preload = ["./p.ts"]\n' >"$ctrap/bunfig.toml"
+printf '{"compilerOptions":{"paths":{"*":["./p.ts"]}}}\n' >"$ctrap/tsconfig.json"
+st="$(cd "$ctrap" && "$BRAIN" stats --home "$AC_HOME" --compact 2>&1)"
+case "$st" in *PRELOAD-RAN*) fail "a caller cwd's bun config ran inside the engine: $st" ;; esac
+assert_contains "$st" '"pages"' "stats answers from a hostile cwd"
+mcp2="$(printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"recall","arguments":{"query":"widget product line"}}}' \
+  | (cd "$ctrap" && "$BRAIN" serve --home "$AC_HOME") 2>&1)"
+case "$mcp2" in *PRELOAD-RAN*) fail "serve's re-exec ran a caller cwd's bun config: $mcp2" ;; esac
+assert_contains "$mcp2" "crewdomains/dom-a/CREWMATE" "serve's re-exec answers from a hostile cwd"
+rel="$(cd "$(dirname "$AC_HOME")" && "$BRAIN" stats --home "$(basename "$AC_HOME")" --compact 2>&1)"
+assert_contains "$rel" '"pages"' "a relative --home resolves against the caller's cwd"
+# Bun cannot name a cwd that ends in a backslash; bash can, so only the engine
+# sees the cwd as nameless there.
+bnameless="$TMP/brain-cwd\\"
+mkdir -p "$bnameless/relhome"
+nameless="$(cd "$bnameless" && "$BRAIN" stats --home relhome --compact 2>/dev/null || true)"
+assert_contains "$nameless" "current directory cannot be resolved" "a relative --home from a cwd bun cannot name is refused"
+noverb="$("$BRAIN" --home "$AC_HOME" 2>&1 || true)"
+assert_contains "$noverb" '"error"' "no verb still answers one JSON error"
+
 pass

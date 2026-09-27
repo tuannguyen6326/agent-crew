@@ -1,7 +1,7 @@
 // app.test.ts - Bun unit test for the dashboard's PURE parsers.
 // Run: bun test dashboard/app.test.ts   (importing app.ts does NOT start the
-// server - Bun.serve lives inside dashboardMain, called only by the
-// bin/dashboard.ts shim's import.meta.main guard).
+// server - Bun.serve lives inside dashboardMain, called only by app.ts's own
+// import.meta.main guard).
 //
 // Only the two non-trivial pure functions are tested: the rest of app.ts
 // is thin IO/shell-out/render that a unit test would only re-assert the obvious

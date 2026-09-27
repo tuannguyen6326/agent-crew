@@ -6,7 +6,7 @@ description: Query and maintain the per-home memory engine - recall (hybrid sear
 # ac-brain
 
 The per-home memory engine: an index over what this home has already written, plus a small working-memory facts store.
-`bin/ac-brain-engine.ts`'s header is the authoritative spec; `bin/ac-brain.sh` is the CLI; every verb prints one JSON value.
+`src/brain.ts`'s header is the authoritative spec; `bin/ac-brain.sh` is the CLI; every verb prints one JSON value.
 POSTURE: this is an AVAILABLE TOOL - the `intake-triage` skill's intake law (tier-ranked `ac-know recall` reads, cites, heat) is unchanged and stays first; reach here when those reads return empty or the question spans history they do not cover.
 
 ## When to reach for it

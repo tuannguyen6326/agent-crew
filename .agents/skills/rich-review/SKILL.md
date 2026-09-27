@@ -9,7 +9,7 @@ The fleet dashboard is the rich-review surface for HTML and markdown
 artifacts: the captain opens your artifact at its `/review` page, pins
 comments to elements, and the feedback reaches you over a blocking poll
 (`bin/ac-review.sh`, a thin shim on the dashboard review API -
-`bin/dashboard.ts`'s review block owns the contract). HTML is the new
+`dashboard/app.ts`'s review block owns the contract). HTML is the new
 markdown - and plain `.md` reviews too, no conversion needed.
 
 PRECONDITION: the dashboard must be RUNNING (`bin/ac-dashboard.sh`; port from

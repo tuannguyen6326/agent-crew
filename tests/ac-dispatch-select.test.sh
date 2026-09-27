@@ -460,6 +460,12 @@ printf '{"default":{"harness":"rel"}}' >"$TMP/relhome/config/crew-dispatch.json"
 assert_eq "$(cd "$TMP" && AC_HOME=relhome "$BIN/ac-dispatch-select.sh")" $'harness=rel\tmodel=\teffort=' \
   "a relative AC_HOME resolves against the caller's cwd"
 assert_fails_with "no dispatch config at //config/crew-dispatch.json" -- env AC_HOME=/ "$BIN/ac-dispatch-select.sh" --list
+# A reader that stops early (`| head`) ends the run silently, as SIGPIPE did.
+mkdir -p "$TMP/manyrules/config"
+bun -e 'console.log(JSON.stringify({rules: Array.from({length: 20000}, (_, i) => ({when: "rule " + i, use: {harness: "h"}}))}))' \
+  >"$TMP/manyrules/config/crew-dispatch.json"
+err="$( { AC_HOME="$TMP/manyrules" "$BIN/ac-dispatch-select.sh" --list | head -c1 >/dev/null; } 2>&1 || true)"
+assert_eq "$err" "" "an early-closed pipe prints no error"
 mkdir -p "$TMP/nobun"
 for t in bash env dirname; do ln -s "$(command -v "$t")" "$TMP/nobun/$t"; done
 rc=0

@@ -7,6 +7,8 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+const ROOT = resolve(import.meta.dir, "..");
+
 // writeSync, not process.stderr.write: the message must be on the fd before
 // process.exit tears the process down.
 export function die(msg: string): never {
@@ -14,12 +16,26 @@ export function die(msg: string): never {
   process.exit(1);
 }
 
+// Bun's process.cwd() drops a trailing backslash from the directory's name,
+// so the name it reports counts only once it stats as the directory entered.
+function namedCwd(): string | null {
+  try {
+    const named = process.cwd();
+    const a = statSync(named);
+    const b = statSync(".");
+    return a.dev === b.dev && a.ino === b.ino ? named : null;
+  } catch {
+    return null;
+  }
+}
+
 // ac_home_resolve's no-flag rungs: `cd "$AC_HOME" && pwd -P`, or "" when
 // unset - a homeless caller is legitimate and decides what "no home" means.
 // A chdir round-trip, not realpath: cd tries the logical spelling (link/..
 // walks back up the link) before the physical one, needs only search
-// permission, and takes spellings realpath refuses (over PATH_MAX, a
-// backslash in Bun's).
+// permission, and takes spellings Bun's realpath refuses (over PATH_MAX, a
+// backslash). A home Bun cannot name (a trailing backslash) is refused where
+// ac_home_resolve accepts it: failing closed beats reading its sibling.
 export function envHome(): string {
   const h = process.env.AC_HOME;
   if (!h) return "";
@@ -27,7 +43,8 @@ export function envHome(): string {
   for (const dir of [resolve(h), h]) {
     try {
       process.chdir(dir);
-      return process.cwd();
+      const named = namedCwd();
+      if (named) return named;
     } catch {
     } finally {
       process.chdir(here);
@@ -45,7 +62,7 @@ export function configRead(name: string, dflt = ""): string {
   if (!h) return dflt;
   const f = join(h, "config", name);
   if (!existsSync(f) || !statSync(f).isFile()) return dflt;
-  return readFileSync(f, "utf8").split("\n")[0].replace(SHELL_TRIM, "");
+  return readFileSync(f, "utf8").split("\n")[0].replace(/\u0000/g, "").replace(SHELL_TRIM, "");
 }
 
 export function stateDir(): string {
@@ -54,4 +71,29 @@ export function stateDir(): string {
   const dir = join(envHome(), "state");
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+// The module's half of bin/ac-bun.sh: bun started in the distro root, and the
+// caller's cwd arrived as the first argument ("" when it has no name).
+// Returning there keeps every relative input the caller's.
+let atCallerCwd = false;
+
+export function enterCaller(argv: string[]): { args: string[]; atCaller: boolean } {
+  const [caller = "", ...args] = argv;
+  atCallerCwd = false;
+  try {
+    process.chdir(caller);
+    if (namedCwd()) atCallerCwd = true;
+    else process.chdir(ROOT);
+  } catch {}
+  return { args, atCaller: atCallerCwd };
+}
+
+// Another src/ module started the way bin/ac-bun.sh starts one, for a module
+// that spawns bun itself. A parent that never reached its caller's cwd sits in
+// the distro root, so it hands the child "" rather than the root.
+export function bunChild(module: string, args: string[]): { cmd: string[]; cwd: string; env: Record<string, string> } {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(BUN_|JSC_)/.test(k)) env[k] = v;
+  return { cmd: [process.execPath, "--no-env-file", join(ROOT, module), atCallerCwd ? process.cwd() : "", ...args], cwd: ROOT, env };
 }

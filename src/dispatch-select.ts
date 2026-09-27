@@ -1,11 +1,9 @@
 // dispatch-select.ts - resolve a crew-dispatch profile for ac-spawn. The
 // entry is bin/ac-dispatch-select.sh (a shim that execs this file); THIS
-// header is the authoritative spec. The shim starts bun in the distro root
-// with no BUN_*/JSC_* environment and no .env, and passes the caller's
-// physical cwd as the first argument ("" when it has no name); the module
-// returns there before reading any relative input (AC_HOME, a --propose
-// brief) - or refuses such an input when it cannot - so nothing in a caller's
-// cwd or environment configures bun itself.
+// header is the authoritative spec. The entry starts it through bin/ac-bun.sh
+// (the caller's cwd arrives as the first argument, src/lib.ts's enterCaller
+// returns there); a relative input - AC_HOME, a --propose brief - is refused
+// when that cwd has no name.
 //
 // config/crew-dispatch.json (see docs/examples/crew-dispatch.json) maps
 // natural-language `when` clauses to harness profiles. MATCHING a rule is the
@@ -112,7 +110,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:os";
 import { existsSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { configRead, die, envHome, stateDir } from "./lib.ts";
+import { configRead, die, enterCaller, envHome, stateDir } from "./lib.ts";
 
 type Json = any;
 
@@ -420,12 +418,7 @@ function main(args: string[]): void {
 }
 
 if (import.meta.main) {
-  const [caller, ...args] = process.argv.slice(2);
-  let atCaller = false;
-  try {
-    process.chdir(caller);
-    atCaller = true;
-  } catch {}
+  const { args, atCaller } = enterCaller(process.argv.slice(2));
   // Without the caller's cwd a relative input would resolve inside the distro
   // checkout, whose gitignored config/ and state/ look like a fleet home.
   const relative = [process.env.AC_HOME ?? "", args[0] === "--propose" ? args[1] ?? "" : ""]
@@ -435,6 +428,9 @@ if (import.meta.main) {
   try {
     main(args);
   } catch (e) {
+    // A reader that closed the pipe early (`| head`) ends the run the way the
+    // shell's SIGPIPE did: silently, 128+13.
+    if ((e as { code?: string }).code === "EPIPE") process.exit(141);
     die(e instanceof Error ? e.message : String(e));
   }
 }

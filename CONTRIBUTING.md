@@ -56,7 +56,7 @@ Read [`docs/concepts.md`](docs/concepts.md) first if you are new to the model.
 | Backlog grammar | `docs/backlog.md` | `AC_DONELINE_AWK` in `bin/ac-lib.sh` is the one parser. |
 | Config files and env knobs | `docs/configuration.md` | The environment table is the knob manifest, enforced by `tests/ac-config-surface.test.sh`. |
 | Script index | `docs/scripts.md` | A map only; each row points to the owning header. |
-| Web dashboard | `dashboard/app.ts`, `dashboard/lib.ts`, `dashboard/page.ts`, `dashboard/watch.ts` | Bun, no build step. `bin/dashboard.ts` is the launcher shim `bin/ac-dashboard.sh` execs. `app.ts`'s header owns the route and API contract; `lib.ts` is the pure layer. Tests: `dashboard/app.test.ts`, `dashboard/watch.test.ts`. |
+| Web dashboard | `dashboard/app.ts`, `dashboard/lib.ts`, `dashboard/page.ts`, `dashboard/watch.ts` | Bun, no build step. `bin/ac-dashboard.sh` starts `dashboard/app.ts` through `bin/ac-bun.sh`. `app.ts`'s header owns the route and API contract; `lib.ts` is the pure layer. Tests: `dashboard/app.test.ts`, `dashboard/watch.test.ts`. |
 | Tests | `tests/<name>.test.sh` | Colocated per behavior; `tests/run-suite.sh` is the only suite runner. Bun unit tests for `src/` live in `tests/<name>.test.ts` and run through `tests/src.test.sh`. |
 
 ## Dev loop
@@ -74,7 +74,7 @@ bin/ac-lint.sh                     # opt-in: bash -n + shellcheck over changed f
 - `tests/run-suite.sh` exits 0 when all pass, 1 when any test fails, 2 when it cannot proceed (bad arguments, no test files, or an empty `--changed` selection), and 3 when it refuses to run because SIGINT is ignored in an async invocation it cannot reset.
 - `--changed` maps `bin/<name>.sh` to `tests/<name>.test.sh` over staged, unstaged and untracked changes; a changed shared library narrows to its sourcers' tests, and anything it cannot map confidently widens to the full set and says why.
 - `src/<name>.ts` maps to `tests/src.test.sh` plus its entry's `tests/ac-<name>.test.sh`, a changed `tests/*.test.ts` maps to `tests/src.test.sh`, and a `src/` module other `src/` files import narrows to its importers' tests.
-- `--changed` ignores files outside `bin/*.sh`, `src/*.ts`, `tests/*.sh` and `tests/*.test.ts`, so a change to `dashboard/*.ts`, `bin/*.ts`, docs or skills selects nothing on its own; run the relevant test file directly.
+- `--changed` ignores files outside `bin/*.sh`, `src/*.ts`, `tests/*.sh` and `tests/*.test.ts`, so a change to `dashboard/*.ts`, docs or skills selects nothing on its own; run the relevant test file directly.
 - On a clean, fully committed tree `--changed` has nothing to read and exits 2 without running anything.
 - The suite is not a per-change gate: per-change verification is the changed-file tests plus any do-not-break tests; the bare full run is a periodic task.
 - `bin/ac-lint.sh` is opt-in; `--all` lints the whole set, and `AC_LINT_ALLOW_MISSING=1` tolerates a missing shellcheck.
@@ -89,7 +89,7 @@ The script headers of `tests/run-suite.sh` and `bin/ac-lint.sh` are the authorit
 
 - Write the logic in TypeScript under `src/<name>.ts` when it parses or writes structured data (JSON, ledgers, metas), runs past about 200 lines or branches heavily, loops for a long time, or needs unit tests.
 - Keep bash for thin glue around `git`/`herdr`/`gh`, hooks, and short scripts; an existing script that works and is tested is not ported just for uniformity.
-- A ported script keeps its `bin/ac-<name>.sh` entry as a shim that execs `bun` on `src/<name>.ts` (see `bin/ac-dispatch-select.sh`), so callers, hooks and skills keep the path; the `src/` module's header is the spec.
+- A ported script keeps its `bin/ac-<name>.sh` entry as a shim that starts `src/<name>.ts` through `bin/ac-bun.sh` (see `bin/ac-dispatch-select.sh`), so callers, hooks and skills keep the path and nothing in a caller's cwd or environment configures bun; the `src/` module's header is the spec, and it reads its arguments through `enterCaller` (`src/lib.ts`).
 - A `bin/ac-lib.sh` helper gets a twin in `src/lib.ts` only when a port calls it, keeps its bash original's observable contract, and is pinned to that original by a differential test.
 - Unit tests go in `tests/<name>.test.ts`; the black-box `tests/ac-<name>.test.sh` stays the CLI contract and must pass unchanged across the port.
 

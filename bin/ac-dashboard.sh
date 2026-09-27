@@ -5,7 +5,8 @@
 #        ac-dashboard.sh start|stop|restart|status [--port <N>]
 #        ac-dashboard.sh -h | --help
 #
-# The bare invocation runs `bun run <bin>/dashboard.ts` in the FOREGROUND:
+# The bare invocation runs dashboard/app.ts (through bin/ac-bun.sh, so nothing
+# in the caller's cwd or environment configures bun) in the FOREGROUND:
 # on-demand, Ctrl-C to stop, prints the URL, serves until interrupted. Before
 # launching it does one cheap check that the port is free, so a second launch
 # on a busy port fails with a clear message instead of a stack trace.
@@ -19,7 +20,7 @@
 #            log tail, and the dead pid is cleaned). Idempotent: an already-
 #            running daemon is reported, never doubled; a port held by a
 #            FOREIGN process still refuses.
-#   stop     kill the recorded pid (verified to be dashboard.ts before the
+#   stop     kill the recorded pid (verified to be this checkout's dashboard/app.ts before the
 #            kill - a recycled pid is never shot), wait until gone, remove
 #            the pidfile. Idempotent ("not running" is a clean no-op); a
 #            stale pidfile (dead process) is repaired, not obeyed.
@@ -36,7 +37,7 @@
 # normalize+atomic-writes (or RENAMEs - never onto an existing name - or
 # DELETEs, two-step-confirmed in the UI) ONE
 # Excalidraw scene under <home>/whiteboards/
-# (the /whiteboard editor page's save - the dashboard.ts whiteboard block owns
+# (the /whiteboard editor page's save - dashboard/app.ts's whiteboard block owns
 # the contract, incl. its pinned-CDN editor runtime); and the review routes
 # publish ONE fleet wake (kind=review, via ac_wake_publish - never a
 # re-implemented grammar) when captain feedback lands on a session nobody is
@@ -49,7 +50,9 @@
 # Exit: 0 on clean shutdown; 2 bad args; 3 port busy; 4 bun missing.
 
 set -euo pipefail
-bin_dir="$(cd "$(dirname "$0")" && pwd -P)"
+bin_dir="$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd -P)"
+root="$(CDPATH= cd -P -- "$bin_dir/.." && pwd -P)"
+. "$bin_dir/ac-bun.sh"
 
 verb=""
 case "${1:-}" in start|stop|restart|status) verb="$1"; shift ;; esac
@@ -70,16 +73,19 @@ case "$port" in
 esac
 
 command -v bun >/dev/null 2>&1 \
-  || { printf 'ac-dashboard.sh: bun not found (needed to run dashboard.ts)\n' >&2; exit 4; }
+  || { printf 'ac-dashboard.sh: bun not found (needed to run dashboard/app.ts)\n' >&2; exit 4; }
 
 port_answers() { (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; }
 
 # The recorded pid counts only while it is alive AND still the dashboard -
-# a recycled pid must read as "not running", never as a kill target.
+# a recycled pid must read as "not running", never as a kill target. A daemon
+# started before the dashboard entry left bin/ still runs bin/dashboard.ts, and
+# an upgrade must stop it rather than orphan it on its port.
 pid_running() {
   local pid="$1"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
-    && ps -o command= -p "$pid" 2>/dev/null | grep -q "dashboard.ts"
+    && ps -o command= -p "$pid" 2>/dev/null \
+      | grep -qF -e "$root/dashboard/app.ts" -e "$root/bin/dashboard.ts"
 }
 
 if [ -n "$verb" ]; then
@@ -118,7 +124,8 @@ if [ -n "$verb" ]; then
       printf 'ac-dashboard.sh start: 127.0.0.1:%s is held by a FOREIGN process - pick another port\n' "$port" >&2
       exit 3
     fi
-    nohup bun run "$bin_dir/dashboard.ts" --port "$port" >"$logfile" 2>&1 &
+    # The subshell execs bun, so $! is the daemon itself.
+    ( ac_bun_exec dashboard/app.ts --port "$port" ) >"$logfile" 2>&1 &
     pid=$!
     disown "$pid" 2>/dev/null || true
     printf '%s\n' "$pid" >"$pidfile"
@@ -161,4 +168,4 @@ if port_answers; then
 fi
 
 printf 'http://127.0.0.1:%s\n' "$port"
-exec bun run "$bin_dir/dashboard.ts" --port "$port"
+ac_bun_exec dashboard/app.ts --port "$port"

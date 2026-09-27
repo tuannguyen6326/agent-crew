@@ -1,5 +1,5 @@
-// ac-brain-engine.ts - the per-home memory engine (this header is the
-// authoritative spec; design record: the fleet's data/ac-brain family).
+// brain.ts - the per-home memory engine (this header is the authoritative
+// spec; design record: the fleet's data/ac-brain family).
 //
 // WHAT IT IS. A rebuildable SQLite index over a fleet home's own markdown
 // (records/, data/, crewdomains/, CREWMATE-learned.md) plus a markdown-backed
@@ -79,7 +79,11 @@
 //   supported to 50k embedded chunks (doctor's vector_scan_scale check fails
 //   past it). An ANN index is deliberately out until measurements demand it.
 //
-// CLI: ac-brain.sh is the wrapper; every command prints ONE JSON value.
+// CLI: bin/ac-brain.sh is the entry. It starts this module through
+//   bin/ac-bun.sh, so the caller's cwd arrives as the first argument and
+//   enterCaller (src/lib.ts) returns there; a relative --home is refused when
+//   that cwd has no name. serve's per-call re-exec starts the module the same
+//   way (bunChild). Every command prints ONE JSON value.
 //   sync [--rebuild] [--dry-run] [--no-embed] [--force-reconcile] [--break-lease]
 //   recall [--query q] [--entity slug] [--agent a] [--since iso|7d] [--limit n]
 //          [--budget-tokens n] [--no-boosts] [--deputy id]
@@ -99,12 +103,13 @@
 //   MEMORY_VERBS spec; do not point an external protocol client at serve.
 import { Database } from "bun:sqlite";
 import { readdirSync, statSync, readFileSync, existsSync, appendFileSync, mkdirSync, writeFileSync } from "fs";
-import { join, relative, dirname, basename } from "path";
+import { join, relative, dirname, basename, isAbsolute, resolve } from "path";
 import { hostname } from "os";
+import { bunChild, enterCaller } from "./lib.ts";
 
 const SCHEMA_VERSION = 1;
 const CHUNKER_VERSION = 1;
-const args = process.argv.slice(2);
+const { args, atCaller } = enterCaller(process.argv.slice(2));
 const cmd = args[0];
 function opt(name: string, dflt?: string): string | undefined {
   const i = args.indexOf("--" + name);
@@ -122,7 +127,10 @@ const positional = (n: number) => {
 const BOOL_FLAGS = new Set(["--rebuild", "--dry-run", "--no-embed", "--force-reconcile", "--break-lease", "--no-boosts", "--compact"]);
 const isBoolFlag = (a: string) => BOOL_FLAGS.has(a);
 
-const HOME = opt("home", process.env.AC_HOME)!;
+const HOME_ARG = opt("home", process.env.AC_HOME) ?? "";
+if (HOME_ARG && !isAbsolute(HOME_ARG) && !atCaller)
+  die("invalid_params", "the current directory cannot be resolved, so a relative home cannot be either", "pass --home <abs path>");
+const HOME = HOME_ARG && resolve(HOME_ARG);
 if (!HOME || !existsSync(HOME)) die("invalid_params", "no fleet home", "pass --home <abs path> or set AC_HOME");
 const DB_PATH = join(HOME, "state", "brain.sqlite");
 const FACTS_MD = join(HOME, "state", "facts.md");
@@ -1501,7 +1509,6 @@ const MCP_TOOLS = [
 async function cmdServe() {
   // ndjson JSON-RPC 2.0 over stdio; each tools/call re-execs this engine so the
   // verb implementations stay single-sourced and every call is a fresh process.
-  const engine = process.argv[1];
   const send = (m: unknown) => process.stdout.write(JSON.stringify(m) + "\n");
   for await (const lineRaw of console) {
     const line = String(lineRaw).trim();
@@ -1516,7 +1523,7 @@ async function cmdServe() {
     else if (msg.method === "tools/call") {
       const tool = msg.params?.name;
       const a = msg.params?.arguments || {};
-      const argv: string[] = ["bun", engine, tool, "--home", HOME, "--compact"];
+      const argv: string[] = [tool, "--home", HOME, "--compact"];
       const pos = tool === "remember" ? a.fact : tool === "synthesize" ? a.question : tool === "forget" ? String(a.id) : tool === "entity" ? a.name : undefined;
       if (pos !== undefined) argv.push(pos);
       for (const [k, v] of Object.entries(a)) {
@@ -1527,7 +1534,8 @@ async function cmdServe() {
         send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify({ error: "unknown_tool" }) }], isError: true } });
         continue;
       }
-      const proc = Bun.spawnSync(argv);
+      const child = bunChild("src/brain.ts", argv);
+      const proc = Bun.spawnSync(child.cmd, { cwd: child.cwd, env: child.env });
       const text = new TextDecoder().decode(proc.stdout).trim() || new TextDecoder().decode(proc.stderr).trim();
       send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text }], isError: proc.exitCode !== 0 } });
     } else if (id !== undefined)

@@ -5,8 +5,8 @@
 # rest, and reports OK/SYNTAX ERROR per page with the three-way exit code
 # (0 clean, 1 a page is broken, 2 usage, 3 tooling could not run).
 # Runs against a FIXTURE dashboard (a copy of ac-page-lint.sh in a throwaway
-# repo, pointed at a tiny fixture bin/dashboard.ts - never the real
-# dashboard/*.ts, which this task must not edit). The fixture serves all 5
+# repo, pointed at a tiny fixture dashboard/app.ts - never the real
+# dashboard, so the test pins the lint and not the pages). The fixture serves all 5
 # fixed-list paths with one external <script src>, one inline <script>, and
 # one inline <script type="module"> per page; PAGE_LINT_TEST_BAD=1 swaps the
 # module script's body on "/" for one with a syntax error.
@@ -20,11 +20,11 @@ command -v curl >/dev/null 2>&1 || { printf 'SKIP: curl not available\n'; exit 0
 command -v perl >/dev/null 2>&1 || { printf 'SKIP: perl not available\n'; exit 0; }
 
 repo="$TMP/pagelintrepo"
-mkdir -p "$repo/bin"
-cp "$BIN/ac-page-lint.sh" "$repo/bin/ac-page-lint.sh"
+mkdir -p "$repo/bin" "$repo/dashboard"
+cp "$BIN/ac-page-lint.sh" "$BIN/ac-bun.sh" "$repo/bin/"
 chmod +x "$repo/bin/ac-page-lint.sh"
 
-cat >"$repo/bin/dashboard.ts" <<'EOF'
+cat >"$repo/dashboard/app.ts" <<'EOF'
 // FIXTURE dashboard for ac-page-lint.test.sh - not the real dashboard.
 const args = process.argv.slice(2);
 let port = 0;
@@ -96,12 +96,19 @@ done
 rc=0; (cd "$repo" && PATH="$emptybin" ./bin/ac-page-lint.sh) >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" 3 "bun missing from PATH exits 3 (tooling could not run)"
 
+# A caller whose cwd was deleted still gets a real lint: nothing the lint
+# runs - the dashboard, bun build - works in that cwd.
+gone="$TMP/pl-gone"
+mkdir -p "$gone"
+rc=0; (cd "$gone" && rmdir "$gone" && "$repo/bin/ac-page-lint.sh") >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" 0 "a deleted cwd lints the good fixture clean"
+
 # --- tooling could not run: the dashboard itself fails to start -------------
 repo2="$TMP/pagelintrepo-broken"
-mkdir -p "$repo2/bin"
-cp "$BIN/ac-page-lint.sh" "$repo2/bin/ac-page-lint.sh"
+mkdir -p "$repo2/bin" "$repo2/dashboard"
+cp "$BIN/ac-page-lint.sh" "$BIN/ac-bun.sh" "$repo2/bin/"
 chmod +x "$repo2/bin/ac-page-lint.sh"
-printf 'throw new Error("fixture: dashboard intentionally broken");\n' >"$repo2/bin/dashboard.ts"
+printf 'throw new Error("fixture: dashboard intentionally broken");\n' >"$repo2/dashboard/app.ts"
 rc=0; (cd "$repo2" && ./bin/ac-page-lint.sh) >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" 3 "a dashboard that fails to start exits 3, not 1"
 

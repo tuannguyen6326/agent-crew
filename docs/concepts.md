@@ -209,7 +209,7 @@ Learning happens at landing, never deferred to a manual debrief.
 
 At intake the chief reads by the order's question with `bin/ac-know.sh recall` and cites what it used; citing is what bumps an entry's heat.
 
-Owners: [`task-lifecycle`](../.agents/skills/task-lifecycle/SKILL.md) skill, the `bin/ac-know.sh`, `bin/ac-learn.sh`, `bin/ac-scene.sh` and `bin/ac-brain-engine.ts` headers.
+Owners: [`task-lifecycle`](../.agents/skills/task-lifecycle/SKILL.md) skill, the `bin/ac-know.sh`, `bin/ac-learn.sh`, `bin/ac-scene.sh` and `src/brain.ts` headers.
 
 ## Review and QA as obligations
 

@@ -27,6 +27,7 @@ assert_contains "$out" "http://127.0.0.1:$port" "start prints the url"
 [ -f "$AC_HOME/state/dashboard.pid" ] || fail "start writes the pidfile"
 pid1="$(cat "$AC_HOME/state/dashboard.pid")"
 kill -0 "$pid1" 2>/dev/null || fail "the daemon process is alive"
+assert_contains "$(ps -o command= -p "$pid1")" "$(cd "$ROOT" && pwd -P)/dashboard/app.ts" "the daemon runs dashboard/app.ts itself, no bin/ shim"
 (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null || fail "the port answers after start"
 
 out="$("$DB" status --port "$port")"
@@ -58,6 +59,27 @@ kill -0 "$pid2" 2>/dev/null && fail "stop must kill the daemon"
 assert_contains "$(cat "$AC_HOME/state/dashboard.log")" "shutdown: SIGTERM" "the log records the shutdown reason"
 out="$("$DB" stop)"
 assert_contains "$out" "not running" "a second stop is an idempotent no-op"
+
+# A daemon the OLD code started still runs <root>/bin/dashboard.ts: after an
+# upgrade, stop must still recognise and end it, never orphan it.
+bun -e 'setTimeout(() => {}, 60000)' "$(cd "$ROOT" && pwd -P)/bin/dashboard.ts" --port "$port" &
+old=$!
+printf '%s\n' "$old" >"$AC_HOME/state/dashboard.pid"
+"$DB" stop >/dev/null
+kill -0 "$old" 2>/dev/null && { kill "$old"; fail "stop must end a daemon the pre-upgrade code started"; }
+
+# A relative AC_HOME from a cwd that has no name is refused, never read in the
+# distro checkout.
+gone="$TMP/gone"
+mkdir -p "$gone"
+rc=0
+(cd "$gone" && rmdir "$gone" && AC_HOME=relhome "$DB" --port "$port") >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" "a relative AC_HOME from a nameless cwd is refused"
+
+# An exported CDPATH never redirects the entry's own bin/ lookup.
+mkdir -p "$TMP/cdp/bin"
+out="$(cd "$ROOT" && CDPATH="$TMP/cdp" bin/ac-dashboard.sh status --port "$port" 2>&1 || true)"
+assert_eq "$out" "not running" "an exported CDPATH never redirects the dashboard entry"
 
 # a stale pidfile (process gone) is repaired, not obeyed
 printf '999999\n' >"$AC_HOME/state/dashboard.pid"

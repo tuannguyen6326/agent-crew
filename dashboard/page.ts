@@ -4306,7 +4306,7 @@ function dlgKeydown(e){
 // Post-render passes: iframe identity, input value/caret, scroll restore.
 // ===========================================================================
 // Mermaid render pass, shared with /review's iframe overlay - reports-mermaid:
-// extracted top-level (mermaidPass, dashboard.ts, alongside readerCss) and
+// extracted top-level (mermaidPass, lib.ts, alongside readerCss) and
 // interpolated here verbatim, the same toString() sharing readerCss itself
 // established, so a report's mermaid fence renders here the identical way
 // it already does on /review - one implementation, not a second hand-copied

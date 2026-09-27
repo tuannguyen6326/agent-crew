@@ -37,6 +37,7 @@ AC_QA_ATTESTATION_ERROR  out-param: qa attestation validator error carrier
 AC_QA_BUNDLE_ERROR       out-param: qa bundle validator error carrier
 AC_QA_MANIFEST_ERROR     out-param: qa manifest validator error carrier
 AC_QA_RECEIPT_ERROR      out-param: qa receipt validator error carrier
+AC_SEND_UNPROVEN    intra-run wire: a caller of backend_send_line (ac-backend.sh) sets it to type a line whose composer cannot be proven first - shell and launch lines, ac-send.sh --force
 AC_AUTOARM          intra-run wire: ac-watch-autoarm.sh exports it (=1) so the watcher it
                     starts records the arm as BOUNDED; never set by a human
 AC_FINDINGS_ROUND   intra-run wire: ac-ship.sh -> ac_findings_normalize (review round)
@@ -106,10 +107,10 @@ known_extra() {
 # Tokens are maximal [A-Z_]+ runs; a token ENDING in `_` is a dynamic-family
 # prefix (AC_FLEET_MODEL_$ku and friends) and must match a templated doc row
 # (`AC_X_<...>`), which documents the whole family.
-# bin/ and src/ hold TypeScript too (the brain engine, the dashboard entry, the
-# ported entries' logic), and a knob only they read is as real as any other -
-# scanning .sh alone read two live brain timeouts as phantom rows.
-code_tokens="$(grep -ohE 'AC_[A-Z_]+' "$BIN"/*.sh "$BIN"/*.ts "$ROOT"/src/*.ts | sort -u)"
+# src/ holds TypeScript too (the brain engine, the ported entries' logic), and
+# a knob only it reads is as real as any other - scanning .sh alone read two
+# live brain timeouts as phantom rows.
+code_tokens="$(grep -ohE 'AC_[A-Z_]+' "$BIN"/*.sh "$ROOT"/src/*.ts | sort -u)"
 doc_names="$(awk -F'`' '/^\| `AC_/ {print $2}' "$DOC" | sort -u)"
 doc_plain="$(printf '%s\n' "$doc_names" | grep -v '<' || true)"
 doc_prefixes="$(printf '%s\n' "$doc_names" | sed -n 's/^\(AC_[A-Z_]*_\)<.*$/\1/p' | sort -u)"

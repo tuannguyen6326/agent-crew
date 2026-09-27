@@ -255,7 +255,7 @@ The gate law is the `staged-gates` skill; report contents are [`staged-design-fl
 | L1 lessons | `records/learnings.md` `## Pending` | `bin/ac-learn.sh note` |
 | L2 scenes | `records/scenes/<slug>.md`, pull-only, never seeded | `bin/ac-scene.sh` |
 | L3 always-loaded | `$AC_HOME/CREWMATE-learned.md` and `$AC_HOME/skills/` | `bin/ac-learn.sh` transactions |
-| Index | `state/brain.sqlite` over the home's markdown, facts in `state/facts.md` | `bin/ac-brain-engine.ts` |
+| Index | `state/brain.sqlite` over the home's markdown, facts in `state/facts.md` | `src/brain.ts` |
 
 `ac-know.sh recall` walks scenes then facts, ranks by terms matched then `heat:`, and caps its output; `cite` (and `ac-scene.sh show --cite`) bumps heat.
 
@@ -271,7 +271,7 @@ Neither has a cron or daemon.
 Both mutate knowledge only through the maintenance transaction in `bin/ac-maintenance-lib.sh` - a fleet lock, a pre-write backup, a closed schema, staged hashes, atomic replacement and a journal under `state/.maintenance-transactions/` - and `ac_maintenance_receipt_validate` re-derives every hash rather than trust a writer.
 `ac-learn.sh maintenance status|resume|abandon` settles a held transaction.
 
-The brain database is disposable: markdown stays the system of record (`bin/ac-brain-engine.ts` header).
+The brain database is disposable: markdown stays the system of record (`src/brain.ts` header).
 `ac_brain_freshen` fires one throttled catch-up sync from the watcher and the prompt-recall hook when the database exists and `config/brain-auto-sync` is not `off`.
 Landing stays the primary learning mechanism; the manual `/debrief` is the reset-time catch-all, and its `debrief` skill owns knowledge routing and curation, room and fleet reconciliation, the resume pointer and the reset verdict.
 
@@ -286,7 +286,7 @@ Its sites, each a proposal only: the watcher's notes on quiet wakes, `ac-dispatc
 ## The dashboard
 
 `bin/ac-dashboard.sh` runs it in the foreground by default, or detached with `start|stop|restart|status` (pid and log in `$AC_HOME/state/`).
-It runs `bin/dashboard.ts`, a shim that re-exports `dashboard/app.ts` and calls `dashboardMain()`, under Bun with no build step.
+It runs `dashboard/app.ts` itself (through `bin/ac-bun.sh`, like every `src/` entry) under Bun with no build step.
 
 | File | Role |
 |---|---|
@@ -354,7 +354,7 @@ Every tracked package follows the Agent Skills spec, enforced by `tests/ac-skill
 | Pane agents, exact-ref verification | `bin/ac-pane-agent.sh`, `bin/ac-verify.sh` |
 | crew-ship and QA pipelines | `bin/ac-ship.sh`, `bin/ac-qa.sh`, `bin/ac-pipeline-lib.sh` |
 | Second chief and maintenance gate | `bin/ac-gate.sh` |
-| Knowledge, scenes, brain | `bin/ac-know.sh`, `bin/ac-scene.sh`, `bin/ac-brain-engine.ts` |
+| Knowledge, scenes, brain | `bin/ac-know.sh`, `bin/ac-scene.sh`, `src/brain.ts` |
 | Learning, Curate, maintenance transaction | `bin/ac-learn.sh`, `bin/ac-curate.sh`, `bin/ac-maintenance-lib.sh` |
 | System One | `bin/ac-jev.sh`, `bin/ac-compact-advise.sh` |
 | Dashboard | `dashboard/app.ts` |

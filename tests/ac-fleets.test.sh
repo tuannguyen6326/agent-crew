@@ -223,8 +223,8 @@ rm -f "$alpha/state/.learn.meta" "$alpha/state/.curate.meta" \
   "$alpha/config/learn-every" "$alpha/config/curate-every" \
   "$alpha/config/flow" "$alpha/config/promote" "$alpha/config/remote-mirror"
 
-# -- --paths: the CHEAP source for allowedHomePaths (dashboard.ts) ---------------
-# bin/dashboard.ts's allowedHomePaths() reads ONLY h.path/h.crewdeputies from
+# -- --paths: the CHEAP source for allowedHomePaths (dashboard/app.ts)--------------
+# dashboard/app.ts's allowedHomePaths() reads ONLY h.path/h.crewdeputies from
 # `--json` and throws away the whole per-home crew/inbox/watcher/wakes/lock/
 # cadence/config computation that walk pays for (the "batch facility sits
 # unused" item (c)). `--paths` is the paths-only sibling: same home-discovery
