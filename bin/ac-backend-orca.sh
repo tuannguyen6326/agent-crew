@@ -392,6 +392,8 @@ orca_pane_dialog() {
 
 backend_submit_verified_orca() { orca_submit_verified_pane "$(orca_pane "$1")" "${2:-}"; }
 
+backend_submit_verified_pane_orca() { orca_submit_verified_pane "$1" "${2:-}"; }
+
 orca_type_pane() {
   # Type WITHOUT submitting (`--text` with no `--enter` stays in the
   # composer - measured). CHUNKED at 512 chars: one large --text write

@@ -226,10 +226,12 @@
 #     verdict file is a FAILED turn (never ok with an empty payload, the same
 #     rule the scrollback floor is held to); the harness exiting before the
 #     marker is refused at once, naming its exit status, instead of burning the
-#     caller's timeout; a prompt the pane STRANDED unsubmitted is refused before
-#     any wait, since no turn will ever start; and a harness that never comes up
-#     is refused rather than waited out. A pane that could not be READ is never
-#     collapsed into either verdict - it is a note, and the turn proceeds.
+#     caller's timeout; a prompt the pane still STRANDS after a bounded
+#     re-submit (Enter only - a harness still starting holds or drops it) is
+#     refused before any wait, since no turn will ever start; and a harness
+#     that never comes up is refused rather than waited out. A pane that
+#     could not be READ is never collapsed into either verdict - it is a
+#     note, and the turn proceeds.
 #   - PARTIAL WRITES are the agent's ordering to keep: it is told to announce
 #     only once the file is written. This arm can only see the bytes that are
 #     there when the marker fires; the payload's own shape is checked where it
@@ -1491,6 +1493,23 @@ if [ "$ARM" = crewmate ]; then
   KICKLINE="Read and follow the instructions in $PF. Do NOT print your final message to the terminal: WRITE it to the file $VERDICT - that file's entire contents are your final message, and nothing else goes in it. Once it is written, announce your own completion by running this exact command: touch '$MARKER'"
   crew_drc=0
   backend_send_line_pane "$P" "$KICKLINE" || crew_drc=$?
+  # A strand here is usually a harness still STARTING: codex keeps an Enter
+  # pressed before its session is ready as a pending submit and sends it
+  # itself later (harness-facts.md, codex STARTUP SUBMISSION), and a booting
+  # TUI may drop the Enter outright - the line sits in the composer either
+  # way. So it is re-SUBMITTED for a bounded while before it is called a
+  # strand: Enter only, since typing it again appends a second copy, and a
+  # named dialog surfacing meanwhile is answered rather than pressed into.
+  crew_resub_end=$(( $(date +%s) + 60 ))
+  while [ "$crew_drc" = 1 ] && [ "$(date +%s)" -lt "$crew_resub_end" ] && [ "$(date +%s)" -lt "$deadline" ]; do
+    if [ -f "$EXITMARK" ]; then
+      fail "harness '$HARNESS' exited (status $(cat "$CRCF" 2>/dev/null || printf 'unrecorded')) with its prompt still unsubmitted - no turn ran"
+    fi
+    sleep 2
+    backend_dialog_answer_pane "$P" >/dev/null 2>&1 && continue
+    crew_drc=0
+    backend_submit_verified_pane "$P" "$KICKLINE" || crew_drc=$?
+  done
   case "$crew_drc" in
     0) ;;
     2) emit "{\"event\":\"note\",\"path\":\"prompt delivery UNVERIFIED - the pane could not be read, so the submit is neither confirmed nor refuted\"}" ;;

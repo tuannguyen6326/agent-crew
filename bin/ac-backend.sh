@@ -65,6 +65,15 @@
 #                                     and the status is how it tells the two
 #                                     failures apart. Fails closed on an empty
 #                                     pane id.
+#   backend_submit_verified_pane <pane-id> [text]
+#                                     submit_verified in that same raw-pane
+#                                     addressing: the resubmit primitive for a
+#                                     pane agent whose typed line stranded.
+#                                     herdr focuses the pane's own tab first,
+#                                     as the send's retry does; orca takes the
+#                                     text for its composer-pending check and
+#                                     answers 3 on a DIALOG-owned pane,
+#                                     pressing nothing.
 #   backend_send_key_pane <pane-id> <Enter|Escape|C-c>
 #                                     send_key in that same raw-pane addressing
 #                                     (the pane agent's crewmate arm answers a
@@ -1060,6 +1069,11 @@ herdr_submit_verified_pane() {
 
 backend_submit_verified_herdr() { herdr_submit_verified_pane "$(herdr_pane "$1")"; }
 
+backend_submit_verified_pane_herdr() {
+  herdr_focus_pane "$1" || true
+  herdr_submit_verified_pane "$1"
+}
+
 herdr_composer_text_pane() {
   # herdr_composer_text_pane <pane> <lines> - the text a claude composer holds:
   # the rows between the LAST TWO horizontal rules of the styled screen, with
@@ -1452,6 +1466,7 @@ backend_target()          { ac_backend_route target "$@"; }
 backend_window_new()      { ac_backend_route window_new "$@"; }
 backend_window_alive()    { ac_backend_route window_alive "$@"; }
 backend_submit_verified() { ac_backend_route submit_verified "$@"; }
+backend_submit_verified_pane() { ac_backend_route submit_verified_pane "$@"; }
 backend_send_line()       { ac_backend_route send_line "$@"; }
 backend_send_line_pane()  { ac_backend_route send_line_pane "$@"; }
 backend_send_key()        { ac_backend_route send_key "$@"; }

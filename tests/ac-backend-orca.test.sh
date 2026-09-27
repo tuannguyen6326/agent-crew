@@ -189,6 +189,13 @@ rm -f "$FAKE_ORCA/.unreachable"
 run_backend orca 'backend_send_line_pane term1 "raw addressed"' >/dev/null
 assert_contains "$(cat "$FAKE_ORCA/terminals/term1.buf")" "raw addressed" \
   "raw-pane send_line submits like the id-keyed one"
+printf 'raw kick' >"$FAKE_ORCA/terminals/term1.in"
+touch "$FAKE_ORCA/terminals/term1.popup-once"
+run_backend orca 'backend_submit_verified_pane term1 "raw kick"' >/dev/null \
+  || fail "the raw-pane submit verb must land past the popup"
+assert_eq "$(cat "$FAKE_ORCA/terminals/term1.in")" "" \
+  "raw-pane submit_verified proves the composer cleared, like the id-keyed one"
+rm -f "$FAKE_ORCA/terminals/term1.popup-once"
 assert_fails run_backend orca 'backend_send_line_pane "" x'
 
 # --- send_key: Enter / Escape / C-c mapping --------------------------------------

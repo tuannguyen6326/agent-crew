@@ -1456,7 +1456,10 @@ case "${1:-} ${2:-}" in
     fi ;;
   "pane send-keys")
     if [ "${4:-}" = enter ]; then
-      if [ -s "$d/in" ]; then cat "$d/in" >>"$d/buf"; printf '\n' >>"$d/buf"; : >"$d/in"
+      if [ -s "$d/in" ]; then
+        n="$(cat "$d/drop-enters" 2>/dev/null || echo 0)"
+        if [ "$n" -gt 0 ]; then echo "$((n - 1))" >"$d/drop-enters"; exit 0; fi
+        cat "$d/in" >>"$d/buf"; printf '\n' >>"$d/buf"; : >"$d/in"
       else printf 'BARE-ENTER\n' >>"$d/buf"; fi
     fi ;;
 esac
@@ -1471,6 +1474,9 @@ echo "codex $*" >>"$CLOG"
 d="$CSTATE"
 [ -f "$d/die-at-launch" ] && exit 9
 : >"$d/harness.up"
+if [ -f "$d/die-when-typed" ]; then
+  for _ in $(seq 1 400); do [ -s "$d/in" ] && exit 7; sleep 0.05; done
+fi
 for _ in $(seq 1 400); do grep -q 'touch ' "$d/buf" 2>/dev/null && break; sleep 0.05; done
 line="$(tr '\n' ' ' <"$d/buf")"
 vf="$(printf '%s' "$line" | sed -n 's/.*WRITE it to the file \([^ ]*\).*/\1/p' | head -1)"
@@ -1697,6 +1703,33 @@ assert_contains "$out" "input surface did not become ready" \
   "the refusal names input readiness instead of reporting a generic turn timeout"
 case "$(cat "$HDLOG")" in *"pane send-text"*) \
   fail "a codex verifier with no input-ready evidence must type no kickoff" ;; esac
+
+# A HARNESS STILL STARTING HOLDS THE KICKOFF. Live, codex 0.157.0 showed the
+# typed line in its composer under "Waiting for startup · esc cancel" and the
+# round was refused as a strand seconds after typing: codex keeps an Enter
+# pressed before its session is configured as a PENDING submit and sends it
+# itself once ready (openai/codex codex-rs/tui/src/startup_draft_input.rs), so
+# the render need not react inside the submit probe's window, and a booting TUI
+# may drop the Enter outright. The text is still the composer's either way.
+# The stub drops the first three submits; the fourth is the one that lands.
+creset; printf '3\n' >"$cstate/drop-enters"
+out="$(AC_SEND_SETTLE=0.05 crun --harness codex --kind codereview --label c-held 2>&1 || true)"
+assert_contains "$out" '"event":"done","status":"ok"' \
+  "a kickoff held while the harness starts is re-submitted until it lands"
+assert_eq "$(grep -c 'pane send-text' "$HDLOG")" "1" \
+  "the held kickoff is re-SUBMITTED, never re-typed (a second copy appends to the first)"
+
+# Never landing is still a strand, refused inside the caller's budget.
+creset; printf '999\n' >"$cstate/drop-enters"
+out="$(AC_SEND_SETTLE=0.05 PATH="$kstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$crepo" \
+  --prompt-file "$pf" --timeout 12 --harness codex --kind codereview --label c-strand 2>&1 || true)"
+assert_contains "$out" "NOT accepted" "a kickoff that never lands is refused as a strand"
+
+# A harness that dies while its kickoff is held is reported as the death it is,
+# not as a composer still holding the text.
+creset; printf '999\n' >"$cstate/drop-enters"; : >"$cstate/die-when-typed"
+out="$(AC_SEND_SETTLE=0.05 crun --harness codex --kind codereview --label c-held-dies 2>&1 || true)"
+assert_contains "$out" "exited (status 7)" "a harness dying with its kickoff held is named as exited"
 
 # FAIL CLOSED (a) - the agent announced its turn but wrote no verdict. A turn
 # that ended with nothing to read is a FAILED turn, never ok with an empty
