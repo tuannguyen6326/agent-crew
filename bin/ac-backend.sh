@@ -23,9 +23,11 @@
 #                                     focused retry, then non-zero + stderr -
 #                                     exit 1 the text is stranded in the
 #                                     composer, exit 2 the pane could not be
-#                                     READ so nothing was observed (for a
-#                                     claude pane on herdr: before anything
-#                                     was typed), exit 3 (herdr, claude
+#                                     READ so nothing was observed (when a
+#                                     claude pane's composer proof is what
+#                                     could not read it, nothing was typed;
+#                                     on the AC_SEND_UNPROVEN path the text
+#                                     was typed first), exit 3 (herdr, claude
 #                                     panes) the composer was not on screen,
 #                                     held a draft, or did not prove the
 #                                     whole message, so NOTHING was
