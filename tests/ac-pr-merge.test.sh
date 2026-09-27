@@ -22,6 +22,7 @@ mkdir -p "$stub"
 export GHLOG="$TMP/gh.log"
 export GHPRFILES="$TMP/gh.prfiles"   # `gh pr diff --name-only` answer, if set
 export GHVIEW=""                     # `gh pr view --json headRefOid` behavior
+export GHVIEWSEQ="$TMP/gh.viewseq"   # when non-empty: successive headRefOid answers, one line each
 export GHMERGESTATE="MERGED"         # `gh pr view --json state` read-back ("fail" = API error)
 export GHMERGEFAIL=""                # 1 -> `gh pr merge` itself exits 1 ("already merged")
 
@@ -45,6 +46,9 @@ fi
 if [ "$1 $2" = "pr view" ]; then
   case "$*" in
     *headRefOid*)
+      if [ -s "$GHVIEWSEQ" ]; then
+        head -n 1 "$GHVIEWSEQ"; tail -n +2 "$GHVIEWSEQ" >"$GHVIEWSEQ.next"; mv "$GHVIEWSEQ.next" "$GHVIEWSEQ"; exit 0
+      fi
       case "${GHVIEW:-}" in
         fail)  exit 1 ;;
         empty) exit 0 ;;
@@ -131,6 +135,15 @@ printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t3c.meta"
 out="$(GHVIEW=def222 merge t3c "$url" 2>&1)" && fail "a PR merged at another head than the recorded one must not record the proof"
 assert_contains "$out" "moved since it was recorded" "...it names the head that moved"
 grep -q "pr_merged=1" "$AC_HOME/state/t3c.meta" && fail "no proof for a head nobody approved" || true
+# ...and when the head could not be read BEFORE the call, the recovery's own
+# read is the only check left: a merged head other than the approved one
+# still records no proof.
+printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t3d.meta"
+printf '\ndef222\n' >"$GHVIEWSEQ"
+out="$(merge t3d "$url" 2>&1)" && fail "a recovery that finds another head merged must not record the proof"
+assert_contains "$out" "not the approved head" "...it names the unapproved merged head"
+grep -q "pr_merged=1" "$AC_HOME/state/t3d.meta" && fail "no proof for a merged head nobody approved" || true
+: >"$GHVIEWSEQ"
 GHMERGEFAIL=""
 
 # The captain approves THE PR as recorded: a recorded pr_head pins the merge

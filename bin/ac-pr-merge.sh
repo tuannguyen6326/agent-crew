@@ -8,8 +8,8 @@
 # The merge is pinned (--match-head-commit) to the head ac-pr-check.sh
 # recorded for this PR - the head the captain approved - refused when none is
 # recorded or the PR's head has moved since; pr_merged_head is the head that
-# merged - the pinned head, or the forge's answer when an earlier attempt or a
-# hand merge landed it.
+# merged - the pinned head, or, when an earlier attempt or a hand merge landed
+# it, the forge's answer, which must be that same approved head.
 #
 # Landing interlock (contract: ac-lib.sh's landing-ledger block): BEFORE the
 # merge it prints one LANDING-OVERLAP warning per PR file another family
@@ -143,7 +143,8 @@ fi
 # The head teardown's merged proof may cover: this run's pinned call merged
 # exactly head_sha, but a PR found MERGED after a failed call was merged by
 # something else - an earlier run, or by hand - so only the forge's own answer
-# says what merged, and no answer means no proof.
+# says what merged: no answer, or a head other than the approved one, is no
+# proof.
 if [ "$merge_rc" = 0 ]; then
   merged_head="$head_sha"
 else
@@ -151,6 +152,10 @@ else
   if [ -z "$merged_head" ]; then
     ac_status_append "$id" "merge-unproven: $url is MERGED but its merged head is unreadable"
     ac_die "the PR is MERGED, but no pinned call of this run merged it and the forge answered no merged head - pr_merged stays unset so teardown keeps refusing; re-run once gh pr view $url --json headRefOid answers"
+  fi
+  if [ "$merged_head" != "$head_sha" ]; then
+    ac_status_append "$id" "merge-unproven: $url merged at ${merged_head:0:12}, not the approved ${head_sha:0:12}"
+    ac_die "the PR is MERGED at ${merged_head:0:12}, not the approved head ${head_sha:0:12} - pr_merged stays unset; re-record the merged head (bin/ac-pr-check.sh $id $url), get it approved, then re-run"
   fi
   printf 'note: the merge call failed (exit %s) but the PR is MERGED - an earlier attempt landed; recording the proof.\n' "$merge_rc"
 fi
