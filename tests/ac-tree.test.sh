@@ -85,11 +85,20 @@ git -C "$wt2" update-index --no-assume-unchanged file.txt
 git -C "$wt2" update-index --skip-worktree file.txt
 rm "$wt2/file.txt"
 case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) ;; *) fail "a skip-worktree deletion outside a sparse checkout is work" ;; esac
-git -C "$wt2" config core.sparseCheckout true
-case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) fail "an absent file under a sparse checkout must not read as dirty" ;; esac
-git -C "$wt2" config --unset core.sparseCheckout
 git -C "$wt2" update-index --no-skip-worktree file.txt
 git -C "$wt2" checkout -- file.txt
+# Under a sparse checkout, absence is by design only for a path the sparse
+# rules EXCLUDE; a path they include that is absent is still a hidden deletion.
+git -C "$wt2" sparse-checkout set --no-cone '/nothing-here/' >/dev/null 2>&1
+[ -e "$wt2/file.txt" ] && fail "fixture: the sparse rules must leave file.txt out"
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) fail "a file the sparse rules exclude is absent by design" ;; esac
+git -C "$wt2" sparse-checkout set --no-cone '/*' >/dev/null 2>&1
+git -C "$wt2" update-index --skip-worktree file.txt
+rm "$wt2/file.txt"
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) ;; *) fail "a skip-worktree deletion of a file the sparse rules include is work" ;; esac
+git -C "$wt2" update-index --no-skip-worktree file.txt
+git -C "$wt2" checkout -- file.txt
+git -C "$wt2" sparse-checkout disable >/dev/null 2>&1
 # git C-quotes a non-ASCII path in `ls-files -v`; the scan must read the real
 # name - a clean flagged file is clean, an edited one is work.
 printf 'quoted\n' >"$wt2/エ.txt"

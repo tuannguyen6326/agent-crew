@@ -2649,7 +2649,7 @@ ac_worktree_status() {
   # status is git status's own; the hidden-bit scan only adds `H  <path>`.
   # Paths are read NUL-delimited and matched literally: `ls-files -v` C-quotes
   # a non-ASCII name, and a quoted name is no path on disk.
-  local rc=0 rec tag path mode blob f filemode sparse
+  local rc=0 rec tag path mode blob f filemode sparse out
   git -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
   filemode="$(git -C "$1" config --get core.fileMode 2>/dev/null || printf 'true')"
   sparse="$(git -C "$1" config --get core.sparseCheckout 2>/dev/null || printf 'false')"
@@ -2660,9 +2660,15 @@ ac_worktree_status() {
     read -r mode blob _ <<<"$(git -C "$1" --literal-pathspecs ls-files -s -z -- "$path" 2>/dev/null | tr '\0' '\n' | head -n 1)"
     [ "$mode" != 160000 ] || continue
     if [ ! -e "$f" ] && [ ! -L "$f" ]; then
-      # Absent under skip-worktree is a sparse checkout doing its job when one
-      # is on; any other absence is a deletion git status does not show.
-      { [ "$tag" = S ] && [ "$sparse" = true ]; } || printf 'H  %s\n' "$path"
+      # Absent under skip-worktree is a sparse checkout doing its job only for
+      # a path its rules exclude; any other absence - or rules that cannot be
+      # read - is a deletion git status does not show.
+      if [ "$tag" = S ] && [ "$sparse" = true ] \
+        && out="$(printf '%s\0' "$path" | git -C "$1" sparse-checkout check-rules -z 2>/dev/null | tr -d '\0')" \
+        && [ -z "$out" ]; then
+        continue
+      fi
+      printf 'H  %s\n' "$path"
       continue
     fi
     case "$mode" in
