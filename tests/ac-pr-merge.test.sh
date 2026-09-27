@@ -115,11 +115,22 @@ GHMERGESTATE=MERGED
 # pr_merged=1 for that task.
 printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t3.meta"
 GHMERGEFAIL=1
-out="$(merge t3 "$url" 2>&1)" || fail "a failed merge call over a MERGED PR must record the proof, not die"
+out="$(GHVIEW=abc111 merge t3 "$url" 2>&1)" || fail "a failed merge call over a MERGED PR must record the proof, not die"
 assert_contains "$out" "merged $url" "the proof is reported"
 assert_contains "$out" "earlier attempt" "the recovery names what happened"
 assert_contains "$(cat "$AC_HOME/state/t3.meta")" "pr_merged=1" "the proof reaches the meta"
 assert_contains "$(cat "$AC_HOME/state/t3.meta")" "pr=$url" "pr= rides the proof"
+assert_contains "$(cat "$AC_HOME/state/t3.meta")" "pr_merged_head=abc111" "the recovered proof carries the head the forge says merged"
+# No pinned call of THIS run merged it, so the merged head is only what the
+# forge reports: an unreadable one records no proof, and a PR merged by hand at
+# a head other than the approved one is refused until that head is recorded.
+printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t3b.meta"
+out="$(GHVIEW="" merge t3b "$url" 2>&1)" && fail "a recovery whose merged head cannot be read must not record the proof"
+grep -q "pr_merged=1" "$AC_HOME/state/t3b.meta" && fail "no proof without the merged head" || true
+printf 'backend=tmux\npr=%s\npr_head=abc111\n' "$url" >"$AC_HOME/state/t3c.meta"
+out="$(GHVIEW=def222 merge t3c "$url" 2>&1)" && fail "a PR merged at another head than the recorded one must not record the proof"
+assert_contains "$out" "moved since it was recorded" "...it names the head that moved"
+grep -q "pr_merged=1" "$AC_HOME/state/t3c.meta" && fail "no proof for a head nobody approved" || true
 GHMERGEFAIL=""
 
 # The captain approves THE PR as recorded: a recorded pr_head pins the merge

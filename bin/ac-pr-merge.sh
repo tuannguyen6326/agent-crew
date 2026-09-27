@@ -7,8 +7,9 @@
 # is the single source of truth for where the merge lands.
 # The merge is pinned (--match-head-commit) to the head ac-pr-check.sh
 # recorded for this PR - the head the captain approved - refused when none is
-# recorded or the PR's head has moved since; that pinned head is recorded as
-# pr_merged_head.
+# recorded or the PR's head has moved since; pr_merged_head is the head that
+# merged - the pinned head, or the forge's answer when an earlier attempt or a
+# hand merge landed it.
 #
 # Landing interlock (contract: ac-lib.sh's landing-ledger block): BEFORE the
 # merge it prints one LANDING-OVERLAP warning per PR file another family
@@ -139,13 +140,23 @@ if [ "$merge_state" != MERGED ]; then
   ac_status_append "$id" "merge-unproven: $url state=${merge_state:-unreadable} merge_rc=$merge_rc"
   ac_die "merge NOT proven for $url - gh pr merge exited $merge_rc and the forge answered state=${merge_state:-unreadable} across 3 reads (auto-merge queued? protected branch? unreadable API?). pr= and pr_merged stay unset so teardown keeps refusing; re-check with: gh pr view $url --json state, then re-run this command"
 fi
-[ "$merge_rc" = 0 ] \
-  || printf 'note: the merge call failed (exit %s) but the PR is MERGED - an earlier attempt landed; recording the proof.\n' "$merge_rc"
+# The head teardown's merged proof may cover: this run's pinned call merged
+# exactly head_sha, but a PR found MERGED after a failed call was merged by
+# something else - an earlier run, or by hand - so only the forge's own answer
+# says what merged, and no answer means no proof.
+if [ "$merge_rc" = 0 ]; then
+  merged_head="$head_sha"
+else
+  merged_head="$(gh pr view "$url" --json headRefOid -q .headRefOid 2>/dev/null || true)"
+  if [ -z "$merged_head" ]; then
+    ac_status_append "$id" "merge-unproven: $url is MERGED but its merged head is unreadable"
+    ac_die "the PR is MERGED, but no pinned call of this run merged it and the forge answered no merged head - pr_merged stays unset so teardown keeps refusing; re-run once gh pr view $url --json headRefOid answers"
+  fi
+  printf 'note: the merge call failed (exit %s) but the PR is MERGED - an earlier attempt landed; recording the proof.\n' "$merge_rc"
+fi
 [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
 ac_meta_set "$meta" pr "$url"
-# The merge was pinned to head_sha, so a MERGED PR merged exactly that head:
-# teardown's merged proof covers it and nothing committed after it.
-ac_meta_set "$meta" pr_merged_head "$head_sha"
+ac_meta_set "$meta" pr_merged_head "$merged_head"
 ac_meta_set "$meta" pr_merged 1
 ac_status_append "$id" "merged: $url"
 printf 'merged %s\n' "$url"
