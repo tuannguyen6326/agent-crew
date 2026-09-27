@@ -2641,6 +2641,19 @@ ac_window_family() {
 
 # --- git helpers ----------------------------------------------------------------
 
+ac_sparse_excluded() {
+  # ac_sparse_excluded <wt> <path> - 0 when the tree's sparse rules exclude
+  # <path>, so its absence is by design. `sparse-checkout check-rules` needs
+  # git 2.41: an older git answers 129 (no such subcommand), and then the
+  # sparse flag alone decides, as it did before the rules could be asked. Any
+  # other failure is no exclusion. The answer is COUNTED, never captured: a
+  # command substitution would shave a newline-only name down to nothing.
+  local n rc=0
+  n="$(printf '%s\0' "$2" | git -C "$1" sparse-checkout check-rules -z 2>/dev/null | wc -c; exit "${PIPESTATUS[1]}")" || rc=$?
+  [ "$rc" = 129 ] && return 0
+  [ "$rc" = 0 ] && [ "$(( n ))" -eq 0 ]
+}
+
 ac_worktree_status() {
   # ac_worktree_status <wt> - everything a destructive gate must count as work
   # in a tree: the porcelain with any submodule ignore setting overridden, plus
@@ -2649,7 +2662,7 @@ ac_worktree_status() {
   # status is git status's own; the hidden-bit scan only adds `H  <path>`.
   # Paths are read NUL-delimited and matched literally: `ls-files -v` C-quotes
   # a non-ASCII name, and a quoted name is no path on disk.
-  local rc=0 rec tag path mode blob f filemode sparse out
+  local rc=0 rec tag path mode blob f filemode sparse
   git -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
   filemode="$(git -C "$1" config --get core.fileMode 2>/dev/null || printf 'true')"
   sparse="$(git -C "$1" config --get core.sparseCheckout 2>/dev/null || printf 'false')"
@@ -2663,9 +2676,7 @@ ac_worktree_status() {
       # Absent under skip-worktree is a sparse checkout doing its job only for
       # a path its rules exclude; any other absence - or rules that cannot be
       # read - is a deletion git status does not show.
-      if [ "$tag" = S ] && [ "$sparse" = true ] \
-        && out="$(printf '%s\0' "$path" | git -C "$1" sparse-checkout check-rules -z 2>/dev/null | tr -d '\0')" \
-        && [ -z "$out" ]; then
+      if [ "$tag" = S ] && [ "$sparse" = true ] && ac_sparse_excluded "$1" "$path"; then
         continue
       fi
       printf 'H  %s\n' "$path"

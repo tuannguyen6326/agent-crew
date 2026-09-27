@@ -98,6 +98,29 @@ rm "$wt2/file.txt"
 case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) ;; *) fail "a skip-worktree deletion of a file the sparse rules include is work" ;; esac
 git -C "$wt2" update-index --no-skip-worktree file.txt
 git -C "$wt2" checkout -- file.txt
+# A path the rules include is work even when its name is only newlines, which a
+# command substitution would otherwise shave down to nothing.
+nl=$'\n'
+printf 'nl\n' >"$wt2/$nl"
+git -C "$wt2" add -- "$nl"
+git -C "$wt2" -c user.email=t@t -c user.name=t commit -qm "a newline-only name"
+git -C "$wt2" update-index --skip-worktree -- "$nl"
+rm "$wt2/$nl"
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) ;; *) fail "an included skip-worktree deletion is work whatever its name" ;; esac
+git -C "$wt2" update-index --no-skip-worktree -- "$nl"
+git -C "$wt2" checkout -- "$nl"
+# A git older than 2.41 has no `sparse-checkout check-rules` (it exits 129):
+# then the sparse flag alone decides, as it did before, rather than every
+# sparse omission reading as work on a git the fleet still supports.
+mkdir -p "$TMP/oldgit"
+cat >"$TMP/oldgit/git" <<OLDGIT
+#!/usr/bin/env bash
+case " \$* " in *" check-rules "*) exit 129 ;; esac
+exec $(command -v git) "\$@"
+OLDGIT
+chmod +x "$TMP/oldgit/git"
+git -C "$wt2" sparse-checkout set --no-cone '/nothing-here/' >/dev/null 2>&1
+case "$(PATH="$TMP/oldgit:$PATH" "$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) fail "a git without check-rules must not turn sparse omissions into work" ;; esac
 git -C "$wt2" sparse-checkout disable >/dev/null 2>&1
 # git C-quotes a non-ASCII path in `ls-files -v`; the scan must read the real
 # name - a clean flagged file is clean, an edited one is work.
