@@ -1605,6 +1605,35 @@ assert_eq "$(lib "ac_room_file oldfan-slice")" "$rdata/archive/2026/oldfan/room.
 assert_eq "$(lib "ac_room_file plain-unknown-family")" "$rdata/plain-unknown-family/room.md" \
   "a hyphenated id with no matching tasks/<slug>/brief.md stays on its own live path"
 
+# --- ac_epic_base_for: an unreadable ledger is not a missing row ------------
+# rc 1 is "no fence", and every caller then leases, lands and diffs against
+# the default branch - a ledger nobody could read proves no such thing.
+printf -- '- [ ] fence-s1 - story; epic:fence (repo: fx)\n' >"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/fence"
+printf 'fx epic/fence\n' >"$AC_HOME/data/fence/branches"
+rc=0; lib "ac_epic_base_for nosuch fx" >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" "a readable ledger with no row for the id is rc 1, no fence"
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$AC_HOME/records/backlog.md"
+  rc=0; lib "ac_epic_base_for fence-s1 fx" >/dev/null 2>&1 || rc=$?
+  chmod 644 "$AC_HOME/records/backlog.md"
+  assert_eq "$rc" "2" "an unreadable ledger is rc 2, never the rc 1 of no fence"
+fi
+# Ids match byte for byte: awk's == compares 01 and 1 as one number, which
+# would hand task 1 and its fan-out the fence of row 01.
+printf -- '- [ ] 01 - numeric-looking id; epic:fa (repo: fx)\n- [ ] 1 - its numeric twin; epic:fb (repo: fx)\n' \
+  >"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/fa" "$AC_HOME/data/fb"
+printf 'fx epic/fa\n' >"$AC_HOME/data/fa/branches"
+printf 'fx epic/fb\n' >"$AC_HOME/data/fb/branches"
+assert_eq "$(lib "ac_epic_base_for 1 fx")" "epic/fb" "id 1 resolves its own row, never row 01"
+assert_eq "$(lib "ac_epic_base_for 1-x fx")" "epic/fb" "a fan-out of 1 resolves row 1, never row 01"
+printf -- '- [ ] 01 - numeric-looking id; epic:fa (repo: fx)\n' >"$AC_HOME/records/backlog.md"
+rc=0; lib "ac_epic_base_for 1 fx" >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" "row 01 is no row for id 1"
+rm -rf "$AC_HOME/records/backlog.md" "$AC_HOME/data/fence" "$AC_HOME/data/fa" "$AC_HOME/data/fb"
+
 # --- ac_domain_tally: fleet-ledger token census (crewdomain-token) -----------
 # done means REAL done, not Done-section membership: a [failed]/[abandoned]
 # row must not inflate the field (same-done-miscount-in-three-more-surfaces,

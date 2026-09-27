@@ -12,6 +12,9 @@
 # homes), toolchain doctor, orphaned-shell-snapshot sweep, queued-wake drain
 # + watcher health, clone staleness hints, worktree-pool health hints, fleet
 # view, backlog head, project registry, and the supervision instruction block.
+# The backlog head carries the scheduler report, or its own
+# `WARN   scheduler unavailable` line when ac-ready.sh fails - the same text
+# the wake drain prints, but a read-only digest skips the drain.
 #
 # The orphaned-shell-snapshot sweep (ac_orphan_snapshot_scan) is a read-only
 # host check: it surfaces ppid==1 Claude shell-snapshot processes burning CPU
@@ -297,7 +300,8 @@ printf -- '-- backlog (head) --\n'
 if [ -s "$records_dir/backlog.md" ]; then
   head -n 20 "$records_dir/backlog.md"
   # Scheduler: every READY item to start now, STUCK dependents to escalate.
-  sched="$("$(dirname "$0")/ac-ready.sh" 2>/dev/null || true)"
+  sched="$("$(dirname "$0")/ac-ready.sh" 2>/dev/null \
+    || printf 'WARN   scheduler unavailable: ac-ready.sh exited %s - run it to see why\n' "$?")"
   [ -n "$sched" ] && { printf -- '-- scheduler --\n'; printf '%s\n' "$sched"; }
 else
   printf '(no backlog yet - records/backlog.md)\n'

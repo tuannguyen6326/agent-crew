@@ -48,6 +48,7 @@ for s in ac-ready ac-remote; do
   cat >"$fakebin/$s.sh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$TMP/$s.calls"
+[ ! -f "$TMP/$s.fail" ] || exit "\$(cat "$TMP/$s.fail")"
 exit 0
 EOF
   chmod +x "$fakebin/$s.sh"
@@ -544,6 +545,14 @@ reset_state
 drain '' >/dev/null
 assert_file "$TMP/ac-ready.calls" "the fleet drain runs the epic scheduler"
 assert_contains "$(cat "$TMP/ac-remote.calls")" "push-pending" "the fleet drain pushes the remote batch"
+
+# A scheduler that could not run prints nothing, and nothing is exactly what
+# "no item to start" looks like - the drain has to say which one it was.
+reset_state
+printf '3\n' >"$TMP/ac-ready.fail"
+out="$(drain '')"
+rm -f "$TMP/ac-ready.fail"
+assert_contains "$out" "WARN   scheduler unavailable: ac-ready.sh exited 3" "a failed scheduler ride-along is named, never silent"
 
 # Brain ride-along: syncs only a home that already runs the engine (never
 # mints a db), fleet drain only, and narrates one summary line.

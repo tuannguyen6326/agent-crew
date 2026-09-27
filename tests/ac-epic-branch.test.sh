@@ -208,6 +208,19 @@ printf 'project_dir=%s\nworktree=%s\nproject=proj\n' "$AC_HOME/projects/proj" "$
 rd="$("$BIN/ac-review-diff.sh" eppy3-s1 --stat)"
 assert_contains "$rd" "round2.txt" "review-diff shows the story's own new work"
 case "$rd" in *story.txt*) fail "review-diff must not render the LANDED sibling work as this story's diff" ;; esac
+# A ledger nobody can read cannot prove the story has no epic branch, so the
+# landing and the diff refuse rather than fall back to the default branch.
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  main_before="$(git -C "$AC_HOME/projects/proj" rev-parse main)"
+  chmod 000 "$AC_HOME/records/backlog.md"
+  out="$("$BIN/ac-merge-local.sh" eppy3-s1 2>&1 || true)"
+  rd="$("$BIN/ac-review-diff.sh" eppy3-s1 --stat 2>&1 || true)"
+  chmod 644 "$AC_HOME/records/backlog.md"
+  assert_eq "$(git -C "$AC_HOME/projects/proj" rev-parse main)" "$main_before" "an unreadable ledger never lands a story on the default branch"
+  assert_contains "$out" "cannot read the ledger" "merge-local names the unreadable ledger"
+  assert_contains "$rd" "cannot read the ledger" "review-diff names the unreadable ledger"
+fi
 
 # --- checked-out epic target: the live practice lands in place ----------------
 # The lab clones sit ON the epic branch; `git fetch . src:dst` refuses to move
@@ -249,6 +262,17 @@ assert_contains "$out" "partial epic" "an abandoned story without a captain rece
 assert_contains "$out" "eppy5-s2" "and names it"
 printf -- '- [2026-08-19T12:00:00Z] crewchief> DECIDED: epic-ship partial - eppy5-s2 keep (captain: giu lai, cong viec da land van dung)\n' >>"$AC_HOME/data/eppy5/room.md"
 
+# A ledger nobody can read shows no story terminal, so the exit stops at the
+# story check instead of moving on to the review gate as if none were open.
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$AC_HOME/records/backlog.md"
+  rc=0; out="$("$ES" eppy5 proj --dry-run 2>&1)" || rc=$?
+  chmod 644 "$AC_HOME/records/backlog.md"
+  [ "$rc" != 0 ] || fail "an unreadable ledger must refuse the exit"
+  case "$out" in *"no epic review round"* | *DRY-RUN*) fail "an unreadable ledger must stop the exit at the story check, got: $out" ;; esac
+fi
+
 # review round: absent -> refuse naming the exact command; stale ref -> refuse
 out="$("$ES" eppy5 proj --dry-run 2>&1 || true)"
 assert_contains "$out" "no epic review round on record" "a missing review round refuses"
@@ -288,5 +312,22 @@ mkdir -p "$AC_HOME/projects/proj/.crew/qa/passed"
 : >"$AC_HOME/projects/proj/.crew/qa/passed/$tip5"
 out="$("$ES" eppy5 proj --dry-run)"
 assert_contains "$out" "proven merged; opening PR-2" "the attestation at the tip satisfies the qa gate"
+
+# A hand edit can leave the ledger without its final newline; the last row is
+# still a row, so an open story there holds the exit like any other.
+cp "$AC_HOME/records/backlog.md" "$TMP/backlog.keep"
+printf -- '- [ ] eppy5-s3 - open story, no trailing newline; epic:eppy5 (repo: proj)' >>"$AC_HOME/records/backlog.md"
+out="$("$ES" eppy5 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "non-terminal stories: eppy5-s3" "an open story on an unterminated last line refuses the exit"
+mv "$TMP/backlog.keep" "$AC_HOME/records/backlog.md"
+
+# A byte that is not UTF-8 in ledger prose is no row and must not stop the
+# exit. The locale is forced: only a UTF-8 ctype makes awk die on a regex
+# test against such a line, so under C this would pass on any filter.
+cp "$AC_HOME/records/backlog.md" "$TMP/backlog.keep"
+printf '> caf\351 reviewed\n' >>"$AC_HOME/records/backlog.md"
+out="$(LC_ALL=en_US.UTF-8 "$ES" eppy5 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "proven merged; opening PR-2" "a non-UTF-8 byte in ledger prose does not stop the exit"
+mv "$TMP/backlog.keep" "$AC_HOME/records/backlog.md"
 
 pass

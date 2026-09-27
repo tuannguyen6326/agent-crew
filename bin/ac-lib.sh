@@ -2810,22 +2810,25 @@ ac_epic_base_for() {
   # AND the row id itself (an epic's/feature's own scouts integrate on its
   # branch too) against the branch record.
   # Prints `<branch> [key=value ...]`; rc 1 = no fence (no row, no record, or
-  # a retired record - retirement is the DELIBERATE end of the fence).
-  local id="$1" repo="$2" ledger row_id="" row_tok="" row_epic="" row_feature="" cand entry base
+  # a retired record - retirement is the DELIBERATE end of the fence); rc 2 =
+  # the ledger exists but could not be read, which proves nothing either way.
+  local id="$1" repo="$2" ledger row rc=0 row_id row_epic row_feature cand entry
   ledger="$(ac_records_dir)/backlog.md"
   [ -f "$ledger" ] || return 1
-  base="$id"
-  while :; do
-    if row_tok="$(awk -v want="$base" "$AC_DONELINE_AWK"'
-      /^- \[/ { ac_doneline($0, f); if (f["id"] == want) { print f["epic"] "\t" f["feature"]; found = 1; exit } }
-      END { if (!found) exit 1 }' "$ledger")"; then
-      row_id="$base"
-      break
-    fi
-    case "$base" in *-*) base="${base%-*}" ;; *) return 1 ;; esac
-  done
-  row_epic="${row_tok%%$'\t'*}"
-  row_feature="${row_tok#*$'\t'}"
+  row="$(awk -v want="$id" "$AC_DONELINE_AWK"'
+    /^- \[/ { ac_doneline($0, f); if (!(f["id"] in row)) row[f["id"]] = f["epic"] "\t" f["feature"] }
+    END {
+      b = want
+      while (1) {
+        if (b in row) { print b "\t" row[b]; exit 0 }
+        if (b !~ /-/) exit 1
+        sub(/-[^-]*$/, "", b)
+      }
+    }' "$ledger")" || rc=$?
+  case "$rc" in 0) ;; 1) return 1 ;; *) return 2 ;; esac
+  row_id="${row%%$'\t'*}"; row="${row#*$'\t'}"
+  row_epic="${row%%$'\t'*}"
+  row_feature="${row#*$'\t'}"
   for cand in "$row_epic" "$row_feature" "$row_id"; do
     [ -n "$cand" ] || continue
     if entry="$(ac_epic_branch_entry "$cand" "$repo")"; then

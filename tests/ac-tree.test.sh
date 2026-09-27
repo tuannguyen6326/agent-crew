@@ -682,6 +682,32 @@ assert_contains "$outF" "record for shadow-s1 on fence" "the refusal names where
 case "$outF" in *"reset failed"*) fail "the gate must fire BEFORE the acquire loop tries a slot" ;; esac
 assert_eq "$(ls "$repoF/.crew/slots" | wc -l | tr -d ' ')" "1" "an unresolvable base leases and creates no slot"
 assert_eq "$(sed -n 's/^leased=//p' "$repoF/.crew/slots/1-fence.meta")" "0" "the existing free slot stays available"
+# A ledger nobody can read cannot prove there is no fence, so the lease
+# refuses instead of cutting from the default branch, and remove and prune
+# refuse instead of judging an epic-landed slot by the default branch alone.
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$AC_HOME/records/backlog.md"
+  rc=0; outU="$("$BIN/ac-tree.sh" get --repo "$repoF" --id shadow-s1 --holder t 2>&1)" || rc=$?
+  chmod 644 "$AC_HOME/records/backlog.md"
+  [ "$rc" != 0 ] || fail "a lease must refuse when the ledger cannot be read, got: $outU"
+  assert_contains "$outU" "cannot read the ledger" "the refusal names the unreadable ledger"
+  assert_eq "$(sed -n 's/^leased=//p' "$repoF/.crew/slots/1-fence.meta")" "0" "an unreadable ledger leases no slot"
+
+  repoU="$(make_repo unread)"
+  sleep 0.1 &
+  deadU=$!
+  wait "$deadU" 2>/dev/null || true
+  wtU="$("$BIN/ac-tree.sh" get --repo "$repoU" --id shadow-s2 --owner "$deadU" 2>/dev/null)"
+  git -C "$wtU" commit -q --allow-empty -m "landed on the feature branch only"
+  chmod 000 "$AC_HOME/records/backlog.md"
+  outU="$("$BIN/ac-tree.sh" remove "$wtU" 2>&1 || true)"
+  outP="$("$BIN/ac-tree.sh" prune --repo "$repoU" --yes 2>&1 || true)"
+  chmod 644 "$AC_HOME/records/backlog.md"
+  assert_contains "$outU" "remove: cannot read the ledger" "remove names the unreadable ledger, not unmerged work"
+  assert_contains "$outP" "prune: cannot read the ledger" "prune names the unreadable ledger, not unmerged work"
+  [ -d "$wtU" ] || fail "an unreadable ledger must leave the slot in place"
+fi
 
 # lease <slot>: a DURABLE, STATE-ONLY lease on an existing pool worktree. The
 # only other way to mint a lease is get, which resets the tree, so a tree that

@@ -226,7 +226,9 @@ fi
 # below is unchanged.
 epic_eb_entry=""
 epic_eb_branch=""
-if epic_eb_entry="$(ac_epic_base_for "$id" "$project" 2>/dev/null)"; then
+ebrc=0; epic_eb_entry="$(ac_epic_base_for "$id" "$project" 2>/dev/null)" || ebrc=$?
+[ "$ebrc" != 2 ] || ac_die "cannot read the ledger to resolve the epic-branch fence for $id"
+if [ "$ebrc" = 0 ]; then
   epic_eb_branch="${epic_eb_entry%% *}"
 fi
 pr_base_phrase="the target branch"

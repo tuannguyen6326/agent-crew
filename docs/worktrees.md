@@ -44,7 +44,7 @@ A spawn that resumes an earlier session passes `--prefer` with the old slot, bec
 ### What `get` does
 
 - Resets the slot to the FRESHEST default-branch ref: whichever of the local branch and `origin/<branch>` is ahead, origin winning on true divergence.
-- Cuts the slot from a recorded integration branch instead when the task id belongs to an epic or feature that records one for this repo, and refuses outright when that branch is missing - never a silent fall back to the default branch.
+- Cuts the slot from a recorded integration branch instead when the task id belongs to an epic or feature that records one for this repo, and refuses outright when that branch is missing or the ledger cannot be read - never a silent fall back to the default branch.
 - On the first lease, installs two shared guard hooks into the default git-common-dir `hooks/` directory, so one install covers the primary checkout and every linked worktree:
   - a `pre-commit` that refuses a commit in the PRIMARY checkout when `AC_CREW_ID` or `AC_SCOPE` is set (a crewmate or roomchief; the captain carries neither);
   - a `commit-msg` that refuses an agent `Co-authored-by:` trailer, read through `git interpret-trailers --parse` and matched against the trailer name only, so a human co-author passes.

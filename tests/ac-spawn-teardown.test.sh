@@ -534,6 +534,36 @@ git -C "$wt9e" add -A
 git -C "$wt9e" -c user.email=t@t -c user.name=t commit -qm "work past the landed branch"
 out="$("$BIN/ac-teardown.sh" t9e 2>&1)" && fail "teardown must refuse a commit past the landed crew branch"
 assert_contains "$out" "$(git -C "$wt9e" rev-parse --short=12 HEAD)" "the refusal names the unlanded head"
+# An unreadable ledger withholds only the epic-branch proof: the refusal
+# stands, and a WARN says which proof went missing. Skipped under root, which
+# reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  : >"$AC_HOME/records/backlog.md"
+  chmod 000 "$AC_HOME/records/backlog.md"
+  out="$("$BIN/ac-teardown.sh" t9e 2>&1)" \
+    && { rm -f "$AC_HOME/records/backlog.md"; fail "an unreadable ledger must never let teardown discard work past the landed branch"; }
+  rm -f "$AC_HOME/records/backlog.md"
+  assert_contains "$out" "cannot read the ledger" "the refusal carries the unreadable-ledger WARN"
+
+  # ...and at the branch drop, which never fails the teardown, it costs only
+  # the epic-branch -D: the WARN names it and the landed branch still goes.
+  "$BIN/ac-brief.sh" t9w proj9 --mode local-only >/dev/null
+  "$BIN/ac-spawn.sh" t9w "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+  wt9w="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9w.meta")"
+  git -C "$wt9w" checkout -q -b crew/t9w
+  printf 't9w landed\n' >"$wt9w/t9w.txt"
+  git -C "$wt9w" add -A
+  git -C "$wt9w" -c user.email=t@t -c user.name=t commit -qm "landed work"
+  git -C "$repo9" merge -q --ff-only crew/t9w
+  : >"$AC_HOME/records/backlog.md"
+  chmod 000 "$AC_HOME/records/backlog.md"
+  out="$("$BIN/ac-teardown.sh" t9w 2>&1)" \
+    || { rm -f "$AC_HOME/records/backlog.md"; fail "an unreadable ledger must never fail the teardown of a landed task: $out"; }
+  rm -f "$AC_HOME/records/backlog.md"
+  assert_contains "$out" "cannot read the ledger" "the branch drop names the unreadable ledger"
+  git -C "$repo9" rev-parse --verify --quiet refs/heads/crew/t9w >/dev/null \
+    && fail "a branch -d proves merged is still dropped"
+fi
 "$BIN/ac-teardown.sh" t9e --force >/dev/null 2>&1 || fail "--force still discards work past a landed branch"
 
 # An edit git status hides (assume-unchanged) is uncommitted work all the same.
@@ -1540,6 +1570,20 @@ case "$(cat "$(fake_pane_buf dfam2-chief)")" in
   *AC_DOMAIN*) fail "AC-3.2: an unassigned family's launch line must carry no AC_DOMAIN" ;;
 esac
 
+# A ledger nobody can read cannot prove a family unassigned, so the promote
+# refuses instead of minting an ordinary roomchief for a domain family.
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  dom_seed payments dfam2u
+  room_seed dfam2u
+  chmod 000 "$fleet_bl"
+  err="$("$BIN/ac-spawn.sh" --roomchief dfam2u --harness fake 2>&1 || true)"
+  chmod 644 "$fleet_bl"
+  assert_contains "$err" "cannot read the ledger" "an unreadable ledger refuses the promote"
+  assert_no_file "$AC_HOME/state/dfam2u-chief.meta" "refused before any window, lease or meta"
+  dom_seed payments dfam1
+fi
+
 # AC-3.3 (token grammar) - ONE FAMILY, ONE DOMAIN: a story whose own token
 # disagrees with its epic row's is corrupt state, not a coin flip: refuse
 # fail-closed naming both, before any window, lease or meta.
@@ -1818,6 +1862,27 @@ assert_eq "$(git -C "$obb_wt" merge-base HEAD "$release_sha")" "$release_sha" \
 [ -f "$obb_wt/release.txt" ] || fail "the leased tree must carry the release branch's content"
 "$BIN/ac-teardown.sh" obb1 --force >/dev/null 2>&1
 git -C "$repo" branch -D release >/dev/null 2>&1
+
+# The orca lease never reads the ledger, so an epic story's INTEGRATION
+# BRANCH line is the only fence it gets here: an unreadable ledger refuses
+# the spawn instead of launching the crewmate with no landing target.
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  cp "$AC_HOME/records/backlog.md" "$TMP/orca-bl.keep"
+  printf -- '- [ ] oes1 - story; epic:oep (repo: proj)\n' >>"$AC_HOME/records/backlog.md"
+  mkdir -p "$AC_HOME/data/oep"
+  printf 'proj epic/oep\n' >"$AC_HOME/data/oep/branches"
+  "$BIN/ac-brief.sh" oes1 proj --mode local-only >/dev/null
+  owt_n="$(ls "$FAKE_ORCA/orca-wt" | wc -l | tr -d ' ')"
+  chmod 000 "$AC_HOME/records/backlog.md"
+  err="$("$BIN/ac-spawn.sh" oes1 "$repo" --harness fake --mode local-only 2>&1 || true)"
+  chmod 644 "$AC_HOME/records/backlog.md"
+  assert_contains "$err" "cannot read the ledger" "an unreadable ledger refuses an orca epic-story spawn"
+  assert_no_file "$AC_HOME/state/oes1.meta" "the refused spawn writes no meta"
+  assert_eq "$(ls "$FAKE_ORCA/orca-wt" | wc -l | tr -d ' ')" "$owt_n" "the refused spawn gives its orca worktree back"
+  mv "$TMP/orca-bl.keep" "$AC_HOME/records/backlog.md"
+  rm -rf "$AC_HOME/data/oep"
+fi
 
 printf 'herdr\n' >"$AC_HOME/config/backend"
 

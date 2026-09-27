@@ -195,6 +195,20 @@ printf 'not a registry line\n- broken\n' >"$AC_HOME/records/crewdomains.md"
   || fail "a corrupt crewdomain registry must not take session start down"
 rm -f "$AC_HOME/records/crewdomains.md"
 
+# --- the scheduler block ----------------------------------------------------
+# A scheduler that could not run prints nothing, which is exactly what "no
+# item to start" looks like - the digest has to say which one it was. A bin/
+# whose ac-ready.sh fails; every other script is the real one.
+ssbin="$TMP/ssbin"
+mkdir -p "$ssbin"
+for f in "$ROOT"/bin/*.sh; do ln -sf "$f" "$ssbin/$(basename "$f")"; done
+rm -f "$ssbin/ac-ready.sh"
+printf '#!/usr/bin/env bash\nexit 3\n' >"$ssbin/ac-ready.sh"
+chmod +x "$ssbin/ac-ready.sh"
+dig="$("$ssbin/ac-session-start.sh" 2>/dev/null)"
+bl_section="$(printf '%s\n' "$dig" | awk '/^-- backlog \(head\) --$/{f=1;next} /^-- projects --$/{f=0} f')"
+assert_contains "$bl_section" "WARN   scheduler unavailable: ac-ready.sh exited 3" "a scheduler that could not run is named in the digest's backlog block"
+
 # --- DISTRO-LAG (identity header) ---------------------------------------------
 # The pointer state/.ac-root (ac_root_pointer_path) names the tree to measure
 # when it exists and names a git repo; the whole point of the line is that it
