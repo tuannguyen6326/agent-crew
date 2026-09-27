@@ -257,6 +257,10 @@ export AC_AUTOARM=1
 ac_hook_trace watch-autoarm "verdict=armed reason=loop-start scope=${scope:-fleet} owed=yes"
 
 while owed; do
+  # An arm lasts at least AC_HEARTBEAT, so one started with less than that left
+  # in the budget could outlive the hook timeout, and a hook killed there wakes
+  # nobody - the first arm included.
+  [ "$(( $(date -u +%s) - started + ${AC_HEARTBEAT:-600} ))" -le "$budget" ] || break
   # A roomchief watches its own family plus its epic's in-flight stories, and
   # the set changes as stories start and land - so it is recomputed on every
   # re-arm, which is the same instruction the roomchief charter gives a human.
@@ -281,10 +285,7 @@ while owed; do
 
   case "$reason" in
     heartbeat)
-      # Silent re-arm - the tokenless half of this hook. An arm lasts at least
-      # AC_HEARTBEAT, so one started with less than that left could outlive
-      # the hook timeout, and a hook killed there wakes nobody.
-      [ "$(( $(date -u +%s) - started + ${AC_HEARTBEAT:-600} ))" -le "$budget" ] || break
+      # Silent re-arm - the tokenless half of this hook.
       continue ;;
     'already running'*|'refused: a live watcher'*)
       # The chief armed one by hand, or a previous hook still holds it. The

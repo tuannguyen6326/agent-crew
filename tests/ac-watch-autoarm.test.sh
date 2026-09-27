@@ -205,7 +205,7 @@ stub_watch 'heartbeat' 'heartbeat' 'ask:t1'
 rc=0
 ( cd "$AC_HOME" && printf '{}' | AC_AUTOARM_BUDGET=100 AC_HEARTBEAT=600 "$hook" >/dev/null 2>"$TMP/hook.err" ) || rc=$?
 assert_eq "$rc" "2" "a budget too short for another arm hands coverage back"
-assert_eq "$(calls)" "1" "no arm starts that could not end inside the budget"
+assert_eq "$(calls)" "0" "no arm starts that could not end inside the budget, the first one included"
 assert_contains "$(cat "$TMP/hook.err")" "budget spent" "and the handback says why"
 
 # --- the same exhaustion, but owed() fires on its OTHER branch --------------
