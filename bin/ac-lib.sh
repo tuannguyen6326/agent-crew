@@ -2647,17 +2647,22 @@ ac_worktree_status() {
   # an edit, deletion or mode/type change to a file whose assume-unchanged or
   # skip-worktree bit hides it from `git status` (git-update-index). The exit
   # status is git status's own; the hidden-bit scan only adds `H  <path>`.
-  local rc=0 line tag path mode blob f filemode
+  # Paths are read NUL-delimited and matched literally: `ls-files -v` C-quotes
+  # a non-ASCII name, and a quoted name is no path on disk.
+  local rc=0 rec tag path mode blob f filemode sparse
   git -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
   filemode="$(git -C "$1" config --get core.fileMode 2>/dev/null || printf 'true')"
-  while IFS= read -r line; do
-    tag="${line%% *}"; path="${line#? }"; f="$1/$path"
-    read -r mode blob _ <<<"$(git -C "$1" ls-files -s -- "$path" 2>/dev/null | head -n 1)"
+  sparse="$(git -C "$1" config --get core.sparseCheckout 2>/dev/null || printf 'false')"
+  while IFS= read -r -d '' rec; do
+    tag="${rec%% *}"; path="${rec#? }"
+    case "$tag" in [a-z]|S) ;; *) continue ;; esac
+    f="$1/$path"
+    read -r mode blob _ <<<"$(git -C "$1" --literal-pathspecs ls-files -s -z -- "$path" 2>/dev/null | tr '\0' '\n' | head -n 1)"
     [ "$mode" != 160000 ] || continue
     if [ ! -e "$f" ] && [ ! -L "$f" ]; then
-      # Absent under skip-worktree is a sparse checkout doing its job; absent
-      # under assume-unchanged is a deletion git status does not show.
-      [ "$tag" = S ] || printf 'H  %s\n' "$path"
+      # Absent under skip-worktree is a sparse checkout doing its job when one
+      # is on; any other absence is a deletion git status does not show.
+      { [ "$tag" = S ] && [ "$sparse" = true ]; } || printf 'H  %s\n' "$path"
       continue
     fi
     case "$mode" in
@@ -2669,7 +2674,7 @@ ac_worktree_status() {
            printf 'H  %s\n' "$path"
          fi ;;
     esac
-  done < <(git -C "$1" ls-files -v 2>/dev/null | grep -E '^([a-z]|S) ')
+  done < <(git -C "$1" ls-files -v -z 2>/dev/null)
   return "$rc"
 }
 

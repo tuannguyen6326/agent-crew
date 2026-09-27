@@ -80,13 +80,29 @@ assert_fails "$BIN/ac-tree.sh" return "$wt2"
 chmod -x "$wt2/file.txt"
 git -C "$wt2" update-index --no-assume-unchanged file.txt
 [ -z "$(git -C "$wt2" status --porcelain)" ] || fail "fixture: the tree must be clean again"
-# A skip-worktree file that is absent is a sparse checkout doing its job, not
-# a deletion: the tree stays clean (it is only listed, never returned here).
+# An absent skip-worktree file is a deletion hidden like any other - unless a
+# sparse checkout is on, which leaves files absent by design.
 git -C "$wt2" update-index --skip-worktree file.txt
 rm "$wt2/file.txt"
-case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) fail "an absent skip-worktree file must not read as dirty" ;; esac
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) ;; *) fail "a skip-worktree deletion outside a sparse checkout is work" ;; esac
+git -C "$wt2" config core.sparseCheckout true
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) fail "an absent file under a sparse checkout must not read as dirty" ;; esac
+git -C "$wt2" config --unset core.sparseCheckout
 git -C "$wt2" update-index --no-skip-worktree file.txt
 git -C "$wt2" checkout -- file.txt
+# git C-quotes a non-ASCII path in `ls-files -v`; the scan must read the real
+# name - a clean flagged file is clean, an edited one is work.
+printf 'quoted\n' >"$wt2/エ.txt"
+git -C "$wt2" add "エ.txt"
+git -C "$wt2" -c user.email=t@t -c user.name=t commit -qm "a non-ASCII name"
+git -C "$wt2" update-index --assume-unchanged "エ.txt"
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) fail "a clean flagged file with a quoted name must not read as dirty" ;; esac
+git -C "$wt2" update-index --no-assume-unchanged "エ.txt"
+git -C "$wt2" update-index --skip-worktree "エ.txt"
+printf 'edited\n' >>"$wt2/エ.txt"
+case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) ;; *) fail "an edited skip-worktree file with a quoted name is work" ;; esac
+git -C "$wt2" update-index --no-skip-worktree "エ.txt"
+git -C "$wt2" checkout -- "エ.txt"
 
 # Remove: refuses a leased slot without --include-leased.
 assert_fails "$BIN/ac-tree.sh" remove "$wt2"
