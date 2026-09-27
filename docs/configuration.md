@@ -120,7 +120,7 @@ Identity and local knobs (`captain`, `launch-*`, `herdr-*`) are never copied.
 ## Dispatch rules (`config/crew-dispatch.json`)
 
 Example: `docs/examples/crew-dispatch.json`.
-Owner: the `bin/ac-dispatch-select.sh` header.
+Owner: the `src/dispatch-select.ts` header (`bin/ac-dispatch-select.sh` is its entry).
 
 - Top level: `rules[]` (each a prose `when`, an atomic `use` of `harness`/`model`/`effort`, and a non-empty `why`) plus a `default`.
   When the file exists, `ac-spawn.sh` refuses to guess: the chief reads `ac-dispatch-select.sh --list`, judges which `when` matches, and resolves it with `--rule <n>`.
@@ -357,7 +357,7 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_FLEET_EFFORT_<ROLE>` | unset (launch line) | Per-role pane effort from `config/<role>-effort`. |
 | `AC_FLEET_PROFILE_<KIND>` | unset (launch line) | Static dispatched pane profile from `panes.<kind>` (`CODEREVIEW` or `QA`), one TAB-separated `harness=<h> model=<m> effort=<e>` value so the triple stays atomic. A routed qa selection is passed explicitly through `ac-verify qa` instead. |
 
-This table is enforced: `tests/ac-config-surface.test.sh` diffs it against every `AC_*` name read in `bin/`.
+This table is enforced: `tests/ac-config-surface.test.sh` diffs it against every `AC_*` name read in `bin/` or `src/`.
 A new tunable needs a row here, with the name in backticks as the first cell and a dynamic family written as one templated row such as `AC_X_<...>`.
 Internal wire variables and test seams take no row; they are declared with a one-line reason inside that test.
 
@@ -365,8 +365,8 @@ Internal wire variables and test seams take no row; they are declared with a one
 
 `bin/ac-bootstrap.sh` audits the toolchain and prints one line per check (`OK:`, `MISSING:`, `BELOW-FLOOR:`, `NO-CAPABILITY:`, `OPTIONAL:`, ...); a `MISSING:` exits 1.
 
-- Required: `git`, `jq`, `gh` (authenticated for PR and CI steps), and the backend `config/backend` names: `herdr` with its server running, or `orca` with its runtime ready.
-- Optional: `bun` (dashboard and native review loop), `node` (npx-driven helpers), `shellcheck` (`bin/ac-lint.sh`), `docker` (QA infra).
+- Required: `git`, `jq`, `bun` (the `bin/` entries ported to `src/*.ts` exec it), `gh` (authenticated for PR and CI steps), and the backend `config/backend` names: `herdr` with its server running, or `orca` with its runtime ready.
+- Optional: `node` (npx-driven helpers), `shellcheck` (`bin/ac-lint.sh`), `docker` (QA infra).
 
 Version floors, each tied to a call the fleet makes (FLOOR TABLE in the `bin/ac-bootstrap.sh` header):
 
@@ -375,4 +375,4 @@ Version floors, each tied to a call the fleet makes (FLOOR TABLE in the `bin/ac-
 | `herdr` | 0.8.0 | `status server --json` reporting `.running`, which `bin/ac-backend.sh` reads. |
 | `git` | 2.15.0 | `git interpret-trailers --parse`, used by the commit-msg guard `bin/ac-tree.sh` installs. |
 | `jq` | 1.6 | `--args` / `$ARGS`, used by `bin/ac-brief.sh`. |
-| `bun` | 1.3.5 | `Bun.Terminal`, the dashboard's native terminal; optional tier, so advisory. |
+| `bun` | 1.3.5 | `Bun.Terminal`, the dashboard's native terminal; `bun:sqlite`, the brain engine. |

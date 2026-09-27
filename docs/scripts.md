@@ -1,6 +1,7 @@
 # Scripts reference
 
-Every executable and library under `bin/` has one row below, grouped by area.
+Every executable and library under `bin/`, and every library under `src/`, has one row below, grouped by area.
+A `bin/` entry ported to TypeScript is a shim; its row points to the `src/` module whose header is the spec.
 Each script's header comment is its authoritative spec; this page is only the map, and a row that disagrees with its header is a doc bug.
 The usage column lists every verb the script dispatches; the header owns the contract.
 Rows name fail-closed behavior, the callers that matter, and where a script refuses a SOLO session (`AC_SOLO=1`).
@@ -34,7 +35,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | `ac-teardown.sh <id> [--force] [--pr-ready '<captain acceptance>'] [--no-lesson '<why>'] [--no-fact '<why>']` | Fail-closed teardown: proves landed work and a clean worktree, then archives state, closes panes, returns every lease and deletes a merged `crew/<id>`. `--pr-ready` is refused while an open row is blocked-by the task; a `kind=self` slice must also have its lesson, repo fact and Done row (or waivers) before it lands. `--force` means the captain discards the work. Spec: `bin/ac-teardown.sh` header. |
 | `ac-tree.sh get \| lease \| list \| return \| prune \| remove` | The herdr fleets' in-repo worktree pool at `<repo>/.crew/worktrees/<n>`: detached-HEAD trees reset on acquire and reused, `lease` for a state-only lease, dry-run `prune`, gated `remove`. The first lease installs the pre-commit and commit-msg guard hooks; a dirty available slot is never silently reset. Spec: `bin/ac-tree.sh` header. |
 | `ac-relocate.sh <id> [--family <fam> \| --root]` | Moves a live task window to another herdr workspace (default: its own family's) and resumes its recorded session there. Refuses an unknown task, a non-herdr backend, a missing `session_id` and a busy agent. Spec: `bin/ac-relocate.sh` header. |
-| `ac-dispatch-select.sh --list \| [--rule <n>] \| --pane <kind> [--lanes \| --list \| --rule <n\|default> \| --receipt <n\|default>] \| --propose <brief-file>` | Resolves a `config/crew-dispatch.json` profile into TAB-separated `harness= model= effort=`; the chief judges the prose `when` clauses, this script never does. An absent pane entry prints nothing; a malformed one dies. `--propose` prints a System One rule hint only under `config/jev=on`. Spec: `bin/ac-dispatch-select.sh` header. |
+| `ac-dispatch-select.sh --list \| [--rule <n>] \| --pane <kind> [--lanes \| --list \| --rule <n\|default> \| --receipt <n\|default>] \| --propose <brief-file>` | Resolves a `config/crew-dispatch.json` profile into TAB-separated `harness= model= effort=`; the chief judges the prose `when` clauses, this script never does. An absent pane entry prints nothing; a malformed one dies. `--propose` prints a System One rule hint only under `config/jev=on`. Spec: `src/dispatch-select.ts` header (the entry execs it). |
 | `ac-project-mode.sh <project>` | Resolves the `+yolo` flag from `records/projects.md` (`yolo=<on\|off>`) and nothing else - delivery mode is per task and resolved by `ac-brief.sh`. Spec: `bin/ac-project-mode.sh` header. |
 | `ac-archive.sh archive [--dry-run] \| restore <family> [--dry-run]` | MANUAL ONLY, with no automatic caller by design: relocates families whose room carries `CLOSED:` to `data/archive/<year>/<family>/` and back; a closed room with no resolvable year is refused and exits 1. Idempotent and byte-reversible. Spec: `bin/ac-archive.sh` header. |
 
@@ -160,7 +161,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | `ac-bootstrap.sh [--quiet]` | Toolchain doctor with stable line prefixes (`OK:`, `MISSING:`, `BELOW-FLOOR:`, `NO-CAPABILITY:`, `OPTIONAL:`, ...); exit 1 only when a required tool is missing, below floor or lacking its capability, or the backend compat check fails. Spec: `bin/ac-bootstrap.sh` header. |
 | `ac-lint.sh [--all]` | The single lint definition (`bash -n` plus shellcheck) over its owned script set; by default only changed files, `--all` for the full set. Spec: `bin/ac-lint.sh` header. |
 
-## Libraries sourced by others
+## Libraries sourced or imported by others
 
 | Script | What it does |
 |---|---|
@@ -170,3 +171,4 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | `ac-qa-lib.sh` | The `ac_qa_*` validators (attestation, bundle, testplan, coverage, receipts) and the merge-time qa gate read by `ac-merge-local.sh` and `ac-pr-merge.sh`. Spec: `bin/ac-qa-lib.sh` header. |
 | `ac-pipeline-lib.sh` | Shared by `ac-ship.sh` and `ac-qa.sh`: the YAML subset reader, the fail-closed findings normalizer and summary, and the transcript-final and verdict-JSON readers. Spec: `bin/ac-pipeline-lib.sh` header. |
 | `ac-watch-dash.sh` | Shared rendering and loop body of `ac-ship-watch.sh` and `ac-qa-watch.sh`; sourced only. Spec: `bin/ac-watch-dash.sh` header. |
+| `src/lib.ts` | The TypeScript twins of the `ac-lib.sh` helpers the `src/` modules import (`die`, `envHome`, `configRead`, `stateDir`), each keeping its bash original's contract; `tests/lib.test.ts` holds `envHome`/`configRead` to `ac_home_resolve`/`ac_config_read` differentially. Spec: `src/lib.ts` header. |

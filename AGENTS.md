@@ -29,6 +29,7 @@ Four judgment rules bind every chief and crewmate; the `judgment-rules` skill ho
 | Path | Purpose |
 |---|---|
 | `bin/` | All tooling; each script's header is its authoritative spec. |
+| `src/` | TypeScript logic of the ported `bin/` entries (each such entry is a shim that execs it); each module's header is its spec. |
 | `state/` | Volatile runtime signals (metas, status logs, wake spools). |
 | `records/` | Fleet ledgers, `repo-knowledge/`, `scenes/`, `standing-jobs.md`, `rig.json` - each owned by its `bin/` script. |
 | `data/` | Task dirs and family rooms; `bin/ac-brief.sh` owns the layout. |

@@ -640,8 +640,9 @@ assert_contains "$(cat "$HDLOG")" "workspace create --label home · fam7 --no-fo
 # its basename with the knob persisted into a config/ dir minted right there.
 # Run from a COPY of bin/ so the assertions can never touch the real checkout.
 fake="$TMP/fakecheckout"
-mkdir -p "$fake/bin"
+mkdir -p "$fake/bin" "$fake/src"
 cp "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$BIN/ac-pane-agent.sh" "$BIN/ac-dispatch-select.sh" "$fake/bin/"
+cp "$ROOT/src/dispatch-select.ts" "$ROOT/src/lib.ts" "$fake/src/"
 echo '{"result":{"workspaces":[]}}' >"$WSLIST"
 : >"$HDLOG"
 env -u AC_HOME PATH="$stub:$PATH" HOME="$FAKEHOME" \

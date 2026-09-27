@@ -799,7 +799,7 @@ if [ -z "$HFLAG" ]; then
   esac
   if [ -z "$PROFILE" ]; then
     # Absent resolves to empty with exit 0 and falls through; a resolver ERROR
-    # (a panes entry naming no harness, unreadable JSON, no jq) must NOT - a
+    # (a panes entry naming no harness, unreadable JSON, no bun) must NOT - a
     # misconfigured profile that quietly degraded to the ladder below would put
     # the fleet's judge back on the defaults without saying so, which is the
     # silent-wrong-answer failure this whole ladder exists to end.

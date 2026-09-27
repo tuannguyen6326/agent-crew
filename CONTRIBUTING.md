@@ -1,7 +1,7 @@
 # Contributing to agent-crew
 
 Thanks for your interest!
-agent-crew is an agent distro - instructions, skills and bash tooling - so most contributions are edits to `bin/*.sh` scripts, `.agents/skills/` packages, `AGENTS.md`, `docs/`, or the Bun dashboard under `dashboard/`.
+agent-crew is an agent distro - instructions, skills and bash/TypeScript tooling - so most contributions are edits to `bin/*.sh` scripts, the TypeScript under `src/`, `.agents/skills/` packages, `AGENTS.md`, `docs/`, or the Bun dashboard under `dashboard/`.
 Read [`docs/concepts.md`](docs/concepts.md) first if you are new to the model.
 
 ## Ground rules
@@ -50,14 +50,14 @@ Read [`docs/concepts.md`](docs/concepts.md) first if you are new to the model.
 | --- | --- | --- |
 | Chief law (index) | `AGENTS.md` | The short muscle-memory index; `CLAUDE.md` symlinks to it. Keep it an index: detail belongs in a skill or a header. |
 | Chief law (procedures) | `.agents/skills/<name>/SKILL.md` | `intake-triage`, `delivery-review`, `staged-gates`, `judgment-rules`, `task-lifecycle`, `solo-session`, `rooms-threads`, `deputies-domains` and the other chief skills hold the full text behind each `AGENTS.md` summary. |
-| Script behavior | `bin/<script>.sh` header | The header comment IS the spec - change behavior, update the header. |
+| Script behavior | `bin/<script>.sh` header, or `src/<name>.ts` for a ported script | The header comment IS the spec - change behavior, update the header. A ported script's `bin/ac-<name>.sh` is a shim whose header points to its `src/` module. |
 | Crew skills | `.agents/skills/<name>/` | Agent Skills spec packages; schema enforced by `tests/ac-skills-catalog.test.sh`. |
 | Crewmate instructions | `docs/examples/CREWMATE.md` | The starter for a fleet's crewmate seed layer. |
 | Backlog grammar | `docs/backlog.md` | `AC_DONELINE_AWK` in `bin/ac-lib.sh` is the one parser. |
 | Config files and env knobs | `docs/configuration.md` | The environment table is the knob manifest, enforced by `tests/ac-config-surface.test.sh`. |
 | Script index | `docs/scripts.md` | A map only; each row points to the owning header. |
 | Web dashboard | `dashboard/app.ts`, `dashboard/lib.ts`, `dashboard/page.ts`, `dashboard/watch.ts` | Bun, no build step. `bin/dashboard.ts` is the launcher shim `bin/ac-dashboard.sh` execs. `app.ts`'s header owns the route and API contract; `lib.ts` is the pure layer. Tests: `dashboard/app.test.ts`, `dashboard/watch.test.ts`. |
-| Tests | `tests/<name>.test.sh` | Colocated per behavior; `tests/run-suite.sh` is the only suite runner. |
+| Tests | `tests/<name>.test.sh` | Colocated per behavior; `tests/run-suite.sh` is the only suite runner. Bun unit tests for `src/` live in `tests/<name>.test.ts` and run through `tests/src.test.sh`. |
 
 ## Dev loop
 
@@ -67,12 +67,14 @@ tests/run-suite.sh --changed       # only the tests mapped from your changed fil
 tests/run-suite.sh                 # full bash suite (pass/fail count, every failing name)
 tests/run-suite.sh --jobs 4        # opt-in parallel run; sequential by default
 bash tests/dashboard.test.sh       # dashboard Bun tests (skips cleanly without bun)
+bash tests/src.test.sh             # Bun unit tests for src/ (tests/*.test.ts)
 bin/ac-lint.sh                     # opt-in: bash -n + shellcheck over changed files
 ```
 
 - `tests/run-suite.sh` exits 0 when all pass, 1 when any test fails, 2 when it cannot proceed (bad arguments, no test files, or an empty `--changed` selection), and 3 when it refuses to run because SIGINT is ignored in an async invocation it cannot reset.
 - `--changed` maps `bin/<name>.sh` to `tests/<name>.test.sh` over staged, unstaged and untracked changes; a changed shared library narrows to its sourcers' tests, and anything it cannot map confidently widens to the full set and says why.
-- `--changed` ignores files outside `bin/*.sh` and `tests/*.sh`, so a change to `dashboard/*.ts`, `bin/*.ts`, docs or skills selects nothing on its own; run the relevant test file directly.
+- `src/<name>.ts` maps to `tests/src.test.sh` plus its entry's `tests/ac-<name>.test.sh`, a changed `tests/*.test.ts` maps to `tests/src.test.sh`, and a `src/` module other `src/` files import narrows to its importers' tests.
+- `--changed` ignores files outside `bin/*.sh`, `src/*.ts`, `tests/*.sh` and `tests/*.test.ts`, so a change to `dashboard/*.ts`, `bin/*.ts`, docs or skills selects nothing on its own; run the relevant test file directly.
 - On a clean, fully committed tree `--changed` has nothing to read and exits 2 without running anything.
 - The suite is not a per-change gate: per-change verification is the changed-file tests plus any do-not-break tests; the bare full run is a periodic task.
 - `bin/ac-lint.sh` is opt-in; `--all` lints the whole set, and `AC_LINT_ALLOW_MISSING=1` tolerates a missing shellcheck.
@@ -82,6 +84,16 @@ bin/ac-lint.sh                     # opt-in: bash -n + shellcheck over changed f
 The script headers of `tests/run-suite.sh` and `bin/ac-lint.sh` are the authoritative specs for these flags.
 
 ## Adding a script
+
+### Bash or TypeScript
+
+- Write the logic in TypeScript under `src/<name>.ts` when it parses or writes structured data (JSON, ledgers, metas), runs past about 200 lines or branches heavily, loops for a long time, or needs unit tests.
+- Keep bash for thin glue around `git`/`herdr`/`gh`, hooks, and short scripts; an existing script that works and is tested is not ported just for uniformity.
+- A ported script keeps its `bin/ac-<name>.sh` entry as a shim that execs `bun` on `src/<name>.ts` (see `bin/ac-dispatch-select.sh`), so callers, hooks and skills keep the path; the `src/` module's header is the spec.
+- A `bin/ac-lib.sh` helper gets a twin in `src/lib.ts` only when a port calls it, keeps its bash original's observable contract, and is pinned to that original by a differential test.
+- Unit tests go in `tests/<name>.test.ts`; the black-box `tests/ac-<name>.test.sh` stays the CLI contract and must pass unchanged across the port.
+
+### Every script
 
 - Put it in `bin/` as `ac-<name>.sh` and write its header comment first: purpose, usage, exit codes, and the contract other files will point to.
 - Add `tests/ac-<name>.test.sh`, which `--changed` maps to it automatically.
@@ -112,7 +124,7 @@ The script headers of `tests/run-suite.sh` and `bin/ac-lint.sh` are the authorit
   Before rewording, search for the phrase: `git grep -n -F '<phrase>' tests/`.
 - `tests/public-source-scrub.test.sh` fails on private identifiers anywhere in tracked text; keep examples neutral.
 - The `docs/configuration.md` environment table is machine-read: each row starts with `` | `AC_NAME` | ``, and a family of dynamic names is documented as one templated row such as `` `AC_X_<...>` ``.
-  Every plain row must have a reader in `bin/`, and every `AC_*` name read in `bin/` must have a row or a declaration.
+  Every plain row must have a reader in `bin/` or `src/`, and every `AC_*` name read there must have a row or a declaration.
 - Link to the owning header or skill instead of copying tables or procedures.
 
 ## Commits and pushes

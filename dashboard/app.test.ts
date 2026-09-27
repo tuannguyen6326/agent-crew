@@ -1762,7 +1762,7 @@ test("applyDispatchWrite writes canonical JSON + a receipt for a valid document"
   }
 });
 
-test("applyDispatchWrite accepts a lanes pane and holds the same rules the bash resolver does", () => {
+test("applyDispatchWrite accepts a lanes pane and holds the same rules the resolver does", () => {
   const home = mkdtempSync(`${tmpdir()}/dash-lanes-`);
   try {
     mkdirSync(`${home}/config`, { recursive: true });
@@ -1890,7 +1890,7 @@ test("readDispatch derives routed cards for the mandatory-default kinds (gate/co
   }
 });
 
-test("applyDispatchWrite mirrors routed_pane_validate: gate/codereview/roomchief need a default", () => {
+test("applyDispatchWrite mirrors validRoutedPane: gate/codereview/roomchief need a default", () => {
   const home = tmpHome();
   try {
     const rule = { when: "risky scope", use: { harness: "codex", model: "gpt-5.6-sol", effort: "xhigh" }, why: "depth" };

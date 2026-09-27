@@ -398,9 +398,78 @@ printf 'on\n' >"$AC_HOME/config/jev"
 sha="$("$BIN/ac-jev.sh" sha --state-file "$TMP/brief.md")"
 assert_eq "$("$BIN/ac-dispatch-select.sh" --propose "$TMP/brief.md" 2>/dev/null)" "propose: rule=2 p=0.81 state_sha=$sha" \
   "propose: on prints the picked rule, its probability and the label key"
+assert_eq "$(cd "$TMP" && "$BIN/ac-dispatch-select.sh" --propose brief.md 2>/dev/null)" "propose: rule=2 p=0.81 state_sha=$sha" \
+  "propose: a relative brief resolves against the caller's cwd"
 assert_fails "$BIN/ac-dispatch-select.sh" --propose
 assert_fails "$BIN/ac-dispatch-select.sh" --propose "$TMP/nope.md"
 rm -f "$AC_HOME/config/crew-dispatch.json"
 assert_fails "$BIN/ac-dispatch-select.sh" --propose "$TMP/brief.md"
+
+# A config the jq original read as NO document - empty, blank, or a bare null -
+# resolves like an absent key (the default falls back, a rule is not there),
+# while the validating modes still call it invalid: `touch`ing the file must
+# not break every spawn. One leading UTF-8 BOM is not an error either, and a
+# kind named like a JS prototype member is an ordinary absent key.
+cfgf="$AC_HOME/config/crew-dispatch.json"
+for doc in '' $'  \n' 'null'; do
+  printf '%s' "$doc" >"$cfgf"
+  assert_eq "$("$BIN/ac-dispatch-select.sh")" $'harness=claude\tmodel=\teffort=' "no-document config '$doc' falls back"
+  assert_fails_with "no rule 1 in" -- "$BIN/ac-dispatch-select.sh" --rule 1
+  assert_fails_with "invalid JSON" -- "$BIN/ac-dispatch-select.sh" --list
+  assert_fails_with "invalid JSON" -- "$BIN/ac-dispatch-select.sh" --pane gate
+done
+printf '\357\273\277{"default":{"harness":"codex"},"panes":{"gate":{"harness":"x"}}}' >"$cfgf"
+assert_eq "$("$BIN/ac-dispatch-select.sh")" $'harness=codex\tmodel=\teffort=' "a leading BOM is not an error"
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate)" $'harness=x\tmodel=\teffort=' "a leading BOM is not an error for --pane"
+for k in constructor __proto__ toString; do
+  out="$("$BIN/ac-dispatch-select.sh" --pane "$k" 2>&1)" || fail "--pane $k: an absent kind must exit 0"
+  assert_eq "$out" "" "--pane $k is an absent kind, never an inherited member"
+done
+rm -f "$cfgf"
+
+# The entry runs in the CALLER's cwd, often a project worktree: nothing there -
+# a .env naming a home, a bunfig.toml whose preload runs code, a tsconfig whose
+# paths swap the entry module - nor a BUN_* knob in the caller's environment
+# may reach the resolver. The caller's argv arrives verbatim, a leading `--`
+# included; an exported CDPATH never redirects the entry's lookup of its own
+# source; a cwd deleted under the caller costs nothing; and relative inputs
+# still resolve against the caller's cwd.
+cwdtrap="$TMP/cwdtrap"
+mkdir -p "$cwdtrap/.crew/evil/config"
+printf '{"default":{"harness":"evil"}}' >"$cwdtrap/.crew/evil/config/crew-dispatch.json"
+printf 'AC_HOME=%s/.crew/evil\n' "$cwdtrap" >"$cwdtrap/.env"
+printf 'process.stdout.write("harness=spoof\\tmodel=\\teffort=\\n"); process.exit(0);\n' >"$cwdtrap/p.ts"
+printf 'preload = ["./p.ts"]\n' >"$cwdtrap/bunfig.toml"
+printf '{"compilerOptions":{"paths":{"*":["./p.ts"]}}}\n' >"$cwdtrap/tsconfig.json"
+cp "$cwdtrap/tsconfig.json" "$cwdtrap/jsconfig.json"
+out="$(cd "$cwdtrap" && env -u AC_HOME "$BIN/ac-dispatch-select.sh" 2>&1)"
+assert_eq "$out" $'harness=claude\tmodel=\teffort=' "a caller cwd's .env, bunfig.toml and tsconfig never reach the resolver"
+out="$(cd "$cwdtrap" && env -u AC_HOME BUN_OPTIONS="--preload=$cwdtrap/p.ts --env-file=$cwdtrap/.env" BUN_INSPECT=ws://127.0.0.1:9/x JSC_dumpOptions=1 "$BIN/ac-dispatch-select.sh" 2>&1)"
+assert_eq "$out" $'harness=claude\tmodel=\teffort=' "a caller's BUN_* environment never reaches the resolver"
+gone="$TMP/gone"
+mkdir -p "$gone"
+out="$(cd "$gone" && rmdir "$gone" && "$BIN/ac-dispatch-select.sh" 2>/dev/null)"
+assert_eq "$out" $'harness=claude\tmodel=\teffort=' "a deleted cwd costs the resolver nothing"
+mkdir -p "$gone"
+rc=0
+out="$(cd "$gone" && rmdir "$gone" && AC_HOME=relhome "$BIN/ac-dispatch-select.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "1" "a relative AC_HOME from a cwd with no name is refused, never read from the distro root"
+assert_contains "$out" "current directory" "the refusal names the unresolvable cwd"
+mkdir -p "$TMP/relhome/config"
+printf '{"default":{"harness":"rel"}}' >"$TMP/relhome/config/crew-dispatch.json"
+assert_eq "$(cd "$TMP" && AC_HOME=relhome "$BIN/ac-dispatch-select.sh")" $'harness=rel\tmodel=\teffort=' \
+  "a relative AC_HOME resolves against the caller's cwd"
+assert_fails_with "no dispatch config at //config/crew-dispatch.json" -- env AC_HOME=/ "$BIN/ac-dispatch-select.sh" --list
+mkdir -p "$TMP/nobun"
+for t in bash env dirname; do ln -s "$(command -v "$t")" "$TMP/nobun/$t"; done
+rc=0
+err="$(PATH="$TMP/nobun" "$BIN/ac-dispatch-select.sh" --pane qa 2>&1 >/dev/null)" || rc=$?
+assert_eq "$rc" "1" "no bun on PATH fails the entry"
+assert_eq "$err" "ERROR: required tool not found: bun" "no bun on PATH names the missing tool"
+assert_fails_with "usage:" -- "$BIN/ac-dispatch-select.sh" --
+assert_fails_with "usage:" -- "$BIN/ac-dispatch-select.sh" -- --list
+mkdir -p "$TMP/cdpath/bin"
+out="$(cd "$ROOT" && CDPATH="$TMP/cdpath" bin/ac-dispatch-select.sh 2>&1)"
+assert_eq "$out" $'harness=claude\tmodel=\teffort=' "an exported CDPATH never redirects the entry"
 
 pass

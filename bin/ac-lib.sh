@@ -397,7 +397,9 @@ ac_config_read() {
   # so the default answers, which is the same value a homeless read already got:
   # the only knob the phantom checkout ever grew is config/herdr-workspace, and
   # that knob is retired and read by nothing (ac-backend.sh:266).
-  # ac_home_resolve is THE homeless ladder - one copy on purpose.
+  # ac_home_resolve is THE homeless ladder - one copy on purpose. The
+  # TypeScript twin, src/lib.ts's configRead, is pinned to this function by
+  # a differential test (tests/lib.test.ts).
   local name="$1" default="${2:-}" h f line
   h="$(ac_home_resolve '' '')"
   [ -n "$h" ] || { printf '%s\n' "$default"; return 0; }
@@ -2986,7 +2988,9 @@ ac_home_resolve() {
   # ac_home_resolve <--home value|''> <repo> - THE fleet-home ladder for the
   # tools a HOMELESS pane runs (ac-know.sh, ac-qa.sh). ONE copy on purpose:
   # the same ladder written twice is how one site gets fixed and the other
-  # stays broken.
+  # stays broken. The one twin, src/lib.ts's envHome (rungs 2-3, for the
+  # TypeScript ports), is pinned to this function by a differential test
+  # (tests/lib.test.ts), so a fix here that it misses reddens that test.
   #   1. --home <abs>, guarded below;
   #   2. $AC_HOME tested DIRECTLY - never through ac_home(), which REFUSES
   #      when the variable is unset (and, before it refused, handed back a

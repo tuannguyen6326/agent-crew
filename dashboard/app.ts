@@ -1522,7 +1522,7 @@ export interface DispatchView {
 }
 
 /** The pane kinds ac-dispatch-select.sh accepts in ROUTED shape (rules[] +
- * default). Mirrors its qa_pane_validate/routed_pane_validate split: qa's
+ * default). Mirrors its validQaPane/validRoutedPane split (src/dispatch-select.ts): qa's
  * default is optional (caller judgment only), the other three REQUIRE one so
  * a selector-less lookup resolves deterministically. */
 export const ROUTED_PANE_KINDS = new Set(["qa", "gate", "codereview", "roomchief"]);
@@ -1585,7 +1585,7 @@ export function readDispatch(homePath: string): DispatchView {
  * ac-dispatch-select.sh. The four routable pane kinds (ROUTED_PANE_KINDS)
  * additionally accept routed rules with prose when, one atomic object use, and
  * prose why; qa's bare default stays optional while gate/codereview/roomchief
- * REQUIRE one (routed_pane_validate). Then realpath-confirm under <home>/config, write via a
+ * REQUIRE one (validRoutedPane). Then realpath-confirm under <home>/config, write via a
  * tmp+rename (atomic replace), and append a .dash-edits.log receipt. Any gate
  * failure writes NOTHING. Canonicalised to 2-space JSON so the file stays diffable.
  */
@@ -1628,7 +1628,7 @@ export function applyDispatchWrite(homePath: string, raw: string): ConfigWriteRe
     if (!parsed.panes || typeof parsed.panes !== "object" || Array.isArray(parsed.panes))
       return { status: 400, body: { error: "`panes` must be an object" } };
     for (const [kind, value] of Object.entries(parsed.panes) as [string, any][]) {
-      // LANES - the third pane shape, and the one the bash resolver reads with
+      // LANES - the third pane shape, and the one the resolver reads with
       // `--pane <kind> --lanes`. A flat entry IS one profile, a routed entry
       // PICKS one; lanes says run every profile listed. Validated here to the
       // same rules ac-dispatch-select.sh enforces, because a document this
@@ -1675,7 +1675,7 @@ export function applyDispatchWrite(homePath: string, raw: string): ConfigWriteRe
         } else {
           // gate/codereview/roomchief: default is MANDATORY once routed, so a
           // selector-less caller (e.g. the system-initiated roomchief promote)
-          // resolves deterministically (routed_pane_validate's contract).
+          // resolves deterministically (validRoutedPane's contract).
           if (!("default" in value))
             return { status: 400, body: { error: `panes.${kind} routed rules require a default profile` } };
           const err = profileError(value.default, `panes.${kind} default`);

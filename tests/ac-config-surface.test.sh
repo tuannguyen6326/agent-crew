@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-config-surface.test.sh - the env-knob inventory contract (audit-f8).
 # docs/configuration.md's environment table IS the knob manifest, and this
-# test is what makes it one: every `AC_*` name read in bin/ must be either a
+# test is what makes it one: every `AC_*` name read in bin/ or src/ must be a
 # documented row there, a declared INTERNAL variable, or a declared TEST
 # SEAM - and every non-templated documented row must exist in code. Before
 # this, the surface had drifted 46 undocumented vars and 3 phantom rows deep,
@@ -102,14 +102,14 @@ known_extra() {
   printf '%s\n%s\n' "$internal" "$seams" | awk -v n="$1" '$1 == n { found=1 } END { exit !found }'
 }
 
-# --- every AC_* read in bin/ is documented or declared -----------------------
+# --- every AC_* read in bin/ or src/ is documented or declared --------------
 # Tokens are maximal [A-Z_]+ runs; a token ENDING in `_` is a dynamic-family
 # prefix (AC_FLEET_MODEL_$ku and friends) and must match a templated doc row
 # (`AC_X_<...>`), which documents the whole family.
-# bin/ holds TypeScript too (the brain engine, the dashboard entry), and a knob
-# only they read is as real as any other - scanning .sh alone read two live
-# brain timeouts as phantom rows.
-code_tokens="$(grep -ohE 'AC_[A-Z_]+' "$BIN"/*.sh "$BIN"/*.ts | sort -u)"
+# bin/ and src/ hold TypeScript too (the brain engine, the dashboard entry, the
+# ported entries' logic), and a knob only they read is as real as any other -
+# scanning .sh alone read two live brain timeouts as phantom rows.
+code_tokens="$(grep -ohE 'AC_[A-Z_]+' "$BIN"/*.sh "$BIN"/*.ts "$ROOT"/src/*.ts | sort -u)"
 doc_names="$(awk -F'`' '/^\| `AC_/ {print $2}' "$DOC" | sort -u)"
 doc_plain="$(printf '%s\n' "$doc_names" | grep -v '<' || true)"
 doc_prefixes="$(printf '%s\n' "$doc_names" | sed -n 's/^\(AC_[A-Z_]*_\)<.*$/\1/p' | sort -u)"
@@ -152,7 +152,7 @@ EOF
 done <<EOF
 $code_tokens
 EOF
-[ -z "$undeclared" ] || fail "undocumented and undeclared AC_ names in bin/:$undeclared - add a docs/configuration.md row (a tunable) or declare it in this test with a reason (internal wire / test seam)"
+[ -z "$undeclared" ] || fail "undocumented and undeclared AC_ names in bin/ or src/:$undeclared - add a docs/configuration.md row (a tunable) or declare it in this test with a reason (internal wire / test seam)"
 
 # --- every plain documented row exists in code (no phantom knobs) ------------
 phantom=""
@@ -162,7 +162,7 @@ while IFS= read -r name; do
 done <<EOF
 $doc_plain
 EOF
-[ -z "$phantom" ] || fail "documented env rows with no reader in bin/:$phantom - a captain can set these to no effect; delete the row or restore the reader"
+[ -z "$phantom" ] || fail "documented env rows with no reader in bin/ or src/:$phantom - a captain can set these to no effect; delete the row or restore the reader"
 
 # --- the two exec hooks stay double-keyed ------------------------------------
 grep -q 'AC_TEST_HOOKS.*AC_CURATE_SNAPSHOT_HOOK\|AC_CURATE_SNAPSHOT_HOOK' "$BIN/ac-curate.sh" || fail "curate snapshot hook site vanished - update this test"
