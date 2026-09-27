@@ -23,16 +23,15 @@
 #                                     focused retry, then non-zero + stderr -
 #                                     exit 1 the text is stranded in the
 #                                     composer, exit 2 the pane could not be
-#                                     READ so nothing was observed (when a
-#                                     claude pane's composer proof is what
-#                                     could not read it, nothing was typed;
-#                                     on the AC_SEND_UNPROVEN path the text
-#                                     was typed first), exit 3 (herdr, claude
-#                                     panes) the composer was not on screen,
-#                                     held a draft, or did not prove the
-#                                     whole message, so NOTHING was
-#                                     submitted; the CALLER decides what
-#                                     each one means
+#                                     READ, so whether the text was submitted
+#                                     is unknown - except when a claude pane's
+#                                     composer proof failed to read it before
+#                                     typing, which typed nothing - exit 3
+#                                     (herdr, claude panes) the composer was
+#                                     not on screen, held a draft, or did
+#                                     not prove the whole message, so
+#                                     NOTHING was submitted; the CALLER
+#                                     decides what each one means
 #   backend_submit_verified <id>      press Enter, ack by capture-change; the
 #                                     resubmit primitive for callers retrying
 #                                     a stranded line (re-TYPING would append
