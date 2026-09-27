@@ -402,6 +402,11 @@ case "$(cat "$FAKE_HERDR/panes/pCTL.in")" in *"short steer"*) fail "nothing may 
 # A claude pane whose composer cannot be SEEN (no rules on screen - a dialog,
 # a menu, an unreadable pane) proves nothing, so nothing is typed; --force is
 # the deliberate way to type into whatever is there.
+: >"$FAKE_HERDR/panes/pCTL.read-fails"
+err="$("$BIN/ac-send.sh" ctail 'steer into an unreadable pane' 2>&1)" && fail "an unreadable claude pane must not be typed into"
+assert_contains "$err" "delivery UNVERIFIED" "an unreadable pane is the exit-2 case, not a refused composer"
+[ -s "$FAKE_HERDR/panes/pCTL.in" ] && fail "nothing is typed into an unreadable pane"
+rm -f "$FAKE_HERDR/panes/pCTL.read-fails"
 rm -f "$FAKE_HERDR/panes/pCTL.claude-composer"
 err="$("$BIN/ac-send.sh" ctail 'steer into the unknown' 2>&1)" && fail "an unseen claude composer must not be typed into"
 assert_contains "$err" "cannot see the composer" "the refusal says why"

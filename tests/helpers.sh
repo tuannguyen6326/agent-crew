@@ -392,6 +392,7 @@ hold_close() {
 #                                 characters, the tail a long send into claude
 #                                 leaves in its composer (measured live)
 #   `pane send-keys <p> ctrl+u` clears the composer
+#   $FAKE_HERDR/panes/<p>.read-fails  `pane read` of this pane fails outright
 #   $FAKE_HERDR/panes/<p>.drop-enters  strand knob: "<count> [<pattern>]" -
 #                                 the next <count> enters whose composer
 #                                 matches <pattern> (default: any) are
@@ -694,6 +695,7 @@ case "${1:-} ${2:-}" in
     rm -f "$d/panes/$3.reported"; exit 0 ;;
   "pane read")
     [ -f "$d/panes/$3.buf" ] || exit 1
+    [ -f "$d/panes/$3.read-fails" ] && exit 1
     cat "$d/panes/$3.buf"
     if [ -f "$d/panes/$3.claude-composer" ] || grep -q 'claude --' "$d/panes/$3.buf" 2>/dev/null; then
       rule='────────────────────────────────'

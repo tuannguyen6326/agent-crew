@@ -23,11 +23,14 @@
 #                                     focused retry, then non-zero + stderr -
 #                                     exit 1 the text is stranded in the
 #                                     composer, exit 2 the pane could not be
-#                                     READ so nothing was observed, exit 3
-#                                     (herdr, claude panes) the composer did
-#                                     not prove the whole message or held a
-#                                     draft, so NOTHING was submitted; the
-#                                     CALLER decides what each one means
+#                                     READ so nothing was observed (for a
+#                                     claude pane on herdr: before anything
+#                                     was typed), exit 3 (herdr, claude
+#                                     panes) the composer was not on screen,
+#                                     held a draft, or did not prove the
+#                                     whole message, so NOTHING was
+#                                     submitted; the CALLER decides what
+#                                     each one means
 #   backend_submit_verified <id>      press Enter, ack by capture-change; the
 #                                     resubmit primitive for callers retrying
 #                                     a stranded line (re-TYPING would append
@@ -1061,9 +1064,9 @@ herdr_composer_text_pane() {
   # the rows between the LAST TWO horizontal rules of the styled screen, with
   # the dim (SGR 2) hint an EMPTY composer shows, the `❯` glyph and every
   # escape removed (shape measured on claude 2.1.283). Exit 1 when the screen
-  # carries no such structure, so the caller keeps its unproven path.
+  # carries no such structure, 2 when the pane could not be read at all.
   local cap r1 r2
-  cap="$(herdr_cli pane read "$1" --source recent --lines 200 --ansi 2>/dev/null)" || return 1
+  cap="$(herdr_cli pane read "$1" --source recent --lines 200 --ansi 2>/dev/null)" || return 2
   cap="$(printf '%s\n' "$cap" | tail -n "$2")"
   r2="$(printf '%s\n' "$cap" | LC_ALL=C grep -n '\(─\)\{8,\}' | tail -1 | cut -d: -f1)"
   r1="$(printf '%s\n' "$cap" | LC_ALL=C grep -n '\(─\)\{8,\}' | tail -2 | head -1 | cut -d: -f1)"
@@ -1119,8 +1122,13 @@ backend_send_line_herdr() {
   pane="$(herdr_pane "$id")"
   if [ "$(ac_meta_get "$(ac_task_meta "$id")" harness 2>/dev/null)" = claude ] \
     && [ "${AC_SEND_UNPROVEN:-0}" != 1 ]; then
-    if ! pre="$(herdr_composer_text_pane "$pane" 20)"; then
-      printf 'ac-backend: cannot see the composer of %s (no claude composer on screen, or the pane could not be read) - NOTHING was typed; peek it (ac-peek.sh %s), or type anyway with ac-send.sh %s --force\n' \
+    rc=0; pre="$(herdr_composer_text_pane "$pane" 20)" || rc=$?
+    if [ "$rc" = 2 ]; then
+      printf 'ac-backend: could not read the pane of %s - NOTHING was typed or submitted (peek it: ac-peek.sh %s)\n' \
+        "$(backend_target_herdr "$id")" "$id" >&2
+      return 2
+    elif [ "$rc" != 0 ]; then
+      printf 'ac-backend: cannot see the composer of %s (no claude composer on screen) - NOTHING was typed; peek it (ac-peek.sh %s), or type anyway with ac-send.sh %s --force\n' \
         "$(backend_target_herdr "$id")" "$id" "$id" >&2
       return 3
     fi
