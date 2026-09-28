@@ -13,7 +13,9 @@
 #   ac-know.sh cite   --home <abs> --repo <dir>
 #                     --quote <text-quoted-from-the-entry> [--by <family>]
 #   ac-know.sh recall <question words>... --home <abs> --repo <dir>
-#                     [--max <n>] [--bytes <n>]
+#                     [--max <n>] [--bytes <n>] [-- <question words>...]
+#                     (a quoted multi-word question may start with -; a
+#                     one-word question that does goes after --)
 #   ac-know.sh verify --home <abs> --repo <dir>   (leaves a digest stamp)
 #   ac-know.sh scope-proposal --home <abs> --repo <dir> --family <fam>
 #                     (--src-file <path>:<line> | --src-cmd <command>) [--at <ref>]
@@ -541,7 +543,10 @@ fact_live_candidates() {
   # entry is not "nothing matched" - it is a different, sayable defect
   # (repo-knowledge-superseded-set-is-loaded-never-searched).
   local f="$1" quote="$2" by="$3"
-  awk -v q="$quote" -v by="$by" '
+  # ENVIRON, not -v: -v cooks backslash escapes, so a verbatim quote of an
+  # entry carrying `\d` would stop matching that entry.
+  QQ="$quote" BY="$by" awk '
+    BEGIN { q = ENVIRON["QQ"]; by = ENVIRON["BY"] }
     /^- fact / {
       subj = $0
       sub(/^- fact /, "", subj)
@@ -598,13 +603,15 @@ fact_near_duplicates() {
   # families verifying the same subject - and stays silent on the ordinary case
   # of many facts about one file.
   local live="$1" fact="$2"
-  awk -v newfact="$fact" '
+  # ENVIRON, not -v: the guard must judge the bytes `add` writes, not an
+  # escape-cooked copy of them.
+  NEWFACT="$fact" awk '
     function toks(s, out,   n, i, w, arr) {
       n = split(tolower(s), arr, /[^a-z0-9_.\/-]+/)
       for (i = 1; i <= n; i++) { w = arr[i]; if (length(w) >= 5) out[w] = 1 }
       return length(out)
     }
-    BEGIN { nn = toks(newfact, NT) }
+    BEGIN { nn = toks(ENVIRON["NEWFACT"], NT) }
     /^- fact / {
       subj = $0
       sub(/^- fact /, "", subj)
@@ -869,17 +876,23 @@ $matches"
 # of the output says so.
 cmd_recall() {
   local home_flag="" repo="" query="" max=8 bytes=8192
-  local rec live n_scene=0 n_fact=0 printed=0 shown_bytes=0 truncated=0 floor
+  local rec n_scene=0 n_fact=0 printed=0 shown_bytes=0 truncated=0 floor
   while [ $# -gt 0 ]; do
     case "$1" in
       --home) home_flag="${2:-}"; shift 2 ;;
       --repo) repo="${2:-}"; shift 2 ;;
       --max) max="${2:-}"; shift 2 ;;
       --bytes) bytes="${2:-}"; shift 2 ;;
-      -*) ac_die "unknown flag: $1" ;;
+      --) shift; break ;;
+      # A quoted question may start with -, but a bare dash-word is a mistyped
+      # flag: as a query term it raises the floor and matches nothing, which
+      # prints a false absence instead of a refusal.
+      -*[[:space:]]*) query="${query:+$query }$1"; shift ;;
+      -*) ac_die "unknown flag: $1 (a question word that starts with - goes after --)" ;;
       *) query="${query:+$query }$1"; shift ;;
     esac
   done
+  [ $# -eq 0 ] || query="${query:+$query }$*"
   [ -n "$query" ] || reject "no question - pass the order's subject/mechanism/terms"
   case "$max" in ''|*[!0-9]*) ac_die "--max must be a count (got: '$max')" ;; esac
   case "$bytes" in ''|*[!0-9]*) ac_die "--bytes must be a byte count (got: '$bytes')" ;; esac
@@ -922,17 +935,7 @@ cmd_recall() {
   local fact_tsv fheat line subj quote
   fact_tsv="$(mktemp)"
   if [ -f "$rec" ]; then
-    live="$(mktemp)"; record_live "$rec" >"$live"
-    while IFS= read -r line; do
-      case "$line" in '- fact '*) ;; *) continue ;; esac
-      hits="$(recall_hits "$query" "$line")"
-      [ "$hits" -ge "$floor" ] || continue
-      fheat="${line% | by: *}"
-      case "$fheat" in *" | heat: "*) fheat="${fheat##* | heat: }" ;; *) fheat=0 ;; esac
-      case "$fheat" in ''|*[!0-9]*) fheat=0 ;; esac
-      printf '%s\t%s\t%s\n' "$hits" "$fheat" "$line" >>"$fact_tsv"
-    done <"$live"
-    rm -f "$live"
+    record_live "$rec" | recall_fact_rows "$query" "$floor" >"$fact_tsv"
   fi
   if [ -s "$fact_tsv" ]; then
     printf '== facts (L1 - repo-knowledge) ==\n'
@@ -941,8 +944,10 @@ cmd_recall() {
       subj="${line#- fact }"; subj="${subj%% | src:*}"
       printf '  (hits %s, heat %s) %s\n' "$hits" "$fheat" "$line"
       # The cite hand-over quotes a phrase from the entry's OWN text, which is
-      # how ac-know.sh addresses an entry - never a line number.
-      quote="$(printf '%s' "$subj" | cut -c1-60)"
+      # how ac-know.sh addresses an entry - never a line number. Unescaped, an
+      # apostrophe in it ends the single-quoted phrase and the line no longer
+      # parses.
+      quote="$(printf '%s' "$subj" | cut -c1-60 | sed "s/'/'\\\\''/g")"
       printf '    cite: ac-know.sh cite --repo <clone> --quote %s\n' "'$quote'"
       printed=$((printed + 1)); n_fact=$((n_fact + 1))
       shown_bytes=$((shown_bytes + ${#line}))
@@ -954,7 +959,9 @@ cmd_recall() {
   [ ! -s "$fact_tsv" ] || total_f="$(wc -l <"$fact_tsv" | tr -d ' ')"
   rm -f "$fact_tsv"
 
-  if [ "$printed" -eq 0 ]; then
+  # Every hit is either printed or cut, so only "neither" is an absence: a zero
+  # budget that cut them all is a truncation, stated below like any other.
+  if [ "$printed" -eq 0 ] && [ "$truncated" -eq 0 ]; then
     printf 'no hit in any layer for: %s (needed %s of its distinctive terms)\n' "$query" "$floor"
     printf '(state the absence explicitly in the brief - intake-triage skill)\n'
     return 0
@@ -990,21 +997,49 @@ recall_floor() {
     }'
 }
 
+# hits_in(text) - how many DISTINCTIVE query terms (>=4 chars, deduped,
+# case-folded, from ENVIRON["QQ"]) appear as substrings of the text. Both
+# recall tiers splice it in, so they rank by one measure.
+recall_measure='
+  function toks(s, out,   n, i, w, arr) {
+    n = split(tolower(s), arr, /[^a-z0-9_.\/-]+/)
+    for (i = 1; i <= n; i++) { w = arr[i]; if (length(w) >= 4) out[w] = 1 }
+  }
+  function hits_in(text,   t, w, h) {
+    t = tolower(text); h = 0
+    for (w in Q) if (index(t, w) > 0) h++
+    return h
+  }
+  BEGIN { toks(ENVIRON["QQ"], Q) }'
+
 recall_hits() {
-  # recall_hits <query> <text> - how many DISTINCTIVE query terms (>=4 chars,
-  # deduped, case-folded) appear in the text. The same mechanical measure the
-  # duplicate guard uses, so one idea of "these are about the same thing" is
-  # implemented once in this file.
-  QQ="$1" TT="$2" awk '
-    function toks(s, out,   n, i, w, arr) {
-      n = split(tolower(s), arr, /[^a-z0-9_.\/-]+/)
-      for (i = 1; i <= n; i++) { w = arr[i]; if (length(w) >= 4) out[w] = 1 }
+  # recall_hits <query> <text> - hits_in over one text (a whole scene file).
+  QQ="$1" TT="$2" awk "$recall_measure"'
+    BEGIN { print hits_in(ENVIRON["TT"]) }'
+}
+
+recall_fact_rows() {
+  # recall_fact_rows <query> <floor> - the live section on stdin; one
+  # `<hits>\t<heat>\t<line>` row per fact clearing <floor>, in record order.
+  # ONE pass on purpose: an awk fork per entry made this tier ~2 s over
+  # drydock's 681 live facts (2026-09-28); one pass is ~0.05 s. Heat is what
+  # follows the LAST ` | heat: ` before the LAST ` | by: `, and anything but
+  # digits reads as 0.
+  QQ="$1" FLOOR="$2" awk "$recall_measure"'
+    function rindex(s, t,   i, j) {
+      i = 0
+      while ((j = index(substr(s, i + 1), t)) > 0) i += j
+      return i
     }
-    BEGIN {
-      toks(ENVIRON["QQ"], Q)
-      t = tolower(ENVIRON["TT"])
-      for (w in Q) if (index(t, w) > 0) hits++
-      print hits + 0
+    /^- fact / {
+      h = hits_in($0)
+      if (h < ENVIRON["FLOOR"] + 0) next
+      p = $0
+      if ((i = rindex(p, " | by: ")) > 0) p = substr(p, 1, i - 1)
+      heat = 0
+      if ((i = rindex(p, " | heat: ")) > 0) heat = substr(p, i + 9)
+      if (heat == "" || heat ~ /[^0-9]/) heat = 0
+      printf "%s\t%s\t%s\n", h, heat, $0
     }'
 }
 
