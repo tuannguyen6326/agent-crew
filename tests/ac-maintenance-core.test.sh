@@ -38,6 +38,19 @@ if ac_curate_reset "$ccaptured"; then
 fi
 assert_eq "$(ac_meta_get "$AC_HOME/state/.curate.meta" runs_since)" "1" "Curate late tick survives an old reset"
 
+# A lock that is not acquired returns the same 1 a generation mismatch does, so
+# only stderr tells the caller which fact it holds (F19). The lock is forced
+# shut rather than held, which would cost the real 10s timeout per call.
+assert_eq "$(ac_learn_reset "$captured" 2>&1 || true)" "" "a generation mismatch stays silent"
+for cadence_call in "ac_learn_reset $(ac_learn_generation)" ac_curate_tick \
+  "ac_curate_reset $(ac_curate_generation)"; do
+  lockerr="$( (ac_lock_acquire() { return 1; }; $cadence_call) 2>&1 >/dev/null )" \
+    && fail "$cadence_call must still return 1 when its cadence lock is not acquired"
+  assert_contains "$lockerr" "cadence lock" "$cadence_call announces a lock failure instead of returning a bare 1"
+done
+assert_eq "$(ac_learn_due)" "1 8" "a lock-refused Learning reset leaves the counter due"
+assert_eq "$(ac_curate_due)" "1 5" "a lock-refused Curate tick or reset leaves the counter unchanged"
+
 # Closed maintenance plans accept only the named schema, fields, operations,
 # and contained relative paths.
 run="$AC_HOME/data/learning-1"
@@ -56,7 +69,13 @@ cat >"$run/plan.json" <<EOF
 EOF
 ac_maintenance_plan_validate "$run/plan.json" "$run"
 
-for bad in unknown absolute traversal nested-traversal glob shell; do
+# A document ahead of a valid one must be judged too: `jq -e` alone reads only
+# the last output, while every per-action loop walks the actions of all of them.
+escape_doc="{\"actions\":[{\"op\":\"execute-shell\",\"target\":\"records/../../escaped.txt\",\"old_sha256\":\"-\",\"new_sha256\":\"$sha\",\"staged\":\"staged/skills/example/SKILL.md\",\"extra\":\"x\"}]}"
+mkdir -p "$AC_HOME/skills" "$TMP/outside"
+ln -s "$TMP/outside" "$AC_HOME/skills/linked"
+for bad in unknown absolute traversal nested-traversal glob shell multi-document repeated-document \
+  symlink-component; do
   case "$bad" in
     unknown) jq '.actions[0].op="execute-shell"' "$run/plan.json" >"$run/bad.json" ;;
     absolute) jq '.actions[0].target="/tmp/escape"' "$run/plan.json" >"$run/bad.json" ;;
@@ -64,11 +83,24 @@ for bad in unknown absolute traversal nested-traversal glob shell; do
     nested-traversal) jq '.actions[0].target="skills/example/../../../escape"' "$run/plan.json" >"$run/bad.json" ;;
     glob) jq '.actions[0].target="skills/*/SKILL.md"' "$run/plan.json" >"$run/bad.json" ;;
     shell) jq '.shell="rm anything"' "$run/plan.json" >"$run/bad.json" ;;
+    multi-document) { printf '%s\n' "$escape_doc"; cat "$run/plan.json"; } >"$run/bad.json" ;;
+    repeated-document) cat "$run/plan.json" "$run/plan.json" >"$run/bad.json" ;;
+    symlink-component) jq '.actions[0].target="skills/linked/SKILL.md"' "$run/plan.json" >"$run/bad.json" ;;
   esac
   if ac_maintenance_plan_validate "$run/bad.json" "$run" >/dev/null 2>&1; then
     fail "closed plan validator accepted $bad input"
   fi
 done
+rm "$AC_HOME/skills/linked"
+ln -s plan.json "$run/plan-link.json"
+if ac_maintenance_plan_validate "$run/plan-link.json" "$run" >/dev/null 2>&1; then
+  fail "closed plan validator accepted a plan that is a symlink"
+fi
+{ printf '%s\n' "$escape_doc"; cat "$run/plan.json"; } >"$run/multi.json"
+if ac_maintenance_apply "$run/multi.json" "$run" >/dev/null 2>&1; then
+  fail "apply must refuse a plan stream holding more than one document"
+fi
+assert_no_file "$TMP/escaped.txt" "a multi-document plan must never write outside AC_HOME"
 
 # Only a closed, hash-bound maintenance receipt can authorize the plan.
 plan_sha="$(ac_sha256_file "$run/plan.json")"
@@ -104,6 +136,25 @@ sed 's/action_plan_sha256: \".*\"/action_plan_sha256: \"bad\"/' \
 if ac_maintenance_receipt_validate "$run/bad-decision.md" "$run/plan.json" "$run/manifest" >/dev/null 2>&1; then
   fail "a receipt with a mismatched action-plan hash must not authorize apply"
 fi
+# Each variant differs from the valid receipt in exactly one rule, so each
+# refusal is owed to that rule alone.
+for bad in extra-key duplicate-key schema no-grounds no-process subject mode \
+  input-sha environment-error; do
+  case "$bad" in
+    extra-key) awk '{ print } /^reviewed_at:/ { print "note: \"x\"" }' ;;
+    duplicate-key) awk '{ print } /^model:/ { print }' ;;
+    schema) sed 's#^schema: ".*"$#schema: "agentcrew.captain-decision/v1"#' ;;
+    no-grounds) awk '/^## Grounds$/ { skip = 1; next } /^## / { skip = 0 } !skip' ;;
+    no-process) awk '/^## Proposed Process$/ { skip = 1; next } /^## / { skip = 0 } !skip' ;;
+    subject) sed 's/^subject: ".*"$/subject: "other"/' ;;
+    mode) sed 's/^mode: ".*"$/mode: "curate"/' ;;
+    input-sha) sed "s/^input_manifest_sha256: \".*\"$/input_manifest_sha256: \"$plan_sha\"/" ;;
+    environment-error) sed 's/^decision: ".*"$/decision: "environment-error"/' ;;
+  esac <"$run/decision.md" >"$run/bad-decision.md"
+  if ac_maintenance_receipt_validate "$run/bad-decision.md" "$run/plan.json" "$run/manifest" >/dev/null 2>&1; then
+    fail "the receipt boundary accepted a receipt with $bad"
+  fi
+done
 
 # Hash agreement alone never authorizes: the gate prompt PRINTS both hashes, so
 # a judge that never opened either input can echo them back. The receipt has to
@@ -372,6 +423,51 @@ EOF
 } | ac_maintenance_read_evidence "$vnrun/manifest" "$vnrun/plan.json" \
   || fail "a non-ASCII payload must not set a floor its own best line cannot reach"
 
+# BYTE-EXACT C whatever the caller's locale (captain 2026-09-28). Under UTF-8 the
+# trim's [[:space:]] also eats a U+00A0, and the host's awk, sed and grep refuse
+# a quote holding an invalid byte instead of matching it.
+nbsp="$(printf '\302\240')"
+assert_eq "$(printf '## Inputs Read\n- LABEL: value%s\n' "$nbsp" \
+  | LC_ALL=en_US.UTF-8 ac_maintenance_evidence_value LABEL)" "value$nbsp" \
+  "a U+00A0 is not whitespace to the evidence trim, whatever the locale"
+octetrun="$AC_HOME/data/learning-octet"
+mkdir -p "$octetrun/staged/records"
+octet_manifest_line="$(printf 'A manifest line carrying \377 one invalid byte.')"
+octet_payload_line="$(printf 'A payload line carrying \377 one invalid byte.')"
+printf 'An ascii manifest line that is plain.\n%s\n' "$octet_manifest_line" >"$octetrun/manifest"
+printf 'An ascii payload line that is plain.\n%s\n' "$octet_payload_line" >"$octetrun/staged/records/octet.md"
+octet_new="$(ac_sha256_file "$octetrun/staged/records/octet.md")"
+cat >"$octetrun/plan.json" <<EOF
+{"schema":"agentcrew.maintenance-plan/v1","mode":"learning","run_id":"learning-octet","subject":"octet","input_manifest_sha256":"$(ac_sha256_file "$octetrun/manifest")","actions":[{"op":"rewrite-ledger","target":"records/octet.md","old_sha256":"-","new_sha256":"$octet_new","staged":"staged/records/octet.md"}]}
+EOF
+octet_evidence() {
+  # octet_evidence <manifest-quote> <payload-quote>
+  printf '## Inputs Read\n- INPUT MANIFEST QUOTE: %s\n- ACTION PLAN NEW SHA-256: %s\n- STAGED PAYLOAD QUOTE: %s\n' \
+    "$1" "$octet_new" "$2" \
+    | LC_ALL=en_US.UTF-8 ac_maintenance_read_evidence "$octetrun/manifest" "$octetrun/plan.json"
+}
+octet_evidence "$octet_manifest_line" 'An ascii payload line that is plain.' \
+  || fail "a manifest quote holding an invalid UTF-8 byte matches byte-wise under a UTF-8 caller"
+octet_evidence 'An ascii manifest line that is plain.' "$octet_payload_line" \
+  || fail "a payload quote holding an invalid UTF-8 byte matches byte-wise under a UTF-8 caller"
+if octet_evidence "$(printf 'A manifest line carrying \376 one invalid byte.')" \
+  'An ascii payload line that is plain.'; then
+  fail "byte-wise matching still refuses a quote whose invalid byte is not the manifest's"
+fi
+{
+  printf -- '---\nschema: "agentcrew.maintenance-gate/v1"\nmode: "learning"\nsubject: "octet"\n'
+  printf 'decision: "continue"\nauthority: "second-\377chief"\nengine: "codex"\nmodel: "gate-model"\n'
+  printf 'input_manifest_sha256: "%s"\naction_plan_sha256: "%s"\n' \
+    "$(ac_sha256_file "$octetrun/manifest")" "$(ac_sha256_file "$octetrun/plan.json")"
+  printf 'reviewed_at: "2026-07-26T00:00:00Z"\n---\n## Grounds\nRecoverable.\n'
+  printf '## Inputs Read\n- INPUT MANIFEST QUOTE: %s\n- ACTION PLAN NEW SHA-256: %s\n- STAGED PAYLOAD QUOTE: %s\n' \
+    "$octet_manifest_line" "$octet_new" "$octet_payload_line"
+  printf '## Proposed Process\nApply the plan.\n'
+} >"$octetrun/decision.md"
+assert_eq "$(LC_ALL=en_US.UTF-8 ac_maintenance_receipt_validate "$octetrun/decision.md" \
+  "$octetrun/plan.json" "$octetrun/manifest")" "continue" \
+  "the settled receipt holding those quotes validates byte-wise under a UTF-8 caller"
+
 # Applying a validated plan is backup-first, journaled, atomic, and idempotent.
 ac_maintenance_apply "$run/plan.json" "$run"
 assert_eq "$(cat "$AC_HOME/skills/example/SKILL.md")" "skill" "validated write-skill action applied"
@@ -493,6 +589,65 @@ assert_eq "$(ac_maintenance_incomplete "$txroot")" "" "and is no longer named as
 assert_contains "$("$BIN/ac-learn.sh" maintenance status)" "no incomplete" \
   "a clean loop SAYS so - silence is indistinguishable from a broken query"
 
+# --- apply's own refusals, each on an otherwise valid plan -------------------
+guard_plan() {
+  # guard_plan <name> - a valid one-action plan whose transaction is
+  # learning-<name>-<name> and whose target is skills/<name>/SKILL.md.
+  local r="$AC_HOME/data/learning-$1"
+  mkdir -p "$r/staged/skills/$1"
+  printf '%s skill\n' "$1" >"$r/staged/skills/$1/SKILL.md"
+  jq -n --arg n "$1" --arg m "$manifest_sha" \
+    --arg s "$(ac_sha256_file "$r/staged/skills/$1/SKILL.md")" \
+    '{schema: "agentcrew.maintenance-plan/v1", mode: "learning", run_id: ("learning-" + $n),
+      subject: $n, input_manifest_sha256: $m,
+      actions: [{op: "write-skill", target: ("skills/" + $n + "/SKILL.md"), old_sha256: "-",
+        new_sha256: $s, staged: ("staged/skills/" + $n + "/SKILL.md")}]}' >"$r/plan.json"
+}
+guard_apply() { ac_maintenance_apply "$AC_HOME/data/learning-$1/plan.json" "$AC_HOME/data/learning-$1"; }
+
+guard_plan blocked
+mkdir -p "$txroot/learning-elsewhere"
+printf 'status=applying\n' >"$txroot/learning-elsewhere/journal"
+guard_apply blocked 2>/dev/null && fail "apply must refuse while another transaction is unsettled"
+assert_no_file "$AC_HOME/skills/blocked/SKILL.md" "a transaction refused for another's claim writes nothing"
+rm -rf "$txroot/learning-elsewhere"
+
+guard_plan replanned
+mkdir -p "$txroot/learning-replanned-replanned"
+printf 'plan_sha256=%s\nstatus=applying\n' "$manifest_sha" >"$txroot/learning-replanned-replanned/journal"
+guard_apply replanned 2>/dev/null && fail "apply must refuse a plan other than the one its journal recorded"
+assert_no_file "$AC_HOME/skills/replanned/SKILL.md" "a different plan under a recorded transaction writes nothing"
+rm -rf "$txroot/learning-replanned-replanned"
+
+guard_plan unbacked
+mkdir -p "$txroot/learning-unbacked-unbacked"
+printf 'plan_sha256=%s\nstatus=applying\nbackup=%s\n' \
+  "$(ac_sha256_file "$AC_HOME/data/learning-unbacked/plan.json")" "$TMP/gone.tar.gz" \
+  >"$txroot/learning-unbacked-unbacked/journal"
+held="$(guard_apply unbacked 2>&1)" && fail "a replay whose recorded backup is gone must not mutate without its floor"
+assert_contains "$held" "pre-mutation backup is missing" "the replay names the missing floor"
+assert_no_file "$AC_HOME/skills/unbacked/SKILL.md" "a replay without its backup writes nothing"
+rm -rf "$txroot/learning-unbacked-unbacked"
+
+# Bytes that change between validation and the copy: a cp that corrupts its
+# output stands in for the race, which no fixture can time.
+guard_plan tampered
+held="$(cp() { command cp "$@" && printf 'tampered\n' >>"$2"; }; guard_apply tampered 2>&1)" \
+  && fail "copied bytes that no longer match the planned hash must never replace the target"
+assert_contains "$held" "do not match the planned hash" "the hold names the hash mismatch"
+assert_no_file "$AC_HOME/skills/tampered/SKILL.md" "the mismatched copy never reaches the target"
+rm -rf "$txroot/learning-tampered-tampered"
+
+# Callers read apply's bare 1 as a stale receipt or a refused plan
+# (bin/ac-learn.sh:1006/2197) or point at "the cause above" (:2291), so a busy
+# writer lock has to name itself.
+guard_plan busy
+lockerr="$( (ac_lock_acquire() { return 1; }; guard_apply busy) 2>&1 >/dev/null )" \
+  && fail "apply must still return 1 when its writer lock is not acquired"
+assert_contains "$lockerr" "writer lock" "apply announces a busy writer lock instead of returning a bare 1"
+assert_no_file "$AC_HOME/skills/busy/SKILL.md" "a transaction refused for a busy lock writes nothing"
+assert_no_file "$txroot/learning-busy-busy" "a transaction refused for a busy lock claims nothing"
+
 # --- AC-1.4: ac_records_backup reaches crewdomain packages -------------------
 # A crewdomain package holds mutable truth (its backlog and its projects detail)
 # OUTSIDE records/, so without this it sits outside the reversibility floor.
@@ -548,5 +703,38 @@ rm -f "$AC_HOME/crewdomains/payments/projects/alpha"
 tar -xzf "$arc" -C "$AC_HOME"
 [ -L "$AC_HOME/crewdomains/payments/projects/alpha" ] \
   || fail "AC-1.4: the restored view entry is a SYMLINK, not a materialised clone"
+
+# Two same-prefix backups inside one second: an overwrite would leave the first
+# transaction's pre-mutation archive holding the bytes the second one saw.
+first_arc="$(ac_now() { printf '1800000000\n'; }; ac_records_backup same)"
+first_sum="$(ac_sha256_file "$first_arc")"
+printf 'written after the first backup\n' >"$AC_HOME/records/later.md"
+second_arc="$(ac_now() { printf '1800000000\n'; }; ac_records_backup same)"
+[ "$second_arc" != "$first_arc" ] || fail "a same-second backup must get its own archive name"
+assert_eq "$(ac_sha256_file "$first_arc")" "$first_sum" "a same-second backup never overwrites the earlier archive"
+case "$second_arc" in
+  "$AC_HOME/state/backups/same-"*.tar.gz) ;;
+  *) fail "a same-second backup keeps the <prefix>-*.tar.gz shape its readers glob (got $second_arc)" ;;
+esac
+tar -tzf "$second_arc" | grep -q 'records/later.md' || fail "the second archive holds its own pre-state"
+# The name is claimed before tar runs, so a failed tar must not leave that
+# claimed file behind to pass for a floor, nor a path to it.
+failed_arc="$(tar() { return 1; }; ac_records_backup tarfail)" \
+  && fail "a backup whose tar failed must not report success"
+assert_eq "$failed_arc" "" "a failed backup prints no archive path"
+ls "$AC_HOME/state/backups/"tarfail-* >/dev/null 2>&1 \
+  && fail "a failed backup leaves no archive behind"
+# The set -e callers (ac-domain.sh, ac-deputy.sh, ac_learn_backup) stop on this
+# failure with nothing else to say, so the backup itself names what it could
+# not create. Skipped under root, which writes through a 0555 dir.
+if [ "$(id -u)" != 0 ]; then
+  chmod 555 "$AC_HOME/state/backups"
+  ro_arc="$(ac_records_backup readonly 2>"$TMP/readonly.err")" \
+    && { chmod 755 "$AC_HOME/state/backups"; fail "a backup into an unwritable backups dir must not report success"; }
+  chmod 755 "$AC_HOME/state/backups"
+  assert_eq "$ro_arc" "" "an uncreatable backup prints no archive path"
+  assert_contains "$(cat "$TMP/readonly.err")" "$AC_HOME/state/backups" \
+    "an uncreatable backup names the backups dir instead of failing silently"
+fi
 
 pass

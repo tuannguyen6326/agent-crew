@@ -212,7 +212,7 @@ ac_learn_due() {
 
 ac_records_backup() {
   # ac_records_backup <prefix> - snapshot the fleet's mutable truth (records/ +
-  # the skills store) to state/backups/<prefix>-<epoch>.tar.gz, and print its
+  # the skills store) to state/backups/<prefix>-<epoch>[-<n>].tar.gz, and print its
   # path. The shared body of the layer-3 reversibility floor (Q8, captain "k
   # dùng git, track bằng backup"): ac_learn_backup passes `learn`, the records
   # CURATE pass (ac-curate.sh) passes `curate`, so a backup's provenance is
@@ -223,14 +223,28 @@ ac_records_backup() {
   # resolved (and created) first so the tar always has both members even on a
   # fresh home; paths are stored relative to the home so a restore is
   # `tar -xzf <arc> -C <home>`.
-  local prefix="$1" home bdir arc
+  local prefix="$1" home bdir arc now n=0
   local -a members
   home="$(ac_home)"
   ac_records_dir >/dev/null   # ensure records/ exists
   ac_skills_dir >/dev/null    # ensure skills/ exists
   bdir="$(ac_state_dir)/backups"
   mkdir -p "$bdir"
-  arc="$bdir/$prefix-$(ac_now).tar.gz"
+  # NEVER-CLOBBER: the name is claimed with noclobber's exclusive create before
+  # tar writes it, because tar -czf truncates whatever already holds the name and
+  # two backups inside one second share an epoch - the earlier transaction's
+  # pre-mutation archive would then hold the later one's pre-state instead. A
+  # failed tar drops its claim and fails, so no empty archive passes for a floor.
+  now="$(ac_now)"
+  arc="$bdir/$prefix-$now.tar.gz"
+  until (set -C; : >"$arc") 2>/dev/null; do
+    [ -e "$arc" ] || {
+      ac_warn "records backup: could not create $arc (is $bdir writable?) - no backup archive was taken"
+      return 1
+    }
+    n=$((n + 1))
+    arc="$bdir/$prefix-$now-$n.tar.gz"
+  done
   members=(records skills)
   # Crewdomain packages hold mutable truth too - the projects detail file and
   # the CREWMATE layer (no ledger since the crewdomain-token refactor: rows
@@ -261,13 +275,13 @@ ac_records_backup() {
   # The machine-owned crewmate lesson layer is mutable truth a learning
   # transaction rewrites - same reversibility floor as records/ and skills/.
   [ ! -f "$home/CREWMATE-learned.md" ] || members+=(CREWMATE-learned.md)
-  tar -czf "$arc" -C "$home" "${members[@]}"
+  tar -czf "$arc" -C "$home" "${members[@]}" || { rm -f "$arc"; return 1; }
   printf '%s\n' "$arc"
 }
 
 ac_learn_backup() {
   # ac_learn_backup - the DISTILL run's pre-run backup: ac_records_backup with
-  # the `learn` prefix (state/backups/learn-<epoch>.tar.gz). Shares its body
+  # the `learn` prefix (state/backups/learn-<epoch>[-<n>].tar.gz). Shares its body
   # with the CURATE pass's backup - see ac_records_backup.
   ac_records_backup learn
 }
@@ -291,7 +305,10 @@ ac_learn_reset() {
   local f expected="${1:-}" current lock
   f="$(ac_learn_meta)"
   lock="$(ac_state_dir)/.learn-cadence.lock"
-  ac_lock_acquire "$lock" 10 || return 1
+  ac_lock_acquire "$lock" 10 || {
+    ac_warn "learning reset: cadence lock $lock could not be acquired within 10s - the debrief counter was NOT reset and its generation did NOT advance, so a due DISTILL cycle stays due. This is a lock failure, not a newer cadence generation."
+    return 1
+  }
   ac_learn_migrate "$f"
   current="$(ac_learn_generation)"
   if [ -n "$expected" ] && [ "$expected" != "$current" ]; then
@@ -326,7 +343,10 @@ ac_curate_tick() {
   local f cur gen lock
   f="$(ac_curate_meta)"
   lock="$(ac_state_dir)/.curate-cadence.lock"
-  ac_lock_acquire "$lock" 10 || return 1
+  ac_lock_acquire "$lock" 10 || {
+    ac_warn "curate tick: cadence lock $lock could not be acquired within 10s - the learning-run counter was NOT advanced. Missing a tick only delays the next Curate pass, but a caller that assumes success will believe the counter moved when it did not."
+    return 1
+  }
   cur="$(ac_meta_get "$f" runs_since)"
   gen="$(ac_meta_get "$f" generation)"
   case "$cur" in '' | *[!0-9]*) cur=0 ;; esac
@@ -365,7 +385,10 @@ ac_curate_reset() {
   local f expected="${1:-}" current lock
   f="$(ac_curate_meta)"
   lock="$(ac_state_dir)/.curate-cadence.lock"
-  ac_lock_acquire "$lock" 10 || return 1
+  ac_lock_acquire "$lock" 10 || {
+    ac_warn "curate reset: cadence lock $lock could not be acquired within 10s - the learning-run counter was NOT reset and its generation did NOT advance, so a due Curate pass stays due. This is a lock failure, not a newer cadence generation."
+    return 1
+  }
   current="$(ac_curate_generation)"
   if [ -n "$expected" ] && [ "$expected" != "$current" ]; then
     ac_lock_release "$lock"
@@ -456,7 +479,9 @@ ac_maintenance_plan_validate() {
     || return 1
   home="$(ac_home)"
 
-  jq -e '
+  # Slurped, because `jq -e` judges only the LAST output of a stream while every
+  # loop below and in apply walks the actions of every document in the file.
+  jq -e -s 'length == 1 and (.[0] |
     type == "object"
     and keys == ["actions","input_manifest_sha256","mode","run_id","schema","subject"]
     and .schema == "agentcrew.maintenance-plan/v1"
@@ -488,7 +513,7 @@ ac_maintenance_plan_validate() {
       and (.old_sha256 | type == "string"
         and (. == "-" or test("^[0-9a-f]{64}$")))
       and (.new_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
-    )
+    ))
   ' "$plan" >/dev/null 2>&1 || return 1
 
   while IFS=$'\t' read -r op target staged expected; do
@@ -663,15 +688,17 @@ ac_maintenance_evidence_value() {
   # ac_maintenance_evidence_value <label> - stdin = the receipt, or the raw judge
   # body before it becomes one. Print the whitespace-trimmed value of the one
   # `- <label>: <value>` line inside `## Inputs Read`; return 1 unless exactly
-  # one such line exists there.
+  # one such line exists there. The scan and the trim are byte-exact C whatever
+  # the caller's locale (captain 2026-09-28): under UTF-8 the trim would also eat
+  # a U+00A0, and awk and sed both refuse a line holding an invalid byte.
   local raw
-  raw="$(awk -v want="- $1: " '
+  raw="$(LC_ALL=C awk -v want="- $1: " '
     /^## Inputs Read[[:space:]]*$/ { insec = 1; next }
     insec && /^## / { insec = 0 }
     insec && index($0, want) == 1 { line = substr($0, length(want) + 1); n++ }
     END { if (n != 1) exit 1; print line }
   ')" || return 1
-  printf '%s' "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+  printf '%s' "$raw" | LC_ALL=C sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
 _ac_maintenance_significance() {
@@ -749,6 +776,9 @@ ac_maintenance_read_evidence() {
   #     property of the staged bytes and never of the judge. The run dir is
   #     derived from the plan's own path exactly as the receipt boundary derives
   #     it, so both call sites get this check from one definition.
+  # Verbatim means BYTE-wise (captain 2026-09-28): both quote matches run under
+  # LC_ALL=C, because a UTF-8 grep refuses a quote holding an invalid byte
+  # instead of matching it.
   local manifest="$1" plan="$2"
   local body quote bare form new_sha input_sha plan_sha mode subject run_id
   local run staged_rel staged_abs other_rel floor payload payload_bare payload_ok
@@ -798,7 +828,7 @@ ac_maintenance_read_evidence() {
     payload_ok=""
     for form in "$payload" "$payload_bare"; do
       [ -n "$form" ] || continue
-      grep -qF -- "$form" "$staged_abs" || continue
+      LC_ALL=C grep -qF -- "$form" "$staged_abs" || continue
       [ "$(printf '%s\n' "$form" \
         | _ac_maintenance_significance "$run_id" "$subject" "$mode")" \
         -ge "$floor" ] || continue
@@ -814,7 +844,7 @@ ac_maintenance_read_evidence() {
   case "$bare" in \`*\`) bare="${bare#\`}"; bare="${bare%\`}" ;; esac
   for form in "$quote" "$bare"; do
     [ -n "$form" ] || continue
-    grep -qF -- "$form" "$manifest" || continue
+    LC_ALL=C grep -qF -- "$form" "$manifest" || continue
     [ "$(printf '%s\n' "$form" \
       | _ac_maintenance_significance "$run_id" "$subject" "$mode")" \
       -ge "$AC_MAINTENANCE_QUOTE_MIN" ] && return 0
@@ -825,7 +855,10 @@ ac_maintenance_read_evidence() {
 ac_maintenance_receipt_validate() {
   # ac_maintenance_receipt_validate <receipt.md> <plan.json> <manifest>
   # Print the validated decision. This is the authorization boundary shared by
-  # Learning and Curate; an `approved:` candidate header never reaches it.
+  # Learning and Curate; an `approved:` candidate header never reaches it. The
+  # frontmatter and section scans are byte-exact C (captain 2026-09-28): a UTF-8
+  # awk aborts once a regex steps over an invalid byte, and the section scan
+  # reads every line of the receipt, verbatim quotes included.
   local receipt="$1" plan="$2" manifest="$3" mode subject decision input_sha plan_sha run
   local authority
   [ -f "$receipt" ] && [ ! -L "$receipt" ] && [ -f "$manifest" ] \
@@ -833,7 +866,7 @@ ac_maintenance_receipt_validate() {
   run="$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P)" || return 1
   [ "$(basename "$run")" != plans ] || run="$(cd "$run/.." && pwd -P)"
   ac_maintenance_plan_validate "$plan" "$run" || return 1
-  awk '
+  LC_ALL=C awk '
     NR == 1 && $0 == "---" { front = 1; next }
     front && $0 == "---" { front = 0; closed = 1; next }
     front {
@@ -872,7 +905,7 @@ ac_maintenance_receipt_validate() {
     || return 1
   [ "$plan_sha" = "$(ac_maintenance_receipt_field "$receipt" action_plan_sha256)" ] \
     || return 1
-  awk '
+  LC_ALL=C awk '
     /^## Grounds[[:space:]]*$/ { section = "grounds"; next }
     /^## Proposed Process[[:space:]]*$/ { section = "process"; next }
     /^## / { section = ""; next }
@@ -960,7 +993,10 @@ ac_maintenance_apply() {
     return
   fi
 
-  ac_lock_acquire "$lock" 30 || return 1
+  ac_lock_acquire "$lock" 30 || {
+    ac_warn "maintenance apply: writer lock $lock could not be acquired within 30s - another Learning/Curate transaction holds it, so $run_id-$subject was neither claimed nor written. This is a busy lock, not a stale receipt or a refused plan."
+    return 1
+  }
   if ! ac_maintenance_plan_validate "$plan" "$run"; then
     ac_lock_release "$lock"
     return 1
