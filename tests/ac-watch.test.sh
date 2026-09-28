@@ -241,6 +241,16 @@ assert_contains "$out" "heartbeat" "config-interval idle run bounded by heartbea
 out="$(AC_LOCK_PID=$$ AC_REMOTE_POLL=0 AC_POLL=1 AC_HEARTBEAT=2 bash "$BIN/ac-watch.sh")"
 assert_contains "$out" "heartbeat" "env-off idle run bounded by heartbeat"
 [ ! -s "$polllog" ] || fail "AC_REMOTE_POLL=0 must beat config/remote-poll-interval (slot off)"
+# A zero-padded interval is the decimal number it spells. Raw, bash arithmetic
+# reads the leading 0 as octal and 09 is no octal number: the next slot was
+# never assigned, and the armed watcher died at its first slot check on an
+# unbound variable - no reason line, nothing for the chief to re-arm on.
+printf '09\n' >"$AC_HOME/config/remote-poll-interval"
+out="$(AC_LOCK_PID=$$ AC_REMOTE_POLL='' AC_POLL=1 AC_HEARTBEAT=2 bash "$BIN/ac-watch.sh" 2>/dev/null)" || true
+assert_contains "$out" "heartbeat" "a zero-padded config interval must not kill the armed watcher"
+: >"$polllog"
+AC_LOCK_PID=$$ AC_REMOTE_POLL='' bash "$BIN/ac-watch.sh" --once >/dev/null 2>&1 || true
+[ -s "$polllog" ] || fail "a zero-padded config interval is its decimal value, never the slot turned off"
 rm -f "$AC_HOME/config/remote-poll-interval"
 
 # Standing coverage is FLEET business, and idle mode does not widen it: a
@@ -840,7 +850,7 @@ wedge_survivors() {
   local p
   while read -r p; do
     [ -n "$p" ] && kill -0 "$p" 2>/dev/null && printf '%s\n' "$p"
-  done <"$FAKE_HERDR/hang-children" 2>/dev/null || true
+  done 2>/dev/null <"$FAKE_HERDR/hang-children" || true
 }
 reap_wedge_children() { local p; for p in $(wedge_survivors); do kill -9 "$p" 2>/dev/null || true; done; }
 reap_wedge_children
@@ -1444,6 +1454,25 @@ assert_contains "$(cat "$sigout")" "watcher killed externally" \
 assert_no_file "$state/.watcher-release-$wpid" \
   "... and it is consumed anyway, so it cannot mute a later kill either"
 
+# ... nor a MALFORMED one: a zero-padded epoch is all digits, and bash
+# arithmetic reads its leading 0 as octal - the kill must still read as the
+# external one it is, with no arithmetic error on the way out.
+rm -f "$state"/.last-watcher-beat* "$state/.watcher-arm.log"
+AC_LOCK_PID=$$ AC_POLL=30 AC_HEARTBEAT=300 bash "$BIN/ac-watch.sh" \
+  >"$sigout" 2>"$TMP/sig.err" &
+wpid=$!
+in_poll_wait "$wpid" "$state/.last-watcher-beat" >/dev/null \
+  || fail "the malformed-marker watcher never reached its poll wait"
+printf 'releaser=%s\ntarget=%s\nreason=config-swap\nepoch=0009\n' \
+  "$$" "$wpid" >"$state/.watcher-release-$wpid"
+kill -TERM "$wpid"
+rc=0; wait "$wpid" || rc=$?
+assert_contains "$(cat "$sigout")" "watcher killed externally" \
+  "a malformed marker quiets nothing"
+case "$(cat "$TMP/sig.err")" in
+  *"too great for base"*) fail "a zero-padded marker epoch must not reach bash arithmetic raw" ;;
+esac
+
 # (8d) A release that could not deliver its TERM WITHDRAWS its marker - a
 # marker outliving its kill is exactly the silencer (8c) exists to prevent.
 # This shape refuses at the HOME-CROSSING check (no .watch.lock.d/pid names
@@ -1503,6 +1532,15 @@ rc=0; out="$(bash "$BIN/ac-watch.sh" --release "$opid" 2>&1)" || rc=$?
 assert_eq "$rc" "2" "a scoped watcher whose room still reads PROMOTED is refused"
 assert_contains "$out" "belongs to that family" "... with the ordinary refusal"
 kill -0 "$opid" 2>/dev/null || fail "the refused watcher must survive untouched"
+
+# A tenure verb counts only where the room grammar puts one: at the START of an
+# entry. A later entry that QUOTES `> CLOSED:` on a continuation line - which
+# the real writer accepts - is prose, and must not orphan a live family.
+bash "$BIN/ac-room.sh" post famdead crewchief \
+  "$(printf 'NOTE: the old room said\n  > CLOSED: nothing to do')" >/dev/null
+rc=0; out="$(bash "$BIN/ac-watch.sh" --release "$opid" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "a tenure verb quoted on a continuation line is no demotion"
+kill -0 "$opid" 2>/dev/null || fail "a family whose room only QUOTES a CLOSED: keeps its watcher"
 
 # Demotion posts DEMOTED to the room - now the same release is ALLOWED, and it
 # must actually take the watcher down.
@@ -1877,6 +1915,18 @@ assert_contains "$out" "report:rf-t1" "the re-armed scoped watcher catches the d
 assert_eq "$(find "$state/.wake-spool.rf" -type f 2>/dev/null | wc -l | tr -d ' ')" "1" \
   "the done lands in the FAMILY spool, not the fleet's"
 
+# The gap tracker is a clock stamp like the others: zero-padded, it is all
+# digits, and bash arithmetic reads its leading 0 as octal - the whole pass
+# died. It must restart the gap, which holds the skip.
+rm -f "$state/.skip-revoked-rf" "$state/.seen-rf-t1"
+printf '0\n' >"$state/.last-watcher-beat.rf"
+printf '0009\n' >"$state/.skip-stale-since-rf"
+rc=0; out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)" || rc=$?
+assert_eq "$rc" "0" "a zero-padded re-arm gap stamp must not kill the fleet watcher"
+assert_contains "$out" "check:quiet" "a zero-padded re-arm gap stamp restarts the gap and holds the skip"
+[ "$(cat "$state/.skip-stale-since-rf")" -gt "$(( $(date +%s) - 60 ))" ] \
+  || fail "a zero-padded re-arm gap stamp is restarted at now, got $(cat "$state/.skip-stale-since-rf")"
+
 # Beacon stale PAST the re-arm grace -> the roomchief is genuinely not
 # re-arming; the fleet revokes as a fail-safe and covers rf-t1.
 rm -f "$state/.skip-revoked-rf" "$state/.seen-rf-t1"
@@ -1939,6 +1989,16 @@ out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)" || rc=$?
 assert_eq "$rc" "0" "an unreadable beacon must not kill the fleet watcher"
 assert_contains "$out" "check:quiet" "an unreadable beacon leaves the watcher polling"
 assert_file "$state/.skip-stale-since-rf" "an unreadable beacon reads as no beat, so the re-arm gap opens"
+
+# Digits-only is not the whole test: raw in the same arithmetic, a zero-padded
+# beat is read as octal and errors, so the classifier must call it unreadable.
+rm -f "$state/.seen-rf-t1" "$state/.skip-stale-since-rf"
+printf '0009\n' >"$state/.last-watcher-beat.rf"
+rc=0
+out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)" || rc=$?
+assert_eq "$rc" "0" "a zero-padded beacon must not kill the fleet watcher"
+assert_contains "$out" "check:quiet" "a zero-padded beacon leaves the watcher polling"
+assert_file "$state/.skip-stale-since-rf" "a zero-padded beacon reads as stale, so the re-arm gap opens"
 
 # Coverage down via a GONE roomchief (chief meta archived by teardown, beacon
 # still fresh) -> revoked IMMEDIATELY, with NO re-arm grace (there is no
@@ -3576,6 +3636,15 @@ out="$(bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *bs-hung*) fail "a freshly-busy pane must not wake" ;; esac
 assert_file "$state/.busy-bs-hung" "a busy pane opens a busy-run stamp"
 
+# An EMPTY run stamp (the writer truncates in place) restarts the run's clock:
+# never an arithmetic error that ends the pass, never a run as old as the epoch.
+: >"$state/.busy-bs-hung"
+rc=0; out="$(bash "$BIN/ac-watch.sh" --once)" || rc=$?
+assert_eq "$rc" "0" "an empty busy-run stamp must not kill the pass"
+case "$out" in *bs-hung*) fail "an empty busy-run stamp must not read as a run past the bound" ;; esac
+[ "$(cat "$state/.busy-bs-hung")" -gt "$(( $(date +%s) - 60 ))" ] \
+  || fail "an empty busy-run stamp is restarted at now, got '$(cat "$state/.busy-bs-hung")'"
+
 # THE POINT OF THE WHOLE PATCH: rewind the BUSY stamp past the bound while the
 # .change stamp stays FRESH - a ticking footer rewrites the tail hash every
 # poll, so a bound reading the hash clock would still be silent right here.
@@ -3770,6 +3839,25 @@ rm -rf "$AC_HOME/data/dsw" "$AC_HOME/data/gp" "$AC_HOME/data/gf" "$AC_HOME/data/
 
 reset_state
 rm -f "$state"/*.status
+
+# --- UNREADABLE IDLE STAMP ----------------------------------------------------
+# An EMPTY .change-<id> (the writers truncate in place: a read caught mid-write,
+# or a write cut short by ENOSPC) or a zero-padded one (bash arithmetic reads a
+# leading 0 as octal) killed the whole pass - rc 1, no reason line, no spool
+# record, and every re-arm died the same way until that pane's tail changed.
+# It must restart the idle clock: never the crash, and never a 56-year idle that
+# fires a false stale:.
+for bad in '' 0009; do
+  stale_pane us pUS tUS
+  printf '%s' "$bad" >"$state/.change-us"
+  rc=0; out="$(bash "$BIN/ac-watch.sh" --once)" || rc=$?
+  assert_eq "$rc" "0" "an unreadable idle stamp ('$bad') must not kill the pass"
+  assert_contains "$out" "check:quiet" "an unreadable idle stamp ('$bad') is no long idle"
+  [ "$(cat "$state/.change-us")" -gt "$(( $(date +%s) - 60 ))" ] \
+    || fail "an unreadable idle stamp ('$bad') is restarted at now, got '$(cat "$state/.change-us")'"
+  reset_state
+done
+rm -rf "$AC_HOME/data/us"
 
 # A SOLO session (AC_SOLO=1) never arms a watcher: supervision, the wake spool
 # and the fleet's one remote poller belong to the chief session.

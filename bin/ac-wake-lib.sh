@@ -127,10 +127,12 @@ ac_watcher_beat_read() {
   # is EMPTY for a usable beat and otherwise says which no-beat state this is.
   # The three are decidable from the file alone and need OPPOSITE responses:
   #   ABSENT      - no beacon: nothing has ever armed here, you have been blind.
-  #   UNREADABLE  - present but empty or non-numeric. An empty read is what a
-  #                 reader sees when it catches a truncate-then-write mid-flight
-  #                 (ac-watch.sh publishes by rename now, so this is a real
-  #                 anomaly rather than the routine race it was until 2026-07-27).
+  #   UNREADABLE  - present but empty, non-numeric, or zero-padded. An empty read
+  #                 is what a reader sees when it catches a truncate-then-write
+  #                 mid-flight (ac-watch.sh publishes by rename now, so this is a
+  #                 real anomaly rather than the routine race it was until
+  #                 2026-07-27). No ac_now epoch starts with 0, and bash
+  #                 arithmetic reads a leading 0 as octal, so 0009 is an error.
   #   STOOD DOWN  - the 0 stand_down_beacon writes on every watcher exit: the
   #                 COMMON state, "a watcher just heartbeat-exited, drain and
   #                 re-arm", not an emergency.
@@ -174,7 +176,7 @@ ac_watcher_beat_read() {
     beat="$(cat "$f" 2>/dev/null || true)"
     case "$beat" in
       0) note='no beat on record (a watcher stood its beacon down on exit - drain and re-arm)' ;;
-      ''|*[!0-9]*) beat=0; note='no beat on record (the beacon is unreadable)' ;;
+      ''|0?*|*[!0-9]*) beat=0; note='no beat on record (the beacon is unreadable)' ;;
     esac
   fi
   printf '%s %s\n' "$beat" "$note"
