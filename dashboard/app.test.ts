@@ -792,6 +792,9 @@ test("matchBacklog matches by id + text (case-insensitive) with family + section
   expect(epic[0].family).toBe("ep1");
   expect(epic[0].line).toContain("[EPIC]");
 
+  // the family is the id the board cards the row under
+  expect(matchBacklog("## Queued\n- [ ] fix_foo - underscore id", "underscore")[0].family).toBe("fix_foo");
+
   // empty / whitespace query -> [] (no match-everything on a blank box)
   expect(matchBacklog(md, "").length).toBe(0);
   expect(matchBacklog(md, "   ").length).toBe(0);
@@ -1135,7 +1138,7 @@ test("renderMarkdown is XSS-safe and does not mangle snake_case", () => {
 // --- dashboard-board: backlog-line field parser -----------------------------
 
 test("parseBacklogLine pulls id/text/repo/pr/merged/epic from one raw line", () => {
-  const done = "- [x] evidence-harness [EPIC->1 task] - P0 harness - https://github.com/o/r/pull/2 (merged 2026-08-02)";
+  const done = "- [x] evidence-harness [EPIC] - P0 harness - https://github.com/o/r/pull/2 (merged 2026-08-02)";
   const f = parseBacklogLine(done);
   expect(f.id).toBe("evidence-harness");
   expect(f.text).toContain("P0 harness");
@@ -1143,6 +1146,7 @@ test("parseBacklogLine pulls id/text/repo/pr/merged/epic from one raw line", () 
   expect(f.merged).toBe("2026-08-02");
   expect(f.isEpic).toBe(true);
   expect(f.epic).toBe(""); // an epic line carries [EPIC], not an epic:<id> membership
+  expect(parseBacklogLine("- [x] evidence-harness [EPIC->1 task] - P0 harness").isEpic).toBe(false);
 
   const story = "- [ ] story-a - alpha work; epic:ep1 (repo: agent-crew, since 2026-08-02)";
   const s = parseBacklogLine(story);
@@ -1207,8 +1211,9 @@ test("storyState distinguishes done/failed/abandoned within the done section", (
   expect(storyState("- [x] a - alpha; epic:e (merged 2026-08-02)", "done")).toBe("done");
   expect(storyState("- [x] a [failed] - alpha; epic:e - why (2026-08-02)", "done")).toBe("failed");
   expect(storyState("- [x] a [abandoned] - alpha; epic:e - why (2026-08-02)", "done")).toBe("abandoned");
-  // case-insensitive marker, matching parseBacklog's own [ xX] tolerance
-  expect(storyState("- [x] a [FAILED] - alpha; epic:e - why", "done")).toBe("failed");
+  // the terminal is the exact token right after the id, as src/backlog.ts reads it
+  expect(storyState("- [x] a [FAILED] - alpha; epic:e - why", "done")).toBe("done");
+  expect(storyState("- [x] a [x] [failed] - alpha; epic:e - why", "done")).toBe("done");
 });
 
 test("storyState never false-positives on the marker word appearing in the description", () => {
@@ -1216,6 +1221,162 @@ test("storyState never false-positives on the marker word appearing in the descr
   // boundary, :443-444) - a description mentioning "failed" past that boundary
   // must not flip a real done story to failed
   expect(storyState("- [x] a - the retry failed once then abandoned the old plan; epic:e", "done")).toBe("done");
+});
+
+// --- dashboard-board: the backlog twin agrees with src/backlog.ts -----------
+// parseBacklogLine + storyState stay a separate, import-free copy of the
+// grammar (PAGE pastes them), so nothing but this differential keeps the two
+// readings of one ledger line from drifting apart.
+import { acDoneline, records } from "../src/backlog.ts";
+
+const TWIN_ROW = /^- \[[ x]\] /;
+
+// What the board must show for a line, stated in the parser's own fields;
+// null when the grammar has no row there, and the board must show no card.
+function twinWant(line: string) {
+  if (!TWIN_ROW.test(line)) return null;
+  const p = acDoneline(line);
+  return {
+    id: p.id,
+    isEpic: p.terminal === "epic",
+    state: p.terminal === "failed" || p.terminal === "abandoned" ? p.terminal : "done",
+    epic: p.epic,
+    contract: p.contract,
+    domain: p.domain,
+    merged: p.verb === "merged" ? p.date : "",
+  };
+}
+
+// boardLine is what the board reads, decoded as `enc`; the parser reads the
+// same bytes as latin1, and every compared string is re-encoded to those bytes.
+function twinDiff(boardLine: string, enc: BufferEncoding): string[] {
+  const bytes = (s: string) => Buffer.from(s, enc).toString("latin1");
+  const line = bytes(boardLine);
+  const b = parseBacklogLine(boardLine);
+  const got: Record<string, string | boolean> = {
+    id: bytes(b.id), isEpic: b.isEpic, state: storyState(boardLine, "done"),
+    epic: bytes(b.epic), contract: bytes(b.contract), domain: bytes(b.domain), merged: b.merged,
+  };
+  const want: Record<string, string | boolean> | null = twinWant(line);
+  if (!want) return got.id === "" ? [] : [`id ${JSON.stringify(line)}: board=${JSON.stringify(got.id)}, the grammar has no row`];
+  return Object.keys(want).filter((k) => got[k] !== want[k])
+    .map((k) => `${k} ${JSON.stringify(line)}: board=${JSON.stringify(got[k])} parser=${JSON.stringify(want[k])}`);
+}
+
+// One row per known divergence class, and the rows that must keep agreeing.
+const TWIN_EDGES = [
+  "- [ ] c1 [ src:cap] - lead space",
+  "- [ ] c2 [src:cap ] - trail space",
+  "- [ ] c3 [src:cap\tqa:yes] - tab-joined",
+  "- [ ] c4 [src:cap\x0bqa:yes] - VT-joined",
+  "- [ ] c5 [src:cap\xa0qa:yes] - NBSP byte",
+  "- [ ] c6 [a][src:cap] - no gap",
+  "- [ ] c7 [a [b] [src:cap] - not innermost",
+  "- [ ] c8 `[x]` [src:cap] - after a quoted group",
+  "- [ ] c9 `[src:cap]` [mode:crew-ship] - quoted first",
+  "- [ ]  c10 [src:cap] - two spaces before the id",
+  "- [ ] c11\t[src:cap] - tab after the id",
+  "- [ ] c12 [x]] [src:cap] - stray bracket",
+  "- [X] i1 - upper checkbox",
+  "-[ ] i2 - no space",
+  "- [ ]\ti3 - tab after the checkbox",
+  "  - [ ] i4 - indented",
+  "- [ ] Upper-Id - upper id",
+  "- [ ] fix_foo - underscore id",
+  "- [ ] a[b] - bracket in the id",
+  "- [ ]  i5 - two spaces",
+  "- [ ] \xc3\xa9-id - latin1 id",
+  "- [ ] e1 - x; epic:Foo_bar",
+  "- [ ] e2 - noepic:x",
+  "- [ ] e3 - x; epic:a_b (repo: r)",
+  "- [ ] p1 [EPIC] - an epic",
+  "- [ ] p2 [EPIC 3 stories] - x",
+  "- [ ] p3 - mentions [EPIC] later",
+  "- [ ] p4 [EPIC-ish] - x",
+  "- [ ] p5 [epic] - x",
+  "- [ ] p6 [x] [EPIC] - x",
+  "- [x] s1 [failed] - why (2026-01-01)",
+  "- [x] s2 [abandoned] - why (2026-01-01)",
+  "- [x] s3 [FAILED] - x",
+  "- [x] s4 [x] [failed] - x",
+  "- [x] s5 [CAPTAIN [failed]] - x",
+  "- [x] s6 [failed]\r",
+  "- [x] m1 - (merged 2026-01-01) later (reported 2026-02-02)",
+  "- [x] m2 - (merged  2026-01-01)",
+  "- [x] m3 - (MERGED 2026-01-01)",
+  "- [x] m4 - local main merged 2026-03-03",
+  "- [x] m5 - (merged 2026-01-01) (2026-02-02)",
+  "- [x] m6 - (merged 2026-01-01; note (x))",
+  "- [x] m7 - (merged2026-01-01)",
+  "- [x] m8 - local main (merged 2026-07-24) (repo: x)",
+  "- [x] m9 - local main merged\xa02026-03-03",
+  "- [x] m10 - (\xa0merged 2026-01-01)",
+  "- [x] m11 - (merged\xa02026-01-01)",
+  "- [ ] d1 - x; domain:pay (repo: r)",
+  "- [x] d2 - x (merged 2026-01-02); domain:pay",
+  "- [ ] d3 - mentions domain:pay (repo: r)",
+];
+
+test("backlog twin: the board reads every hand-written edge row as the grammar's one parser does", () => {
+  expect(TWIN_EDGES.flatMap((l) => twinDiff(l, "latin1"))).toEqual([]);
+});
+
+test("backlog twin: the board agrees with src/backlog.ts over tests/ts/backlog-gen.ts corpora", () => {
+  const dir = mkdtempSync(`${tmpdir()}/twin-`);
+  try {
+    const seeds = `${dir}/seeds.md`;
+    writeFileSync(seeds, Buffer.from(TWIN_EDGES.join("\n") + "\n", "latin1"));
+    const seen: Record<string, number> = {};
+    let diffs: string[] = [];
+    let utf8Lines = 0;
+    for (const seed of [1, 20260928, 424242]) {
+      const r = Bun.spawnSync([process.execPath, `${import.meta.dir}/../tests/ts/backlog-gen.ts`, String(seed), "4000", seeds]);
+      expect(r.exitCode).toBe(0);
+      for (const line of records(Buffer.from(r.stdout).toString("latin1"))) {
+        diffs = diffs.concat(twinDiff(line, "latin1"));
+        const raw = Buffer.from(line, "latin1");
+        const text = raw.toString("utf8");
+        if (Buffer.from(text, "utf8").equals(raw)) {
+          utf8Lines++;
+          diffs = diffs.concat(twinDiff(text, "utf8"));
+        }
+        const want = twinWant(line);
+        if (want) for (const [k, v] of Object.entries(want)) if (v && v !== "done") seen[k === "state" ? v as string : k] = 1;
+      }
+    }
+    expect(diffs.slice(0, 40)).toEqual([]);
+    // a field never set in the corpus would agree vacuously
+    expect(Object.keys(seen).sort()).toEqual(["abandoned", "contract", "domain", "epic", "failed", "id", "isEpic", "merged"]);
+    expect(utf8Lines).toBeGreaterThan(1000);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("backlog twin: parseBacklog hands the board exactly the grammar's rows, byte for byte", () => {
+  const md = [
+    "# Backlog",
+    "## In flight",
+    "- [ ] f1 [src:cap] - x; domain:pay ",
+    "  - [ ] body1 - an indented body line",
+    "- [X] f2 - upper checkbox",
+    "- [ ] f3 [src:cap qa:yes] - été — NBSP-joined; epic:e1",
+    "## Queued",
+    "- [ ] f4 [@held] - x\r",
+    "-  [ ] f5 - two spaces",
+    "\t- [ ] body2 - a tab-indented body line",
+    "## Done",
+    "- [x] f6 [failed] - why (2026-01-01)\r",
+    "- [x] f7 - x (merged 2026-01-02); domain:pay\r",
+    "- [x] f8 [failed]\0 junk - why (2026-01-01)",
+    "- [ ] f9\0 [src:cap] - y; epic:e1\0; domain:pay",
+    "",
+  ].join("\n");
+  const bl = parseBacklog(md);
+  const board = [...bl.in_flight, ...bl.queued, ...bl.done].map((l) => Buffer.from(l, "utf8").toString("latin1"));
+  const grammar = records(Buffer.from(md, "utf8").toString("latin1")).filter((l) => TWIN_ROW.test(l));
+  expect(board).toEqual(grammar);
+  expect([...bl.in_flight, ...bl.queued, ...bl.done].flatMap((l) => twinDiff(l, "utf8"))).toEqual([]);
 });
 
 // --- dashboard-board: staged task-id -> bare family-id normalizer ------------

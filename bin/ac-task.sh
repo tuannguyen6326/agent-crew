@@ -374,11 +374,6 @@ cmd_update_note() {
   find_row "$id" || ac_die "no row for '$id'"
   for ((i = ROW_I + 1; i <= ROW_END; i++)); do old+=("${L[$i]}"); done
   while IFS= read -r line; do
-    # A body line is opaque to the awk parsers (they anchor at column 0), but
-    # the dashboard's parseBacklog matches `^\s*-\s+\[[ xX]\]` - an indented
-    # checkbox AT ANY DEPTH would show up there as a PHANTOM ROW the scheduler
-    # cannot see, so the check runs on the line with its own indent stripped.
-    case "${line#"${line%%[![:space:]]*}"}" in '- ['*) ac_die "a body line may not start like a row ('$line') - the dashboard would read it as one" ;; esac
     new+=("  $line")
   done <<<"$text"
   if [ "${#old[@]}" = "${#new[@]}" ] && [ "${old[*]+"${old[*]}"}" = "${new[*]}" ]; then
