@@ -281,7 +281,7 @@ _backlog_plan() {
 
 curate_backlog() {
   local apply="$1" pre_backed="$2" keep="${AC_CURATE_KEEP:-20}"
-  local backlog archive plan nmove nr droptmp btmp
+  local backlog archive plan picks nmove droptmp btmp
   backlog="$(ac_records_dir)/backlog.md"
   archive="$(ac_records_dir)/backlog-archive.md"
   printf '== backlog: archive move-only (keep %s recent Done, blocked-by-safe + epic-safe) ==\n' "$keep"
@@ -296,10 +296,11 @@ curate_backlog() {
   fi
   nmove="$(printf '%s\n' "$plan" | grep -c .)"
   printf '  candidates to archive: %s Done line(s) older than the %s most-recent\n' "$nmove" "$keep"
-  while IFS= read -r nr; do
-    [ -n "$nr" ] || continue
-    sed -n "${nr}p" "$backlog" | sed 's/^/    move | /'
-  done <<<"$plan"
+  # One sed, not awk: awk cuts a line at a NUL and terminates an unterminated
+  # last line, so the moved bytes would stop being the backlog's. One command
+  # per script line: BSD sed rejects a `;`-joined script past 2048 bytes.
+  picks="$(printf '%s\n' "$plan" | sed 's/$/p/')"
+  sed -n "$picks" "$backlog" | sed 's/^/    move | /'
 
   if [ "$apply" != 1 ]; then
     printf '  PROPOSE-ONLY: %s line(s) would move to %s on --apply\n' "$nmove" "$archive"
@@ -309,10 +310,7 @@ curate_backlog() {
   [ "$pre_backed" = 1 ] || printf '  pre-run backup: %s\n' "$(ac_records_backup curate)"
   [ -f "$archive" ] || printf '# Backlog archive - moved Done receipts (byte-identical; ac-ready.sh never reads this)\n\n## Done\n' >"$archive"
   # Append moved lines VERBATIM (from the intact backlog), then drop them.
-  while IFS= read -r nr; do
-    [ -n "$nr" ] || continue
-    sed -n "${nr}p" "$backlog"
-  done <<<"$plan" >>"$archive"
+  sed -n "$picks" "$backlog" >>"$archive"
   droptmp="$(mktemp "${TMPDIR:-/tmp}/ac-curate-bl.XXXXXX")"
   printf '%s\n' "$plan" | sort -n -u >"$droptmp"
   btmp="$backlog.tmp.$$"
@@ -325,8 +323,25 @@ curate_backlog() {
 
 # --- projects: correctness-audit (PROPOSE ONLY) ------------------------------
 
+curate_registry_lines() {
+  # Emit line-number<TAB>name<TAB>verbatim-line for each records/projects.md
+  # line in the registry grammar `- <name> [+yolo] - <desc> (added <date>)`
+  # (bin/ac-project-mode.sh header). The bracket is optional, so a line is
+  # recognised by the grammar position after its name (` [` or ` - `), never
+  # by the bracket alone. Byte-wise (captain 2026-09-28): under UTF-8 the host
+  # awk dies at an invalid byte, and behind `< <(...)` that death reads as a
+  # shorter registry.
+  local registry
+  registry="$(ac_records_dir)/projects.md"
+  [ -f "$registry" ] || return 0
+  LC_ALL=C awk '/^- [^ ]+ (\[|- )/ {
+    name = substr($0, 3); sub(/ .*/, "", name)
+    printf "%d\t%s\t%s\n", NR, name, $0
+  }' "$registry"
+}
+
 curate_projects() {
-  local projects proj_dir line name mode pd flags=0
+  local projects proj_dir line name pd flags=0
   projects="$(ac_records_dir)/projects.md"
   printf '== projects: correctness-audit (propose-only; deletion stays a captain call) ==\n'
   if [ ! -f "$projects" ]; then
@@ -334,15 +349,7 @@ curate_projects() {
     return 0
   fi
   proj_dir="$(ac_projects_dir)"
-  while IFS= read -r line; do
-    case "$line" in '- '*'['*']'*) ;; *) continue ;; esac
-    name="$(printf '%s\n' "$line" | sed -n 's/^- \([^ ]*\) \[.*/\1/p')"
-    mode="$(printf '%s\n' "$line" | sed -n 's/^- [^[]*\[\([^]]*\)\].*/\1/p')"
-    [ -n "$name" ] || continue
-    case "$mode" in
-      crew-ship | direct-pr | local-only) ;;
-      *) printf '  FLAG %s: unknown delivery mode [%s] (expected crew-ship|direct-pr|local-only)\n' "$name" "$mode"; flags=$((flags + 1)) ;;
-    esac
+  while IFS=$'\t' read -r _ name line; do
     case "$line" in
       *ASSUMED* | *assumed*) printf '  FLAG %s: delivery mode is ASSUMED - confirm with the captain\n' "$name"; flags=$((flags + 1)) ;;
     esac
@@ -360,7 +367,7 @@ curate_projects() {
       printf '  FLAG %s: projects/%s is not a git repo\n' "$name" "$name"
       flags=$((flags + 1))
     fi
-  done <"$projects"
+  done < <(curate_registry_lines)
   if [ "$flags" -eq 0 ]; then
     printf '  ok: every registered project line verified against reality (no mismatches)\n'
   else
@@ -519,7 +526,7 @@ _skills_overlap_flags() {
 
 curate_skills_audit() {
   local dirs now stale_days stale_seconds ndtsv ov flag_ov=0 flag_st=0
-  local d store name landed age total
+  local d store name total
   now="$(ac_now)"
   stale_days="${AC_CURATE_STALE_DAYS:-90}"
   case "$stale_days" in ''|*[!0-9]*) stale_days=90 ;; esac
@@ -553,8 +560,6 @@ curate_skills_audit() {
     [ -n "$d" ] || continue
     name="$(basename "$d")"
     curate_skill_is_stale "$d" "$now" "$stale_seconds" || continue
-    landed="$(_skill_field "$d/SKILL.md" landed)"
-    age=$(( (now - landed) / 86400 ))
     printf '  STALE: %s [%s] - last landing/patch, seed, and evidence activity exceed %sd; no pending candidate or active worktree dependency\n' \
       "$name" "$store" "$stale_days"
     flag_st=$((flag_st + 1))
@@ -944,17 +949,11 @@ curate_blocked_subject() {
 curate_project_candidates() {
   # Emit line-number<TAB>name<TAB>verbatim-line for registered projects whose
   # fleet-local project path is absent. Audit-only mismatches are not candidates.
-  local registry line nr name
-  registry="$(ac_records_dir)/projects.md"
-  [ -f "$registry" ] || return 0
-  nr=0
-  while IFS= read -r line; do
-    nr=$((nr + 1))
-    case "$line" in '- '*'['*']'*) ;; *) continue ;; esac
-    name="$(printf '%s\n' "$line" | sed -n 's/^- \([^ ]*\) \[.*/\1/p')"
+  local nr name line
+  while IFS=$'\t' read -r nr name line; do
     case "$name" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
     [ -e "$(ac_projects_dir)/$name" ] || printf '%s\t%s\t%s\n' "$nr" "$name" "$line"
-  done <"$registry"
+  done < <(curate_registry_lines)
 }
 
 curate_prepare_project_subject() {
@@ -969,8 +968,10 @@ curate_prepare_project_subject() {
   plan="$run/plans/$subject.json"
   registry="$(ac_records_dir)/projects.md"
   archive="$(ac_records_dir)/projects-archive.md"
-  [ "$(grep -cFx -- "$line" "$registry" || true)" = 1 ] || return 1
-  nr="$(grep -nFx -- "$line" "$registry" | cut -d: -f1)"
+  # Byte-wise as in curate_registry_lines: a UTF-8 grep or cut refuses a line
+  # holding an invalid byte, and an empty line number drops nothing.
+  [ "$(LC_ALL=C grep -cFx -- "$line" "$registry" || true)" = 1 ] || return 1
+  nr="$(LC_ALL=C grep -nFx -- "$line" "$registry" | LC_ALL=C cut -d: -f1)"
   mkdir -p "$staged" "$(dirname "$manifest")" "$run/subjects"
   awk -v drop="$nr" 'NR != drop { print }' "$registry" >"$staged/projects.md"
   [ ! -f "$archive" ] || cp "$archive" "$staged/projects-archive.md"
@@ -1405,7 +1406,7 @@ cmd_run() {
   fi
 
   if ! ac_curate_reset "$generation"; then
-    ac_warn "Curate committed, but a newer cadence generation exists; its late Learning ticks were preserved"
+    ac_warn "Curate committed, but did not reset its cadence: either a newer cadence generation exists and its late Learning ticks were preserved, or the cadence lock was not acquired (warned just above)"
   fi
   read -r rn rx < <(ac_curate_due)
   printf '== curate pass complete: %s changed record file(s); transaction + policy receipt committed; interval=%s/%s ==\n' \

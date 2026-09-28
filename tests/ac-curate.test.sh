@@ -223,6 +223,15 @@ grep -qxF -- '- [x] d21 - receipt - local main @sha21 (merged 2026-02-21)' "$rec
 grep -qxF -- '- [x] d22 - receipt - local main @sha22 (merged 2026-02-22)' "$records/backlog-archive.md" \
   || fail "d22 archived byte-identical"
 
+# A move longer than one BSD sed script line (2048 bytes) moves whole.
+rm -f "$records/backlog-archive.md"
+{
+  printf '## In flight\n\n## Queued\n\n## Done\n'
+  for i in $(seq 600); do printf -- '- [x] l%03d - receipt - local main (merged 2026-01-01)\n' "$i"; done
+} >"$records/backlog.md"
+AC_CURATE_KEEP=0 "$BIN/ac-curate.sh" backlog --apply >/dev/null || fail "a 600-line move completes"
+assert_eq "$(grep -c '^- \[x\] l' "$records/backlog-archive.md")" "600" "a 600-line move archives every line"
+
 # --- backlog: blocked-by-safety (a live blocker Done is never archived) -------
 
 rm -f "$records/backlog-archive.md"
@@ -275,12 +284,16 @@ assert_no_file "$records/backlog-archive.md" "no archive created for an empty ba
 
 mkdir -p "$AC_HOME/projects"
 git init -q "$AC_HOME/projects/realp"
+git init -q "$AC_HOME/projects/yolop"
 cat >"$records/projects.md" <<'PROJ'
 # Projects
 
 - realp [local-only] - a real project (added 2026-02-01)
 - deadp [direct-pr] - ASSUMED mode, since gone (added 2026-02-01)
 - deadq [local-only] - another absent project (added 2026-02-02)
+- yolop [+yolo] - a live project in the current grammar (added 2026-02-03)
+- barep - an absent project with no bracket (added 2026-02-04)
+- a prose bullet is not a registry line
 PROJ
 proj_before="$(cat "$records/projects.md")"
 out="$("$BIN/ac-curate.sh" projects --apply)"
@@ -288,6 +301,21 @@ assert_eq "$(cat "$records/projects.md")" "$proj_before" "projects audit is prop
 assert_contains "$out" "deadp" "the dead project is surfaced"
 assert_contains "$out" "ASSUMED" "an ASSUMED mode is flagged"
 assert_contains "$out" "absent" "the missing project dir is flagged as a proposed drop"
+# The bracket is optional and only +yolo in it means anything (bin/ac-project-mode.sh header).
+assert_contains "$out" "FLAG barep: registered but projects/barep is absent" \
+  "a registry line with no bracket is audited"
+case "$out" in *"FLAG yolop"*) fail "a live [+yolo] project is not flagged: +yolo is not a delivery mode" ;; esac
+case "$out" in *"FLAG a:"*) fail "a prose bullet is never read as a registry line" ;; esac
+# Read byte-wise whatever the caller's locale (captain 2026-09-28): under UTF-8
+# the host awk stops at an invalid byte, and the audit must not pass on the rest.
+printf '# Projects\n\n- cafep [local-only] - caf\351 gone (added 2026-02-05)\n- afterp - absent, after the byte (added 2026-02-06)\n' \
+  >"$records/projects.md"
+out="$(LC_ALL=en_US.UTF-8 "$BIN/ac-curate.sh" projects 2>&1)"
+assert_contains "$out" "FLAG cafep: registered but projects/cafep is absent" \
+  "a registry line holding an invalid UTF-8 byte is audited"
+assert_contains "$out" "FLAG afterp: registered but projects/afterp is absent" \
+  "every registry line after an invalid UTF-8 byte is audited"
+printf '%s\n' "$proj_before" >"$records/projects.md"
 
 # --- run: automatic by default; --dry-run is byte-identical ------------------
 
@@ -368,8 +396,44 @@ grep -qxF -- '- deadq [local-only] - another absent project (added 2026-02-02)' 
 if grep -qF -- '- deadp ' "$records/projects.md"; then
   fail "maintenance-gate continue removes the archived project registry line"
 fi
+grep -qxF -- '- barep - an absent project with no bracket (added 2026-02-04)' \
+  "$records/projects-archive.md" \
+  || fail "an absent project with no bracket is archived verbatim too"
+if grep -qF -- '- barep ' "$records/projects.md"; then
+  fail "the archived bracketless registry line leaves the registry"
+fi
+grep -qxF -- '- yolop [+yolo] - a live project in the current grammar (added 2026-02-03)' \
+  "$records/projects.md" || fail "a live [+yolo] project stays registered"
+grep -qxF -- '- a prose bullet is not a registry line' "$records/projects.md" \
+  || fail "a prose bullet is never archived as a dead project"
 assert_file "$AC_HOME/projects/realp/.git/HEAD" \
   "Curate registry archival cannot delete an existing project clone"
+
+# The archive move matches its registry line byte-wise too, or a line holding
+# an invalid UTF-8 byte asks the captain on every pass.
+cafe_line="$(printf -- '- cafep [local-only] - caf\351 gone (added 2026-02-05)')"
+printf '%s\n' "$cafe_line" >>"$records/projects.md"
+printf 'runs_since=4\ngeneration=0\n' >"$AC_HOME/state/.curate.meta"
+LC_ALL=en_US.UTF-8 AC_GATE="$gate_stub" "$BIN/ac-curate.sh" run >/dev/null 2>&1
+LC_ALL=C grep -qxF -- "$cafe_line" "$records/projects-archive.md" \
+  || fail "an absent project whose line holds an invalid UTF-8 byte is archived verbatim"
+if LC_ALL=C grep -qF -- '- cafep ' "$records/projects.md"; then
+  fail "the archived invalid-byte registry line leaves the registry"
+fi
+
+# ac_curate_reset returns the same 1 for a newer cadence generation and for a
+# busy cadence lock, so the run's own warning has to stand for both. Held by a
+# live pid, the lock costs the reset's real 10s timeout.
+printf 'runs_since=4\ngeneration=2\n' >"$AC_HOME/state/.curate.meta"
+mkdir "$AC_HOME/state/.curate-cadence.lock"
+printf '%s\n' "$$" >"$AC_HOME/state/.curate-cadence.lock/pid"
+out="$(AC_GATE="$gate_stub" "$BIN/ac-curate.sh" run 2>&1)"
+rm -rf "$AC_HOME/state/.curate-cadence.lock"
+assert_contains "$out" "curate reset: cadence lock" "the busy lock carries the lib's own warning"
+assert_contains "$(printf '%s\n' "$out" | grep '^WARN: Curate committed')" "cadence lock" \
+  "the run's warning names a busy cadence lock as a cause, not only a newer generation"
+assert_eq "$(ac_meta_get "$AC_HOME/state/.curate.meta" runs_since)" "4" \
+  "a busy cadence lock does not reset the Curate counter"
 
 # --- ac-learn.sh run advances the curate counter EXACTLY once (jq-gated) ------
 
