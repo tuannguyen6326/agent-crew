@@ -237,8 +237,9 @@ printf '#!/usr/bin/env bash\n# fixture ac-spawn\n' >"$splitrepo/bin/ac-spawn.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-teardown\n' >"$splitrepo/bin/ac-teardown.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-other, unrelated - proves the map NARROWS instead of widening\n' >"$splitrepo/bin/ac-other.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-qa-lib, pinned inside ac-qa.test.sh\n' >"$splitrepo/bin/ac-qa-lib.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-maintenance-lib, pinned inside ac-maintenance-core.test.sh\n' >"$splitrepo/bin/ac-maintenance-lib.sh"
 printf '#!/usr/bin/env bash\n. "%s/tests/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/ac-other.test.sh"
-for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-qa; do
+for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-qa ac-maintenance-core; do
   printf '#!/usr/bin/env bash\n. "%s/tests/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/$t.test.sh"
 done
 chmod +x "$splitrepo"/bin/*.sh "$splitrepo"/tests/*.test.sh
@@ -271,6 +272,16 @@ assert_eq "$rc" "0" "--changed narrowed to ac-qa-lib.sh's test must still be gre
 assert_contains "$out" "RUNNING ac-qa.test.sh" "ac-qa-lib.sh maps to ac-qa.test.sh"
 assert_contains "$out" "1/1 passed" "ac-qa-lib.sh selects exactly ac-qa.test.sh"
 git -C "$splitrepo" checkout -q -- bin/ac-qa-lib.sh
+
+# ac-maintenance-lib.sh keeps its pins inside ac-maintenance-core.test.sh, the
+# same shape as ac-qa-lib.sh.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-maintenance-lib.sh"
+res="$(run_runner --changed "$splitrepo/tests")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-maintenance-lib.sh's test must still be green"
+assert_contains "$out" "RUNNING ac-maintenance-core.test.sh" "ac-maintenance-lib.sh maps to ac-maintenance-core.test.sh"
+assert_contains "$out" "1/1 passed" "ac-maintenance-lib.sh selects exactly ac-maintenance-core.test.sh"
+git -C "$splitrepo" checkout -q -- bin/ac-maintenance-lib.sh
 
 # 2) touching bin/ac-teardown.sh alone selects its ONE mapped split-name test.
 printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-teardown.sh"

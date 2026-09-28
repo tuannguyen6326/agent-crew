@@ -326,6 +326,7 @@ split_map() {
     # A sourced lib whose pins live in its one real consumer's test; without
     # this arm every src/ module it starts widened --changed to the full set.
     ac-qa-lib) printf '%s' "ac-qa.test.sh" ;;
+    ac-maintenance-lib) printf '%s' "ac-maintenance-core.test.sh" ;;
   esac
 }
 

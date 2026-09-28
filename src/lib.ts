@@ -4,6 +4,7 @@
 // same stderr shape, exit status and homeless answer), because callers of a
 // ported bin/ac-*.sh entry cannot tell which language answered them.
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -63,6 +64,12 @@ export function configRead(name: string, dflt = ""): string {
   const f = join(h, "config", name);
   if (!existsSync(f) || !statSync(f).isFile()) return dflt;
   return readFileSync(f, "utf8").split("\n")[0].replace(/\u0000/g, "").replace(SHELL_TRIM, "");
+}
+
+// ac_sha256_file's twin. A file it cannot read throws, where the shell's
+// pipeline printed an empty hash for its caller to mistake for a value.
+export function sha256File(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 export function stateDir(): string {
