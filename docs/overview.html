@@ -511,7 +511,7 @@
     <div class="card">
       <span class="tag">second backend</span>
       <h4>orca</h4>
-      <p>Each task leases an Orca-managed worktree on <code>crew/&lt;id&gt;</code>, cut from the freshest tip of the repo's live checkout branch and removed at teardown. Chief-kind panes sit under the home's node, worker panes under their worktree's node.</p>
+      <p>Each task leases an Orca-managed worktree on <code>crew/&lt;id&gt;</code>, cut from the freshest tip of the repo's live checkout branch (or of the recorded integration branch, for an epic or feature story) and removed at teardown. Chief-kind panes sit under the home's node, worker panes under their worktree's node.</p>
     </div>
   </div>
   <p>A backend that cannot be read reports <code>unobservable</code>, never a death — a pane whose liveness is unknown is never torn down.</p>
