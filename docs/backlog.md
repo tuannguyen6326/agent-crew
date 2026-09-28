@@ -25,7 +25,7 @@ The grammar is byte-exact ASCII - what onetrue awk does under `LC_ALL=C` - and i
 
 `[failed]`/`[abandoned]` are terminal but NEVER satisfy a blocker.
 `[@held]`, as one of a row's `[...]` groups in the LEADING RUN right after the
-id - contiguous bracket groups, nothing but whitespace between them, not
+id - contiguous bracket groups, nothing but spaces and TABs between them, not
 necessarily the first one there (a row already carrying another bracket tag,
 e.g. `[CAPTAIN-ORDERED ...]`, still takes `[@held]` in a second contiguous
 group) - is a CAPTAIN HOLD: `bin/ac-ready.sh` refuses to offer that row
@@ -34,7 +34,7 @@ fail-closed direction as an unreadable `blocked-by` - a mis-typed hold-shaped
 group anywhere on the line still reads as HELD, never as no-hold, whether the
 sentinel is present but wrong (`[@hold]`, `[@HELD]`, `[@Held]`, ...) or
 forgotten outright (`[held]`, `[hold]`, `[on-hold]`, ... - a bracket group
-whose ENTIRE content is one word, no whitespace, needs no sentinel to be
+whose ENTIRE content is one word, no space or TAB, needs no sentinel to be
 recognized as a hold attempt, because a one-word group can never be a
 free-text tag's prose). It is not the dependency token (no blocker id, no
 STUCK semantics) and not terminal (nothing lands to clear it). Releasing it is
@@ -54,7 +54,8 @@ is the one that compares it to today. When an expired-dated row STARTS,
 `bin/ac-task.sh start` strips the spent token - the date was the captain's
 own release, and a leftover hold token on an In-flight line would still read
 as waiting-on-captain in every display.
-Detection scans every top-level `[...]` group on the line and matches on the
+Detection scans every innermost `[...]` group on the line (one holding no `[`
+or `]`: in `[a [b] c]` it is `[b]`) and matches on the
 `@` SENTINEL, not the bare word: a live ledger row measurably false-positived
 on an earlier bracket-syntax-only design, because this grammar's OTHER
 bracket tags (`[SLICE ...]`, `[CAPTAIN ORDER LANDED ...]`) carry free-text
@@ -80,7 +81,9 @@ still reads HELD hold malformed, never READY - position denies it authority,
 but a real hold mis-placed by one keystroke must not silently schedule
 either.
 The DELIVERY-CONTRACT token group: ONE leading-run `[...]` group whose
-EVERY whitespace-separated token is `key:value` from the closed key set
+content is `key:value` tokens joined by runs of spaces and TABs, with no
+space or TAB before the first or after the last (`[ src:cap]` and
+`[src:cap ]` are no contract), each key from the closed key set
 `src|flow|mode|rev|qa|promote` - e.g.
 `[src:cap flow:direct mode:local-only rev:no qa:no]`. The all-tokens-keyed
 shape is the discriminator: a leading-run group with any non-`key:value`
@@ -111,8 +114,13 @@ deliberately date-free - the parser's date fallback would otherwise adopt
 a timestamp as the row's date and verb. `src/backlog.ts` (`domain`) is
 the ONE parser.
 
-`blocked-by` grammar is machine-read by `bin/ac-ready.sh`: comma-joined ids
-with NO spaces, then ` - <reason>`. Story membership is the `epic:<epic-id>`
+`blocked-by` grammar is machine-read by `bin/ac-ready.sh`: the line's first
+`blocked-by: <ids>` - comma-joined ids with NO spaces, ended by a space, a
+TAB or end of line (conventionally ` - <reason>`). Any other `blocked-by` on
+the line, in any case and wherever it sits - after a word character
+(`re-blocked-by: a,`), or beside a run read in that shape - makes the row
+MALFORMED: `STUCK`, never `READY` (captain TN 2026-09-28).
+Story membership is the `epic:<epic-id>`
 token on the story line - never an id prefix. FEATURE membership is the
 `feature:<name>` token in the same anywhere-matched shape (feature-branch-mech,
 `src/backlog.ts`'s `feature`); one row never carries both - two

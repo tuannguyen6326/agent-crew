@@ -344,3 +344,24 @@ out="$("$FT" ship shipux proj3 --dry-run)"
 assert_contains "$out" "gh pr create" \
   "a sibling repo's key never records THIS repo's PR"
 rm "$AC_HOME/data/shipux/gate/ships.env"
+
+# The qa pin is read off the container's OWN row. awk's == compared
+# numeric-looking ids as numbers, so an earlier row 07 stood in for feature 7
+# and its empty contract let the ship skip the qa gate.
+cat >>"$AC_HOME/records/backlog.md" <<'BEOF'
+- [ ] 07 - an unrelated row that reads as the same number (repo: proj3)
+- [ ] 7 [src:cap flow:direct mode:feature-pr rev:no qa:yes] - a numeric feature container (repo: proj3)
+BEOF
+mkdir -p "$AC_HOME/data/7/gate"
+printf 'proj3 feat/7 target=release push=deferred\n' >"$AC_HOME/data/7/branches"
+"$FT" create 7 proj3 >/dev/null
+printf '{"findings":[],"reviewed_ref":"%s"}\n' "$(git -C "$AC_HOME/projects/proj3" rev-parse refs/heads/feat/7)" \
+  >"$AC_HOME/data/7/gate/review.json"
+rm -rf "$AC_HOME/projects/proj3/.crew/qa/passed"
+out="$("$FT" ship 7 proj3 --dry-run 2>&1 || true)"
+assert_contains "$out" "no crew-qa pass attestation" "a numeric container's own qa:yes pin gates its ship"
+# A TAB may join contract tokens (src/backlog.ts); the gate once matched the
+# pin between spaces only, so a TAB before qa:yes skipped it.
+perl -pi -e 's/rev:no qa:yes\] - a numeric feature/rev:no\tqa:yes] - a numeric feature/' "$AC_HOME/records/backlog.md"
+out="$("$FT" ship 7 proj3 --dry-run 2>&1 || true)"
+assert_contains "$out" "no crew-qa pass attestation" "a TAB-joined qa:yes pin gates the ship"

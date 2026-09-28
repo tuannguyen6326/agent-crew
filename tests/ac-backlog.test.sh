@@ -6,6 +6,11 @@
 # sites cut over to this one, over the seed and NUL-bearing rows below plus
 # 20,000 lines tests/backlog-gen.ts derives from a fixed seed.
 #
+# The oracle stays frozen against drift, not against the captain: a ruling that
+# changes the grammar changes the oracle the same way in the same diff (TN
+# 2026-09-28: a `blocked-by` run the strict read did not consume is MALFORMED
+# wherever it sits), so Leg A keeps comparing two readings of ONE grammar.
+#
 # Leg C is local only: `bash tests/ac-backlog.test.sh <ledger>...` runs every
 # ledger named on the command line through Leg A as well, so a live
 # records/backlog.md is checked without ever being committed.
@@ -198,6 +203,8 @@ else
 - [ ] q6 [EPIC 3 stories] [src:cap] - x blocked-by: a, b - listspace
 - [ ] q7 - waits (repo: r) blocked-by: payapi - contract first; domain:payments
 - [ ] q8 - mentions domain:payments in prose and Blocked-by: x (repo: r)
+- [ ] q9 - word-prefixed, re-blocked-by: a, - a slip after a word character (repo: r)
+- [ ] q10 - a read run then another (repo: r) blocked-by: a - see blocked-by: b
 
 ## Done
 - [x] crewmate-missing-from-agents-grouped-view - NOT REPRODUCED on the pane server; root cause was a pre-fix build - FIXED UPSTREAM - so NO change needed; captain accepted close (reported 2026-07-24)

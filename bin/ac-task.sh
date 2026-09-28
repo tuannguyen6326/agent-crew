@@ -98,19 +98,21 @@ hold_fields() {
 # the row may start. The same rule ac-ready.sh schedules by (docs/backlog.md),
 # read here because the scheduler only advises. It reads the buffer L, which
 # the verb may already have edited, through a temp file: AC_DONELINE_AWK takes
-# its ledger as a file operand, never stdin.
+# its ledger as a file operand, never stdin. The row is found with `in`, never
+# ==: awk compares numeric-looking ids as numbers (01 == 1).
 unresolved_blocker() {
   local buf rc=0
   buf="$(mktemp "${TMPDIR:-/tmp}/ac-task-ledger.XXXXXX")" || ac_die "cannot stage the ledger for the blocker check"
   printf '%s\n' "${L[@]}" >"$buf" || { rm -f "$buf"; ac_die "cannot stage the ledger for the blocker check"; }
   awk -v want="$1" "$AC_DONELINE_AWK"'
+    BEGIN { w[want] }
     /^## In flight/ { sec = "in flight"; next }
     /^## Queued/    { sec = "queued";    next }
     /^## Done/      { sec = "done";      next }
     /^- \[[ x]\] / {
       ac_doneline($0, o)
       st[o["id"]] = sec; mk[o["id"]] = o["terminal"]
-      if (o["id"] == want) { bl = o["blockers"]; bad = o["blockers_malformed"] }
+      if (o["id"] in w) { bl = o["blockers"]; bad = o["blockers_malformed"] }
     }
     END {
       if (bad != "") { print "blocked-by malformed"; exit }

@@ -117,6 +117,16 @@ case "$out" in
   *"WARN   tokened-row"*) fail "a clean contract draws no WARN" ;;
 esac
 
+# A TAB may join contract tokens (src/backlog.ts), and ac-ready's snapshot is
+# TAB-separated: a raw TAB there shifted every later column, so the row read as
+# a domain row, left `queued`, and went unlinted past the TAB.
+perl -0777 -pi -e 's/(## Queued\n)/$1- [ ] tab-row [src:cap\tqa:maybe] - a TAB-joined contract (repo: x)\n/' "$backlog"
+out="$("$BIN/ac-ready.sh")"
+assert_contains "$out" "READY  tab-row [src:cap qa:maybe]"$'\n' \
+  "a TAB-joined contract rides the READY line whole, with no domain note"
+assert_contains "$out" "WARN   tab-row contract: qa:maybe invalid" "... and is linted past the TAB"
+assert_contains "$("$BIN/ac-ready.sh" queued)" "tab-row" "... and is offered by queued like any plain row"
+
 # --- THE ESCALATION GATE (ac-brief.sh) ---------------------------------------
 # The captain's rule verbatim: "confirm với captain khi sử dụng các mode take
 # time (staged, crew-ship, qa, code-reviewer)" + "đưa ra lý do khi chọn các
@@ -212,6 +222,26 @@ out="$(PATH="$failbun:$PATH" STUB_FAIL_AT=3 "$BIN/ac-brief.sh" g-norow gproj --m
 assert_contains "$out" "cannot read the ledger $backlog for the delivery contract of g-norow" \
   "G6b: the escalation gate's contract read names the ledger it could not read"
 assert_no_file "$AC_HOME/data/g-norow/brief.md" "G6b: nothing scaffolded by the gate"
+
+# G6c: an id that reads as a number is still matched byte for byte - awk's ==
+# compares two numeric-looking strings as numbers, so row 01 answered for 1.
+num="$TMP/num-ledger.md"
+printf -- '- [ ] 01 [src:cap mode:crew-ship] - another row (repo: x)\n- [ ] 1 [src:cap mode:local-only] - the row (repo: x)\n' >"$num"
+assert_eq "$(ac_row_contract_for_id 1 "$num")" "src:cap mode:local-only" \
+  "G6c: the exact-row lookup never takes row 01's contract for id 1"
+printf -- '- [ ] 01 [src:cap mode:crew-ship] - another row (repo: x)\n- [ ] 1 - the family row, no pin (repo: x)\n' >"$num"
+assert_eq "$(ac_row_contract_for_id 1-spec "$num")" "" \
+  "G6c: the family-row lookup never takes row 01's contract for family 1"
+
+# G6d: a TAB may join a pin's tokens (src/backlog.ts); the mode and rev pin
+# reads split on spaces only, so a TAB-joined pin went unread.
+printf -- '- [ ] g-tabmode [src:cap\tmode:local-only] - x (repo: gproj)\n- [ ] g-tabrev [src:cap\trev:yes] - x (repo: gproj)\n' \
+  >>"$backlog"
+out="$("$BIN/ac-brief.sh" g-tabmode gproj --mode crew-ship --review yes \
+  --captain-requested 'x' --reason 'r' 2>&1)" && fail "G6d: a flag contradicting a TAB-joined pin must refuse"
+assert_contains "$out" "contradicts the row's pinned mode" "G6d: a TAB-joined mode pin is read"
+"$BIN/ac-brief.sh" g-tabrev gproj --mode local-only --review yes >/dev/null \
+  || fail "G6d: a TAB-joined rev:yes pin must authorize the raise"
 
 # G7: mode has NO registry default any more - unspecified refuses, naming both
 # the flag and the pin path.

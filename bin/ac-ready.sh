@@ -62,8 +62,8 @@
 # STUCK  <id> blocker <b> <missing|failed|abandoned> - a dependent that can
 #                           never start; raise ONE ASK in the epic room
 # STUCK  <id> blocked-by malformed - ... - the row carries a `blocked-by`
-#                           token that does NOT match the pinned grammar, so
-#                           its dependency is unreadable; fix the LINE. Never
+#                           token the pinned grammar did not read, so a
+#                           dependency is unreadable; fix the LINE. Never
 #                           READY and never offered by `queued`: an unreadable
 #                           dependency read as "none" is how a one-character
 #                           slip authorized starting a story whose blocker was
@@ -74,7 +74,7 @@
 #                           groups, OR a mis-typed attempt at it - sentinel
 #                           present but wrong ("@hold" as well as "@held"),
 #                           OR the sentinel forgotten outright (a ONE-WORD
-#                           group, no whitespace, spelling "held"/"hold" -
+#                           group, no space or TAB, spelling "held"/"hold" -
 #                           `[held]`, `[hold]`, `[on-hold]`). NEVER READY and
 #                           never offered by `queued`, same fail-closed
 #                           direction as a malformed `blocked-by` - a hold is
@@ -160,7 +160,9 @@ cap="$(ac_config_read epic-parallel 2)"
 case "$cap" in ''|*[!0-9]*) cap=2 ;; esac
 
 # TSV snapshot of the ledger: section, id, marker, epic, blockers, malformed,
-# hold, hold_malformed, contract, domain, hold_until
+# hold, hold_malformed, contract, domain, hold_until. contract is the one field
+# the parser can return holding a TAB (its tokens may be TAB-joined), so each
+# TAB in it is written as a space - a raw one would shift every later column.
 snapshot() {
   # Field extraction is the ONE shared Done-line parser (src/backlog.ts, via
   # ac-lib.sh); the marker is keyed on the FIXED grammar position (token after
@@ -180,7 +182,9 @@ snapshot() {
       ac_doneline($0, o)
       d = o["domain"]
       if (d == "" && o["epic"] != "") d = dm[o["epic"]]
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, o["id"], o["terminal"], o["epic"], o["blockers"], o["blockers_malformed"], o["hold"], o["hold_malformed"], o["contract"], d, o["hold_until"]
+      c = o["contract"]
+      gsub(/\t/, " ", c)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, o["id"], o["terminal"], o["epic"], o["blockers"], o["blockers_malformed"], o["hold"], o["hold_malformed"], c, d, o["hold_until"]
     }
   ' "$backlog" "$backlog"
 }
@@ -219,8 +223,8 @@ cmd_report() {
       for (i = 1; i <= n; i++) {
         id = qids[i]
         # A line carrying a blocked-by token the pinned grammar did not accept
-        # has NO readable dependency, and an unreadable one may never read as
-        # none: empty blockers fall through to READY below, which is how a
+        # has a dependency nobody can read, and an unreadable one may never
+        # read as none: the blockers below would let it READY, which is how a
         # one-character slip authorized starting a story whose blocker still
         # flies. Named here, never scheduled, until the line is fixed.
         if (qbad[id] != "") {
@@ -331,8 +335,10 @@ cmd_watch_set() {
   # single-family arming (behavior: epic-roomchief-watch-only-omits-story-ids).
   local fam="${1:-}"
   [ -n "$fam" ] || ac_die "usage: ac-ready.sh watch-set <family>"
+  # `in`, never ==: awk compares numeric-looking ids as numbers (07 == 7).
   snapshot | awk -F'\t' -v fam="$fam" '
-    $1 == "inflight" && $4 == fam { set = set "," $2 }
+    BEGIN { w[fam] }
+    $1 == "inflight" && ($4 in w) { set = set "," $2 }
     END { printf "%s%s\n", fam, set }
   '
 }
@@ -352,7 +358,8 @@ cmd_validate() {
       *[!a-zA-Z0-9_-]*)
         printf 'INVALID id %s: bad characters\n' "$s"; rc=1 ;;
     esac
-    printf '%s\n' "$snap" | awk -F'\t' -v s="$s" '$2 == s { found = 1 } END { exit !found }' \
+    # `in`, never ==: awk compares numeric-looking ids as numbers (01 == 1).
+    printf '%s\n' "$snap" | awk -F'\t' -v s="$s" 'BEGIN { w[s] } $2 in w { found = 1 } END { exit !found }' \
       || { printf 'MISSING story line for %s\n' "$s"; rc=1; }
   done
   # Acyclicity (Kahn) over blocked-by edges among this epic's stories.

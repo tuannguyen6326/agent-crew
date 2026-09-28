@@ -127,6 +127,17 @@ assert_contains "$out" "--captain-requested" "direct-pr names the same fix"
 assert_contains "$(cat "$AC_HOME/data/task-3-reviewed/brief.md")" "Review: yes" "direct local-only can opt into review when the captain asks"
 assert_contains "$(cat "$AC_HOME/data/task-3-reviewed/brief.md")" "captain TN 2026-07-30: review this one" "the brief records WHO asked for the review"
 assert_contains "$(cat "$AC_HOME/data/task-3-reviewed/brief.md")" "ac-verify.sh codereview" "optional direct review uses the verifier facade"
+# A rev:yes pin authorizes the raise for its own row only: awk's == once
+# matched numeric-looking ids as numbers, so row 01's pin raised row 1.
+printf -- '- [ ] 01 [src:cap rev:yes] - pins its own review (repo: myproj)\n- [ ] 1 - pins nothing (repo: myproj)\n' \
+  >>"$AC_HOME/records/backlog.md"
+out="$("$BIN/ac-brief.sh" 1 myproj --mode local-only --review yes 2>&1)" \
+  && fail "row 01's rev:yes pin must not raise review on row 1"
+assert_contains "$out" "--captain-requested" "a raise another row pinned is refused like any self-raise"
+"$BIN/ac-brief.sh" 01 myproj --mode local-only --review yes >/dev/null \
+  || fail "the row's own rev:yes pin must authorize the raise"
+assert_contains "$(cat "$AC_HOME/data/01/brief.md")" "Review: yes (pinned on the backlog row)" \
+  "the row's own rev:yes pin authorizes the raise"
 # An empty ref is no ref: the declaration must NAME the captain's words.
 assert_fails "$BIN/ac-brief.sh" task-3-empty myproj --mode local-only --review yes --captain-requested ""
 # A declaration with nothing to authorize is a caller mistake, not a silent no-op.

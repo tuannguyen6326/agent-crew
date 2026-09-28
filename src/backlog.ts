@@ -4,7 +4,8 @@
 // header is the authoritative spec of the backlog grammar, this parser and
 // its wire. Awk sites reach it through the AC_DONELINE_AWK binding in
 // bin/ac-lib.sh. tests/ac-backlog.test.sh holds this parser to
-// tests/fixtures/doneline.awk, the awk parser it replaced, frozen.
+// tests/fixtures/doneline.awk, the awk parser it replaced, frozen except where
+// a captain ruling changes the grammar - the ruling changes both, in one diff.
 //
 // Usage (the caller's cwd arrives first, from ac_bun_exec):
 //   ac-backlog.sh fields <file|->
@@ -173,13 +174,13 @@
 //                 so a CRLF row whose ids end the line reads MALFORMED. Only
 //                 the line's first `blocked-by: <ids>` run is judged, and
 //                 nothing bounds its left side: `preblocked-by: a` reads `a`.
-//   blockers_malformed - "1" when blockers is empty and the line still
-//                 carries a `blocked-by`, in any case, at line start or after
-//                 a byte outside [a-z0-9_-] once ASCII-lowercased, with
-//                 nothing bounding its right side (`blocked-byz` trips;
-//                 `re-blocked-by` does not, so `re-blocked-by: a,` is neither
-//                 read nor flagged): slips are detected LENIENTLY. An empty
-//                 blockers field reads READY at
+//   blockers_malformed - "1" when the line carries a `blocked-by`, in any
+//                 case and with nothing bounding either side, outside the one
+//                 run blockers read (captain TN 2026-09-28): `blocked-byz`,
+//                 `re-blocked-by: a,` and a second run before or after the
+//                 read one all trip, so blockers can be non-empty beside it
+//                 and a consumer checks this field first. Slips are detected
+//                 LENIENTLY. An empty blockers field reads READY at
 //                 ac-ready.sh, so a one-character slip would authorize
 //                 starting a story whose dependency is still flying; a token
 //                 the strict read did not consume is therefore MALFORMED, a
@@ -205,8 +206,10 @@
 //                 never invents a verb the ledger did not write.
 //   contract    - the DELIVERY-CONTRACT token group (delivery-contract-on-the-
 //                 row): the FIRST leading-run, unquoted `[...]` group whose
-//                 EVERY space- or TAB-separated token is `key:value` with a key
-//                 from the closed set src|flow|mode|rev|qa|promote - e.g.
+//                 content, split on [ \t]+, gives only `key:value` tokens with
+//                 a key from the closed set src|flow|mode|rev|qa|promote - a
+//                 leading or trailing space or TAB gives an empty token, so
+//                 `[ src:cap]` and `[src:cap ]` are none - e.g.
 //                 `[src:cap flow:direct mode:local-only rev:no qa:no]` -
 //                 returned as the bare content, else "". The all-tokens-keyed
 //                 test is the discriminator that keeps every EXISTING group
@@ -340,11 +343,15 @@ export function acDoneline(line: string): Doneline {
     pos = gend + 1;
   }
 
+  let unread = line;
   if (match(line, /blocked-by: [a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*/)) {
     const after = substr(line, RSTART + RLENGTH, 1);
-    if (after === "" || after === " " || after === "\t") f.blockers = substr(line, RSTART + 12, RLENGTH - 12);
+    if (after === "" || after === " " || after === "\t") {
+      f.blockers = substr(line, RSTART + 12, RLENGTH - 12);
+      unread = substr(line, 1, RSTART - 1) + substr(line, RSTART + RLENGTH);
+    }
   }
-  if (f.blockers === "" && /(^|[^a-z0-9_-])blocked-by/.test(lower(line))) f.blockers_malformed = "1";
+  if (/blocked-by/.test(lower(unread))) f.blockers_malformed = "1";
 
   let grp = "";
   for (let pos = 1; ; ) {

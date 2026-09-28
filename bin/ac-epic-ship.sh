@@ -136,9 +136,11 @@ n_fix="$(jq -r '[.findings[]? | select(.action == "fix")] | length' "$review" 2>
   || ac_die "the epic review round left $n_fix open fix finding(s) - fix on the epic branch (the ref change invalidates the round) and run a fresh round: $review_cmd"
 
 # --- 5. qa when the epic row pins it -------------------------------------------
+# `in`, never ==: awk compares numeric-looking ids as numbers (07 == 7).
 epic_contract="$(awk -v want="$epic" "$AC_DONELINE_AWK"'
-  /^- \[/ { ac_doneline($0, f); if (f["id"] == want) { print f["contract"]; exit } }' "$ledger")"
-case " $epic_contract " in
+  BEGIN { w[want] }
+  /^- \[/ { ac_doneline($0, f); if (f["id"] in w) { print f["contract"]; exit } }' "$ledger")"
+case " ${epic_contract//$'\t'/ } " in
   *" qa:yes "*)
     if ! ls "$dir/.crew/qa/passed/$tip"* >/dev/null 2>&1; then
       ac_die "the epic row pins qa:yes and no crew-qa pass attestation exists for the tip $tip - run one behavioral round against the BUILT epic branch (crew-qa skill / bin/ac-qa.sh agent --target $tip ...). Note: a ut coverage row qualifies only against a ship TEST RECEIPT minted at this tip - no story run's SHA can stand in (epic-branch-mech M7)"

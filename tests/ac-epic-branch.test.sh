@@ -330,4 +330,25 @@ out="$(LC_ALL=en_US.UTF-8 "$ES" eppy5 proj --dry-run 2>&1 || true)"
 assert_contains "$out" "proven merged; opening PR-2" "a non-UTF-8 byte in ledger prose does not stop the exit"
 mv "$TMP/backlog.keep" "$AC_HOME/records/backlog.md"
 
+# The qa pin is read off the epic's OWN row. awk's == compared numeric-looking
+# ids as numbers, so an earlier row 07 stood in for epic 7 and its empty
+# contract let the exit skip the qa gate.
+cat >>"$AC_HOME/records/backlog.md" <<'EOF'
+- [ ] 07 - an unrelated row that reads as the same number (repo: proj)
+- [ ] 7 [EPIC] [src:cap flow:direct mode:direct-pr rev:no qa:yes] - a numeric epic (repo: proj)
+EOF
+mkdir -p "$AC_HOME/data/7/gate"
+printf 'proj epic/7\n' >"$AC_HOME/data/7/branches"
+"$EB" create 7 proj >/dev/null
+printf '{"findings":[],"reviewed_ref":"%s"}\n' "$(git -C "$AC_HOME/projects/proj" rev-parse refs/remotes/origin/epic/7)" \
+  >"$AC_HOME/data/7/gate/review.json"
+rm -rf "$AC_HOME/projects/proj/.crew/qa/passed"
+out="$("$ES" 7 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "no crew-qa pass attestation" "a numeric epic's own qa:yes pin gates its exit"
+# A TAB may join contract tokens (src/backlog.ts); the gate once matched the
+# pin between spaces only, so a TAB before qa:yes skipped it.
+perl -pi -e 's/rev:no qa:yes\] - a numeric epic/rev:no\tqa:yes] - a numeric epic/' "$AC_HOME/records/backlog.md"
+out="$("$ES" 7 proj --dry-run 2>&1 || true)"
+assert_contains "$out" "no crew-qa pass attestation" "a TAB-joined qa:yes pin gates the exit"
+
 pass

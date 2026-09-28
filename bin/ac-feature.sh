@@ -231,9 +231,11 @@ cmd_ship() {
     || ac_die "the feature review round left $n_fix open fix finding(s) - fix on the feature branch (the ref change invalidates the round) and run a fresh round: $review_cmd"
 
   # --- 5. qa when the container row pins it -------------------------------------
+  # `in`, never ==: awk compares numeric-looking ids as numbers (07 == 7).
   container_contract="$(awk -v want="$feature" "$AC_DONELINE_AWK"'
-    /^- \[/ { ac_doneline($0, f); if (f["id"] == want) { print f["contract"]; exit } }' "$ledger")"
-  case " $container_contract " in
+    BEGIN { w[want] }
+    /^- \[/ { ac_doneline($0, f); if (f["id"] in w) { print f["contract"]; exit } }' "$ledger")"
+  case " ${container_contract//$'\t'/ } " in
     *" qa:yes "*)
       if ! ls "$dir/.crew/qa/passed/$tip"* >/dev/null 2>&1; then
         ac_die "the container row pins qa:yes and no crew-qa pass attestation exists for the tip $tip - run one behavioral round against the BUILT feature branch (crew-qa skill / bin/ac-qa.sh agent --target $tip ...)"
