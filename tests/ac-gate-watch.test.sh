@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-gate-watch.test.sh - the ACTIVE-run second-chief observer (bin/ac-gate-watch.sh).
-# It shows ONLY gates running RIGHT NOW (the .gate-running marker + its observe
-# descriptor); a SETTLED second-chief.md is an ordinary artifact and creates NO
+# It shows ONLY gates running RIGHT NOW (each run's .gate-running.<pid> marker +
+# its observe descriptor); a SETTLED second-chief.md is an ordinary artifact and creates NO
 # row. --once renders the active dashboard (newest-first, dot-dirs are not
 # families) and never crashes on an empty home; --tail follows the newest active
 # gate's REAL emitted bytes (the exact prompt once, then the harness's own
@@ -20,7 +20,7 @@ W="$BIN/ac-gate-watch.sh"
 
 # mk_active <fam> <stage> <round> <engine> <mtime> <prompt> <out> [pid] - stamp
 # ONE active gate:
-# the .gate-running marker (ac-gate's live fields) + the transient observe
+# the run's .gate-running.<pid> marker (ac-gate's live fields) + the transient observe
 # descriptor the pane-agent arm publishes + its real prompt/out/err stream files.
 mk_active() {
   local fam=$1 stage=$2 round=$3 eng=$4 mt=$5 pc=$6 oc=$7 pid=${8:-$$} d
@@ -33,8 +33,8 @@ mk_active() {
     >"$d/.gate-observe-r$round"
   printf 'family=%s\nstage=%s\nround=%s\nengine=%s\nmodel=\nat=%s\nobserve=%s\npid=%s\n' \
     "$fam" "$stage" "$round" "$eng" "2026-07-23T09:0${mt}:00Z" \
-    "$d/.gate-observe-r$round" "$pid" >"$d/.gate-running"
-  touch -t "$(printf '2026072309%02d' "$mt")" "$d/.gate-running"
+    "$d/.gate-observe-r$round" "$pid" >"$d/.gate-running.$pid"
+  touch -t "$(printf '2026072309%02d' "$mt")" "$d/.gate-running.$pid"
 }
 
 # 1. empty home: clean exit, "no gate running", zero active
@@ -77,7 +77,7 @@ assert_fails "$W" --round 3 --once
 # 5. a dot-prefixed dir is never treated as a family
 mkdir -p "$AC_HOME/data/.hidden/spec"
 printf 'family=.hidden\nstage=spec\nround=1\nengine=codex\nmodel=\nat=x\nobserve=-\npid=%s\n' \
-  "$$" >"$AC_HOME/data/.hidden/.gate-running"
+  "$$" >"$AC_HOME/data/.hidden/.gate-running.$$"
 out="$("$W" --once 2>&1)" || fail "watch must not crash on a dot-prefixed dir"
 case "$out" in *hidden*) fail "a dot-prefixed dir must not appear as a family: $out" ;; esac
 
@@ -109,15 +109,15 @@ case "$tcap" in *"$(basename "$AC_HOME")"*) ;; *) fail "--tail header must name 
 # 8. once the followed gate SETTLES (its .gate-running goes away), --tail
 #    announces where its prompt is retained - a settled gate has no live stream
 #    left to follow, but the board the captain runs should still say where the
-#    prompt landed (ac-gate.sh keeps it at gate-prompt.md, never deleted).
-rm -f "$AC_HOME"/data/*/.gate-running
+#    prompt landed (ac-gate.sh keeps it at gate-prompt-r<N>.md, never deleted).
+rm -f "$AC_HOME"/data/*/.gate-running*
 mk_active solo design 1 opencode 9 "PROMPT-SOLO-DESIGN" "solo-activity"
 tout2="$TMP/tail2.out"
 (
   "$W" --tail --interval 1 >"$tout2" 2>&1 &
   tpid=$!
   sleep 2
-  rm -f "$AC_HOME/data/solo/.gate-running"
+  rm -f "$AC_HOME/data/solo/.gate-running".*
   sleep 2
   kill "$tpid" 2>/dev/null
   wait "$tpid" 2>/dev/null
@@ -129,11 +129,11 @@ case "$tcap2" in *"$AC_HOME/data/solo/.gate-prompt-r1"*) ;; *) fail "--tail must
 # 9. The marker intentionally lands before pane-agent publishes its observation
 # descriptor. If --tail observes that startup window, it must keep probing the
 # descriptor rather than pinning empty stream paths for the whole round.
-rm -f "$AC_HOME"/data/*/.gate-running
+rm -f "$AC_HOME"/data/*/.gate-running*
 lag="$AC_HOME/data/lag"; mkdir -p "$lag/spec"
 : >"$lag/.gate-observe-r1"
 printf 'family=lag\nstage=spec\nround=1\nengine=codex\nmodel=\nat=2026-07-23T09:10:00Z\nobserve=%s\npid=%s\n' \
-  "$lag/.gate-observe-r1" "$$" >"$lag/.gate-running"
+  "$lag/.gate-observe-r1" "$$" >"$lag/.gate-running.$$"
 tout3="$TMP/tail3.out"
 (
   "$W" --tail --interval 1 >"$tout3" 2>&1 &
@@ -155,7 +155,7 @@ case "$tcap3" in *late-descriptor-activity*) ;; *) fail "--tail must follow stre
 
 # 10. R1 and R2 share family/stage. A watcher that misses the brief marker-free
 # interval must still switch because round + observe identify the run.
-rm -f "$AC_HOME"/data/*/.gate-running
+rm -f "$AC_HOME"/data/*/.gate-running*
 mk_active swap spec 1 codex 11 "PROMPT-SWAP-R1" "swap-r1-activity"
 tout4="$TMP/tail4.out"
 (
@@ -175,10 +175,20 @@ case "$tcap4" in *" / r1  "*"/ r2  "*) ;; *) fail "--tail must label both rounds
 
 # 11. A SIGKILL cannot run ac-gate's EXIT trap. The watcher remains read-only
 # but ignores a marker whose recorded owner pid is dead.
-rm -f "$AC_HOME"/data/*/.gate-running
+rm -f "$AC_HOME"/data/*/.gate-running*
 mk_active dead spec 1 codex 13 "PROMPT-DEAD" "dead-activity" 99999999
 out="$("$W" --once 2>&1)" || fail "watch must tolerate a stale marker"
 case "$out" in *"0 active"*) ;; *) fail "a dead-owner marker must not count as active: $out" ;; esac
 case "$out" in *dead*) fail "a dead-owner marker must not render as a live gate: $out" ;; esac
+
+# 12. Two runs of ONE family at once are two rows: each run owns its marker.
+rm -f "$AC_HOME"/data/*/.gate-running*
+hold_open duo-holder
+mk_active duo spec 1 codex 14 "PROMPT-DUO-SPEC" "duo-spec-activity"
+mk_active duo plan 2 claude 15 "PROMPT-DUO-PLAN" "duo-plan-activity" "$HOLD_PID"
+out="$("$W" --family duo --once 2>&1)" || fail "watch --once must exit 0 with two runs of one family"
+hold_close duo-holder "$HOLD_PID"
+case "$out" in *"2 active"*) ;; *) fail "two live runs of one family must both count: $out" ;; esac
+case "$out" in *spec*plan*|*plan*spec*) ;; *) fail "both runs of the family must render: $out" ;; esac
 
 pass

@@ -118,10 +118,21 @@
 # hash/previous review) prepended to the validated model body BYTE-FOR-BYTE.
 # `gate-context-rN.json` records the routing receipt, gate verification,
 # repository commit, and every context file path/hash. The rN artifacts
-# are immutable; canonical second-chief.md is updated atomically to the latest
-# valid round only after validation passes. Alongside them,
-# data/<family>/<short>/gate-prompt.md holds the EXACT prompt this run sent - a
-# settled gate's prompt was previously reviewable only during its live window.
+# are immutable. Overlapping runs of one stage and round are supported (captain
+# ruling 2026-09-28): they publish under the family lock data/<family>/.gate-lock,
+# the first to settle owns the round, and a later one exits with the
+# existing-artifact error having published nothing; a run that cannot have the
+# lock to publish exits 1 having published nothing too, and consumes no round.
+# second-chief-rN.md is written by link(2), which never replaces a settled one,
+# and it lands after its context, so a run killed while publishing leaves at most
+# an orphan gate-context-rN.json, which the round's settler replaces.
+# Canonical second-chief.md is updated atomically to the latest valid round
+# only after validation passes. Alongside them, data/<family>/<short>/gate-prompt-rN.md
+# holds the EXACT prompt round N was sent: a run that starts after its round
+# settled writes none, and the settler re-writes its own over one an overlapping
+# run wrote meanwhile - a settled gate's prompt was previously reviewable only
+# during its live window, and one file per round keeps R1's after R2; a
+# maintenance gate has no round, so its prompt is <run>/gates/<subject>/gate-prompt.md.
 # There is NO gate.json. On a fail_gate failure (engine or validation, staged
 # or maintenance alike), the raw judge output actually captured by that point -
 # the final message when reached, else the raw event stream, else nothing - is
@@ -133,7 +144,7 @@
 # best-effort: a write that cannot land degrades silently and never changes
 # the failure path, the stderr contract, or the exit status. The running
 # marker, observation descriptor, stream files, and tmp outputs remain
-# transient and are removed on exit; gate-prompt.md is a settled artifact kept
+# transient and are removed on exit; the prompt file is a settled artifact kept
 # whether the run succeeds or fails.
 #
 # VALIDATION (section 6): before writing, the body must carry the required H1
@@ -180,11 +191,13 @@
 # preferences, prior-stage reports, repository ref, and the R1 artifact on R2;
 # maintenance re-checks manifest and plan.
 #
-# LIVE BOARD (ac-gate-watch): for the duration of the run a per-family marker
-# data/<family>/.gate-running
+# LIVE BOARD (ac-gate-watch): for the duration of the run a per-RUN marker
+# data/<family>/.gate-running.<pid> (<run>/.gate-running.<pid> in maintenance)
 # (family/stage/round/engine/model/at/observe/pid) is stamped and cleared on every
-# trappable exit. `pid=` lets the read-only watcher ignore a marker left by an
-# untrappable death. `observe=` names a transient observation descriptor the
+# trappable exit - one per run, so overlapping runs of one family are separate
+# board rows and never clear each other's marker. `pid=` lets the read-only
+# watcher ignore a marker left by an untrappable death, and the family's next
+# staged exit sweeps it. `observe=` names a transient observation descriptor the
 # pane-agent one-shot arm publishes (pane/tab identity + the durable prompt path
 # plus the pane-agent's own transient stdout/stderr paths) so ac-gate-watch can
 # tail the ACTIVE run; only the DESCRIPTOR is deleted on exit, never the prompt
@@ -205,12 +218,15 @@
 # on its own command line (never inferred from the environment - ac-pane-agent.sh's
 # caller-declares principle): state/.chief-busy-until.<family> (ac_chief_busy_path,
 # ac-wake-lib.sh, which owns the contract) holds the epoch until which the caller is
-# blocked - AC_GATE_TIMEOUT plus a reap slack for the post-timeout tail. It is
-# cleared on every trappable exit like the running marker, and SELF-EXPIRES so an
-# untrappable death cannot hold the skip open; it never asserts coverage and never
-# overrides roomchief liveness. MAINTENANCE MODE DECLARES NOTHING: its `family` is
-# the run directory's basename, not a fleet family, so there is no family whose
-# skip could honestly be held.
+# blocked - AC_GATE_TIMEOUT plus a reap slack for the post-timeout tail. The file
+# is the FAMILY's while overlapping runs of it share one: a run never shortens a
+# later bound already on disk, and only the family's LAST live gate run clears it
+# on its trappable exit - live meaning a family marker whose pid exists, judged
+# under data/<family>/.gate-lock so a run stamping meanwhile is seen. It
+# SELF-EXPIRES so an untrappable death cannot hold the skip open; it never
+# asserts coverage and never overrides roomchief liveness. MAINTENANCE MODE
+# DECLARES NOTHING: its `family` is the run directory's basename, not a fleet
+# family, so there is no family whose skip could honestly be held.
 #
 # Exit codes: 0 = a validated staged-design advice or maintenance receipt was
 # written; 3 = the selected engine failed, returned nothing valid, or (in
@@ -517,7 +533,9 @@ validate_r1_artifact() {
 # From here through latest_valid_r1_disposition: the READER-side twins of
 # ac-room.sh's gate-route/gate-verify/disposition writers - change both sides
 # together; the WRITER/READER PARITY matrix in tests/ac-gate.test.sh fails when
-# they judge one of its receipts apart.
+# they judge one of its receipts apart. Grounds carrying a CR are refused here as
+# the writers refuse them: a hand-posted receipt could otherwise hide text from a
+# plain `cat` of the room while still binding.
 r1_required_change_ids() {
   review_body "$1" | awk '
     /^## Required Changes[[:space:]]*$/ { insec=1; next }
@@ -599,6 +617,7 @@ valid_gate_verify_text() {
   rest="${rest#* }"
   case "$rest" in grounds=*) grounds="${rest#grounds=}" ;; *) return 1 ;; esac
   [ -n "${grounds//[[:space:]]/}" ] || return 1
+  case "$grounds" in *$'\r'*) return 1 ;; esac
 }
 
 # A receipt is the chief's own authored ENTRY, so it is matched against the room
@@ -657,6 +676,7 @@ valid_gate_routing_text() {
   rest="${rest#* }"
   case "$rest" in grounds=*) grounds="${rest#grounds=}" ;; *) return 1 ;; esac
   [ -n "${grounds//[[:space:]]/}" ] || return 1
+  case "$grounds" in *$'\r'*) return 1 ;; esac
   if [ "$authority" = captain ]; then
     expected=captain
   elif [ "$uncertainty" = yes ] || [ "$consequence" = high ]; then
@@ -708,6 +728,7 @@ valid_r1_disposition_text() {
   rest="${rest#* }"
   case "$rest" in grounds=*) grounds="${rest#grounds=}" ;; *) return 1 ;; esac
   [ -n "${grounds//[[:space:]]/}" ] || return 1
+  case "$grounds" in *$'\r'*) return 1 ;; esac
   case "$authority" in chief-owned|captain-owned|mixed|none) ;; *) return 1 ;; esac
   accepted="$(normalize_id_list "$accepted")" || return 1
   disputed="$(normalize_id_list "$disputed")" || return 1
@@ -734,15 +755,18 @@ brief_sha=""; report_sha=""; r1_sha=""; r1_disposition=""
 gate_verify=""; gate_routing=""; routing_route=""; routing_uncertainty=""
 routing_consequence=""; routing_authority=""
 previous_review="none"
+# A settled rN is immutable, and an overlapping run of its round may settle it at
+# any point of this one: checked here, again before the turn, and when publishing.
+refuse_settled_round() {
+  [ ! -e "$round_file" ] || ac_die "round $round review already exists and is immutable: $round_file"
+}
 if [ "$gate_kind" != maintenance ]; then
   r1_file="$sdir/second-chief-r1.md"
   r2_file="$sdir/second-chief-r2.md"
+  round_file="$sdir/second-chief-r$round.md"
   canonical_file="$sdir/second-chief.md"
   [ ! -d "$canonical_file" ] || ac_die "canonical second-chief.md path is a directory, refusing to write: $canonical_file"
-  case "$round" in
-    1) [ ! -e "$r1_file" ] || ac_die "round 1 review already exists and is immutable: $r1_file" ;;
-    2) [ ! -e "$r2_file" ] || ac_die "round 2 review already exists and is immutable: $r2_file" ;;
-  esac
+  refuse_settled_round
   brief_sha="$(ac_config_sha256 "$brief")"
   report_sha="$(ac_config_sha256 "$report")"
   gate_routing="$(latest_valid_gate_routing "$data_dir/$family/room.md" "$stage" "$report_sha")" \
@@ -1016,15 +1040,17 @@ fi
 # The prompt is written DURABLY alongside second-chief.md, not to a $TMPDIR
 # scratch file, so a settled gate's prompt stays reviewable (see OUTPUT above).
 # It shares second-chief.md's home (data/<family>/<short>/) and lifecycle: a
-# settled runtime artifact, kept whether the run succeeds or fails, never
-# cleaned up here.
-promptf="$sdir/gate-prompt.md"
-printf '%s' "$prompt" >"$promptf"
+# settled runtime artifact, one per round so R2 never erases the prompt R1 was
+# sent, kept whether the run succeeds or fails, never cleaned up here.
 if [ "$gate_kind" = maintenance ]; then
-  gate_running="$run/.gate-running"
+  promptf="$sdir/gate-prompt.md"
+  gate_running="$run/.gate-running.$$"
+  gate_lock=""
   busy_decl=""
 else
-  gate_running="$data_dir/$family/.gate-running"
+  promptf="$sdir/gate-prompt-r${round}.md"
+  gate_running="$data_dir/$family/.gate-running.$$"
+  gate_lock="$data_dir/$family/.gate-lock"
   busy_decl="$(ac_chief_busy_path "$(ac_state_dir)" "$family")"
 fi
 obsdesc="$(mktemp "${TMPDIR:-/tmp}/ac-gate-observe-XXXXXX")"
@@ -1032,14 +1058,49 @@ tmp_out=""
 tmp_canonical=""
 tmp_context=""
 watch_pane=""
-# The running marker, busy declaration, observation descriptor, tmp outputs and
-# the run's own gate board are transient and cleared on every trappable exit -
-# measured: bash runs an EXIT-only trap on TERM and INT, not on KILL, which is
-# exactly why the declaration also carries its own bound. The board pane closes
-# with the run, ac-ship-watch style (watch_open owns the contract); a REUSED
-# live board never lands in watch_pane, so another run's board is never taken.
-# gate-prompt.md and settled second-chief artifacts are kept.
-trap 'rm -f "$gate_running" "$busy_decl" "$obsdesc" "$tmp_out" "$tmp_canonical" "$tmp_context" 2>/dev/null; [ -z "$watch_pane" ] || herdr_cli pane close "$watch_pane" >/dev/null 2>&1 || true' EXIT
+family_locked=""
+
+# At a run's start and exit the family lock is best-effort like the busy
+# declaration it orders: one that cannot be had within ac_lock_acquire's wait lets
+# the run go on unordered rather than fail it. Publishing a round never does (see
+# ATOMIC WRITE). A run holds it at most once, so an exit taken while holding it
+# never waits on it.
+lock_family() {
+  [ -n "$gate_lock" ] && [ -z "$family_locked" ] || return 0
+  if ac_lock_acquire "$gate_lock"; then family_locked=1; fi
+}
+unlock_family() {
+  [ -n "$family_locked" ] || return 0
+  family_locked=""
+  ac_lock_release "$gate_lock"
+}
+
+leave_family() {
+  # This run's marker is its own; the busy declaration is the FAMILY's, so only
+  # the family's last live run clears it (see BUSY DECLARATION in the header).
+  # Under the family lock, so a run stamping its marker meanwhile is either seen
+  # here or declares after this clear. A dead run's marker is swept on the way:
+  # per-run names are never overwritten by a later run.
+  local m live=""
+  rm -f "$gate_running"
+  [ -n "$busy_decl" ] || return 0
+  lock_family
+  for m in "$data_dir/$family"/.gate-running.*; do
+    [ -f "$m" ] || continue
+    if ac_pid_alive "$(ac_meta_get "$m" pid)"; then live=1; else rm -f "$m"; fi
+  done
+  [ -n "$live" ] || rm -f "$busy_decl"
+  unlock_family
+}
+# The running marker, observation descriptor, tmp outputs and the run's own gate
+# board are transient and cleared on every trappable exit, the busy declaration
+# on the family's last one - measured: bash runs an EXIT-only trap on TERM and
+# INT, not on KILL, which is exactly why the declaration also carries its own
+# bound. The board pane closes with the run, ac-ship-watch style (watch_open owns
+# the contract); a REUSED live board never lands in watch_pane, so another run's
+# board is never taken. The prompt file and settled second-chief artifacts are
+# kept.
+trap 'leave_family 2>/dev/null || true; rm -f "$obsdesc" "$tmp_out" "$tmp_canonical" "$tmp_context" 2>/dev/null; [ -z "$watch_pane" ] || herdr_cli pane close "$watch_pane" >/dev/null 2>&1 || true' EXIT
 
 helper="${AC_PANE_AGENT:-$(dirname "$0")/ac-pane-agent.sh}"
 
@@ -1118,13 +1179,20 @@ watch_open() {
 }
 
 # --- RUN: stamp the marker, open the board, run ONE fresh turn, no fallback ----
+# Stamped under the family lock leave_family takes, so a same-family run exiting
+# meanwhile sees this run before it decides it was the family's last. The prompt
+# is written under it too, past a last settled-round check, so a run starting once
+# an overlapping run has settled its round never replaces the settled prompt.
+lock_family
 if [ "$gate_kind" = maintenance ]; then
   printf 'family=%s\nstage=%s\nengine=%s\nmodel=%s\nat=%s\nobserve=%s\npid=%s\n' \
     "$family" "$stage" "$engine" "$model" "$(ac_iso)" "$obsdesc" "$$" >"$gate_running"
 else
+  refuse_settled_round
   printf 'family=%s\nstage=%s\nround=%s\nengine=%s\nmodel=%s\nat=%s\nobserve=%s\npid=%s\n' \
     "$family" "$stage" "$round" "$engine" "$model" "$(ac_iso)" "$obsdesc" "$$" >"$gate_running"
 fi
+printf '%s' "$prompt" >"$promptf"
 # BUSY DECLARATION (see the header): the single call below blocks this process -
 # a roomchief among its callers - for up to AC_GATE_TIMEOUT, so declare that
 # window for the family being judged before entering it. The bound is the budget
@@ -1134,9 +1202,15 @@ fi
 # and nothing more. BEST-EFFORT by construction: a write that cannot land must
 # never fail the gate, because failing to declare degrades to exactly today's
 # behaviour (the fleet revokes the skip after the grace) - the safe direction.
+# A declaration already on disk with a LATER bound is kept, never shortened: it
+# covers another blocking call of this family still inside its own window.
 if [ -n "$busy_decl" ]; then
-  printf '%s\n' "$(( $(ac_now) + ${AC_GATE_TIMEOUT:-600} + 60 ))" >"$busy_decl" || true
+  busy_until="$(( $(ac_now) + ${AC_GATE_TIMEOUT:-600} + 60 ))"
+  busy_prev="$(cat "$busy_decl" 2>/dev/null || true)"
+  case "$busy_prev" in ''|*[!0-9]*) busy_prev=0 ;; esac
+  [ "$busy_prev" -ge "$busy_until" ] 2>/dev/null || printf '%s\n' "$busy_until" >"$busy_decl" || true
 fi
+unlock_family
 watch_open || true
 
 # ONE fresh non-resumed one-shot turn on the selected engine. --observe hands the
@@ -1273,8 +1347,7 @@ if [ "$gate_kind" != maintenance ]; then
       r1_disposition:(if $r1_disposition == "" then null else $r1_disposition end),
       repository:{root:$repo_root, ref:$repo_ref, commit:$repo_commit}, inputs:$inputs}' \
     >"$tmp_context" || fail_gate "could not build immutable decision context"
-  mv -f "$tmp_context" "$context_file"
-  context_sha="$(ac_sha256_file "$context_file")"
+  context_sha="$(ac_sha256_file "$tmp_context")"
 fi
 
 # --- ATOMIC WRITE: staged advice or hash-bound maintenance authorization -------
@@ -1292,22 +1365,36 @@ if [ "$gate_kind" = maintenance ]; then
   mv -f "$tmp_out" "$out_file"
   printf 'maintenance-gate[%s] %s/%s: %s\n' "$engine" "$family" "$subject" "$decision"
 else
-  case "$round" in
-    1) out_file="$r1_file" ;;
-    2) out_file="$r2_file" ;;
-  esac
+  out_file="$round_file"
   tmp_out="$sdir/.second-chief-r${round}.md.tmp.$$"
   {
     printf -- '---\nschema: agentcrew.second-chief/v1\ndecision: %s\nengine: %s\nround: %s\nbrief_sha256: %s\nreport_sha256: %s\ncontext_sha256: %s\nprevious_review: %s\nreviewed_at: %s\n---\n' \
       "$decision" "$engine" "$round" "$brief_sha" "$report_sha" "$context_sha" "$previous_review" "$(ac_iso)"
     printf '%s\n' "$body"
   } >"$tmp_out"
-  mv "$tmp_out" "$out_file"
+  # Publishing is ordered by the family lock against an overlapping run of this
+  # round, which may have settled it while this one was judging: the first to
+  # settle owns the round, and a later one fails here having published nothing.
+  # Unordered, a run past its check could replace the context a settled review
+  # binds, so a publish never goes on without the lock. The context lands first,
+  # so a run killed between the two leaves only an orphan context the round's
+  # settler replaces - never a settled review without its context. The settler
+  # re-writes its prompt over one a later-started run wrote meanwhile.
+  lock_family
+  refuse_settled_round
+  [ -n "$family_locked" ] || ac_die "could not take the family lock to publish round $round, nothing published: $gate_lock"
+  mv -f "$tmp_context" "$context_file"
+  if ! ln "$tmp_out" "$out_file" 2>/dev/null; then
+    refuse_settled_round
+    ac_die "could not write round $round review: $out_file"
+  fi
   tmp_canonical="$sdir/.second-chief.md.tmp.$$"
   if ! cp "$out_file" "$tmp_canonical" || ! mv -f "$tmp_canonical" "$canonical_file"; then
     rm -f "$out_file" "$tmp_canonical" "$context_file"
     ac_die "failed to update canonical second-chief.md; removed just-written round artifact"
   fi
+  printf '%s' "$prompt" >"$promptf"
+  unlock_family
   printf 'second-chief[%s] %s/%s r%s: %s\n' "$engine" "$family" "$stage" "$round" "$decision"
 fi
 printf '  -> %s\n' "$out_file"
