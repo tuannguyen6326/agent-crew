@@ -281,6 +281,14 @@ qa_error_report_on_exit() {
     && declare -F reap_verify_runtime >/dev/null 2>&1; then
     reap_verify_runtime
   fi
+  # No meta exists before the pane, so nothing could ever recover a lease an
+  # exit in that window leaves behind - and not every exit there is an ac_die a
+  # call site anticipated (set -e ends the script too). The trap is the ONE
+  # releaser for the window: a second --force return lands on a slot the pool
+  # may already have handed to another lessee.
+  case "$qa_phase" in
+    source-lease|runtime-bundle) return_leases "$all_leases" || true ;;
+  esac
   if declare -F release_lock >/dev/null 2>&1; then
     release_lock
   fi
@@ -481,12 +489,18 @@ restore_neutralized() {
   # path - so that crewmate's harness loaded a 166-byte pointer at a commit
   # path that no longer existed (observed 2026-09-20). ac_seed_disposable is
   # the fail-safe for a round killed untrappably, where this never runs.
-  [ -n "$ctx_backup" ] && [ -f "$ctx_backup/manifest" ] || return 0
+  [ -n "$ctx_backup" ] || return 0
   local n path
-  while IFS=$'\t' read -r n path; do
-    [ -n "$path" ] || continue
-    cat "$ctx_backup/$n" >"$path" 2>/dev/null || true
-  done <"$ctx_backup/manifest"
+  if [ -f "$ctx_backup/manifest" ]; then
+    while IFS=$'\t' read -r n path; do
+      [ -n "$path" ] || continue
+      if [ -f "$ctx_backup/$n.link" ]; then
+        rm -f "$path" && ln -s -- "$(cat "$ctx_backup/$n.link")" "$path" 2>/dev/null || true
+      else
+        cat "$ctx_backup/$n" >"$path" 2>/dev/null || true
+      fi
+    done <"$ctx_backup/manifest"
+  fi
   rm -rf "$ctx_backup"
   ctx_backup=""
 }
@@ -837,7 +851,13 @@ qa_validate_boundary_receipts() {
     "$(ac_meta_get "$run/runtime/receipt.env" process_group)" || return 1
   local evidence_root rec_driver rec_expected rec_resolved
   evidence_root="$(ac_meta_get "$run/run.meta" evidence)"
-  while IFS="$(printf '\t')" read -r case_id tier status cls conf grade evidence note auth repro boundary receipt; do
+  # Every `read` of cases.tsv in this file re-separates TAB as US (\037) first:
+  # TAB is IFS whitespace, so `read` collapses an empty field and shifts each
+  # later one off the column the awk validators read. The swap runs under
+  # LC_ALL=C because the free-text columns are bytes: in a UTF-8 locale BSD tr
+  # stops at the first invalid sequence, and every row from there on would
+  # silently skip the loop.
+  while IFS=$'\037' read -r case_id tier status cls conf grade evidence note auth repro boundary receipt; do
     [ -n "$case_id" ] || continue
     ac_qa_receipt_path_ok "$run" "$case_id" "$receipt" \
       || { AC_QA_RECEIPT_ERROR="case $case_id boundary receipt escapes the run's own boundary directory (canonical check refuses traversal, symlinks, and foreign paths)"; return 1; }
@@ -858,7 +878,7 @@ qa_validate_boundary_receipts() {
       "$want_sha" "$profile_sha" "$runtime_sha" "$rec_expected" || return 1
     [ "$boundary" = "$(ac_meta_get "$receipt" boundary)" ] \
       || { AC_QA_RECEIPT_ERROR="case $case_id ledger boundary disagrees with its receipt"; return 1; }
-  done <"$run/cases.tsv"
+  done < <(LC_ALL=C tr '\t' '\037' <"$run/cases.tsv")
   ac_qa_coverage_validate "$run" "$source_repo" "$want_sha" \
     || { AC_QA_RECEIPT_ERROR="$AC_QA_MANIFEST_ERROR"; return 1; }
   return 0
@@ -1282,9 +1302,9 @@ qa_phase="source-lease"
 lease="$(verify_lease "$main_repo" "$id")" \
   || ac_die "could not lease verifier worktree for $id"
 [ -n "$lease" ] && [ -d "$lease" ] || ac_die "tree allocator returned no verifier worktree for $id"
+all_leases="$lease"
 if ! git -C "$lease" checkout --detach --force --quiet "$sha" \
   || ! git -C "$lease" reset --hard --quiet "$sha"; then
-  return_leases "$lease" || true
   ac_die "could not bind verifier worktree to $sha"
 fi
 verify_drop_branch "$lease" "$id"
@@ -1304,22 +1324,33 @@ verify_drop_branch "$lease" "$id"
 # Nothing here outlives the lease: the pre-round bytes are kept aside and
 # restore_neutralized writes them back before the lease is released (the
 # pool's return resets tracked files only, and an untracked seed would
-# otherwise carry the stub to the slot's next lessee). Two passes - back up
-# EVERY file before overwriting ANY: a root CLAUDE.md symlinked to AGENTS.md
-# (this distro's own shape) makes one write reach two listed paths, and a
-# backup taken mid-loop would capture the stub itself.
+# otherwise carry the stub to the slot's next lessee). A SYMLINK is
+# neutralized as the link - swapped for a stub file and recreated at restore,
+# never written through: the diff under review decides where it points, and a
+# target outside the lease (or a dangling one, which a write would CREATE) is
+# not this round's to change. Only regular files and links are instruction
+# files; a directory of that name cannot be stubbed. Two passes - back up
+# EVERY file before overwriting ANY: a write reaches every name sharing the
+# written file's inode, and a backup taken mid-loop would capture the stub
+# itself.
 neutralized=0
 ctx_backup="$(mktemp -d "${TMPDIR:-/tmp}/ac-verify-ctx.XXXXXX")"
 ctx_files=()
 while IFS= read -r ctx_file; do
   ctx_files+=("$ctx_file")
-done < <(find "$lease" \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md \) -not -path '*/.git/*' 2>/dev/null)
+done < <(find "$lease" \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md \) \
+  \( -type f -o -type l \) -not -path '*/.git/*' 2>/dev/null)
 for ctx_file in ${ctx_files[@]+"${ctx_files[@]}"}; do
   neutralized=$((neutralized + 1))
-  cat "$ctx_file" >"$ctx_backup/$neutralized" 2>/dev/null || continue
+  if [ -L "$ctx_file" ]; then
+    readlink "$ctx_file" >"$ctx_backup/$neutralized.link" || continue
+  else
+    cat "$ctx_file" >"$ctx_backup/$neutralized" 2>/dev/null || continue
+  fi
   printf '%s\t%s\n' "$neutralized" "$ctx_file" >>"$ctx_backup/manifest"
 done
 for ctx_file in ${ctx_files[@]+"${ctx_files[@]}"}; do
+  [ ! -L "$ctx_file" ] || rm -f "$ctx_file"
   printf '%s project instruction files must not steer the independent verifier. True content: git show %s:<path>\n' \
     "$AC_VERIFY_NEUTRALIZED_MARK" "$sha" >"$ctx_file"
 done
@@ -1328,9 +1359,8 @@ done
 # a separate E2E suite from its own repository at an exact frozen SHA, so the
 # facade leases a second worktree and releases BOTH under the plural lease
 # grammar (return_leases splits on ':'). Any failure while the E2E lease is only
-# PARTIALLY set up is a pre-spawn abort: release every partial lease before
-# ac_die, since no meta exists yet to recover from.
-all_leases="$lease"
+# PARTIALLY set up is a pre-spawn abort: the EXIT trap releases every partial
+# lease, since no meta exists yet to recover from.
 e2e_worktree=""
 if [ "$kind" = qa ] && [ -n "$profile" ]; then
   qa_phase=runtime-bundle
@@ -1338,18 +1368,17 @@ if [ "$kind" = qa ] && [ -n "$profile" ]; then
   e2e_ref_prof="$(jq -r '.e2e.ref // ""' "$profile" 2>/dev/null || true)"
   if [ -n "$e2e_repo_path" ]; then
     [ -n "$e2e_ref_prof" ] \
-      || { return_leases "$all_leases" || true; ac_die "qa profile has an E2E repo but no exact E2E ref: $profile"; }
+      || ac_die "qa profile has an E2E repo but no exact E2E ref: $profile"
     e2e_repo_root="$(ac_repo_root "$e2e_repo_path" 2>/dev/null || true)"
     [ -n "$e2e_repo_root" ] \
-      || { return_leases "$all_leases" || true; ac_die "qa profile e2e.repo_path is not a git repository: $e2e_repo_path"; }
+      || ac_die "qa profile e2e.repo_path is not a git repository: $e2e_repo_path"
     e2e_lease="$(verify_lease "$e2e_repo_root" "$id-e2e")" \
-      || { return_leases "$all_leases" || true; ac_die "could not lease E2E verifier worktree for $id"; }
+      || ac_die "could not lease E2E verifier worktree for $id"
     [ -n "$e2e_lease" ] && [ -d "$e2e_lease" ] \
-      || { return_leases "$all_leases" || true; ac_die "tree allocator returned no E2E worktree for $id"; }
+      || ac_die "tree allocator returned no E2E worktree for $id"
     all_leases="$all_leases:$e2e_lease"
     if ! git -C "$e2e_lease" checkout --detach --force --quiet "$e2e_ref_prof" \
       || ! git -C "$e2e_lease" reset --hard --quiet "$e2e_ref_prof"; then
-      return_leases "$all_leases" || true
       ac_die "could not bind E2E verifier worktree to $e2e_ref_prof"
     fi
     verify_drop_branch "$e2e_lease" "$id-e2e"
@@ -1368,22 +1397,19 @@ EOF
   runtime_parent="$lease/.crew/qa"
   runtime_final="$runtime_parent/profile-runtime"
   if [ -e "$runtime_final" ]; then
-    return_leases "$all_leases" || true
     ac_die "source lease carries a stale qa profile-runtime directory; refusing to overwrite it"
   fi
   if ! mkdir -p "$runtime_parent"; then
-    return_leases "$all_leases" || true
     ac_die "could not create the QA runtime bundle parent for $id"
   fi
   runtime_tmp="$(mktemp -d "$runtime_parent/.profile-runtime.tmp.XXXXXX")" \
-    || { return_leases "$all_leases" || true; ac_die "could not allocate the QA runtime bundle for $id"; }
+    || ac_die "could not allocate the QA runtime bundle for $id"
   if ! cp -R "$(dirname "$profile")/." "$runtime_tmp/" \
     || ! jq -n --arg wt "$e2e_worktree" \
          '{schema:"agentcrew.qa-runtime/v1",e2e_worktree:$wt}' \
          >"$runtime_tmp/runtime.json" \
     || ! mv "$runtime_tmp" "$runtime_final"; then
     rm -rf "$runtime_tmp"
-    return_leases "$all_leases" || true
     ac_die "could not publish the frozen runtime bundle for $id"
   fi
 fi
@@ -1792,14 +1818,14 @@ text="$(ac_transcript_final "$transcript")"
 # waited for one) falls back to the lanes' own last write.
 if [ "${scout_count:-0}" -gt 0 ] && [ -d "$scout_dir" ]; then
   verdict_epoch="$(ac_transcript_final_epoch "$transcript" 2>/dev/null || true)"
-  # `|| true` inside the group, not after the pipeline: with pipefail, a stat
-  # on a glob that matched nothing (a fan-out that never ran) fails the whole
-  # substitution and set -e ends the round silently - which is exactly what
-  # a refusal branch below is supposed to say out loud instead.
+  # `|| true` inside the loop, not after the pipeline: with pipefail, an mtime
+  # read on a glob that matched nothing (a fan-out that never ran) fails the
+  # whole substitution and set -e ends the round silently - which is exactly
+  # what a refusal branch below is supposed to say out loud instead.
   if [ -e "$scout_dir/lanes.tsv" ]; then
-    lane_latest="$(stat -f %m "$scout_dir/lanes.tsv" 2>/dev/null || true)"
+    lane_latest="$(ac_file_mtime "$scout_dir/lanes.tsv" || true)"
   else
-    lane_latest="$( { stat -f %m "$scout_dir"/*.ndjson 2>/dev/null || true; } | sort -n | tail -1)"
+    lane_latest="$(for f in "$scout_dir"/*.ndjson; do ac_file_mtime "$f" || true; done | sort -n | tail -1)"
   fi
   if [ -n "$verdict_epoch" ] && [ -n "$lane_latest" ] && [ "$verdict_epoch" -lt "$lane_latest" ]; then
     log_rejection "verdict-written-before-fan-out-finished"
@@ -1887,10 +1913,10 @@ if [ "$kind" = qa ]; then
       || ac_die "verifier $id passed run failed receipt reconciliation: $AC_QA_RECEIPT_ERROR"
     qa_evidence_root="$(ac_meta_get "$qa_run/run.meta" evidence)"
     [ -n "$qa_evidence_root" ] || qa_evidence_root="$qa_run/evidence"
-    while IFS="$(printf '\t')" read -r case_id _ _ _ _ _ case_evidence _; do
+    while IFS=$'\037' read -r case_id _ _ _ _ _ case_evidence _; do
       qa_path_within "$qa_evidence_root" "$case_evidence" \
         || ac_die "verifier $id case $case_id evidence is missing or outside the declared root"
-    done <"$qa_run/cases.tsv"
+    done < <(LC_ALL=C tr '\t' '\037' <"$qa_run/cases.tsv")
     marker="$main_repo/.crew/qa/passed/$sha"
     marker_scope="$(ac_meta_get "$qa_run/run.meta" scope)"
     marker_app="$(ac_meta_get "$qa_run/run.meta" app)"
@@ -2030,8 +2056,8 @@ case "$kind" in
     # predicate above: one named reason in rejection.log. A fix finding with
     # no file at all is left to the normalizer and the fix loop as before.
     bad_cite="$(jq -r '.findings[] | select(.action == "fix") | select((.file // "") != "")
-                        | "\(.id // "unknown")\t\(.file)\t\(.line // "")"' <<<"$json" 2>/dev/null \
-      | while IFS="$(printf '\t')" read -r c_id c_file c_line; do
+                        | "\(.id // "unknown")\u001f\(.file)\u001f\(.line // "")"' <<<"$json" 2>/dev/null \
+      | while IFS=$'\037' read -r c_id c_file c_line; do
           c_path="${c_file#"$lease"/}"; c_path="${c_path#"$main_repo"/}"; c_path="${c_path#./}"
           if ! git -C "$main_repo" cat-file -e "$sha:$c_path" 2>/dev/null; then
             printf '%s(%s not at ref)\n' "$c_id" "$c_path"; continue
@@ -2083,7 +2109,7 @@ case "$kind" in
       while IFS= read -r _ref; do
         [ -n "$_ref" ] || continue
         printf '%s' "$json" | jq -e --arg r "$_ref" \
-          '[(.scout_dispositions // [])[].ref // "" | ascii_downcase] | any(index($r) != null)' \
+          '[(.scout_dispositions // [])[].ref // "" | ascii_downcase] | any(. == $r)' \
           >/dev/null 2>&1 || _missing="$_missing${_missing:+, }$_ref"
       done <<EOF
 $_want
@@ -2166,12 +2192,12 @@ if [ "$kind" = qa ]; then
   mkdir -p "$evidence_dir/artifacts"
   if [ "$durable_outcome" = passed ]; then
     mkdir -p "$evidence_dir/artifacts/cases"
-    while IFS="$(printf '\t')" read -r case_id _ _ _ _ _ case_evidence _; do
+    while IFS=$'\037' read -r case_id _ _ _ _ _ case_evidence _; do
       resolved_case="$case_evidence"
       case "$resolved_case" in /*) ;; *) resolved_case="$qa_evidence_root/$resolved_case" ;; esac
       cp -R "$resolved_case" "$evidence_dir/artifacts/cases/$case_id" \
         || ac_die "verifier $id could not export evidence for case $case_id"
-    done <"$qa_run/cases.tsv"
+    done < <(LC_ALL=C tr '\t' '\037' <"$qa_run/cases.tsv")
   fi
   qa_summary="$(jq -r '.summary' "$output_tmp")"
   qa_phase=report
