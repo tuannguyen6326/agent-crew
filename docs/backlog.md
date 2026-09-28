@@ -21,6 +21,8 @@ Moved verbatim from `AGENTS.md` section 9, which keeps the one-line summary and 
 - [x] <id> [abandoned] - <one line> - <why> (<date>)
 ```
 
+The grammar is byte-exact ASCII - what onetrue awk does under `LC_ALL=C` - and its one parser, `src/backlog.ts`, specifies every field in its header.
+
 `[failed]`/`[abandoned]` are terminal but NEVER satisfy a blocker.
 `[@held]`, as one of a row's `[...]` groups in the LEADING RUN right after the
 id - contiguous bracket groups, nothing but whitespace between them, not
@@ -47,7 +49,7 @@ it is the bare token's: same leading-run position, same sentinel, same
 code-span exemption, and the same fail-closed direction for a slip - a date
 that is not exactly `YYYY-MM-DD` is not a dated hold at all but a mis-typed
 one, reported `hold malformed`, never an accidental release. The parser
-extracts the date (`AC_DONELINE_AWK`'s `f["hold_until"]`), `bin/ac-ready.sh`
+extracts the date (`src/backlog.ts`'s `hold_until`), `bin/ac-ready.sh`
 is the one that compares it to today. When an expired-dated row STARTS,
 `bin/ac-task.sh start` strips the spent token - the date was the captain's
 own release, and a leftover hold token on an In-flight line would still read
@@ -83,7 +85,7 @@ EVERY whitespace-separated token is `key:value` from the closed key set
 `[src:cap flow:direct mode:local-only rev:no qa:no]`. The all-tokens-keyed
 shape is the discriminator: a leading-run group with any non-`key:value`
 content keeps its existing class (provenance prose, `[EPIC]`, `[@held]`).
-`AC_DONELINE_AWK` (`f["contract"]`) is the ONE parser; `ac_contract_lint`
+`src/backlog.ts` (`contract`) is the ONE parser; `ac_contract_lint`
 (ac-lib.sh) the one value judge; `bin/ac-ready.sh` displays the group on
 READY lines and WARNs on violations - display and judgment, never a
 scheduling condition; the enforcement point is `ac-brief.sh`'s escalation
@@ -105,15 +107,15 @@ durable per-domain provenance - re-stamped at END of line when the landing
 rewrite gives the row a new trailing `(merged ...)` group, since that group
 is not a `(repo: ...)` arm. Only the crewchief stamps (the verb is
 chief-only and the ledger guard fences the file), and the token is
-deliberately date-free - `ac_doneline`'s date fallback would otherwise adopt
-a timestamp as the row's date and verb. `AC_DONELINE_AWK`'s `f["domain"]` is
+deliberately date-free - the parser's date fallback would otherwise adopt
+a timestamp as the row's date and verb. `src/backlog.ts` (`domain`) is
 the ONE parser.
 
 `blocked-by` grammar is machine-read by `bin/ac-ready.sh`: comma-joined ids
 with NO spaces, then ` - <reason>`. Story membership is the `epic:<epic-id>`
 token on the story line - never an id prefix. FEATURE membership is the
 `feature:<name>` token in the same anywhere-matched shape (feature-branch-mech,
-`AC_DONELINE_AWK`'s `f["feature"]`); one row never carries both - two
+`src/backlog.ts`'s `feature`); one row never carries both - two
 integration targets is a ledger defect the shared resolver orders epic-first
 and `ac-feature.sh ship` refuses outright.
 

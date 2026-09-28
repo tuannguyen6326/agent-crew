@@ -53,7 +53,7 @@ Read [`docs/concepts.md`](docs/concepts.md) first if you are new to the model.
 | Script behavior | `bin/<script>.sh` header, or `src/<name>.ts` for a ported script | The header comment IS the spec - change behavior, update the header. A ported script's `bin/ac-<name>.sh` is a shim whose header points to its `src/` module. |
 | Crew skills | `.agents/skills/<name>/` | Agent Skills spec packages; schema enforced by `tests/ac-skills-catalog.test.sh`. |
 | Crewmate instructions | `docs/examples/CREWMATE.md` | The starter for a fleet's crewmate seed layer. |
-| Backlog grammar | `docs/backlog.md` | `AC_DONELINE_AWK` in `bin/ac-lib.sh` is the one parser. |
+| Backlog grammar | `docs/backlog.md` | `src/backlog.ts` is the one parser, and its header the full spec; awk sites read it through `AC_DONELINE_AWK` in `bin/ac-lib.sh`. |
 | Config files and env knobs | `docs/configuration.md` | The environment table is the knob manifest, enforced by `tests/ac-config-surface.test.sh`. |
 | Script index | `docs/scripts.md` | A map only; each row points to the owning header. |
 | Web dashboard | `dashboard/app.ts`, `dashboard/lib.ts`, `dashboard/page.ts`, `dashboard/watch.ts` | Bun, no build step. `bin/ac-dashboard.sh` starts `dashboard/app.ts` through `bin/ac-bun.sh`. `app.ts`'s header owns the route and API contract; `lib.ts` is the pure layer. Tests: `dashboard/app.test.ts`, `dashboard/watch.test.ts`. |

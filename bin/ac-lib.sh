@@ -7,9 +7,9 @@
 # recovery, config reads, crewdeputy config convergence + the crewdeputy
 # routing table grammar, task data dir resolution (staged-flow nesting), the
 # captain-marker regexes (AC_CAPTAIN_RE/AC_DECISION_RE/AC_BUSY_RE) and their
-# write-side twin ac_bare_marker_verbs, the backlog Done-line grammar
-# (AC_DONELINE_AWK/ac_doneline - shared by ac-ready.sh/ac-curate.sh/ac-learn.sh,
-# none of which otherwise need a sub-lib, so it stays here rather than in
+# write-side twin ac_bare_marker_verbs, the awk binding to the backlog line
+# parser (AC_DONELINE_AWK/ac_doneline - every ledger-reading awk site sources
+# this file already, so it stays here rather than in
 # ac-wake-lib.sh), task state files + the VERIFICATION-agent and SELF-TASK
 # meta classes, the landing ledger (cross-family file interlock) + crewmate
 # seeding (ac_seed_*), git helpers (ac_repo_root/ac_default_branch/
@@ -1095,334 +1095,68 @@ ac_room_file() {
   printf '%s\n' "$live"
 }
 
-# --- backlog Done-line grammar: the ONE parser three sites share --------------
+# --- backlog line parser: the awk binding --------------------------------------
 #
-# AUTHORITATIVE for how a `records/backlog.md` line (docs/backlog.md) is
-# decomposed into fields. THREE awk sites parse this line - ac-ready.sh's
-# snapshot(), ac-curate.sh's _backlog_plan(), ac-learn.sh's
-# learn_retro_snapshot() - and their private copies DRIFTED (the learn parser
-# landed inert against the real ledger's date/verb shapes). This is their single
-# source: an awk function block each site prepends to its own program with
-# `awk "$AC_DONELINE_AWK"'<program>'`, so every site keeps its own surrounding
-# walk (section tracking, line numbers, windowing) and only the field extraction
-# is shared.
-#
-# ac_doneline(line, f) ALSO fills f["contract"] - the DELIVERY-CONTRACT token
-# group (delivery-contract-on-the-row): the FIRST leading-run, unquoted `[...]`
-# group whose EVERY whitespace-separated token is `key:value` with a key from
-# the closed set src|flow|mode|rev|qa|promote - e.g.
-# `[src:cap flow:direct mode:local-only rev:no qa:no]` - returned as the bare
-# content, else "". The all-tokens-keyed test is the discriminator that keeps
-# every EXISTING group class untouched: a provenance tag (`[CAPTAIN-ORDERED
-# 2026-08-10 ...]`) carries non-kv words, `[EPIC]`/`[failed]`/`[@held]` carry
-# none, and a backtick-quoted group is a mention exactly as it is for hold.
-# VALUE validity is deliberately NOT judged here - the parser extracts,
-# `ac_contract_lint` (after this block) judges - so a typo'd value surfaces at
-# lint instead of silently vanishing the whole group.
-#
-# ac_doneline(line, f) fills the `f` array (passed by reference; named `f` so it
-# never shadows a caller's own global `out` array - ac-curate has one) with:
-#   f["id"]       - first whitespace token after the `- [ ]`/`- [x]` checkbox.
-#   f["terminal"] - "epic"|"failed"|"abandoned" when that bracket token sits at
-#                   the FIXED grammar position (rp[2], immediately after the id),
-#                   else "". A token check, NEVER a substring match against the
-#                   whole line: a prose mention of [failed] is not a terminal
-#                   state (the ready-marker-matches-prose-not-position incident).
-#   f["hold"]     - "1" when the row carries the captain-hold token `[@held]`,
-#                   or its DATED arm `[@held until <YYYY-MM-DD>]`, as one of
-#                   the line's top-level `[...]` groups AND that
-#                   group sits in the LEADING RUN - the contiguous run of
-#                   `[...]` groups starting immediately after the id, nothing
-#                   but whitespace between them - else "". A hold is not a
-#                   terminal state (nothing lands to clear it) and not the
-#                   dependency token (no blocker id, no STUCK semantics) - its
-#                   own field. NOT pinned to rp[2] the way `terminal` is: a
-#                   live ledger row's rp[2] is usually ALREADY another bracket
-#                   tag (`[CAPTAIN-ORDERED ...]`, `[MONITOR ...]`, `[EPIC]`),
-#                   so `[@held]` has no legal rp[2] slot to occupy on most rows
-#                   (measured: 3 of 4 open rows on the drydock ledger) - the
-#                   WHOLE leading run is checked, not just its first group.
-#                   THE TOKEN CARRIES A SENTINEL (`@`) FOR A MEASURED REASON:
-#                   an earlier `[held]` (bare word, no sentinel) design was
-#                   still structural - bracket syntax required - and STILL
-#                   false-positived on a real ledger row, because this
-#                   grammar's OTHER bracket tags (`[SLICE ...]`, `[CAPTAIN
-#                   ORDER LANDED ...]`) carry free-text PROSE, and that prose
-#                   uses "held"/"hold" as ordinary English verbs ("the
-#                   guardrail held", "Held until now on a verified
-#                   collision"). Bracket syntax alone cannot tell a token from
-#                   a sentence inside a free-text tag. `@` immediately before
-#                   the word is the part ordinary prose never writes -
-#                   nobody types "the guardrail @held" - so matching on the
-#                   SENTINEL rather than the bare word keeps both properties:
-#                   structural (still requires `[...]`) AND immune to a
-#                   free-text tag's ordinary prose.
-#                   LEADING-RUN POSITION IS ALSO MEASURED, not assumed: bracket
-#                   syntax and a sentinel still cannot tell a real token from a
-#                   QUOTATION of one - a row, a receipt, or AGENTS.md itself
-#                   documenting the grammar has to WRITE `[@held]` to describe
-#                   it, and a whole-line scan would silently hold that row too
-#                   (the exact bug this field exists to kill, reproduced on
-#                   itself). Restricting authority to the leading run does not
-#                   by itself fix that - a quotation sitting right after some
-#                   OTHER id would still be positional - so position combines
-#                   with the CODE-SPAN rule below; between them, a `[@held]`
-#                   outside the leading run is never authoritative, and one
-#                   wrapped in backticks is never authoritative even inside it.
-#   f["hold_until"] - the `<YYYY-MM-DD>` of a dated hold, else "". EXPIRY is
-#                   not judged here - the parser extracts, `bin/ac-ready.sh`
-#                   compares against today, the same extract/judge split
-#                   `contract`/`ac_contract_lint` already take. A hold whose
-#                   date shape is anything else is not a dated hold at all:
-#                   it falls to hold_malformed below, so a mis-typed date is
-#                   HELD (fail-closed), never an accidental release.
-#   f["hold_malformed"] - "1" when a `[...]` group is a mis-typed hold
-#                   attempt and is NOT wrapped in a code span (see QUOTATION
-#                   below), by EITHER of two rules, each catching a different
-#                   slip:
-#                   (1) the group case-insensitively contains "@held" or
-#                       "@hold" but is not an AUTHORITATIVE `[@held]` (see
-#                       f["hold"] above: exact text AND leading-run position) -
-#                       `[@hold]`, `[@HELD]`, `[@Held]`, `[@helds]`, ... AND a
-#                       well-formed `[@held]` sitting OUTSIDE the leading run,
-#                       unquoted. That last case is deliberate: position
-#                       decides AUTHORITY, so a token typed in the WRONG PLACE
-#                       never earns hold=1, but it must not silently fall
-#                       through to READY either - a real hold mis-placed by a
-#                       keystroke is exactly the failure this field exists to
-#                       catch, so it fails the SAME closed direction as any
-#                       other mis-type instead of opening a second escape.
-#                   (2) the group's content (bracket-stripped) is a SINGLE
-#                       WORD - no whitespace - and case-insensitively
-#                       contains "held" or "hold": `[held]`, `[hold]`,
-#                       `[HELD]`, `[on-hold]`, ... (the sentinel itself
-#                       forgotten - the single most likely slip on a
-#                       sentinel-bearing token, and the one this field could
-#                       not yet catch). A ONE-WORD group can never be prose -
-#                       it is exactly one token, not a sentence - so it needs
-#                       no sentinel to be recognized as a hold ATTEMPT; a
-#                       free-text tag's prose (`[SLICE ...]`, `[CAPTAIN ORDER
-#                       LANDED ...]`) is always multi-word and never matches
-#                       rule (2) (measured against the live ledger's actual
-#                       one-word bracket groups - `[x]`, `[abandoned]`,
-#                       `[failed]`, `[project]`, `[needs-decision]`, `[0]` -
-#                       zero false positives today). Position never gates this
-#                       rule: a mis-typed shape is never authoritative to
-#                       begin with, so there is no "wrong place" for it to be
-#                       demoted from - only QUOTATION exempts it.
-#                   Either rule failing CLOSED (HELD, not READY) is the same
-#                   direction blockers_malformed already picked for a
-#                   mis-typed `blocked-by` (below); "hold" is caught
-#                   alongside "held" in both rules because it is the nearest
-#                   possible miss: the feature's own name, present-tense.
-#                   QUOTATION: a `[...]` group immediately wrapped in a code
-#                   span - a backtick directly before `[` and directly after
-#                   `]`, the same backtick-wrap convention `bin/ac-spawn.sh`
-#                   already uses so a narrative marker verb never trips its
-#                   own detector - is a documentation mention, exempt from
-#                   BOTH f["hold"] and f["hold_malformed"] regardless of its
-#                   content or position: a row explaining the grammar can
-#                   write `` `[@held]` `` or `` `[held]` `` without holding or
-#                   flagging itself.
-#   f["epic"]     - the id in an `epic:<id>` token anywhere on the line, else "".
-#   f["feature"]  - the name in a `feature:<name>` token anywhere on the line,
-#                   else "" (feature-branch-mech). A MEMBERSHIP token exactly
-#                   like epic: - same anywhere-match, same charset. A row
-#                   carrying BOTH names two integration targets, a ledger
-#                   defect: ac_epic_base_for resolves epic first,
-#                   deterministically, and ac-feature.sh ship refuses such a
-#                   member row.
-#   f["domain"]   - the name in a `domain:<name>` CREWDOMAIN assignment token
-#                   (crewdomain-token) - authoritative ONLY at the two grammar
-#                   positions the old `assigned:crewchief` slot defined:
-#                   `; domain:<name>` immediately before a trailing
-#                   `(repo: ...)` group, or `; domain:<name>` at end of line
-#                   (the arm a Done row and a blocked Queued row take). NOT
-#                   anywhere-matched like `epic:` - epic is a membership
-#                   token, domain is an AUTHORIZATION token (the assignment
-#                   itself), so a prose quotation must be inert; the measured
-#                   `[@held]` and domain_row_tokened lessons both bind here.
-#                   Name charset [a-z0-9-] = ac_domain_name_ok's.
-#   f["domain_malformed"] - "1" when a `domain:[a-z0-9-]+`-shaped run sits
-#                   ANYWHERE ELSE on the line un-backticked (a mis-placed or
-#                   mis-typed stamp, or an unquoted prose mention). Fails
-#                   VISIBLE like hold_malformed/blockers_malformed: the row
-#                   never silently drops out of its domain's slice. A
-#                   backtick-wrapped run is a documentation mention, exempt.
-#   f["blockers"] - the comma-joined ids in a `blocked-by: <ids>` token, else "".
-#   f["date"]     - the first YYYY-MM-DD inside the LAST top-level (non-nested)
-#                   parenthetical group; fallback to the LAST YYYY-MM-DD anywhere
-#                   on the line when that group carries none (a nested-paren tail,
-#                   or a verb+date sitting outside any group). No date -> "".
-#                   The real ledger annotates the date group with trailing prose
-#                   (`(merged <date>; <note>)`) and trails more prose after it, so
-#                   the group is not anchored to end-of-line.
-#   f["verb"]     - the word immediately before that date; "unknown" when the
-#                   group is a bare `(date)` or the word is not verb-shaped. The
-#                   ledger uses done/closed/ended/delivered/merged/reported and
-#                   more; this never invents a verb the ledger did not write.
-# A site needing the failed/abandoned-OR-verb "marker" (ac-learn) composes it:
-# terminal in {failed,abandoned} ? terminal : verb.
+# An awk site reads a `records/backlog.md` line's fields by prepending
+# AC_DONELINE_AWK - `awk "$AC_DONELINE_AWK"'<program>' <ledger>` - and calling
+# ac_doneline($0, f), which fills f["id"] ... f["domain_malformed"]. The grammar
+# and its 14 fields are specified in the header of src/backlog.ts, the one
+# parser; this binding runs it (bin/ac-backlog.sh) once per ledger file and
+# looks each line up in the result.
+# - Pass the ledger as a FILE operand. The parser reads the file on its own,
+#   so stdin, `-`, /dev/stdin and /dev/fd/N are refused: the parser and awk
+#   would race for the bytes behind one descriptor.
+# - A failure exits awk 2 with one ERROR: line, before the site's own END runs
+#   (the binding's END comes first in the program): the parser did not finish
+#   (awk cannot see its exit status, so its count trailer is the proof), a
+#   refused operand, or a line the parse never saw (the file was rewritten
+#   mid-read).
+# - Never run it once per line: every file costs one parser start. A caller
+#   holding a single line runs `ac-backlog.sh fields --get <f1,...> -`.
 read -r -d '' AC_DONELINE_AWK <<'ACAWK' || true
-function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv, dauth) {
-  f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_until"] = ""; f["hold_malformed"] = ""; f["epic"] = ""; f["feature"] = ""
-  f["blockers"] = ""; f["blockers_malformed"] = ""; f["date"] = ""; f["verb"] = ""; f["contract"] = ""
-  f["domain"] = ""; f["domain_malformed"] = ""
-  rest = line
-  sub(/^- \[[ x]\] /, "", rest)
-  split(rest, rp, " ")
-  f["id"] = rp[1]
-  if (rp[2] == "[EPIC]")           f["terminal"] = "epic"
-  else if (rp[2] == "[failed]")    f["terminal"] = "failed"
-  else if (rp[2] == "[abandoned]") f["terminal"] = "abandoned"
-  # Every top-level `[...]` group on the line, not just rp[2]; matched on the
-  # `@` SENTINEL, not the bare word - see f["hold"] above for why. Structural
-  # (requires the literal bracket syntax) AND immune to a free-text tag's
-  # ordinary prose use of "held"/"hold" as a verb. hold_malformed's rule (2)
-  # (see f["hold_malformed"] above) needs no sentinel: a ONE-WORD group is
-  # never prose, so "held"/"hold" alone in one is still a hold attempt.
-  # POSITION decides AUTHORITY: only a group in the LEADING RUN - the id's own
-  # `[...]` groups, contiguous, nothing but whitespace between them - can set
-  # hold=1. A CODE SPAN decides QUOTATION: a group wrapped in backticks is a
-  # documentation mention, never a token and never an attempt, wherever it
-  # sits. A bare (unquoted) token-shaped group OUTSIDE the leading run still
-  # falls to hold_malformed instead of "no match" - never silently READY.
-  match(line, /^- \[[ x]\] [^ \t]+/)
-  idend = RLENGTH
-  hpos = idend + 1
-  runpos = hpos
-  inrun = 1
-  while (1) {
-    hseg = substr(line, hpos)
-    if (hseg == "" || !match(hseg, /\[[^][]*\]/)) break
-    gstart = hpos + RSTART - 1
-    hgrp = substr(line, gstart, RLENGTH)
-    gend = gstart + RLENGTH - 1
-    positional = 0
-    if (inrun) {
-      between = substr(line, runpos, gstart - runpos)
-      if (between ~ /^[ \t]*$/) { positional = 1; runpos = gend + 1 }
-      else inrun = 0
-    }
-    leftch = ""
-    if (gstart > 1) leftch = substr(line, gstart - 1, 1)
-    rightch = substr(line, gend + 1, 1)
-    quoted = (leftch == "`" && rightch == "`")
-    # The delivery-contract group (header note above): leading-run, unquoted,
-    # EVERY token key:value from the closed key set, first one wins. No
-    # contract-shaped content can also be a hold (the key set spells neither
-    # "held" nor "hold"), so claiming the group here steals nothing.
-    hcontent = substr(hgrp, 2, length(hgrp) - 2)
-    callkv = 0
-    if (!quoted && positional && f["contract"] == "" && hcontent != "") {
-      cn = split(hcontent, ctok, /[ \t]+/)
-      callkv = (cn > 0)
-      for (ci = 1; ci <= cn; ci++)
-        if (ctok[ci] !~ /^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/) { callkv = 0; break }
-    }
-    if (callkv) {
-      f["contract"] = hcontent
-    } else if (quoted) {
-      # a documentation mention - never a token, never an attempt
-    } else if (positional && hgrp ~ /^\[@held( until [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])?\]$/) {
-      f["hold"] = "1"
-      if (match(hgrp, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
-        f["hold_until"] = substr(hgrp, RSTART, RLENGTH)
-    } else if (tolower(hgrp) ~ /@held|@hold/) {
-      f["hold_malformed"] = "1"
-    } else {
-      hcontent = substr(hgrp, 2, length(hgrp) - 2)
-      if (hcontent !~ /[ \t]/ && tolower(hcontent) ~ /held|hold/) f["hold_malformed"] = "1"
-    }
-    hpos = gend + 1
+function _dl_q(s) { gsub(/'/, "'\\''", s); return "'" s "'" }
+function _dl_die(msg) { printf "ERROR: %s\n", msg > "/dev/stderr"; _dl_fail = 1; exit 2 }
+function _dl_load(file,    cmd, r, i, p, n, ok) {
+  cmd = _dl_q("@SHIM@") " fields " _dl_q(file)
+  while ((cmd | getline r) > 0) {
+    if (substr(r, 1, 2) == "r\t") {
+      p = 2
+      for (i = 0; i < 14; i++) p += index(substr(r, p + 1), "\t")
+      _dl_rec[substr(r, p + 1)] = substr(r, 3, p - 3)
+      n++
+    } else if (substr(r, 1, 2) == "e\t") ok = (substr(r, 3) + 0 == n)
   }
-  if (match(line, /epic:[a-zA-Z0-9_-]+/))
-    f["epic"] = substr(line, RSTART + 5, RLENGTH - 5)
-  if (match(line, /feature:[a-zA-Z0-9_-]+/))
-    f["feature"] = substr(line, RSTART + 8, RLENGTH - 8)
-  # domain:<name> (crewdomain-token) - see the field notes above. Two-arm
-  # position rule inherited from the retired domain_row_tokened; every other
-  # occurrence is malformed unless backtick-quoted.
-  dauth = 0
-  if (match(line, /; domain:[a-z0-9-]+ \(repo: [^()]*\)$/)) {
-    seg = substr(line, RSTART, RLENGTH); dauth = RSTART
-    match(seg, /domain:[a-z0-9-]+/)
-    dauth = dauth + RSTART - 1
-    f["domain"] = substr(seg, RSTART + 7, RLENGTH - 7)
-  } else if (match(line, /; domain:[a-z0-9-]+$/)) {
-    dauth = RSTART + 2
-    f["domain"] = substr(line, RSTART + 9, RLENGTH - 9)
-  }
-  hpos = 1
-  while (1) {
-    hseg = substr(line, hpos)
-    if (hseg == "" || !match(hseg, /domain:[a-z0-9-]+/)) break
-    gstart = hpos + RSTART - 1
-    gend = gstart + RLENGTH - 1
-    leftch = (gstart > 1) ? substr(line, gstart - 1, 1) : ""
-    rightch = substr(line, gend + 1, 1)
-    quoted = (leftch == "`" && rightch == "`")
-    if (gstart != dauth && !quoted) f["domain_malformed"] = "1"
-    hpos = gend + 1
-  }
-  # blocked-by is read STRICTLY and its slips are detected LENIENTLY. The
-  # strict shape is the pinned one (docs/backlog.md, `blocked-by: id1,id2 -
-  # reason`): one space, lowercase, comma-joined with no empty component, and
-  # ended by whitespace or end-of-line. Anything else leaves blockers EMPTY -
-  # which ac-ready.sh reads as READY - so a one-character slip would authorize
-  # starting a story whose dependency is still flying. A line that carries a
-  # blocked-by token the strict parse did not consume is therefore MALFORMED,
-  # a state its consumers must refuse to schedule. A prose mention of the token
-  # trips this too; that is the fail-VISIBLE direction, and the line is one
-  # keystroke from legal.
-  if (match(line, /blocked-by: [a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*/)) {
-    bafter = substr(line, RSTART + RLENGTH, 1)
-    if (bafter == "" || bafter == " " || bafter == "\t")
-      f["blockers"] = substr(line, RSTART + 12, RLENGTH - 12)
-  }
-  if (f["blockers"] == "" && tolower(line) ~ /(^|[^a-z0-9_-])blocked-by/)
-    f["blockers_malformed"] = "1"
-  # Date in the LAST non-nested parenthetical group; verb = the word before it.
-  searchpos = 1; grp = ""
-  while (1) {
-    seg = substr(line, searchpos)
-    if (seg == "" || !match(seg, /\([^()]*\)/)) break
-    grp = substr(seg, RSTART + 1, RLENGTH - 2)
-    searchpos = searchpos + RSTART + RLENGTH - 1
-  }
-  if (grp != "" && match(grp, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
-    f["date"] = substr(grp, RSTART, RLENGTH)
-    pre = substr(grp, 1, RSTART - 1)
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "", pre)
-    if (pre == "") f["verb"] = "unknown"
-    else { split(pre, pp, /[[:space:]]+/); f["verb"] = (pp[1] ~ /^[A-Za-z][A-Za-z_-]*$/) ? pp[1] : "unknown" }
-  }
-  # Fallback: last YYYY-MM-DD anywhere; verb = the word immediately before it.
-  if (f["date"] == "") {
-    fpos = 1; flast = ""; flaststart = 0
-    while (1) {
-      fseg = substr(line, fpos)
-      if (fseg == "" || !match(fseg, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) break
-      flaststart = fpos + RSTART - 1
-      flast = substr(fseg, RSTART, RLENGTH)
-      fpos = flaststart + RLENGTH
-    }
-    if (flast != "") {
-      f["date"] = flast
-      pre = substr(line, 1, flaststart - 1)
-      sub(/[[:space:]]+$/, "", pre)
-      n = split(pre, pp, /[^A-Za-z_-]+/)
-      cand = (n > 0) ? pp[n] : ""
-      f["verb"] = (cand ~ /^[A-Za-z][A-Za-z_-]*$/) ? cand : "unknown"
-    }
-  }
+  close(cmd)
+  if (!ok) _dl_die("the backlog parser failed on " file)
 }
+function ac_doneline(line, f,    v) {
+  if (FILENAME == "" || FILENAME == "-" || FILENAME ~ /^\/dev\/(stdin|fd\/[0-9]+)$/) _dl_die("ac_doneline reads its ledger as a file operand, never stdin")
+  if (!(FILENAME in _dl_loaded)) { _dl_loaded[FILENAME] = 1; _dl_load(FILENAME) }
+  if (!(line in _dl_rec)) _dl_die(FILENAME " changed between the parse and this read")
+  split(_dl_rec[line], v, "\t")
+  gsub(/\\t/, "\t", v[12])
+  f["id"] = v[1]; f["terminal"] = v[2]; f["hold"] = v[3]; f["hold_until"] = v[4]; f["hold_malformed"] = v[5]
+  f["epic"] = v[6]; f["feature"] = v[7]; f["blockers"] = v[8]; f["blockers_malformed"] = v[9]
+  f["date"] = v[10]; f["verb"] = v[11]; f["contract"] = v[12]; f["domain"] = v[13]; f["domain_malformed"] = v[14]
+}
+END { if (_dl_fail) exit 2 }
 ACAWK
+# The parser's path is fixed when this file is sourced, since a site may run
+# after its caller has cd'd, and without a subshell, since every script sources
+# this file.
+_ac_dl="${BASH_SOURCE[0]%/*}"
+case "$_ac_dl" in /*) ;; *) _ac_dl="$PWD/$_ac_dl" ;; esac
+_ac_dl="${_ac_dl//\\/\\\\}"
+_ac_dl="${_ac_dl//\"/\\\"}"
+_ac_dl="${_ac_dl//$'\n'/\\n}"
+_ac_dl="${_ac_dl//$'\r'/\\r}"
+AC_DONELINE_AWK="${AC_DONELINE_AWK%%@SHIM@*}$_ac_dl/ac-backlog.sh${AC_DONELINE_AWK#*@SHIM@}"
+unset _ac_dl
 
 # --- delivery-contract lint ----------------------------------------------------
 # ac_contract_lint <contract-content> - one violation per line, empty output
 # when clean, exit 0 always (a judge, not a gate). The VALUE vocabulary lives
-# HERE, the one judge - the parser above extracts shape only. Also flags the
+# HERE, the one judge - src/backlog.ts extracts shape only. Also flags the
 # two combinations AGENTS.md section 5 already outlaws (flow:staged with
 # rev:no; mode:crew-ship with rev:no) so a contract contradicting the law is
 # loud at the scheduler instead of surprising the pipeline.
@@ -1435,12 +1169,13 @@ ac_row_contract_for_id() {
   # contract wins over the family's (more specific consent beats broader);
   # a contractless exact row falls through - the grammar has no "empty
   # group revokes the family pin" concept. Prints "" when neither row
-  # carries a contract.
+  # carries a contract; rc 2 = the ledger exists but could not be read, which
+  # a caller must never read as unpinned.
   local id="$1" f="$2" fam sub out
   [ -f "$f" ] || { printf '\n'; return 0; }
   out="$(awk -v want="$id" "$AC_DONELINE_AWK"'
     /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
-  ' "$f")"
+  ' "$f")" || return 2
   if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
   sub="$(ac_stage_dir_for_id "$id")"
   [ -n "$sub" ] || { printf '\n'; return 0; }

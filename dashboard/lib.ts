@@ -480,7 +480,7 @@ export function parseBacklogLine(line: string): BacklogLineFields {
   //     provenance note) used to cut the text mid-bracket;
   //   - the delivery-contract group (§9) is readable only INSIDE the run
   //     (position denies authority everywhere else). Discriminator per the
-  //     awk twin (AC_DONELINE_AWK, ac-lib.sh): EVERY whitespace-separated
+  //     parser twin (src/backlog.ts): EVERY whitespace-separated
   //     token is key:value from the closed key set - any other content
   //     keeps the group's existing class ([EPIC...], [@held], prose) -
   //     first such group wins, a backtick-wrapped group never counts.
@@ -508,7 +508,7 @@ export function parseBacklogLine(line: string): BacklogLineFields {
   const merged = (s.match(/\(merged\s+([0-9]{4}-[0-9]{2}-[0-9]{2})/) || ["", ""])[1];
   const epic = (s.match(/\bepic:([a-z0-9][a-z0-9-]*)/) || ["", ""])[1];
   // The crewdomain assignment token, position-pinned exactly like the awk
-  // twin (AC_DONELINE_AWK f["domain"]): before a trailing (repo: ...) group,
+  // twin (src/backlog.ts's domain): before a trailing (repo: ...) group,
   // or at end of line. Never anywhere-matched - a prose mention is inert.
   const dm = s.match(/; domain:([a-z0-9-]+) \(repo: [^()]*\)$/) || s.match(/; domain:([a-z0-9-]+)$/);
   const domain = dm ? dm[1] : "";

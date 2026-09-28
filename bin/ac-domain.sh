@@ -15,7 +15,7 @@
 # one routing line - with no home, no session, no liveness and no ledger of
 # its own (crewdomain-token refactor, captain-ordered 2026-08-18). Work
 # reaches it when the crewchief STAMPS a fleet backlog row with the
-# `domain:<name>` token (grammar owner: AC_DONELINE_AWK's f["domain"] -
+# `domain:<name>` token (grammar owner: src/backlog.ts's domain field -
 # position-pinned at the slot the retired assigned:crewchief defined); work
 # happens when the crewchief promotes a DOMAINCHIEF, an ordinary roomchief
 # whose domain binding is derived from that token. The row NEVER leaves
@@ -45,7 +45,7 @@
 # chief to disambiguate it forever.
 #
 # The registry GRAMMAR is owned by ac-lib.sh's `crewdomain routing table`
-# block; the TOKEN grammar by AC_DONELINE_AWK; this script owns the verbs.
+# block; the TOKEN grammar by src/backlog.ts; this script owns the verbs.
 #
 # --- new: the package, whole or nothing ----------------------------------------
 #
@@ -410,11 +410,9 @@ domain_row_of() {
 
 domain_of_row() {
   # domain_of_row <line> - the row's authoritative domain token, "" when none.
-  # ONE parser: AC_DONELINE_AWK's f["domain"], never a private regex twin (the
+  # ONE parser: src/backlog.ts's domain field, never a private regex twin (the
   # measured two-parser lesson the retired domain_row_tokened carried).
-  printf '%s\n' "$1" | awk "$AC_DONELINE_AWK"'
-    { ac_doneline($0, o); print o["domain"] }
-  '
+  printf '%s\n' "$1" | "$(dirname "$0")/ac-backlog.sh" fields --get domain -
 }
 
 domain_stamp_line() {
@@ -739,9 +737,10 @@ cmd_list() {
       printf 'INVALID\t%s\treason: %s\n' "$id" "$reason"
       continue
     fi
-    local tally q i d flying nproj
+    local tally t q i d flying nproj
+    t="$(ac_domain_tally "$id")" || t="? ? ?"
     read -r q i d <<EOF
-$(ac_domain_tally "$id")
+$t
 EOF
     tally="queued $q, in flight $i, done $d"
     nproj="$(domain_view_names "$id" | grep -c . || true)"
@@ -770,16 +769,17 @@ EOF
     printf 'UNREGISTERED\t%s\tpackage on disk with no VALID registry line - re-adopt it with `new`, restore its line in %s, or leave it as kept knowledge\n' \
       "$gn" "$REGISTRY_LABEL"
   done
-  local ob
+  local ob orows gi
   ob="$(ac_records_dir)/backlog.md"
   if [ -f "$ob" ]; then
-    awk "$AC_DONELINE_AWK"'
+    orows="$(awk "$AC_DONELINE_AWK"'
       /^- \[/ { ac_doneline($0, o); if (o["domain"] != "") print o["domain"], o["id"] }
-    ' "$ob" | while read -r gn gi; do
+    ' "$ob")" || { orows=""; printf 'WARN\tledger unreadable - backlog tallies and the ORPHAN-TOKEN scan are unavailable\n'; }
+    while read -r gn gi; do
       [ -n "$gn" ] || continue
       printf '%s\n' "$records" | grep -q "VALID${FS_US}${gn}${FS_US}" && continue
       printf 'ORPHAN-TOKEN\t%s\t%s - the row names a domain with no VALID registry line (unassign it, or re-`new` the domain)\n' "$gn" "$gi"
-    done
+    done <<<"$orows"
   fi
   printf 'registered: %s (invalid %s)\n' "$n" "$invalid"
   return 0
@@ -905,7 +905,19 @@ EOF
   # hold/blockers malformed fields they ride on.
   local vb; vb="$(ac_records_dir)/backlog.md"
   if [ -f "$vb" ]; then
-    local tok
+    local tok toks
+    toks="$(awk "$AC_DONELINE_AWK"'
+      NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
+      /^- \[/ {
+        ac_doneline($0, o)
+        if (o["domain_malformed"] == "1")
+          printf "MALFORMED %s carries a domain:-shaped run off its grammar position (backtick-quote a mention, or re-stamp with assign)\n", o["id"]
+        if (o["domain"] != "")
+          printf "ORPHAN %s %s\n", o["domain"], o["id"]
+        if (o["domain"] != "" && o["epic"] != "" && dom[o["epic"]] != "" && dom[o["epic"]] != o["domain"])
+          printf "DISAGREE story %s carries domain:%s but its epic %s carries domain:%s - one family, one domain\n", o["id"], o["domain"], o["epic"], dom[o["epic"]]
+      }
+    ' "$vb" "$vb")" || { printf 'INVALID ledger: cannot read %s\n' "$vb"; return 2; }
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
       case "$tok" in
@@ -915,20 +927,7 @@ EOF
           printf '%s\n' "$(domain_names)" | grep -qxF -- "$(printf '%s' "${tok#ORPHAN }" | awk "{print \$1}")" \
             || { printf 'INVALID token: orphan domain token %s\n' "${tok#ORPHAN }"; rc=1; } ;;
       esac
-    done <<VEOF
-$(awk "$AC_DONELINE_AWK"'
-  NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
-  /^- \[/ {
-    ac_doneline($0, o)
-    if (o["domain_malformed"] == "1")
-      printf "MALFORMED %s carries a domain:-shaped run off its grammar position (backtick-quote a mention, or re-stamp with assign)\n", o["id"]
-    if (o["domain"] != "")
-      printf "ORPHAN %s %s\n", o["domain"], o["id"]
-    if (o["domain"] != "" && o["epic"] != "" && dom[o["epic"]] != "" && dom[o["epic"]] != o["domain"])
-      printf "DISAGREE story %s carries domain:%s but its epic %s carries domain:%s - one family, one domain\n", o["id"], o["domain"], o["epic"], dom[o["epic"]]
-  }
-' "$vb" "$vb")
-VEOF
+    done <<<"$toks"
   fi
   return "$rc"
 }

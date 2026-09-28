@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ac-backlog.test.sh - bin/ac-backlog.sh's CLI contract (the v1 wire, --get,
-# stdin, exit codes, a closed pipe) and Leg A: src/backlog.ts held to a frozen
-# copy of the awk parser, tests/fixtures/doneline.awk (AC_DONELINE_AWK
-# extracted verbatim from bin/ac-lib.sh), over the seed rows below plus 20,000
-# lines tests/backlog-gen.ts derives from a fixed seed.
+# stdin, exit codes, a closed pipe), the AC_DONELINE_AWK binding every awk site
+# reaches it through (bin/ac-lib.sh), and Leg A: src/backlog.ts held to
+# tests/fixtures/doneline.awk, the awk parser frozen as it stood before the
+# sites cut over to this one, over the seed and NUL-bearing rows below plus
+# 20,000 lines tests/backlog-gen.ts derives from a fixed seed.
 #
 # Leg C is local only: `bash tests/ac-backlog.test.sh <ledger>...` runs every
 # ledger named on the command line through Leg A as well, so a live
@@ -99,13 +100,88 @@ leg_a() {
 $(diff "$TMP/awk.wire" "$TMP/ts.wire" | head -n 6 | cut -c1-300)"
 }
 
-# Every site still runs AC_DONELINE_AWK, not the frozen copy: were the two to
-# part, Leg A would stay green while this parser and the sites disagree. The
-# check goes when that variable does.
-(. "$BIN/ac-lib.sh" && printf '%s\n' "$AC_DONELINE_AWK") >"$TMP/live.awk"
-cmp -s "$TMP/live.awk" "$ROOT/tests/fixtures/doneline.awk" \
-  || fail "tests/fixtures/doneline.awk is no longer AC_DONELINE_AWK, the grammar every site runs:
-$(diff "$ROOT/tests/fixtures/doneline.awk" "$TMP/live.awk" | head -n 6 | cut -c1-300)"
+# --- the binding: AC_DONELINE_AWK in bin/ac-lib.sh ------------------------------
+. "$BIN/ac-lib.sh"
+# Shaped like the real sites: an END of its own, with an exit status of its own.
+site() {
+  awk "$AC_DONELINE_AWK"'/^- \[/ { ac_doneline($0, o); print o["id"] "|" o["hold_until"] "|" o["contract"] } END { print "site END"; exit 1 }' "$@"
+}
+rc=0
+out="$(site "$wire")" || rc=$?
+assert_eq "$out" "t3||src:cap${T}qa:yes"$'\n'"t2||"$'\n'"q1|2026-09-01|"$'\n'"site END" "a site reads this parser's fields, a TAB in contract included, and still runs its own END"
+assert_eq "$rc" "1" "a healthy parse leaves the site's own exit status alone"
+
+stub="$TMP/stub-bun"
+mkdir -p "$stub" "$TMP/nobun"
+cat >"$stub/bun" <<'EOF'
+#!/bin/sh
+case "$STUB_BUN" in
+  short) printf 'e\t5\n' ;;
+  other) printf 'e\t0\n' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$stub/bun"
+for t in bash env dirname awk; do ln -s "$(command -v "$t")" "$TMP/nobun/$t"; done
+
+# binding_dies <label> <stderr substring> <site stdout> <site status>
+binding_dies() {
+  assert_eq "$4" "2" "$1: exit status"
+  assert_contains "$(cat "$TMP/site.err")" "ERROR: $2" "$1: stderr"
+  case "$3" in *"site END"*) fail "$1: the site's END ran after the parser failed" ;; esac
+}
+rc=0; out="$(export PATH="$stub:$PATH" STUB_BUN=fail; site "$wire" 2>"$TMP/site.err")" || rc=$?
+binding_dies "a parser that exits 1" "the backlog parser failed on $wire" "$out" "$rc"
+rc=0; out="$(export PATH="$stub:$PATH" STUB_BUN=short; site "$wire" 2>"$TMP/site.err")" || rc=$?
+binding_dies "a trailer counting records never printed" "the backlog parser failed on $wire" "$out" "$rc"
+rc=0; out="$(export PATH="$stub:$PATH" STUB_BUN=other; site "$wire" 2>"$TMP/site.err")" || rc=$?
+binding_dies "a line the parse never saw" "$wire changed between the parse and this read" "$out" "$rc"
+rc=0; out="$(export PATH="$TMP/nobun"; site "$wire" 2>"$TMP/site.err")" || rc=$?
+binding_dies "no bun on PATH" "the backlog parser failed on $wire" "$out" "$rc"
+rc=0; out="$(site <"$wire" 2>"$TMP/site.err")" || rc=$?
+binding_dies "stdin" "ac_doneline reads its ledger as a file operand, never stdin" "$out" "$rc"
+rc=0; out="$(site - <"$wire" 2>"$TMP/site.err")" || rc=$?
+binding_dies "- as the ledger" "ac_doneline reads its ledger as a file operand, never stdin" "$out" "$rc"
+rc=0; out="$(site /dev/stdin <"$wire" 2>"$TMP/site.err")" || rc=$?
+binding_dies "/dev/stdin as the ledger" "ac_doneline reads its ledger as a file operand, never stdin" "$out" "$rc"
+rc=0; out="$(site <(cat "$wire") 2>"$TMP/site.err")" || rc=$?
+binding_dies "a process substitution as the ledger" "ac_doneline reads its ledger as a file operand, never stdin" "$out" "$rc"
+
+# Neither path is ever shell text, and the parser is found from ac-lib.sh's own
+# directory even when it was sourced by a relative name and the caller moved.
+# CR and LF are the bytes an awk string literal cannot hold raw.
+odd="$TMP/it's \$(touch pwned) \`touch pwned\` \"q\" b\\s"$'\r\n'nl
+mkdir -p "$odd" "$TMP/cwd"
+ln -s "$BIN" "$odd/bin"
+cp "$wire" "$odd/backlog.md"
+out="$(cd "$TMP/cwd" && . "$odd/bin/ac-lib.sh" && awk "$AC_DONELINE_AWK"'/^- \[/ { ac_doneline($0, o); print o["id"] }' "$odd/backlog.md")" \
+  || fail "a ledger and a distro under a path full of shell syntax: the site exited $?"
+assert_eq "$out" "t3"$'\n'"t2"$'\n'"q1" "a ledger and a distro under a path full of shell syntax parse"
+assert_no_file "$TMP/cwd/pwned" "a path full of shell syntax runs nothing"
+out="$(cd "$odd" && . bin/ac-lib.sh && cd "$TMP/cwd" && awk "$AC_DONELINE_AWK"'/^- \[/ { ac_doneline($0, o); print o["id"] }' "$wire")" \
+  || fail "ac-lib.sh sourced by a relative name: the site exited $? after a cd"
+assert_eq "$out" "t3"$'\n'"t2"$'\n'"q1" "ac-lib.sh sourced by a relative name still finds the parser after a cd"
+
+counter="$TMP/count-bun"
+mkdir -p "$counter"
+cat >"$counter/bun" <<EOF
+#!/bin/sh
+printf x >>"$TMP/bun.starts"
+exec "$(command -v bun)" "\$@"
+EOF
+chmod +x "$counter/bun"
+out="$(export PATH="$counter:$PATH"; awk "$AC_DONELINE_AWK"'NR == FNR { if (/^- \[/) ac_doneline($0, o); next } /^- \[/ { ac_doneline($0, o); print o["id"] }' "$wire" "$wire")"
+assert_eq "$out" "t3"$'\n'"t2"$'\n'"q1" "a two-pass site reads its second pass"
+assert_eq "$(cat "$TMP/bun.starts" 2>/dev/null)" "x" "a site reading one ledger twice starts the parser once"
+
+# F1: under a UTF-8 ctype the awk parser died on a hand-typed check mark
+# (`towc: multibyte conversion failure`), and the report printed nothing.
+printf '## Queued\n- [ ] q1 - a plain row (repo: alpha)\n- [\342\234\223] q2 - a hand-typed check mark (repo: alpha)\n' \
+  >"$AC_HOME/records/backlog.md"
+rc=0
+out="$(LC_ALL=en_US.UTF-8 "$BIN/ac-ready.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "0" "a hand-typed [✓] row under a UTF-8 locale: ac-ready.sh exit status"
+assert_contains "$out" "READY  q1" "a hand-typed [✓] row under a UTF-8 locale leaves the rest of the queue readable"
 
 if [ "$(/usr/bin/awk --version 2>/dev/null)" != "awk version 20200816" ]; then
   printf 'SKIP: /usr/bin/awk is not onetrue awk 20200816 - the Leg A differential skipped\n'
@@ -146,6 +222,18 @@ EOF
     $1 == "r" { for (i = 2; i <= 15; i++) if ($i != "") seen[i] = 1 }
     END { for (i = 2; i <= 15; i++) if (!(i in seen)) printf " %s", name[i] }' "$TMP/ts.wire")"
   assert_eq "$unexercised" "" "every field is non-empty somewhere in the corpus, or a zero diff proves nothing about it"
+  # A NUL byte ends awk's record, so a site reads the fields of the bytes
+  # before it - through the binding exactly as through the frozen parser -
+  # also for a clean row that shares those bytes.
+  nul="$TMP/nul.md"
+  printf -- '- [ ] n1 [failed]\0 x\n- [ ] n2 do the thing\n- [ ] n2 do the thing\0 blocked-by: zz - waits\n- [ ] a\0b do x\n' >"$nul"
+  leg_a "$nul"
+  every='/^- \[/ { ac_doneline($0, o); r = ""; for (i = 1; i <= 14; i++) r = r "|" o[K[i]]; print r }'
+  every="BEGIN { split(\"id terminal hold hold_until hold_malformed epic feature blockers blockers_malformed date verb contract domain domain_malformed\", K, \" \") } $every"
+  want_nul="$(LC_ALL=C /usr/bin/awk "$(cat "$ROOT/tests/fixtures/doneline.awk")$every" "$nul")"
+  rc=0; out="$(LC_ALL=C /usr/bin/awk "$AC_DONELINE_AWK$every" "$nul" 2>&1)" || rc=$?
+  assert_eq "$rc" "0" "a site over NUL-bearing rows: exit status"
+  assert_eq "$out" "$want_nul" "a site over NUL-bearing rows reads what the frozen awk parser read"
   for ledger in "$@"; do
     leg_a "$ledger"
     printf 'Leg C: %s - %s records identical\n' "$ledger" "$(tail -n 1 "$TMP/ts.wire" | cut -f2)"

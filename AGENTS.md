@@ -95,7 +95,7 @@ The `rooms-threads` skill owns attribution of captain replies, remote orders, st
 ## 9. Backlog
 
 `records/backlog.md` is the single task ledger (`## In flight`, `## Queued`, `## Done`), moved with `bin/ac-task.sh` or by hand.
-Its grammar - `[failed]`/`[abandoned]`, the `[@held]` captain hold and its dated arm, the delivery-contract token group, `epic:`/`feature:`/`domain:` tokens, `blocked-by: id1,id2 - reason`, `inputs:`, record rows, and fold-before-mint - is in `docs/backlog.md`, with `AC_DONELINE_AWK` as the one parser.
+Its grammar - `[failed]`/`[abandoned]`, the `[@held]` captain hold and its dated arm, the delivery-contract token group, `epic:`/`feature:`/`domain:` tokens, `blocked-by: id1,id2 - reason`, `inputs:`, record rows, and fold-before-mint - is in `docs/backlog.md`, parsed by `src/backlog.ts` (awk sites reach it through `AC_DONELINE_AWK`).
 Before minting a row, fold into a related Queued row; never fold into an In flight row.
 
 ## 10. Validation (crew-ship)

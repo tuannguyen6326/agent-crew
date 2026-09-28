@@ -243,7 +243,7 @@ _backlog_plan() {
     /^## Queued/    { sec = "queued" }
     /^## Done/      { sec = "done" }
     /^- \[[ x]\] / {
-      # Field extraction is the ONE shared Done-line parser (AC_DONELINE_AWK in
+      # Field extraction is the ONE shared Done-line parser (src/backlog.ts, via
       # ac-lib.sh); this walk keeps its own NR/line-number bookkeeping.
       ac_doneline($0, o)
       lineid[NR] = o["id"]; idline[o["id"]] = NR

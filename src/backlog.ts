@@ -1,11 +1,10 @@
 // backlog.ts - the backlog line parser: decomposes each `records/backlog.md`
 // line (docs/backlog.md) into its grammar fields. The entry is
 // bin/ac-backlog.sh (a shim that execs this file through bin/ac-bun.sh); THIS
-// header is the authoritative spec of this parser and its wire. No site calls
-// it yet: AC_DONELINE_AWK in bin/ac-lib.sh still parses the ledger for every
-// site, and its header there owns the grammar until the sites cut over to
-// this module. tests/ac-backlog.test.sh holds this parser to a frozen copy of
-// that awk program (tests/fixtures/doneline.awk).
+// header is the authoritative spec of the backlog grammar, this parser and
+// its wire. Awk sites reach it through the AC_DONELINE_AWK binding in
+// bin/ac-lib.sh. tests/ac-backlog.test.sh holds this parser to
+// tests/fixtures/doneline.awk, the awk parser it replaced, frozen.
 //
 // Usage (the caller's cwd arrives first, from ac_bun_exec):
 //   ac-backlog.sh fields <file|->
@@ -33,9 +32,8 @@
 // number of r lines, is a failed parse.
 //
 // A record is what awk reads: the text split on LF only, the empty element
-// after a final LF dropped, and CR and an unterminated last line kept. A NUL
-// byte is the one exception: onetrue awk ends the record at it and drops the
-// rest of that line, while this parser keeps every byte.
+// after a final LF dropped, and CR and an unterminated last line kept; a NUL
+// byte ends its record and drops the rest of that line, as onetrue awk does.
 //
 // BYTE-EXACT ASCII (captain, 2026-09-27): the grammar is what onetrue awk
 // does under LC_ALL=C. Bytes in, bytes out - the ledger is read and written as
@@ -383,7 +381,7 @@ export function acDoneline(line: string): Doneline {
 export function records(text: string): string[] {
   const r = text.split("\n");
   if (r[r.length - 1] === "") r.pop();
-  return r;
+  return r.map((l) => l.split("\0", 1)[0]);
 }
 
 function main(args: string[], atCaller: boolean): void {

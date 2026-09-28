@@ -366,7 +366,8 @@ learn_retro_snapshot() {
   # added evidence. Bounded by the window itself, so noise cannot grow without
   # bound. REPORT-ONLY: reads records/backlog.md, state/.learn.meta,
   # data/<family>/room.md and its stage report.md files; writes ONLY inside $rundir.
-  # Prints the member count on stdout so cmd_run can decide the R4.4 warn.
+  # Prints the member count on stdout so cmd_run can decide the R4.4 warn;
+  # rc 2 = the ledger exists but could not be read.
   local rundir="$1" retrodir backlog anchor_epoch anchor_date
   local members_tsv skipped_tsv count id date marker doneline roomsrc lessons
   retrodir="$rundir/sources/retro"
@@ -383,7 +384,7 @@ learn_retro_snapshot() {
 
   if [ -f "$backlog" ]; then
     # Window membership (R1.4-R1.5): id/date/verb come from the ONE shared
-    # Done-line parser (AC_DONELINE_AWK in ac-lib.sh, which owns the F1/F1b
+    # Done-line parser (src/backlog.ts via AC_DONELINE_AWK; it owns the F1/F1b
     # date-group + fallback + verb-shape logic and never invents a verb). The
     # `marker` this snapshot records is the terminal state when tagged
     # (failed/abandoned), else the Done verb, else `unknown`. A line with no
@@ -398,7 +399,7 @@ learn_retro_snapshot() {
         if (date == "") { printf "%s\t%s\n", id, $0 >> sfile; next }
         if (anchor == "" || date >= anchor) printf "%s\t%s\t%s\t%s\n", id, date, marker, $0 >> mfile
       }
-    ' "$backlog"
+    ' "$backlog" || { rm -f "$members_tsv" "$skipped_tsv"; return 2; }
   fi
 
   count="$(wc -l <"$members_tsv" | tr -d ' ')"
@@ -484,7 +485,7 @@ cmd_run() {
   # RETRO first-pass (Q3/Q4-A, R1-R2): resolve the distill window and
   # snapshot its manifest + member rooms into sources/retro/, BEFORE the
   # scout spawns, so Pass 1 reads it in-tree like every other source.
-  retro_members="$(learn_retro_snapshot "$rundir")"
+  retro_members="$(learn_retro_snapshot "$rundir")" || ac_die "cannot read the ledger for the retro window"
 
   # Also snapshot the existing LEARNED skill store into sources/skills/, one
   # SKILL.md per skill at sources/skills/<name>/SKILL.md, so the scout can match

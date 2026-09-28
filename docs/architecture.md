@@ -199,7 +199,7 @@ The non-claude wirings ship with live probes pending, and `tests/ac-harness-hook
 `post` refuses a malformed `GATE:`/`ASK:`/`DECIDED:` opening (`ac_room_marker_malformed`).
 The captain's inbox count is one matcher, `ac_room_pending`, and the HANDBACK state another, `ac_room_handback_families`, both in `bin/ac-wake-lib.sh`; the digest, the dashboard and the guards all call them.
 
-The backlog grammar is [`backlog.md`](backlog.md), parsed by one awk block, `AC_DONELINE_AWK` in `bin/ac-lib.sh`, which `ac-ready.sh`, `ac-curate.sh` and `ac-learn.sh` each prepend to their own program.
+The backlog grammar is [`backlog.md`](backlog.md), parsed by one module, `src/backlog.ts`; every awk site that reads a line's fields prepends the `AC_DONELINE_AWK` binding in `bin/ac-lib.sh` to its own program.
 `ac_contract_lint` judges contract-token values; the parser only extracts them.
 The dashboard's `parseBacklogLine` (`dashboard/lib.ts`) is held byte-identical to it by a differential test.
 
@@ -342,7 +342,7 @@ Every tracked package follows the Agent Skills spec, enforced by `tests/ac-skill
 | Concern | Authoritative file |
 |---|---|
 | Home, metas, locks, config reads, seeding, meta classes, landing ledger | `bin/ac-lib.sh` |
-| Backlog parsing and mutation | `AC_DONELINE_AWK` in `bin/ac-lib.sh`, `bin/ac-task.sh`; grammar in [`backlog.md`](backlog.md) |
+| Backlog parsing and mutation | `src/backlog.ts` (awk sites through `AC_DONELINE_AWK` in `bin/ac-lib.sh`), `bin/ac-task.sh`; grammar in [`backlog.md`](backlog.md) |
 | Task-data layout | `bin/ac-brief.sh` |
 | Closed-family relocation to `data/archive/<year>/` | `bin/ac-archive.sh` (manual only) |
 | Harness facets | `bin/ac-harness.sh` |

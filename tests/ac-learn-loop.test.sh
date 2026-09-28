@@ -918,6 +918,28 @@ STUB4
   assert_contains "$(cat "$TMP/noreport.err")" 'retro window is PRESERVED' \
     "the withheld cadence is said out loud, not left for a chief to notice by hand"
 
+  # A ledger the parser could not read is a window nothing read, not an empty
+  # one: the run stops before the scout and the cycle stays due.
+  failbun="$TMP/failbun"
+  mkdir -p "$failbun"
+  printf '#!/bin/sh\nexit 1\n' >"$failbun/bun"
+  chmod +x "$failbun/bun"
+  printf 'debriefs=9\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  set +e
+  PATH="$failbun:$PATH" AC_PANE_AGENT="$TMP/stub-pane.sh" "$BIN/ac-learn.sh" run >/dev/null 2>"$TMP/nobun.err"
+  nobun_rc=$?
+  set -e
+  [ "$nobun_rc" != 0 ] || fail "a run whose ledger could not be read must fail"
+  assert_contains "$(cat "$TMP/nobun.err")" "cannot read the ledger for the retro window" \
+    "the run names why it stopped"
+  assert_contains "$(cat "$TMP/nobun.err")" "the backlog parser failed on $backlog" \
+    "... and which ledger it could not read"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" \
+    "an unread ledger leaves the counter untouched"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
+    "an unread ledger leaves the retro window anchor untouched"
+
   # --- a gate that CANNOT JUDGE must not consume the cycle ---------------------
   # (learn-envfail-burns-retro-window) A complete ok report+retro used to still
   # burn the cycle and advance the retro-window anchor when the ONE thing that

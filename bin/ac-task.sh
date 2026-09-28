@@ -2,7 +2,7 @@
 # ac-task.sh <verb> - every ROUTINE mutation of records/backlog.md as a verb
 # instead of a model rewriting markdown. Authoritative spec for the verbs, the
 # lock, the body block and the archives; the LINE grammar itself stays owned by
-# docs/backlog.md + AC_DONELINE_AWK, and the contract vocabulary by
+# docs/backlog.md + src/backlog.ts, and the contract vocabulary by
 # ac_contract_lint. This script EMITS what they parse and never invents a
 # second dialect.
 #
@@ -81,13 +81,12 @@ save() {
 }
 
 # hold_fields <line> - the row's hold state as THE grammar reads it, never a
-# substring scan: fills HF_HOLD/HF_UNTIL/HF_MALFORMED from AC_DONELINE_AWK, so
-# a prose quotation of the token (`[@held]` in a code span) is an ordinary row
-# here exactly as it is to the scheduler.
+# substring scan: fills HF_HOLD/HF_UNTIL/HF_MALFORMED from the backlog parser
+# (src/backlog.ts), so a prose quotation of the token (`[@held]` in a code
+# span) is an ordinary row here exactly as it is to the scheduler.
 hold_fields() {
   local out
-  out="$(printf '%s\n' "$1" | awk "$AC_DONELINE_AWK"'
-    { ac_doneline($0, o); printf "%s\t%s\t%s\n", o["hold"], o["hold_until"], o["hold_malformed"] }')"
+  out="$(printf '%s\n' "$1" | "$(dirname "$0")/ac-backlog.sh" fields --get hold,hold_until,hold_malformed -)"
   HF_HOLD="${out%%$'\t'*}"
   out="${out#*$'\t'}"
   HF_UNTIL="${out%%$'\t'*}"
@@ -97,9 +96,14 @@ hold_fields() {
 # unresolved_blocker <id> - the first of the row's blockers that is not a
 # clean Done row, as `<blocker> <why>`, or `blocked-by malformed`; empty when
 # the row may start. The same rule ac-ready.sh schedules by (docs/backlog.md),
-# read here because the scheduler only advises.
+# read here because the scheduler only advises. It reads the buffer L, which
+# the verb may already have edited, through a temp file: AC_DONELINE_AWK takes
+# its ledger as a file operand, never stdin.
 unresolved_blocker() {
-  printf '%s\n' "${L[@]}" | awk -v want="$1" "$AC_DONELINE_AWK"'
+  local buf rc=0
+  buf="$(mktemp "${TMPDIR:-/tmp}/ac-task-ledger.XXXXXX")" || ac_die "cannot stage the ledger for the blocker check"
+  printf '%s\n' "${L[@]}" >"$buf" || { rm -f "$buf"; ac_die "cannot stage the ledger for the blocker check"; }
+  awk -v want="$1" "$AC_DONELINE_AWK"'
     /^## In flight/ { sec = "in flight"; next }
     /^## Queued/    { sec = "queued";    next }
     /^## Done/      { sec = "done";      next }
@@ -117,7 +121,9 @@ unresolved_blocker() {
         if (mk[b] == "failed" || mk[b] == "abandoned") { print b " (" mk[b] ")"; exit }
         if (st[b] != "done") { print b " (" st[b] ")"; exit }
       }
-    }'
+    }' "$buf" || rc=$?
+  rm -f "$buf"
+  return "$rc"
 }
 
 # split_hold <line> - the surgery half of what hold_fields judges: locate the

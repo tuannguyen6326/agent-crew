@@ -124,9 +124,11 @@ test("acDoneline is self-contained: its own source, evaluated with nothing in sc
   ]) expect(pasted(line)).toEqual(acDoneline(line));
 });
 
-test("records splits on LF only, drops one trailing empty element, and keeps CR and an unterminated tail", () => {
+test("records splits on LF only, drops one trailing empty element, keeps CR and an unterminated tail, and ends a record at a NUL", () => {
   expect(records("")).toEqual([]);
   expect(records("a\nb")).toEqual(["a", "b"]);
   expect(records("a\r\nb\n")).toEqual(["a\r", "b"]);
   expect(records("a\n\n")).toEqual(["a", ""]);
+  expect(records("a\0b c\nd")).toEqual(["a", "d"]);
+  expect(records("a\n\0")).toEqual(["a", ""]);
 });
