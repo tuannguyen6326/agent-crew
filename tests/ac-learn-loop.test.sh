@@ -90,6 +90,31 @@ find "$AC_HOME/state/.maintenance-transactions" -name journal -exec grep -q '^st
 assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "0" "counter reset to debriefs=0 after land (legacy key migrated)"
 [ -n "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" ] || fail "last_run stamped after land"
 
+# A BUSY cadence lock is not a newer generation: ac_learn_reset answers 1 for
+# both and warns only for the lock (bin/ac-maintenance-lib.sh), so land's own
+# words must not contradict that warning. The lock is held by THIS live
+# process; a no-op `sleep` on PATH spins the acquire's timeout instantly.
+mkdir -p "$TMP/fastbin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/fastbin/sleep"
+chmod +x "$TMP/fastbin/sleep"
+hold_lock() { mkdir -p "$1" && printf '%s\n' "$$" >"$1/pid"; }
+printf 'debriefs=3\n' >"$AC_HOME/state/.learn.meta"
+printf '## 2026-07-18 - fam (chief)\n- LESSON: land under a busy cadence lock.\n' >"$AC_HOME/records/learnings.md"
+{
+  printf 'kind: skill\nname: busy-lock-skill\ndescription: Land under a busy cadence lock.\napproved: 1700000000\n'
+  printf '===sources===\n2026-07-18\tbusy-lock-skill\t- LESSON: land under a busy cadence lock.\n'
+  printf '===skill===\n# busy-lock-skill\n\nbody.\n'
+} >"$TMP/cand-busy.md"
+hold_lock "$AC_HOME/state/.learn-cadence.lock"
+busy_out="$(PATH="$TMP/fastbin:$PATH" "$BIN/ac-learn.sh" land "$TMP/cand-busy.md" 2>&1)"
+ac_lock_release "$AC_HOME/state/.learn-cadence.lock"
+assert_contains "$busy_out" "landed skill" "a land whose cadence reset lost the lock still lands"
+case "$busy_out" in
+  *"newer Learning generation"*) fail "a busy cadence lock is not a newer generation: $busy_out" ;;
+esac
+assert_contains "$busy_out" "cadence lock was busy" "land names the lock as what kept the cadence due"
+assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "3" "the cadence stays due"
+
 # --- land: recognize a pointer by POSITION, not substring --------------------
 # A prose bullet that merely QUOTES the `[distilled -> ...]` marker inside
 # backticks must survive into Pending verbatim and mint no bogus pointer, while
@@ -215,13 +240,15 @@ assert_fails "$BIN/ac-learn.sh" land "$TMP/cand-crewmate-spoof.md"
 assert_eq "$(cat "$cml")" "$cml_before" "spoof refusal writes nothing"
 
 # Total file budget: a land that would push CREWMATE-learned.md past 4096 bytes
-# refuses and NAMES the remedy (pair the new entry with a retire candidate).
+# refuses and NAMES the remedy (pair the new entry with a retire candidate) -
+# never the skill-pointer section, which is not an entry.
 python3 - "$cml" <<'PYEOF'
 import sys
 p = sys.argv[1]
 body = open(p).read()
+pointers = "\n## when to reach for a learned skill\n- when a red needs attribution -> use skill characterise-the-failure\n"
 entry = "\n## filler-entry\n\n" + ("x" * 70 + "\n") * 60 + "\n(learned 2026-08-05)\n"
-open(p, "w").write(body + entry)
+open(p, "w").write(body + pointers + entry)
 PYEOF
 big_before="$(cat "$cml")"
 {
@@ -230,7 +257,20 @@ big_before="$(cat "$cml")"
 } >"$TMP/cand-crewmate-over.md"
 over_out="$("$BIN/ac-learn.sh" land "$TMP/cand-crewmate-over.md" 2>&1)" && fail "over-budget land must refuse"
 assert_contains "$over_out" "retire" "over-budget refusal names the retire remedy"
+assert_contains "$over_out" "retire of one of: look-it-up measure-first filler-entry (nothing written)" \
+  "the retire candidates are the entries, never the skill-pointer section"
 assert_eq "$(cat "$cml")" "$big_before" "over-budget refusal writes nothing"
+# A live file holding only the skill-pointer section has no entry to retire;
+# the refusal must still speak and say so rather than exit silently.
+{
+  printf '# Fleet-learned crewmate lessons\n\n## when to reach for a learned skill\n'
+  for i in $(seq 45); do
+    printf -- '- when doing a fairly long described thing number %02d that needs care -> use skill skill-%02d\n' "$i" "$i"
+  done
+} >"$cml"
+none_out="$("$BIN/ac-learn.sh" land "$TMP/cand-crewmate-over.md" 2>&1)" && fail "over-budget land must refuse"
+assert_contains "$none_out" "retire of one of: none (nothing written)" \
+  "a pointer-only file refuses loudly with no retire candidate"
 # Reset the file to the two real entries for the pointer test below.
 printf '%s\n' "$cml_before" >"$cml"
 
@@ -409,6 +449,10 @@ printf '%s\n' "$deliverable" >"$cwd/stub.deliverable"
 # A REVISION / candidate re-author pane spawned for this same run records
 # itself in the run's pane ledger - the contract cmd_run's EXIT trap reaps by.
 [ -n "${AC_LEARN_STUB_REVISION:-}" ] && printf '%s\n' "$AC_LEARN_STUB_REVISION" >>"$cwd/scout.panes"
+# A cadence reset landing WHILE the scout runs (a concurrent land) moves the
+# generation this run captured before it spawned.
+[ -z "${AC_LEARN_STUB_GENERATION:-}" ] \
+  || printf 'debriefs=9\ngeneration=%s\n' "$AC_LEARN_STUB_GENERATION" >"$AC_HOME/state/.learn.meta"
 printf '# Retro\n\nno cross-family pattern found (smoke).\n' >"$cwd/retro.md"
 printf '## Retro\n\nsee ./retro.md.\n\nproposed nothing this run (smoke).\n' >"$cwd/report.md"
 printf '{"event":"transcript","path":"/dev/null","session_id":"s1"}\n'
@@ -734,6 +778,21 @@ FENCEDEOF
   assert_contains "$(cat "$fanout_lifted")" "nested-fanout lesson from depth three" "the sub-task's own words are carried"
   assert_contains "$(cat "$fanout_lifted")" "fam-fanout/tasks/slug1/report.md" \
     "the block is labelled with the sub-task report's own relative path"
+
+  # A fleet home whose path holds a space (captain 2026-09-28: supported) lifts
+  # the same Lessons - a report path is never split into words.
+  sp_home="$TMP/sp ace home"
+  mkdir -p "$sp_home/state" "$sp_home/config" "$sp_home/records" "$sp_home/data/fam-sp/implement" "$sp_home/projects"
+  printf 'off\n' >"$sp_home/config/wedge-alarm"
+  printf -- '# Backlog\n\n## Done\n- [x] fam-sp - spaced-home work - local main (merged 2026-07-16)\n' \
+    >"$sp_home/records/backlog.md"
+  printf '# Implement\n\n## Lessons\n\n- a lesson from a spaced home\n' >"$sp_home/data/fam-sp/implement/report.md"
+  AC_HOME="$sp_home" AC_PANE_AGENT="$TMP/stub-pane.sh" "$BIN/ac-learn.sh" run >/dev/null 2>&1
+  sp_run="$(find "$sp_home/data" -maxdepth 1 -type d -name 'learning-*' | head -1)"
+  grep -q '^fam-sp 2026-07-16 merged no-room lessons=1$' "$sp_run/sources/retro/window.md" \
+    || fail "a spaced fleet home still marks the member's lifted lessons: $(grep '^fam-sp' "$sp_run/sources/retro/window.md")"
+  assert_contains "$(cat "$sp_run/sources/retro/lessons/fam-sp.md" 2>/dev/null || true)" "a lesson from a spaced home" \
+    "a spaced fleet home still lifts the lesson itself"
   # AC4: a [failed] Done line in the window is tagged failed.
   grep -q '^fam-after2 2026-07-17 failed room$' "$window" || fail "AC4: fam-after2 ([failed]) tagged failed in window.md"
   assert_file "$rundir2/sources/retro/rooms/fam-after2.md" "AC1: fam-after2's room also copied"
@@ -939,6 +998,58 @@ STUB4
     "an unread ledger leaves the counter untouched"
   assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
     "an unread ledger leaves the retro window anchor untouched"
+
+  # --- a BUSY cadence lock is not a newer generation, and never an abort -------
+  # ac_learn_reset answers 1 for a busy lock and for a newer generation alike,
+  # warning only for the lock (bin/ac-maintenance-lib.sh), so the run must not
+  # then claim a newer generation. Each lock is held by THIS live process.
+  printf 'debriefs=9\ngeneration=4\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  hold_lock "$AC_HOME/state/.learn-cadence.lock"
+  PATH="$TMP/fastbin:$PATH" AC_PANE_AGENT="$TMP/stub-pane.sh" "$BIN/ac-learn.sh" run >/dev/null 2>"$TMP/cad-busy.err"
+  ac_lock_release "$AC_HOME/state/.learn-cadence.lock"
+  case "$(cat "$TMP/cad-busy.err")" in
+    *"newer cadence generation exists"*) fail "a busy cadence lock is not a newer generation: $(cat "$TMP/cad-busy.err")" ;;
+  esac
+  assert_contains "$(cat "$TMP/cad-busy.err")" "cadence lock was busy" "the run names the lock as what kept its cycle due"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" "a reset that lost the lock leaves the cycle due"
+  # The other cause keeps its own words: a land reset the cadence while the
+  # scout ran, so the generation this run captured is gone.
+  printf 'debriefs=9\ngeneration=4\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  AC_LEARN_STUB_GENERATION=7 AC_PANE_AGENT="$TMP/stub-pane.sh" "$BIN/ac-learn.sh" run >/dev/null 2>"$TMP/cad-gen.err"
+  assert_contains "$(cat "$TMP/cad-gen.err")" "newer cadence generation exists" "a moved generation is still named as one"
+  case "$(cat "$TMP/cad-gen.err")" in
+    *"cadence lock was busy"*) fail "a moved generation is not a busy lock: $(cat "$TMP/cad-gen.err")" ;;
+  esac
+
+  # The Curate counter only PACES Curate - a lost tick delays it one run - so a
+  # busy Curate lock must neither abort the run nor decide whether the DISTILL
+  # cycle it examined is consumed, in EITHER direction.
+  printf 'debriefs=9\ngeneration=4\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  hold_lock "$AC_HOME/state/.curate-cadence.lock"
+  set +e
+  PATH="$TMP/fastbin:$PATH" AC_PANE_AGENT="$TMP/stub-pane.sh" "$BIN/ac-learn.sh" run >/dev/null 2>"$TMP/cur-busy.err"
+  cur_busy_rc=$?
+  set -e
+  ac_lock_release "$AC_HOME/state/.curate-cadence.lock"
+  assert_eq "$cur_busy_rc" "0" "a busy Curate lock does not abort the run"
+  assert_contains "$(cat "$TMP/cur-busy.err")" "curate tick" "the lost Curate tick is said on stderr"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "0" \
+    "an examined run consumes its DISTILL cycle although its Curate tick was lost"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" generation)" "5" "... and advances the generation it captured"
+  printf 'debriefs=9\ngeneration=4\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+  rm -rf "${AC_HOME:?}"/data/learning-*
+  hold_lock "$AC_HOME/state/.curate-cadence.lock"
+  set +e
+  PATH="$TMP/fastbin:$PATH" AC_PANE_AGENT="$TMP/stub-pane-noreport.sh" "$BIN/ac-learn.sh" run >/dev/null 2>&1
+  set -e
+  ac_lock_release "$AC_HOME/state/.curate-cadence.lock"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" \
+    "a run that examined nothing keeps its DISTILL cycle due although its Curate tick was lost"
+  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
+    "... and its retro window anchor"
 
   # --- a gate that CANNOT JUDGE must not consume the cycle ---------------------
   # (learn-envfail-burns-retro-window) A complete ok report+retro used to still

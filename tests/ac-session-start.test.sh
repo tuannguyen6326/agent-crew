@@ -103,6 +103,20 @@ wait "$pipedpid" || fail "a hung docker must not fail a merged-capture session s
 if [ -s "$TMP/hang.pid" ]; then kill "$(cat "$TMP/hang.pid")" 2>/dev/null || true; fi
 assert_contains "$(cat "$TMP/piped2.out")" "-- fleet --" "a merged capture still completes past the hung sweep"
 
+# (1d) The warning's remedy is a command the reader pastes into a shell, so a
+# project path holding a space (captain 2026-09-28: such fleet homes are
+# supported) must reach that shell as ONE word.
+sp_home="$TMP/sp ace home"
+mkdir -p "$sp_home/state" "$sp_home/config" "$sp_home/records" "$sp_home/data" "$sp_home/projects/proj1/.crew"
+git init -q "$sp_home/projects/proj1"
+rm -f "$TMP/hang.pid"
+sp_out="$(AC_HOME="$sp_home" "$BIN/ac-session-start.sh" 2>&1)"
+if [ -s "$TMP/hang.pid" ]; then kill "$(cat "$TMP/hang.pid")" 2>/dev/null || true; fi
+sp_cd="${sp_out##*reap by hand once fixed: (cd }"
+sp_cd="${sp_cd%% && *}"
+assert_eq "$(eval "cd $sp_cd" 2>/dev/null && pwd -P)" "$(cd "$sp_home/projects/proj1" && pwd -P)" \
+  "the printed remedy's cd reaches the project in a spaced fleet home"
+
 # (2) An ordinary FAST docker with nothing to reap prints no warning - the
 # reap pipeline's own no-match exit (grep '^reaped' finds nothing) must not
 # be mistaken for a timeout.
@@ -282,5 +296,40 @@ assert_contains "$out" "ac-self-task.sh start scfam-" "...and names the slice ve
 assert_no_file "$solo_home/state/.session-lock" "a scoped session never takes the fleet lock"
 [ -e "$solo_home/state/.wake-spool/1.1.000000" ] \
   || fail "a scoped session must not consume the fleet spool"
+
+# --- the knowledge block counts ENTRIES ---------------------------------------
+# A repo-knowledge record's live entries sit above `## Superseded`; below it is
+# history (bin/ac-know.sh header), never an entry.
+mkdir -p "$AC_HOME/records/repo-knowledge"
+printf -- '- fact live one | src: cmd:true | at: abc 2026-08-01 | by: fam\n\n## Superseded\n\n- fact old one | src: cmd:true | at: abc 2026-07-01 | by: fam\n' \
+  >"$AC_HOME/records/repo-knowledge/kproj.md"
+dig="$("$BIN/ac-session-start.sh" 2>/dev/null)"
+assert_contains "$dig" "kproj: 1 entries" "a superseded entry is history, not a counted entry"
+rm -rf "$AC_HOME/records/repo-knowledge"
+
+# The always-loaded layer's skill-pointer section is not an entry, and the date
+# grammar must hold under mawk 1.3.4 before its 20200724 snapshot, which has
+# no interval expressions: `[0-9]{4}` there is a digit then the literal text
+# `{4}` (probed: mawk 1.3.4-20200120 in node:22.12.0). This awk hands the
+# host's own awk every argument with its intervals turned into exactly those
+# literal braces.
+mawk_real="$(command -v awk)"
+mkdir -p "$TMP/mawkbin"
+cat >"$TMP/mawkbin/awk" <<'EOF'
+#!/usr/bin/env bash
+args=()
+for a in "$@"; do
+  args+=("$(printf '%s\n' "$a" | sed -E 's/[{]([0-9]+(,[0-9]*)?)[}]/\\{\1\\}/g')")
+done
+exec "$MAWK_MODEL_REAL_AWK" "${args[@]}"
+EOF
+chmod +x "$TMP/mawkbin/awk"
+printf '# H\n\n## old-e\n\nb\n\n(learned 2026-01-01)\n\n## when to reach for a learned skill\n- when x -> use skill y\n\n## new-e\n\nb\n\n(learned %s)\n' "$(date -u +%F)" \
+  >"$AC_HOME/CREWMATE-learned.md"
+dig="$("$BIN/ac-session-start.sh" 2>/dev/null)"
+assert_contains "$dig" "always-loaded: 2 entries, 1 stale" "the skill-pointer section is not counted as an entry"
+dig="$(PATH="$TMP/mawkbin:$PATH" MAWK_MODEL_REAL_AWK="$mawk_real" "$BIN/ac-session-start.sh" 2>/dev/null)"
+assert_contains "$dig" "always-loaded: 2 entries, 1 stale" "under mawk the digest still reads the clocks"
+rm -f "$AC_HOME/CREWMATE-learned.md"
 
 pass
