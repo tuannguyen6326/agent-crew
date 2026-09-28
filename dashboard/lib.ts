@@ -15,7 +15,13 @@ export interface BacklogView {
   done: string[];
 }
 
-/** Parse records/backlog.md into its three sections' task lines (§2.2). */
+/**
+ * Parse records/backlog.md into its three sections' task lines (§2.2): the
+ * grammar's rows only (an indented `- [ ]` is a row's body), kept untrimmed
+ * and cut at a NUL as src/backlog.ts cuts its records - a trailing space or CR
+ * changes what it reads from the row, and parseBacklogLine must read the same
+ * bytes.
+ */
 export function parseBacklog(md: string): BacklogView {
   const out: BacklogView = { in_flight: [], queued: [], done: [] };
   let section: keyof BacklogView | null = null;
@@ -31,8 +37,8 @@ export function parseBacklog(md: string): BacklogView {
       else section = null;
       continue;
     }
-    if (section && /^\s*-\s+\[[ xX]\]/.test(line))
-      out[section].push(line.trim());
+    if (section && /^- \[[ x]\] /.test(raw))
+      out[section].push(raw.split("\0", 1)[0]);
   }
   return out;
 }
@@ -113,7 +119,7 @@ export interface BacklogHit {
  * Search a home's backlog markdown for task lines matching `q` (dash-search).
  * Reuses parseBacklog (never re-parses sections); a case-insensitive substring
  * over the FULL line covers BOTH id and text (the id is the line's first token),
- * and `family` is that leading `[a-z0-9-]+` token. Empty/whitespace `q` -> [].
+ * and `family` is that id as parseBacklogLine reads it. Empty/whitespace `q` -> [].
  * Pure - the /api/search route supplies the md, so no path ever reaches the FS.
  */
 export function matchBacklog(md: string, q: string): BacklogHit[] {
@@ -129,8 +135,7 @@ export function matchBacklog(md: string, q: string): BacklogHit[] {
   for (const [key, section] of buckets) {
     for (const line of bl[key]) {
       if (!line.toLowerCase().includes(needle)) continue;
-      const m = line.match(/^-\s+\[[ xX]\]\s+([a-z0-9-]+)/);
-      out.push({ family: m ? m[1] : "", line, section });
+      out.push({ family: parseBacklogLine(line).id, line, section });
     }
   }
   return out;
@@ -453,13 +458,14 @@ export function buildReviewSrcdoc(kind: string, content: string, styleBlock: str
 // ---------------------------------------------------------------------------
 
 export interface BacklogLineFields {
-  id: string; // leading task-id token, "" if the string is not a task line
+  id: string; // first token after a `- [ ] `/`- [x] ` checkbox, "" if the string is not a row
   text: string; // one-line description after the first " - " (full remainder)
   repo: string; // the `repo:<name>` token, "" if absent
   pr: string; // a GitHub PR url on the line (QĐ1 link-only regex), "" if none
-  merged: string; // date inside "(merged <date>)", "" if none
+  merged: string; // the row's date when its verb is `merged`, "" otherwise
   epic: string; // `epic:<id>` membership token (a story's parent), "" if none
-  isEpic: boolean; // the line carries an [EPIC...] marker (it IS an epic)
+  terminal: string; // "epic"|"failed"|"abandoned" when that exact token follows the id, else ""
+  isEpic: boolean; // terminal is "epic" (it IS an epic)
   contract: string; // delivery-contract group content ("src:cap mode:local-only ..."), "" if none
   domain: string; // crewdomain token at its grammar position, "" if none
 }
@@ -467,52 +473,79 @@ export interface BacklogLineFields {
 /**
  * Parse ONE backlog line into the fields the board card + detail render (§9
  * grammar). Pure regex over the SAME raw string parseBacklog keeps - the fields
- * live inside that string and are never stored broken out.
+ * live inside that string and are never stored broken out. id, terminal, epic,
+ * contract, domain and merged are src/backlog.ts's readings (merged is its
+ * date where its verb is `merged`), held to it by the differential in
+ * app.test.ts; no other field of it is mirrored here.
  */
 export function parseBacklogLine(line: string): BacklogLineFields {
   const s = String(line || "");
-  var idm = s.match(/^-\s*\[[ xX]\]\s+([a-z0-9][a-z0-9-]*)/);
-  var id = idm ? idm[1] : "";
-  // Walk the LEADING RUN of bracket groups after the id (backtick-quoted
-  // documentation mentions included). Two derivations hang off this walk:
-  //   - the TEXT boundary is the first " - " AFTER the run - a prose group
-  //     whose content contains " - " (a verbatim captain quote, a dated
-  //     provenance note) used to cut the text mid-bracket;
-  //   - the delivery-contract group (§9) is readable only INSIDE the run
-  //     (position denies authority everywhere else). Discriminator per the
-  //     parser twin (src/backlog.ts): EVERY whitespace-separated
-  //     token is key:value from the closed key set - any other content
-  //     keeps the group's existing class ([EPIC...], [@held], prose) -
-  //     first such group wins, a backtick-wrapped group never counts.
+  var rp = /^- \[[ x]\] /.test(s) ? s.slice(6).split(/[ \t\n]+/).filter(function (t) { return t !== ""; }) : [];
+  var id = rp[0] || "";
+  var terminal = rp[1] === "[EPIC]" ? "epic" : rp[1] === "[failed]" ? "failed" : rp[1] === "[abandoned]" ? "abandoned" : "";
+  // The delivery-contract group (§9) is readable only INSIDE the LEADING RUN
+  // (position denies authority everywhere else). The run is src/backlog.ts's:
+  // it starts after the checkbox, ONE space and the id (a wider gap leaves the
+  // row without one), and takes innermost groups with nothing but spaces and
+  // TABs before each - so a backtick-quoted group ends it. The contract is its
+  // first group whose [ \t]+-split tokens are all key:value from the closed
+  // key set.
   var contract = "";
-  var pos = idm ? idm[0].length : 0;
-  if (id) {
+  var head = /^- \[[ x]\] [^ \t]+/.exec(s);
+  var pos = head ? head[0].length : 0;
+  if (head) {
     for (;;) {
-      var g = /^\s+(`?)\[([^\]]*)\](`?)/.exec(s.slice(pos));
+      var g = /^[ \t]*\[([^\][]*)\]/.exec(s.slice(pos));
       if (!g) break;
       pos += g[0].length;
-      if (contract || g[1] === "`" || g[3] === "`") continue;
-      var content = g[2].trim();
-      if (!content) continue;
-      var toks = content.split(/\s+/);
+      if (contract || !g[1]) continue;
+      var toks = g[1].split(/[ \t]+/);
       var all = true;
       for (var ti = 0; ti < toks.length; ti++)
         if (!/^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/.test(toks[ti])) { all = false; break; }
-      if (all) contract = content;
+      if (all) contract = g[1];
     }
   }
-  const dash = s.indexOf(" - ", id ? pos : 0);
+  // The TEXT boundary is the first " - " after the bracket groups that follow
+  // a [a-z0-9][a-z0-9-]* match right after the checkbox, or the line's first
+  // " - " when there is none - a prose group whose content contains " - " (a
+  // verbatim captain quote, a dated provenance note) used to cut the text
+  // mid-bracket. Text is the board's own field, so it keeps this walk rather
+  // than the grammar's: that match is not `id` (none on `Upper-Id`, `fix` on
+  // `fix_foo`), and the walk also steps over a quoted group and one holding a
+  // `[`, where the grammar's run ends.
+  var tm = /^-\s*\[[ xX]\]\s+[a-z0-9][a-z0-9-]*/.exec(s);
+  var tpos = tm ? tm[0].length : 0;
+  for (var tg; tm && (tg = /^\s+`?\[[^\]]*\]`?/.exec(s.slice(tpos))); ) tpos += tg[0].length;
+  const dash = s.indexOf(" - ", tm ? tpos : 0);
   const text = dash >= 0 ? s.slice(dash + 3).trim() : "";
   const repo = (s.match(/\brepo:\s*([a-z0-9][a-z0-9._-]*)/i) || ["", ""])[1];
   const pr = (s.match(/https?:\/\/github\.com\/[^\s)]+\/pull\/\d+/) || [""])[0] || "";
-  const merged = (s.match(/\(merged\s+([0-9]{4}-[0-9]{2}-[0-9]{2})/) || ["", ""])[1];
-  const epic = (s.match(/\bepic:([a-z0-9][a-z0-9-]*)/) || ["", ""])[1];
+  // src/backlog.ts's date and verb: the first date in the LAST innermost
+  // (...) group and the first word before it there, else the line's last date
+  // and the letters/_/- run just before it.
+  var grp = "", date = "", verb = "", re = /\([^()]*\)/g, m: RegExpExecArray | null;
+  while ((m = re.exec(s))) grp = m[0].slice(1, -1);
+  var gd = grp ? /[0-9]{4}-[0-9]{2}-[0-9]{2}/.exec(grp) : null;
+  if (gd) {
+    date = gd[0];
+    verb = grp.slice(0, gd.index).replace(/^[ \t\n\v\f\r]+/, "").split(/[ \t\n\v\f\r]+/)[0];
+  } else {
+    re = /[0-9]{4}-[0-9]{2}-[0-9]{2}/g;
+    while ((m = re.exec(s))) gd = m;
+    if (gd) {
+      date = gd[0];
+      verb = s.slice(0, gd.index).replace(/[ \t\n\v\f\r]+$/, "").split(/[^A-Za-z_-]+/).pop() || "";
+    }
+  }
+  const merged = verb === "merged" ? date : "";
+  const epic = (s.match(/epic:([a-zA-Z0-9_-]+)/) || ["", ""])[1];
   // The crewdomain assignment token, position-pinned exactly like the awk
   // twin (src/backlog.ts's domain): before a trailing (repo: ...) group,
   // or at end of line. Never anywhere-matched - a prose mention is inert.
   const dm = s.match(/; domain:([a-z0-9-]+) \(repo: [^()]*\)$/) || s.match(/; domain:([a-z0-9-]+)$/);
   const domain = dm ? dm[1] : "";
-  return { id, text, repo, pr, merged, epic, domain, isEpic: /\[EPIC/i.test(s), contract };
+  return { id, text, repo, pr, merged, epic, domain, terminal, isEpic: terminal === "epic", contract };
 }
 
 /**
@@ -558,12 +591,10 @@ export function backlogFamilyIds(b: BacklogView): string[] {
  * Derive a story's five-state board value (done/in_flight/queued/failed/
  * abandoned) from a backlog line + its known section. Section alone is only
  * in_flight/queued/done (boardData's childrenOf entries carry {id, line,
- * section}, :6472) and parseBacklogLine drops the marker anyway (its text
- * starts after the first " - ", the marker sits before that boundary) - so
- * neither, alone, can distinguish a real done from a [failed]/[abandoned]
- * row. This re-reads the RAW line's own prefix - the same boundary
- * parseBacklogLine uses - so a description mentioning the words
- * "failed"/"abandoned" past that boundary never false-positives.
+ * section}, :6472), so it cannot distinguish a real done from a [failed]/
+ * [abandoned] row; parseBacklogLine's `terminal` can - the exact token right
+ * after the id, as src/backlog.ts reads it - so a `[failed]` anywhere else on
+ * the line, or `[FAILED]`, never flips a done row.
  * composeFamily calls this directly for three things now: the epic rollup's
  * done count, each child's exposed `state` (board-rollup-and-overlay-count-
  * failed-as-done fixed the prior `done: c.section === "done"` bug here), and
@@ -577,20 +608,17 @@ export function backlogFamilyIds(b: BacklogView): string[] {
  * remaining direct caller, since it has no composeFamily result per child
  * line). One state derivation, every render reuses it - never a second
  * marker parser. realDoneCount (headMeta) also calls this directly for the
- * backlog/board route header counters. Self-contained so PAGE interpolates
- * its toString() and the bun test proves the same code the browser runs.
+ * backlog/board route header counters. It calls nothing but parseBacklogLine,
+ * which PAGE interpolates beside it, so the bun test proves the same code the
+ * browser runs.
  */
 export function storyState(
   line: string,
   section: string | null | undefined,
 ): "done" | "in_flight" | "queued" | "failed" | "abandoned" {
   if (section === "in_flight" || section === "queued") return section;
-  var s = String(line || "");
-  var dash = s.indexOf(" - ");
-  var head = dash >= 0 ? s.slice(0, dash) : s;
-  if (/\[failed\]/i.test(head)) return "failed";
-  if (/\[abandoned\]/i.test(head)) return "abandoned";
-  return "done";
+  var t = parseBacklogLine(line).terminal;
+  return t === "failed" || t === "abandoned" ? t : "done";
 }
 
 /**

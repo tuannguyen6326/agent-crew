@@ -306,9 +306,10 @@ assert_contains "$(cat "$AC_HOME/data/g-fampin/implement/brief.md")" "Review: ye
 # --- differential: the TS twin extracts byte-identically ----------------------
 # dashboard/lib.ts parseBacklogLine().contract is the browser-side twin of
 # AC_DONELINE_AWK's f["contract"] - one grammar, two hosts. Drive BOTH parsers
-# over the same fixture lines and demand byte-identical answers, so the twins
-# cannot drift apart silently. Skips cleanly when bun is absent (house style:
-# a missing tool never reads as a failure - tests/sh/dashboard.test.sh).
+# over the same fixture lines and demand byte-identical answers through the awk
+# binding the sites use; every field the twin shares is held by the backlog
+# twin differential in dashboard/app.test.ts. Skips cleanly when bun is absent
+# (house style: a missing tool never reads as a failure - tests/sh/dashboard.test.sh).
 if command -v bun >/dev/null 2>&1; then
   diff_lines="$AC_HOME/contract-diff-lines.txt"
   cat >"$diff_lines" <<'LINES'

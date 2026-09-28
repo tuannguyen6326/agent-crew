@@ -66,11 +66,14 @@ assert_file "$arc" "replaced body is archived"
 assert_contains "$(cat "$arc")" "the long narrative that used to bloat the line" "archive holds the old body"
 assert_contains "$(cat "$arc")" "first" "archive names the row id"
 
-# A body line shaped like a row is refused: the dashboard's parseBacklog
-# matches an INDENTED checkbox, so it would render as a phantom row - and it
-# matches it at ANY indent, so leading whitespace must not slip past the guard.
-assert_fails_with "start like a row" -- "$BIN/ac-task.sh" update-note first '- [ ] sneaky - a phantom'
-assert_fails_with "start like a row" -- "$BIN/ac-task.sh" update-note first '   - [ ] sneaky - an indented phantom'
+# A body line shaped like a row is legal: it is written indented, and every
+# reader - the awk sites and the dashboard's parseBacklog alike - takes rows at
+# column 0 only, so a checkbox list in a body stays body.
+"$BIN/ac-task.sh" update-note first $'steps:\n- [ ] one\n   - [x] two' >/dev/null \
+  || fail "a body carrying a checkbox list must be accepted"
+grep -qxF -- '  - [ ] one' "$ledger" || fail "the body's checkbox line is kept, indented"
+"$BIN/ac-ready.sh" queued | grep -qx 'one' && fail "a body checkbox must never read as a row"
+"$BIN/ac-task.sh" update-note first 'a rewritten narrative' >/dev/null
 
 # ---- start: moves the row (WITH its body) to In flight and stamps since.
 out="$("$BIN/ac-task.sh" start first)"

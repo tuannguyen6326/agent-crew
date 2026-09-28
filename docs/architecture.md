@@ -202,7 +202,8 @@ The captain's inbox count is one matcher, `ac_room_pending`, and the HANDBACK st
 
 The backlog grammar is [`backlog.md`](backlog.md), parsed by one module, `src/backlog.ts`; every awk site that reads a line's fields prepends the `AC_DONELINE_AWK` binding in `bin/ac-lib.sh` to its own program.
 `ac_contract_lint` judges contract-token values; the parser only extracts them.
-The dashboard's `parseBacklogLine` (`dashboard/lib.ts`) is held byte-identical to it by a differential test.
+The dashboard's `parseBacklogLine` and `storyState` (`dashboard/lib.ts`) are a separate, import-free copy for the browser that mirrors six of its fields and no other: `id` (on a `- [ ] `/`- [x] ` row only), `terminal` (as `isEpic` and the story state), `epic`, `contract`, `domain`, and `date` where `verb` is `merged` (the board's `merged`).
+The backlog-twin differential in `dashboard/app.test.ts` holds them to it over generated rows, hand-written edge rows, and a fixture ledger read through `parseBacklog`; the board reads the ledger as UTF-8, so a byte sequence that is not UTF-8 reaches it as U+FFFD.
 
 - `bin/ac-task.sh` - every routine backlog mutation as a verb, under the lock `records/.backlog.md.lock`, re-read inside the lock and published by tmp+rename, with a row's narrative as an indented body.
 - `bin/ac-ready.sh` - the read-only scheduler primitive: READY/STUCK/HELD, `queued`, `watch-set`, `validate <epic>`, and `overlap`.
