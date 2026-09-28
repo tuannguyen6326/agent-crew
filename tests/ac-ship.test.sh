@@ -1033,6 +1033,33 @@ assert_eq "$(grep -c . "$sclog")" "0" "neither suite nor scoped command re-runs 
 assert_eq "$(sed -n 's/^qualification=//p' "$srun/test/receipt.env")" "qualifies" \
   "the accepted attestation receipt qualifies"
 "$BIN/ac-ship.sh" finish cancelled >/dev/null
+
+# Names git C-quotes even under core.quotepath=false (", \, TAB, LF) reach the
+# scoped run verbatim, each as ONE argument naming a file that exists - a
+# TRAILING LF too, which a bare $(...) around the escape would strip.
+printf 'x\n' >"$screpo/q\"uote.txt"; printf 'x\n' >"$screpo/back\\slash.txt"
+printf 'x\n' >"$screpo/tab$(printf '\t')name.txt"; printf 'x\n' >"$screpo/new
+line.txt"; printf 'x\n' >"$screpo/trail
+"
+git -C "$screpo" add -A && git -C "$screpo" commit -qm "C-quoted names"
+cat >"$TMP/each-file.sh" <<'EOF'
+#!/bin/sh
+for f in "$@"; do [ -f "$f" ] || { printf 'missing:%s\n' "$f"; exit 9; }; done
+printf 'scoped-args=%s\n' "$#"
+EOF
+chmod +x "$TMP/each-file.sh"
+cat >"$sc_cfg" <<EOF
+commands:
+  test: "echo full-ok"
+  test-changed: "$TMP/each-file.sh {files}"
+EOF
+"$BIN/ac-ship.sh" start --intent "scoped quoted names" >/dev/null
+out="$("$BIN/ac-ship.sh" cmd test 2>"$TMP/scoped-quote.err")" \
+  || fail "the scoped run must receive every C-quotable name verbatim: $out"
+assert_contains "$out" "scoped-args=7" "each changed name reaches the scoped run as ONE existing argument"
+assert_contains "$(cat "$TMP/scoped-quote.err")" "(scoped test: 7 changed files)" \
+  "the count names every changed file once"
+"$BIN/ac-ship.sh" finish cancelled >/dev/null
 cd "$repo" || fail "cd back from scoperepo"
 
 # --- finish is FAIL CLOSED: no fresh/incomplete run may be marked passed ------
@@ -1317,12 +1344,24 @@ assert_eq "$("$BIN/ac-ship.sh" base)" "$(git rev-parse prelive)" \
   "target=prelive: base is the prelive merge-base, not the default's"
 grep -q '^target=prelive$' "$trepo/.crew/ship/$(readlink "$trepo/.crew/ship/current")/run.meta" \
   || fail "target recorded in run.meta"
-# Omitted target: byte-compatible default-ref base.
-"$BIN/ac-ship.sh" start --intent 'default run' >/dev/null
+# Omitted target: byte-compatible default-ref base - the one FROZEN at start
+# too, although `current` still names the prelive run when this start begins
+# (pooled worktrees keep .crew/ between leases).
+out="$("$BIN/ac-ship.sh" start --intent 'default run')"
+assert_contains "$out" "base=$(git rev-parse main | cut -c1-12)" \
+  "no --target: the start line names the default-ref base, never the previous run's target"
+grep -qx "base=$(git rev-parse main)" "$trepo/.crew/ship/$(readlink "$trepo/.crew/ship/current")/run.meta" \
+  || fail "no --target: run.meta freezes the default-ref base, never the previous run's target"
 assert_eq "$("$BIN/ac-ship.sh" base)" "$(git rev-parse main)" \
   "no --target: base stays the default-ref merge-base"
 # A mistyped target refuses loudly - never a silent default fallback.
 assert_fails "$BIN/ac-ship.sh" start --intent x --target no-such-branch
+# A retired target (its branch deleted once the epic landed) must not jam the
+# next task leased into this worktree.
+"$BIN/ac-ship.sh" start --intent 'pinned again' --target prelive >/dev/null
+git branch -q -D prelive
+out="$("$BIN/ac-ship.sh" start --intent 'after the target retired' 2>&1)" \
+  || fail "a start without --target must not read the previous run's retired target: $out"
 cd "$repo" || fail "cd back from trepo"
 
 # --- fresh_base FAIL CLOSED on a genuine merge-base failure ---------------------
@@ -1346,6 +1385,13 @@ out=""; rc=0
 out="$("$BIN/ac-ship.sh" base 2>/dev/null)" || rc=$?
 assert_eq "$rc" "1" "merge-base failure: base exits non-zero, not HEAD"
 assert_eq "$out" "" "base prints nothing on merge-base failure, never HEAD"
+# start refuses on the same failure BEFORE creating anything: a run dir with no
+# run.meta is invisible to ac-teardown.sh's run sweep.
+rc=0; "$BIN/ac-ship.sh" start --intent 'refused at the merge-base' >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" "start refuses when the merge-base cannot be computed"
+for d in "$urepo/.crew/ship"/*/; do
+  [ -f "$d/run.meta" ] || fail "a start refused at the merge-base left a run dir with no run.meta: $d"
+done
 cd "$repo" || fail "cd back from urepo"
 
 # --- config verb on a config-less repo: quiet return, never a killer exit ------
@@ -1410,7 +1456,63 @@ err="$(env -u AC_HOME "$BIN/ac-ship.sh" start --intent 'no signal at all' 2>&1 1
 assert_eq "$rc" "1" "start refuses with no AC_HOME and no threaded config signal"
 assert_contains "$err" "cannot resolve the project's pipeline config" \
   "the refusal names the exact ambiguity, not a generic failure"
+# A threaded path that no longer exists refuses too - never a verified none.
+rc=0
+err="$(env -u AC_HOME AC_FLEET_HOME_CHECKED=1 AC_FLEET_PROJECT_CONFIG="$TMP/gone.yaml" \
+  "$BIN/ac-ship.sh" start --intent 'threaded file gone' 2>&1 1>/dev/null)" || rc=$?
+assert_eq "$rc" "1" "start refuses a threaded config path that names a missing file"
+assert_contains "$err" "names a missing file" "the refusal names the missing threaded file"
+unread_cfg="$TMP/mode000.yaml"
+: >"$unread_cfg"; chmod 000 "$unread_cfg"
+rc=0
+err="$(env -u AC_HOME AC_FLEET_HOME_CHECKED=1 AC_FLEET_PROJECT_CONFIG="$unread_cfg" \
+  "$BIN/ac-ship.sh" start --intent 'threaded file mode 000' 2>&1 1>/dev/null)" || rc=$?
+chmod 644 "$unread_cfg"
+assert_eq "$rc" "1" "start refuses a config it cannot read"
+assert_contains "$err" "unreadable" "the refusal names the unreadable config"
+# No refusal may leave a run dir behind (no run.meta = invisible to
+# ac-teardown.sh's run sweep).
+for d in "$pinrepo/.crew/ship"/*/; do
+  [ -f "$d/run.meta" ] || fail "a refused start must create nothing, yet left a run dir with no run.meta: $d"
+done
+
+# attest-test and attest-check read the SAME handover start trusts: bare, the
+# pane's missing AC_HOME refused them, so the evidence-backed test skip never
+# worked from a real crewmate pane.
+printf 'commands:\n  test: "echo pin-green"\n' >>"$pin_cfg"
+out="$(env -u AC_HOME AC_FLEET_HOME_CHECKED=1 AC_FLEET_PROJECT_CONFIG="$pin_cfg" \
+  "$BIN/ac-ship.sh" attest-test 2>&1)" \
+  || fail "a homeless crewmate pane attests through the threaded config: $out"
+assert_contains "$out" "attested: commands.test green" "attest-test runs the threaded commands.test"
+out="$(env -u AC_HOME AC_FLEET_HOME_CHECKED=1 AC_FLEET_PROJECT_CONFIG="$pin_cfg" \
+  "$BIN/ac-ship.sh" attest-check 2>&1)" \
+  || fail "attest-check judges against the threaded config, not a homeless miss: $out"
+assert_contains "$out" "attested: fresh" "a fresh attestation reads fresh from a homeless pane"
+# A threaded file deleted since spawn is no config for both verbs, never awk's
+# exit 2 - which attest-check reserves for `no attestation`.
+rc=0
+out="$(env -u AC_HOME AC_FLEET_HOME_CHECKED=1 AC_FLEET_PROJECT_CONFIG="$TMP/gone.yaml" \
+  "$BIN/ac-ship.sh" attest-check 2>&1)" || rc=$?
+assert_eq "$rc" "1" "attest-check answers stale when the threaded config is gone"
+assert_contains "$out" "stale: commands.test changed since attestation" \
+  "a vanished config un-configures the attested command"
+rc=0
+out="$(env -u AC_HOME AC_FLEET_HOME_CHECKED=1 AC_FLEET_PROJECT_CONFIG="$TMP/gone.yaml" \
+  "$BIN/ac-ship.sh" attest-test 2>&1)" || rc=$?
+assert_eq "$rc" "4" "attest-test reports no config when the threaded config is gone"
+assert_contains "$out" "(no config file)" "attest-test names the missing config"
 cd "$repo" || fail "cd back from pinrepo"
+# Before any run exists, the config verb falls back to the same handover.
+prerepo="$(make_repo prerunrepo)"
+printf 'review:\n  model: opus-prerun\n' >"$AC_HOME/projects/prerunrepo.yaml"
+m="$(cd "$prerepo" && env -u AC_HOME AC_FLEET_HOME_CHECKED=1 \
+  AC_FLEET_PROJECT_CONFIG="$AC_HOME/projects/prerunrepo.yaml" \
+  "$BIN/ac-ship.sh" config review.model 2>/dev/null || true)"
+assert_eq "$m" "opus-prerun" "before any run, the config verb reads the threaded handover too"
+rc=0
+(cd "$prerepo" && env -u AC_HOME AC_FLEET_HOME_CHECKED=1 AC_FLEET_PROJECT_CONFIG="$TMP/gone.yaml" \
+  "$BIN/ac-ship.sh" config review.model >/dev/null 2>&1) || rc=$?
+assert_eq "$rc" "1" "before any run, a vanished threaded config reads as no config"
 
 # --- best-effort external calls DEGRADE; load-bearing ones stay fail-closed ---
 # ship-finish-pane-gone (@a4bc17d) guarded the finish pane-close PAIR and left
@@ -1645,13 +1747,9 @@ cd "$repo" || fail "cd back from detachedrepo"
 # reported success. skip-remaining is the sharper of the two: it printed
 # "remaining steps skipped" and exited 0 having skipped nothing.
 #
-# The staged temp file each verb also stops leaking is deliberately NOT
-# asserted here: both stage through a bare `mktemp`, and BSD mktemp resolves
-# that against _CS_DARWIN_USER_TEMP_DIR, IGNORING TMPDIR - so the obvious
-# `TMPDIR=<empty dir>` assertion is vacuous on macOS (verified: it survives
-# deleting the cleanup). Diffing the real per-user temp dir instead would race
-# every other process sharing it. The cleanup is measured out of band; only the
-# refusal itself is pinned.
+# Both verbs stage their temp file BESIDE steps.tsv, so the cleanup is pinned
+# in the run dir itself (a bare `mktemp` on macOS ignores TMPDIR, which made
+# the leak unobservable while they staged there).
 ledrepo="$(make_repo ledgerrepo)"
 cd "$ledrepo" || fail "cd ledgerrepo"
 "$BIN/ac-ship.sh" start --intent "ledger write fails" >/dev/null
@@ -1669,6 +1767,10 @@ assert_contains "$out" "could not update the steps ledger" "skip-remaining names
 case "$out" in
   *"remaining steps skipped"*) fail "skip-remaining must never report success on an unwritten ledger: $out" ;;
 esac
+for f in "$lrd"/.steps.tsv.*; do
+  [ ! -e "$f" ] || fail "a refused ledger write must not leak its staged temp file: $f"
+done
+assert_no_file "$lrd/.steps.lock" "skip-remaining releases the ledger lock before the refusal"
 # Healthy path on the same run: with the ledger back, both verbs behave.
 printf 'intent\tpending\t0\n' >"$lrd/steps.tsv"
 printf 'push\tpending\t0\n' >>"$lrd/steps.tsv"
@@ -1677,6 +1779,54 @@ assert_contains "$("$BIN/ac-ship.sh" status)" "intent     completed" "the health
 "$BIN/ac-ship.sh" skip-remaining >/dev/null || fail "skip-remaining still works on a readable ledger"
 assert_contains "$("$BIN/ac-ship.sh" status)" "push       skipped" "the healthy skip lands"
 cd "$repo" || fail "cd back from ledgerrepo"
+
+# The ledger lock comes BEFORE the staged temp: taken after it, a lock timeout
+# exited with the temp leaked. The temp is staged beside steps.tsv, so the swap
+# is one rename the live readers (ac-watch-dash.sh, ac-crew-state.sh) never
+# catch half-written. skip-remaining is a ledger writer too, so it honours the
+# same lock. `sleep` is stubbed so the 30s lock timeout costs nothing, and
+# `mktemp` records every path it hands out.
+realmktemp="$(command -v mktemp)"
+lkstub="$TMP/ledgerlockstub"; mkdir -p "$lkstub"
+lklog="$TMP/ledger-mktemp.log"
+printf '#!/bin/sh\nexit 0\n' >"$lkstub/sleep"
+cat >"$lkstub/mktemp" <<EOF
+#!/bin/sh
+p="\$("$realmktemp" "\$@")" || exit 1
+printf '%s\n' "\$p" >>"$lklog"
+printf '%s\n' "\$p"
+EOF
+chmod +x "$lkstub/sleep" "$lkstub/mktemp"
+lkrepo="$(make_repo ledgerlockrepo)"
+cd "$lkrepo" || fail "cd ledgerlockrepo"
+"$BIN/ac-ship.sh" start --intent "ledger lock and staging" >/dev/null
+lkrd="$lkrepo/.crew/ship/$(readlink "$lkrepo/.crew/ship/current")"
+: >"$lklog"
+PATH="$lkstub:$PATH" "$BIN/ac-ship.sh" step intent running >/dev/null || fail "step on a free lock"
+[ -s "$lklog" ] || fail "the probe must see step stage its ledger"
+while IFS= read -r p; do
+  assert_eq "$(dirname "$p")" "$lkrd" "step stages the ledger beside steps.tsv, so the swap is one rename"
+done <"$lklog"
+mkdir "$lkrd/.steps.lock"; printf '%s\n' "$$" >"$lkrd/.steps.lock/pid"
+: >"$lklog"
+rc=0; out="$(PATH="$lkstub:$PATH" "$BIN/ac-ship.sh" step intent completed 2>&1)" || rc=$?
+assert_eq "$rc" "1" "step refuses while a live owner holds the ledger lock"
+assert_contains "$out" "lock timeout" "the refusal names the lock"
+while IFS= read -r p; do
+  assert_no_file "$p" "a lock timeout leaves no staged ledger behind"
+done <"$lklog"
+rc=0; out="$(PATH="$lkstub:$PATH" "$BIN/ac-ship.sh" skip-remaining 2>&1)" || rc=$?
+assert_eq "$rc" "1" "skip-remaining waits for the ledger lock instead of writing under its holder"
+assert_contains "$("$BIN/ac-ship.sh" status)" "intent     running" "the held ledger is left untouched"
+rm -rf "$lkrd/.steps.lock"
+: >"$lklog"
+PATH="$lkstub:$PATH" "$BIN/ac-ship.sh" skip-remaining >/dev/null || fail "skip-remaining on a free lock"
+[ -s "$lklog" ] || fail "the probe must see skip-remaining stage its ledger"
+while IFS= read -r p; do
+  assert_eq "$(dirname "$p")" "$lkrd" "skip-remaining stages the ledger beside steps.tsv"
+done <"$lklog"
+assert_no_file "$lkrd/.steps.lock" "skip-remaining releases the ledger lock"
+cd "$repo" || fail "cd back from ledgerlockrepo"
 
 # --- lint opt-in + test skip-if-TDD + start notes (crew-ship-lean-pipeline) ---
 # Both conditional steps FAIL TOWARD RUNNING: lint is skip-by-default (opt-in via
@@ -2010,10 +2160,77 @@ assert_eq "$(jq -r '.[] | select(.id == "floor-carried") | .action' "$floorrun/f
 assert_eq "$(jq -r '.[] | select(.id == "floor-carried") | has("round_floored")' "$floorrun/findings/review.json")" "false" \
   "the prior-open id carries no round floor flag"
 assert_eq "$(jq -r '.[] | select(.id == "floor-utf8") | .action' "$floorrun/findings/review.json")" "fix" \
-  "a NEW in-delta blocker on a UTF-8 path stays fix (core.quotepath=false - C-quoted paths must not read as out-of-delta)"
+  "a NEW in-delta blocker on a UTF-8 path stays fix (the delta is read -z - C-quoted paths must not read as out-of-delta)"
 assert_eq "$(jq -r '.verdict' "$floorrun/logs/review-agent-r3.json")" "fix" \
   "durable r3 verdict remains fix because the previous open id persists"
 cd "$repo" || fail "cd back from floorrepo"
+
+# core.quotepath=false stops quoting only bytes >= 0x80; git still C-quotes ",
+# \ and control characters (git-config(1) core.quotePath), and a quoted delta
+# name read as out-of-delta floored a NEW blocker on that very file. A newline
+# cannot ride the newline-list AC_FINDINGS_DELTA at all, so such a round must
+# floor nothing rather than guess.
+qrepo="$(make_repo quoterepo)"
+cd "$qrepo" || fail "cd $qrepo"
+cat >"$AC_HOME/projects/quoterepo.yaml" <<'EOF'
+commands:
+  test: "echo test-ok"
+
+review:
+  max_rounds: 9
+EOF
+qstub="$TMP/quotestub"; mkdir -p "$qstub"
+cat >"$qstub/ac-verify" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = codereview ] || exit 2
+shift
+output=""; ref=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output) output="$2"; shift ;;
+    --ref) ref="$2"; shift ;;
+    --repo|--base|--family|--caller|--intent|--history|--owner) shift ;;
+    *) exit 2 ;;
+  esac
+  shift
+done
+jq --arg ref "$ref" '{findings: [.[] | . + {severity:"warning",action:"fix",class:"regression",description:"d",authority_class:"internal",authority:"tests/x:1",suggested_fix:"s"}],
+  summary:"s",risk_level:"low",risk_rationale:"r",reviewed_ref:$ref,verdict:"fix"}' "$QUOTE_FINDINGS" >"$output"
+EOF
+chmod +x "$qstub/ac-verify"
+qfind="$TMP/quote-findings.json"
+qra() { QUOTE_FINDINGS="$qfind" AC_CREW_ID=quote-implement AC_VERIFY_BIN="$qstub/ac-verify" "$BIN/ac-ship.sh" review-agent; }
+git checkout -qb crew/quote
+"$BIN/ac-ship.sh" start --intent "quoted delta" --skip pr >/dev/null
+qrun="$qrepo/.crew/ship/$(readlink "$qrepo/.crew/ship/current")"
+qaction() { jq -r --arg id "$1" '.[] | select(.id == $id) | .action' "$qrun/findings/review.json"; }
+printf 'work\n' >>file.txt && git commit -qam work
+"$BIN/ac-ship.sh" step test completed --note "suite green" >/dev/null
+jq -n '[{id:"q-r1",file:"file.txt"}]' >"$qfind"
+qra >/dev/null
+"$BIN/ac-ship.sh" step review fixing >/dev/null
+printf 'x\n' >'q"uote.txt'; printf 'x\n' >'back\slash.txt'; printf 'x\n' >"tab$(printf '\t')name.txt"
+git add -A && git commit -qm "fix touches C-quoted names"
+jq -n --arg t "tab$(printf '\t')name.txt" '[{id:"q-r1",file:"file.txt"},
+  {id:"q-dq",file:"q\"uote.txt"},{id:"q-bs",file:"back\\slash.txt"},{id:"q-tab",file:$t},
+  {id:"q-out",file:"untouched.txt"}]' >"$qfind"
+qra >/dev/null
+assert_eq "$(qaction q-dq)" "fix" "a NEW in-delta blocker on a double-quoted name stays fix"
+assert_eq "$(qaction q-bs)" "fix" "a NEW in-delta blocker on a backslashed name stays fix"
+assert_eq "$(qaction q-tab)" "fix" "a NEW in-delta blocker on a TAB-carrying name stays fix"
+assert_eq "$(qaction q-out)" "no-op" "the floor is still armed: a NEW out-of-delta finding floors"
+"$BIN/ac-ship.sh" step review fixing >/dev/null
+printf 'x\n' >'new
+line.txt'
+git add -A && git commit -qm "fix touches a newline name"
+jq -n --arg n 'new
+line.txt' '[{id:"q-r1",file:"file.txt"},{id:"q-lf",file:$n},{id:"q-out3",file:"untouched.txt"}]' >"$qfind"
+qra >/dev/null
+assert_eq "$(qaction q-lf)" "fix" "a NEW in-delta blocker on a newline-carrying name stays fix"
+assert_eq "$(qaction q-out3)" "fix" \
+  "a delta the newline-list wire cannot carry arms no floor at all - it fails toward reviewing"
+cd "$repo" || fail "cd back from quoterepo"
 
 # --- advisory-polish-loop A: a 0-fix verdict FREEZES the tree ------------------
 # A captain ruling. A round returning ZERO `fix` findings makes the run

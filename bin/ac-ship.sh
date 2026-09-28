@@ -168,6 +168,8 @@
 #   ac_findings_normalize. Only NEW out-of-delta findings floor; an unresolved
 #   previous finding never becomes advisory merely because its file was not in
 #   the latest fix delta. bin/ac-pipeline-lib.sh owns the floor directions.
+#   A delta name holding a newline cannot ride that newline list, so such a
+#   round passes no delta and floors nothing.
 #
 # Findings JSON (per step):
 #   [{"id","severity","action","file","line","description",
@@ -387,7 +389,10 @@
 # real AC_HOME, else REFUSES - a homeless, unchecked caller freezing an empty
 # config would be indistinguishable from a project verified to have none,
 # silently dropping any key the captain pinned (ship-config-and-know-citation-
-# blind-spots).
+# blind-spots). attest-test, attest-check and a pre-run `config` read trust the
+# same handover (home_config_file); with neither signal, or a threaded file
+# since deleted, they report no config instead of refusing, so no attestation
+# is written or honoured and the suite runs.
 #
 # SCOPED TEST (prefer changed-file tests over the
 # full suite): commands.test-changed is an OPT-IN per-project command template
@@ -425,14 +430,29 @@ current="$vdir/current"
 
 config_file() {
   # A started run is immutable: every command reads its frozen config snapshot.
-  # Before the first run, resolve the HOME-ONLY installed config directly.
-  local rd
+  # Before the first run, resolve the HOME-ONLY installed config the way start
+  # does.
+  local rd cf
   if [ -L "$current" ]; then
     rd="$(run_dir)"
     if [ -s "$rd/config.yaml" ]; then printf '%s\n' "$rd/config.yaml"; return 0; fi
     [ -f "$rd/config.yaml" ] && return 1
   fi
-  ac_project_config_file "$repo"
+  cf="$(home_config_file)" && [ -f "$cf" ] && printf '%s\n' "$cf"
+}
+
+home_config_file() {
+  # The installed project config (START FREEZE, header): the handover
+  # ac-spawn.sh threads wins over a bare ac_project_config_file, which refuses
+  # in the homeless crewmate pane. 1 = no path; the caller decides whether that
+  # is a verified none or an unresolved home. A threaded path prints even when
+  # its file is gone, so start can refuse it; every reader tests -f.
+  if [ -n "${AC_FLEET_HOME_CHECKED:-}" ]; then
+    [ -n "${AC_FLEET_PROJECT_CONFIG:-}" ] || return 1
+    printf '%s\n' "$AC_FLEET_PROJECT_CONFIG"
+  else
+    ac_project_config_file "$repo"
+  fi
 }
 
 require_run() { [ -L "$current" ] || ac_die "no active crew-ship run; ac-ship.sh start first"; }
@@ -483,7 +503,8 @@ fresh_base() {
   # diff vs THAT branch, not vs origin/HEAD (live miss: PR #3856 reviewed 8
   # files instead of 145). Recomputed each call: the base drifts after a
   # rebase, so never trust the value frozen at start. An explicit $1 serves
-  # cmd_start, which runs before run.meta exists.
+  # cmd_start, where `current` still names the PREVIOUS run (pooled worktrees
+  # keep .crew/ between leases) and its target= must not leak into a new run.
   local ref="${1:-}"
   if [ -z "$ref" ] && readlink "$current" >/dev/null 2>&1; then
     ref="$(sed -n 's/^target=//p' "$vdir/$(readlink "$current")/run.meta" 2>/dev/null | head -n 1)"
@@ -554,10 +575,6 @@ cmd_start() {
     done
   fi
   local id rd branch base status
-  id="$(date +%Y%m%d-%H%M%S)-$$"
-  rd="$vdir/$id"
-  mkdir -p "$rd/logs" "$rd/findings"
-  ensure_crew_excluded
 
   # Freeze one immutable project config per run. Concurrent ship/qa runs may
   # share the canonical home file, but never observe an update mid-run.
@@ -579,27 +596,31 @@ cmd_start() {
   # real AC_HOME exists is the ambiguity genuine, and it refuses loudly rather
   # than defaulting to an empty config nobody can tell apart from a verified
   # "none".
-  if [ -n "${AC_FLEET_HOME_CHECKED:-}" ]; then
-    config_source="${AC_FLEET_PROJECT_CONFIG:-}"
-    if [ -n "$config_source" ]; then
-      [ -f "$config_source" ] \
-        || ac_die "AC_FLEET_PROJECT_CONFIG names a missing file: $config_source"
-      cp "$config_source" "$rd/config.yaml"
-    else
-      : >"$rd/config.yaml"
-    fi
-  elif config_source="$(ac_project_config_file "$repo")"; then
-    cp "$config_source" "$rd/config.yaml"
-  elif [ -n "${AC_HOME:-}" ]; then
+  if config_source="$(home_config_file)"; then
+    [ -f "$config_source" ] \
+      || ac_die "AC_FLEET_PROJECT_CONFIG names a missing file: $config_source"
+    [ -r "$config_source" ] \
+      || ac_die "the project's pipeline config is unreadable: $config_source"
+  elif [ -n "${AC_FLEET_HOME_CHECKED:-}" ] || [ -n "${AC_HOME:-}" ]; then
     config_source=""
-    : >"$rd/config.yaml"
   else
     ac_die "cannot resolve the project's pipeline config: AC_HOME is unset and no AC_FLEET_PROJECT_CONFIG was threaded by ac-spawn.sh - freezing an empty config here would be indistinguishable from a project that genuinely has none installed, silently dropping any captain-pinned key. Re-spawn through bin/ac-spawn.sh (it resolves this with a real AC_HOME and hands the answer over), or export AC_HOME before running start directly."
   fi
-  config_sha="$(ac_config_sha256 "$rd/config.yaml")"
-
   branch="$(git -C "$repo" symbolic-ref --short HEAD 2>/dev/null || printf 'DETACHED')"
-  base="$(fresh_base "$tref")"
+  base="$(fresh_base "${tref:-$(ac_default_ref "$repo")}")"
+
+  # Every refusal sits above this line, so a refused start creates nothing: a
+  # run dir without run.meta is invisible to ac-teardown.sh's run sweep.
+  id="$(date +%Y%m%d-%H%M%S)-$$"
+  rd="$vdir/$id"
+  mkdir -p "$rd/logs" "$rd/findings"
+  ensure_crew_excluded
+  if [ -n "$config_source" ]; then
+    cp "$config_source" "$rd/config.yaml"
+  else
+    : >"$rd/config.yaml"
+  fi
+  config_sha="$(ac_config_sha256 "$rd/config.yaml")"
   {
     printf 'intent=%s\n' "$intent"
     printf 'branch=%s\n' "$branch"
@@ -733,7 +754,6 @@ cmd_step() {
       ac_die "review has no independent-reviewer evidence: run ac-ship.sh review-agent, or record meta review with a \"reviewer\" field after a clean-context subagent reviewed"
     fi
   fi
-  tmp="$(mktemp)"
   # Locked read-modify-write: test and lint may be driven by CONCURRENT
   # subagents (the skill fans them out), and two unlocked writers to
   # steps.tsv lose a row. `fixing` increments the durable round counter (col 3).
@@ -745,7 +765,11 @@ cmd_step() {
   # still printed `<step> -> <status>`. The lock is released on the refusal path
   # too: ac_die exits, and a held .steps.lock would then stall every concurrent
   # writer for its full 30s timeout before they, too, refused.
-  if ! { awk -F'\t' -v OFS='\t' -v s="$name" -v st="$status" '
+  # The temp is staged BESIDE steps.tsv so the swap is one rename(2):
+  # ac-watch-dash.sh and ac-crew-state.sh read the ledger live, and a mv across
+  # filesystems is a copy they can catch half-written.
+  if ! { tmp="$(mktemp "$rd/.steps.tsv.XXXXXX")" \
+      && awk -F'\t' -v OFS='\t' -v s="$name" -v st="$status" '
       $1 == s { $2 = st; if (st == "fixing") $3 = ($3 + 0) + 1 }
       { print }' "$rd/steps.tsv" >"$tmp" && mv "$tmp" "$rd/steps.tsv"; }; then
     rm -f "$tmp"
@@ -843,8 +867,9 @@ cmd_attest_test() {
   # atomically on green; a failing run writes nothing and propagates.
   local cf c branch head tree tmp rc dirty
   # Attestation is normally created before `start`, so it resolves the current
-  # installed home config directly. The following run freezes that same source.
-  cf="$(ac_project_config_file "$repo")" || { printf '(no config file)\n' >&2; exit 4; }
+  # installed home config the way start does. The following run freezes that
+  # same source.
+  cf="$(home_config_file)" && [ -f "$cf" ] || { printf '(no config file)\n' >&2; exit 4; }
   c="$(ac_yaml_get "$cf" commands.test)"
   [ -n "$c" ] || { printf '(no commands.test configured - nothing to attest)\n' >&2; exit 4; }
   ensure_crew_excluded
@@ -944,7 +969,7 @@ cmd_attest_check() {
   # answer `fresh` for a command the project no longer configures.
   local af="$vdir/attest-test.json" cf c="" why head
   [ -f "$af" ] || { printf 'no attestation\n'; exit 2; }
-  if cf="$(ac_project_config_file "$repo")"; then c="$(ac_yaml_get "$cf" commands.test)"; fi
+  if cf="$(home_config_file)" && [ -f "$cf" ]; then c="$(ac_yaml_get "$cf" commands.test)"; fi
   why="$(attest_conditions "$af" "$c")"
   if [ -n "$why" ]; then
     printf 'stale: %s\n' "$why"
@@ -1048,16 +1073,25 @@ cmd_cmd() {
     tc="$(ac_yaml_get "$cf" commands.test-changed)"
     if [ -n "$tc" ]; then
       case "$tc" in *"{files}"*) ;; *) ac_die "commands.test-changed must carry a {files} placeholder" ;; esac
-      changed="$(git -C "$repo" -c core.quotepath=false diff --name-only --diff-filter=d "$(fresh_base)" HEAD)"
-      if [ -n "$changed" ]; then
-        quoted=""
-        while IFS= read -r cfile; do
-          esc="$(printf '%s' "$cfile" | sed "s/'/'\\\\''/g")"
-          quoted="$quoted '$esc'"
-        done <<<"$changed"
+      # -z, never a line list: git C-quotes ", \ and control characters even
+      # under core.quotepath=false (git-config(1)), and a newline cannot ride a
+      # line. The first line out is the count; the rest is the quoted set.
+      # The x sentinel stops $(...) eating a name's trailing LF; sed gets a
+      # terminated line so BSD and GNU sed both end on exactly one newline.
+      changed="$(git -C "$repo" diff -z --name-only --diff-filter=d "$(fresh_base)" HEAD \
+        | { n=0 quoted=""
+            while IFS= read -r -d '' cfile; do
+              esc="$(printf '%s\n' "$cfile" | sed "s/'/'\\\\''/g"; printf x)"
+              esc="${esc%$'\n'x}"
+              quoted="$quoted '$esc'"
+              n=$((n + 1))
+            done
+            printf '%s\n%s' "$n" "$quoted"; })"
+      if [ "${changed%%$'\n'*}" -gt 0 ]; then
+        quoted="${changed#*$'\n'}"
         c="${tc//\{files\}/$quoted}"
         scoped=1
-        printf '(scoped test: %s changed files)\n' "$(printf '%s\n' "$changed" | grep -c .)" >&2
+        printf '(scoped test: %s changed files)\n' "${changed%%$'\n'*}" >&2
       fi
     fi
   fi
@@ -1248,17 +1282,21 @@ cmd_skip_remaining() {
   require_run
   local rd tmp
   rd="$(run_dir)"
-  tmp="$(mktemp)"
+  # cmd_step's lock and beside-the-ledger staging, for the same two reasons.
+  ac_lock_acquire "$rd/.steps.lock" 30 || ac_die "steps ledger lock timeout"
   # Same errexit-exempt AND-OR shape as cmd_step, and the sharper of the two:
   # unguarded, a failed ledger write still printed "remaining steps skipped" and
   # exited 0 having skipped nothing - so the caller moved on to a finish gate
   # that would then refuse on steps it believed were already resolved.
-  if ! { awk -F'\t' -v OFS='\t' '
+  if ! { tmp="$(mktemp "$rd/.steps.tsv.XXXXXX")" \
+      && awk -F'\t' -v OFS='\t' '
       $2 == "pending" || $2 == "running" { $2 = "skipped" }
       { print }' "$rd/steps.tsv" >"$tmp" && mv "$tmp" "$rd/steps.tsv"; }; then
     rm -f "$tmp"
+    ac_lock_release "$rd/.steps.lock"
     ac_die "skip-remaining: could not update the steps ledger ($rd/steps.tsv) - failing closed"
   fi
+  ac_lock_release "$rd/.steps.lock"
   printf '%s skip-remaining (empty diff)\n' "$(ac_iso)" >>"$rd/logs/run.log"
   printf 'remaining steps skipped\n'
 }
@@ -1374,6 +1412,17 @@ review_delta_is_caller_polish() {
   total="$(git -C "$repo" rev-list --count "$reviewed..$head" 2>/dev/null)" || return 1
   own="$(git -C "$repo" rev-list --count "$reviewed..$head" "^$base" 2>/dev/null)" || return 1
   [ -n "$total" ] && [ "$total" = "$own" ]
+}
+
+nul_names_to_lines() {
+  # NUL-terminated names on stdin (git -z) -> one per line. 1 on a name holding
+  # a newline: the newline-list AC_FINDINGS_DELTA cannot carry it, and a delta
+  # missing a file would floor a blocker on it, so the caller arms no floor.
+  local p
+  while IFS= read -r -d '' p; do
+    case "$p" in *$'\n'*) return 1 ;; esac
+    printf '%s\n' "$p"
+  done
 }
 
 cmd_review_agent() {
@@ -1569,8 +1618,12 @@ cmd_review_agent() {
   # A fresh independent review round IS the resolution a `fix` finding is
   # waiting for (F9): trust this one internal call to replace review findings
   # wholesale, including dropping resolved `fix` ids.
+  # The delta is read -z because git C-quotes ", \ and control characters even
+  # under core.quotepath=false (git-config(1)), and a quoted name reads as
+  # out-of-delta, flooring a blocker.
   if [ -n "$floor_ref" ] && [ -n "$prior_open_ids" ] \
-    && delta="$(git -C "$repo" -c core.quotepath=false diff --name-only "$floor_ref" "$head" -- 2>/dev/null)"; then
+    && delta="$(git -C "$repo" diff -z --name-only "$floor_ref" "$head" -- 2>/dev/null \
+         | nul_names_to_lines)"; then
     AC_FINDINGS_ROUND="$round" AC_FINDINGS_DELTA="$delta" \
       AC_FINDINGS_PRIOR_OPEN="$prior_open_ids" \
       _ac_findings_trusted=1 cmd_findings review <<<"$findings_json" >/dev/null

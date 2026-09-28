@@ -350,7 +350,7 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_FLEET_NAME` | unset (launch line) | The fleet token used for pane grouping and titles (`ac_fleet_name`: `AC_HOME` basename > this > `agent-crew`). |
 | `AC_FLEET_MODEL` | unset (launch line) | The fleet's `config/model`, the middle rung of `ac-pane-agent.sh`'s model ladder. |
 | `AC_FLEET_EFFORT` | unset (launch line) | The fleet's `config/effort`, raw, same rung as `AC_FLEET_MODEL`. |
-| `AC_FLEET_HOME_CHECKED` | unset (launch line) | Always `1` on a crewmate: a real `AC_HOME` already resolved the project config, so `ac-ship.sh start` trusts `AC_FLEET_PROJECT_CONFIG`. |
+| `AC_FLEET_HOME_CHECKED` | unset (launch line) | Always `1` on a crewmate: a real `AC_HOME` already resolved the project config, so `ac-ship.sh` (`start`, `attest-test`, `attest-check`, a pre-run `config`) trusts `AC_FLEET_PROJECT_CONFIG`. |
 | `AC_FLEET_PROJECT_CONFIG` | unset (launch line) | The resolved `$AC_HOME/projects/<name>.yaml`, set only when one exists. |
 | `AC_FLEET_AGENT_<ROLE>` | unset (launch line) | Per-role pane harness from `config/<role>-agent` (`<ROLE>` = `CODEREVIEW` or `QA`), set only when the file is set. |
 | `AC_FLEET_MODEL_<ROLE>` | unset (launch line) | Per-role pane model from `config/<role>-model`. |
