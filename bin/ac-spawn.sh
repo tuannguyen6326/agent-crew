@@ -1952,12 +1952,14 @@ command -v "${launch%% *}" >/dev/null 2>&1 || ac_die "harness binary not found: 
 if [ "$backend" = orca ]; then
   # Orca fleets lease through the Orca CLI (orca_worktree_lease: one
   # worktree per task, sidebar-native, cut from the repo's live checkout
-  # branch at its freshest tip unless --base-branch names one explicitly);
-  # the crew-tree pool stays the herdr fleets'. No slot affinity exists
-  # here - a respawn re-creates the path, so a resume is warned the same
-  # way a changed pool slot is.
-  worktree="$(orca_worktree_lease "$id" "$project_dir" "$base_branch")" \
-    || ac_die "orca worktree create failed for $id (is the Orca runtime running, and the repo registered? orca repo add --path $project_dir)"
+  # branch at its freshest tip unless --base-branch or the epic-branch
+  # fence names one); the crew-tree pool stays the herdr fleets'. No slot
+  # affinity exists here - a respawn re-creates the path, so a resume is
+  # warned the same way a changed pool slot is.
+  worktree="$(orca_worktree_lease "$id" "$project_dir" "$base_branch")" || {
+    [ "$?" != 2 ] || ac_die "the epic-branch fence refused the orca lease for $id (reason above)"
+    ac_die "orca worktree create failed for $id (is the Orca runtime running, and the repo registered? orca repo add --path $project_dir)"
+  }
   [ -z "$resume_wt" ] || [ "$worktree" = "$resume_wt" ] \
     || ac_warn "resume may not find the old session (cwd changed: $resume_wt -> $worktree)"
 elif [ -n "$resume_wt" ]; then
@@ -2008,9 +2010,10 @@ prompt="You are an agent-crew crewmate. Read and follow the brief at $brief. Wor
 [ -z "$seed_fallback" ] \
   || prompt="$prompt Read $worktree/$seed_fallback first - the fleet-wide crewmate instructions, which this repo's own instruction file does not carry."
 # Epic-branch fence, the crewmate-facing half (epic-branch-mech): the lease
-# itself was already cut from the recorded branch by ac-tree.sh's fence; this
-# line makes the base and the LANDING TARGET explicit so the crewmate never
-# re-derives them from room prose. Silent when the id has no record.
+# itself was already cut from the recorded branch by its backend's fence
+# (ac-tree.sh get, orca_worktree_lease); this line makes the base and the
+# LANDING TARGET explicit so the crewmate never re-derives them from room
+# prose. Silent when the id has no record.
 ebrc=0; eb_entry="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)" || ebrc=$?
 [ "$ebrc" != 2 ] || ac_die "cannot read the ledger to resolve the epic-branch fence for $id"
 if [ "$ebrc" = 0 ]; then

@@ -1806,7 +1806,8 @@ case "$err" in *"project view"*) fail "R12: an ordinary roomchief's AC_SCOPE mus
 # --- orca fleet: the crewmate worktree is ORCA-MANAGED ---------------------------
 # Captain ruling: an orca-backend fleet leases through `orca worktree create`
 # (one per task, sidebar-native) instead of the crew-tree pool; the checkout
-# lands on crew/<id> from the LOCAL default branch, and teardown removes the
+# lands on crew/<id> from the live checkout branch at its freshest tip (or
+# the epic-branch fence's recorded branch), and teardown removes the
 # worktree through the same CLI.
 make_fake_orca
 # Panes must read as a came-up idle TUI (the orca driver proves UP by the
@@ -1822,6 +1823,8 @@ owt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/ow1.meta" | head -1)"
 case "$owt" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "the worktree must be orca-managed (got: $owt)" ;; esac
 grep -q -- 'worktree create.*--setup run' "$FAKE_ORCA/log" \
   || fail "the lease must run the repo-defined Orca setup hooks (--setup run)"
+grep -q -- 'worktree create.*--name crew-ow1 --base-branch main ' "$FAKE_ORCA/log" \
+  || fail "a task with no integration-branch record is cut from the live checkout branch (main)"
 # The CLI opens the worktree WITH a first terminal (a bare shell); the crew
 # pane must BE the worktree's first tab, so the lease closes that startup
 # terminal instead of leaving an orphan shell tab beside the agent.
@@ -1863,9 +1866,132 @@ assert_eq "$(git -C "$obb_wt" merge-base HEAD "$release_sha")" "$release_sha" \
 "$BIN/ac-teardown.sh" obb1 --force >/dev/null 2>&1
 git -C "$repo" branch -D release >/dev/null 2>&1
 
-# The orca lease never reads the ledger, so an epic story's INTEGRATION
-# BRANCH line is the only fence it gets here: an unreadable ledger refuses
-# the spawn instead of launching the crewmate with no landing target.
+# Epic-branch fence on the orca lease (captain ruling TN 2026-09-28): a
+# fenced story is cut from its recorded integration branch under ac-tree.sh
+# get's own existence rule, never from the live checkout, and a missing
+# branch or a --base-branch naming another one refuses before any lease.
+cp "$AC_HOME/records/backlog.md" "$TMP/orca-fence-bl.keep"
+printf -- '- [ ] ofs1 - story; epic:ofe (repo: proj)\n- [ ] ofs2 - story; epic:ofe (repo: proj)\n- [ ] ofs5 - story; epic:ofe (repo: proj)\n' >>"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/ofe"
+printf 'proj epic/ofe\n' >"$AC_HOME/data/ofe/branches"
+"$BIN/ac-brief.sh" ofs1 proj --mode local-only >/dev/null
+"$BIN/ac-brief.sh" ofs2 proj --mode local-only >/dev/null
+err="$("$BIN/ac-spawn.sh" ofs1 "$repo" --harness fake --mode local-only 2>&1 || true)"
+assert_no_file "$AC_HOME/state/ofs1.meta" "a fenced orca story whose integration branch is missing is refused"
+assert_contains "$err" "epic/ofe" "the missing-branch refusal names the recorded branch"
+case "$err" in *"Orca runtime"*) fail "a fence refusal must not blame the Orca runtime: $err" ;; esac
+grep -q -- 'worktree create.*--name crew-ofs1 ' "$FAKE_ORCA/log" \
+  && fail "a missing integration branch must lease nothing - never a silent fall back to the live checkout"
+# ac-self-task.sh carries no fence code of its own: its slice is fenced only
+# because the fence lives in orca_worktree_lease, as herdr's lives in get.
+err="$("$BIN/ac-self-task.sh" start ofs5 "$repo" 2>&1 || true)"
+assert_no_file "$AC_HOME/state/ofs5.meta" "a fenced orca self-task slice whose integration branch is missing is refused"
+assert_contains "$err" "epic/ofe" "the self-task refusal names the recorded branch"
+grep -q -- 'worktree create.*--name crew-ofs5 ' "$FAKE_ORCA/log" \
+  && fail "a missing integration branch must lease nothing for a self-task slice either"
+git -C "$repo" checkout -qb epic/ofe
+printf 'epic marker\n' >"$repo/epic.txt"
+git -C "$repo" add epic.txt
+git -C "$repo" commit -qm "epic marker"
+epic_sha="$(git -C "$repo" rev-parse epic/ofe)"
+git -C "$repo" checkout -q main
+"$BIN/ac-spawn.sh" ofs1 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "a fenced orca story spawn must succeed once its integration branch exists"
+ofs_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs1.meta" | head -1)"
+assert_eq "$(git -C "$ofs_wt" merge-base HEAD "$epic_sha")" "$epic_sha" \
+  "a fenced orca story is cut from its epic branch, not the live checkout (main)"
+grep -q -- 'worktree create.*--name crew-ofs1 --base-branch epic/ofe ' "$FAKE_ORCA/log" \
+  || fail "the fenced lease passes the recorded integration branch as its base override"
+grep -qF -- 'INTEGRATION\ BRANCH:\ this\ worktree\ is\ cut\ from\ epic/ofe' "$FAKE_ORCA/log" \
+  || fail "the kickoff names the integration branch the worktree was cut from"
+"$BIN/ac-teardown.sh" ofs1 --force >/dev/null 2>&1
+"$BIN/ac-self-task.sh" start ofs5 "$repo" >/dev/null 2>&1 \
+  || fail "a fenced orca self-task slice starts once its integration branch exists"
+assert_eq "$(git -C "$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs5.meta" | head -1)" merge-base HEAD "$epic_sha")" "$epic_sha" \
+  "a fenced orca self-task slice is cut from its epic branch, not the live checkout (main)"
+"$BIN/ac-teardown.sh" ofs5 --force >/dev/null 2>&1
+err="$("$BIN/ac-spawn.sh" ofs2 "$repo" --harness fake --mode local-only --base-branch main 2>&1 || true)"
+assert_no_file "$AC_HOME/state/ofs2.meta" "a --base-branch disagreeing with the fence refuses the orca story spawn"
+assert_contains "$err" "disagrees" "the disagreement refusal says why"
+grep -q -- 'worktree create.*--name crew-ofs2 ' "$FAKE_ORCA/log" \
+  && fail "a --base-branch disagreeing with the fence must lease nothing"
+"$BIN/ac-spawn.sh" ofs2 "$repo" --harness fake --mode local-only --base-branch epic/ofe >/dev/null 2>&1 \
+  || fail "a --base-branch naming the fence's own branch agrees with it"
+"$BIN/ac-teardown.sh" ofs2 --force >/dev/null 2>&1
+git -C "$repo" branch -D epic/ofe >/dev/null 2>&1
+
+# The origin-backed arms of the same rule, on one repo: ac-epic-branch.sh
+# create pushes the branch with no local ref, so an epic branch is found on
+# origin; a push=deferred (feature) entry is local until ship.
+ofo_remote="$TMP/oproj-origin.git"
+git init -q --bare -b main "$ofo_remote"
+orepo="$(make_repo oproj)"
+git -C "$orepo" remote add origin "$ofo_remote"
+git -C "$orepo" push -q origin main
+git -C "$orepo" checkout -qb side
+printf 'integration marker\n' >"$orepo/int.txt"
+git -C "$orepo" add int.txt
+git -C "$orepo" commit -qm "integration marker"
+int_sha="$(git -C "$orepo" rev-parse side)"
+git -C "$orepo" checkout -q main
+git -C "$orepo" branch -D side >/dev/null
+git -C "$orepo" push -q origin "$int_sha:refs/heads/epic/ofo"
+git -C "$orepo" fetch -q origin
+git -C "$orepo" branch feat/ofl "$int_sha"
+printf -- '- [ ] ofs3 - story; epic:ofo (repo: oproj)\n- [ ] ofs4 - story; feature:ofl (repo: oproj)\n' >>"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/ofo" "$AC_HOME/data/ofl"
+printf 'oproj epic/ofo\n' >"$AC_HOME/data/ofo/branches"
+"$BIN/ac-brief.sh" ofs3 oproj --mode local-only >/dev/null
+"$BIN/ac-brief.sh" ofs4 oproj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" ofs3 "$orepo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an epic branch that exists only on origin fences the orca story spawn"
+assert_eq "$(git -C "$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs3.meta" | head -1)" merge-base HEAD "$int_sha")" "$int_sha" \
+  "the story is cut from origin's epic branch when no local branch exists"
+"$BIN/ac-teardown.sh" ofs3 --force >/dev/null 2>&1
+# ac-tree.sh get fetches origin before its fence, so origin moving under this
+# clone (a predecessor's PR merged on GitHub, a branch cut from another clone)
+# must neither leave the next story on a stale base nor refuse it.
+# DISPUTED: whether the fenced orca lease fetches origin before it judges and cuts.
+# HELD-CONSTANT: repo oproj and its origin, this clone's last fetch (stale origin/epic/ofo), the second clone that moves origin, ids ofs6/ofs7.
+git clone -q "$ofo_remote" "$TMP/oproj-c2"
+git -C "$TMP/oproj-c2" checkout -q epic/ofo
+printf 'predecessor\n' >"$TMP/oproj-c2/pred.txt"
+git -C "$TMP/oproj-c2" add pred.txt
+git -C "$TMP/oproj-c2" -c user.email=t@t -c user.name=t commit -qm "predecessor merged on origin"
+git -C "$TMP/oproj-c2" push -q origin epic/ofo
+pred_sha="$(git -C "$TMP/oproj-c2" rev-parse HEAD)"
+printf -- '- [ ] ofs6 - story; epic:ofo (repo: oproj)\n- [ ] ofs7 - story; epic:ofn (repo: oproj)\n' >>"$AC_HOME/records/backlog.md"
+"$BIN/ac-brief.sh" ofs6 oproj --mode local-only >/dev/null
+"$BIN/ac-brief.sh" ofs7 oproj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" ofs6 "$orepo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "a fenced orca story spawns after origin's epic branch moved"
+assert_eq "$(git -C "$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs6.meta" | head -1)" merge-base HEAD "$pred_sha")" "$pred_sha" \
+  "a fenced orca story is cut from origin's current epic tip, not this clone's stale one"
+"$BIN/ac-teardown.sh" ofs6 --force >/dev/null 2>&1
+git -C "$TMP/oproj-c2" push -q origin HEAD:refs/heads/epic/ofn
+mkdir -p "$AC_HOME/data/ofn"
+printf 'oproj epic/ofn\n' >"$AC_HOME/data/ofn/branches"
+"$BIN/ac-spawn.sh" ofs7 "$orepo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an epic branch cut on origin from another clone is not missing to the fenced orca lease"
+"$BIN/ac-teardown.sh" ofs7 --force >/dev/null 2>&1
+# DISPUTED: the push=deferred key on the record entry.
+# HELD-CONSTANT: repo (origin-backed), branch feat/ofl (local only), id ofs4, its ledger row.
+printf 'oproj feat/ofl\n' >"$AC_HOME/data/ofl/branches"
+err="$("$BIN/ac-spawn.sh" ofs4 "$orepo" --harness fake --mode local-only 2>&1 || true)"
+assert_no_file "$AC_HOME/state/ofs4.meta" "an epic-shaped entry whose branch is not on origin is refused, as ac-tree.sh get refuses it"
+grep -q -- 'worktree create.*--name crew-ofs4 ' "$FAKE_ORCA/log" \
+  && fail "a branch missing from origin must lease nothing"
+printf 'oproj feat/ofl push=deferred\n' >"$AC_HOME/data/ofl/branches"
+"$BIN/ac-spawn.sh" ofs4 "$orepo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "a push=deferred entry's local-only branch fences the orca story spawn"
+assert_eq "$(git -C "$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs4.meta" | head -1)" merge-base HEAD "$int_sha")" "$int_sha" \
+  "the feature story is cut from the local feature branch"
+"$BIN/ac-teardown.sh" ofs4 --force >/dev/null 2>&1
+mv "$TMP/orca-fence-bl.keep" "$AC_HOME/records/backlog.md"
+rm -rf "$AC_HOME/data/ofe" "$AC_HOME/data/ofo" "$AC_HOME/data/ofl" "$AC_HOME/data/ofn"
+
+# An unreadable ledger proves nothing about the fence, so the orca spawn
+# refuses before any lease instead of cutting from the live checkout.
 # Skipped under root, which reads through chmod 000.
 if [ "$(id -u)" != 0 ]; then
   cp "$AC_HOME/records/backlog.md" "$TMP/orca-bl.keep"
@@ -1879,7 +2005,9 @@ if [ "$(id -u)" != 0 ]; then
   chmod 644 "$AC_HOME/records/backlog.md"
   assert_contains "$err" "cannot read the ledger" "an unreadable ledger refuses an orca epic-story spawn"
   assert_no_file "$AC_HOME/state/oes1.meta" "the refused spawn writes no meta"
-  assert_eq "$(ls "$FAKE_ORCA/orca-wt" | wc -l | tr -d ' ')" "$owt_n" "the refused spawn gives its orca worktree back"
+  assert_eq "$(ls "$FAKE_ORCA/orca-wt" | wc -l | tr -d ' ')" "$owt_n" "the refused spawn leaves no orca worktree behind"
+  grep -q -- 'worktree create.*--name crew-oes1 ' "$FAKE_ORCA/log" \
+    && fail "an unreadable ledger refuses before the orca lease, not after it"
   mv "$TMP/orca-bl.keep" "$AC_HOME/records/backlog.md"
   rm -rf "$AC_HOME/data/oep"
 fi

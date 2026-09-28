@@ -208,7 +208,7 @@ The dashboard's `parseBacklogLine` (`dashboard/lib.ts`) is held byte-identical t
 - `bin/ac-ready.sh` - the read-only scheduler primitive: READY/STUCK/HELD, `queued`, `watch-set`, `validate <epic>`, and `overlap`.
 - `bin/ac-ledger-guard.sh` - keeps scoped sessions out of the fleet ledgers, so only the crewchief moves rows.
 
-Integration branches keep their own records: `data/<epic>/branches` (`bin/ac-epic-branch.sh`, exit through `bin/ac-epic-ship.sh`) and `data/<feature>/branches` (`bin/ac-feature.sh`), fenced at lease time by `ac-tree.sh get`.
+Integration branches keep their own records: `data/<epic>/branches` (`bin/ac-epic-branch.sh`, exit through `bin/ac-epic-ship.sh`) and `data/<feature>/branches` (`bin/ac-feature.sh`), fenced at lease time by `ac-tree.sh get` on herdr fleets and by `orca_worktree_lease` on orca fleets.
 
 ## The delivery engines
 

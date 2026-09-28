@@ -102,7 +102,17 @@ orca_worktree_lease() {
   # 3rd arg (ac-self-task.sh/ac-spawn.sh's own --base-branch) names the
   # branch explicitly and wins over the live checkout (detached or not),
   # but still resolves through ac_freshest_ref - an override names WHICH
-  # branch, not which tip. Measured against the real orca CLI (1.4.190,
+  # branch, not which tip. EPIC-BRANCH FENCE (epic-branch-mech): an <id>
+  # whose ledger row resolves an integration branch for this repo
+  # (ac_epic_base_for) is cut from that branch as the override, under
+  # ac-tree.sh get's own existence rule, and refused before anything is
+  # created when that branch is missing, the ledger cannot be read, or an
+  # override names another branch. It lives HERE, as herdr's lives in get,
+  # so every orca lease path (crew spawn, self task, verifier) rides it.
+  # Like get it fetches origin first (best effort: a failed fetch warns and
+  # judges local refs), so a predecessor merged into the epic branch on
+  # origin is in the next story's base; an unfenced lease never fetches.
+  # Measured against the real orca CLI (1.4.190,
   # `worktree create --base-branch`): a bare name resolves the LOCAL
   # branch tip, `origin/<name>` resolves the remote-tracking tip, and a
   # raw commit SHA resolves to exactly that commit - the first two are
@@ -118,8 +128,40 @@ orca_worktree_lease() {
   # deps. The CLI names the branch <git-user>/<name>; the crew contract
   # owns crew/<id>, so the checkout is switched there (adopting an
   # existing crew/<id> on a respawn) and the minted name dropped. Prints
-  # the path; 1 on failure.
+  # the path; 1 on failure, 2 when the fence refuses (warned, nothing
+  # created).
   local id="$1" repo="$2" override="${3:-}" out path obranch base ref st
+  local rname eb ebrc=0 ebranch ebref
+  rname="$(basename "$repo")"
+  eb="$(ac_epic_base_for "$id" "$rname" 2>/dev/null)" || ebrc=$?
+  if [ "$ebrc" = 2 ]; then
+    ac_warn "cannot read the ledger to resolve the epic-branch fence for $id - nothing was leased"
+    return 2
+  fi
+  if [ "$ebrc" = 0 ]; then
+    ebranch="${eb%% *}"
+    if [ -n "$override" ] && [ "$override" != "$ebranch" ]; then
+      ac_warn "--base-branch $override disagrees with the epic-branch fence for $id (recorded integration branch $ebranch in $rname) - nothing was leased; drop the flag or name $ebranch"
+      return 2
+    fi
+    if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+      git -C "$repo" fetch origin --quiet 2>/dev/null \
+        || ac_warn "fetch origin failed; judging the epic-branch fence for $id on local refs"
+    fi
+    case " ${eb#"$ebranch"} " in
+      *" push=deferred "*) ebref="refs/heads/$ebranch" ;;
+      *) if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+           ebref="refs/remotes/origin/$ebranch"
+         else
+           ebref="refs/heads/$ebranch"
+         fi ;;
+    esac
+    if ! git -C "$repo" show-ref --verify --quiet "$ebref"; then
+      ac_warn "integration branch $ebranch for $id is missing ($ebref does not exist in $rname) - nothing was leased; cut it first: ac-epic-branch.sh create <epic> $rname (ac-feature.sh create <feature> $rname for a push=deferred entry)"
+      return 2
+    fi
+    override="$ebranch"
+  fi
   if [ -n "$override" ]; then
     ref="$(ac_freshest_ref "$repo" "$override")"
   elif base="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null)" && [ -n "$base" ]; then
