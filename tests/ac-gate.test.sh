@@ -87,6 +87,10 @@ valid_continue_body
 # descriptor, and returns the
 # fixture body inside a claude-transcript-shaped jsonl that ac_transcript_final
 # parses. GATE_STUB_FAIL injects an engine failure; GATE_BODY_FILE picks the body.
+# GATE_STUB_HOLD=<dir> with GATE_STUB_KEY=<k> holds the turn open - it touches
+# <dir>/<k>.started, then waits for <dir>/<k>.release (or for <dir> to vanish
+# with the test's $TMP) - so a test can overlap runs and choose which one
+# settles first.
 cat >"$stub/pane-agent" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = reap-pane ]; then echo '{"event":"reap-pane-done"}'; exit 0; fi
@@ -101,8 +105,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$prompt" ] && cp "$prompt" "$GLOG.prompt"
-cat "$AC_HOME"/data/*/.gate-running >"$GLOG.marker" 2>/dev/null || true
+cat "$AC_HOME"/data/*/.gate-running* >"$GLOG.marker" 2>/dev/null || true
 cat "$AC_HOME"/state/.chief-busy-until.* >"$GLOG.busy" 2>/dev/null || true
+if [ -n "${GATE_STUB_HOLD:-}" ]; then
+  : >"$GATE_STUB_HOLD/$GATE_STUB_KEY.started"
+  i=0
+  while [ -d "$GATE_STUB_HOLD" ] && [ ! -e "$GATE_STUB_HOLD/$GATE_STUB_KEY.release" ] && [ "$i" -lt 600 ]; do
+    sleep 0.1; i=$((i + 1))
+  done
+fi
 if [ -n "${GATE_STUB_FAIL:-}" ]; then
   echo '{"event":"done","status":"error","error":"engine down"}'; exit 1
 fi
@@ -159,6 +170,14 @@ clear_gate_artifacts() {
     "$AC_HOME/data/$1/$2/second-chief-r2.md" \
     "$AC_HOME/data/$1/$2/gate-context-r1.json" \
     "$AC_HOME/data/$1/$2/gate-context-r2.json"
+}
+# assert_no_marker <family> <msg> - no running marker of ANY run is left in the
+# family dir (a marker is per run, so no single path answers this).
+assert_no_marker() {
+  local m
+  for m in "$AC_HOME/data/$1"/.gate-running*; do
+    [ ! -e "$m" ] || fail "$2: $m"
+  done
 }
 
 valid_revise_body() {
@@ -473,7 +492,7 @@ assert_contains "$(cat "$GLOG.marker")" "round=1" "marker carries round"
 assert_contains "$(cat "$GLOG.marker")" "engine=codex" "marker carries engine"
 assert_contains "$(cat "$GLOG.marker")" "observe=" "marker names the observation descriptor"
 assert_contains "$(cat "$GLOG.marker")" "pid=" "marker carries its owner pid for stale detection"
-assert_no_file "$AC_HOME/data/widget/.gate-running" "marker cleared on exit"
+assert_no_marker widget "marker cleared on exit"
 # BUSY DECLARATION: the gate blocks its caller in ONE synchronous call for up to
 # AC_GATE_TIMEOUT, so it declares that bounded window for the family it judges -
 # LIVE during the run, cleared on exit, and bounded by the budget it actually
@@ -486,9 +505,9 @@ case "$busy_at" in ''|*[!0-9]*) fail "the busy declaration was not a live epoch 
 [ "$busy_at" -le "$(( now + 660 ))" ] || fail "the declared bound outlives the gate's own wait budget (got $busy_at, now $now)"
 # the exact prompt is retained durably alongside second-chief.md - the
 # transient marker is gone, but the prompt this run sent is NOT
-assert_file "$AC_HOME/data/widget/spec/gate-prompt.md" "the settled gate retains its prompt alongside second-chief.md"
-assert_contains "$armline" "--prompt-file $AC_HOME/data/widget/spec/gate-prompt.md" "the arm is handed the durable prompt path directly, not a scratch tempfile"
-assert_contains "$(cat "$AC_HOME/data/widget/spec/gate-prompt.md")" "INDEPENDENT SECOND CHIEF" "the retained prompt is the real rubric, not a placeholder"
+assert_file "$AC_HOME/data/widget/spec/gate-prompt-r1.md" "the settled gate retains its round's prompt alongside second-chief.md"
+assert_contains "$armline" "--prompt-file $AC_HOME/data/widget/spec/gate-prompt-r1.md" "the arm is handed the durable prompt path directly, not a scratch tempfile"
+assert_contains "$(cat "$AC_HOME/data/widget/spec/gate-prompt-r1.md")" "INDEPENDENT SECOND CHIEF" "the retained prompt is the real rubric, not a placeholder"
 cp "$AC_HOME/data/widget/spec/second-chief-r1.md" "$TMP/widget-spec-r1.before"
 cp "$AC_HOME/data/widget/spec/second-chief.md" "$TMP/widget-spec-canon.before"
 : >"$GLOG"
@@ -541,7 +560,7 @@ for bad in learning implement code-review qa ship frobnicate; do
   [ "$rc" != 0 ] || fail "stage '$bad' must be rejected"
   [ "$rc" != 3 ] && [ "$rc" != 4 ] || fail "stage '$bad' must reject as a usage error, not the engine/disable exit"
   grep -q '^pane-agent ' "$GLOG" && fail "stage '$bad' must reject BEFORE the arm is invoked"
-  assert_no_file "$AC_HOME/data/widget/.gate-running" "no marker for rejected stage '$bad'"
+  assert_no_marker widget "no marker for rejected stage '$bad'"
 done
 assert_contains "$(cat "$TMP/err")" "staged design artifacts only" "rejection names the design-only scope"
 
@@ -591,7 +610,7 @@ rc=0; GATE_STUB_FAIL=1 gate widget architecture >/dev/null 2>"$TMP/err" || rc=$?
 assert_eq "$rc" "3" "a failing engine is the gate-failure exit"
 assert_eq "$(grep -c '^pane-agent ' "$GLOG")" "1" "a failure is NOT retried on another engine"
 assert_no_file "$AC_HOME/data/widget/arch/second-chief.md" "no second-chief.md on engine failure"
-assert_no_file "$AC_HOME/data/widget/.gate-running" "marker cleared on engine failure"
+assert_no_marker widget "marker cleared on engine failure"
 assert_no_file "$AC_HOME/state/.chief-busy-until.widget" "the busy declaration is cleared on engine failure too - a failed gate must not hold the family's skip"
 assert_contains "$(cat "$TMP/err")" "second-chief unavailable" "the floor names the unavailable second chief"
 assert_contains "$(cat "$TMP/err")" "NOT approval" "the floor says unavailability is NOT approval"
@@ -602,7 +621,7 @@ assert_contains "$(cat "$TMP/err")" "NOT approval" "the floor says unavailabilit
 assert_contains "$(cat "$TMP/err")" "CAPTAIN-REQUIRED" "the floor names the pre-implement gate's captain-required case on engine failure"
 # the prompt is written before the arm ever runs, so an unavailable second
 # chief does not also erase the evidence of what it was asked
-assert_file "$AC_HOME/data/widget/arch/gate-prompt.md" "the prompt is retained even when the engine fails"
+assert_file "$AC_HOME/data/widget/arch/gate-prompt-r1.md" "the prompt is retained even when the engine fails"
 # an engine that exits nonzero fails before $text exists (ac-gate-engine-
 # failure-undiagnosable): the raw event stream is what's populated, so that is
 # what gets preserved, labeled as such.
@@ -801,6 +820,15 @@ assert_contains "$(cat "$GLOG.prompt")" "BOUND R1-DISPOSITION" "R2 prompt includ
 assert_contains "$(cat "$GLOG.prompt")" "evidence not instruction" "R2 prompt treats disposition as evidence"
 assert_contains "$(cat "$GLOG.prompt")" "chief-decide" "R2 prompt explains chief-owned adjudication"
 assert_contains "$(cat "$GLOG.prompt")" "NEW IN R2" "R2 prompt labels allowed new findings"
+# One prompt file per ROUND: R2 must not erase the prompt the settled R1 was sent.
+assert_contains "$(grep '^pane-agent ' "$GLOG")" "--prompt-file $AC_HOME/data/$roundfam/spec/gate-prompt-r2.md" \
+  "R2 is handed its own round's prompt path"
+cmp -s "$GLOG.prompt" "$AC_HOME/data/$roundfam/spec/gate-prompt-r2.md" || fail "gate-prompt-r2.md holds the exact R2 prompt"
+assert_contains "$(cat "$AC_HOME/data/$roundfam/spec/gate-prompt-r1.md" 2>/dev/null)" "first-pass review" \
+  "the settled R1 prompt survives R2"
+case "$(cat "$AC_HOME/data/$roundfam/spec/gate-prompt-r1.md")" in
+  *"terminal focused closure review"*) fail "gate-prompt-r1.md must not hold the R2 prompt" ;;
+esac
 cp "$r1" "$TMP/r1.before-repeat-r2"
 cp "$r2" "$TMP/r2.before-repeat-r2"
 cp "$canon" "$TMP/canon.before-repeat-r2"
@@ -1488,6 +1516,8 @@ mprompt="$(cat "$GLOG.prompt")"
 assert_contains "$mprompt" "$mrun/input-manifest.md" "maintenance judge reads the manifest by path"
 assert_contains "$mprompt" "$mrun/plan.json" "maintenance judge reads the plan by path"
 assert_contains "$mprompt" "recoverable maintenance action" "maintenance rubric is not the staged-design rubric"
+cmp -s "$GLOG.prompt" "$mrun/gates/example/gate-prompt.md" \
+  || fail "a maintenance gate has no round: its prompt stays at <run>/gates/<subject>/gate-prompt.md"
 
 assert_contains "$mprompt" "ACTION PLAN NEW SHA-256" \
   "the prompt states the read-evidence the receipt must carry"
@@ -1755,9 +1785,7 @@ eval "$(declare -f room_entry_payload_parse | sed '1s/^room_entry_payload_parse/
 # verdict on the raw lists is compared, and what it wrote must bind as well.
 # Reader-side verdict: some gate invocation (a valid stage, round 1 or 2, that
 # stage's report sha) binds the text as twin-chief's entry.
-# Grounds carrying a CR are left out: the writers refuse them as a second
-# physical line while the readers accept them, a disagreement no authority has
-# settled yet.
+# `<CR>` in a row's grounds stands for a carriage return.
 family=twin
 twin_room="$AC_HOME/data/twin/room.md"
 for s in spec arch plan design; do
@@ -1807,6 +1835,7 @@ twin_route_read() {
 while read -r st rd g; do
   [ "$rd" != - ] || rd=""
   [ "$g" != - ] || g="   "
+  g="${g//<CR>/$'\r'}"
   w=0; out="$(twin_write gate-verify twin "$st" --round "$rd" --report "$(twin_report "$st")" --grounds "$g")" && w=1
   for v in pass fail; do
     text="GATE-VERIFY: stage=$st round=$rd report_sha256=$(twin_sha "$st") verdict=$v grounds=$g"
@@ -1827,10 +1856,14 @@ plan 2 chief passed it
 design 1 chief passed it
 design 2 chief passed it
 learning 1 chief passed it
+spec 1 chief passed it<CR>
+spec 2 chief passed<CR>text a plain cat of the room hides
+spec 1 <CR>chief passed it
 EOF
 
 while read -r st u c a g; do
   [ "$g" != - ] || g="   "
+  g="${g//<CR>/$'\r'}"
   w=0; out="$(twin_write gate-route twin "$st" --report "$(twin_report "$st")" --uncertainty "$u" \
     --consequence "$c" --authority "$a" --grounds "$g")" && w=1
   for rt in chief second-chief captain; do
@@ -1854,11 +1887,14 @@ spec no medium chief settled
 spec no low mixed settled
 spec no low chief -
 learning yes low chief settled
+spec yes low chief settled<CR>
+spec yes high chief settled<CR>text a plain cat of the room hides
 EOF
 
 twin_r1="$AC_HOME/data/twin/spec/second-chief-r1.md"
 while read -r ids acc dis au g; do
   [ "$g" != - ] || g="   "
+  g="${g//<CR>/$'\r'}"
   if [ "$ids" != "${twin_ids:-}" ]; then
     twin_ids="$ids"
     {
@@ -1906,7 +1942,366 @@ done <<'EOF'
 1 1 none none settled
 1 none 1 chief-owned settled
 1 none none none settled
+1,2,3 1,2,3 none none settled<CR>
+1 none 1 chief-owned settled<CR>text a plain cat of the room hides
 EOF
 [ -z "$twin_diffs" ] || fail "ac-room.sh writers and ac-gate.sh readers disagree on:$twin_diffs"
+
+# ============================================================================
+# 17. overlapping runs of one family, and of one stage
+# ============================================================================
+# Concurrent same-family and same-stage runs are supported (captain ruling
+# 2026-09-28): the first run to settle a round owns it and a later one fails
+# instead of replacing it, and the family's running marker and busy declaration
+# hold until the LAST of its runs exits. Receipts are posted before any run
+# starts: a room written mid-run fails every run reading it.
+hold="$TMP/hold"
+mkdir -p "$hold"
+valid_revise_body; cp "$GATE_BODY_FILE" "$hold/revise.md"
+valid_ask_captain_body; cp "$GATE_BODY_FILE" "$hold/ask.md"
+valid_continue_body; cp "$GATE_BODY_FILE" "$hold/continue.md"
+post_receipts() {  # post_receipts <family> <stage> <round>
+  local rpt
+  rpt="$AC_HOME/data/$1/$(stage_short "$2")/report.md"
+  "$BIN/ac-room.sh" gate-route "$1" "$2" --report "$rpt" --uncertainty yes --consequence low \
+    --authority chief --grounds "Independent challenge required." >/dev/null
+  "$BIN/ac-room.sh" gate-verify "$1" "$2" --round "$3" --report "$rpt" \
+    --grounds "Chief passed the report." >/dev/null
+}
+held_gate() {  # held_gate <key> <body> <gate args...> - start a run and wait until it is inside its turn
+  local key="$1" body="$2" i=0
+  shift 2
+  # Detached from the test's own streams: a run still held when the test fails
+  # must not keep its caller's capture pipe open.
+  ( rc=0
+    GATE_STUB_HOLD="$hold" GATE_STUB_KEY="$key" GATE_BODY_FILE="$body" raw_gate "$@" \
+      >"$hold/$key.out" 2>"$hold/$key.err" || rc=$?
+    printf '%s\n' "$rc" >"$hold/$key.rc" ) >/dev/null 2>&1 &
+  while [ ! -e "$hold/$key.started" ] && [ ! -e "$hold/$key.rc" ]; do
+    i=$((i + 1)); [ "$i" -le 300 ] || fail "held run $key never reached its turn"
+    sleep 0.1
+  done
+  [ -e "$hold/$key.started" ] || fail "held run $key exited before its turn: $(cat "$hold/$key.err")"
+}
+release_held() {  # release_held <key> - end that run's turn and wait for its exit
+  local i=0
+  : >"$hold/$1.release"
+  while [ ! -e "$hold/$1.rc" ]; do
+    i=$((i + 1)); [ "$i" -le 300 ] || fail "held run $1 never exited"
+    sleep 0.1
+  done
+}
+
+# --- same stage, same round: the first to settle owns the round ----------------
+# B asks for another --ref, so its context and prompt differ from A's and a
+# replacement of either is visible.
+ovl=overlap
+ovl_dir="$AC_HOME/data/$ovl/spec"
+mkdir -p "$ovl_dir"
+printf '# brief\ncontract.\n' >"$ovl_dir/brief.md"
+printf '# report\noriginal report.\n' >"$ovl_dir/report.md"
+post_receipts "$ovl" spec 1
+# A run killed between its writes can leave a context with no review: it must
+# never block the round.
+printf '{"orphan":true}\n' >"$ovl_dir/gate-context-r1.json"
+held_gate a "$hold/revise.md" "$ovl" spec
+held_gate b "$hold/continue.md" "$ovl" spec --ref HEAD~0
+release_held a
+assert_eq "$(cat "$hold/a.rc")" "0" "the first overlapping R1 to settle writes the round"
+assert_eq "$(sed -n 's/^decision: //p' "$ovl_dir/second-chief-r1.md")" "revise" "R1 records the first settler's decision"
+assert_eq "$(sed -n 's/^context_sha256: //p' "$ovl_dir/second-chief-r1.md")" \
+  "$(shasum -a 256 <"$ovl_dir/gate-context-r1.json" | awk '{print $1}')" \
+  "the settled R1 binds the context published with it, not an orphan"
+for f in second-chief-r1.md second-chief.md gate-context-r1.json gate-prompt-r1.md; do
+  cp "$ovl_dir/$f" "$hold/a.$f"
+done
+release_held b
+rc="$(cat "$hold/b.rc")"
+[ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ] \
+  || fail "an overlapping R1 that finds the round settled must fail as a precondition, not write (rc=$rc)"
+assert_contains "$(cat "$hold/b.err")" "round 1 review already exists and is immutable" \
+  "the losing run names the settled artifact"
+for f in second-chief-r1.md second-chief.md gate-context-r1.json gate-prompt-r1.md; do
+  cmp -s "$ovl_dir/$f" "$hold/a.$f" || fail "the losing overlapping R1 must not replace $f"
+done
+assert_eq "$(jq -r '.repository.ref' "$ovl_dir/gate-context-r1.json")" "HEAD" "the R1 context is the settled run's own"
+assert_contains "$(cat "$ovl_dir/gate-prompt-r1.md")" "ref=HEAD commit=" \
+  "gate-prompt-r1.md is the prompt the settled R1 was sent, not a later-started run's"
+
+printf '# report\nrevised report.\n' >"$ovl_dir/report.md"
+post_disposition "$ovl" spec "$ovl_dir/second-chief-r1.md" 1 none none "R1 item 1 accepted by the roomchief."
+post_receipts "$ovl" spec 2
+held_gate c "$hold/continue.md" "$ovl" spec --round 2
+held_gate d "$hold/ask.md" "$ovl" spec --round 2
+release_held c
+assert_eq "$(cat "$hold/c.rc")" "0" "the first overlapping R2 to settle writes the round"
+for f in second-chief-r2.md second-chief.md gate-context-r2.json; do
+  cp "$ovl_dir/$f" "$hold/c.$f"
+done
+release_held d
+rc="$(cat "$hold/d.rc")"
+[ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ] \
+  || fail "an overlapping R2 that finds the round settled must fail as a precondition, not write (rc=$rc)"
+assert_contains "$(cat "$hold/d.err")" "round 2 review already exists and is immutable" \
+  "the losing R2 names the settled artifact"
+for f in second-chief-r2.md second-chief.md gate-context-r2.json; do
+  cmp -s "$ovl_dir/$f" "$hold/c.$f" || fail "the losing overlapping R2 must not replace $f"
+done
+cmp -s "$ovl_dir/second-chief-r1.md" "$hold/a.second-chief-r1.md" || fail "overlapping R2 runs leave R1 untouched"
+
+await_file() {  # await_file <path> <msg> - wait up to 30s for a held run to reach a point
+  local i=0
+  while [ ! -e "$1" ]; do
+    i=$((i + 1)); [ "$i" -le 300 ] || fail "$2"
+    sleep 0.1
+  done
+}
+# hold_shim <dir> <tool> <case-pattern> <key> <n> - a PATH shim for <tool> whose
+# <n>th call matching <case-pattern> (against " <args> ", counted across every shim
+# sharing <key>) touches $hold/<key>.held and waits for $hold/<key>.go (or for
+# $TMP to go).
+hold_shim() {
+  mkdir -p "$1"
+  cat >"$1/$2" <<EOF
+#!/bin/bash
+case " \$* " in
+  $3)
+    echo >>"$hold/$4.calls"
+    if [ "\$(( \$(wc -l <"$hold/$4.calls") ))" = $5 ]; then
+      : >"$hold/$4.held"
+      i=0
+      while [ -d "$hold" ] && [ ! -e "$hold/$4.go" ] && [ "\$i" -lt 300 ]; do sleep 0.1; i=\$((i + 1)); done
+    fi ;;
+esac
+exec $(command -v "$2") "\$@"
+EOF
+  chmod +x "$1/$2"
+}
+
+# --- a run that reaches its start after the round settled publishes nothing ------
+# L passes the early settled-round check, then is held while building its context
+# until W has settled the round; L asks for another --ref, so its prompt differs.
+late=latestart
+late_dir="$AC_HOME/data/$late/spec"
+mkdir -p "$late_dir"
+printf '# brief\ncontract.\n' >"$late_dir/brief.md"
+printf '# report\noriginal report.\n' >"$late_dir/report.md"
+post_receipts "$late" spec 1
+hold_shim "$TMP/lshim" jq '*" --arg role "*' l 1
+( rc=0
+  PATH="$TMP/lshim:$PATH" GATE_BODY_FILE="$hold/continue.md" raw_gate "$late" spec --ref HEAD~0 \
+    >"$hold/l.out" 2>"$hold/l.err" || rc=$?
+  printf '%s\n' "$rc" >"$hold/l.rc" ) >/dev/null 2>&1 &
+await_file "$hold/l.held" "the late run never reached its context build"
+GATE_BODY_FILE="$hold/revise.md" raw_gate "$late" spec >/dev/null 2>"$TMP/late-w.err" \
+  || fail "the round's first run must settle it: $(cat "$TMP/late-w.err")"
+cp "$late_dir/gate-prompt-r1.md" "$hold/w.gate-prompt-r1.md"
+: >"$hold/l.go"
+await_file "$hold/l.rc" "the late run never exited"
+rc="$(cat "$hold/l.rc")"
+[ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ] \
+  || fail "a run that finds its round settled before its turn must fail as a precondition (rc=$rc)"
+assert_contains "$(cat "$hold/l.err")" "round 1 review already exists and is immutable" \
+  "the late run names the settled artifact"
+cmp -s "$late_dir/gate-prompt-r1.md" "$hold/w.gate-prompt-r1.md" \
+  || fail "a run that finds its round settled must not replace the prompt the settled round was sent"
+
+# --- the settler's publish waits for a run starting under the family lock --------
+# O is held inside its locked start (at its marker's timestamp) while S, released
+# from its turn, goes to publish: S must wait for O's start to end, or O's prompt,
+# written after S's, would replace the settled one. Once O is let go either run may
+# settle the round first, so the prompt is checked against whichever did.
+ord=ordered
+ord_dir="$AC_HOME/data/$ord/spec"
+mkdir -p "$ord_dir"
+printf '# brief\ncontract.\n' >"$ord_dir/brief.md"
+printf '# report\noriginal report.\n' >"$ord_dir/report.md"
+post_receipts "$ord" spec 1
+held_gate s "$hold/revise.md" "$ord" spec
+hold_shim "$TMP/oshim" date '*" -u +%Y-%m-%dT%H:%M:%SZ "*' o 1
+( rc=0
+  PATH="$TMP/oshim:$PATH" GATE_BODY_FILE="$hold/continue.md" raw_gate "$ord" spec --ref HEAD~0 \
+    >"$hold/o.out" 2>"$hold/o.err" || rc=$?
+  printf '%s\n' "$rc" >"$hold/o.rc" ) >/dev/null 2>&1 &
+await_file "$hold/o.held" "the second run never reached its locked start"
+: >"$hold/s.release"
+# Unordered, S publishes inside this window; ordered, it cannot until O is let go.
+i=0
+while [ ! -e "$hold/s.rc" ] && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+: >"$hold/o.go"
+await_file "$hold/s.rc" "the settling run never exited"
+await_file "$hold/o.rc" "the second run never exited"
+settler=s; loser=o
+[ "$(cat "$hold/s.rc")" = 0 ] || { settler=o; loser=s; }
+assert_eq "$(cat "$hold/$settler.rc")" "0" "one of two overlapping runs settles the round ($(cat "$hold/s.err" "$hold/o.err"))"
+assert_contains "$(cat "$hold/$loser.err")" "round 1 review already exists and is immutable" \
+  "the other finds the round settled"
+assert_contains "$(cat "$ord_dir/gate-prompt-r1.md")" "ref=$(jq -r '.repository.ref' "$ord_dir/gate-context-r1.json") commit=" \
+  "the settled round keeps its settler's prompt when another run starts during its publish"
+
+# --- a run that cannot have the family lock to publish publishes nothing --------
+# K is held inside its locked publish, past its settled-round check and before its
+# context lands, until N has waited out ac_lock_acquire and given up or published.
+# Were N to publish unordered it would settle the round, and K's context, landing
+# after it, would replace the one N's review binds.
+stl=stalled
+stl_dir="$AC_HOME/data/$stl/spec"
+mkdir -p "$stl_dir"
+printf '# brief\ncontract.\n' >"$stl_dir/brief.md"
+printf '# report\noriginal report.\n' >"$stl_dir/report.md"
+post_receipts "$stl" spec 1
+held_gate n "$hold/revise.md" "$stl" spec
+hold_shim "$TMP/kshim" mv '*"/gate-context-r1.json "*' kctx 1
+( rc=0
+  PATH="$TMP/kshim:$PATH" GATE_STUB_HOLD="$hold" GATE_STUB_KEY=k GATE_BODY_FILE="$hold/continue.md" \
+    raw_gate "$stl" spec --ref HEAD~0 >"$hold/k.out" 2>"$hold/k.err" || rc=$?
+  printf '%s\n' "$rc" >"$hold/k.rc" ) >/dev/null 2>&1 &
+await_file "$hold/k.started" "the lock keeper never reached its turn: $(cat "$hold/k.err")"
+: >"$hold/k.release"
+await_file "$hold/kctx.held" "the lock keeper never reached its context publish: $(cat "$hold/k.err")"
+: >"$hold/n.release"
+i=0
+until grep -qs -e '^ERROR:' -e '^second-chief\[' "$hold/n.err" "$hold/n.out"; do
+  i=$((i + 1)); [ "$i" -le 300 ] || fail "the run without the lock never gave up nor published"
+  sleep 0.1
+done
+: >"$hold/kctx.go"
+await_file "$hold/k.rc" "the lock keeper never exited"
+await_file "$hold/n.rc" "the run without the lock never exited"
+assert_eq "$(sed -n 's/^context_sha256: //p' "$stl_dir/second-chief-r1.md")" \
+  "$(shasum -a 256 <"$stl_dir/gate-context-r1.json" | awk '{print $1}')" \
+  "a run that cannot have the family lock must not settle a round another run's context then replaces"
+assert_eq "$(cat "$hold/k.rc")" "0" "the run holding the family lock settles the round ($(cat "$hold/k.err"))"
+rc="$(cat "$hold/n.rc")"
+[ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ] \
+  || fail "a run that cannot have the family lock to publish must fail as a precondition (rc=$rc)"
+assert_contains "$(cat "$hold/n.err")" "could not take the family lock to publish round 1, nothing published" \
+  "the run without the lock says it published nothing"
+assert_eq "$(jq -r '.repository.ref' "$stl_dir/gate-context-r1.json")" "HEAD~0" "the settled context is the lock keeper's"
+assert_contains "$(cat "$stl_dir/gate-prompt-r1.md")" "ref=HEAD~0 commit=" \
+  "the settled prompt is the lock keeper's"
+
+# --- a run terminated while publishing leaves a round its next run can settle ----
+# The shims hold whichever of the round's two published files (review, context) is
+# written SECOND, and the run's own process group (set -m) is terminated there, as
+# a caller's timeout would; SIGTERM, because SIGINT may arrive already ignored in
+# a suite started in the background. The run is exec'd as the group's leader, so
+# waiting on it waits out its EXIT trap.
+term=terminated
+term_dir="$AC_HOME/data/$term/spec"
+mkdir -p "$term_dir"
+printf '# brief\ncontract.\n' >"$term_dir/brief.md"
+printf '# report\noriginal report.\n' >"$term_dir/report.md"
+post_receipts "$term" spec 1
+for tool in mv ln; do
+  hold_shim "$TMP/ishim" "$tool" '*/second-chief-r1.md" "|*/gate-context-r1.json" "' i 2
+done
+( set -m
+  ( PATH="$TMP/ishim:$PATH" GATE_BODY_FILE="$hold/revise.md" AC_PANE_AGENT="$stub/pane-agent" \
+      AC_GATE_WATCH=off exec "$BIN/ac-gate.sh" "$term" spec --repo "$gate_repo" \
+      >"$hold/i.out" 2>"$hold/i.err" ) &
+  gp=$!
+  i=0
+  while [ ! -e "$hold/i.held" ]; do
+    i=$((i + 1)); [ "$i" -le 300 ] || { kill -KILL -- -"$gp"; exit 1; }
+    sleep 0.1
+  done
+  t0="$(date +%s)"
+  kill -TERM -- -"$gp"
+  rc=0; wait "$gp" || rc=$?
+  printf '%s %s\n' "$rc" "$(( $(date +%s) - t0 ))" >"$hold/i.rc"
+) 2>/dev/null || fail "the terminated run never reached its second publishing write: $(cat "$hold/i.err")"
+read -r rc secs <"$hold/i.rc"
+[ "$rc" != 0 ] || fail "the held run must have been terminated mid-publish, not have settled"
+if [ -e "$term_dir/second-chief-r1.md" ]; then
+  [ -f "$term_dir/gate-context-r1.json" ] \
+    || fail "a run terminated while publishing must never leave a settled review without its context"
+  assert_eq "$(sed -n 's/^context_sha256: //p' "$term_dir/second-chief-r1.md")" \
+    "$(shasum -a 256 <"$term_dir/gate-context-r1.json" | awk '{print $1}')" \
+    "a run terminated while publishing must never leave a settled review bound to another context"
+fi
+[ "$secs" -lt 8 ] || fail "a run terminated while holding the family lock must not wait on it to exit (${secs}s)"
+assert_no_file "$AC_HOME/data/$term/.gate-lock" "a terminated run leaves the family lock free"
+assert_no_marker "$term" "a terminated run leaves no marker"
+rc=0; GATE_BODY_FILE="$hold/continue.md" raw_gate "$term" spec >/dev/null 2>"$TMP/term-rerun.err" || rc=$?
+assert_eq "$rc" "0" "the round a terminated run left behind settles on its next run ($(cat "$TMP/term-rerun.err"))"
+assert_eq "$(sed -n 's/^context_sha256: //p' "$term_dir/second-chief-r1.md")" \
+  "$(shasum -a 256 <"$term_dir/gate-context-r1.json" | awk '{print $1}')" \
+  "the re-run's review binds its own context, not the terminated run's"
+
+# --- one family, several stages: the family's state lives until its last run ----
+fam2=overlapfam
+for s in spec arch plan; do
+  mkdir -p "$AC_HOME/data/$fam2/$s"
+  printf '# %s brief\ncontract.\n' "$s" >"$AC_HOME/data/$fam2/$s/brief.md"
+  printf '# %s report\noriginal report.\n' "$s" >"$AC_HOME/data/$fam2/$s/report.md"
+done
+for st in spec architecture plan; do post_receipts "$fam2" "$st" 1; done
+busyf="$AC_HOME/state/.chief-busy-until.$fam2"
+board() { "$BIN/ac-gate-watch.sh" --family "$fam2" --once 2>&1; }
+# A SIGKILLed run's marker outlives it: it must not count as a live run, and it
+# must not outlive the family's next exit either.
+printf 'family=%s\nstage=spec\nround=1\npid=99999999\n' "$fam2" >"$AC_HOME/data/$fam2/.gate-running.99999999"
+held_gate e "$hold/continue.md" "$fam2" spec
+e_until="$(cat "$busyf")"
+AC_GATE_TIMEOUT=30 held_gate f "$hold/continue.md" "$fam2" architecture
+assert_contains "$(board)" "2 active" "two overlapping runs of one family are both on the board"
+[ "$(cat "$busyf")" -ge "$e_until" ] \
+  || fail "a later run with a shorter budget must not shorten the family's busy declaration ($(cat "$busyf") < $e_until)"
+release_held e
+assert_eq "$(cat "$hold/e.rc")" "0" "the first same-family run settles"
+out="$(board)"
+assert_contains "$out" "1 active" "the run still alive keeps its marker when another run of its family exits"
+assert_contains "$out" "architecture" "and it is the live run's own marker"
+busy_now="$(cat "$busyf" 2>/dev/null || true)"
+case "$busy_now" in ''|*[!0-9]*) fail "the busy declaration must hold while a run of the family is alive (got: '$busy_now')" ;; esac
+[ "$busy_now" -ge "$(date +%s)" ] || fail "the held busy declaration must still be live (got $busy_now)"
+# The later-started run exits first this time.
+held_gate g "$hold/continue.md" "$fam2" plan
+release_held g
+assert_eq "$(cat "$hold/g.rc")" "0" "the later same-family run settles"
+assert_contains "$(board)" "1 active" "the earlier run keeps its marker when a later run of its family exits"
+[ -s "$busyf" ] || fail "the busy declaration must hold while the earlier run is alive"
+release_held f
+assert_eq "$(cat "$hold/f.rc")" "0" "the last same-family run settles"
+assert_contains "$(board)" "0 active" "no run of the family is left on the board"
+assert_no_marker "$fam2" "the family's last run leaves no marker behind, a dead run's included"
+assert_no_file "$busyf" "the family's last run clears the busy declaration"
+
+# --- a run starting while another of its family exits keeps its declaration ------
+# X is held inside its exit, after it found no other live run and before it clears
+# the busy declaration; Y, starting meanwhile, must wait for X's exit to end, or X
+# would clear the declaration Y just made. Unordered, Y's marker shows up inside
+# the window below; ordered, it cannot until X is let go.
+fam3=exitrace
+for s in spec arch; do
+  mkdir -p "$AC_HOME/data/$fam3/$s"
+  printf '# %s brief\ncontract.\n' "$s" >"$AC_HOME/data/$fam3/$s/brief.md"
+  printf '# %s report\noriginal report.\n' "$s" >"$AC_HOME/data/$fam3/$s/report.md"
+done
+for st in spec architecture; do post_receipts "$fam3" "$st" 1; done
+busy3="$AC_HOME/state/.chief-busy-until.$fam3"
+hold_shim "$TMP/xshim" rm "*\".chief-busy-until.$fam3 \"*" x 1
+( rc=0
+  PATH="$TMP/xshim:$PATH" GATE_BODY_FILE="$hold/continue.md" raw_gate "$fam3" spec \
+    >"$hold/x.out" 2>"$hold/x.err" || rc=$?
+  printf '%s\n' "$rc" >"$hold/x.rc" ) >/dev/null 2>&1 &
+await_file "$hold/x.held" "the exiting run never reached its busy-declaration clear"
+( rc=0
+  GATE_STUB_HOLD="$hold" GATE_STUB_KEY=y GATE_BODY_FILE="$hold/continue.md" raw_gate "$fam3" architecture \
+    >"$hold/y.out" 2>"$hold/y.err" || rc=$?
+  printf '%s\n' "$rc" >"$hold/y.rc" ) >/dev/null 2>&1 &
+i=0
+while [ -z "$(ls -A "$AC_HOME/data/$fam3" | grep '^\.gate-running\.')" ] && [ "$i" -lt 50 ]; do
+  sleep 0.1; i=$((i + 1))
+done
+: >"$hold/x.go"
+await_file "$hold/y.started" "the starting run never reached its turn: $(cat "$hold/y.err")"
+await_file "$hold/x.rc" "the exiting run never exited"
+assert_eq "$(cat "$hold/x.rc")" "0" "the exiting run settled its own round"
+[ -s "$busy3" ] || fail "a run that starts while another of its family exits must keep its busy declaration"
+release_held y
+assert_eq "$(cat "$hold/y.rc")" "0" "the starting run settles"
+assert_no_file "$busy3" "the family's last run clears the busy declaration"
 
 pass

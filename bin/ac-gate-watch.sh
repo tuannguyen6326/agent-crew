@@ -13,8 +13,9 @@
 #     [--self-pane ID]             DASHBOARD MODE ONLY: a pane to close on idle
 #     [--interval SECS] [--once]
 #
-# Data sources - ACTIVE runs ONLY: data/<family>/.gate-running (the marker
-# ac-gate stamps: family/stage/round/engine/model/at/observe/pid) plus the
+# Data sources - ACTIVE runs ONLY: data/<family>/.gate-running.<pid> (the marker
+# each ac-gate run stamps: family/stage/round/engine/model/at/observe/pid - one
+# per run, so overlapping runs of one family are separate rows) plus the
 # TRANSIENT observation descriptor named by `observe=` (pane/tab/harness + the real
 # prompt/out/err file paths the one-shot run uses, published by
 # `ac-pane-agent --observe`). It follows ONLY bytes the selected harness actually
@@ -104,7 +105,7 @@ self_close() {
 #   <mtime>\t<family>\t<stage>\t<round>\t<engine>\t<model>\t<at>\t<observe>\t<pid>
 active_rows() {
   local m fam stage round engine model at obs pid
-  for m in "$data"/*/.gate-running; do
+  for m in "$data"/*/.gate-running.*; do
     [ -f "$m" ] || continue
     marker_live "$m" || continue
     fam="$(basename "$(dirname "$m")")"
@@ -169,7 +170,7 @@ render() {
 # Follow the NEWEST active gate's real emitted output, auto-switching when the
 # target changes. Print the exact prompt ONCE per target. Label the streams.
 # When the followed gate SETTLES (no active gate remains), announce where its
-# prompt is retained (data/<family>/<short>/gate-prompt.md, kept by ac-gate.sh
+# prompt is retained (data/<family>/<short>/gate-prompt-r<N>.md, kept by ac-gate.sh
 # after exit) - a settled gate has no live stream left to follow, but the board
 # the captain runs should still say where its prompt landed.
 tail_loop() {

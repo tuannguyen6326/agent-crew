@@ -213,8 +213,10 @@ ac_chief_busy_path() {
   # ac_chief_busy_path <state_dir> <family> - the BUSY DECLARATION for <family>'s
   # roomchief: the epoch (one line) until which that chief is blocked inside ONE
   # bounded synchronous call and therefore CANNOT take a turn. Written by the
-  # blocking caller itself (ac-gate.sh), read by ac-watch.sh's AC_WATCH_SKIP
-  # revalidation, cleared by the writer on every trappable exit
+  # blocking caller itself (ac-gate.sh, ac-verify.sh), read by ac-watch.sh's
+  # AC_WATCH_SKIP revalidation, cleared by the writer on its trappable exit -
+  # ac-gate.sh clears it only from the family's last live gate run, because
+  # overlapping runs of one family share this one file
   # (behavior: skip-grace-too-short-for-a-chief-inside-a-long-synchronous-gate).
   #
   # DELIBERATELY NOT the beacon (ac_watcher_beat_path above): that file asserts "a

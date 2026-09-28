@@ -240,9 +240,10 @@ Its meta is `kind=verify-<kind>`, and round history carries forward only as stru
 
 The second chief is one fresh, non-resumed turn on one engine with no fallback.
 Its profile is a valid `panes.gate`, else `config/gate-agent` (default `codex`) with its model and effort knobs; an invalid `panes.gate` fails before a pane opens.
-Its context is bound by `gate-context-rN.json`, and it writes `second-chief-rN.md` (the latest also as `second-chief.md`) and `gate-prompt.md` in the stage dir.
+Its context is bound by `gate-context-rN.json`, and it writes `second-chief-rN.md` (the latest also as `second-chief.md`) and `gate-prompt-rN.md` in the stage dir.
 R1 is advisory `continue|revise|ask-captain`, R2 is terminal `continue|chief-decide|ask-captain`, and the owning chief decides.
-While it runs, `data/<family>/.gate-running` exists and `bin/ac-gate-watch.sh` shows the live turn.
+While it runs, its own `data/<family>/.gate-running.<pid>` exists and `bin/ac-gate-watch.sh` shows the live turn.
+Overlapping runs of one family or one stage are supported: a settled `second-chief-rN.md` is never replaced, so the second run of one round to finish fails instead, and the family's busy declaration stays until its last run exits.
 
 `ac-gate.sh maintenance --mode learning|curate` judges one immutable Learning or Curate plan and writes a hash-bound `agentcrew.maintenance-gate/v1` receipt.
 The gate law is the `staged-gates` skill; report contents are [`staged-design-flow-spec.md`](staged-design-flow-spec.md).
