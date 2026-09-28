@@ -11,7 +11,7 @@
 # accounting. Text mode stays byte-identical - --json is purely additive. The
 # JSON adds only what the cross-fleet cards render on top of the text fields
 # (the per-home config pins and the learn/curate cadence line) and a top-level
-# `totals` aggregate; the schema is pinned by tests/ac-fleets.test.sh.
+# `totals` aggregate; the schema is pinned by tests/sh/ac-fleets.test.sh.
 #
 # --paths is the paths-only sibling of --json: `{homes:[{path,crewdeputies:
 # [...]}]}`, home-discovery only (is_home + crewdeputy nesting), none of

@@ -357,7 +357,7 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_FLEET_EFFORT_<ROLE>` | unset (launch line) | Per-role pane effort from `config/<role>-effort`. |
 | `AC_FLEET_PROFILE_<KIND>` | unset (launch line) | Static dispatched pane profile from `panes.<kind>` (`CODEREVIEW` or `QA`), one TAB-separated `harness=<h> model=<m> effort=<e>` value so the triple stays atomic. A routed qa selection is passed explicitly through `ac-verify qa` instead. |
 
-This table is enforced: `tests/ac-config-surface.test.sh` diffs it against every `AC_*` name read in `bin/` or `src/`.
+This table is enforced: `tests/sh/ac-config-surface.test.sh` diffs it against every `AC_*` name read in `bin/` or `src/`.
 A new tunable needs a row here, with the name in backticks as the first cell and a dynamic family written as one templated row such as `AC_X_<...>`.
 Internal wire variables and test seams take no row; they are declared with a one-line reason inside that test.
 

@@ -23,7 +23,7 @@
 // both guard scripts self-scope, so outside a real primary checkout the
 // plugin is inert. AC_HOME reaches the guards through plain process env (the
 // `ac` launcher exports it before exec'ing the harness). Live probe on this
-// rig pending; tests/ac-harness-hooks.test.sh fences the wiring.
+// rig pending; tests/sh/ac-harness-hooks.test.sh fences the wiring.
 
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";

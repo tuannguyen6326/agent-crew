@@ -86,7 +86,7 @@ The `bin/ac-backend.sh` header owns these contracts:
 The orca driver states each divergence at its function (`bin/ac-backend-orca.sh` header): panes group under Orca sidebar nodes instead of workspaces, the captain-wait stamp is the file alone, the came-up probe reads Orca's own agent detection and the terminal title, startup dialogs are answered by name, and liveness comes from `terminal show`'s `.connected` because a closed terminal still serves scrollback.
 
 `bin/ac-backend.sh` also owns the launch line every mechanism types into a pane (`ac_build_launch`) and the crew-dispatch profile resolution behind it (`ac_resolve_profile`).
-Tests drive the herdr driver through a fake `herdr` CLI shipped in `tests/helpers.sh`.
+Tests drive the herdr driver through a fake `herdr` CLI shipped in `tests/sh/helpers.sh`.
 
 A task's primary tree is leased by the fleet's backend.
 A herdr fleet leases a pooled detached-HEAD worktree (`<repo>/.crew/worktrees/<n>`, slot leases in `<repo>/.crew/slots/`) through `bin/ac-tree.sh`; slots are reused and returned, never deleted ([`worktrees.md`](worktrees.md)).
@@ -113,7 +113,7 @@ One crewmate spawn:
 `bin/ac-harness.sh` is the one place a harness's facets live: the known set, the TUI busy regex, the instruction file, the pane-agent arm, the startup-dialog key and the recorded launch options.
 Every facet fails closed or answers a documented default.
 The three launch command tables stay at their arms (`ac_build_launch`, `oneshot_launch` in `bin/ac-pane-agent.sh`, and the brain's `synthCommand` in `src/brain.ts`), so a new harness edits the registry, those three arms and its entry in the `harness-operations` skill's `references/harness-facts.md`.
-`synthCommand` must print exactly what `oneshot_launch` prints for the same harness, model and effort, with `ultracode` sent as `xhigh` as the one-shot arm sends it; `tests/ac-brain.test.sh` pins that.
+`synthCommand` must print exactly what `oneshot_launch` prints for the same harness, model and effort, with `ultracode` sent as `xhigh` as the one-shot arm sends it; `tests/sh/ac-brain.test.sh` pins that.
 A captain's custom template (`config/launch-<h>`) launches without joining the registry.
 
 `ac_seed_crewmate_md` installs the crewmate layer where the harness reads it (`ac_harness_instruction_file`): `AGENTS.md` for codex, opencode, pi and cursor, `.claude/CLAUDE.md` for claude and for an existing custom template, and a refusal for anything else.
@@ -190,7 +190,7 @@ Other harnesses carry a subset:
 - pi - `.pi/extensions/ac-primary-turnend-guard.ts`: watch policy, turn-end guard on `agent_settled`, prompt recall.
 
 Every adapter fails open and the guards self-scope, so hooks copied into a crewmate worktree stay inert there.
-The non-claude wirings ship with live probes pending, and `tests/ac-harness-hooks.test.sh` fences them.
+The non-claude wirings ship with live probes pending, and `tests/sh/ac-harness-hooks.test.sh` fences them.
 
 ## Rooms and the ledger machinery
 
@@ -337,7 +337,7 @@ Skills hold judgment and operating sequence; script headers hold syntax, state t
 - Captain-invocable and chief-facing: `order-direct`, `order-staged`, `order-design`, `rich-review`, `bearings`, `debrief`, `ac-brain`, `domain-knowledge`, `diagram-design`, and `brainstorm` (captain ideation with a dedicated roomchief that drafts rows and a `requirements.md` for the chief to mint on the captain's yes, leaving a scene and a Done record row; its risk-scaled design cadence asks one decision at a time on architectural topics and stays lightweight otherwise).
 
 Learned skills live only in `$AC_HOME/skills/`, are written only by Learning transactions, and are seeded as the second class by `ac_seed_crew_skills`.
-Every tracked package follows the Agent Skills spec, enforced by `tests/ac-skills-catalog.test.sh`.
+Every tracked package follows the Agent Skills spec, enforced by `tests/sh/ac-skills-catalog.test.sh`.
 
 ## Contract owners
 

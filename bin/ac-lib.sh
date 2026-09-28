@@ -399,7 +399,7 @@ ac_config_read() {
   # that knob is retired and read by nothing (ac-backend.sh:266).
   # ac_home_resolve is THE homeless ladder - one copy on purpose. The
   # TypeScript twin, src/lib.ts's configRead, is pinned to this function by
-  # a differential test (tests/lib.test.ts).
+  # a differential test (tests/ts/lib.test.ts).
   local name="$1" default="${2:-}" h f line
   h="$(ac_home_resolve '' '')"
   [ -n "$h" ] || { printf '%s\n' "$default"; return 0; }
@@ -1570,7 +1570,7 @@ ac_family_of_id() {
   #
   # A BARE revision (foo-r2, no stage suffix at all) stays unconditional: no
   # stage suffix means nothing to doubt, and a direct task's own
-  # data/<id>/implement never exists to check against (tests/ac-lib.test.sh's
+  # data/<id>/implement never exists to check against (tests/sh/ac-lib.test.sh's
   # ac_crew_branch 'foo-r2' case is exercised standalone, no dir ever
   # scaffolded).
   local sub stage base_stage
@@ -2732,7 +2732,7 @@ ac_home_resolve() {
   # the same ladder written twice is how one site gets fixed and the other
   # stays broken. The one twin, src/lib.ts's envHome (rungs 2-3, for the
   # TypeScript ports), is pinned to this function by a differential test
-  # (tests/lib.test.ts), so a fix here that it misses reddens that test.
+  # (tests/ts/lib.test.ts), so a fix here that it misses reddens that test.
   #   1. --home <abs>, guarded below;
   #   2. $AC_HOME tested DIRECTLY - never through ac_home(), which REFUSES
   #      when the variable is unset (and, before it refused, handed back a
@@ -2793,7 +2793,7 @@ ac_project_mode() {
 #
 # The incident: a `jobs -p` cleanup that returned EMPTY in the non-interactive
 # `zsh -c` tool shell reaped nothing, orphaning 77 busy loops (ppid=1, ~760%
-# CPU, ~48 min). Layer 0 (tests/helpers.sh) and layer 1 (docs/examples/
+# CPU, ~48 min). Layer 0 (tests/sh/helpers.sh) and layer 1 (docs/examples/
 # CREWMATE.md) prevent it; this is the layer-2 DETECTION backstop, so an
 # accumulation is visible within ONE session-start digest instead of an hour
 # of burned cores. READ-ONLY: it counts and hints, never kills - killing is a

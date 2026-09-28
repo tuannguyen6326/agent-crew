@@ -532,7 +532,7 @@ validate_r1_artifact() {
 
 # From here through latest_valid_r1_disposition: the READER-side twins of
 # ac-room.sh's gate-route/gate-verify/disposition writers - change both sides
-# together; the WRITER/READER PARITY matrix in tests/ac-gate.test.sh fails when
+# together; the WRITER/READER PARITY matrix in tests/sh/ac-gate.test.sh fails when
 # they judge one of its receipts apart. Grounds carrying a CR are refused here as
 # the writers refuse them: a hand-posted receipt could otherwise hide text from a
 # plain `cat` of the room while still binding.

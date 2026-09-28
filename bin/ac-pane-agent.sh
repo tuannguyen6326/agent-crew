@@ -878,7 +878,7 @@ oneshot_launch() {
   # bin/ac-verify.sh's one-shot scout lanes), and src/brain.ts's synthCommand
   # keeps a TypeScript twin of it (captain ruling 2026-09-28) that must print
   # exactly these bytes, fed the EFFORT_FLAG mapping above -
-  # tests/ac-brain.test.sh fails when the two part, so a form or that mapping
+  # tests/sh/ac-brain.test.sh fails when the two part, so a form or that mapping
   # changed here must change there too. Effort is per-harness in
   # SHAPE as well as value: codex takes a config override, claude a flag,
   # opencode a variant. An unset knob passes NOTHING, leaving the engine's own

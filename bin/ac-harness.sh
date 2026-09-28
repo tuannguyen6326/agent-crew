@@ -19,7 +19,7 @@
 # headers: two different shapes for two different lifecycles. synthCommand
 # (src/brain.ts, the brain's synthesize one-shot) is oneshot_launch's shape
 # again, kept as the brain's own table by captain ruling (2026-09-28) and held
-# to oneshot_launch's exact bytes by tests/ac-brain.test.sh. None of the three
+# to oneshot_launch's exact bytes by tests/sh/ac-brain.test.sh. None of the three
 # composes a line for an unknown name. A new harness therefore edits THIS file
 # plus those three arms (and its harness-facts.md entry), instead of thirteen
 # files.

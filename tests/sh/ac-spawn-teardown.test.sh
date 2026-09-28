@@ -1,0 +1,2104 @@
+#!/usr/bin/env bash
+# ac-spawn-teardown.test.sh - e2e: spawn a fake-harness crewmate into an
+# in-repo worktree + herdr tab, verify fleet state, then fail-closed
+# teardown (refuses unlanded branch work, --force discards).
+# Driven through the fake herdr CLI (tests/sh/helpers.sh): launch lines land
+# VERBATIM in the pane buffer, nothing executes them.
+
+# FAIL-CLOSED SOURCING (this suite pushes): run from anywhere but tests/sh/, the
+# source below no-ops, errexit is never armed, every helper var stays EMPTY -
+# and `git -C "" push origin main` below then hits the REAL repo (incident
+# 2026-07-20). Abort instead of running unsourced.
+. "$(dirname "$0")/helpers.sh" \
+  || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
+
+make_fake_herdr
+# Deliver the kickoff prompt immediately (default 8s) so the suite stays fast.
+export AC_SPAWN_SETTLE=0
+# Every pane here clears the composer-ready observation (bin/ac-spawn.sh
+# kickoff_wait_input_ready) immediately - this suite is not testing that gate
+# (tests/sh/ac-spawn-kickoff-ready.test.sh owns it), it just needs its spawns to
+# complete without a real harness's boot delay.
+: >"$FAKE_HERDR/.pane-idle-by-default"
+export AC_KICKOFF_READY_BUDGET=5
+
+make_home
+repo="$(make_repo proj)"
+
+# A claude stub so the claude-harness spawns below pass ac-spawn's
+# command -v check; the fake herdr never executes the launch line.
+mkdir -p "$TMP/stub"
+printf '#!/usr/bin/env bash\nsleep 300\n' >"$TMP/stub/claude"
+chmod +x "$TMP/stub/claude"
+export PATH="$TMP/stub:$PATH"
+
+# A fake harness template; its text sits unexecuted in the pane buffer.
+printf 'echo crew __ID__ reading __BRIEF__; sleep 300\n' >"$AC_HOME/config/launch-fake"
+
+"$BIN/ac-brief.sh" t1 proj --mode local-only >/dev/null
+assert_fails "$BIN/ac-spawn.sh" tX "$repo" --harness fake --mode bogus
+
+# Mint-side grammar is [a-z0-9-] - the same charset ac-brief.sh mints, tighter
+# than the loose read-path charset ([a-zA-Z0-9_-]) other tools still accept
+# for an EXISTING id/family. Underscore and uppercase must be refused BEFORE
+# any worktree lease or window - no meta, no pane handle.
+err="$("$BIN/ac-spawn.sh" "bad_id" "$repo" --harness fake 2>&1 || true)"
+assert_contains "$err" "id must be [a-z0-9-]" "underscore id refused, naming the tightened charset"
+assert_no_file "$AC_HOME/state/bad_id.meta" "no meta leased for a refused id"
+assert_no_file "$AC_HOME/state/.pane-bad_id" "no pane handle for a refused id"
+err="$("$BIN/ac-spawn.sh" "BadId" "$repo" --harness fake 2>&1 || true)"
+assert_contains "$err" "id must be [a-z0-9-]" "uppercase id refused, naming the tightened charset"
+assert_no_file "$AC_HOME/state/BadId.meta" "no meta leased for a refused id"
+err="$("$BIN/ac-spawn.sh" --roomchief "bad_family" --harness fake 2>&1 || true)"
+assert_contains "$err" "family must be [a-z0-9-]" "underscore family refused, naming the tightened charset"
+assert_no_file "$AC_HOME/state/bad_family-chief.meta" "no meta leased for a refused roomchief family"
+err="$("$BIN/ac-spawn.sh" --roomchief "BadFamily" --harness fake 2>&1 || true)"
+assert_contains "$err" "family must be [a-z0-9-]" "uppercase family refused, naming the tightened charset"
+assert_no_file "$AC_HOME/state/BadFamily-chief.meta" "no meta leased for a refused roomchief family"
+# Slack task thread: with a remote-reply hook wired AND the auto-mirror
+# opted in (remote-mirror=on), spawn announces the task start into its
+# family thread (thread-post; best-effort - asserted working here, and
+# spawn must survive without the hook everywhere else).
+printf 'on\n' >"$AC_HOME/config/remote-mirror"
+export AC_SPAWN_TEST_TLOG="$TMP/spawn-thread.log"
+cat >"$AC_HOME/config/remote-reply" <<'EOF'
+#!/usr/bin/env bash
+cat >>"$AC_SPAWN_TEST_TLOG"
+printf 'rid=%s\n' "$AC_REMOTE_RID" >>"$AC_SPAWN_TEST_TLOG"
+printf '1700.11\n'
+EOF
+chmod +x "$AC_HOME/config/remote-reply"
+out="$("$BIN/ac-spawn.sh" t1 "$repo" --harness fake --mode local-only 2>/dev/null)"
+assert_contains "$out" "spawned t1 harness=fake kind=ship mode=local-only" "per-task --mode overrides the registry default"
+assert_contains "$(cat "$TMP/spawn-thread.log")" "] [START] [t1]*" "announce header carries ts, verb, family in brackets"
+assert_contains "$(cat "$TMP/spawn-thread.log")" "bắt đầu task t1 (ship)" "spawn announced the start into the family thread (VN framing, ids verbatim)"
+assert_contains "$(cat "$TMP/spawn-thread.log")" "rid=t1" "announce addressed to the family"
+# A spawn from a SCOPED session (a roomchief) announces into the CHIEF's
+# family thread - slice ids (<fam>-s1) are flat by the stage grammar but
+# they are that family's crewmates.
+"$BIN/ac-brief.sh" lgrp-s1 proj --mode local-only >/dev/null
+sout="$(AC_SCOPE=lgrp "$BIN/ac-spawn.sh" lgrp-s1 "$repo" --harness fake --mode local-only 2>/dev/null)"
+assert_contains "$sout" "spawned lgrp-s1" "scoped slice spawn succeeds"
+assert_contains "$(cat "$TMP/spawn-thread.log")" "rid=lgrp" "scoped spawn announces into the chief's family thread"
+assert_contains "$(cat "$TMP/spawn-thread.log")" "] [START] [lgrp]*" "announce header names the chief family, not the slice id"
+# Give the slot back and drop the fixture task so the pool numbering the
+# later sections assert on stays untouched.
+"$BIN/ac-tree.sh" return "${sout##*worktree=}" --force 2>/dev/null
+rm -f "$AC_HOME/state/lgrp-s1.meta" "$AC_HOME/state/lgrp-s1.status" "$AC_HOME/state/.pane-lgrp-s1"
+rm -f "$AC_HOME/config/remote-reply" "$AC_HOME/config/remote-mirror"
+# Custom launch template (config/launch-fake exists) keeps AC_PROMPT on the
+# launch line; the tty-1024 guard only strips it for BUILT-IN templates.
+assert_contains "$(cat "$(fake_pane_buf t1)")" "AC_PROMPT=" "custom template keeps AC_PROMPT"
+assert_contains "$out" "worktree=$repo/.crew/worktrees/1-proj" "in-repo worktree"
+
+meta="$AC_HOME/state/t1.meta"
+assert_file "$meta"
+assert_file "$AC_HOME/state/.pane-t1" "pane handle recorded (window alive)"
+assert_contains "$("$BIN/ac-tree.sh" list --repo "$repo")" "leased" "lease recorded"
+
+# AC3: the kickoff prompt lands as its OWN typed line (literal spaces), after
+# the bare launch line. The pane receives the short kickoff POINTER as its
+# own line; the full prompt is durable in the task dir's kickoff.md.
+assert_contains "$(cat "$(fake_pane_buf t1)")" \
+  "kickoff order at" "kickoff pointer delivered as its own line"
+assert_contains "$(cat "$AC_HOME/data/t1/kickoff.md")" \
+  "You are an agent-crew crewmate. Read and follow the brief" "the kickoff FILE carries the full prompt"
+
+assert_fails "$BIN/ac-spawn.sh" t1 "$repo" --harness fake
+
+# Unlanded branch work blocks teardown; --force discards and cleans up.
+wt="$(awk -F= '$1=="worktree"{print $2}' "$meta")"
+git -C "$wt" checkout -q -b crew/t1
+printf 'work\n' >"$wt/work.txt"
+git -C "$wt" add -A
+git -C "$wt" -c user.email=t@t -c user.name=t commit -qm "unlanded work"
+assert_fails "$BIN/ac-teardown.sh" t1
+"$BIN/ac-teardown.sh" t1 --force >/dev/null
+assert_no_file "$meta" "meta archived"
+assert_file "$AC_HOME/state/archive/t1/meta"
+assert_no_file "$AC_HOME/state/.pane-t1" "window survived teardown"
+assert_contains "$("$BIN/ac-tree.sh" list --repo "$repo")" "available" "worktree back in pool"
+
+# claude spawns pin a session id in the meta; --resume-from reopens it
+# (the claude stub above only satisfies the command -v check).
+# Slot-affinity setup: pin slot 1 under another lease so t2 lands in slot 2 -
+# the resume assertions below must distinguish "old slot" from "first free
+# slot" (normal selection would hand out slot 1).
+hold="$("$BIN/ac-tree.sh" get --repo "$repo" --id hold 2>/dev/null)"
+assert_eq "$hold" "$repo/.crew/worktrees/1-proj" "hold pins slot 1"
+"$BIN/ac-brief.sh" t2 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t2 "$repo" --harness claude >/dev/null 2>&1
+assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t2.meta")" \
+  "$repo/.crew/worktrees/2-proj" "t2 leased slot 2"
+sid="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/t2.meta")"
+[ -n "$sid" ] || fail "claude spawn must record session_id"
+grep -q -- "--session-id $sid" "$(fake_pane_buf t2)" || fail "launch line pins the session id"
+"$BIN/ac-teardown.sh" t2 --force >/dev/null 2>&1
+"$BIN/ac-tree.sh" return "$hold" 2>/dev/null
+
+# Resume lands in the OLD slot (claude keys sessions by cwd): slots 1 and 2
+# are both free and normal selection would pick 1, but the resume must
+# reclaim slot 2 where t2's session lives.
+"$BIN/ac-brief.sh" t2-r2 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t2-r2 "$repo" --resume-from t2 >/dev/null 2>&1
+sid2="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/t2-r2.meta")"
+assert_eq "$sid2" "$sid" "revision resumes the same session"
+assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t2-r2.meta")" \
+  "$repo/.crew/worktrees/2-proj" "resume lands in the old slot (cwd affinity)"
+grep -q -- "--resume $sid" "$(fake_pane_buf t2-r2)" || fail "resume launch line"
+"$BIN/ac-teardown.sh" t2-r2 --force >/dev/null 2>&1
+
+# A host without uuidgen still pins a lowercase v4 id: lowercase is what
+# launch_session_id reads back, v4 what claude's --session-id takes.
+mkdir -p "$TMP/nouuid"
+printf '#!/bin/sh\nexit 127\n' >"$TMP/nouuid/uuidgen"
+chmod +x "$TMP/nouuid/uuidgen"
+"$BIN/ac-brief.sh" t2u proj --mode local-only >/dev/null
+PATH="$TMP/nouuid:$PATH" "$BIN/ac-spawn.sh" t2u "$repo" --harness claude >/dev/null 2>&1
+sidu="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/t2u.meta")"
+printf '%s\n' "$sidu" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' \
+  || fail "without uuidgen the pinned session id must be a lowercase v4 UUID, got '$sidu'"
+grep -q -- "--session-id $sidu" "$(fake_pane_buf t2u)" || fail "the launch line pins that id"
+"$BIN/ac-teardown.sh" t2u --force >/dev/null 2>&1
+
+# Per-role pane-agent knobs thread onto the crewmate launch line so its homeless
+# codereview/qa panes can read config/<role>-<knob> (which config/ cannot resolve
+# in a crewmate). Only emitted when the fleet pins them. All THREE knobs per role
+# ride together (captain ruling, routed-pane-rules-for-gate-codereview-
+# roomchief TASK 2): an agent pin whose model/effort stayed behind would let the
+# pane compose a model onto a harness the knob did not choose.
+printf 'codex\n' >"$AC_HOME/config/codereview-agent"
+printf 'sonnet\n' >"$AC_HOME/config/codereview-model"
+printf 'xhigh\n' >"$AC_HOME/config/codereview-effort"
+printf 'claude\n' >"$AC_HOME/config/qa-agent"
+printf 'haiku\n' >"$AC_HOME/config/qa-model"
+printf 'low\n' >"$AC_HOME/config/qa-effort"
+"$BIN/ac-brief.sh" tmr proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" tmr "$repo" --harness claude >/dev/null 2>&1
+mrbuf="$(cat "$(fake_pane_buf tmr)")"
+case "$mrbuf" in *"AC_FLEET_AGENT_CODEREVIEW=codex"*) ;; *) fail "config/codereview-agent must thread as AC_FLEET_AGENT_CODEREVIEW" ;; esac
+case "$mrbuf" in *"AC_FLEET_MODEL_CODEREVIEW=sonnet"*) ;; *) fail "config/codereview-model must thread as AC_FLEET_MODEL_CODEREVIEW" ;; esac
+case "$mrbuf" in *"AC_FLEET_EFFORT_CODEREVIEW=xhigh"*) ;; *) fail "config/codereview-effort must thread as AC_FLEET_EFFORT_CODEREVIEW" ;; esac
+case "$mrbuf" in *"AC_FLEET_AGENT_QA=claude"*) ;; *) fail "config/qa-agent must thread as AC_FLEET_AGENT_QA" ;; esac
+case "$mrbuf" in *"AC_FLEET_MODEL_QA=haiku"*) ;; *) fail "config/qa-model must thread as AC_FLEET_MODEL_QA" ;; esac
+case "$mrbuf" in *"AC_FLEET_EFFORT_QA=low"*) ;; *) fail "config/qa-effort must thread as AC_FLEET_EFFORT_QA" ;; esac
+"$BIN/ac-teardown.sh" tmr --force >/dev/null 2>&1
+rm -f "$AC_HOME/config/codereview-agent" "$AC_HOME/config/codereview-model" \
+      "$AC_HOME/config/codereview-effort" "$AC_HOME/config/qa-agent" \
+      "$AC_HOME/config/qa-model" "$AC_HOME/config/qa-effort"
+
+# A fleet pinning NONE of them leaves the launch line free of every per-role
+# rung - the byte-identical no-change property for a fleet that configures
+# nothing (both real fleets today: neither key set on drydock or lab).
+"$BIN/ac-brief.sh" tmr0 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" tmr0 "$repo" --harness claude >/dev/null 2>&1
+case "$(cat "$(fake_pane_buf tmr0)")" in
+  *AC_FLEET_AGENT_*|*AC_FLEET_MODEL_CODEREVIEW*|*AC_FLEET_MODEL_QA*|*AC_FLEET_EFFORT_CODEREVIEW*|*AC_FLEET_EFFORT_QA*)
+    fail "an unpinned fleet must thread no per-role rung at all" ;;
+esac
+"$BIN/ac-teardown.sh" tmr0 --force >/dev/null 2>&1
+
+# The DISPATCHED pane profile threads on that same rung, and for the harder
+# version of the same reason: ac-ship.sh review-agent and ac-qa.sh agent are
+# themselves homeless, so nobody downstream can resolve it. A fleet that
+# configures no panes block must leave this launch line byte-identical.
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{"rules": [{"when": "anything", "use": {"harness": "claude"}}]}
+EOF
+"$BIN/ac-brief.sh" tnp proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" tnp "$repo" --harness claude >/dev/null 2>&1
+case "$(cat "$(fake_pane_buf tnp)")" in
+  *AC_FLEET_PROFILE_*) fail "no panes block must thread no profile at all" ;;
+esac
+"$BIN/ac-teardown.sh" tnp --force >/dev/null 2>&1
+
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{"panes": {"codereview": {"harness": "claude", "model": "opus"},
+           "qa": {"harness": "claude"},
+           "learning": {"harness": "claude", "model": "haiku"}}}
+EOF
+"$BIN/ac-brief.sh" tpp proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" tpp "$repo" --harness claude >/dev/null 2>&1
+ppbuf="$(cat "$(fake_pane_buf tpp)")"
+# The threaded value arrives in bash's own $'...' form because the profile's
+# fields are TAB-separated and the launch line is composed with printf %q - so
+# the quoting IS the contract here: an unquoted TAB would split the assignment
+# into arguments and the crewmate would launch with no profile at all.
+case "$ppbuf" in *"AC_FLEET_PROFILE_CODEREVIEW=\$'harness=claude"*) ;; *) fail "panes.codereview must thread as AC_FLEET_PROFILE_CODEREVIEW" ;; esac
+case "$ppbuf" in *"AC_FLEET_PROFILE_QA=\$'harness=claude"*) ;; *) fail "panes.qa must thread as AC_FLEET_PROFILE_QA" ;; esac
+# The learning scout is HOMED - it reads the block first-hand - so threading it
+# would be a rung nobody reads, carried on every crewmate launch line.
+case "$ppbuf" in *AC_FLEET_PROFILE_LEARNING*) fail "a homed kind needs no threaded rung" ;; esac
+"$BIN/ac-teardown.sh" tpp --force >/dev/null 2>&1
+rm -f "$AC_HOME/config/crew-dispatch.json"
+
+# --codereview-rule pins a ROUTED panes.codereview deliberately at spawn time
+# (captain decision 2026-07-28, routed-pane-rules-for-gate-codereview-
+# roomchief: the chief is the only actor ever in a position to judge a `when`
+# clause here, since an execution crewmate never gets AC_HOME). Read back
+# from the REAL launch line, not inferred.
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{
+  "panes": {
+    "codereview": {
+      "rules": [
+        {"when": "financial or irreversible risk",
+         "use": {"harness": "claude", "model": "opus", "effort": "xhigh"},
+         "why": "max reasoning"},
+        {"when": "routine review", "use": {"harness": "claude", "model": "sonnet"},
+         "why": "cheaper routine review"}
+      ],
+      "default": {"harness": "claude", "model": "haiku"}
+    }
+  }
+}
+EOF
+"$BIN/ac-brief.sh" tcr1 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" tcr1 "$repo" --harness claude --codereview-rule 1 >/dev/null 2>&1
+cr1buf="$(cat "$(fake_pane_buf tcr1)")"
+case "$cr1buf" in *"AC_FLEET_PROFILE_CODEREVIEW=\$'harness=claude"*) ;; *) fail "--codereview-rule 1 must pin rule 1's harness onto AC_FLEET_PROFILE_CODEREVIEW" ;; esac
+case "$cr1buf" in *"model=opus"*) ;; *) fail "--codereview-rule 1 must pin rule 1's model" ;; esac
+case "$cr1buf" in *"effort=xhigh"*) ;; *) fail "--codereview-rule 1 must pin rule 1's effort, not the mandatory default's" ;; esac
+"$BIN/ac-teardown.sh" tcr1 --force >/dev/null 2>&1
+
+# --codereview-rule default is an explicit selection, equal to the no-flag
+# fallback (the mandatory default) - proven by comparing both launch lines.
+"$BIN/ac-brief.sh" tcr2 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" tcr2 "$repo" --harness claude --codereview-rule default >/dev/null 2>&1
+cr2buf="$(cat "$(fake_pane_buf tcr2)")"
+case "$cr2buf" in *"AC_FLEET_PROFILE_CODEREVIEW=\$'harness=claude"*) ;; *) fail "--codereview-rule default must pin the mandatory default's harness onto AC_FLEET_PROFILE_CODEREVIEW" ;; esac
+case "$cr2buf" in *"model=haiku"*) ;; *) fail "--codereview-rule default must pin the mandatory default's model" ;; esac
+"$BIN/ac-teardown.sh" tcr2 --force >/dev/null 2>&1
+
+"$BIN/ac-brief.sh" tcr3 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" tcr3 "$repo" --harness claude >/dev/null 2>&1
+cr3buf="$(cat "$(fake_pane_buf tcr3)")"
+# Same two fields asserted on cr2buf above (--codereview-rule default) - no
+# flag at all must resolve the SAME mandatory default, not something else.
+case "$cr3buf" in *"AC_FLEET_PROFILE_CODEREVIEW=\$'harness=claude"*) ;; *) fail "no --codereview-rule must still pin the mandatory default's harness" ;; esac
+case "$cr3buf" in *"model=haiku"*) ;; *) fail "no --codereview-rule must resolve the same mandatory default as --codereview-rule default" ;; esac
+"$BIN/ac-teardown.sh" tcr3 --force >/dev/null 2>&1
+
+# A wrong selector DIES before any window/meta is opened - never a silent
+# fall-through to the default the caller did not ask for.
+"$BIN/ac-brief.sh" tcr4 proj --mode local-only >/dev/null
+assert_fails "$BIN/ac-spawn.sh" tcr4 "$repo" --harness claude --codereview-rule 9
+assert_no_file "$AC_HOME/state/tcr4.meta" "an unresolvable --codereview-rule must die before any meta is written"
+rm -f "$AC_HOME/config/crew-dispatch.json"
+
+# --codereview-rule with NO panes.codereview at all is equally a wrong
+# request, not a silent no-op: nothing to select from.
+"$BIN/ac-brief.sh" tcr5 proj --mode local-only >/dev/null
+assert_fails "$BIN/ac-spawn.sh" tcr5 "$repo" --harness claude --codereview-rule 1
+assert_no_file "$AC_HOME/state/tcr5.meta" "--codereview-rule against an absent panes.codereview must die, not thread nothing silently"
+
+# --codereview-rule requires a plain crew spawn - it resolves panes.codereview,
+# which only ever threads to an execution crewmate.
+assert_fails "$BIN/ac-spawn.sh" --roomchief tcr6 --codereview-rule 1
+assert_no_file "$AC_HOME/state/tcr6-chief.meta" "--codereview-rule on a roomchief promote must die before any meta is written"
+
+# --base-branch requires a plain crew spawn too (orca-lease-cuts-from-wrong-
+# branch): the roomchief/crewdeputy paths both exit before the orca lease
+# call site, so passing it there would otherwise silently do nothing.
+assert_fails "$BIN/ac-spawn.sh" --roomchief tbb1 --base-branch release
+assert_no_file "$AC_HOME/state/tbb1-chief.meta" "--base-branch on a roomchief promote must die before any meta is written"
+
+# --base-branch "" (empty) must die loud, not silently mean "no override" -
+# the sibling ac-self-task.sh flag already refuses this shape.
+"$BIN/ac-brief.sh" tbb2 proj --mode local-only >/dev/null
+assert_fails "$BIN/ac-spawn.sh" tbb2 "$repo" --harness claude --base-branch ""
+assert_no_file "$AC_HOME/state/tbb2.meta" "an empty --base-branch must die before any meta is written"
+
+# --base-branch only ever reaches the orca lease call site; on a herdr fleet
+# (the ambient default here) it would otherwise silently no-op instead of
+# failing loud - the exact silent-outcome defect this fleet's own
+# conventions refuse.
+"$BIN/ac-brief.sh" tbb3 proj --mode local-only >/dev/null
+assert_fails "$BIN/ac-spawn.sh" tbb3 "$repo" --harness claude --base-branch release
+assert_no_file "$AC_HOME/state/tbb3.meta" "--base-branch on a herdr-backend spawn must die before any meta is written"
+
+# A separate ship crewmate is no longer a normal execution surface. Delivery
+# stays with the execution crewmate, so the old model-ship spawn selector is
+# rejected instead of creating a third production role.
+printf 'sonnet\n' >"$AC_HOME/config/model-ship"
+"$BIN/ac-brief.sh" tship proj --mode local-only >/dev/null
+assert_fails "$BIN/ac-spawn.sh" tship "$repo" --harness claude --stage ship
+rm -f "$AC_HOME/config/model-ship"
+
+# Affinity miss: the old slot is leased by someone else, so the resume falls
+# back to another slot and warns loudly that the session cwd changed.
+hold2="$("$BIN/ac-tree.sh" get --repo "$repo" --id hold2 --prefer 2 2>/dev/null)"
+assert_eq "$hold2" "$repo/.crew/worktrees/2-proj" "hold2 pins the old slot"
+"$BIN/ac-brief.sh" t2-r3 proj --mode local-only >/dev/null
+out="$("$BIN/ac-spawn.sh" t2-r3 "$repo" --resume-from t2 2>&1)"
+assert_contains "$out" \
+  "resume may not find the old session (cwd changed: $repo/.crew/worktrees/2-proj -> $repo/.crew/worktrees/1-proj)" \
+  "affinity miss warns loudly"
+assert_eq "$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t2-r3.meta")" \
+  "$repo/.crew/worktrees/1-proj" "affinity miss fell back to a free slot"
+"$BIN/ac-teardown.sh" t2-r3 --force >/dev/null 2>&1
+"$BIN/ac-tree.sh" return "$hold2" 2>/dev/null
+
+# Fresh-fallback guard: resuming a non-claude task refuses loudly.
+assert_fails "$BIN/ac-spawn.sh" t3 "$repo" --resume-from t1
+
+# A spawn that dies after leasing gives the lease back (no leaked slot).
+# Simulate an already-live t4 window: pane handle + live fake pane files.
+printf 'p90 t90\n' >"$AC_HOME/state/.pane-t4"
+printf 'p90\n' >"$FAKE_HERDR/tabs/t90"
+: >"$FAKE_HERDR/panes/p90.buf"
+"$BIN/ac-brief.sh" t4 proj --mode local-only >/dev/null
+assert_fails "$BIN/ac-spawn.sh" t4 "$repo" --harness fake
+assert_no_file "$AC_HOME/state/t4.meta" "no half-written meta"
+"$BIN/ac-tree.sh" list --repo "$repo" | grep -q 'leased.*t4' && fail "leaked leased slot for t4"
+rm -f "$AC_HOME/state/.pane-t4" "$FAKE_HERDR/tabs/t90" "$FAKE_HERDR/panes/p90.buf"
+
+# Staged-flow layout: a --stage brief nests under the family; spawn resolves
+# it, hands the crewmate the NESTED path, and the scout teardown fail-closed
+# check looks for the report next to that brief.
+"$BIN/ac-brief.sh" t5-spec proj --mode local-only --stage spec --captain-requested 'test fixture: staged pinned by the captain' --reason 'fixture: exercising the staged path' >/dev/null
+assert_file "$AC_HOME/data/t5/spec/brief.md"
+"$BIN/ac-spawn.sh" t5-spec "$repo" --scout --harness fake >/dev/null 2>&1
+assert_contains "$(cat "$(fake_pane_buf t5-spec)")" \
+  "data/t5/spec/brief.md" "spawn hands the crewmate the nested brief path"
+assert_fails "$BIN/ac-teardown.sh" t5-spec          # scout, no report yet
+printf 'findings\n' >"$AC_HOME/data/t5/spec/report.md"
+"$BIN/ac-teardown.sh" t5-spec >/dev/null            # nested report satisfies fail-closed
+assert_file "$AC_HOME/state/archive/t5-spec/meta"
+
+# Merged-design teardown: a --stage design scout keeps its ONE brief at
+# <family>/design/ but writes each sub-stage report at
+# <family>/{spec,arch,plan}/report.md - never design/report.md. The scout proof
+# must accept those sub-stage reports; checking only design/report.md
+# mis-detected the layout and refused a fully-delivered design (backlog flag).
+"$BIN/ac-brief.sh" md-design proj --mode local-only --stage design --captain-requested 'test fixture: staged pinned by the captain' --reason 'fixture: exercising the staged path' >/dev/null
+assert_file "$AC_HOME/data/md/design/brief.md"
+"$BIN/ac-spawn.sh" md-design "$repo" --scout --harness fake >/dev/null 2>&1
+assert_fails "$BIN/ac-teardown.sh" md-design        # no sub-stage report yet
+mkdir -p "$AC_HOME/data/md/arch"
+printf 'arch findings\n' >"$AC_HOME/data/md/arch/report.md"
+"$BIN/ac-teardown.sh" md-design >/dev/null          # a sub-stage report satisfies fail-closed
+assert_file "$AC_HOME/state/archive/md-design/meta"
+
+# Scout backstop: a scout steered into writing code holds commits on
+# crew/<id> inside its worktree; even with the report in place, teardown
+# refuses until ac-promote.sh flips it to ship (then ship rules apply) or
+# the captain discards with --force.
+"$BIN/ac-brief.sh" t6 proj --scout >/dev/null
+"$BIN/ac-spawn.sh" t6 "$repo" --scout --harness fake >/dev/null 2>&1
+printf 'findings\n' >"$AC_HOME/data/t6/report.md"
+wt6="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t6.meta")"
+git -C "$wt6" checkout -q -b crew/t6
+printf 'code\n' >"$wt6/code.txt"
+git -C "$wt6" add -A
+git -C "$wt6" -c user.email=t@t -c user.name=t commit -qm "scout wrote code"
+out="$("$BIN/ac-teardown.sh" t6 2>&1)" && fail "teardown must refuse a scout with an unlanded crew branch"
+assert_contains "$out" "ac-promote.sh t6" "refusal points at promote"
+out="$("$BIN/ac-promote.sh" t6 --mode local-only)"
+assert_contains "$out" "notified crewmate t6" "live pane gets the ship notice"
+assert_eq "$(awk -F= '$1=="kind"{v=$2} END{print v}' "$AC_HOME/state/t6.meta")" "ship" "promote flips kind in place"
+assert_fails "$BIN/ac-teardown.sh" t6              # ship rules: branch still unlanded
+"$BIN/ac-teardown.sh" t6 --force >/dev/null
+assert_file "$AC_HOME/state/archive/t6/meta"
+
+# The same backstop one step earlier: work a steered scout EDITED but never
+# committed dies just as silently at the pool return (ac-tree.sh resets the
+# tree), so the scout proof mirrors the ship sibling's dirty-tree refusal.
+"$BIN/ac-brief.sh" t22 proj --scout >/dev/null
+"$BIN/ac-spawn.sh" t22 "$repo" --scout --harness fake >/dev/null 2>&1
+printf 'findings\n' >"$AC_HOME/data/t22/report.md"
+wt22="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t22.meta")"
+printf 'scratch code\n' >"$wt22/uncommitted.txt"
+out="$("$BIN/ac-teardown.sh" t22 2>&1)" && fail "teardown must refuse a scout holding uncommitted work"
+assert_contains "$out" "worktree is dirty" "the refusal names the dirty tree, like the ship sibling"
+assert_file "$AC_HOME/state/t22.meta" "a refused scout stays in flight"
+# The let-through direction: a delivered scout with a clean tree still lands.
+rm -f "$wt22/uncommitted.txt"
+"$BIN/ac-teardown.sh" t22 >/dev/null
+assert_file "$AC_HOME/state/archive/t22/meta"
+
+# --- kickoff acknowledgement: a booting TUI drops Enters; spawn re-SUBMITS ------
+# (never re-types) until the render reacts - the 2026-07-16 eaten-kickoff was
+# two blind sends appending into one garbled line. The drop knob targets the
+# PROMPT only ("crewmate" never appears on the claude launch line), so the
+# launch line submits normally and only the kickoff strands.
+n="$(cat "$FAKE_HERDR/.n")"; kpane="p$((n + 1))"
+# 3 drops: send_line burns its two verified submits (plain + focused), the
+# kickoff's first resubmit still strands, its second lands.
+printf '3 kickoff\n' >"$FAKE_HERDR/panes/$kpane.drop-enters"
+"$BIN/ac-brief.sh" t7 proj --mode local-only >/dev/null
+out="$("$BIN/ac-spawn.sh" t7 "$repo" --harness claude 2>&1)"
+assert_contains "$out" "spawned t7" "spawn survives dropped kickoff Enters"
+case "$out" in *"NOT acknowledged"*) fail "a recovered kickoff must not warn" ;; esac
+assert_eq "$(grep -c "kickoff order at" "$(fake_pane_buf t7)")" "1" \
+  "kickoff resubmit lands the pointer exactly once (no re-type, no garble)"
+"$BIN/ac-teardown.sh" t7 --force >/dev/null 2>&1
+
+# never acknowledged: spawn still completes, warns LOUDLY, names the ac-send
+# fallback - and the prompt honestly sits in the composer, not in the transcript.
+n="$(cat "$FAKE_HERDR/.n")"; kpane="p$((n + 1))"
+printf '99 kickoff\n' >"$FAKE_HERDR/panes/$kpane.drop-enters"
+"$BIN/ac-brief.sh" t8 proj --mode local-only >/dev/null
+out="$("$BIN/ac-spawn.sh" t8 "$repo" --harness claude 2>&1)"
+assert_contains "$out" "spawned t8" "spawn must not die on an unacknowledged kickoff"
+assert_contains "$out" "kickoff pointer NOT acknowledged" "unacknowledged kickoff warns loudly"
+assert_contains "$out" "ac-send.sh t8" "warning names the manual fallback"
+assert_contains "$(cat "$FAKE_HERDR/panes/$kpane.in")" "kickoff order at" \
+  "pointer sits stranded in the composer, reported not hidden"
+case "$(cat "$(fake_pane_buf t8)")" in *"kickoff order at"*) \
+  fail "an unacknowledged pointer must not appear submitted" ;; esac
+"$BIN/ac-teardown.sh" t8 --force >/dev/null 2>&1
+
+# The UNSUFFIXED staged implement id resolves through the existence probe:
+# spawn must hand the crewmate data/t5/implement/brief.md, not data/t5/brief.md.
+"$BIN/ac-brief.sh" t5 proj --mode local-only --stage implement --captain-requested 'test fixture: staged pinned by the captain' --reason 'fixture: exercising the staged path' >/dev/null
+assert_file "$AC_HOME/data/t5/implement/brief.md"
+"$BIN/ac-spawn.sh" t5 "$repo" --harness fake >/dev/null 2>&1
+assert_contains "$(cat "$(fake_pane_buf t5)")" \
+  "data/t5/implement/brief.md" "spawn resolves the unsuffixed staged implement brief"
+"$BIN/ac-teardown.sh" t5 --force >/dev/null 2>&1
+
+# --- landed proof spans BOTH default refs (local and origin) -------------------
+# A local-only project never pushes: its landing is a ff-merge into LOCAL main,
+# which leaves origin/main stale. Proving containment in origin/main alone
+# reported such work as unlanded and forced every teardown through --force.
+oremote="$TMP/proj9-origin.git"
+git init -q --bare -b main "$oremote"
+repo9="$(make_repo proj9)"
+git -C "$repo9" remote add origin "$oremote"
+git -C "$repo9" push -q origin main
+git -C "$repo9" fetch -q origin
+
+# t9: local-only - local main is AHEAD of origin/main and contains the head.
+"$BIN/ac-brief.sh" t9 proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9 "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt9="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9.meta")"
+git -C "$wt9" checkout -q -b crew/t9
+printf 'landed locally\n' >"$wt9/local.txt"
+git -C "$wt9" add -A
+git -C "$wt9" -c user.email=t@t -c user.name=t commit -qm "local-only work"
+git -C "$repo9" merge -q --ff-only crew/t9
+git -C "$repo9" merge-base --is-ancestor crew/t9 origin/main 2>/dev/null \
+  && fail "fixture broken: origin/main must NOT contain the head"
+"$BIN/ac-teardown.sh" t9 >/dev/null || fail "local-only landed work needs no --force"
+assert_file "$AC_HOME/state/archive/t9/meta"
+
+# t9d: a LANDED head proves nothing about the tree. Follow-up edits made after
+# the landing live only in the worktree, and the pool return below the gate is
+# --force - so a dirty tree must refuse even when the branch is landed.
+"$BIN/ac-brief.sh" t9d proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9d "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt9d="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9d.meta")"
+git -C "$wt9d" checkout -q -b crew/t9d
+printf 'landed\n' >"$wt9d/landed.txt"
+git -C "$wt9d" add -A
+git -C "$wt9d" -c user.email=t@t -c user.name=t commit -qm "landed work"
+git -C "$repo9" merge -q --ff-only crew/t9d
+printf 'follow-up\n' >"$wt9d/followup.txt"
+out="$("$BIN/ac-teardown.sh" t9d 2>&1)" && fail "teardown must refuse a dirty tree even when the branch is landed"
+assert_contains "$out" "uncommitted changes" "the refusal names the dirty tree"
+assert_file "$wt9d/followup.txt"
+assert_file "$AC_HOME/state/t9d.meta"
+"$BIN/ac-teardown.sh" t9d --force >/dev/null 2>&1 || fail "--force still discards a dirty landed tree"
+
+# The landed proof must test the head the worktree actually HOLDS, not only
+# crew/<id>: pool slots start on a detached HEAD, and the return below the gate
+# is --force, so a commit no branch carries was orphaned in silence.
+"$BIN/ac-brief.sh" t9f proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9f "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+"$BIN/ac-teardown.sh" t9f >/dev/null 2>&1 || fail "a fresh slot with no branch and no commit needs no --force"
+
+"$BIN/ac-brief.sh" t9h proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9h "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt9h="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9h.meta")"
+printf 'detached\n' >"$wt9h/detached.txt"
+git -C "$wt9h" add -A
+git -C "$wt9h" -c user.email=t@t -c user.name=t commit -qm "work on the detached HEAD"
+h9h="$(git -C "$wt9h" rev-parse HEAD)"
+out="$("$BIN/ac-teardown.sh" t9h 2>&1)" && fail "teardown must refuse a detached commit no branch carries"
+assert_contains "$out" "${h9h:0:12}" "the refusal names the orphaned head"
+assert_file "$AC_HOME/state/t9h.meta"
+"$BIN/ac-teardown.sh" t9h --force >/dev/null 2>&1 || fail "--force still discards a detached commit"
+
+"$BIN/ac-brief.sh" t9e proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9e "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt9e="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9e.meta")"
+git -C "$wt9e" checkout -q -b crew/t9e
+printf 't9e landed\n' >"$wt9e/t9e-landed.txt"
+git -C "$wt9e" add -A
+git -C "$wt9e" -c user.email=t@t -c user.name=t commit -qm "landed work"
+git -C "$repo9" merge -q --ff-only crew/t9e
+git -C "$wt9e" checkout -q --detach
+printf 'after the landing\n' >"$wt9e/t9e-after.txt"
+git -C "$wt9e" add -A
+git -C "$wt9e" -c user.email=t@t -c user.name=t commit -qm "work past the landed branch"
+out="$("$BIN/ac-teardown.sh" t9e 2>&1)" && fail "teardown must refuse a commit past the landed crew branch"
+assert_contains "$out" "$(git -C "$wt9e" rev-parse --short=12 HEAD)" "the refusal names the unlanded head"
+# An unreadable ledger withholds only the epic-branch proof: the refusal
+# stands, and a WARN says which proof went missing. Skipped under root, which
+# reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  : >"$AC_HOME/records/backlog.md"
+  chmod 000 "$AC_HOME/records/backlog.md"
+  out="$("$BIN/ac-teardown.sh" t9e 2>&1)" \
+    && { rm -f "$AC_HOME/records/backlog.md"; fail "an unreadable ledger must never let teardown discard work past the landed branch"; }
+  rm -f "$AC_HOME/records/backlog.md"
+  assert_contains "$out" "cannot read the ledger" "the refusal carries the unreadable-ledger WARN"
+
+  # ...and at the branch drop, which never fails the teardown, it costs only
+  # the epic-branch -D: the WARN names it and the landed branch still goes.
+  "$BIN/ac-brief.sh" t9w proj9 --mode local-only >/dev/null
+  "$BIN/ac-spawn.sh" t9w "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+  wt9w="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9w.meta")"
+  git -C "$wt9w" checkout -q -b crew/t9w
+  printf 't9w landed\n' >"$wt9w/t9w.txt"
+  git -C "$wt9w" add -A
+  git -C "$wt9w" -c user.email=t@t -c user.name=t commit -qm "landed work"
+  git -C "$repo9" merge -q --ff-only crew/t9w
+  : >"$AC_HOME/records/backlog.md"
+  chmod 000 "$AC_HOME/records/backlog.md"
+  out="$("$BIN/ac-teardown.sh" t9w 2>&1)" \
+    || { rm -f "$AC_HOME/records/backlog.md"; fail "an unreadable ledger must never fail the teardown of a landed task: $out"; }
+  rm -f "$AC_HOME/records/backlog.md"
+  assert_contains "$out" "cannot read the ledger" "the branch drop names the unreadable ledger"
+  git -C "$repo9" rev-parse --verify --quiet refs/heads/crew/t9w >/dev/null \
+    && fail "a branch -d proves merged is still dropped"
+fi
+"$BIN/ac-teardown.sh" t9e --force >/dev/null 2>&1 || fail "--force still discards work past a landed branch"
+
+# An edit git status hides (assume-unchanged) is uncommitted work all the same.
+"$BIN/ac-brief.sh" t9u proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t9u "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt9u="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t9u.meta")"
+git -C "$wt9u" checkout -q -b crew/t9u
+printf 't9u landed\n' >"$wt9u/t9u.txt"
+git -C "$wt9u" add -A
+git -C "$wt9u" -c user.email=t@t -c user.name=t commit -qm "landed work"
+git -C "$repo9" merge -q --ff-only crew/t9u
+git -C "$wt9u" update-index --assume-unchanged t9u.txt
+printf 'hidden follow-up\n' >>"$wt9u/t9u.txt"
+out="$("$BIN/ac-teardown.sh" t9u 2>&1)" && fail "teardown must refuse an edit hidden behind assume-unchanged"
+assert_contains "$out" "uncommitted changes" "the hidden edit reads as uncommitted work"
+"$BIN/ac-teardown.sh" t9u --force >/dev/null 2>&1 || fail "--force still discards a hidden edit"
+
+# t10: push mode - only ORIGIN contains the head; local main stays behind.
+# The brief IS the mode record now: spawn refuses a flag that contradicts it
+# (delivery-contract-on-the-row), so the brief carries direct-pr from the
+# start and spawn simply agrees.
+"$BIN/ac-brief.sh" t10 proj9 --mode direct-pr >/dev/null
+"$BIN/ac-spawn.sh" t10 "$repo9" --harness fake --mode direct-pr >/dev/null 2>&1
+wt10="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t10.meta")"
+git -C "$wt10" checkout -q -b crew/t10
+printf 'pushed work\n' >"$wt10/pushed.txt"
+git -C "$wt10" add -A
+git -C "$wt10" -c user.email=t@t -c user.name=t commit -qm "push-mode work"
+git -C "$repo9" push -q origin crew/t10:main
+git -C "$repo9" fetch -q origin
+git -C "$repo9" merge-base --is-ancestor crew/t10 main 2>/dev/null \
+  && fail "fixture broken: local main must NOT contain the head"
+# The landed proof and `git branch -d` are DIFFERENT tests, so this same
+# fixture is also where they legitimately disagree: the proof accepts origin
+# containment, while -d checks the project repo's own HEAD - still behind. The
+# delete therefore REFUSES here, and that refusal must be REPORTED: teardown
+# used to print `complete` while the branch survived with nothing said.
+err10="$("$BIN/ac-teardown.sh" t10 2>&1 >"$TMP/t10.out")" \
+  || fail "origin-landed work still needs no --force"
+assert_contains "$(cat "$TMP/t10.out")" "teardown t10 complete" \
+  "a kept branch never stops the run short of the steps after it"
+assert_file "$AC_HOME/state/archive/t10/meta"
+git -C "$repo9" rev-parse --verify --quiet refs/heads/crew/t10 >/dev/null \
+  || fail "fixture broken: -d must refuse origin-only containment, so crew/t10 must survive"
+assert_contains "$err10" "kept crew/t10" "the branch teardown could not drop is named"
+assert_contains "$err10" "merged" "git's own reason for keeping it travels with the warning"
+
+# --- family-scoped id: teardown targets the FAMILY branch, not a raw alias ----
+# id t12-r2 belongs to family t12 (ac_family_of_id strips the -r2 revision
+# suffix); the crew branch actually created (via ac_crew_branch, the SAME
+# derivation ac-brief.sh/ac-merge-local.sh use) is crew/t12, never a hand-made
+# crew/t12-r2 alias. Before the fix, ac-teardown.sh built the raw "crew/$id"
+# name, found no such branch, and never targeted crew/t12 for deletion - so a
+# fully landed family branch survived teardown, orphaned.
+"$BIN/ac-brief.sh" t12-r2 proj9 --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t12-r2 "$repo9" --harness fake --mode local-only >/dev/null 2>&1
+wt12="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t12-r2.meta")"
+git -C "$wt12" checkout -q -b crew/t12
+printf 'family-scoped work\n' >"$wt12/fam.txt"
+git -C "$wt12" add -A
+git -C "$wt12" -c user.email=t@t -c user.name=t commit -qm "family-scoped work"
+git -C "$repo9" merge -q --ff-only crew/t12
+"$BIN/ac-teardown.sh" t12-r2 >/dev/null \
+  || fail "family-scoped id: landed crew/<family> needs no --force"
+git -C "$repo9" rev-parse --verify --quiet refs/heads/crew/t12 >/dev/null 2>&1 \
+  && fail "teardown must drop the landed FAMILY branch crew/t12 for a family-scoped id, not leave it orphaned"
+
+# --- guarded crewdeputy recovery (--recover) -----------------------------------
+# The naive "teardown then spawn" path is blocked exactly when recovery matters:
+# spawn refuses while a meta exists, and crewdeputy teardown refuses while the
+# deputy's home still holds crew in flight.
+
+dhome="$("$BIN/ac-home-seed.sh" dep1 --no-projects 2>/dev/null)"
+mkdir -p "$AC_HOME/data/dep1"
+printf 'charter for dep1\n' >"$AC_HOME/data/dep1/brief.md"
+
+# --recover is a crewdeputy verb only: on a crew spawn it is a mistake, not a no-op.
+assert_fails "$BIN/ac-spawn.sh" t11 "$repo" --harness fake --recover
+
+"$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake >/dev/null 2>&1
+assert_file "$AC_HOME/state/dep1.meta" "the crewdeputy spawned"
+# workspace = home: the deputy pane opens AT its home - ac-home-seed links the
+# executable core there (bin/ CLAUDE.md .claude/ AGENTS.md), so the charter's
+# relative `bin/ac-session-start.sh` resolves from the home itself.
+assert_contains "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" "--cwd $dhome " \
+  "the crewdeputy pane opens with its cwd at the deputy home"
+case "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" in
+  *"--cwd $ROOT "*) fail "the crewdeputy pane must not open at the distro checkout - workspace is the home" ;;
+esac
+# FILE-DELIVERED KICKOFF: the prompt lands on disk and the pane receives only
+# a short pointer - a typed multi-KB prompt measurably lost its head on the
+# orca backend, and a file has no length limit on any backend.
+assert_contains "$(cat "$AC_HOME/data/dep1/kickoff.md")" "IDLE BY DEFAULT" \
+  "the kickoff FILE carries the idle contract, so it travels with the live deputy"
+assert_contains "$(cat "$AC_HOME/data/dep1/kickoff.md")" "ac-deputy.sh report" \
+  "the kickoff FILE carries the return channel, so an answer never lives only in chat"
+assert_contains "$(cat "$(fake_pane_buf dep1)")" "$AC_HOME/data/dep1/kickoff.md" \
+  "the pane receives the short pointer naming the kickoff file"
+# The codegraph prompt-hook kill-switch rides EVERY crew launch line, deputy
+# included - its kickoff is structural too, so it pays the same whole-tree query.
+assert_contains "$(cat "$(fake_pane_buf dep1)")" "CODEGRAPH_NO_PROMPT_HOOK=1" \
+  "the crewdeputy launch line disarms the codegraph prompt hook"
+
+# A LIVE pane is never double-spawned - two chiefs on one home is the failure.
+err="$("$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
+  && fail "--recover must refuse while the window is alive"
+assert_contains "$err" "LIVE" "the refusal names why"
+assert_file "$AC_HOME/state/dep1.meta" "a refused recovery leaves the meta in place"
+
+# Crewdeputy teardown still refuses while the deputy's home holds crew in
+# flight - and recovery must not become a bypass of that refusal.
+printf 'backend=herdr\n' >"$dhome/state/inner.meta"
+assert_fails "$BIN/ac-teardown.sh" dep1
+assert_file "$AC_HOME/state/dep1.meta" "the refused teardown kept the meta"
+
+# The pane died: recovery ARCHIVES the stale meta (the routed-order history
+# stays readable), respawns through the ordinary path, and never touches the
+# deputy's own state.
+archived_with() { grep -rl -- "$1" "$AC_HOME/state/archive/dep1" 2>/dev/null | wc -l | tr -d ' '; }
+kill_pane() { rm -f "$FAKE_HERDR/panes/$(fake_pane dep1)".*; }
+
+"$BIN/ac-send.sh" dep1 'routed order EPOCH1' >/dev/null
+kill_pane
+"$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover >/dev/null 2>&1 \
+  || fail "--recover must respawn once the window is gone"
+assert_eq "$(archived_with 'routed order EPOCH1')" "1" \
+  "what was asked is archived, not deleted"
+assert_file "$AC_HOME/state/dep1.meta" "the recovered deputy has a fresh meta"
+assert_file "$dhome/state/inner.meta" "the deputy's OWN crew is untouched by recovery"
+assert_file "$AC_HOME/state/.pane-dep1" \
+  "the pane handle survives, so the spawn path's own window-collision check can still resolve it"
+
+# A crewdeputy is a LONG-LIVED identity recovered repeatedly, unlike a crewmate
+# id that teardown archives exactly once: a second retirement must get its own
+# slot, never overwrite the first one's routed-order history (acceptance A2).
+"$BIN/ac-send.sh" dep1 'routed order EPOCH2' >/dev/null
+kill_pane
+"$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover >/dev/null 2>&1 \
+  || fail "a second --recover must respawn too"
+assert_eq "$(archived_with 'routed order EPOCH1')" "1" \
+  "the FIRST retirement's routed-order history is STILL readable after a second recovery"
+assert_eq "$(archived_with 'routed order EPOCH2')" "1" "the second retirement is archived too"
+
+# ORPHAN-WINDOW SAFETY on the crewdeputy path (contract: bin/ac-spawn.sh): the
+# launch line strands under set -e, so the spawn dies after its window exists and
+# before the first meta byte - and must take that window with it. The drop
+# pattern targets the LAUNCH line only (AC_HOME= never appears in the kickoff
+# prompt, which spells the same name out in prose).
+dhome2="$("$BIN/ac-home-seed.sh" dep2 --no-projects 2>/dev/null)"
+mkdir -p "$AC_HOME/data/dep2"
+printf 'charter for dep2\n' >"$AC_HOME/data/dep2/brief.md"
+n="$(cat "$FAKE_HERDR/.n")"; dtab="t$((n + 1))"
+printf '9 AC_HOME=\n' >"$FAKE_HERDR/panes/p$((n + 1)).drop-enters"
+: >"$FAKE_HERDR/log"
+assert_fails "$BIN/ac-spawn.sh" dep2 --crewdeputy --harness fake
+assert_no_file "$AC_HOME/state/dep2.meta" "a died crewdeputy spawn leaves no meta"
+assert_contains "$(cat "$FAKE_HERDR/log")" "tab close $dtab" "it reaps the window it created"
+assert_no_file "$AC_HOME/state/.pane-dep2" "no orphan pane handle survives"
+# ...and the retry is not wedged: with the window gone it is an ordinary spawn.
+"$BIN/ac-spawn.sh" dep2 --crewdeputy --harness fake >/dev/null 2>&1 \
+  || fail "the retry after a died crewdeputy spawn must succeed"
+assert_file "$AC_HOME/state/dep2.meta" "the retry wrote its meta"
+rm -rf "$dhome2"
+
+# THE POST-META BOOKKEEPING TAIL, crewdeputy path (contract: bin/ac-spawn.sh,
+# mirrors the roomchief case in ac-room-parallel-cap.test.sh). trap - EXIT
+# fires one line above ac_status_append here, so a failing status write must
+# WARN by name and the spawn still succeed - the deputy already exists and is
+# addressable.
+dhome3="$("$BIN/ac-home-seed.sh" dep3 --no-projects 2>/dev/null)"
+mkdir -p "$AC_HOME/data/dep3"
+printf 'charter for dep3\n' >"$AC_HOME/data/dep3/brief.md"
+mkdir -p "$AC_HOME/state/dep3.status"
+set +e
+out="$("$BIN/ac-spawn.sh" dep3 --crewdeputy --harness fake 2>&1)"
+rc=$?
+set -e
+assert_eq "$rc" "0" "a post-meta bookkeeping failure never fails the crewdeputy spawn"
+assert_file "$AC_HOME/state/dep3.meta" "the deputy meta is present: the spawn HAPPENED and is not retryable"
+assert_contains "$out" "spawned dep3" "the spawn still reports its own outcome"
+assert_contains "$out" "status line could not be appended" "the lost bookkeeping write is named in the warning, never silently dropped"
+rm -rf "$dhome3"
+
+# The --recover ladder's live-pane guard is NOT the meta-race orphan, so it stays
+# a REFUSAL: the ladder deliberately leaves state/.pane-<id> behind so this check
+# can still catch a LIVE deputy its own probe could not answer for (a meta naming
+# an unsupported backend is exactly such a probe), and reaping there would
+# double-spawn onto a living deputy's tab.
+printf 'backend=bogus\nkind=crewdeputy\n' >"$AC_HOME/state/dep1.meta"
+err="$("$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
+  && fail "--recover must refuse a window collision, never reap it"
+assert_contains "$err" "already exists" "the recover collision stays a refusal"
+assert_file "$AC_HOME/state/.pane-dep1" "the refused recovery left the live deputy's window alone"
+
+# ...and an UNREADABLE backend is refused at BOTH window-collision guards, for a
+# DIFFERENT reason that has to be said in different words: rc 2 means nothing was
+# learned about the pane, so proceeding would open a SECOND window onto one that
+# may well be alive (contract: ORPHAN-WINDOW SAFETY in bin/ac-spawn.sh, WINDOW
+# LIVENESS in bin/ac-backend.sh). `.pane-api-down` is the partial outage that
+# makes this bite: the liveness probe is blind while `tab create` still works, so
+# an unguarded spawn really does create the second window.
+touch "$FAKE_HERDR/.pane-api-down"
+: >"$FAKE_HERDR/log"
+err="$("$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
+  && fail "--recover must refuse a backend it cannot READ, never spawn onto a possibly-live deputy"
+rm -f "$FAKE_HERDR/.pane-api-down"
+assert_contains "$err" "could not be READ" "the refusal blames the BACKEND, not the pane"
+case "$err" in *"already exists"*) fail "an unreadable backend is not a window-already-exists verdict" ;; esac
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second deputy window was created"
+assert_file "$AC_HOME/state/.pane-dep1" "the blind recovery left the deputy's window alone"
+
+# ...and exit 127 (a driver failed to LOAD) refuses the SAME way, never
+# treated as the legitimate GONE path that would let recovery reap and
+# re-spawn onto a possibly-live deputy (contract: ac-backend.sh WINDOW
+# LIVENESS; ac_backend_route's per-call dispatch means a driver function that
+# failed to load makes bash itself return 127 from the very call being
+# classified - the real production shape, not a hand-picked sentinel). A
+# `case` with no default lets 127 fall straight through to backend_window_new
+# - fail-OPEN, the same hazard the rc=2 guard above exists for.
+make_loadfail_bin
+: >"$FAKE_HERDR/log"
+err="$("$LOADFAIL_BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
+  && fail "THE REGRESSION: --recover must refuse a 127 driver-load failure, never reap and re-spawn onto a possibly-live deputy"
+assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second deputy window was created"
+assert_file "$AC_HOME/state/.pane-dep1" "the refused recovery left the live deputy's window alone"
+
+# The crew path's own guard, same defect: reaching it PROVES no meta exists (the
+# duplicate-meta refusal above dies on one), so the orphan handle a SIGKILLed
+# spawn leaves behind is exactly what it must still resolve - and a blind backend
+# is no licence to open a second window beside it.
+"$BIN/ac-brief.sh" bw1 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+rm -f "$AC_HOME/state/bw1.meta"   # the SIGKILL-mid-spawn orphan: handle, no meta
+
+# rc=0 (the orphan window is genuinely ALIVE): the case's 0) branch is
+# untouched by the 127 fix, and must keep refusing exactly as it does today.
+: >"$FAKE_HERDR/log"
+err="$("$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
+  && fail "a crew spawn must refuse a genuinely alive orphan window"
+assert_contains "$err" "already exists" "a genuinely alive orphan window still refuses as before"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
+
+touch "$FAKE_HERDR/.pane-api-down"
+: >"$FAKE_HERDR/log"
+err="$("$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
+  && fail "a crew spawn must refuse a backend it cannot READ, never open a second window"
+rm -f "$FAKE_HERDR/.pane-api-down"
+assert_contains "$err" "could not be READ" "the crew refusal blames the BACKEND, not the pane"
+case "$err" in *"already exists"*) fail "an unreadable backend is not a window-already-exists verdict" ;; esac
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
+assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
+
+# ...and exit 127 refuses the SAME way at the ordinary spawn path too - the
+# exact production shape a missing default branch let fall through to
+# backend_window_new.
+: >"$FAKE_HERDR/log"
+err="$("$LOADFAIL_BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
+  && fail "THE REGRESSION: a crew spawn must refuse a 127 driver-load failure, never open a second window"
+assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
+case "$err" in *"already exists"*) fail "a 127 driver failure is not a window-already-exists verdict" ;; esac
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
+assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
+
+# reap_orphan_window (bin/ac-spawn.sh, called from the crewdeputy NON-recover
+# path): the SAME fail-OPEN as the ordinary crew/recover guards above, but a
+# DIFFERENT shape - it never captures alive_rc at all (`backend_window_alive
+# "$id" || return 0`), so EVERY non-zero code, 2 and 127 alike, reads as
+# "nothing to reap" and the caller proceeds straight to backend_window_new.
+# A fresh id (dep5) keeps this scenario isolated from dep1's recover-ladder
+# state above.
+dhome5="$("$BIN/ac-home-seed.sh" dep5 --no-projects 2>/dev/null)"
+mkdir -p "$AC_HOME/data/dep5"
+printf 'charter for dep5\n' >"$AC_HOME/data/dep5/brief.md"
+
+# rc=0 (a genuinely alive orphan): reap_orphan_window must still reap it and
+# let the spawn proceed - A4's no-regression floor for the 0) branch.
+printf 'pOR5 tOR5\n' >"$AC_HOME/state/.pane-dep5"
+printf 'pOR5 crew:dep5\n' >"$FAKE_HERDR/tabs/tOR5"; : >"$FAKE_HERDR/panes/pOR5.buf"
+: >"$FAKE_HERDR/log"
+"$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake >/dev/null 2>&1 \
+  || fail "a genuinely alive orphan (rc=0) must still be reaped so the spawn can proceed"
+assert_contains "$(cat "$FAKE_HERDR/log")" "tab close tOR5" "reap_orphan_window still kills a genuine orphan on rc=0"
+assert_file "$AC_HOME/state/dep5.meta" "the spawn proceeded to open its window after reaping"
+rm -f "$AC_HOME/state/dep5.meta"
+
+# rc=1 (a genuinely gone orphan, nothing to reap): the spawn must still
+# proceed quietly - A4's no-regression floor for the 1) branch. A handle with
+# no matching tab/pane is the fake herdr's "genuinely gone" shape.
+printf 'pOR5B tOR5B\n' >"$AC_HOME/state/.pane-dep5"
+: >"$FAKE_HERDR/log"
+"$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake >/dev/null 2>&1 \
+  || fail "a genuinely gone orphan (rc=1) must still let the spawn proceed"
+assert_eq "$(grep -c 'tab close' "$FAKE_HERDR/log" || true)" "0" "nothing to reap on a genuine rc=1 - no kill attempted"
+assert_file "$AC_HOME/state/dep5.meta" "the spawn proceeded normally on rc=1"
+rm -f "$AC_HOME/state/dep5.meta"
+
+# rc=2 (an unreadable backend): THE REGRESSION this row closes. Must NOT
+# proceed to backend_window_new - opening a second window beside a pane that
+# may still be alive (contract: ac-backend.sh WINDOW LIVENESS; AGENTS.md
+# section 7 - unobservable is "NOT a death and no work is lost"). Unlike the
+# isolated 127 fixture below, .pane-api-down ALSO blocks the downstream
+# kickoff-readiness pane reads, so the overall exit code/message are not this
+# guard's alone (measured: the pre-fix tree still exits nonzero here, just for
+# an unrelated "input surface did not become ready" reason) - the tab-create
+# COUNT is the unambiguous, single-purpose proof A1 asks for, checked first.
+printf 'pOR5C tOR5C\n' >"$AC_HOME/state/.pane-dep5"
+printf 'pOR5C crew:dep5\n' >"$FAKE_HERDR/tabs/tOR5C"; : >"$FAKE_HERDR/panes/pOR5C.buf"
+touch "$FAKE_HERDR/.pane-api-down"
+: >"$FAKE_HERDR/log"
+err="$("$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake 2>&1)" || true
+rm -f "$FAKE_HERDR/.pane-api-down"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
+  "THE REGRESSION: reap_orphan_window must refuse an unreadable backend (rc=2), never open a second window"
+assert_contains "$err" "could not be READ" "the rc=2 refusal blames the BACKEND, not the pane"
+assert_no_file "$AC_HOME/state/dep5.meta" "the refused spawn leaves no task in flight"
+
+# ...and exit 127 (a driver failed to LOAD) refuses the SAME way - the real
+# production shape of a driver file that failed to load (ac_backend_route
+# dispatches per call to backend_${fn}_herdr, so a missing driver function
+# makes bash itself return 127 from the call being classified).
+make_loadfail_bin
+: >"$FAKE_HERDR/log"
+err="$("$LOADFAIL_BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake 2>&1)" \
+  && fail "THE REGRESSION: reap_orphan_window must refuse a 127 driver-load failure, never open a second window"
+assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "A1: no second window created on rc=127"
+assert_no_file "$AC_HOME/state/dep5.meta" "the refused spawn leaves no task in flight"
+rm -rf "$dhome5"
+
+# Ladder step 2: the home is gone on disk. Repairing or removing a registry
+# line is a captain decision, so recovery refuses rather than spawning a deputy
+# into a home that no longer exists.
+rm -f "$AC_HOME/state/dep1.meta"
+rm -rf "$dhome"
+assert_fails "$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover
+
+# Ladder step 1: no parseable registry entry - there is nothing to recover.
+printf '# Crewdeputies\n\n' >"$AC_HOME/records/crewdeputies.md"
+assert_fails "$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover
+
+# --- gone-window teardown: the durable index survives a death at the pane-kill -
+# Three recorded incidents ended ac-teardown.sh AT the pane-kill step (exit 144,
+# no output). While the state archive ran LAST, such a death stranded
+# state/<id>.meta and .status behind a torn-down task: the fleet survey kept
+# listing a phantom crewmate and the monitor raised crew-signal-stale. The
+# archive is now the FIRST durable act of the teardown proper, so the fleet
+# index is already correct when the kill step ends the run.
+"$BIN/ac-brief.sh" t12 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t12 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt12="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t12.meta")"
+# The recorded scenario: the crewmate's pane is ALREADY gone, teardown still
+# runs its kill step, and that step kills the run. The tab stays (still
+# labelled crew:t12) so the kill gets its ownership proof and reaches the
+# close - ac-backend.sh KILL OWNERSHIP PROOF; an unprovable tab is refused,
+# and a refusal is exactly the path that CANNOT kill the run.
+rm -f "$FAKE_HERDR/panes/$(fake_pane t12)".*
+: >"$FAKE_HERDR/.kill-caller-on-tab-close"
+# The inner shell (not exec-optimized, hence the trailing exit) owns the
+# killed child, so bash's "Killed: 9" job report stays out of the suite output.
+rc=0
+bash -c '"$0" t12 >/dev/null 2>&1; exit $?' "$BIN/ac-teardown.sh" 2>/dev/null || rc=$?
+rm -f "$FAKE_HERDR/.kill-caller-on-tab-close"
+if [ "$rc" = 0 ]; then fail "fixture broken: the pane-kill step must end the run"; fi
+# The exit code is NOT the assertion (the run was killed mid-flight and cannot
+# report 0); the durable end-state is.
+assert_no_file "$AC_HOME/state/t12.meta" "no phantom crewmate after a killed teardown"
+assert_file "$AC_HOME/state/archive/t12/meta" "meta archived before the pane-kill"
+assert_file "$AC_HOME/state/archive/t12/status" "status archived with it (one unit)"
+# What such a death DOES leave: the pool lease, reclaimable with the pool's own
+# verb (the header's recoverability claim).
+grep -q "leased.*t12" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
+  || fail "the killed run should leave its lease behind, reclaimable by ac-tree.sh"
+"$BIN/ac-tree.sh" return "$wt12" --force >/dev/null 2>&1
+
+# --- pane close FAILED on a tab that IS ours: the record says so --------------
+# A label-mismatch refusal deliberately returns 0 (a stale handle must never
+# fail a teardown), but a close that FAILS on a PROVEN-owned tab and leaves it
+# open is a live pane with no live record - the archive above already moved
+# the meta and status. The driver returns non-zero there; teardown keeps going
+# (lease and branch are already handled, refusing would strand more), warns
+# naming the handle and the exact close command, and writes the same line into
+# the ARCHIVED status log - never a re-minted live one.
+"$BIN/ac-brief.sh" t12b proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t12b "$repo" --harness fake --mode local-only >/dev/null 2>&1
+tab12b="$(awk '{print $2}' "$AC_HOME/state/.pane-t12b")"
+[ -n "$tab12b" ] || fail "fixture: the spawn must record a tab handle"
+: >"$FAKE_HERDR/.tab-close-fails"
+err12b="$("$BIN/ac-teardown.sh" t12b --force 2>&1 >/dev/null)" \
+  || fail "a failed pane close must not fail the teardown: $err12b"
+rm -f "$FAKE_HERDR/.tab-close-fails"
+assert_file "$FAKE_HERDR/tabs/$tab12b" "fixture: the tab really stayed open"
+assert_contains "$err12b" "pane close FAILED for t12b" "teardown warns loudly"
+assert_contains "$err12b" "herdr tab close $tab12b" "the warn names the handle and the exact close command"
+assert_contains "$(cat "$AC_HOME/state/archive/t12b/status")" "warn: pane close failed" \
+  "the ARCHIVED status log carries the failure"
+assert_contains "$(cat "$AC_HOME/state/archive/t12b/status")" "$tab12b" "the archived line names the handle"
+assert_no_file "$AC_HOME/state/t12b.status" "no live status re-minted behind the archive"
+assert_no_file "$AC_HOME/state/t12b.meta" "the archive stands (teardown was not refused)"
+assert_no_file "$AC_HOME/state/.pane-t12b" "the handle is swept either way"
+grep -q "leased.*t12b" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
+  && fail "the lease must still be returned after a failed pane close"
+rm -f "$FAKE_HERDR/tabs/$tab12b"
+
+# --- end-of-task pane-agent sweep ---------------------------------------------
+# The pane agents a task starts (the ship reviewer, the qa agent, the ship/qa
+# watch panes) and the qa serve process are retired only by ac-ship.sh /
+# ac-qa.sh finish - which a crewmate killed at the pane-kill step never reaches,
+# so they outlived teardown (captain-caught twice). Teardown owns that sweep,
+# and it must run BEFORE the lease goes back: ac-tree.sh return rm -rf's
+# .crew/qa, so a sweep placed after it could never see the qa records at all.
+"$BIN/ac-brief.sh" t13 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t13 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt13="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t13.meta")"
+assert_eq "$(awk -F= '$1=="leases"{print $2}' "$AC_HOME/state/t13.meta")" "$wt13" \
+  "spawn records every lease it took as leases="
+# lease_ids= runs alongside leases=, so teardown can bind each return to the
+# acquisition that took the slot instead of to its (reusable) path.
+assert_eq "$(awk -F= '$1=="lease_ids"{print $2}' "$AC_HOME/state/t13.meta")" \
+  "$(sed -n 's/^lease_id=//p' "$repo/.crew/slots/$(basename "$wt13").meta")" \
+  "spawn records the slot's acquisition identity as lease_ids="
+
+mkdir -p "$wt13/.crew/qa/qrun" "$wt13/.crew/qa/other" "$wt13/.crew/qa/nameless" \
+         "$wt13/.crew/ship/srun"
+printf 'pQA\n' >"$wt13/.crew/qa/agent-t13.pane"             # keyed by task
+printf 'task=t13\n' >"$wt13/.crew/qa/qrun/run.meta"
+printf 'pQW\n' >"$wt13/.crew/qa/qrun/watch.pane"
+printf 'task=t99\n' >"$wt13/.crew/qa/other/run.meta"        # a CO-TENANT's run
+printf 'pOTHER\n' >"$wt13/.crew/qa/other/watch.pane"
+printf 'target=main\n' >"$wt13/.crew/qa/nameless/run.meta"  # attributable to NO ONE
+printf 'pNAMELESS\n' >"$wt13/.crew/qa/nameless/watch.pane"
+printf 'branch=crew/t13\n' >"$wt13/.crew/ship/srun/run.meta"
+printf 'pREV\n' >"$wt13/.crew/ship/srun/review.pane"
+printf 'pSW\n' >"$wt13/.crew/ship/srun/watch.pane"
+# Execution-triggered verifiers live in fleet state, not in the caller's
+# worktree. Teardown attributes modern records by caller=, archives them, and
+# preserves an explicit artifact before cleaning incomplete QA.
+# An epic story's family is not its task id; its verifier slot is keyed by caller.
+vreview=t13-verify-codereview
+cat >"$AC_HOME/state/$vreview.meta" <<EOF
+kind=verify-codereview
+family=t13-epic
+caller=t13
+worktree=
+leases=
+EOF
+printf 'pVC tVC\n' >"$AC_HOME/state/.pane-$vreview"
+vqa=t13-verify-qa
+vqa_evidence="$AC_HOME/data/t13/verification/qa-evidence"
+mkdir -p "$vqa_evidence"
+printf 'partial verdict\n' >"$vqa_evidence/verdict.json"
+cat >"$AC_HOME/state/$vqa.meta" <<EOF
+kind=verify-qa
+family=t13
+caller=t13
+worktree=
+leases=
+evidence=$vqa_evidence
+EOF
+printf 'pVQ tVQ\n' >"$AC_HOME/state/.pane-$vqa"
+# Same family but another explicit caller is a co-tenant and must survive.
+cat >"$AC_HOME/state/other-verify-codereview.meta" <<'EOF'
+kind=verify-codereview
+family=t13
+caller=other
+worktree=
+leases=
+EOF
+printf 'pOTHERVERIFY tOV\n' >"$AC_HOME/state/.pane-other-verify-codereview"
+mkdir -p "$AC_HOME/state/.verify-t13-codereview.lock.d" "$AC_HOME/state/.verify-other-codereview.lock.d"
+# A pane the close does NOT take on: it still resolves afterwards (the fake
+# keeps a pane with a .buf alive), which is what reap-pane's `closed` reports.
+mkdir -p "$wt13/.crew/qa/qstuck"
+printf 'task=t13\n' >"$wt13/.crew/qa/qstuck/run.meta"
+printf 'pSTUCK\n' >"$wt13/.crew/qa/qstuck/watch.pane"
+: >"$FAKE_HERDR/panes/pSTUCK.buf"
+# A live serve process group: started from a subshell that exits at once, so the
+# sleep is reparented and never a zombie child of this suite (kill -0 would
+# report a zombie as alive and make the assertion below unfalsifiable).
+( sleep 30 & printf '%s' "$!" >"$wt13/.crew/qa/qrun/serve.pid" )
+spid="$(cat "$wt13/.crew/qa/qrun/serve.pid")"
+kill -0 "$spid" 2>/dev/null || fail "fixture broken: the serve pid must start alive"
+
+: >"$FAKE_HERDR/log"
+out="$("$BIN/ac-teardown.sh" t13 --force 2>&1)" || fail "the sweep must never fail teardown"
+log="$(cat "$FAKE_HERDR/log")"
+for p in pQA pQW pREV pSW pVC pVQ; do
+  assert_contains "$log" "pane close $p" "teardown reaped $p"
+done
+case "$log" in *"pane close pOTHERVERIFY"*) fail "another caller's verifier must never be reaped" ;; esac
+assert_file "$AC_HOME/state/archive/$vreview/meta" "caller-linked codereview meta is archived"
+assert_file "$AC_HOME/state/archive/$vqa/meta" "caller-linked QA meta is archived"
+assert_file "$vqa_evidence/incomplete-run.md" "incomplete QA is preserved before explicit teardown"
+assert_file "$AC_HOME/state/other-verify-codereview.meta" "co-tenant verifier meta survives"
+assert_no_file "$AC_HOME/state/.verify-t13-codereview.lock.d" "the caller's leftover verifier slot is cleared"
+[ -d "$AC_HOME/state/.verify-other-codereview.lock.d" ] || fail "a co-tenant caller's verifier slot survives"
+case "$log" in *"pane close pOTHER"*) fail "a run attributed to ANOTHER task must never be reaped" ;; esac
+case "$log" in *"pane close pNAMELESS"*) fail "an unattributable run must never be reaped" ;; esac
+assert_contains "$out" "pNAMELESS" "an unattributable pane is warned by id"
+assert_contains "$out" "$wt13/.crew/qa/nameless/watch.pane" "an unattributable pane is warned by path"
+# A reap ATTEMPTED but not taken is surfaced too. reap-pane always exits 0 by
+# contract, so the sweep could previously not tell a retired pane from one it
+# left running - the silence that let pane agents orphan unnoticed.
+assert_contains "$out" "pSTUCK" "a pane the reap did not close is warned by id"
+case "$out" in *"pQA"*) fail "a pane that DID close must not be warned about" ;; esac
+i=0
+while [ "$i" -lt 25 ] && kill -0 "$spid" 2>/dev/null; do sleep 0.2; i=$((i + 1)); done
+kill -0 "$spid" 2>/dev/null && fail "teardown must kill a live qa serve process group"
+# Herestring, never `list | grep -q`: -q exits on the first match, ac-tree.sh
+# dies of SIGPIPE, and under pipefail the pipeline then reports 141 - so the
+# `&& fail` could never fire and the assertion would be unfalsifiable.
+grep -q "leased.*t13" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
+  && fail "the sweep must not cost the task its lease return"
+
+# --- the evidence preflight runs INSIDE the gate ------------------------------
+# The preflight is DURABLE: it mints verification/<vid>-incomplete-*/ carrying
+# an incomplete-run.md that states the verifier "was explicitly torn down".
+# Running it before the landed proof recorded exactly that on the path the gate
+# exists to REFUSE - about a verifier that keeps running - and its own ac_die
+# sites could end teardown with a preservation error instead of the refusal the
+# captain must see. The gate's promise is that a refusal writes nothing durable.
+"$BIN/ac-brief.sh" t23 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t23 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt23="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t23.meta")"
+git -C "$wt23" checkout -q -b crew/t23
+printf 'unlanded\n' >"$wt23/t23.txt"
+git -C "$wt23" add -A
+git -C "$wt23" -c user.email=t@t -c user.name=t commit -qm "unlanded work"
+# A QA verifier mid-run: no verdict, no relay report, no run-state - exactly
+# what the preflight preserves, and with no evidence= it MINTS the artifact dir.
+cat >"$AC_HOME/state/t23-verify-qa.meta" <<EOF
+kind=verify-qa
+family=t23
+caller=t23
+worktree=
+leases=
+EOF
+out="$("$BIN/ac-teardown.sh" t23 2>&1)" && fail "teardown must refuse an unlanded crew branch"
+assert_contains "$out" "refusing teardown of t23" \
+  "the refusal is the landed-proof one, not a preservation error"
+assert_no_file "$AC_HOME/data/t23/verification" "a refused teardown writes NOTHING durable"
+assert_file "$AC_HOME/state/t23-verify-qa.meta" "a refused teardown leaves the live verifier alone"
+# The let-through direction: past the gate the preflight still runs, before the
+# task meta is archived (header: VERIFIER SWEEP).
+git -C "$repo" merge -q --ff-only crew/t23
+"$BIN/ac-teardown.sh" t23 >/dev/null 2>&1 || fail "a landed task must tear down"
+assert_file "$AC_HOME/state/archive/t23/meta"
+ev23="$(printf '%s\n' "$AC_HOME/data/t23/verification/t23-verify-qa-incomplete-"*/incomplete-run.md | head -n1)"
+assert_file "$ev23" "past the gate the incomplete QA artifact is still preserved"
+
+# Direct verifier recovery is its own lifecycle: it never enters ship landed
+# proof or looks for a crew/<verify-id> branch.
+cat >"$AC_HOME/state/direct-verify-codereview.meta" <<EOF
+kind=verify-codereview
+family=direct
+caller=direct
+backend=herdr
+project_dir=$repo
+worktree=
+leases=
+EOF
+printf 'pDIRECTVERIFY tDV\n' >"$AC_HOME/state/.pane-direct-verify-codereview"
+# The watcher polls and stamps EVERY meta including verify-* ones (excluded
+# from accounting, never from supervision), so a verifier accumulates the same
+# per-id litter a crewmate does. Before the fix, the verifier branch's early
+# exit skipped removing it entirely - the live evidence: 11 orphan .change-*
+# stamps, every one a verify-codereview id.
+for stamp in hash change seen seen-hash stale gone ask unobservable report-hash superseded; do
+  : >"$AC_HOME/state/.$stamp-direct-verify-codereview"
+done
+"$BIN/ac-teardown.sh" direct-verify-codereview >/dev/null
+assert_file "$AC_HOME/state/archive/direct-verify-codereview/meta" \
+  "direct verifier teardown skips ship landed proof"
+for stamp in hash change seen seen-hash stale gone ask unobservable report-hash superseded; do
+  assert_no_file "$AC_HOME/state/.$stamp-direct-verify-codereview" \
+    "verifier teardown sweeps the watcher's .$stamp-<id> stamp too"
+done
+
+# Story 3: a dual-ref QA verifier record carries TWO leases (source:e2e). The
+# failure/timeout cleanup for the SECOND (E2E) worktree runs through teardown,
+# not only ac-verify's own success path, so teardown must return BOTH - the
+# source lease from its repo AND the E2E lease from the separate E2E repo.
+dual_src="$("$BIN/ac-tree.sh" get --repo "$repo" --id dualsrc --holder verify | tail -n1)"
+dual_e2e_repo="$(make_repo dual-e2e)"
+dual_e2e="$("$BIN/ac-tree.sh" get --repo "$dual_e2e_repo" --id duale2e --holder verify | tail -n1)"
+mkdir -p "$AC_HOME/data/dualqa/verification/ev"
+cat >"$AC_HOME/state/dualqa-verify-qa.meta" <<EOF
+kind=verify-qa
+family=dualqa
+caller=dualqa
+backend=herdr
+project_dir=$repo
+worktree=$dual_src
+leases=$dual_src:$dual_e2e
+evidence=$AC_HOME/data/dualqa/verification/ev
+EOF
+printf 'pDUALQA tDQA\n' >"$AC_HOME/state/.pane-dualqa-verify-qa"
+"$BIN/ac-teardown.sh" dualqa-verify-qa >/dev/null 2>&1 \
+  || fail "a dual-ref verifier teardown must not fail"
+assert_file "$AC_HOME/state/archive/dualqa-verify-qa/meta" "the dual-ref verifier meta is archived"
+grep -q "leased.*dualsrc" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
+  && fail "teardown must return the SOURCE lease of a dual-ref verifier"
+grep -q "leased.*duale2e" <<<"$("$BIN/ac-tree.sh" list --repo "$dual_e2e_repo")" \
+  && fail "teardown must return the E2E lease of a dual-ref verifier"
+
+# Story 4: an ORDINARY crew/local-only task (kind=ship) with a SECOND lease
+# goes through teardown's CREW return loop (:627) - a separate code path from
+# Story 3's verifier loop (:467). Before ac-tree.sh get appended a second
+# lease into a live crew meta, a spawn's single lease meant leases= could
+# never carry more than one entry here, so this loop never actually ran on a
+# multi-entry list. Take the second lease the same way a crewmate would: a
+# bare `ac-tree.sh get --id <id>` call, the real append path under test.
+"$BIN/ac-brief.sh" t25 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t25 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt25a="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t25.meta")"
+wt25b="$("$BIN/ac-tree.sh" get --repo "$repo" --id t25 --holder crew:t25 | tail -n1)"
+assert_eq "$(awk -F= '$1=="leases"{print $2}' "$AC_HOME/state/t25.meta")" "$wt25a:$wt25b" \
+  "the second lease is folded into the crew meta before teardown ever runs"
+"$BIN/ac-teardown.sh" t25 --force >/dev/null 2>&1 || fail "a dual-lease crew task must tear down"
+out25="$("$BIN/ac-tree.sh" list --repo "$repo")"
+grep -q "leased.*t25" <<<"$out25" \
+  && fail "teardown must return BOTH leases of a dual-lease crew task, not only the primary one"
+
+# Back-compat: a meta written before leases= existed carries only worktree=, and
+# teardown must still return that one tree (no migration script).
+"$BIN/ac-brief.sh" t14 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t14 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+grep -v '^leases=' "$AC_HOME/state/t14.meta" >"$TMP/t14.meta"
+mv "$TMP/t14.meta" "$AC_HOME/state/t14.meta"
+"$BIN/ac-teardown.sh" t14 --force >/dev/null 2>&1
+grep -q "leased.*t14" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
+  && fail "a pre-leases meta must still get its worktree back"
+
+# --- vanished lease dir: the lease record and the disk have DIVERGED -----------
+# Same defect class as the branch -d silence above (@4e80718), one statement
+# earlier in this same loop: something removed a leased worktree out from
+# under the pool, and the old predicate (`[ -n "$lease" ] && [ -d "$lease" ] ||
+# continue`) swallowed it with no warning at all - the sweep, the return,
+# everything the loop iteration owed for that lease simply never ran.
+"$BIN/ac-brief.sh" t16 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t16 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt16="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t16.meta")"
+rm -rf "$wt16"
+err16="$("$BIN/ac-teardown.sh" t16 2>&1 >"$TMP/t16.out")" \
+  || fail "a vanished lease dir must not stop teardown short of completion"
+assert_contains "$(cat "$TMP/t16.out")" "teardown t16 complete" \
+  "a vanished lease never stops the run short of the steps after it"
+assert_contains "$err16" "WARN:" "the vanished lease is reported on the warning channel"
+assert_contains "$err16" "$wt16" "the warning names the vanished lease path"
+assert_file "$AC_HOME/state/archive/t16/meta"
+
+# An EMPTY lease entry is a DIFFERENT, ORDINARY state - a meta whose leases=
+# carries no path at all - and must stay silent; the same predicate has to
+# tell the two apart. Hand-written like the dem-chief/dem-spec metas above:
+# kind=ship with no leases= and no worktree= reaches this loop with lease=""
+# (`printf '%s\n' "" | tr ':' '\n'` yields one empty line). Normal spawn never
+# produces this shape - ac-spawn.sh/ac-self-task.sh always set leases= equal
+# to worktree=, itself always non-empty on a successful spawn - but the
+# back-compat fallback (`[ -n "$leases" ] || leases="$worktree"`) still has to
+# handle it correctly rather than warn spuriously on every ordinary teardown.
+printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nworktree=\nleases=\n' "$repo" \
+  >"$AC_HOME/state/t17.meta"
+out17="$("$BIN/ac-teardown.sh" t17 2>&1)" || fail "an empty lease must not fail teardown"
+assert_contains "$out17" "teardown t17 complete" "an empty lease still reaches completion"
+# The assertion is scoped to LEASE warnings, not to "no WARN at all". Teardown
+# legitimately warns about OTHER subsystems in the same output - on a host where
+# the docker BINARY exists but the daemon is unusable, the qa-infra sweep warns
+# after its 30s bound - and an unscoped match failed on that, reporting a lease
+# defect that was never there (this case was red on main for exactly that
+# reason; DEBUG showed out17 held only the qa-infra warning). The two warnings
+# this loop can actually emit are "skipping vanished lease" and "could not
+# return worktree", so match those.
+case "$out17" in *"WARN: skipping vanished lease"*|*"WARN: could not return worktree"*) fail "an empty lease entry must stay silent, no spurious lease WARN" ;; esac
+
+# --- kept-branch warning: the reclaim command is CASE-CORRECT, not borrowed ----
+# @4e80718 made the git-branch -d refusal speak, but it only carries a reclaim
+# command because git's own hint happens to say `git branch -D <branch>` -
+# absent under advice.forceDeleteBranch=false (CASE B) and WRONG when the
+# branch is checked out in a worktree (CASE C, where -D refuses IDENTICALLY -
+# verified empirically on git 2.55.0: same "used by worktree" message, exit 1).
+"$BIN/ac-brief.sh" t18 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t18 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt18="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t18.meta")"
+git -C "$wt18" checkout -q -b crew/t18
+printf 'unmerged work\n' >"$wt18/t18.txt"
+git -C "$wt18" add -A
+git -C "$wt18" -c user.email=t@t -c user.name=t commit -qm "unmerged work"
+git -C "$repo" config advice.forceDeleteBranch false
+err18="$("$BIN/ac-teardown.sh" t18 --force 2>&1 >"$TMP/t18.out")" \
+  || fail "a kept branch must not stop teardown short of completion"
+git -C "$repo" config --unset advice.forceDeleteBranch
+assert_contains "$(cat "$TMP/t18.out")" "teardown t18 complete" \
+  "a kept branch never stops the run short of the steps after it"
+assert_contains "$err18" "kept crew/t18" "the branch teardown could not drop is named"
+assert_contains "$err18" "not fully merged" "git's own reason for keeping it travels with the warning"
+case "$err18" in *hint:*) fail "CASE B: git emits no hint under advice.forceDeleteBranch=false, so any hint text here is not git's own" ;; esac
+assert_contains "$err18" "git branch -D crew/t18" \
+  "CASE B: git's hint is absent, so the warning must supply its own reclaim command"
+
+"$BIN/ac-brief.sh" t19 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t19 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+stray19="$TMP/stray-t19"
+git -C "$repo" worktree add -q -b crew/t19 "$stray19"
+printf 'stray work\n' >"$stray19/t19.txt"
+git -C "$stray19" add -A
+git -C "$stray19" -c user.email=t@t -c user.name=t commit -qm "stray work"
+err19="$("$BIN/ac-teardown.sh" t19 --force 2>&1 >"$TMP/t19.out")" \
+  || fail "a worktree-held branch must not stop teardown short of completion"
+assert_contains "$(cat "$TMP/t19.out")" "teardown t19 complete" \
+  "a worktree-held branch never stops the run short of the steps after it"
+assert_contains "$err19" "kept crew/t19" "the branch teardown could not drop is named"
+assert_contains "$err19" "used by worktree" "git's own reason for keeping it travels with the warning"
+case "$err19" in
+  *"reclaim: git branch -D crew/t19"*)
+    fail "CASE C: a bare -D suggestion (the CASE A/B wording, unqualified) refuses IDENTICALLY when a worktree holds the branch - it must be sent into freeing the worktree first, not straight into a second refusal" ;;
+esac
+case "$err19" in *worktree*"git branch -D crew/t19"*) ;; *) fail "CASE C: the reclaim instruction must still lead to -D, but only after dealing with the worktree" ;; esac
+git -C "$repo" worktree remove --force "$stray19" >/dev/null 2>&1 || true
+git -C "$repo" branch -D crew/t19 >/dev/null 2>&1 || true
+
+# --- the same silence one loop away: a verifier's own vanished lease ----------
+# bin/ac-teardown.sh:471 (archive_and_reap_verifier) carries the IDENTICAL
+# predicate @9b39f00 fixed one statement above it in the sibling loop - a
+# verifier lease whose directory has vanished was skipped in total silence.
+# Torn down directly (the dualqa idiom above): a verifier meta IS the id.
+vlease20="$TMP/vanished-verifier-lease-t20"
+rm -rf "$vlease20"
+printf 'kind=verify-codereview\nbackend=herdr\nfamily=t20\ncaller=t20-verify\nproject_dir=%s\nleases=%s\n' \
+  "$repo" "$vlease20" >"$AC_HOME/state/t20-verify.meta"
+err20="$("$BIN/ac-teardown.sh" t20-verify 2>&1 >"$TMP/t20.out")" \
+  || fail "a vanished verifier lease dir must not stop teardown short of completion"
+assert_contains "$(cat "$TMP/t20.out")" "teardown t20-verify complete (verifier)" \
+  "a vanished verifier lease never stops the run short of the steps after it"
+assert_contains "$err20" "WARN:" "the vanished verifier lease is reported on the warning channel"
+assert_contains "$err20" "$vlease20" "the warning names the vanished verifier lease path"
+assert_file "$AC_HOME/state/archive/t20-verify/meta"
+
+# An EMPTY verifier lease is the normal back-compat case (no lease held at
+# all) and must stay silent - the same distinction @9b39f00 drew for its twin.
+printf 'kind=verify-codereview\nbackend=herdr\nfamily=t21\ncaller=t21-verify\nproject_dir=%s\nleases=\n' \
+  "$repo" >"$AC_HOME/state/t21-verify.meta"
+out21="$("$BIN/ac-teardown.sh" t21-verify 2>&1)" || fail "an empty verifier lease must not fail teardown"
+assert_contains "$out21" "teardown t21-verify complete (verifier)" "an empty verifier lease still reaches completion"
+case "$out21" in *"WARN: skipping vanished lease"*|*"WARN: could not return worktree"*) fail "an empty verifier lease entry must stay silent, no spurious lease WARN" ;; esac
+
+# --- orphan-window safety on the crew path -------------------------------------
+# The crew trap gave the lease back and removed the half-written meta, but left
+# its TAB behind - an un-addressable orphan, since every consumer keys off
+# state/<id>.meta (contract: ORPHAN-WINDOW SAFETY in bin/ac-spawn.sh). The launch
+# line strands the way a real one does; the drop pattern targets it only
+# (AC_FLEET_STATE never appears in the kickoff prompt).
+"$BIN/ac-brief.sh" t15 proj --mode local-only >/dev/null
+n="$(cat "$FAKE_HERDR/.n")"; otab="t$((n + 1))"
+printf '9 AC_FLEET_STATE\n' >"$FAKE_HERDR/panes/p$((n + 1)).drop-enters"
+: >"$FAKE_HERDR/log"
+assert_fails "$BIN/ac-spawn.sh" t15 "$repo" --harness fake --mode local-only
+assert_no_file "$AC_HOME/state/t15.meta" "no half-written meta"
+assert_contains "$(cat "$FAKE_HERDR/log")" "tab close $otab" "the crew trap now reaps the window it created"
+assert_no_file "$AC_HOME/state/.pane-t15" "no orphan pane handle survives"
+grep -q "leased.*t15" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
+  && fail "the trap must still give the lease back"
+
+# --- roomchief DEMOTE vs the verification-agent class -------------------------
+# landed_proof refuses a demote while any member of the family stands (member =
+# ac_family_of_id, or the meta's fleet_scope). A VERIFICATION agent carries a
+# family id but is NOT crew, and nobody tears it down - counting it would strand
+# the roomchief undemotable. No project_dir on these metas, so the qa-infra
+# sweep is skipped (this case is about landed_proof, not docker).
+"$BIN/ac-room.sh" post dem crewchief "spawned dem-review" >/dev/null
+printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/dem-chief.meta"
+# ac_family_of_id trusts a stage suffix only once its nested brief dir exists
+# (family-of-id-suffix-collision) - a real dem-spec task always has one, since
+# ac-brief.sh mkdirs it before any crewmate can commit.
+mkdir -p "$AC_HOME/data/dem/spec"
+printf 'kind=ship\nbackend=herdr\n' >"$AC_HOME/state/dem-spec.meta"
+assert_fails "$BIN/ac-teardown.sh" dem-chief          # real crew still flies
+rm -f "$AC_HOME/state/dem-spec.meta"
+printf 'kind=verify-codereview\nbackend=herdr\n' >"$AC_HOME/state/dem-review.meta"
+"$BIN/ac-teardown.sh" dem-chief >/dev/null || fail "a verifier meta must not block the demote"
+assert_contains "$(cat "$AC_HOME/data/dem/room.md")" "DEMOTED" "the demote receipt still posts"
+rm -f "$AC_HOME/state/dem-review.meta"
+
+# --- DEMOTED room post failure is no longer swallowed in total silence --------
+# bin/ac-teardown.sh:615 posted DEMOTED with `>/dev/null 2>&1 || true`, which
+# swallowed BOTH the room record AND ac-room.sh's own refusal text - unlike
+# every other best-effort step in this file, which at least ac_warns. A family
+# name with a space is a real, deterministic refusal (ac-room.sh post's own
+# charset guard: [a-zA-Z0-9_-]), reached here by giving the roomchief id itself
+# an embedded space - ac-teardown.sh applies no charset check of its own to id.
+printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/dem bad-chief.meta"
+err23="$("$BIN/ac-teardown.sh" "dem bad-chief" 2>&1 >"$TMP/t23.out")" \
+  || fail "a DEMOTED post failure must not stop teardown short of completion"
+assert_contains "$(cat "$TMP/t23.out")" "teardown dem bad-chief complete" \
+  "a DEMOTED post failure never stops the run short of the steps after it"
+assert_contains "$err23" "WARN:" "the DEMOTED post failure is reported on the warning channel"
+assert_contains "$err23" "could not post DEMOTED to room dem bad" "the warning names the family"
+assert_contains "$err23" "family must be" "ac-room.sh's own refusal text travels with the warning"
+assert_contains "$err23" "post it by hand:" "the warning names the exact command to post the entry by hand"
+assert_contains "$err23" "ac-room.sh post dem bad crewchief" "the hand command names the family and actor"
+
+# --- reap_pane_file: a read failure keeps the record instead of deleting it ---
+# bin/ac-teardown.sh:305 (reap_pane_file) collapsed "could not read the file"
+# into the same silent rm -f as "no first field" - the function's own header
+# (:294-297) promises a read failure is warned by pane id/path AND the record
+# KEPT so a later attempt still has it. Verified empirically on this host
+# (awk, under this script's `set -euo pipefail`):
+# DISPUTED: whether `awk 'NR==1{print $1}' "$f" 2>/dev/null` exits non-zero on
+#   an unreadable EXISTING file and zero on an empty READABLE file, and
+#   whether that exit status survives `p="$(...)"` used in an `if` test.
+# HELD-CONSTANT: the awk program, the file's existence, `set -euo pipefail`.
+#   f=/tmp/awktest_noread; : > "$f"; chmod 000 "$f"
+#   if p="$(awk 'NR==1{print $1}' "$f" 2>/dev/null)"; then echo "ok=[$p]"
+#   else echo "failed exit=$?"; fi   # -> "failed exit=2"
+#   f=/tmp/awktest_empty; : > "$f"
+#   if p="$(awk 'NR==1{print $1}' "$f" 2>/dev/null)"; then echo "ok=[$p]"
+#   else echo "failed"; fi          # -> "ok=[]"
+# archive_and_reap_verifier's own pane record (state/.pane-<id>) is the clean
+# target: it lives in fleet state, not a leased worktree, so nothing downstream
+# resets or deletes it out from under this test the way a worktree return does.
+vunread=t22-verify
+printf 'kind=verify-codereview\nbackend=herdr\nfamily=t22\ncaller=t22-verify\nproject_dir=%s\nleases=\n' \
+  "$repo" >"$AC_HOME/state/$vunread.meta"
+printf 'pUNREAD tUR\n' >"$AC_HOME/state/.pane-$vunread"
+chmod 000 "$AC_HOME/state/.pane-$vunread"
+err22="$("$BIN/ac-teardown.sh" "$vunread" 2>&1 >"$TMP/t22.out")" \
+  || fail "an unreadable pane file must not stop teardown short of completion"
+chmod 644 "$AC_HOME/state/.pane-$vunread" 2>/dev/null || true
+assert_contains "$(cat "$TMP/t22.out")" "teardown $vunread complete (verifier)" \
+  "an unreadable pane file never stops the run short of the steps after it"
+assert_contains "$err22" "WARN:" "the unreadable pane file is reported on the warning channel"
+assert_contains "$err22" "could not read" "the warning says the file could not be read"
+assert_contains "$err22" "$AC_HOME/state/.pane-$vunread" "the warning names the unreadable pane path"
+assert_file "$AC_HOME/state/.pane-$vunread" "an unreadable pane file record is KEPT, not deleted"
+
+# --- kill_serve_pid: a read failure keeps the record instead of deleting it ---
+# bin/ac-teardown.sh:340 is symmetric with reap_pane_file above: unreadable and
+# empty collapsed into the same silent no-op-then-delete, so a genuinely
+# running qa serve process behind an unreadable pid file was abandoned with its
+# record erased and no signal - the next qa run then hits a port collision with
+# no clue why. Same disputed variable, same construct, verified the same way
+# (`cat` in place of `awk`; DISPUTED/HELD-CONSTANT declared above covers it).
+# leases= is pointed at a REAL, existing directory that is NOT a registered
+# pool slot: sweep_pane_agents runs on it (and must see the unreadable
+# serve.pid) before the unconditional `ac-tree.sh return` that follows - that
+# return refuses ("not an agent-crew pool worktree"), caught by the existing
+# `|| ac_warn`, so this directory is never reset and the kept-vs-deleted file
+# is directly observable after teardown completes (unlike a real leased
+# worktree, whose pool reset would erase the evidence either way).
+fake_lease24="$TMP/fake-lease-t24"
+mkdir -p "$fake_lease24/.crew/qa/qrun24"
+printf 'task=t24\n' >"$fake_lease24/.crew/qa/qrun24/run.meta"
+printf '4242\n' >"$fake_lease24/.crew/qa/qrun24/serve.pid"
+chmod 000 "$fake_lease24/.crew/qa/qrun24/serve.pid"
+printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nworktree=%s\nleases=%s\n' \
+  "$repo" "$fake_lease24" "$fake_lease24" >"$AC_HOME/state/t24.meta"
+err24="$("$BIN/ac-teardown.sh" t24 --force 2>&1 >"$TMP/t24.out")" \
+  || fail "an unreadable serve.pid must not stop teardown short of completion"
+chmod 644 "$fake_lease24/.crew/qa/qrun24/serve.pid" 2>/dev/null || true
+assert_contains "$(cat "$TMP/t24.out")" "teardown t24 complete" \
+  "an unreadable serve.pid never stops the run short of the steps after it"
+assert_contains "$err24" "WARN:" "the unreadable serve.pid is reported on the warning channel"
+assert_contains "$err24" "could not read" "the warning says the file could not be read"
+assert_contains "$err24" "$fake_lease24/.crew/qa/qrun24/serve.pid" "the warning names the unreadable serve.pid path"
+assert_file "$fake_lease24/.crew/qa/qrun24/serve.pid" "an unreadable serve.pid record is KEPT, not deleted"
+
+# --- bounded qa-infra sweep: docker can no longer park or silence teardown -----
+# The last step (ac-qa.sh infra down) had no bound and no evidence channel: a
+# HUNG docker parked teardown there forever, so neither the completion line nor
+# the roomchief advisory ever ran, an unusable docker passed for a clean sweep,
+# and the deaths recorded at this step exited 144 (signal 16, SIGURG) in total
+# silence. The metas below are written by hand (the ac-room-parallel-cap.test.sh
+# idiom) and kind=roomchief on purpose: a chief holds no lease and no crew
+# branch, so the qa-infra step and the tail after it are all that runs.
+dstub="$TMP/dstub"; mkdir -p "$dstub"
+export PATH="$dstub:$PATH"
+export AC_TEARDOWN_QA_TIMEOUT=1   # the production bound is 30s; a test may not sit for it
+qa_chief() {
+  printf 'kind=roomchief\nbackend=herdr\nworktree=%s\nproject_dir=%s\n' "$repo" "$repo" \
+    >"$AC_HOME/state/$1.meta"
+  printf 'p20 t20\n' >"$AC_HOME/state/.pane-$1"
+}
+cat >"$AC_HOME/records/backlog.md" <<'EOF'
+# Backlog
+
+## Queued
+- [ ] nextup - ordinary queued work (repo: proj)
+EOF
+
+# (1) a HUNG docker is killed by the watchdog and the whole tail still runs.
+# `exec sleep` so the recorded pid IS the sleeper: the watchdog kills teardown's
+# own child, the shim is orphaned, and this file is how the suite reaps it.
+cat >"$dstub/docker" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$\$" >"$TMP/hang.pid"
+exec sleep 30
+EOF
+chmod +x "$dstub/docker"
+qa_chief hung-chief
+"$BIN/ac-teardown.sh" hung-chief >"$TMP/hung.out" 2>&1 &
+tdpid=$!
+# A ceiling of the test's own: without it an unbounded sweep hangs the suite
+# instead of failing it, and a hang proves nothing.
+i=0
+while [ "$i" -lt 50 ] && kill -0 "$tdpid" 2>/dev/null; do sleep 0.2; i=$((i + 1)); done
+if kill -0 "$tdpid" 2>/dev/null; then
+  kill -9 "$tdpid" 2>/dev/null || true
+  fail "a hung docker parked teardown at the qa-infra sweep"
+fi
+wait "$tdpid" || fail "a hung docker must not fail teardown"
+if [ -s "$TMP/hang.pid" ]; then kill "$(cat "$TMP/hang.pid")" 2>/dev/null || true; fi
+hung="$(cat "$TMP/hung.out")"
+assert_contains "$hung" "status 124" "the watchdog timeout is warned by status"
+assert_contains "$hung" "infra down --task hung-chief" "the warning names the reclaim command"
+assert_contains "$hung" "teardown hung-chief complete" "the completion line still prints"
+assert_contains "$hung" "next queued family: nextup" "the roomchief advisory still prints"
+
+# (2) an UNUSABLE docker (present, exits non-zero) warns instead of passing for
+# a successful sweep - ac-qa.sh `infra down` returns the compose status.
+printf '#!/usr/bin/env bash\nexit 7\n' >"$dstub/docker"
+qa_chief broke-chief
+out="$("$BIN/ac-teardown.sh" broke-chief 2>&1)" || fail "an unusable docker must not fail teardown"
+assert_contains "$out" "status 7" "an unusable docker surfaces its own status"
+assert_contains "$out" "teardown broke-chief complete" "the completion line still prints"
+
+# (3) a signal AT THIS STEP names itself. The shim delivers the recorded killer
+# (signal 16) to teardown from inside the step; SIGURG is the one the header
+# called untrappable, so this test is the proof, not the assumption.
+cat >"$dstub/docker" <<EOF
+#!/usr/bin/env bash
+while [ ! -s "$TMP/td.pid" ]; do sleep 0.05; done
+kill -URG "\$(cat "$TMP/td.pid")"
+exit 0
+EOF
+rm -f "$TMP/td.pid"
+qa_chief sig-chief
+"$BIN/ac-teardown.sh" sig-chief >"$TMP/sig.out" 2>&1 &
+tdpid=$!
+printf '%s\n' "$tdpid" >"$TMP/td.pid"
+wait "$tdpid" || fail "a signal bash ignores by default must not fail teardown"
+sigout="$(cat "$TMP/sig.out")"
+assert_contains "$sigout" "SIGURG" "the trap names WHICH signal"
+assert_contains "$sigout" "qa-infra sweep" "the trap names WHICH step"
+assert_contains "$sigout" "teardown sig-chief complete" "the run still finishes"
+rm -f "$dstub/docker"
+unset AC_TEARDOWN_QA_TIMEOUT
+
+# --- the DERIVED crewdomain binding on the roomchief promote (R3) ------------
+# A promote of a family whose FLEET row carries the domain:<name> token
+# becomes a DOMAINCHIEF (crewdomain-token): AC_DOMAIN on the launch line (for
+# the session and everything it spawns) and domain= in the meta (for every
+# OTHER process, which reads durable state, not the chief's environment). The
+# binding is DERIVED from the token, never passed - only the chief-only
+# assign verb stamps it, so a mis-bind is impossible and a family the chief
+# never assigned cannot become a domainchief at all.
+
+dom_reg="$AC_HOME/records/crewdomains.md"
+dom_pkg() { printf '%s/crewdomains/%s\n' "$AC_HOME" "$1"; }
+# This suite does not source ac-lib.sh, so the meta is read the way the rest of
+# the file reads one - directly off disk.
+meta_field() { awk -v k="$2" 'index($0, k "=") == 1 { print substr($0, length(k) + 2) }' "$1"; }
+fleet_bl="$AC_HOME/records/backlog.md"
+dom_seed() {  # dom_seed <domain> <family>... - tokened fleet Queued rows
+  local d="$1"; shift
+  { printf '# Backlog\n\n## In flight\n\n## Queued\n\n'
+    for f in "$@"; do printf -- '- [ ] %s - assigned work; domain:%s (repo: proj)\n' "$f" "$d"; done
+    printf '\n## Done\n'
+  } >"$fleet_bl"
+}
+dom_register() { printf -- '- %s - the %s domain - scope: %s work (added 2026-08-02T00:00:00Z)\n' "$1" "$1" "$1" >>"$dom_reg"; }
+room_seed() { "$BIN/ac-room.sh" post "$1" crewchief "the captain order for $1, posted before the promote" >/dev/null; }
+
+# AC-3.1 - an ASSIGNED (tokened) family binds in both places.
+dom_register payments
+dom_seed payments dfam1
+room_seed dfam1
+"$BIN/ac-spawn.sh" --roomchief dfam1 --harness fake >/dev/null 2>&1
+assert_eq "$(meta_field "$AC_HOME/state/dfam1-chief.meta" domain)" "payments" \
+  "AC-3.1: the domain rides the meta, where every other process reads it"
+assert_contains "$(cat "$(fake_pane_buf dfam1-chief)")" "AC_DOMAIN=payments" \
+  "AC-3.1: and the launch line, for the session and everything it spawns"
+
+# R2-CR-001 - the derivation requires the TOKEN AT ITS GRAMMAR POSITION, not
+# merely a matching row (or a prose mention). Without it any row mints a
+# domainchief and chief-only-add stops being structural.
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] dfam1b - mentions domain:payments mid-prose only (repo: proj)\n\n## Done\n' \
+  >"$fleet_bl"
+room_seed dfam1b
+"$BIN/ac-spawn.sh" --roomchief dfam1b --harness fake >/dev/null 2>&1
+assert_eq "$(meta_field "$AC_HOME/state/dfam1b-chief.meta" domain)" "" \
+  "R2-CR-001: an untokened row mints NO domainchief - inventing a row buys no domain session"
+case "$(cat "$(fake_pane_buf dfam1b-chief)")" in
+  *AC_DOMAIN*) fail "R2-CR-001: and its launch line carries no AC_DOMAIN" ;;
+esac
+dom_seed payments dfam1
+
+# AC-3.2 - an UNASSIGNED family is an ordinary roomchief, byte-identically.
+# This is the regression guard for every promote in the fleet: the whole
+# feature is gated on a resolved domain, so silence here is the contract.
+room_seed dfam2
+"$BIN/ac-spawn.sh" --roomchief dfam2 --harness fake >/dev/null 2>&1
+assert_eq "$(meta_field "$AC_HOME/state/dfam2-chief.meta" domain)" "" \
+  "AC-3.2: an unassigned family writes no domain= in its meta"
+case "$(cat "$(fake_pane_buf dfam2-chief)")" in
+  *AC_DOMAIN*) fail "AC-3.2: an unassigned family's launch line must carry no AC_DOMAIN" ;;
+esac
+
+# A ledger nobody can read cannot prove a family unassigned, so the promote
+# refuses instead of minting an ordinary roomchief for a domain family.
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  dom_seed payments dfam2u
+  room_seed dfam2u
+  chmod 000 "$fleet_bl"
+  err="$("$BIN/ac-spawn.sh" --roomchief dfam2u --harness fake 2>&1 || true)"
+  chmod 644 "$fleet_bl"
+  assert_contains "$err" "cannot read the ledger" "an unreadable ledger refuses the promote"
+  assert_no_file "$AC_HOME/state/dfam2u-chief.meta" "refused before any window, lease or meta"
+  dom_seed payments dfam1
+fi
+
+# AC-3.3 (token grammar) - ONE FAMILY, ONE DOMAIN: a story whose own token
+# disagrees with its epic row's is corrupt state, not a coin flip: refuse
+# fail-closed naming both, before any window, lease or meta.
+dom_register infra
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] bigfam [EPIC] - the epic; domain:infra (repo: proj)\n- [ ] dfam3 - a story; epic:bigfam; domain:payments (repo: proj)\n\n## Done\n' \
+  >"$fleet_bl"
+room_seed dfam3
+err="$("$BIN/ac-spawn.sh" --roomchief dfam3 --harness fake 2>&1 || true)"
+assert_contains "$err" "payments" "AC-3.3: the refusal names the first domain"
+assert_contains "$err" "infra" "AC-3.3: and the second"
+assert_no_file "$AC_HOME/state/dfam3-chief.meta" "AC-3.3: refused before any meta was written"
+
+# AC-3.4 - the ORPHAN TOKEN. A token naming a domain with no VALID registry
+# line (retired, or never registered) must not mint a domainchief - a ghost
+# domain nothing routes to and nothing lists. Symmetric with assign.
+dom_seed ghosts dfam4
+room_seed dfam4
+err="$("$BIN/ac-spawn.sh" --roomchief dfam4 --harness fake 2>&1 || true)"
+assert_contains "$err" "domain:ghosts" "AC-3.4: the refusal names the orphan token"
+assert_contains "$err" "unassign" "AC-3.4: and the strip-the-token remedy"
+assert_contains "$err" "crewdomains.md" "AC-3.4: and the restore-the-registry-line remedy"
+assert_no_file "$AC_HOME/state/dfam4-chief.meta" "AC-3.4: refused before any window, lease or meta"
+
+# An INVALID registry line is not a VALID entry either - same refusal, so a
+# typo in the ledger cannot quietly authorize a binding.
+printf -- '- ghosts - a charter - home: /wrong - scope: x (added 2026-08-02T00:00:00Z)\n' >>"$dom_reg"
+err="$("$BIN/ac-spawn.sh" --roomchief dfam4 --harness fake 2>&1 || true)"
+assert_contains "$err" "domain:ghosts" "AC-3.4: an INVALID line is not a VALID entry"
+assert_no_file "$AC_HOME/state/dfam4-chief.meta" "AC-3.4: and still nothing is written"
+
+# AC-10.1/AC-10.2 - a domain family is an ORDINARY promote: it passes through
+# the existing room-parallel counter with no cap code changed, so it is refused
+# at the cap exactly like any other family. Asserted here rather than by editing
+# tests/sh/ac-room-parallel-cap.test.sh, because no cap CODE changes.
+printf '1\n' >"$AC_HOME/config/room-parallel"
+dom_seed payments dfam5
+room_seed dfam5
+err="$("$BIN/ac-spawn.sh" --roomchief dfam5 --harness fake 2>&1 || true)"
+assert_contains "$err" "room-parallel" "AC-10.1: a domain family is refused at the FLEET cap like any other"
+assert_no_file "$AC_HOME/state/dfam5-chief.meta" "AC-10.2: no path starts a domain family around the counter"
+rm -f "$AC_HOME/config/room-parallel"
+
+# --- the DOMAINCHIEF kickoff (R4, R8, R10) -----------------------------------
+# Every clause below is a contract that lives ONLY here - there is no file on
+# disk a domainchief would otherwise find it in - so each one is asserted
+# against the pane buffer. A kickoff clause that silently disappears in a later
+# edit is a duty nobody performs and nothing catches.
+
+dom_seed payments dfam6
+room_seed dfam6
+"$BIN/ac-spawn.sh" --roomchief dfam6 --harness fake >/dev/null 2>&1
+kick="$(cat "$AC_HOME/data/dfam6/chief/kickoff.md")"
+
+# (1) standing rules - the FLEET captain file, plus the prefix convention. The
+# domain has no captain.md of its own; asserting its ABSENCE is the regression
+# guard against re-adding the member.
+assert_contains "$kick" "STANDING (domain:payments): " "(1) the kickoff names the domain standing-rule convention"
+assert_contains "$kick" "FLEET records/captain.md" "(1) and points at the fleet captain file as the base"
+case "$kick" in
+  *"crewdomains/payments/captain.md"*) fail "(1) the kickoff must name NO package captain.md" ;;
+esac
+
+# (2) learnings - the FLEET ledger with a filterable prefix. The domain has no
+# learnings.md, so a clause pointing at one would send lessons nowhere.
+assert_contains "$kick" "(domain:payments)" "(2) lessons carry the domain prefix"
+assert_contains "$kick" "FLEET records/learnings.md" "(2) and go to the fleet ledger"
+case "$kick" in
+  *"crewdomains/payments/records/learnings.md"*) fail "(2) the kickoff must name NO domain learnings ledger" ;;
+esac
+
+# (3) projects, membership - the view, and that work outside it is REFUSED.
+assert_contains "$kick" "crewdomains/payments/projects/" "(3) the kickoff names the project view"
+assert_contains "$kick" "REFUSED" "(3) and says work outside it is refused"
+
+# (4) projects, detail - required reading, with both boundaries stated: the
+# fleet registry keeps [mode] and the description, and code facts belong in the
+# repo-knowledge store.
+assert_contains "$kick" "crewdomains/payments/records/projects.md" "(4) the detail file is required reading"
+assert_contains "$kick" "[mode]" "(4) the fleet registry stays authoritative for [mode]"
+assert_contains "$kick" "records/repo-knowledge/" "(4) and code facts belong in the repo-knowledge store"
+
+# (5) backlog - ONE fleet ledger, never edited by the domainchief; the slice
+# verb is the read path (crewdomain-token).
+assert_contains "$kick" "FLEET records/backlog.md" "(5) the fleet ledger is named as the one ledger"
+assert_contains "$kick" "domain:payments" "(5) with the stamp that binds the family"
+assert_contains "$kick" "ac-domain.sh queue payments" "(5) and the slice read verb"
+case "$kick" in
+  *"crewdomains/payments/records/backlog.md"*) fail "(5) the kickoff must name NO domain ledger" ;;
+esac
+
+# (6) overlap - fleet-wide, because the domain shares the fleet's clones.
+assert_contains "$kick" "ac-ready.sh overlap" "(6) the overlap duty is named"
+assert_contains "$kick" "git status" "(6) including the live-lease half"
+
+# (7) handback - the ordinary roomchief channel, no domain-specific one.
+assert_contains "$kick" "ac-room.sh handback dfam6" "(7) the hand-back channel is the roomchief's own"
+
+# (8) distil before handback - two classes, and with no domain ledger the fold
+# into the curated files is the ONLY per-domain memory write path.
+assert_contains "$kick" "crewdomains/payments/CREWMATE.md" "(8) the distil target is named"
+assert_contains "$kick" "ONLY per-domain memory write path" "(8) and why it is load-bearing"
+
+# (9) ABSENCE - a promote with no domain emits none of it. dfam2 above is that
+# promote; its buffer must carry no domain section at all.
+nodom="$(cat "$AC_HOME/data/dfam2/chief/kickoff.md")"
+for needle in 'DOMAINCHIEF' 'STANDING (domain:' 'crewdomains/'; do
+  case "$nodom" in
+    *"$needle"*) fail "(9) an ordinary roomchief's kickoff must not carry '$needle'" ;;
+  esac
+done
+
+# (10) memory - the brain clause rides the BASE roomchief kickoff (every
+# promote, not only the domain arm), because the kickoff is the only place a
+# roomchief learns the brain exists: the wake delta keyed to its own cursor
+# identity, the post-compaction repack, and recall for open questions.
+assert_contains "$nodom" "ac-brain.sh delta --agent dfam2-chief --session dfam2" \
+  "(10) the wake delta names the chief's own cursor identity"
+assert_contains "$nodom" "ac-brain.sh context_pack --entities data/dfam2/room" \
+  "(10) the post-compaction repack names the family room entity"
+assert_contains "$nodom" "ac-brain.sh recall" "(10) and the open-question recall verb"
+
+# AC-4.2 - an absent overlay is not an error, asserted as BEHAVIOUR not prose:
+# a domain whose detail file is empty and whose CREWMATE.md does not exist still
+# promotes. Nothing in the read path may require an overlay to exist.
+dom_register bare
+dom_seed bare dfam7
+mkdir -p "$(dom_pkg bare)/records"
+: >"$(dom_pkg bare)/records/projects.md"
+rm -f "$(dom_pkg bare)/CREWMATE.md"
+room_seed dfam7
+"$BIN/ac-spawn.sh" --roomchief dfam7 --harness fake >/dev/null 2>&1
+assert_eq "$(meta_field "$AC_HOME/state/dfam7-chief.meta" domain)" "bare" \
+  "AC-4.2: a domain with no CREWMATE.md and an empty detail file still promotes"
+
+# --- AC-12.2 / CR-007: the crew-spawn view guard -----------------------------
+# A view nothing enforces is decoration. The refusal sits immediately after the
+# project resolves and before the worktree lease, so a wrong-project spawn costs
+# no slot. It reads MEMBERSHIP through ac_domain_view_entry - the same predicate
+# `ac-domain.sh validate` reports with - not mere existence: a plain directory
+# and a link resolving outside the fleet clones both EXIST and are both invalid.
+#
+# The view can only ever select from $AC_HOME/projects/, so the fixture repo
+# lives there; $repo above sits in $TMP and is deliberately NOT a fleet clone.
+vproj="$AC_HOME/projects/vproj"
+git init -q -b main "$vproj"
+git -C "$vproj" config user.email t@t; git -C "$vproj" config user.name t
+printf 'x\n' >"$vproj/f.txt"; git -C "$vproj" add -A; git -C "$vproj" commit -qm init
+mkdir -p "$(dom_pkg bare)/projects"            # a domain whose view is EMPTY
+lease_count() { find "$vproj/.crew/worktrees" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d ' ' || true; }
+
+"$BIN/ac-brief.sh" outsider vproj --mode local-only >/dev/null 2>&1 || true
+slots_before="$(lease_count)"
+err="$(AC_DOMAIN=bare "$BIN/ac-spawn.sh" outsider "$vproj" --harness fake 2>&1 || true)"
+assert_contains "$err" "project view" "AC-12.2: the refusal names the view"
+assert_contains "$err" "bare" "AC-12.2: and the domain"
+assert_eq "$(lease_count)" "$slots_before" \
+  "AC-12.2: refused BEFORE any lease - no worktree slot was taken"
+assert_no_file "$AC_HOME/state/outsider.meta" "AC-12.2: and no meta was written"
+
+# CR-007 - EXISTS is not MEMBERSHIP. A plain directory...
+mkdir -p "$(dom_pkg bare)/projects/vproj"
+err="$(AC_DOMAIN=bare "$BIN/ac-spawn.sh" outsider "$vproj" --harness fake 2>&1 || true)"
+assert_contains "$err" "not-symlink" "CR-007: a plain directory in the view is refused, naming the class"
+assert_no_file "$AC_HOME/state/outsider.meta" "CR-007: and nothing was written"
+rmdir "$(dom_pkg bare)/projects/vproj"
+
+# ... and a live link pointing OUTSIDE the fleet clones.
+ln -s "$repo" "$(dom_pkg bare)/projects/vproj"
+err="$(AC_DOMAIN=bare "$BIN/ac-spawn.sh" outsider "$vproj" --harness fake 2>&1 || true)"
+assert_contains "$err" "outside" "CR-007: a link resolving outside the fleet clones is refused"
+assert_no_file "$AC_HOME/state/outsider.meta" "CR-007: and nothing was written"
+rm -f "$(dom_pkg bare)/projects/vproj"
+
+# A PROPER view entry spawns normally - so the guard is the membership check,
+# not a blanket refusal of every domain-bound spawn.
+ln -s "../../../projects/vproj" "$(dom_pkg bare)/projects/vproj"
+AC_DOMAIN=bare "$BIN/ac-spawn.sh" outsider "$vproj" --harness fake >/dev/null 2>&1
+assert_file "$AC_HOME/state/outsider.meta" "AC-12.2: a project properly INSIDE the view spawns normally"
+rm -f "$(dom_pkg bare)/projects/vproj"
+
+# And a spawn with NO RESOLVABLE domain binding never meets the guard at
+# all: every domain effect is gated on the binding ac_domain_binding
+# resolves, not on AC_DOMAIN alone, so a spawn carrying neither AC_DOMAIN
+# nor AC_SCOPE (the crewchief's own, ordinary spawn) is unchanged. This is
+# that contract's crewchief-spawn instance; the R12 block below completes
+# it for a domainchief's own spawn whose AC_DOMAIN alone went missing.
+rm -f "$(dom_pkg bare)/projects/$(basename "$repo")"
+"$BIN/ac-brief.sh" outsider2 vproj --mode local-only >/dev/null 2>&1 || true
+err="$("$BIN/ac-spawn.sh" outsider2 "$vproj" --harness fake 2>&1 || true)"
+case "$err" in *"project view"*) fail "AC-12.2: a spawn with no domain binding (no AC_DOMAIN, no AC_SCOPE) must not meet the view guard" ;; esac
+
+# --- R12: AC_SCOPE -> the domainchief's own meta is a SECOND source of truth
+# for the SAME domain, for exactly the case AC_DOMAIN cannot be trusted to
+# survive to the spawn (a resume line, a relaunch that forgot it). bare's view
+# is still EMPTY of vproj at this point (removed above), so the refusal still
+# names it - the fallback resolves the SAME binding the direct AC_DOMAIN path
+# does, never a weaker one.
+printf 'kind=roomchief\ndomain=bare\n' >"$AC_HOME/state/dscope-chief.meta"
+"$BIN/ac-brief.sh" outsider3 vproj --mode local-only >/dev/null 2>&1 || true
+err="$(AC_SCOPE=dscope "$BIN/ac-spawn.sh" outsider3 "$vproj" --harness fake 2>&1 || true)"
+assert_contains "$err" "project view" \
+  "R12: AC_SCOPE alone (no AC_DOMAIN) still meets the view guard, resolving bare from the domainchief's own meta"
+assert_no_file "$AC_HOME/state/outsider3.meta" "R12: and no meta was written"
+
+ln -s "../../../projects/vproj" "$(dom_pkg bare)/projects/vproj"
+AC_SCOPE=dscope "$BIN/ac-spawn.sh" outsider3 "$vproj" --harness fake >/dev/null 2>&1
+assert_file "$AC_HOME/state/outsider3.meta" \
+  "R12: and a project properly in bare's view spawns, AC_SCOPE alone resolving the domain"
+rm -f "$(dom_pkg bare)/projects/vproj"
+
+# An ORDINARY roomchief's AC_SCOPE (its own meta carries no domain= field)
+# must resolve nothing - the fallback names a real domainchief's meta, it is
+# not a blanket AC_SCOPE-to-domain mapping, so an ordinary crew spawn under it
+# stays exactly as unguarded as one with no AC_SCOPE at all (AC-12.2 above).
+printf 'kind=roomchief\n' >"$AC_HOME/state/dscope2-chief.meta"
+"$BIN/ac-brief.sh" outsider4 vproj --mode local-only >/dev/null 2>&1 || true
+err="$(AC_SCOPE=dscope2 "$BIN/ac-spawn.sh" outsider4 "$vproj" --harness fake 2>&1 || true)"
+case "$err" in *"project view"*) fail "R12: an ordinary roomchief's AC_SCOPE must not resolve a phantom domain" ;; esac
+
+# --- orca fleet: the crewmate worktree is ORCA-MANAGED ---------------------------
+# Captain ruling: an orca-backend fleet leases through `orca worktree create`
+# (one per task, sidebar-native) instead of the crew-tree pool; the checkout
+# lands on crew/<id> from the live checkout branch at its freshest tip (or
+# the epic-branch fence's recorded branch), and teardown removes the
+# worktree through the same CLI.
+make_fake_orca
+# Panes must read as a came-up idle TUI (the orca driver proves UP by the
+# idle glyph title) - the orca twin of .pane-idle-by-default above.
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
+printf 'orca\n' >"$AC_HOME/config/backend"
+"$BIN/ac-brief.sh" ow1 proj --mode local-only >/dev/null
+mkdir -p "$repo/node_modules/dep"
+printf 'marker\n' >"$repo/node_modules/dep/marker.js"
+"$BIN/ac-spawn.sh" ow1 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn must succeed on the fake orca"
+owt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/ow1.meta" | head -1)"
+case "$owt" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "the worktree must be orca-managed (got: $owt)" ;; esac
+grep -q -- 'worktree create.*--setup run' "$FAKE_ORCA/log" \
+  || fail "the lease must run the repo-defined Orca setup hooks (--setup run)"
+grep -q -- 'worktree create.*--name crew-ow1 --base-branch main ' "$FAKE_ORCA/log" \
+  || fail "a task with no integration-branch record is cut from the live checkout branch (main)"
+# The CLI opens the worktree WITH a first terminal (a bare shell); the crew
+# pane must BE the worktree's first tab, so the lease closes that startup
+# terminal instead of leaving an orphan shell tab beside the agent.
+ls "$FAKE_ORCA/terminals/"termS*.buf >/dev/null 2>&1 \
+  && fail "the lease must close the worktree's startup terminal - the crew pane is the first tab"
+# The primary checkout's node_modules is carried into the fresh worktree (git
+# brings only tracked files) as a real COPY - a symlink would let a crewmate's
+# own install mutate the primary's deps.
+[ -f "$owt/node_modules/dep/marker.js" ] || fail "primary node_modules must be carried into the orca worktree"
+[ ! -L "$owt/node_modules" ] || fail "carried node_modules must be a copy, never a symlink"
+printf 'x\n' >"$owt/node_modules/dep/local.js"
+[ ! -e "$repo/node_modules/dep/local.js" ] || fail "a worktree-side write must not reach the primary node_modules"
+assert_eq "$(sed -n 's/^worktree_backend=//p' "$AC_HOME/state/ow1.meta")" "orca" \
+  "the meta records the orca worktree provenance for teardown"
+assert_eq "$(git -C "$owt" branch --show-current)" "crew/ow1" \
+  "the orca worktree sits on the crew contract branch"
+git -C "$owt" show-ref --verify -q refs/heads/fakeuser/crew-ow1 \
+  && fail "the CLI-minted branch name must be dropped after the switch"
+"$BIN/ac-teardown.sh" ow1 --force >/dev/null 2>&1
+[ ! -d "$owt" ] || fail "teardown must remove the orca-managed worktree"
+rm -rf "$repo/node_modules"
+
+# --base-branch (orca-lease-cuts-from-wrong-branch): an explicit override
+# threads from ac-spawn.sh all the way to the orca lease and wins over the
+# repo's live checkout branch (main here).
+git -C "$repo" checkout -qb release
+printf 'release marker\n' >"$repo/release.txt"
+git -C "$repo" add release.txt
+git -C "$repo" commit -qm "release marker"
+release_sha="$(git -C "$repo" rev-parse release)"
+git -C "$repo" checkout -q main
+"$BIN/ac-brief.sh" obb1 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" obb1 "$repo" --harness fake --mode local-only --base-branch release >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn with --base-branch must succeed on the fake orca"
+obb_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/obb1.meta" | head -1)"
+assert_eq "$(git -C "$obb_wt" merge-base HEAD "$release_sha")" "$release_sha" \
+  "--base-branch release wins over the live checkout (main) end to end through ac-spawn.sh"
+[ -f "$obb_wt/release.txt" ] || fail "the leased tree must carry the release branch's content"
+"$BIN/ac-teardown.sh" obb1 --force >/dev/null 2>&1
+git -C "$repo" branch -D release >/dev/null 2>&1
+
+# Epic-branch fence on the orca lease (captain ruling TN 2026-09-28): a
+# fenced story is cut from its recorded integration branch under ac-tree.sh
+# get's own existence rule, never from the live checkout, and a missing
+# branch or a --base-branch naming another one refuses before any lease.
+cp "$AC_HOME/records/backlog.md" "$TMP/orca-fence-bl.keep"
+printf -- '- [ ] ofs1 - story; epic:ofe (repo: proj)\n- [ ] ofs2 - story; epic:ofe (repo: proj)\n- [ ] ofs5 - story; epic:ofe (repo: proj)\n' >>"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/ofe"
+printf 'proj epic/ofe\n' >"$AC_HOME/data/ofe/branches"
+"$BIN/ac-brief.sh" ofs1 proj --mode local-only >/dev/null
+"$BIN/ac-brief.sh" ofs2 proj --mode local-only >/dev/null
+err="$("$BIN/ac-spawn.sh" ofs1 "$repo" --harness fake --mode local-only 2>&1 || true)"
+assert_no_file "$AC_HOME/state/ofs1.meta" "a fenced orca story whose integration branch is missing is refused"
+assert_contains "$err" "epic/ofe" "the missing-branch refusal names the recorded branch"
+case "$err" in *"Orca runtime"*) fail "a fence refusal must not blame the Orca runtime: $err" ;; esac
+grep -q -- 'worktree create.*--name crew-ofs1 ' "$FAKE_ORCA/log" \
+  && fail "a missing integration branch must lease nothing - never a silent fall back to the live checkout"
+# ac-self-task.sh carries no fence code of its own: its slice is fenced only
+# because the fence lives in orca_worktree_lease, as herdr's lives in get.
+err="$("$BIN/ac-self-task.sh" start ofs5 "$repo" 2>&1 || true)"
+assert_no_file "$AC_HOME/state/ofs5.meta" "a fenced orca self-task slice whose integration branch is missing is refused"
+assert_contains "$err" "epic/ofe" "the self-task refusal names the recorded branch"
+grep -q -- 'worktree create.*--name crew-ofs5 ' "$FAKE_ORCA/log" \
+  && fail "a missing integration branch must lease nothing for a self-task slice either"
+git -C "$repo" checkout -qb epic/ofe
+printf 'epic marker\n' >"$repo/epic.txt"
+git -C "$repo" add epic.txt
+git -C "$repo" commit -qm "epic marker"
+epic_sha="$(git -C "$repo" rev-parse epic/ofe)"
+git -C "$repo" checkout -q main
+"$BIN/ac-spawn.sh" ofs1 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "a fenced orca story spawn must succeed once its integration branch exists"
+ofs_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs1.meta" | head -1)"
+assert_eq "$(git -C "$ofs_wt" merge-base HEAD "$epic_sha")" "$epic_sha" \
+  "a fenced orca story is cut from its epic branch, not the live checkout (main)"
+grep -q -- 'worktree create.*--name crew-ofs1 --base-branch epic/ofe ' "$FAKE_ORCA/log" \
+  || fail "the fenced lease passes the recorded integration branch as its base override"
+grep -qF -- 'INTEGRATION\ BRANCH:\ this\ worktree\ is\ cut\ from\ epic/ofe' "$FAKE_ORCA/log" \
+  || fail "the kickoff names the integration branch the worktree was cut from"
+"$BIN/ac-teardown.sh" ofs1 --force >/dev/null 2>&1
+"$BIN/ac-self-task.sh" start ofs5 "$repo" >/dev/null 2>&1 \
+  || fail "a fenced orca self-task slice starts once its integration branch exists"
+assert_eq "$(git -C "$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs5.meta" | head -1)" merge-base HEAD "$epic_sha")" "$epic_sha" \
+  "a fenced orca self-task slice is cut from its epic branch, not the live checkout (main)"
+"$BIN/ac-teardown.sh" ofs5 --force >/dev/null 2>&1
+err="$("$BIN/ac-spawn.sh" ofs2 "$repo" --harness fake --mode local-only --base-branch main 2>&1 || true)"
+assert_no_file "$AC_HOME/state/ofs2.meta" "a --base-branch disagreeing with the fence refuses the orca story spawn"
+assert_contains "$err" "disagrees" "the disagreement refusal says why"
+grep -q -- 'worktree create.*--name crew-ofs2 ' "$FAKE_ORCA/log" \
+  && fail "a --base-branch disagreeing with the fence must lease nothing"
+"$BIN/ac-spawn.sh" ofs2 "$repo" --harness fake --mode local-only --base-branch epic/ofe >/dev/null 2>&1 \
+  || fail "a --base-branch naming the fence's own branch agrees with it"
+"$BIN/ac-teardown.sh" ofs2 --force >/dev/null 2>&1
+git -C "$repo" branch -D epic/ofe >/dev/null 2>&1
+
+# The origin-backed arms of the same rule, on one repo: ac-epic-branch.sh
+# create pushes the branch with no local ref, so an epic branch is found on
+# origin; a push=deferred (feature) entry is local until ship.
+ofo_remote="$TMP/oproj-origin.git"
+git init -q --bare -b main "$ofo_remote"
+orepo="$(make_repo oproj)"
+git -C "$orepo" remote add origin "$ofo_remote"
+git -C "$orepo" push -q origin main
+git -C "$orepo" checkout -qb side
+printf 'integration marker\n' >"$orepo/int.txt"
+git -C "$orepo" add int.txt
+git -C "$orepo" commit -qm "integration marker"
+int_sha="$(git -C "$orepo" rev-parse side)"
+git -C "$orepo" checkout -q main
+git -C "$orepo" branch -D side >/dev/null
+git -C "$orepo" push -q origin "$int_sha:refs/heads/epic/ofo"
+git -C "$orepo" fetch -q origin
+git -C "$orepo" branch feat/ofl "$int_sha"
+printf -- '- [ ] ofs3 - story; epic:ofo (repo: oproj)\n- [ ] ofs4 - story; feature:ofl (repo: oproj)\n' >>"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/ofo" "$AC_HOME/data/ofl"
+printf 'oproj epic/ofo\n' >"$AC_HOME/data/ofo/branches"
+"$BIN/ac-brief.sh" ofs3 oproj --mode local-only >/dev/null
+"$BIN/ac-brief.sh" ofs4 oproj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" ofs3 "$orepo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an epic branch that exists only on origin fences the orca story spawn"
+assert_eq "$(git -C "$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs3.meta" | head -1)" merge-base HEAD "$int_sha")" "$int_sha" \
+  "the story is cut from origin's epic branch when no local branch exists"
+"$BIN/ac-teardown.sh" ofs3 --force >/dev/null 2>&1
+# ac-tree.sh get fetches origin before its fence, so origin moving under this
+# clone (a predecessor's PR merged on GitHub, a branch cut from another clone)
+# must neither leave the next story on a stale base nor refuse it.
+# DISPUTED: whether the fenced orca lease fetches origin before it judges and cuts.
+# HELD-CONSTANT: repo oproj and its origin, this clone's last fetch (stale origin/epic/ofo), the second clone that moves origin, ids ofs6/ofs7.
+git clone -q "$ofo_remote" "$TMP/oproj-c2"
+git -C "$TMP/oproj-c2" checkout -q epic/ofo
+printf 'predecessor\n' >"$TMP/oproj-c2/pred.txt"
+git -C "$TMP/oproj-c2" add pred.txt
+git -C "$TMP/oproj-c2" -c user.email=t@t -c user.name=t commit -qm "predecessor merged on origin"
+git -C "$TMP/oproj-c2" push -q origin epic/ofo
+pred_sha="$(git -C "$TMP/oproj-c2" rev-parse HEAD)"
+printf -- '- [ ] ofs6 - story; epic:ofo (repo: oproj)\n- [ ] ofs7 - story; epic:ofn (repo: oproj)\n' >>"$AC_HOME/records/backlog.md"
+"$BIN/ac-brief.sh" ofs6 oproj --mode local-only >/dev/null
+"$BIN/ac-brief.sh" ofs7 oproj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" ofs6 "$orepo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "a fenced orca story spawns after origin's epic branch moved"
+assert_eq "$(git -C "$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs6.meta" | head -1)" merge-base HEAD "$pred_sha")" "$pred_sha" \
+  "a fenced orca story is cut from origin's current epic tip, not this clone's stale one"
+"$BIN/ac-teardown.sh" ofs6 --force >/dev/null 2>&1
+git -C "$TMP/oproj-c2" push -q origin HEAD:refs/heads/epic/ofn
+mkdir -p "$AC_HOME/data/ofn"
+printf 'oproj epic/ofn\n' >"$AC_HOME/data/ofn/branches"
+"$BIN/ac-spawn.sh" ofs7 "$orepo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an epic branch cut on origin from another clone is not missing to the fenced orca lease"
+"$BIN/ac-teardown.sh" ofs7 --force >/dev/null 2>&1
+# DISPUTED: the push=deferred key on the record entry.
+# HELD-CONSTANT: repo (origin-backed), branch feat/ofl (local only), id ofs4, its ledger row.
+printf 'oproj feat/ofl\n' >"$AC_HOME/data/ofl/branches"
+err="$("$BIN/ac-spawn.sh" ofs4 "$orepo" --harness fake --mode local-only 2>&1 || true)"
+assert_no_file "$AC_HOME/state/ofs4.meta" "an epic-shaped entry whose branch is not on origin is refused, as ac-tree.sh get refuses it"
+grep -q -- 'worktree create.*--name crew-ofs4 ' "$FAKE_ORCA/log" \
+  && fail "a branch missing from origin must lease nothing"
+printf 'oproj feat/ofl push=deferred\n' >"$AC_HOME/data/ofl/branches"
+"$BIN/ac-spawn.sh" ofs4 "$orepo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "a push=deferred entry's local-only branch fences the orca story spawn"
+assert_eq "$(git -C "$(sed -n 's/^worktree=//p' "$AC_HOME/state/ofs4.meta" | head -1)" merge-base HEAD "$int_sha")" "$int_sha" \
+  "the feature story is cut from the local feature branch"
+"$BIN/ac-teardown.sh" ofs4 --force >/dev/null 2>&1
+mv "$TMP/orca-fence-bl.keep" "$AC_HOME/records/backlog.md"
+rm -rf "$AC_HOME/data/ofe" "$AC_HOME/data/ofo" "$AC_HOME/data/ofl" "$AC_HOME/data/ofn"
+
+# An unreadable ledger proves nothing about the fence, so the orca spawn
+# refuses before any lease instead of cutting from the live checkout.
+# Skipped under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  cp "$AC_HOME/records/backlog.md" "$TMP/orca-bl.keep"
+  printf -- '- [ ] oes1 - story; epic:oep (repo: proj)\n' >>"$AC_HOME/records/backlog.md"
+  mkdir -p "$AC_HOME/data/oep"
+  printf 'proj epic/oep\n' >"$AC_HOME/data/oep/branches"
+  "$BIN/ac-brief.sh" oes1 proj --mode local-only >/dev/null
+  owt_n="$(ls "$FAKE_ORCA/orca-wt" | wc -l | tr -d ' ')"
+  chmod 000 "$AC_HOME/records/backlog.md"
+  err="$("$BIN/ac-spawn.sh" oes1 "$repo" --harness fake --mode local-only 2>&1 || true)"
+  chmod 644 "$AC_HOME/records/backlog.md"
+  assert_contains "$err" "cannot read the ledger" "an unreadable ledger refuses an orca epic-story spawn"
+  assert_no_file "$AC_HOME/state/oes1.meta" "the refused spawn writes no meta"
+  assert_eq "$(ls "$FAKE_ORCA/orca-wt" | wc -l | tr -d ' ')" "$owt_n" "the refused spawn leaves no orca worktree behind"
+  grep -q -- 'worktree create.*--name crew-oes1 ' "$FAKE_ORCA/log" \
+    && fail "an unreadable ledger refuses before the orca lease, not after it"
+  mv "$TMP/orca-bl.keep" "$AC_HOME/records/backlog.md"
+  rm -rf "$AC_HOME/data/oep"
+fi
+
+printf 'herdr\n' >"$AC_HOME/config/backend"
+
+# --- landed proof: PR merged OR the captain's pr-ready acceptance -------------
+# Done does not wait for the merge: a ready-to-merge PR the captain accepts in
+# chat lands the task via --pr-ready '<the captain's words>'; the merge stays
+# the captain's own act. Fail-closed every other way: no recorded PR refuses,
+# and a task an open row still waits on lands only by the real merge.
+"$BIN/ac-brief.sh" tpr proj --mode direct-pr >/dev/null
+"$BIN/ac-spawn.sh" tpr "$repo" --harness fake >/dev/null 2>&1
+prwt="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/tpr.meta")"
+git -C "$prwt" checkout -q -b crew/tpr
+printf 'pr work\n' >"$prwt/pr.txt"
+git -C "$prwt" add -A
+git -C "$prwt" -c user.email=t@t -c user.name=t commit -qm "pr work"
+assert_fails "$BIN/ac-teardown.sh" tpr                       # unmerged, no acceptance
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "no recorded PR" "acceptance with nothing on record refuses"
+assert_file "$AC_HOME/state/tpr.meta" "the refused acceptance tears nothing down"
+printf 'pr=https://github.com/o/r/pull/9\n' >>"$AC_HOME/state/tpr.meta"
+mkdir -p "$AC_HOME/records"
+printf -- '- [ ] dep1 - waits on tpr (repo: proj) blocked-by: tpr - needs its merge\n' \
+  >"$AC_HOME/records/backlog.md"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "dep1" "a waiting dependent forces the real merge and is named"
+assert_file "$AC_HOME/state/tpr.meta" "the dependent refusal tears nothing down"
+
+# The dependent scan fails CLOSED, not open: a blocked-by list the strict
+# grammar would refuse (a space after the comma) still finds the id, and an
+# unreadable ledger refuses outright instead of reading as "no dependent".
+printf -- '- [ ] dep2 - malformed list (repo: proj) blocked-by: other, tpr - spaced\n' \
+  >"$AC_HOME/records/backlog.md"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "dep2" "a malformed spaced blocked-by list still names its dependent"
+mv "$AC_HOME/records/backlog.md" "$AC_HOME/records/backlog.md.away"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "backlog" "an unreadable ledger refuses rather than landing blind"
+assert_file "$AC_HOME/state/tpr.meta" "the unreadable-ledger refusal tears nothing down"
+mv "$AC_HOME/records/backlog.md.away" "$AC_HOME/records/backlog.md"
+printf -- '- [x] dep1 - done elsewhere (merged 2026-08-28)\n' >"$AC_HOME/records/backlog.md"
+
+# The captain accepted THE PR - not work newer than it: a dirty tree refuses,
+# and with pr_head recorded, commits past that head refuse too.
+printf 'dirty\n' >"$prwt/uncommitted.txt"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "uncommitted" "a dirty tree is not covered by the accepted PR"
+assert_file "$AC_HOME/state/tpr.meta" "the dirty refusal tears nothing down"
+rm -f "$prwt/uncommitted.txt"
+printf 'pr_head=%s\n' "$(git -C "$prwt" rev-parse HEAD)" >>"$AC_HOME/state/tpr.meta"
+printf 'newer\n' >"$prwt/newer.txt"
+git -C "$prwt" add -A
+git -C "$prwt" -c user.email=t@t -c user.name=t commit -qm "newer than the PR"
+err="$("$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' 2>&1 1>/dev/null || true)"
+assert_contains "$err" "newer" "commits past the recorded PR head refuse the acceptance"
+git -C "$prwt" reset -q --hard HEAD~1
+
+"$BIN/ac-teardown.sh" tpr --pr-ready 'captain: ok to done' >/dev/null \
+  || fail "a recorded PR plus the captain's acceptance must land the teardown"
+assert_no_file "$AC_HOME/state/tpr.meta" "the accepted teardown archives the meta"
+assert_contains "$(cat "$AC_HOME/state/archive/tpr/status")" "captain: ok to done" \
+  "the captain's acceptance words are durable on the task record"
+
+# A MERGED PR proves only the head that was merged: commits past it on
+# crew/<id> were never part of the PR, and the teardown would destroy them as
+# landed. A record with no merged head keeps the old proof.
+"$BIN/ac-brief.sh" tpm proj --mode direct-pr >/dev/null
+"$BIN/ac-spawn.sh" tpm "$repo" --harness fake >/dev/null 2>&1
+pmwt="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/tpm.meta")"
+git -C "$pmwt" checkout -q -b crew/tpm
+printf 'merged work\n' >"$pmwt/tpm-merged.txt"
+git -C "$pmwt" add -A
+git -C "$pmwt" -c user.email=t@t -c user.name=t commit -qm "merged work"
+printf 'pr=https://github.com/o/r/pull/10\npr_merged=1\npr_merged_head=%s\n' "$(git -C "$pmwt" rev-parse HEAD)" \
+  >>"$AC_HOME/state/tpm.meta"
+printf 'after the merge\n' >"$pmwt/tpm-after.txt"
+git -C "$pmwt" add -A
+git -C "$pmwt" -c user.email=t@t -c user.name=t commit -qm "work after the merge"
+err="$("$BIN/ac-teardown.sh" tpm 2>&1 1>/dev/null)" && fail "commits past the merged PR head must refuse the teardown"
+assert_contains "$err" "not landed" "the refusal says the branch is not landed"
+assert_file "$AC_HOME/state/tpm.meta" "the refusal tears nothing down"
+git -C "$pmwt" reset -q --hard HEAD~1
+"$BIN/ac-teardown.sh" tpm >/dev/null 2>&1 || fail "a branch at the merged PR head lands by the merge"
+
+# A SOLO session (AC_SOLO=1) never spawns crew or roomchiefs - its one write
+# path is ac-self-task.sh; handing work to crew goes through the chief.
+err="$(AC_SOLO=1 "$BIN/ac-spawn.sh" tsx "$repo" --harness fake 2>&1)" \
+  && fail "a solo session's spawn must refuse"
+assert_contains "$err" "solo session (AC_SOLO=1)" "the refusal names the solo session"
+assert_no_file "$AC_HOME/state/tsx.meta" "a refused solo spawn writes no meta"
+
+pass

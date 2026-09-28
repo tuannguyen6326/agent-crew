@@ -8,7 +8,7 @@
 # .cursor/hooks.json stop via bin/ac-turnend-guard-cursor.sh (a follow-up
 # message, never a block - cursor's stop cannot block); the
 # non-claude wirings ship shape-faithful and fail open, live probes pending
-# (tests/ac-harness-hooks.test.sh is their drift fence). Blocks a turn end
+# (tests/sh/ac-harness-hooks.test.sh is their drift fence). Blocks a turn end
 # (exit 2 + reason on stderr) when the session would go blind: wakes IT must
 # drain are pending, or the watcher serving it has a stale liveness beacon.
 #
