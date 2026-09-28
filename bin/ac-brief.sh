@@ -195,7 +195,7 @@ if [ "$stage" != scout ]; then
   _early_pin_mode=""
   if [ -f "$(ac_records_dir)/backlog.md" ]; then
     _early_pin_mode="$(ac_row_contract_for_id "$id" "$(ac_records_dir)/backlog.md" \
-      | tr " " "\n" | sed -n "s/^mode://p")" \
+      | tr " \t" "\n\n" | sed -n "s/^mode://p")" \
       || ac_die "cannot read the ledger $(ac_records_dir)/backlog.md for the delivery contract of $id"
   fi
   if [ -n "$mode_flag" ]; then
@@ -272,11 +272,13 @@ else
   # self-raises were caught only because their chiefs volunteered it.
   if [ "$review_flag" = yes ]; then
     # Row pin first: it is the durable pre-consent. The declared flag stays the
-    # per-call authority, its ref recorded exactly as before.
+    # per-call authority, its ref recorded exactly as before. `in`, never ==:
+    # awk compares numeric-looking ids as numbers (01 == 1).
     _pin_rev="$(
       [ -f "$(ac_records_dir)/backlog.md" ] && awk -v want="$id" "$AC_DONELINE_AWK"'
-        /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
-      ' "$(ac_records_dir)/backlog.md" | tr " " "\n" | sed -n "s/^rev://p" || true
+        BEGIN { w[want] }
+        /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] in w) { print o["contract"]; exit } }
+      ' "$(ac_records_dir)/backlog.md" | tr " \t" "\n\n" | sed -n "s/^rev://p" || true
     )"
     if [ "$_pin_rev" = yes ]; then
       review_line="yes (pinned on the backlog row)"

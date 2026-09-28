@@ -1173,15 +1173,19 @@ ac_row_contract_for_id() {
   # a caller must never read as unpinned.
   local id="$1" f="$2" fam sub out
   [ -f "$f" ] || { printf '\n'; return 0; }
+  # `in`, never ==: awk compares two numeric-looking strings as numbers, so
+  # == would give id 1 the row of id 01.
   out="$(awk -v want="$id" "$AC_DONELINE_AWK"'
-    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
+    BEGIN { w[want] }
+    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] in w) { print o["contract"]; exit } }
   ' "$f")" || return 2
   if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
   sub="$(ac_stage_dir_for_id "$id")"
   [ -n "$sub" ] || { printf '\n'; return 0; }
   fam="${sub%%/*}"
   awk -v want="$fam" "$AC_DONELINE_AWK"'
-    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
+    BEGIN { w[want] }
+    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] in w) { print o["contract"]; exit } }
   ' "$f"
 }
 

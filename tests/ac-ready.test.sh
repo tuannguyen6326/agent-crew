@@ -102,6 +102,13 @@ case "$out" in *"READY  slip"*) fail "a malformed blocked-by line must never rea
 assert_contains "$out" "STUCK  slip blocked-by malformed" "the report names the malformed row"
 case "$("$BIN/ac-ready.sh" queued)" in *slip*) fail "the queued selector must never offer a malformed row" ;; esac
 perl -ni -e 'print unless /^- \[ \] slip /' "$B"
+# Captain TN 2026-09-28: a run the strict read did not consume is MALFORMED
+# wherever it sits - after a word character, or beside a run that was read.
+perl -0777 -pi -e 's/(## Queued\n)/$1- [ ] wordslip - x (repo: shop) re-blocked-by: checkout, - trailing comma\n- [ ] tworuns - x (repo: shop) blocked-by: refund - also blocked-by: checkout\n/' "$B"
+out="$("$BIN/ac-ready.sh")"
+assert_contains "$out" "STUCK  wordslip blocked-by malformed" "a slipped run after a word character reads MALFORMED, never READY"
+assert_contains "$out" "STUCK  tworuns blocked-by malformed" "a second run beside the one read reads MALFORMED, never READY"
+perl -ni -e 'print unless /^- \[ \] (wordslip|tworuns) /' "$B"
 
 # validate: happy map, reserved-suffix id, missing line, cycle.
 "$BIN/ac-ready.sh" validate payv2 >/dev/null || fail "clean map must validate (cursed's ghost edge is outside the story set)"
@@ -196,6 +203,15 @@ assert_eq "$("$BIN/ac-ready.sh" watch-set neverheard)" "neverheard" \
 # the slug is - no watch-set change needed for fan-out coverage.
 assert_eq "$("$BIN/ac-ready.sh" watch-set fanfam)" "fanfam" \
   "a fan-out family (sub-deliverables spawned directly, no epic stories) still computes to exactly its id"
+
+# Ids are text: awk's == compares numeric-looking strings as numbers, so epic
+# 07's story joined epic 7's watch set and row 01 answered for story 1.
+perl -0777 -pi -e 's/(## In flight\n)/$1- [ ] s7 - a story of epic 07; epic:07 (repo: shop, since 2026-07-20)\n- [ ] 7 [EPIC] - a numeric epic stories: 1 (repo: shop, since 2026-07-20)\n/' "$B"
+perl -0777 -pi -e 's/(## Queued\n)/$1- [ ] 01 - an unrelated row that reads as the same number (repo: shop)\n/' "$B"
+assert_eq "$("$BIN/ac-ready.sh" watch-set 7)" "7" "watch-set 7 never takes epic 07's story"
+rc=0; out="$("$BIN/ac-ready.sh" validate 7)" || rc=$?
+assert_contains "$out" "MISSING story line for 1" "validate never takes row 01 for story 1"
+[ "$rc" != 0 ] || fail "a map naming a story with no row must exit nonzero"
 
 # Captain hold: `[@held]` refuses to offer a row, even once every blocker
 # lands - the measured bug (brief captain-hold-has-no-machine-representation:

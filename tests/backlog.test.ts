@@ -75,9 +75,19 @@ test("epic and feature are matched anywhere, with no word boundary", () => {
 test("blockers are read strictly, and every slip the strict read leaves is blockers_malformed", () => {
   only("- [ ] b1 - x blocked-by: a", { id: "b1", blockers: "a" });
   only("- [ ] b1 - x blocked-by: a-b\tx", { id: "b1", blockers: "a-b" });
+  only("- [ ] b1 - x preblocked-by: a", { id: "b1", blockers: "a" });
+  only("- [ ] b1 - x blocked-by: blocked-by", { id: "b1", blockers: "blocked-by" });
   for (const line of ["- [ ] b1 - x blocked-by:a", "- [ ] b1 - x Blocked-by: a", "- [ ] b1 - x blocked-by: a, b"])
     only(line, { id: "b1", blockers_malformed: "1" });
-  only("- [ ] b1 - reads unblocked-by here", { id: "b1" });
+});
+
+// Captain TN 2026-09-28: a run the strict read did not consume reads
+// MALFORMED wherever it sits, after a word character or after a read run.
+test("a blocked-by run outside the one blockers consumed is blockers_malformed wherever it sits", () => {
+  only("- [ ] b1 - x re-blocked-by: a,", { id: "b1", blockers_malformed: "1" });
+  only("- [ ] b1 - reads unblocked-by here", { id: "b1", blockers_malformed: "1" });
+  only("- [ ] b1 - x blocked-by: a - then blocked-by: b", { id: "b1", blockers: "a", blockers_malformed: "1" });
+  only("- [ ] b1 - x Blocked-By: b then blocked-by: a", { id: "b1", blockers: "a", blockers_malformed: "1" });
 });
 
 test("domain is authoritative at its two positions only, and any other unquoted run is domain_malformed", () => {

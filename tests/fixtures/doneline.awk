@@ -1,4 +1,4 @@
-function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv, dauth) {
+function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, bunread, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv, dauth) {
   f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_until"] = ""; f["hold_malformed"] = ""; f["epic"] = ""; f["feature"] = ""
   f["blockers"] = ""; f["blockers_malformed"] = ""; f["date"] = ""; f["verb"] = ""; f["contract"] = ""
   f["domain"] = ""; f["domain_malformed"] = ""
@@ -109,12 +109,15 @@ function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, f
   # a state its consumers must refuse to schedule. A prose mention of the token
   # trips this too; that is the fail-VISIBLE direction, and the line is one
   # keystroke from legal.
+  bunread = line
   if (match(line, /blocked-by: [a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*/)) {
     bafter = substr(line, RSTART + RLENGTH, 1)
-    if (bafter == "" || bafter == " " || bafter == "\t")
+    if (bafter == "" || bafter == " " || bafter == "\t") {
       f["blockers"] = substr(line, RSTART + 12, RLENGTH - 12)
+      bunread = substr(line, 1, RSTART - 1) substr(line, RSTART + RLENGTH)
+    }
   }
-  if (f["blockers"] == "" && tolower(line) ~ /(^|[^a-z0-9_-])blocked-by/)
+  if (tolower(bunread) ~ /blocked-by/)
     f["blockers_malformed"] = "1"
   # Date in the LAST non-nested parenthetical group; verb = the word before it.
   searchpos = 1; grp = ""

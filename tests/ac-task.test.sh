@@ -202,6 +202,15 @@ out="$("$BIN/ac-task.sh" start onlanded)"
 assert_contains "$out" "ok:" "a row whose blockers are all clean Done starts"
 grep -vE '^- \[[ x]\] (onflying|onfailed|onghost|onbad|onlanded|sank) ' "$ledger" >"$TMP/blk.md" && mv "$TMP/blk.md" "$ledger"
 
+# ---- the blockers are read off the row's OWN line: awk's == compared
+#      numeric-looking ids as numbers, so row 01's empty list let 1 start.
+awk '{ print } /^## Queued/ {
+  print "- [ ] 1 - waits on flying (repo: shop) blocked-by: flying - needs it"
+  print "- [ ] 01 - an unrelated row that reads as the same number (repo: shop)"
+}' "$ledger" >"$TMP/num.md" && mv "$TMP/num.md" "$ledger"
+assert_fails_with "flying (in flight)" -- "$BIN/ac-task.sh" start 1
+grep -vE '^- \[[ x]\] (1|01) ' "$ledger" >"$TMP/num.md" && mv "$TMP/num.md" "$ledger"
+
 # ---- a HAND-WRITTEN malformed until date fails CLOSED (HELD, never READY):
 #      hand-editing stays legal and a slip may not read as no-hold.
 awk '{ print } /^## Queued/ { print "- [ ] badhold [@held until soon] - hand-edited slip (repo: shop)" }' \
