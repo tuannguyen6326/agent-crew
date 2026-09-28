@@ -5,7 +5,7 @@ import { test, expect, beforeEach, afterAll } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, existsSync, symlinkSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { envHome, configRead, stateDir, enterCaller, bunChild } from "../src/lib.ts";
+import { envHome, configRead, stateDir, enterCaller, bunChild, sha256File } from "../src/lib.ts";
 
 const LIB = join(import.meta.dir, "..", "src", "lib.ts");
 
@@ -179,6 +179,44 @@ test("envHome and configRead answer exactly what ac_home_resolve and ac_config_r
       expect(`${envHome()}|${configRead("crew-harness", "claude")}`).toBe(bash.stdout.toString());
     }
   }
+});
+
+// Both maintenance hashes a receipt binds - the manifest's and the plan's -
+// are compared against values ac_sha256_file wrote, so the twin must print
+// the same bytes for any file, whatever it holds.
+test("sha256File answers exactly what ac_sha256_file prints", () => {
+  const binDir = join(import.meta.dir, "..", "bin");
+  const d = tempDir("ac-lib-ts-sha-");
+  const bodies: [string, Buffer][] = [
+    ["empty", Buffer.alloc(0)],
+    ["line", Buffer.from("skill\n")],
+    ["unterminated", Buffer.from("no newline")],
+    ["crlf", Buffer.from("a\r\nb\r\n")],
+    ["nul", Buffer.from([0x61, 0x00, 0x62, 0x0a, 0x00])],
+    ["octets", Buffer.from([0xff, 0xfe, 0xc2, 0xa0, 0x80])],
+    ["big", Buffer.alloc(3 << 20, "ab\n")],
+  ];
+  for (const [name, bytes] of bodies) writeFileSync(join(d, name), bytes);
+  symlinkSync(join(d, "line"), join(d, "link"));
+  for (const name of [...bodies.map(([n]) => n), "link"]) {
+    const bash = Bun.spawnSync(["bash", "-c", '. "$1/ac-lib.sh"; ac_sha256_file "$2"', "--", binDir, join(d, name)], {
+      env: { PATH: process.env.PATH! },
+    });
+    expect(bash.exitCode).toBe(0);
+    expect([name, `${sha256File(join(d, name))}\n`]).toEqual([name, bash.stdout.toString()]);
+  }
+});
+
+// Without pipefail the shell's pipeline prints nothing for a file it cannot
+// read, and its callers read that empty hash as a mismatch; the twin throws,
+// so no caller can compare against an empty hash at all.
+test("sha256File throws where ac_sha256_file prints no hash", () => {
+  const missing = join(tempDir("ac-lib-ts-sha-miss-"), "missing");
+  const bash = Bun.spawnSync(["bash", "-c", '. "$1/ac-lib.sh"; ac_sha256_file "$2"', "--", join(import.meta.dir, "..", "bin"), missing], {
+    env: { PATH: process.env.PATH! },
+  });
+  expect(bash.stdout.toString()).toBe("");
+  expect(() => sha256File(missing)).toThrow();
 });
 
 test("enterCaller moves to the caller's cwd, its first argument", () => {

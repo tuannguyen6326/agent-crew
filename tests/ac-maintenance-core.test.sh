@@ -91,6 +91,17 @@ for bad in unknown absolute traversal nested-traversal glob shell multi-document
     fail "closed plan validator accepted $bad input"
   fi
 done
+# jq's `$` also matches before a final newline, so a path the anchors let through
+# with one trailing LF reaches the @tsv loops as another file (the LF spelled as
+# the two bytes \n) than the one read-evidence quotes from.
+printf 'skill\n' >"$run/staged/skills/example/SKILL.md\\n"
+for field in staged target; do
+  jq --arg f "$field" '.actions[0][$f] += "\n"' "$run/plan.json" >"$run/bad.json"
+  if ac_maintenance_plan_validate "$run/bad.json" "$run" >/dev/null 2>&1; then
+    fail "closed plan validator accepted a $field ending in a newline"
+  fi
+done
+rm -f "$run/staged/skills/example/SKILL.md\\n"
 rm "$AC_HOME/skills/linked"
 ln -s plan.json "$run/plan-link.json"
 if ac_maintenance_plan_validate "$run/plan-link.json" "$run" >/dev/null 2>&1; then
@@ -608,15 +619,21 @@ guard_apply() { ac_maintenance_apply "$AC_HOME/data/learning-$1/plan.json" "$AC_
 guard_plan blocked
 mkdir -p "$txroot/learning-elsewhere"
 printf 'status=applying\n' >"$txroot/learning-elsewhere/journal"
-guard_apply blocked 2>/dev/null && fail "apply must refuse while another transaction is unsettled"
+held="$(guard_apply blocked 2>&1 >/dev/null)" && fail "apply must refuse while another transaction is unsettled"
+assert_contains "$held" "maintenance status" "apply names another transaction's claim instead of returning a bare 1"
 assert_no_file "$AC_HOME/skills/blocked/SKILL.md" "a transaction refused for another's claim writes nothing"
 rm -rf "$txroot/learning-elsewhere"
 
 guard_plan replanned
 mkdir -p "$txroot/learning-replanned-replanned"
 printf 'plan_sha256=%s\nstatus=applying\n' "$manifest_sha" >"$txroot/learning-replanned-replanned/journal"
-guard_apply replanned 2>/dev/null && fail "apply must refuse a plan other than the one its journal recorded"
+held="$(guard_apply replanned 2>&1 >/dev/null)" && fail "apply must refuse a plan other than the one its journal recorded"
+assert_contains "$held" "different plan" "apply names a replanned transaction instead of returning a bare 1"
 assert_no_file "$AC_HOME/skills/replanned/SKILL.md" "a different plan under a recorded transaction writes nothing"
+printf 'plan_sha256=%s\nstatus=complete\n' "$manifest_sha" >"$txroot/learning-replanned-replanned/journal"
+held="$(guard_apply replanned 2>&1 >/dev/null)" && fail "apply must refuse a plan other than the one its completed journal recorded"
+assert_contains "$held" "different plan" "apply names a replanned completed transaction instead of returning a bare 1"
+assert_no_file "$AC_HOME/skills/replanned/SKILL.md" "a different plan under a completed transaction writes nothing"
 rm -rf "$txroot/learning-replanned-replanned"
 
 guard_plan unbacked

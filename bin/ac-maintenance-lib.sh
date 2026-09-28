@@ -15,13 +15,15 @@
 # Learning/Curate maintenance transaction (ac_maintenance_target_allowed /
 # ac_maintenance_path_plain / ac_maintenance_move_source /
 # ac_maintenance_plan_validate / ac_maintenance_incomplete_other /
-# ac_maintenance_incomplete / ac_maintenance_receipt_field /
-# ac_maintenance_evidence_value / _ac_maintenance_significance /
-# _ac_maintenance_bearable_floor / ac_maintenance_read_evidence /
-# ac_maintenance_receipt_validate / _ac_maintenance_hold / ac_maintenance_apply
-# - the closed, hash-bound plan Learning and Curate mutate fleet-local
-# knowledge through: one fleet-wide writer lock, a pre-mutation backup, an
-# action journal, and atomic file replacement).
+# ac_maintenance_incomplete / ac_maintenance_evidence_value /
+# ac_maintenance_read_evidence / ac_maintenance_receipt_validate /
+# _ac_maintenance_hold / ac_maintenance_apply - the closed, hash-bound plan
+# Learning and Curate mutate fleet-local knowledge through: one fleet-wide
+# writer lock, a pre-mutation backup, an action journal, and atomic file
+# replacement). The receipt and read-evidence parsing behind
+# ac_maintenance_evidence_value, ac_maintenance_read_evidence and
+# ac_maintenance_receipt_validate is src/maintenance-receipt.ts, whose header
+# is its spec.
 #
 # ac_maintenance_receipt_validate is the AUTHORIZATION BOUNDARY both callers
 # share, and it trusts no writer: it re-derives every hash and, for any receipt
@@ -48,7 +50,10 @@
 # LAYERING: depends only on ac-lib.sh core (ac_state_dir, ac_home, ac_now,
 # ac_meta_get, ac_meta_set, ac_lock_acquire, ac_lock_release, ac_records_dir,
 # ac_skills_dir, ac_config_read, ac_sha256_file, ...). Never depended on by
-# another sub-lib.
+# another sub-lib. It sources bin/ac-bun.sh itself, because the receipt parser
+# runs in src/maintenance-receipt.ts.
+
+. "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh"
 
 # --- learning-loop DISTILL trigger (Slice 2) ----------------------------------
 # The cadence gate for the distill loop: a durable per-debrief counter that
@@ -481,14 +486,16 @@ ac_maintenance_plan_validate() {
 
   # Slurped, because `jq -e` judges only the LAST output of a stream while every
   # loop below and in apply walks the actions of every document in the file.
+  # \A...\z, never ^...$: jq's $ also matches before a final newline, and a
+  # value let through with one reaches the @tsv loops below as another file.
   jq -e -s 'length == 1 and (.[0] |
     type == "object"
     and keys == ["actions","input_manifest_sha256","mode","run_id","schema","subject"]
     and .schema == "agentcrew.maintenance-plan/v1"
     and (.mode == "learning" or .mode == "curate")
-    and (.run_id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))
-    and (.subject | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))
-    and (.input_manifest_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+    and (.run_id | type == "string" and test("\\A[A-Za-z0-9][A-Za-z0-9._-]*\\z"))
+    and (.subject | type == "string" and test("\\A[A-Za-z0-9][A-Za-z0-9._-]*\\z"))
+    and (.input_manifest_sha256 | type == "string" and test("\\A[0-9a-f]{64}\\z"))
     and (.actions | type == "array")
     and ([.actions[].target] | length == (unique | length))
     and all(.actions[];
@@ -504,15 +511,15 @@ ac_maintenance_plan_validate() {
         or .op == "rewrite-crewmate-learned"
         or .op == "update-cadence")
       and (.target | type == "string"
-        and test("^[A-Za-z0-9._/-]+$")
+        and test("\\A[A-Za-z0-9._/-]+\\z")
         and (test("(^|/)\\.\\.?(/|$)") | not)
         and (startswith("/") | not))
       and (.staged | type == "string"
-        and test("^staged/[A-Za-z0-9._/-]+$")
+        and test("\\Astaged/[A-Za-z0-9._/-]+\\z")
         and (test("(^|/)\\.\\.?(/|$)") | not))
       and (.old_sha256 | type == "string"
-        and (. == "-" or test("^[0-9a-f]{64}$")))
-      and (.new_sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+        and (. == "-" or test("\\A[0-9a-f]{64}\\z")))
+      and (.new_sha256 | type == "string" and test("\\A[0-9a-f]{64}\\z"))
     ))
   ' "$plan" >/dev/null 2>&1 || return 1
 
@@ -593,25 +600,6 @@ ac_maintenance_incomplete() {
   done
 }
 
-ac_maintenance_receipt_field() {
-  # ac_maintenance_receipt_field <receipt> <key> - read one quoted frontmatter
-  # scalar. The closed validator below proves uniqueness before this is used.
-  local receipt="$1" key="$2" value
-  value="$(awk -v key="$key" '
-    NR == 1 && $0 == "---" { front = 1; next }
-    front && $0 == "---" { exit }
-    front && index($0, key ":") == 1 {
-      sub("^[^:]+:[[:space:]]*", "")
-      print
-    }
-  ' "$receipt")"
-  case "$value" in
-    \"*\") value="${value#\"}"; value="${value%\"}" ;;
-    *) return 1 ;;
-  esac
-  printf '%s\n' "$value"
-}
-
 # --- READ-EVIDENCE: the judge must prove it OPENED the inputs -----------------
 # The gate prompt inlines no candidate content - it hands the judge two absolute
 # paths and the two SHA-256 values the receipt is later checked against - so a
@@ -686,241 +674,36 @@ AC_MAINTENANCE_QUOTE_MIN=12
 
 ac_maintenance_evidence_value() {
   # ac_maintenance_evidence_value <label> - stdin = the receipt, or the raw judge
-  # body before it becomes one. Print the whitespace-trimmed value of the one
+  # body before it becomes one. Print the trimmed value of the one
   # `- <label>: <value>` line inside `## Inputs Read`; return 1 unless exactly
-  # one such line exists there. The scan and the trim are byte-exact C whatever
-  # the caller's locale (captain 2026-09-28): under UTF-8 the trim would also eat
-  # a U+00A0, and awk and sed both refuse a line holding an invalid byte.
-  local raw
-  raw="$(LC_ALL=C awk -v want="- $1: " '
-    /^## Inputs Read[[:space:]]*$/ { insec = 1; next }
-    insec && /^## / { insec = 0 }
-    insec && index($0, want) == 1 { line = substr($0, length(want) + 1); n++ }
-    END { if (n != 1) exit 1; print line }
-  ')" || return 1
-  printf '%s' "$raw" | LC_ALL=C sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
-}
-
-_ac_maintenance_significance() {
-  # _ac_maintenance_significance <run-id> <subject> <mode> - stdin = one or more
-  # lines. Print the LARGEST number of significant characters any single line
-  # holds: the three prompt-supplied values deleted most-specific-first (the run
-  # id embeds the mode), then punctuation and whitespace dropped. Significant
-  # rather than raw length because an excerpt may be JSON, where quoting and
-  # bracing would otherwise pad a line of nothing but prompt-supplied values past
-  # any plausible raw threshold.
-  #
-  # ONE measure serves both a judge's quote and the floor its payload can bear,
-  # and that is load-bearing rather than tidy: a shell `${#s}` counts CHARACTERS
-  # under a UTF-8 locale while awk under LC_ALL=C counts BYTES, so the two
-  # disagree on every non-ASCII line - measured here, a staged `ệệệệệ` sets a
-  # floor of 12 against a quote scoring 5, which is a floor NO quote of that file
-  # can ever reach. This fleet's own records are written in Vietnamese, so that
-  # is the live case and not a curiosity. Bytes is the side both take: a
-  # multibyte line then scores at least what its characters would, which can only
-  # make an honest quote easier to accept.
-  LC_ALL=C awk -v rid="$1" -v subj="$2" -v mode="$3" '
-    function strip(s, t,   out, p) {
-      if (t == "") return s
-      out = ""
-      while ((p = index(s, t)) > 0) {
-        out = out substr(s, 1, p - 1)
-        s = substr(s, p + length(t))
-      }
-      return out s
-    }
-    {
-      line = strip(strip(strip($0, rid), subj), mode)
-      gsub(/[[:punct:][:space:]]/, "", line)
-      if (length(line) > max) max = length(line)
-    }
-    END { print max + 0 }
-  '
-}
-
-_ac_maintenance_bearable_floor() {
-  # _ac_maintenance_bearable_floor <file> <run-id> <subject> <mode> - the floor
-  # THIS payload can bear: AC_MAINTENANCE_QUOTE_MIN, or the most significant
-  # single line the file actually holds when that is less. 0 says the file can
-  # prove nothing at all about its reader.
-  local max
-  max="$(_ac_maintenance_significance "$2" "$3" "$4" <"$1")" || return 1
-  [ "$max" -lt "$AC_MAINTENANCE_QUOTE_MIN" ] || max="$AC_MAINTENANCE_QUOTE_MIN"
-  printf '%s' "$max"
+  # one such line exists there. Spec: src/maintenance-receipt.ts evidence-value.
+  ( ac_bun_exec src/maintenance-receipt.ts evidence-value "$1" )
 }
 
 ac_maintenance_read_evidence() {
   # ac_maintenance_read_evidence <manifest> <plan.json> - stdin = the receipt, or
   # the raw judge body before it becomes one. 0 when `## Inputs Read` proves the
-  # judge opened the manifest, the plan, and the bytes the cited action writes:
-  #   - INPUT MANIFEST QUOTE: one line that occurs verbatim in the manifest and
-  #     still holds AC_MAINTENANCE_QUOTE_MIN significant characters - punctuation
-  #     and whitespace excluded - once the run id, the subject and the mode are
-  #     deleted from it. Significant rather than raw length because a manifest
-  #     may be JSON, where quoting and bracing would otherwise pad an excerpt of
-  #     nothing but prompt-supplied values past any plausible raw threshold; the
-  #     three deletions run most-specific-first, since the run id embeds the mode.
-  #   - ACTION PLAN NEW SHA-256: one of the plan's own `.actions[].new_sha256`,
-  #     and never a prompt-printed hash. That exclusion is not theoretical: a
-  #     plan may stage a byte-identical copy of its own manifest, and then its
-  #     action hash IS the manifest hash the prompt printed, so membership alone
-  #     would accept the one value a judge gets for free. The quote needs no
-  #     such exclusion - a manifest is written and hashed before its plan
-  #     exists, so it can carry neither hash and the verbatim check already
-  #     denies both. A plan with no actions has no value that can satisfy this,
-  #     and fails closed.
-  #   - STAGED PAYLOAD QUOTE: one line that occurs verbatim in the staged file
-  #     of the action whose `new_sha256` was just cited - the exact bytes apply
-  #     will write - holding the floor that payload can bear. Waived only when
-  #     the payload holds no significant line for anyone to quote, which is a
-  #     property of the staged bytes and never of the judge. The run dir is
-  #     derived from the plan's own path exactly as the receipt boundary derives
-  #     it, so both call sites get this check from one definition.
-  # Verbatim means BYTE-wise (captain 2026-09-28): both quote matches run under
-  # LC_ALL=C, because a UTF-8 grep refuses a quote holding an invalid byte
-  # instead of matching it.
-  local manifest="$1" plan="$2"
-  local body quote bare form new_sha input_sha plan_sha mode subject run_id
-  local run staged_rel staged_abs other_rel floor payload payload_bare payload_ok
-  body="$(cat)"
-  input_sha="$(ac_sha256_file "$manifest")" || return 1
-  plan_sha="$(ac_sha256_file "$plan")" || return 1
-  mode="$(jq -r '.mode' "$plan")" || return 1
-  subject="$(jq -r '.subject' "$plan")" || return 1
-  run_id="$(jq -r '.run_id' "$plan")" || return 1
-
-  new_sha="$(printf '%s\n' "$body" | ac_maintenance_evidence_value 'ACTION PLAN NEW SHA-256')" \
-    || return 1
-  new_sha="${new_sha//\`/}"
-  case "$new_sha" in "$input_sha" | "$plan_sha") return 1 ;; esac
-  jq -e --arg s "$new_sha" 'any(.actions[]; .new_sha256 == $s)' "$plan" >/dev/null 2>&1 \
-    || return 1
-
-  run="$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P)" || return 1
-  [ "$(basename "$run")" != plans ] || run="$(cd "$run/.." && pwd -P)" || return 1
-  # Any further action carrying the same hash stages byte-identical bytes - the
-  # caller proved that - so the first one answers for all of them.
-  staged_rel="$(jq -r --arg s "$new_sha" \
-    'first(.actions[] | select(.new_sha256 == $s) | .staged)' "$plan")" || return 1
-  staged_abs="$run/$staged_rel"
-  [ -f "$staged_abs" ] && [ ! -L "$staged_abs" ] || return 1
-  floor="$(_ac_maintenance_bearable_floor "$staged_abs" "$run_id" "$subject" "$mode")" \
-    || return 1
-  if [ "$floor" -le 0 ]; then
-    # The waiver belongs to the PLAN, never to the judge: the judge chooses which
-    # action it cites, so a waiver keyed on the cited payload alone would let it
-    # cite the one contentless action a plan happens to carry - a move-skill plan
-    # stages one action per package file - and skip the proof for every other
-    # one. Waived only when NO action's payload could have carried it.
-    while IFS= read -r other_rel; do
-      [ -n "$other_rel" ] || continue
-      [ -f "$run/$other_rel" ] && [ ! -L "$run/$other_rel" ] || return 1
-      [ "$(_ac_maintenance_bearable_floor "$run/$other_rel" \
-        "$run_id" "$subject" "$mode")" -le 0 ] || return 1
-    done < <(jq -r '.actions[].staged' "$plan")
-  else
-    payload="$(printf '%s\n' "$body" | ac_maintenance_evidence_value 'STAGED PAYLOAD QUOTE')" \
-      || return 1
-    payload_bare="$payload"
-    case "$payload_bare" in
-      \`*\`) payload_bare="${payload_bare#\`}"; payload_bare="${payload_bare%\`}" ;;
-    esac
-    payload_ok=""
-    for form in "$payload" "$payload_bare"; do
-      [ -n "$form" ] || continue
-      LC_ALL=C grep -qF -- "$form" "$staged_abs" || continue
-      [ "$(printf '%s\n' "$form" \
-        | _ac_maintenance_significance "$run_id" "$subject" "$mode")" \
-        -ge "$floor" ] || continue
-      payload_ok=yes
-      break
-    done
-    [ -n "$payload_ok" ] || return 1
-  fi
-
-  quote="$(printf '%s\n' "$body" | ac_maintenance_evidence_value 'INPUT MANIFEST QUOTE')" \
-    || return 1
-  bare="$quote"
-  case "$bare" in \`*\`) bare="${bare#\`}"; bare="${bare%\`}" ;; esac
-  for form in "$quote" "$bare"; do
-    [ -n "$form" ] || continue
-    LC_ALL=C grep -qF -- "$form" "$manifest" || continue
-    [ "$(printf '%s\n' "$form" \
-      | _ac_maintenance_significance "$run_id" "$subject" "$mode")" \
-      -ge "$AC_MAINTENANCE_QUOTE_MIN" ] && return 0
-  done
-  return 1
+  # judge opened the manifest, the plan, and the bytes the cited action writes.
+  # Both call sites - bin/ac-gate.sh at write time and the receipt boundary
+  # below - get the check from this one definition. Spec:
+  # src/maintenance-receipt.ts read-evidence.
+  ( ac_bun_exec src/maintenance-receipt.ts read-evidence "$1" "$2" "$AC_MAINTENANCE_QUOTE_MIN" )
 }
 
 ac_maintenance_receipt_validate() {
   # ac_maintenance_receipt_validate <receipt.md> <plan.json> <manifest>
   # Print the validated decision. This is the authorization boundary shared by
   # Learning and Curate; an `approved:` candidate header never reaches it. The
-  # frontmatter and section scans are byte-exact C (captain 2026-09-28): a UTF-8
-  # awk aborts once a regex steps over an invalid byte, and the section scan
-  # reads every line of the receipt, verbatim quotes included.
-  local receipt="$1" plan="$2" manifest="$3" mode subject decision input_sha plan_sha run
-  local authority
+  # plan's closed schema is checked here; every receipt rule, read-evidence
+  # included, is src/maintenance-receipt.ts receipt-check.
+  local receipt="$1" plan="$2" manifest="$3" run
   [ -f "$receipt" ] && [ ! -L "$receipt" ] && [ -f "$manifest" ] \
     && [ ! -L "$manifest" ] || return 1
   run="$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P)" || return 1
   [ "$(basename "$run")" != plans ] || run="$(cd "$run/.." && pwd -P)"
   ac_maintenance_plan_validate "$plan" "$run" || return 1
-  LC_ALL=C awk '
-    NR == 1 && $0 == "---" { front = 1; next }
-    front && $0 == "---" { front = 0; closed = 1; next }
-    front {
-      if ($0 !~ /^[A-Za-z0-9_]+: ".*"$/) exit 2
-      key = $0; sub(/:.*/, "", key)
-      allowed = (key == "schema" || key == "mode" || key == "subject" || key == "decision" || key == "authority" || key == "engine" || key == "model" || key == "input_manifest_sha256" || key == "action_plan_sha256" || key == "reviewed_at")
-      if (!allowed) exit 2
-      seen[key]++
-    }
-    END {
-      required[1] = "schema"; required[2] = "mode"; required[3] = "subject"
-      required[4] = "decision"; required[5] = "authority"; required[6] = "engine"
-      required[7] = "model"; required[8] = "input_manifest_sha256"
-      required[9] = "action_plan_sha256"; required[10] = "reviewed_at"
-      if (!closed) exit 2
-      for (i = 1; i <= 10; i++) if (seen[required[i]] != 1) exit 2
-    }
-  ' "$receipt" || return 1
-  [ "$(ac_maintenance_receipt_field "$receipt" schema)" = "agentcrew.maintenance-gate/v1" ] \
-    || return 1
-  mode="$(ac_maintenance_receipt_field "$receipt" mode)" || return 1
-  subject="$(ac_maintenance_receipt_field "$receipt" subject)" || return 1
-  decision="$(ac_maintenance_receipt_field "$receipt" decision)" || return 1
-  # `environment-error` is deliberately absent and must never be added: it is the
-  # judge's declaration that its environment denied it something it had to judge,
-  # not a judgment about the action, so a receipt carrying it authorizes nothing.
-  # bin/ac-gate.sh refuses to write one at all; this is the second layer, which
-  # trusts nothing any gate wrote.
-  case "$decision" in continue|revise|ask-captain) ;; *) return 1 ;; esac
-  [ "$mode" = "$(jq -r '.mode' "$plan")" ] || return 1
-  [ "$subject" = "$(jq -r '.subject' "$plan")" ] || return 1
-  input_sha="$(ac_sha256_file "$manifest")" || return 1
-  plan_sha="$(ac_sha256_file "$plan")" || return 1
-  [ "$input_sha" = "$(jq -r '.input_manifest_sha256' "$plan")" ] || return 1
-  [ "$input_sha" = "$(ac_maintenance_receipt_field "$receipt" input_manifest_sha256)" ] \
-    || return 1
-  [ "$plan_sha" = "$(ac_maintenance_receipt_field "$receipt" action_plan_sha256)" ] \
-    || return 1
-  LC_ALL=C awk '
-    /^## Grounds[[:space:]]*$/ { section = "grounds"; next }
-    /^## Proposed Process[[:space:]]*$/ { section = "process"; next }
-    /^## / { section = ""; next }
-    section == "grounds" && /[^[:space:]]/ { grounds = 1 }
-    section == "process" && /[^[:space:]]/ { process = 1 }
-    END { exit(grounds && process ? 0 : 1) }
-  ' "$receipt" || return 1
-  # A `repository-policy` receipt is minted by the caller that just BUILT these
-  # files, with no engine in the loop and so nothing that could be blind; every
-  # other authority is a judge and owes its proof, unrecognised ones included.
-  authority="$(ac_maintenance_receipt_field "$receipt" authority)" || return 1
-  if [ "$authority" != repository-policy ]; then
-    ac_maintenance_read_evidence "$manifest" "$plan" <"$receipt" || return 1
-  fi
-  printf '%s\n' "$decision"
+  ( ac_bun_exec src/maintenance-receipt.ts receipt-check "$receipt" "$plan" "$manifest" \
+    "$AC_MAINTENANCE_QUOTE_MIN" )
 }
 
 ac_maintenance_gate_failure_reason() {
@@ -989,8 +772,10 @@ ac_maintenance_apply() {
   plan_sha="$(ac_sha256_file "$plan")" || return 1
 
   if [ -f "$journal" ] && [ "$(ac_meta_get "$journal" status)" = "complete" ]; then
-    [ "$(ac_meta_get "$journal" plan_sha256)" = "$plan_sha" ]
-    return
+    recorded_sha="$(ac_meta_get "$journal" plan_sha256)"
+    [ "$recorded_sha" != "$plan_sha" ] || return 0
+    ac_warn "maintenance apply: transaction $run_id-$subject already completed a different plan (plan_sha256 $recorded_sha, this one $plan_sha), so this plan was not applied. A transaction replays only the plan it recorded - this is a changed plan under a reused run id, not a busy lock or a stale receipt."
+    return 1
   fi
 
   ac_lock_acquire "$lock" 30 || {
@@ -1005,10 +790,12 @@ ac_maintenance_apply() {
   mkdir -p "$txn"
   recorded_sha="$(ac_meta_get "$journal" plan_sha256)"
   if [ -n "$recorded_sha" ] && [ "$recorded_sha" != "$plan_sha" ]; then
+    ac_warn "maintenance apply: transaction $run_id-$subject already recorded a different plan (plan_sha256 $recorded_sha, this one $plan_sha), so this plan was neither claimed nor written. A transaction replays only the plan it recorded - this is a changed plan under a reused run id, not a busy lock or a stale receipt."
     ac_lock_release "$lock"
     return 1
   fi
   if ac_maintenance_incomplete_other "$root" "$txn"; then
+    ac_warn "maintenance apply: another Learning/Curate transaction is still unsettled, so $run_id-$subject was neither claimed nor written. This is another transaction's claim, not a stale receipt or a refused plan - bin/ac-learn.sh maintenance status names it, and resume or abandon settles it."
     ac_lock_release "$lock"
     return 1
   fi
