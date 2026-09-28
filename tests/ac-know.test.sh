@@ -638,6 +638,14 @@ refuses "lock timeout" ccite --quote 'prune skips a dirty slot'
 assert_eq "$(cat "$crec")" "$cbefore" "C8: the record is unchanged while the lock is held"
 rm -rf "$crec.lock"
 
+# C9: a quote carrying a BACKSLASH addresses the entry whose text carries it.
+# Passed through `awk -v` the phrase is escape-cooked (`\d` arrives as `d`),
+# so a verbatim quote of the entry's own text read as "nothing matched".
+cadd 'the pattern \d+ matches a run of digits in the parser'
+out="$(ccite --quote 'pattern \d+ matches' 2>&1)" \
+  || fail "C9: a backslash-carrying quote must match the entry it was quoted from: $out"
+assert_contains "$out" 'the pattern \d+ matches a run of digits in the parser | src:' "C9: cite prints that entry"
+
 # --- the DUPLICATE GUARD on `add` -------------------------------------------
 # `add` appended unconditionally, so the same subject landed twice whenever two
 # families verified it - the normal case for a record whose purpose is that the
@@ -694,6 +702,13 @@ before_d5="$(cat "$drec")"
 refuses "matched nothing" dadd --supersede 'no such phrase at all' --fact 'a replacement nobody asked for'
 refuses "ambiguous" dadd --supersede 'the pooled worktree lease' --fact 'a replacement for two entries at once'
 assert_eq "$(cat "$drec")" "$before_d5" "D5: both refusals leave the record byte-unchanged"
+
+# D6: the guard judges the text that will be WRITTEN. Through `awk -v` the new
+# fact was escape-cooked (`\b` became a backspace, so `\bpolicy` tokenized as
+# `policy`, never the stored `bpolicy`), and a verbatim restatement shared no
+# token with the stored entry.
+dadd --new --fact 'the \bpolicy\b \bmatcher\b \bselector\b \banchor\b regex' >/dev/null
+refuses "already has a live entry" dadd --fact 'a \bpolicy\b \bmatcher\b \bselector\b \banchor\b pattern'
 
 # --- SUPERSEDED-SET ADDRESSING: add/retire/cite load $sup already but never
 # search it (repo-knowledge-superseded-set-is-loaded-never-searched). Two
@@ -857,6 +872,7 @@ recall() { "$KNOW" recall --home "$AC_HOME" --repo "$rrepo2" "$@"; }
 radd2 'the watcher beacon goes stale past the re-arm grace and the fleet watcher covers the panes'
 radd2 'the worktree pool lease is recorded in a slot meta that survives a restart'
 radd2 'the watcher skip self-revokes when its scoped beacon is stale past grace'
+radd2 'the lease grace window is counted in whole seconds'
 
 # R1: only entries clearing the TERM FLOOR are offered. Measured on the real
 # record: a floor of 1 matched 304 of 454 live facts for an ordinary question,
@@ -866,6 +882,7 @@ assert_contains "$out" "== facts (L1 - repo-knowledge) ==" "R1: the fact tier is
 assert_contains "$out" "watcher beacon goes stale past the re-arm grace" "R1: the on-topic fact is offered"
 case "$out" in
   *"worktree pool lease"*) fail "R1: an off-topic fact must not clear the term floor" ;;
+  *"lease grace window"*) fail "R1: one shared term (grace) is below the floor of 3" ;;
 esac
 assert_contains "$out" "cite: ac-know.sh cite" "R1: each hit hands over its cite command"
 assert_contains "$out" "recall PRINTS; it never cites" \
@@ -904,5 +921,44 @@ assert_contains "$out5" "(all hits)" "R4: an untruncated answer says so, so the 
 out6="$(recall 'kubernetes ingress certificate rotation')"
 assert_contains "$out6" "no hit in any layer" "R5: a miss is reported as a miss"
 assert_contains "$out6" "state the absence explicitly" "R5: and names the intake obligation it creates"
+
+# R6: a ZERO budget truncates like any other - both counts pass the digits
+# check, and an absence line over hits the budget merely hid is the false
+# "nothing is known" intake then writes into a brief. The inverse holds too: a
+# real miss under a zero budget is still an absence.
+out7="$(recall 'worktree pool lease restart' --max 0)"
+case "$out7" in *"no hit in any layer"*) fail "R6: --max 0 over real hits must not report an absence: $out7" ;; esac
+assert_contains "$out7" "TRUNCATED at --max 0" "R6: --max 0 states the truncation"
+out7="$(recall 'worktree pool lease restart' --bytes 0)"
+case "$out7" in *"no hit in any layer"*) fail "R6: --bytes 0 over real hits must not report an absence: $out7" ;; esac
+assert_contains "$out7" "TRUNCATED at --max 8 / --bytes 0" "R6: --bytes 0 states the truncation"
+out7="$(recall 'kubernetes ingress certificate rotation' --max 0)"
+assert_contains "$out7" "no hit in any layer" "R6: a real miss under a zero budget is still an absence"
+
+# R7: the cite hand-over's phrase survives the shell. An apostrophe in the
+# subject closed the single-quoted phrase early and the line did not parse -
+# 87 of drydock's 681 live entries on 2026-09-28.
+radd2 "the chief's watcher beacon grace is three hundred seconds"
+hand="$(recall "chief's watcher beacon grace" | awk '/cite: ac-know.sh cite/ && /chief/ { l = $0 } END { print l }')"
+out8="$(eval "\"\$KNOW\" cite --home \"\$AC_HOME\" --repo \"\$rrepo2\" --quote ${hand##*--quote }" 2>&1)" \
+  || fail "R7: the printed cite hand-over must parse and address its entry: $hand -> $out8"
+assert_contains "$out8" "the chief's watcher beacon grace is three hundred seconds | src:" "R7: it cites the entry it was printed for"
+
+# R8: a question ABOUT a flag is still a question. The usage is
+# `recall <question words>...` and intake passes the question as one quoted
+# word, so a quoted question starting with - died as "unknown flag".
+radd2 'the --changed selector widens the diff to every file the base touched'
+out9="$(recall '--changed selector widens' 2>&1)" \
+  || fail "R8: a question word beginning with - must reach the query: $out9"
+assert_contains "$out9" "the --changed selector widens the diff" "R8: and the question finds its entry"
+# The inverse: a bare dash-word that is not one of the four flags is a typo'd
+# or unsupported flag. Taken as a question term it raises the floor and matches
+# nothing, so recall would print a false absence (or a silently narrowed "all
+# hits") instead of refusing.
+refuses "unknown flag: --limit" recall 'watcher beacon stale grace' --limit 3
+refuses "unknown flag: --max=3" recall 'watcher beacon stale grace' --max=3
+out9="$(recall -- --changed 2>&1)" \
+  || fail "R8: a one-word question beginning with - must pass after --: $out9"
+assert_contains "$out9" "the --changed selector widens the diff" "R8: and -- ends the flags"
 
 pass
