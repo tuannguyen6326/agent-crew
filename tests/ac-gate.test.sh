@@ -1047,6 +1047,16 @@ done
 rc=0; gate widget spec --round=2 >/dev/null 2>"$TMP/badroundsyntax.err" || rc=$?
 [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ] || fail "unknown round syntax must fail as usage"
 grep -q '^pane-agent ' "$GLOG" && fail "unknown round syntax must fail before the pane"
+# A value flag left as the LAST word is a usage error that SAYS so, in both forms.
+for trailing in "widget spec --round" "widget spec --rule" "widget spec --repo" "widget spec --ref" \
+  "maintenance --mode" "maintenance --run" "maintenance --subject" "maintenance --manifest" \
+  "maintenance --plan"; do
+  rc=0
+  # shellcheck disable=SC2086
+  AC_PANE_AGENT="$stub/pane-agent" "$BIN/ac-gate.sh" $trailing >/dev/null 2>"$TMP/trailing.err" || rc=$?
+  [ "$rc" != 0 ] && [ "$rc" != 3 ] && [ "$rc" != 4 ] || fail "a valueless trailing '$trailing' must fail as usage (rc=$rc)"
+  assert_contains "$(cat "$TMP/trailing.err")" "usage: ac-gate.sh" "a valueless trailing '$trailing' prints the usage line"
+done
 
 # ============================================================================
 # 7. atomic write: a prior second-chief.md survives a failed run unchanged
@@ -1690,5 +1700,213 @@ GATE_BODY_FILE="$TMP/maintenance-body.md" gate maintenance \
   --manifest "$mrun/input-manifest.md" --plan "$mrun/plan.json" >/dev/null 2>&1 || rc=$?
 [ "$rc" != 0 ] || fail "a manifest hash mismatch must reject maintenance gating"
 grep -q '^pane-agent ' "$GLOG" && fail "a hash-mismatched maintenance input must reject before opening a pane"
+
+# ============================================================================
+# 16. the room receipt readers: scan cost, and parity with ac-room.sh's writers
+# ============================================================================
+# The readers are lifted out of the script itself, so what is proven here is
+# ac-gate.sh's own parse, never a copy of it.
+for fn in review_body r1_required_change_ids normalize_id_list validate_disposition_partition \
+  room_entry_payload valid_gate_verify_text latest_valid_gate_verify valid_gate_routing_text \
+  latest_valid_gate_routing valid_r1_disposition_text latest_valid_r1_disposition; do
+  eval "$(sed -n '/^'"$fn"'() {/,/^}/p' "$BIN/ac-gate.sh")"
+  declare -F "$fn" >/dev/null || fail "ac-gate.sh no longer defines $fn"
+done
+
+# The scan pays room_entry_payload's `$(...)` fork only on a line carrying the
+# marker, and still reads exactly the lines it always read: a NUL byte elsewhere
+# in the room hides nothing, and a torn (unterminated) last line stays unread.
+eval "$(declare -f room_entry_payload | sed '1s/^room_entry_payload/room_entry_payload_parse/')"
+room_entry_payload() { printf 'x\n' >>"$TMP/scan-calls"; room_entry_payload_parse "$@"; }
+family=scan
+scan_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+{
+  printf '# Room\n'
+  i=1
+  while [ "$i" -le 200 ]; do
+    printf -- '- [t] crewchief> TRIAGE: filler-%s\n' "$i"
+    i=$((i + 1))
+  done
+  printf -- '- [t] scan-chief> GATE-ROUTING: stage=spec report_sha256=%s uncertainty=yes consequence=low authority=chief route=second-chief grounds=kept\n' "$scan_sha"
+  printf -- '- [t] scan-chief> GATE-VERIFY: stage=spec round=1 report_sha256=%s verdict=pass grounds=kept\n' "$scan_sha"
+  printf -- '- [t] scan-chief> R1-DISPOSITION: stage=spec r1_sha256=%s report_sha256=%s accepted=1 disputed=none authority=none grounds=kept\n' "$scan_sha" "$scan_sha"
+  printf -- '- [t] crewchief> TRIAGE: a NUL byte \000 in the middle of the room\n'
+  printf -- '- [t] scan-chief> GATE-ROUTING: stage=spec report_sha256=%s uncertainty=no consequence=high authority=chief route=second-chief grounds=torn' "$scan_sha"
+} >"$TMP/scan-room.md"
+: >"$TMP/scan-calls"
+assert_contains "$(latest_valid_gate_routing "$TMP/scan-room.md" spec "$scan_sha")" "grounds=kept" \
+  "GATE-ROUTING scan selects the last complete receipt past a NUL byte, never the torn last line"
+assert_eq "$(grep -c . "$TMP/scan-calls")" "1" "GATE-ROUTING scan parses only the lines carrying its marker"
+: >"$TMP/scan-calls"
+assert_contains "$(latest_valid_gate_verify "$TMP/scan-room.md" spec 1 "$scan_sha")" "grounds=kept" \
+  "GATE-VERIFY scan selects its receipt past a NUL byte"
+assert_eq "$(grep -c . "$TMP/scan-calls")" "1" "GATE-VERIFY scan parses only the lines carrying its marker"
+: >"$TMP/scan-calls"
+assert_contains "$(latest_valid_r1_disposition "$TMP/scan-room.md" spec "$scan_sha" "$scan_sha" 1)" "grounds=kept" \
+  "R1-DISPOSITION scan selects its receipt past a NUL byte"
+assert_eq "$(grep -c . "$TMP/scan-calls")" "1" "R1-DISPOSITION scan parses only the lines carrying its marker"
+eval "$(declare -f room_entry_payload_parse | sed '1s/^room_entry_payload_parse/room_entry_payload/')"
+
+# WRITER/READER PARITY: every receipt ac-room.sh writes, ac-gate.sh must bind,
+# and every receipt the writer refuses to write, the reader must refuse to bind.
+# Writer-side verdict: the real verb accepted the fields AND wrote exactly the
+# text under test, so the fields it derives or fixes (route, verdict) are
+# compared too; R1-DISPOSITION normalizes its id lists, so there the verb's
+# verdict on the raw lists is compared, and what it wrote must bind as well.
+# Reader-side verdict: some gate invocation (a valid stage, round 1 or 2, that
+# stage's report sha) binds the text as twin-chief's entry.
+# Grounds carrying a CR are left out: the writers refuse them as a second
+# physical line while the readers accept them, a disagreement no authority has
+# settled yet.
+family=twin
+twin_room="$AC_HOME/data/twin/room.md"
+for s in spec arch plan design; do
+  mkdir -p "$AC_HOME/data/twin/$s"
+  printf '# %s report\nreport under gate for twin %s.\n' "$s" "$s" >"$AC_HOME/data/twin/$s/report.md"
+  eval "twin_sha_$s=$(shasum -a 256 <"$AC_HOME/data/twin/$s/report.md" | awk '{print $1}')"
+done
+twin_sha() {
+  local short
+  short="$(stage_short "$1" 2>/dev/null)" || short=spec
+  eval "printf '%s\n' \"\$twin_sha_$short\""
+}
+twin_report() {
+  local short
+  short="$(stage_short "$1" 2>/dev/null)" || short=spec
+  printf '%s\n' "$AC_HOME/data/twin/$short/report.md"
+}
+twin_write() {
+  "$BIN/ac-room.sh" "$@" >/dev/null 2>&1 || return 1
+  tail -n 1 "$twin_room" | sed 's/^- \[[^]]*\] twin-chief> //'
+}
+twin_line() { printf -- '- [2026-01-01T00:00:00Z] twin-chief> %s\n' "$1" >"$TMP/twin-one.md"; }
+twin_diffs=""
+twin_check() {
+  [ "$1" = "$2" ] || twin_diffs="$twin_diffs
+  writer=$1 reader=$2: $3"
+}
+twin_verify_read() {
+  local ws wr
+  twin_line "$1"
+  for ws in spec architecture plan design; do
+    for wr in 1 2; do
+      latest_valid_gate_verify "$TMP/twin-one.md" "$ws" "$wr" "$(twin_sha "$ws")" >/dev/null && return 0
+    done
+  done
+  return 1
+}
+twin_route_read() {
+  local ws
+  twin_line "$1"
+  for ws in spec architecture plan design; do
+    latest_valid_gate_routing "$TMP/twin-one.md" "$ws" "$(twin_sha "$ws")" >/dev/null && return 0
+  done
+  return 1
+}
+
+while read -r st rd g; do
+  [ "$rd" != - ] || rd=""
+  [ "$g" != - ] || g="   "
+  w=0; out="$(twin_write gate-verify twin "$st" --round "$rd" --report "$(twin_report "$st")" --grounds "$g")" && w=1
+  for v in pass fail; do
+    text="GATE-VERIFY: stage=$st round=$rd report_sha256=$(twin_sha "$st") verdict=$v grounds=$g"
+    ww=0; [ "$w" = 1 ] && [ "$out" = "$text" ] && ww=1
+    r=0; twin_verify_read "$text" && r=1
+    twin_check "$ww" "$r" "$text"
+  done
+done <<'EOF'
+spec 1 chief passed it
+spec 2 chief passed it
+spec 3 chief passed it
+spec - chief passed it
+spec 1 -
+architecture 1 chief passed it
+architecture 2 chief passed it
+plan 1 chief passed it
+plan 2 chief passed it
+design 1 chief passed it
+design 2 chief passed it
+learning 1 chief passed it
+EOF
+
+while read -r st u c a g; do
+  [ "$g" != - ] || g="   "
+  w=0; out="$(twin_write gate-route twin "$st" --report "$(twin_report "$st")" --uncertainty "$u" \
+    --consequence "$c" --authority "$a" --grounds "$g")" && w=1
+  for rt in chief second-chief captain; do
+    text="GATE-ROUTING: stage=$st report_sha256=$(twin_sha "$st") uncertainty=$u consequence=$c authority=$a route=$rt grounds=$g"
+    ww=0; [ "$w" = 1 ] && [ "$out" = "$text" ] && ww=1
+    r=0; twin_route_read "$text" && r=1
+    twin_check "$ww" "$r" "$text"
+  done
+done <<'EOF'
+spec no low chief settled
+spec no low captain settled
+spec no high chief settled
+spec no high captain settled
+spec yes low chief settled
+spec yes low captain settled
+spec yes high chief settled
+spec yes high captain settled
+architecture yes low chief settled
+spec maybe low chief settled
+spec no medium chief settled
+spec no low mixed settled
+spec no low chief -
+learning yes low chief settled
+EOF
+
+twin_r1="$AC_HOME/data/twin/spec/second-chief-r1.md"
+while read -r ids acc dis au g; do
+  [ "$g" != - ] || g="   "
+  if [ "$ids" != "${twin_ids:-}" ]; then
+    twin_ids="$ids"
+    {
+      printf -- '---\nschema: agentcrew.second-chief/v1\ndecision: revise\n---\n'
+      printf '# Second-Chief Decision\n## Required Changes\n'
+      for id in $(printf '%s\n' "$ids" | tr ',' ' '); do
+        printf '%s. **Problem** - gap %s.\n' "$id" "$id"
+      done
+      printf '## Questions for the Owning Chief\nNone.\n'
+    } >"$twin_r1"
+    twin_r1_sha="$(shasum -a 256 <"$twin_r1" | awk '{print $1}')"
+    twin_expected="$(r1_required_change_ids "$twin_r1" | paste -sd, -)"
+  fi
+  w=0; out="$(twin_write disposition twin spec --r1 "$twin_r1" --accepted "$acc" --disputed "$dis" \
+    --authority "$au" --grounds "$g")" && w=1
+  text="R1-DISPOSITION: stage=spec r1_sha256=$twin_r1_sha report_sha256=$(twin_sha spec) accepted=$acc disputed=$dis authority=$au grounds=$g"
+  twin_line "$text"
+  r=0; latest_valid_r1_disposition "$TMP/twin-one.md" spec "$twin_r1_sha" "$(twin_sha spec)" "$twin_expected" >/dev/null && r=1
+  twin_check "$w" "$r" "R1 ids $ids: $text"
+  if [ "$w" = 1 ]; then
+    twin_line "$out"
+    r=0; latest_valid_r1_disposition "$TMP/twin-one.md" spec "$twin_r1_sha" "$(twin_sha spec)" "$twin_expected" >/dev/null && r=1
+    twin_check 1 "$r" "R1 ids $ids, as written: $out"
+  fi
+done <<'EOF'
+1,2,3 1,2,3 none none settled
+1,2,3 3,1,2 none none settled
+1,2,3 01,2,3 none none settled
+1,2,3 0,1,2,3 none none settled
+1,2,3 1,2 3 chief-owned settled
+1,2,3 1,2 3 captain-owned settled
+1,2,3 1,2 3 mixed settled
+1,2,3 1,2 3 none settled
+1,2,3 1,2 3 bogus settled
+1,2,3 none 1,2,3 captain-owned settled
+1,2,3 1 3,2 mixed settled
+1,2,3 1,2 none none settled
+1,2,3 1,2,3 3 chief-owned settled
+1,2,3 1,2,3,4 none none settled
+1,2,3 1,1,2,3 none none settled
+1,2,3 1,2,3 none chief-owned settled
+1,2,3 1,2, 3 chief-owned settled
+1,2,3 1,2,x 3 chief-owned settled
+1,2,3 1,2,3 none none -
+1 1 none none settled
+1 none 1 chief-owned settled
+1 none none none settled
+EOF
+[ -z "$twin_diffs" ] || fail "ac-room.sh writers and ac-gate.sh readers disagree on:$twin_diffs"
 
 pass

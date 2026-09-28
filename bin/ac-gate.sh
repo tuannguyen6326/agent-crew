@@ -204,7 +204,7 @@
 # So this script DECLARES the window it is about to block for, for the family named
 # on its own command line (never inferred from the environment - ac-pane-agent.sh's
 # caller-declares principle): state/.chief-busy-until.<family> (ac_chief_busy_path,
-# ac-lib.sh, which owns the contract) holds the epoch until which the caller is
+# ac-wake-lib.sh, which owns the contract) holds the epoch until which the caller is
 # blocked - AC_GATE_TIMEOUT plus a reap slack for the post-timeout tail. It is
 # cleared on every trappable exit like the running marker, and SELF-EXPIRES so an
 # untrappable death cannot hold the skip open; it never asserts coverage and never
@@ -238,15 +238,16 @@ data_dir="$(ac_data_dir)"
 
 if [ "${1:-}" = maintenance ]; then
   gate_kind=maintenance
+  usage="usage: ac-gate.sh maintenance --mode <learning|curate> --run <dir> --subject <id> --manifest <file> --plan <file>"
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --mode) mode="${2:-}"; shift 2 ;;
-      --run) run="${2:-}"; shift 2 ;;
-      --subject) subject="${2:-}"; shift 2 ;;
-      --manifest) manifest="${2:-}"; shift 2 ;;
-      --plan) plan="${2:-}"; shift 2 ;;
-      *) ac_die "usage: ac-gate.sh maintenance --mode <learning|curate> --run <dir> --subject <id> --manifest <file> --plan <file>" ;;
+      --mode) mode="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --run) run="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --subject) subject="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --manifest) manifest="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --plan) plan="${2:-}"; shift 2 || ac_die "$usage" ;;
+      *) ac_die "$usage" ;;
     esac
   done
   case "$mode" in learning|curate) ;; *) ac_die "maintenance --mode must be learning|curate" ;; esac
@@ -275,16 +276,17 @@ if [ "${1:-}" = maintenance ]; then
   brief="$manifest"
   report="$plan"
 else
+  usage="usage: ac-gate.sh <family> <spec|architecture|plan|design> [--round 1|2] [--rule <number|default>] [--repo <project-or-path>] [--ref <git-ref>]"
   family="${1:-}"; stage="${2:-}"; shift 2 2>/dev/null || true
-  [ -n "$family" ] && [ -n "$stage" ] || ac_die "usage: ac-gate.sh <family> <spec|architecture|plan|design> [--round 1|2] [--rule <number|default>] [--repo <project-or-path>] [--ref <git-ref>]"
+  [ -n "$family" ] && [ -n "$stage" ] || ac_die "$usage"
   round=1; pane_rule=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --round) round="${2:-}"; shift 2 ;;
-      --rule) pane_rule="${2:-}"; shift 2 ;;
-      --repo) repo_arg="${2:-}"; shift 2 ;;
-      --ref) repo_ref="${2:-}"; shift 2 ;;
-      *) ac_die "usage: ac-gate.sh <family> <spec|architecture|plan|design> [--round 1|2] [--rule <number|default>] [--repo <project-or-path>] [--ref <git-ref>]" ;;
+      --round) round="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --rule) pane_rule="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --repo) repo_arg="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --ref) repo_ref="${2:-}"; shift 2 || ac_die "$usage" ;;
+      *) ac_die "$usage" ;;
     esac
   done
   case "$round" in
@@ -512,6 +514,10 @@ validate_r1_artifact() {
   [ "$body_decision" = "$dec" ] || return 1
 }
 
+# From here through latest_valid_r1_disposition: the READER-side twins of
+# ac-room.sh's gate-route/gate-verify/disposition writers - change both sides
+# together; the WRITER/READER PARITY matrix in tests/ac-gate.test.sh fails when
+# they judge one of its receipts apart.
 r1_required_change_ids() {
   review_body "$1" | awk '
     /^## Required Changes[[:space:]]*$/ { insec=1; next }
@@ -602,6 +608,10 @@ valid_gate_verify_text() {
 # GATE-VERIFY: ...` into its own post and issue its own chief pass. ac_iso emits
 # no `]`, so the FIRST `] ` after the `- [` prefix ends the timestamp, and the
 # actor must then match exactly - a `]` smuggled into the text cannot shift it.
+# Each scan skips, in-shell, a line lacking `> <marker>: ` before paying the
+# per-line `$(room_entry_payload ...)` fork: that substring is a necessary
+# condition of the grammar, so the skip never changes which receipt is selected.
+# A `grep -F` prefilter would: it yields the torn last line `read` never returns.
 room_entry_payload() {
   # room_entry_payload <line> <actor> <marker> - print the payload of an entry
   # authored by <actor> carrying <marker>, else return 1.
@@ -619,6 +629,7 @@ latest_valid_gate_verify() {
   local line text found=""
   [ -f "$room_file" ] || return 1
   while IFS= read -r line; do
+    case "$line" in *"> GATE-VERIFY: "*) ;; *) continue ;; esac
     text="$(room_entry_payload "$line" "$family-chief" GATE-VERIFY)" || continue
     if valid_gate_verify_text "$text" "$want_stage" "$want_round" "$want_report_sha"; then
       found="$text"
@@ -661,6 +672,7 @@ latest_valid_gate_routing() {
   local line text found=""
   [ -f "$room_file" ] || return 1
   while IFS= read -r line; do
+    case "$line" in *"> GATE-ROUTING: "*) ;; *) continue ;; esac
     text="$(room_entry_payload "$line" "$family-chief" GATE-ROUTING)" || continue
     if valid_gate_routing_text "$text" "$want_stage" "$want_report_sha"; then
       found="$text"
@@ -707,6 +719,7 @@ latest_valid_r1_disposition() {
   local line text found=""
   [ -f "$room_file" ] || return 1
   while IFS= read -r line; do
+    case "$line" in *"> R1-DISPOSITION: "*) ;; *) continue ;; esac
     text="$(room_entry_payload "$line" "$family-chief" R1-DISPOSITION)" || continue
     if valid_r1_disposition_text "$text" "$want_stage" "$want_sha" "$want_report_sha" "$expected"; then
       found="$text"

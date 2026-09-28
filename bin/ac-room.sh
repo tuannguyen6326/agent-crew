@@ -351,6 +351,10 @@ cmd_pending() {
   ac_room_pending "$f"
 }
 
+# This block and the three receipt verbs below are the WRITER-side twins of
+# ac-gate.sh's receipt readers: change both sides together - the WRITER/READER
+# PARITY matrix in tests/ac-gate.test.sh fails when they judge one of its
+# receipts apart.
 review_body() {
   awk 'BEGIN{fm=0} /^---[[:space:]]*$/{fm++; next} fm>=2{print}' "$1"
 }
@@ -423,19 +427,20 @@ validate_disposition_partition() {
 }
 
 cmd_gate_verify() {
+  local usage="usage: ac-room.sh gate-verify <family> <stage> --round <1|2> --report <file> --grounds <text...>"
   local family="${1:-}" stage="${2:-}" round="" report="" grounds="" short expected_report report_sha
-  shift 2 2>/dev/null || ac_die "usage: ac-room.sh gate-verify <family> <stage> --round <1|2> --report <file> --grounds <text...>"
+  shift 2 2>/dev/null || ac_die "$usage"
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --round) round="${2:-}"; shift 2 ;;
-      --report) report="${2:-}"; shift 2 ;;
+      --round) round="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --report) report="${2:-}"; shift 2 || ac_die "$usage" ;;
       --grounds) shift; grounds="$*"; break ;;
-      *) ac_die "usage: ac-room.sh gate-verify <family> <stage> --round <1|2> --report <file> --grounds <text...>" ;;
+      *) ac_die "$usage" ;;
     esac
   done
   [ -n "$family" ] && [ -n "$stage" ] && [ -n "$round" ] && [ -n "$report" ] \
     && [ -n "${grounds//[[:space:]]/}" ] \
-    || ac_die "usage: ac-room.sh gate-verify <family> <stage> --round <1|2> --report <file> --grounds <text...>"
+    || ac_die "$usage"
   case "$grounds" in *$'\n'*|*$'\r'*) ac_die "gate-verify grounds must be one physical line" ;; esac
   case "$family" in *[!a-zA-Z0-9_-]*) ac_die "family must be [a-zA-Z0-9_-]: $family" ;; esac
   case "$round" in 1|2) ;; *) ac_die "gate-verify --round must be 1 or 2" ;; esac
@@ -450,23 +455,24 @@ cmd_gate_verify() {
 }
 
 cmd_gate_route() {
+  local usage="usage: ac-room.sh gate-route <family> <stage> --report <file> --uncertainty <yes|no> --consequence <low|high> --authority <chief|captain> --grounds <text...>"
   local family="${1:-}" stage="${2:-}" report="" uncertainty="" consequence="" authority="" grounds=""
   local short expected_report report_sha route
-  shift 2 2>/dev/null || ac_die "usage: ac-room.sh gate-route <family> <stage> --report <file> --uncertainty <yes|no> --consequence <low|high> --authority <chief|captain> --grounds <text...>"
+  shift 2 2>/dev/null || ac_die "$usage"
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --report) report="${2:-}"; shift 2 ;;
-      --uncertainty) uncertainty="${2:-}"; shift 2 ;;
-      --consequence) consequence="${2:-}"; shift 2 ;;
-      --authority) authority="${2:-}"; shift 2 ;;
+      --report) report="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --uncertainty) uncertainty="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --consequence) consequence="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --authority) authority="${2:-}"; shift 2 || ac_die "$usage" ;;
       --grounds) shift; grounds="$*"; break ;;
-      *) ac_die "usage: ac-room.sh gate-route <family> <stage> --report <file> --uncertainty <yes|no> --consequence <low|high> --authority <chief|captain> --grounds <text...>" ;;
+      *) ac_die "$usage" ;;
     esac
   done
   [ -n "$family" ] && [ -n "$stage" ] && [ -n "$report" ] \
     && [ -n "$uncertainty" ] && [ -n "$consequence" ] && [ -n "$authority" ] \
     && [ -n "${grounds//[[:space:]]/}" ] \
-    || ac_die "usage: ac-room.sh gate-route <family> <stage> --report <file> --uncertainty <yes|no> --consequence <low|high> --authority <chief|captain> --grounds <text...>"
+    || ac_die "$usage"
   case "$grounds" in *$'\n'*|*$'\r'*) ac_die "gate-route grounds must be one physical line" ;; esac
   case "$family" in *[!a-zA-Z0-9_-]*) ac_die "family must be [a-zA-Z0-9_-]: $family" ;; esac
   case "$uncertainty" in yes|no) ;; *) ac_die "gate-route --uncertainty must be yes|no" ;; esac
@@ -490,21 +496,22 @@ cmd_gate_route() {
 }
 
 cmd_disposition() {
+  local usage="usage: ac-room.sh disposition <family> <stage> --r1 <file> --accepted <ids|none> --disputed <ids|none> --authority <chief-owned|captain-owned|mixed|none> --grounds <text...>"
   local family="${1:-}" stage="${2:-}" r1="" accepted="" disputed="" authority="" grounds="" expected r1_sha report report_sha short expected_r1 expected_report
-  shift 2 2>/dev/null || ac_die "usage: ac-room.sh disposition <family> <stage> --r1 <file> --accepted <ids|none> --disputed <ids|none> --authority <chief-owned|captain-owned|mixed|none> --grounds <text...>"
+  shift 2 2>/dev/null || ac_die "$usage"
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --r1) r1="${2:-}"; shift 2 ;;
-      --accepted) accepted="${2:-}"; shift 2 ;;
-      --disputed) disputed="${2:-}"; shift 2 ;;
-      --authority) authority="${2:-}"; shift 2 ;;
+      --r1) r1="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --accepted) accepted="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --disputed) disputed="${2:-}"; shift 2 || ac_die "$usage" ;;
+      --authority) authority="${2:-}"; shift 2 || ac_die "$usage" ;;
       --grounds) shift; grounds="$*"; break ;;
-      *) ac_die "usage: ac-room.sh disposition <family> <stage> --r1 <file> --accepted <ids|none> --disputed <ids|none> --authority <chief-owned|captain-owned|mixed|none> --grounds <text...>" ;;
+      *) ac_die "$usage" ;;
     esac
   done
   [ -n "$family" ] && [ -n "$stage" ] && [ -n "$r1" ] && [ -n "$accepted" ] \
     && [ -n "$disputed" ] && [ -n "$authority" ] && [ -n "${grounds//[[:space:]]/}" ] \
-    || ac_die "usage: ac-room.sh disposition <family> <stage> --r1 <file> --accepted <ids|none> --disputed <ids|none> --authority <chief-owned|captain-owned|mixed|none> --grounds <text...>"
+    || ac_die "$usage"
   case "$grounds" in *$'\n'*|*$'\r'*) ac_die "disposition grounds must be one physical line" ;; esac
   case "$family" in *[!a-zA-Z0-9_-]*) ac_die "family must be [a-zA-Z0-9_-]: $family" ;; esac
   short="$(stage_short "$stage")" || ac_die "disposition stage must be spec|architecture|plan|design"
