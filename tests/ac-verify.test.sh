@@ -2158,22 +2158,12 @@ assert_eq "$(jq -r .verdict "$TMP/bp-noship.json")" "passed" "the verdict rests 
 assert_contains "$(cat "$TMP/bp-stage-noship/report.md")" "not-qualifies" \
   "the report still surfaces the unqualified ship receipt state"
 # An explicitly EMPTY interior field (`ac-qa.sh case --confidence ""`) is still
-# a column: this facade's own per-case reads must take the columns its awk
-# validator takes. Pinned on this file's reads only - a reader this file does
-# not own may still refuse the round.
-rm -rf "$TMP/bp-qa-profile"
-make_profile_bundle "$(dirname "$bp_profile")" "$target" verify-source
-caller="$bp_family-emptycol-implement"
-export VERIFY_EXPECT_ID="$caller-verify-qa"
-VERIFY_QA_RUN=1 VERIFY_QA_CONF= "$BIN/ac-verify.sh" qa --repo "$repo" --ref "$target" \
-  --family "$bp_family-emptycol" --caller "$caller" --brief "$bp_brief" \
-  --output "$TMP/bp-emptycol.json" --evidence-dir "$TMP/bp-evidence-emptycol" \
-  --report "$TMP/bp-stage-emptycol/report.md" --profile "$bp_profile" \
-  >/dev/null 2>"$TMP/bp-emptycol.err" || true
-case "$(cat "$TMP/bp-emptycol.err")" in
-  *"boundary receipt escapes"*|*"evidence is missing or outside the declared root"*|*"could not export evidence for case"*)
-    fail "an empty interior case field shifted a later column in this facade's own read: $(cat "$TMP/bp-emptycol.err")" ;;
-esac
+# a column: every per-case read this round passes through - the facade's own
+# and ac_qa_coverage_validate's - must take the columns its awk validator takes.
+bp_round emptycol VERIFY_QA_CONF= \
+  || fail "a case row with an empty interior field must still export: $(cat "$TMP/bp-emptycol.err")"
+assert_eq "$(jq -r .verdict "$TMP/bp-emptycol.json")" "passed" "...as a passing verdict"
+assert_file "$TMP/bp-evidence-emptycol/artifacts/cases/fixture-api" "...with that row's evidence"
 # A free-text column is BYTES, and `--confidence` takes any: under a UTF-8
 # locale a byte that is not valid UTF-8 must not end one of this facade's
 # cases.tsv reads early, which would skip that row's checks and export.

@@ -1303,6 +1303,19 @@ fxprof="$pf/.crew/qa/agent-pf-fx-r1.profile/profile.json"
 assert_eq "$(jq -r .fixtures.profile "$fxprof")" "safe-local-fixture" "fixtures.profile is a reference name"
 assert_eq "$(jq -r .fixtures.resolver "$fxprof")" "fleet-secret-profile" "fixtures.resolver is a reference name"
 
+# The profile freezes the store store-dir names. This repo name sanitizes to
+# another key (Pf.Store -> pf-store), so a freeze keyed by the raw basename
+# would read a store nothing writes and hand the verifier an empty snapshot.
+pfk="$(make_repo Pf.Store)"
+cd "$pfk"
+printf 'qa:\n  serve: "echo pf-serve"\n  health: "true"\n' >"$AC_HOME/projects/Pf.Store.yaml"
+printf 'reusable case\n' >"$("$QA" store-dir)/cases/C-1.md"
+AC_CREW_ID=pf-implement AC_VERIFY_BIN="$TMP/stub/ac-verify" \
+  "$QA" agent --target HEAD --task pfk --brief "$qa_brief" --evidence "$TMP/pfk-ev" >/dev/null
+assert_file "$pfk/.crew/qa/agent-pfk-r1.profile/store/cases/C-1.md" \
+  "the profile freezes the store store-dir names"
+cd "$pf"
+
 # --- scoped preflight: ready, conflict, and the caller-arg refusals ----------
 pfs="$(make_repo pfs)"
 pfs_cfg="$AC_HOME/projects/pfs.yaml"
@@ -2273,6 +2286,7 @@ out="$("$QA" step pin completed 2>&1)" || rc=$?
 assert_eq "$rc" "1" "a failing ledger write ABORTS the step transition"
 assert_contains "$out" "could not update the steps ledger" "step names the ledger refusal"
 case "$out" in *"pin -> completed"*) fail "a failed ledger write must never report the transition: $out" ;; esac
+assert_no_file "$lrd/.steps.lock" "the ledger lock is released before the refusal"
 "$QA" finish cancelled >/dev/null
 cd "$repo" || fail "cd back from qaledgerrepo"
 
@@ -2296,6 +2310,70 @@ assert_contains "$out" "cases ledger rewrite failed" \
 : >"$f15rd/cases.tsv"    # restore the ledger the forced failure removed
 "$QA" finish cancelled >/dev/null
 cd "$repo" || fail "cd back from qaf15"
+
+# --- the three ledger writers: lock first, stage beside the ledger ----------------
+# steps.tsv and cases.tsv are read live (ac-qa-watch.sh), visuals.tsv by a
+# concurrent browser-receipt `case` (ac_qa_browser_manifest_ok), so each
+# rewrite is staged BESIDE its ledger - one rename, never a cross-filesystem
+# copy a reader can catch half-written - under a lock taken first and released
+# on every refusal. `sleep` is stubbed so the 30s lock timeout costs nothing;
+# `mktemp` logs every path it hands out and fails any template naming
+# $QA_MKTEMP_FAIL.
+realmktemp="$(command -v mktemp)"
+qlkstub="$TMP/qaledgerlockstub"; mkdir -p "$qlkstub"
+qlklog="$TMP/qa-ledger-mktemp.log"
+printf '#!/bin/sh\nexit 0\n' >"$qlkstub/sleep"
+cat >"$qlkstub/mktemp" <<EOF
+#!/bin/sh
+case "\$*" in *"\${QA_MKTEMP_FAIL:-@none@}"*) exit 1 ;; esac
+p="\$("$realmktemp" "\$@")" || exit 1
+printf '%s\n' "\$p" >>"$qlklog"
+printf '%s\n' "\$p"
+EOF
+chmod +x "$qlkstub/sleep" "$qlkstub/mktemp"
+qlkrepo="$(make_repo qaledgerlock)"
+cd "$qlkrepo" || fail "cd qaledgerlock"
+"$QA" start --target HEAD --task ledgerlock >/dev/null
+qlkrd="$qlkrepo/.crew/qa/$(readlink "$qlkrepo/.crew/qa/current")"
+ensure_default_testplan
+mk_png "$TMP/qlk.png"
+: >"$qlklog"
+PATH="$qlkstub:$PATH" "$QA" step pin running >/dev/null || fail "step on a free lock"
+PATH="$qlkstub:$PATH" "$QA" case LK-1 unverifiable --tier api --note seed >/dev/null \
+  || fail "case on a free lock"
+PATH="$qlkstub:$PATH" "$QA" visual "$TMP/qlk.png" >/dev/null || fail "visual on a free lock"
+for l in steps cases visuals; do
+  grep -qF "$qlkrd/.$l.tsv." "$qlklog" \
+    || fail "the $l ledger must be staged beside $l.tsv: $(cat "$qlklog")"
+done
+qlk_ledger_verb() {
+  case "$1" in
+    steps) "$QA" step pin completed ;;
+    cases) "$QA" case LK-2 unverifiable --tier api --note probe ;;
+    visuals) "$QA" visual "$TMP/qlk.png" --note probe ;;
+  esac
+}
+for l in steps cases visuals; do
+  rc=0; out="$(QA_MKTEMP_FAIL=".$l.tsv." PATH="$qlkstub:$PATH" qlk_ledger_verb "$l" 2>&1)" || rc=$?
+  assert_eq "$rc" "1" "a $l ledger that cannot be staged refuses the write"
+  assert_no_file "$qlkrd/.$l.lock" "...and releases the $l ledger lock"
+done
+assert_eq "$(awk -F'\t' '$1=="pin"{print $2}' "$qlkrd/steps.tsv")" "running" \
+  "a refused step leaves the ledger as it was"
+mkdir "$qlkrd/.steps.lock"; printf '%s\n' "$$" >"$qlkrd/.steps.lock/pid"
+: >"$qlklog"
+rc=0; out="$(PATH="$qlkstub:$PATH" "$QA" step pin completed 2>&1)" || rc=$?
+assert_eq "$rc" "1" "step refuses while a live owner holds the steps ledger lock"
+assert_contains "$out" "lock timeout" "the refusal names the lock"
+rc=0; out="$(PATH="$qlkstub:$PATH" "$QA" step testplan completed 2>&1)" || rc=$?
+assert_eq "$rc" "1" "testplan completed refuses on the held steps ledger lock"
+assert_contains "$out" "lock timeout" "...after staging its manifest, at the lock"
+while IFS= read -r p; do
+  assert_no_file "$p" "a lock timeout leaves no staged file behind"
+done <"$qlklog"
+rm -rf "$qlkrd/.steps.lock"
+"$QA" finish cancelled >/dev/null
+cd "$repo" || fail "cd back from qaledgerlock"
 
 # --- F45: cmd_case rejects a tab/newline in --evidence AT RECORD TIME, the
 # same up-front shape visual_register uses for its own path - unscrubbed, a
@@ -2575,6 +2653,29 @@ for s in pin infra cases verdict; do "$QA" step "$s" completed >/dev/null; done
 out="$("$QA" finish passed 2>&1)" && fail "a skipped testplan must not pass"
 assert_contains "$out" "completed testplan step" \
   "the refusal names the skipped testplan, not a missing frozen hash"
+"$QA" finish cancelled >/dev/null
+
+# --- an explicitly EMPTY interior field is still a column -------------------------
+# `case --confidence ""` writes an empty $5: the gate's per-case read and
+# ac_qa_coverage_validate's must take the columns their awk readers take.
+"$QA" start --target "$sha_gn" --task empty-col >/dev/null
+mk_png "$TMP/ec.png"
+"$QA" visual "$TMP/ec.png" >/dev/null
+qa_case EC-1 pass api --grade A --confidence "" >/dev/null
+prepare_pass
+assert_contains "$("$QA" finish passed 2>&1)" "QA_VERDICT=passed" \
+  "an empty confidence shifts no later column off the pass gate's reads"
+# The free-text columns are bytes: under a UTF-8 locale a non-UTF-8 one must
+# not end the gate's read early and skip every later row's checks.
+"$QA" start --target "$sha_gn" --task u8-col >/dev/null
+mk_png "$TMP/u8.png"
+"$QA" visual "$TMP/u8.png" >/dev/null
+qa_case U8-1 pass api --grade A --confidence "$(printf '\351')" >/dev/null
+qa_case U8-2 pass api >/dev/null
+prepare_pass
+out="$(LC_ALL=en_US.UTF-8 "$QA" finish passed 2>&1)" \
+  && fail "a gradeless row after a non-UTF-8 byte must still refuse the pass"
+assert_contains "$out" "case U8-2 has no valid grade" "...on that row's own check"
 "$QA" finish cancelled >/dev/null
 
 # --- step --note: awk escapes never reintroduce the scrubbed control chars --------
