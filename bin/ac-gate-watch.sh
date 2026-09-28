@@ -34,8 +34,8 @@
 # required real reasoning). CAPTAIN DECISION (2026-07-26): run gate summaries
 # at `auto` - the smallest footprint of the enabled options that still answers
 # "what is it thinking" - wired into oneshot_launch's codex form
-# (bin/ac-pane-agent.sh), unconditionally, since this table's one consumer is
-# the gate. So a codex gate's activity now generally carries real
+# (bin/ac-pane-agent.sh), unconditionally, since the gate was then that table's
+# one consumer. So a codex gate's activity now generally carries real
 # reasoning-summary bytes when the model produces any; an empty section still
 # means exactly what it always did - the model reasoned little enough that
 # `auto` chose not to summarize, never a harness or board defect.

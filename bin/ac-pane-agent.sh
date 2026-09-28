@@ -873,17 +873,21 @@ oneshot_launch() {
   # command form of a harness, the ONE-SHOT ARM's prompt-delivery half. These
   # live HERE, next to the arm that needs them, while ac-backend.sh's
   # ac_build_launch owns the INTERACTIVE launch lines every long-lived agent
-  # starts with: two different shapes for two different lifecycles, and the
-  # one-shot table has exactly one consumer today (bin/ac-gate.sh), so sharing
-  # it before a second appears would buy nothing. Effort is per-harness in
+  # starts with: two different shapes for two different lifecycles. This
+  # script's --exec arm reads the table (bin/ac-gate.sh's judge,
+  # bin/ac-verify.sh's one-shot scout lanes), and src/brain.ts's synthCommand
+  # keeps a TypeScript twin of it (captain ruling 2026-09-28) that must print
+  # exactly these bytes, fed the EFFORT_FLAG mapping above -
+  # tests/ac-brain.test.sh fails when the two part, so a form or that mapping
+  # changed here must change there too. Effort is per-harness in
   # SHAPE as well as value: codex takes a config override, claude a flag,
   # opencode a variant. An unset knob passes NOTHING, leaving the engine's own
-  # default in charge. Only the three forms that exist today - a harness with
-  # no proven one-shot form is refused below, never guessed at.
+  # default in charge. Only the forms below exist - a harness with no proven
+  # one-shot form is refused below, never guessed at.
   # codex also always carries `-c model_reasoning_summary=auto` (captain
   # decision 2026-07-26): a real gate run emits no reasoning bytes by codex's
-  # own default (`none`), which this table's one consumer (the gate) needs to
-  # show the captain - `auto` is the smallest footprint that still answers it.
+  # own default (`none`), which the gate needs to show the captain - `auto` is
+  # the smallest footprint that still answers it.
   case "$1" in
     codex)    printf 'codex exec -s read-only --skip-git-repo-check%s%s -c model_reasoning_summary=auto\n' "${2:+ -m $2}" "${3:+ -c model_reasoning_effort=$3}" ;;
     claude)   printf 'claude -p%s%s\n' "${2:+ --model $2}" "${3:+ --effort $3}" ;;

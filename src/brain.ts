@@ -1400,12 +1400,16 @@ function synthCommand(): string | null {
   if (!harness) { harness = knob("brain-agent"); model = knob("brain-model"); effort = knob("brain-effort"); }
   if (!harness) { harness = knob("crew-harness"); model = model || knob("model"); }
   const mm = model ? ` --model ${model}` : "";
-  // effort reaches the harnesses that take it on a one-shot line (codex config
-  // override, pi --thinking); claude/opencode/cursor one-shots ignore it.
+  // ultracode is a claude preset, not a tier: the one-shot arm sends xhigh in
+  // its place (bin/ac-pane-agent.sh EFFORT_FLAG), so no engine sees the name.
+  if (effort === "ultracode") effort = "xhigh";
+  // Each form is byte-for-byte what bin/ac-pane-agent.sh's oneshot_launch
+  // prints for the same harness/model/effort - that function owns why each
+  // flag is there; tests/ac-brain.test.sh fails the moment the two part.
   switch (harness) {
-    case "claude": return `claude -p${mm}`;
-    case "codex": return `codex exec${model ? ` -m ${model}` : ""}${effort ? ` -c model_reasoning_effort=${effort}` : ""}`;
-    case "opencode": return `opencode run${mm}`;
+    case "claude": return `claude -p${mm}${effort ? ` --effort ${effort}` : ""}`;
+    case "codex": return `codex exec -s read-only --skip-git-repo-check${model ? ` -m ${model}` : ""}${effort ? ` -c model_reasoning_effort=${effort}` : ""} -c model_reasoning_summary=auto`;
+    case "opencode": return `opencode run${model ? ` -m ${model}` : ""}${effort ? ` --variant ${effort}` : ""}`;
     case "pi": return `pi -p${mm}${effort ? ` --thinking ${effort}` : ""}`;
     case "cursor": return `cursor-agent -p --trust${mm}`;
     default: return null;

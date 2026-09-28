@@ -833,6 +833,51 @@ if [ -n "$(hung_survivors)" ]; then
   fail "the ceiling must reap the whole process group: the child the wedged call forked outlived it"
 fi
 
+# A timeout is what the WATCHDOG did, never an elapsed reading: SECONDS counts
+# whole seconds, so a call failing on its own after 1.5s, begun late in a
+# second, reads 2 elapsed against a 2s ceiling. `ticks=2` proves the probe
+# really straddled that tick rather than passing for want of one.
+out="$(run_backend herdr '
+  s=$SECONDS; while [ "$SECONDS" = "$s" ]; do :; done
+  sleep 0.6; pre=$SECONDS; rc=0
+  herdr_rpc_bounded 2 bash -c "sleep 1.5; exit 3" || rc=$?
+  printf "rc=%s ticks=%s\n" "$rc" "$(( SECONDS - pre ))"')"
+assert_eq "$out" "rc=3 ticks=2" "a call that fails on its own under the ceiling keeps its own status"
+
+# The other direction: a call the ceiling DID kill still reads 124, and the
+# member that ignored the TERM is swept once the leader is reaped.
+cat >"$TMP/term-ignorer" <<'EOF'
+(trap '' TERM; exec sleep 30) &
+echo $! >"$1"
+sleep 30
+EOF
+out="$(run_backend herdr "rc=0; herdr_rpc_bounded 1 bash '$TMP/term-ignorer' '$TMP/member' >/dev/null || rc=\$?; echo rc=\$rc")"
+member="$(cat "$TMP/member")"
+if kill -0 "$member" 2>/dev/null; then
+  kill -9 "$member" 2>/dev/null || true
+  fail "a timed-out call's TERM-ignoring member must be swept by the KILL"
+fi
+assert_eq "$out" "rc=124" "a call the ceiling killed reports the timeout"
+
+# The watchdog's report must survive a kill that finds nothing to signal: a
+# call outside its own group turns the group TERM into ESRCH, and the watchdog
+# inherits the caller's errexit - live only for a PLAIN call, as here, since an
+# `||` around the call suspends it - which ended it before its by-pid TERM.
+rc=0
+run_backend herdr 'herdr_rpc_bounded 1 perl -e "setpgrp(0, getpgrp(getppid())) or die; exec qw(sleep 5)"' || rc=$?
+assert_eq "$rc" "124" "a call that left its group is still bounded by the by-pid TERM"
+
+# The ceiling is real time whatever PATH holds: suites put a no-op `sleep` first
+# on PATH to fast-forward their own polling, and a watchdog timed by that stub
+# fires at once and kills a healthy call (ac-pane-agent's busy-stall case lost
+# its workspace create that way).
+mkdir -p "$TMP/nosleep-rpc"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/nosleep-rpc/sleep"
+chmod +x "$TMP/nosleep-rpc/sleep"
+out="$(PATH="$TMP/nosleep-rpc:$PATH" run_backend herdr '
+  rc=0; herdr_rpc_bounded 5 perl -e "select(undef, undef, undef, 0.3); exit 3" || rc=$?; echo rc=$rc')"
+assert_eq "$out" "rc=3" "a no-op sleep on PATH never shortens the ceiling"
+
 # --- launch-line env: pane env belongs to the herdr daemon, not the chief -----------
 
 # The daemon may have been (re)started from inside a claude session and then
