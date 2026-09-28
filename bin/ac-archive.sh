@@ -35,7 +35,7 @@
 # ac-wake-drain.sh. Moving hundreds of live directories is a deliberate act the
 # crewchief performs when the fleet is quiet: ac-room.sh list, the turn-end
 # guard and session-start all sweep data/ continuously, so a migration that can
-# fire by itself defeats the split it exists for. tests/ac-archive.test.sh
+# fire by itself defeats the split it exists for. tests/sh/ac-archive.test.sh
 # asserts the absence of any caller.
 #
 # IDEMPOTENT: a second run finds no eligible live family and says so. REVERSIBLE:

@@ -1347,7 +1347,7 @@ cmd_run() {
   # real multi-second passes below - never a sleep-and-hope timing race.
   # TEST SEAM, double-keyed (audit-f8): the hook execs whatever executable the
   # env names, so it additionally requires AC_TEST_HOOKS=1 (exported by
-  # tests/helpers.sh and nothing else) - one inherited variable in a captain's
+  # tests/sh/helpers.sh and nothing else) - one inherited variable in a captain's
   # environment can no longer make a production curate run execute it.
   if [ "${AC_TEST_HOOKS:-}" = 1 ] && [ -n "${AC_CURATE_SNAPSHOT_HOOK:-}" ] \
     && [ -x "${AC_CURATE_SNAPSHOT_HOOK}" ]; then

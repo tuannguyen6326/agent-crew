@@ -353,7 +353,7 @@ cmd_pending() {
 
 # This block and the three receipt verbs below are the WRITER-side twins of
 # ac-gate.sh's receipt readers: change both sides together - the WRITER/READER
-# PARITY matrix in tests/ac-gate.test.sh fails when they judge one of its
+# PARITY matrix in tests/sh/ac-gate.test.sh fails when they judge one of its
 # receipts apart.
 review_body() {
   awk 'BEGIN{fm=0} /^---[[:space:]]*$/{fm++; next} fm>=2{print}' "$1"

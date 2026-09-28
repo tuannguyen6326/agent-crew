@@ -3,7 +3,7 @@
 #
 # Usage: ac-lint.sh [--all]
 # Runs `bash -n` syntax checks then shellcheck (when present) over the scripts
-# ac-lint owns: bin/*.sh, tests/*.test.sh, tests/stress.sh, and the
+# ac-lint owns: bin/*.sh, tests/sh/*.test.sh, tests/sh/stress.sh, and the
 # docs/examples/slack-remote/remote-* hooks.
 #
 # By DEFAULT it lints only the CHANGED files in that set - staged, unstaged, and
@@ -37,7 +37,7 @@ esac
 # matches one of these - a changed README or config is not ours to check.
 in_lint_set() {
   case "$1" in
-    bin/*.sh | tests/*.test.sh | tests/stress.sh) return 0 ;;
+    bin/*.sh | tests/sh/*.test.sh | tests/sh/stress.sh) return 0 ;;
     docs/examples/slack-remote/remote-*) return 0 ;;
   esac
   return 1
@@ -46,7 +46,7 @@ in_lint_set() {
 files=()
 if [ "$all" = 1 ] || ! git rev-parse --git-dir >/dev/null 2>&1; then
   # --all, or not a git repo: the whole set (the historical behavior).
-  for f in bin/*.sh tests/*.test.sh tests/stress.sh docs/examples/slack-remote/remote-*; do
+  for f in bin/*.sh tests/sh/*.test.sh tests/sh/stress.sh docs/examples/slack-remote/remote-*; do
     [ -e "$f" ] && files+=("$f")
   done
 else

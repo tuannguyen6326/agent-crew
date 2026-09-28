@@ -11,7 +11,7 @@
 #
 # INTERACTIVE by design - a CAPTAIN tool, not crew tooling: one line per knob.
 # Answers are read from plain stdin, so a heredoc drives it unattended (that is
-# how tests/ac-fleet-new.test.sh drives it). stdin at EOF is an error, never a
+# how tests/sh/ac-fleet-new.test.sh drives it). stdin at EOF is an error, never a
 # silent run on defaults: a fleet nobody described is worse than no fleet.
 # Name, container and the already-exists refusal are all resolved BEFORE the
 # first question, so a doomed run never spends the captain's answers.

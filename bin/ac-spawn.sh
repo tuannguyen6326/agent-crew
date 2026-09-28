@@ -1875,7 +1875,7 @@ fi
 # pin > flag > refuse and wrote the `Mode:` line, so spawn READS that record
 # rather than re-deriving - two resolvers for one decision is how the brief
 # said local-only while spawn re-derived crew-ship from a registry fallback
-# (measured red in tests/ac-dispatch-select.test.sh the moment the fallback
+# (measured red in tests/sh/ac-dispatch-select.test.sh the moment the fallback
 # died). --mode here remains an override for the captain's late word, refused
 # when it contradicts the brief rather than silently diverging from it.
 mode="$(sed -n 's/^Mode: //p' "$brief" 2>/dev/null | head -n 1)"

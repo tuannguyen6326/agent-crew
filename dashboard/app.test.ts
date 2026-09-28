@@ -855,7 +855,7 @@ test("parseCrewdomains: registry absent/empty both yield []", () => {
 // bash function's, byte-for-byte input included (a naive rstrip once made
 // this diverge on trailing whitespace / CRLF, since ac_domain_parse anchors
 // on the RAW line). Skips cleanly when bash is unavailable, same as
-// tests/dashboard.test.sh's own bun-availability guard.
+// tests/sh/dashboard.test.sh's own bun-availability guard.
 test.skipIf(!Bun.which("bash"))(
   "parseCrewdomains matches ac_domain_parse's (cls, reason) sequence over every reason class, including trailing-whitespace/CRLF lines",
   () => {

@@ -159,7 +159,7 @@ HARD RULE - host-impact preflight (any load-generating run):
   a trap cannot reap what SIGKILL removed).
 - Run the load under `nice` so real work outruns the load you manufacture.
 
-Do not re-derive any of this: `tests/helpers.sh` (the `load_hogs`/`reap_hogs`
+Do not re-derive any of this: `tests/sh/helpers.sh` (the `load_hogs`/`reap_hogs`
 harness) is the landed, sanctioned implementation - copy it, and read its
 header for the measurements behind each layer.
 

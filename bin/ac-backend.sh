@@ -399,7 +399,7 @@
 #   jq, so the discriminator is the exit code, never absent labels.
 #
 # Tests drive this file through a fake `herdr` CLI on PATH
-# (tests/helpers.sh ships it) - no live server needed.
+# (tests/sh/helpers.sh ships it) - no live server needed.
 
 ac_backend() {
   # AC_BACKEND (per-call/per-task pin) > $AC_HOME/config/backend > the fleet

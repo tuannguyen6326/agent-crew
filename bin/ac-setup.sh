@@ -8,7 +8,7 @@
 # INTERACTIVE by design - this is a CAPTAIN tool, not crew tooling: it asks one
 # line per decision and an empty answer takes the shown default. Answers are
 # read from plain stdin, so a heredoc drives it unattended (that is how
-# tests/ac-setup.test.sh drives it). stdin at EOF is an error, never a silent
+# tests/sh/ac-setup.test.sh drives it). stdin at EOF is an error, never a silent
 # run on defaults.
 #
 # Steps, in order:

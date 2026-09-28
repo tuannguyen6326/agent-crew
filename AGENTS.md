@@ -133,12 +133,12 @@ Crew and captain-invocable skills (each `SKILL.md` owns its contract): `crew-shi
 - `diagram-design` - reach for it instead of Mermaid whenever a captain-facing artifact (stage report, gate-review page, rich-review HTML) needs a diagram.
 - `debrief` - the manual reset-time catch-all; /debrief stays the catch-all while landing remains the primary learning mechanism.
 
-Catalog schema: every package under `.agents/skills/` is an Agent Skills spec package ([spec](https://agentskills.io/specification)) - dir name equals frontmatter `name`, a trigger-rich `description` of at most 1024 chars, only standard frontmatter keys (never `user-invocable`), string-only `metadata:`, `references/` for docs, `assets/` for runtime artifacts, and `SKILL.md` under 500 lines; `tests/ac-skills-catalog.test.sh` enforces it.
+Catalog schema: every package under `.agents/skills/` is an Agent Skills spec package ([spec](https://agentskills.io/specification)) - dir name equals frontmatter `name`, a trigger-rich `description` of at most 1024 chars, only standard frontmatter keys (never `user-invocable`), string-only `metadata:`, `references/` for docs, `assets/` for runtime artifacts, and `SKILL.md` under 500 lines; `tests/sh/ac-skills-catalog.test.sh` enforces it.
 Crew worktrees are seeded only with `AC_CREW_SKILLS` (`bin/ac-lib.sh`) plus the fleet's learned skills; every other skill here is chief-only.
 
 ## 13. Editing this repo
 
-`bin/ac-lint.sh` is opt-in - run it only when the captain requests it in the order or the brief; every behavior gets a colocated `tests/*.test.sh`.
+`bin/ac-lint.sh` is opt-in - run it only when the captain requests it in the order or the brief; every behavior gets a colocated `tests/sh/*.test.sh`.
 Run the suite only with `tests/run-suite.sh`; it is not a landing gate - per-change verify is changed-file tests plus do-not-break tests ONLY, and the bare suite runs only before each Learning DISTILL run.
 Each contract has exactly one authoritative file - a script header, a skill, or one doc section; everything else points to it.
 Markdown: plain-dash lists; one sentence per line for new blocks, and an existing hard-wrapped block keeps its shape - never reflow a block as a side effect, never mix the two shapes in one block.

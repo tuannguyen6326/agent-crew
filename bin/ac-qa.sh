@@ -3784,7 +3784,7 @@ EOF
   # for that TOCTOU window; it is unset in every normal run.
   # TEST SEAM, double-keyed (audit-f8): same contract as ac-curate.sh's
   # snapshot hook - the exec additionally requires AC_TEST_HOOKS=1 (exported
-  # by tests/helpers.sh and nothing else), so one inherited env var cannot
+  # by tests/sh/helpers.sh and nothing else), so one inherited env var cannot
   # make a production qa run execute an arbitrary file.
   if [ "${AC_TEST_HOOKS:-}" = 1 ] && [ -n "${AC_QA_PROFILE_RECHECK_HOOK:-}" ] \
     && [ -x "${AC_QA_PROFILE_RECHECK_HOOK}" ]; then

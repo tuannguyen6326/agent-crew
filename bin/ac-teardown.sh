@@ -108,7 +108,7 @@
 # recorded 144s is undiagnosed, so ORDER stays the only signal-agnostic
 # guarantee. What the qa-infra step now carries is an EVIDENCE trap (below), and
 # only that - the claim that a SIGURG trap "changes nothing" was falsified on
-# this host (bash 3.2 runs a URG handler; tests/ac-spawn-teardown.test.sh
+# this host (bash 3.2 runs a URG handler; tests/sh/ac-spawn-teardown.test.sh
 # delivers the signal and proves it), so a signal at that step names itself
 # instead of ending the run in silence.
 # The gate is unaffected: nothing durable happens on the refusal path.

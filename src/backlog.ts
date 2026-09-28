@@ -3,7 +3,7 @@
 // bin/ac-backlog.sh (a shim that execs this file through bin/ac-bun.sh); THIS
 // header is the authoritative spec of the backlog grammar, this parser and
 // its wire. Awk sites reach it through the AC_DONELINE_AWK binding in
-// bin/ac-lib.sh. tests/ac-backlog.test.sh holds this parser to
+// bin/ac-lib.sh. tests/sh/ac-backlog.test.sh holds this parser to
 // tests/fixtures/doneline.awk, the awk parser it replaced, frozen except where
 // a captain ruling changes the grammar - the ruling changes both, in one diff.
 //

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run-suite.sh - the ONE tested entry point for "is the bash test suite
-# green". Selects <dir>/*.test.sh (default <repo>/tests - the glob already
+# green". Selects <dir>/*.test.sh (default <repo>/tests/sh - the glob already
 # excludes helpers.sh/stress.sh, which do not match *.test.sh, while still
 # picking up helpers.test.sh/stress.test.sh, which are real tests), runs each
 # with `bash <file>` - never a direct exec, so a lost exec bit can never read
@@ -34,11 +34,11 @@
 #                which a bare full run is correct, and a flipped default would
 #                make every existing bare caller silently partial - a false
 #                green.
-#                Mapping: bin/<name>.sh <-> tests/<name>.test.sh (a changed
-#                tests/<name>.test.sh selects itself). A ported script's
+#                Mapping: bin/<name>.sh <-> tests/sh/<name>.test.sh (a changed
+#                tests/sh/<name>.test.sh selects itself). A ported script's
 #                TypeScript maps the same way: src/<name>.ts selects
-#                tests/src.test.sh (the one wrapper running every Bun unit
-#                test, tests/*.test.ts - so a changed *.test.ts selects it
+#                tests/sh/src.test.sh (the one wrapper running every Bun unit
+#                test, tests/ts/*.test.ts - so a changed *.test.ts selects it
 #                too) plus the mapped tests of every bin/*.sh STARTING it -
 #                one with a non-comment line naming src/<name>.ts: its
 #                bin/ac-<name>.sh entry, and any script running a mode of it
@@ -62,7 +62,7 @@
 #                WIDENS to the full set and prints why, never silently
 #                narrowing to nothing:
 #                  1. a changed file that is ITSELF dot-sourced by any OTHER
-#                     owned file (bin/*.sh or tests/*.sh), or - a src/*.ts -
+#                     owned file (bin/*.sh or tests/sh/*.sh), or - a src/*.ts -
 #                     imported by another src/*.ts (from "./<basename>") - a
 #                     LIVE check (grep for a line of the shape
 #                     "^\s*\.\s+.*<basename>\"", or that import, in every other
@@ -100,9 +100,9 @@
 #                     unmapped - also still widens), bin/ac-backend.sh (21,
 #                     3 unmapped - still widens), bin/ac-maintenance-lib.sh
 #                     (9, 2 unmapped - still widens), bin/ac-watch-dash.sh
-#                     (2, both unmapped - still widens), tests/helpers.sh (88
-#                     sourcers, 1 unmapped - tests/stress.sh is neither a
-#                     bin/*.sh nor a tests/*.test.sh, so the mapping this
+#                     (2, both unmapped - still widens), tests/sh/helpers.sh (88
+#                     sourcers, 1 unmapped - tests/sh/stress.sh is neither a
+#                     bin/*.sh nor a tests/sh/*.test.sh, so the mapping this
 #                     rule reuses has no arm for it at all - still widens,
 #                     legitimately near-full either way; do not special-case
 #                     it). Two DO narrow cleanly, proving the
@@ -110,13 +110,13 @@
 #                     mapped -> selects exactly 8 tests, not 88) and
 #                     bin/ac-qa-lib.sh (5 sourcers, all mapped -> selects
 #                     exactly 4 tests, not 88);
-#                  2. a changed owned file (bin/*.sh or tests/*.test.sh) with
+#                  2. a changed owned file (bin/*.sh or tests/sh/*.test.sh) with
 #                     no exact colocated test, or a src/*.ts with a starter
 #                     that has none - unmapped code is unknown blast radius,
 #                     never read as "nothing to run".
 #                Outside a git repo, or with no HEAD yet, --changed falls back
 #                to the full set. A file outside this runner's owned set
-#                (bin/*.sh, src/*.ts, tests/*.sh, tests/*.test.ts) is
+#                (bin/*.sh, src/*.ts, tests/sh/*.sh, tests/ts/*.test.ts) is
 #                ignored, like ac-lint ignoring a changed README.
 #                EMPTY-SELECTION EXIT - NOT a widen: when the mapped selection
 #                comes out EMPTY (e.g. a clean, fully-committed tree - nothing
@@ -133,9 +133,9 @@
 #                safely narrow on, so the runner itself cannot proceed - same
 #                family as "no *.test.sh files found" below.
 #   <tests-dir>  directory to scan for *.test.sh (default: this script's own
-#                <repo>/tests, resolved via BASH_SOURCE so it is independent
+#                <repo>/tests/sh, resolved via BASH_SOURCE so it is independent
 #                of the caller's cwd). The colocated run-suite.test.sh uses
-#                this to point at disposable fixtures instead of tests/.
+#                this to point at disposable fixtures instead of tests/sh/.
 #                --changed resolves the changed set from the git repo that
 #                CONTAINS <tests-dir> (git -C <tests-dir> rev-parse
 #                --show-toplevel), not from this script's own ROOT - so a
@@ -148,7 +148,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-default_dir="$ROOT/tests"
+default_dir="$ROOT/tests/sh"
 
 # SIGNAL-DELIVERY probe, and a self-repair when it fails - the same "capability
 # probe, never a guess" discipline as the timeout check below, applied to the
@@ -242,11 +242,11 @@ done
 
 sourcers_of() {
   # sourcers_of <changed_root> <rel-path> - echoes, one per line, the
-  # relpath of every OTHER bin/*.sh or tests/*.sh under changed_root that
+  # relpath of every OTHER bin/*.sh or tests/sh/*.sh under changed_root that
   # dot-sources this file - or, for a src/*.ts, every other src/*.ts that
-  # imports it (tests/*.sh, not just tests/*.test.sh, so this also
-  # catches tests/helpers.sh and tests/stress.sh, neither of which matches
-  # the tests/*.test.sh mapping case below). Empty output means the file is
+  # imports it (tests/sh/*.sh, not just tests/sh/*.test.sh, so this also
+  # catches tests/sh/helpers.sh and tests/sh/stress.sh, neither of which matches
+  # the tests/sh/*.test.sh mapping case below). Empty output means the file is
   # not a shared library. LIVE, not a hand list: a list rots the day a new
   # shared file joins and nobody remembers to add it (gate-finding
   # run-suite-changed-file-selection, 2026-07-25 - a three-file hand list
@@ -268,7 +268,7 @@ sourcers_of() {
       ;;
   esac
   base_re="$(printf '%s' "$base" | sed 's/[.[\*^$]/\\&/g')"
-  for f in "$root"/bin/*.sh "$root"/tests/*.sh; do
+  for f in "$root"/bin/*.sh "$root"/tests/sh/*.sh; do
     [ -e "$f" ] || continue
     case "$f" in */"$relpath") continue ;; esac # skip the file itself
     grep -qE "^[[:space:]]*\.[[:space:]].*${base_re}\"" "$f" && printf '%s\n' "${f#"$root"/}"
@@ -282,7 +282,7 @@ sourcers_of() {
 }
 
 split_map() {
-  # split_map <changed_root> <base> - echoes the mapped tests/*.test.sh
+  # split_map <changed_root> <base> - echoes the mapped tests/sh/*.test.sh
   # basenames (space-separated) for a KNOWN split script, or nothing. The
   # repo's own convention splits a test by CONCERN rather than by
   # colocated-file-name for these two highest-churn scripts (AGENTS.md
@@ -293,7 +293,7 @@ split_map() {
   #
   # ac-spawn narrows LIVE, the same "not a hand list" spirit sourcers_of
   # states above this function: a glob over the shared
-  # ac-spawn- prefix under changed_root/tests, so a NEW
+  # ac-spawn- prefix under changed_root/tests/sh, so a NEW
   # ac-spawn-<concern>.test.sh file joins the selection the moment it lands
   # on disk - nobody has to remember to add it here.
   #
@@ -305,7 +305,7 @@ split_map() {
   # "the teardown test" from the other three ac-spawn- files without also
   # pulling those three in - which would silently WIDEN what an
   # ac-teardown.sh change selects today (1 test, not 4; see
-  # tests/run-suite.test.sh's ac-teardown.sh scenario), a behaviour change
+  # tests/sh/run-suite.test.sh's ac-teardown.sh scenario), a behaviour change
   # outside this task's scope fence. Maintenance duty this manual line
   # carries: the live glob above fires only for a bin/ac-spawn.sh change, so
   # it never covers a NEW ac-teardown.sh split test, whatever that file is
@@ -317,7 +317,7 @@ split_map() {
   local root="$1" base="$2" f
   case "$base" in
     ac-spawn)
-      for f in "$root"/tests/ac-spawn-*.test.sh; do
+      for f in "$root"/tests/sh/ac-spawn-*.test.sh; do
         [ -e "$f" ] || continue
         printf '%s ' "${f##*/}"
       done
@@ -332,16 +332,16 @@ split_map() {
 
 map_owned_file() {
   # map_owned_file <changed_root> <relpath> - echoes the mapped
-  # tests/*.test.sh basename(s) (space-separated) for an owned file
-  # (tests/*.test.sh selects itself; bin/*.sh maps via its colocated test or
+  # tests/sh/*.test.sh basename(s) (space-separated) for an owned file
+  # (tests/sh/*.test.sh selects itself; bin/*.sh maps via its colocated test or
   # split_map), or nothing when unmapped. ONE rule, shared by the direct
   # per-file case below and the shared-lib sourcer closure - a sourcer's own
   # test is found the SAME way a directly-changed file's is, never a second
   # mapping invented for the sourcer case.
   local root="$1" f="$2" base mapped s m
   case "$f" in
-    tests/*.test.sh) printf '%s' "${f#tests/}" ;;
-    tests/*.test.ts) printf '%s' "src.test.sh" ;;
+    tests/sh/*.test.sh) printf '%s' "${f#tests/sh/}" ;;
+    tests/ts/*.test.ts) printf '%s' "src.test.sh" ;;
     src/*.ts)
       # A starter is any bin script with a NON-comment line naming this
       # module: a script that merely names it in a comment (bin/ac-lib.sh,
@@ -361,7 +361,7 @@ map_owned_file() {
       ;;
     bin/*.sh)
       base="${f#bin/}"; base="${base%.sh}"
-      if [ -e "$root/tests/$base.test.sh" ]; then
+      if [ -e "$root/tests/sh/$base.test.sh" ]; then
         printf '%s' "$base.test.sh"
       else
         mapped="$(split_map "$root" "$base")"
@@ -443,10 +443,10 @@ SOURCERS
       continue
     fi
     case "$f" in
-      tests/*.test.sh)
-        selected="$selected ${f#tests/}"
+      tests/sh/*.test.sh)
+        selected="$selected ${f#tests/sh/}"
         ;;
-      bin/*.sh | src/*.ts | tests/*.test.ts)
+      bin/*.sh | src/*.ts | tests/ts/*.test.ts)
         mapped="$(map_owned_file "$changed_root" "$f")"
         if [ -n "$mapped" ]; then
           selected="$selected $mapped"
@@ -491,9 +491,9 @@ fi
 total=${#tests[@]}
 
 # Parallel-mode decision (brief tests-need-a-canonical-run-suite): read, not
-# guessed. tests/helpers.sh gives every test its OWN mktemp AC_HOME, so
+# guessed. tests/sh/helpers.sh gives every test its OWN mktemp AC_HOME, so
 # file/state collisions across concurrently-run tests are structurally ruled
-# out. But tests/helpers.test.sh calls load_hogs(4), spinning real CPU
+# out. But tests/sh/helpers.test.sh calls load_hogs(4), spinning real CPU
 # busy-loops, and over a dozen other files carry sleep-based timing
 # assumptions (ac-lock, ac-watch, ac-pane-agent, ...) - running those
 # alongside the hog test risks flaky timing under contention, which IS the
@@ -521,7 +521,7 @@ while [ "$i" -lt "$total" ]; do
     # subshell inherits it - without disabling it here, a failing `bash "$f"`
     # would abort the subshell before the printf below ever wrote the .rc
     # file, silently losing the run instead of counting it as a failure
-    # (precedent: tests/stress.sh's identical run_stress wrapper).
+    # (precedent: tests/sh/stress.sh's identical run_stress wrapper).
     #
     # set -m (job control) around the spawn is NOT optional: without it, an
     # async `&` command has SIGINT/SIGQUIT forced to ignore in bash itself
@@ -530,7 +530,7 @@ while [ "$i" -lt "$total" ]; do
     # sends INT to, which then can never see it. Verified live: ac-watch.test.sh
     # passes 3/3 standalone but false-reds under this loop without `set -m`,
     # because its watcher silently ignores the INT it is asserted to die from.
-    # tests/stress.sh and tests/ac-watch.test.sh itself already rely on the
+    # tests/sh/stress.sh and tests/sh/ac-watch.test.sh itself already rely on the
     # same toggle for the same reason - this mirrors that precedent, not a
     # new technique. Toggled off again right after so it does not change how
     # the OUTER loop's own `wait`/pipeline behave.

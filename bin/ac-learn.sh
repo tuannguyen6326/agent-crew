@@ -2199,7 +2199,7 @@ $gate_out"
       # Deliberately NO receipt written here (unlike the kind=rule arm above):
       # a gate that never rendered a judgment must leave no decision.md behind
       # - that absence IS the "no judgment" signal the EXAMINED accounting
-      # above depends on (see also tests/ac-learn-loop.test.sh's leg E, which
+      # above depends on (see also tests/sh/ac-learn-loop.test.sh's leg E, which
       # asserts no receipt exists for a declared environment-error reaching
       # this exact arm). learn_captain_escalate omits the gate= link itself
       # when nothing was written, so this never posts a dead one.
