@@ -894,7 +894,10 @@ release_family_is_over() {
   #   1. the family has a room at all (a scoped watcher for a family with no
   #      room - the (8e) shape - is never touched);
   #   2. the LAST tenure marker in it is DEMOTED/CLOSED, not PROMOTED, so a
-  #      family that was demoted and later re-promoted is protected again;
+  #      family that was demoted and later re-promoted is protected again. A
+  #      marker counts only at the start of an ENTRY (the entry shape
+  #      ac_room_handback_families pins): a continuation line quoting
+  #      `> CLOSED:` is prose, and ac-room.sh post accepts one;
   #   3. no <family>-chief.meta exists, so a chief that is up right now wins
   #      over any stale room line.
   # Any one of them missing means refuse, which keeps the guard's default
@@ -905,9 +908,9 @@ release_family_is_over() {
   room="$(ac_room_file "$fam" 2>/dev/null || true)"
   [ -n "$room" ] && [ -f "$room" ] || return 1
   last="$(awk '
-    /> *PROMOTED:/  { m = "PROMOTED" }
-    /> *DEMOTED:/   { m = "DEMOTED" }
-    /> *CLOSED:/    { m = "CLOSED" }
+    /^- \[[^]]*\] [^>]*> PROMOTED:/ { m = "PROMOTED" }
+    /^- \[[^]]*\] [^>]*> DEMOTED:/  { m = "DEMOTED" }
+    /^- \[[^]]*\] [^>]*> CLOSED:/   { m = "CLOSED" }
     END { print m }
   ' "$room")"
   case "$last" in DEMOTED|CLOSED) return 0 ;; esac
@@ -1146,7 +1149,8 @@ release_note() {
   reason="$(ac_meta_get "$m" reason)"
   releaser="$(ac_meta_get "$m" releaser)"
   rm -f "$m"
-  case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+  # 0*: ac_now never writes a leading zero, and bash arithmetic reads one as octal.
+  case "$epoch" in ''|0*|*[!0-9]*) return 1 ;; esac
   # 30s: two orders of magnitude above the real gap (the idiom's `sleep 1`,
   # and a TERM whose trap bash defers until the running poll pass returns),
   # and far below the "a leftover marker mutes a genuine kill minutes later"
@@ -1473,10 +1477,29 @@ rearm_grace_active() {
   marker="$state_dir/.skip-stale-since-$fam"
   now="$(ac_now)"
   since="$(cat "$marker" 2>/dev/null || true)"
+  # 0*: ac_now never writes a leading zero, and bash arithmetic reads one as octal.
   case "$since" in
-    ''|*[!0-9]*) since="$now"; printf '%s\n' "$now" >"$marker" ;;
+    ''|0*|*[!0-9]*) since="$now"; printf '%s\n' "$now" >"$marker" ;;
   esac
   [ $(( now - since )) -le "${AC_GUARD_GRACE:-300}" ]
+}
+
+clock_stamp() {
+  # clock_stamp <file> - the epoch in a .change-/.busy- clock stamp, or now when
+  # the file holds nothing ac_now could have written - missing, EMPTY (the
+  # writers truncate in place, so a read can land mid-write or after an ENOSPC),
+  # zero-padded or non-numeric - and then the file is rewritten to now. Raw in
+  # `$(( ))` such a value kills the whole pass with no reason line, on every
+  # re-arm until the pane's tail changes; read as 0 it is a 56-year clock and a
+  # false stale:. Fail direction: the clock RESTARTS, so a quiet or hung pane
+  # still wakes, one AC_STALE/AC_BUSY_MAX window late - not at once on a false
+  # clock, and not never on a stamp left unreadable.
+  local v
+  v="$(cat "$1" 2>/dev/null || true)"
+  case "$v" in
+    ''|0*|*[!0-9]*) v="$(ac_now)"; printf '%s\n' "$v" 2>/dev/null >"$1" || true ;;
+  esac
+  printf '%s\n' "$v"
 }
 
 busy_family_of() {
@@ -1602,14 +1625,15 @@ remote_poll_interval() {
   # remote_poll_interval - seconds between remote-order polls; 0 = slot off.
   # Resolution: AC_REMOTE_POLL env > config/remote-poll-interval > 300; the
   # 300 default applies only when the executable config/remote-poll hook
-  # exists. Non-numeric or 0 at any layer = off (unchanged semantics).
+  # exists. Non-numeric or 0 at any layer = off (unchanged semantics). 10#:
+  # the interval feeds `$(( ))`, where a zero-padded 09 is an octal error.
   local iv="${AC_REMOTE_POLL:-}"
   [ -n "$iv" ] || iv="$(ac_config_read remote-poll-interval "")"
   if [ -z "$iv" ]; then
     if [ -x "$(ac_config_dir)/remote-poll" ]; then iv=300; else iv=0; fi
   fi
   case "$iv" in ''|*[!0-9]*) iv=0 ;; esac
-  printf '%s\n' "$iv"
+  printf '%s\n' "$(( 10#$iv ))"
 }
 
 remote_poll_timeout() {
@@ -2226,7 +2250,7 @@ check_fleet() {
     if [ "$busy" = 1 ] && [ "${AC_BUSY_MAX:-2700}" -gt 0 ] \
       && [ ! -e "$state_dir/.busy-stalled-$id" ] \
       && ! chief_busy_declared "$(busy_family_of "$id")"; then
-      busy_age=$(( $(ac_now) - $(cat "$busy_file" 2>/dev/null || ac_now) ))
+      busy_age=$(( $(ac_now) - $(clock_stamp "$busy_file") ))
       if [ "$busy_age" -ge "${AC_BUSY_MAX:-2700}" ]; then
         touch "$state_dir/.busy-stalled-$id"
         ac_status_append "$id" "busy but stalled: ${busy_age}s inside one call with no turn end"
@@ -2240,7 +2264,7 @@ check_fleet() {
     # marker branch's original `continue`, moved past the artifact channel.
     if [ -n "$marker" ]; then continue; fi
 
-    idle=$(( $(ac_now) - $(cat "$changed_file" 2>/dev/null || ac_now) ))
+    idle=$(( $(ac_now) - $(clock_stamp "$changed_file") ))
     if [ "$idle" -ge "${AC_STALE:-240}" ] && [ ! -e "$state_dir/.stale-$id" ] \
       && ! ac_chief_gate_parked "$id" && ! ac_chief_child_live "$state_dir" "$id"; then
       if [ "$busy" = 0 ]; then

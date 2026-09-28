@@ -640,6 +640,14 @@ assert_contains "$outb" "unreadable" "... and an empty beacon is neither absent 
 printf '%s\n' "$(( $(date +%s) - 123456 ))" >"$state/.last-watcher-beat"
 assert_contains "$(drain '')" "no fresh beat (age 12345" "a real stale beat still prints its real age"
 
+# ... and a zero-padded beat is no ac_now epoch: raw, bash arithmetic reads its
+# leading 0 as octal and errors, and forced to base 10 it is a 56-year age.
+printf '0009\n' >"$state/.last-watcher-beat"
+outb="$(drain '')"
+assert_contains "$outb" "WATCHER-DOWN" "a zero-padded beat is still uncovered, not an arithmetic error"
+assert_contains "$outb" "the beacon is unreadable" "a zero-padded beat is unreadable, not a usable beat"
+case "$outb" in *"age "*) fail "no age may be computed from a zero-padded beat: $outb" ;; esac
+
 # --- 8. structural: no code appends into a wake queue or spool path ----------
 
 # Defect class: a FUTURE producer silently reopening R1 with a bare `>>` (the
@@ -715,6 +723,20 @@ reset_state; reset_completions
 task_meta impl3
 seed_quiet_pane impl3 'done: stage finished'
 case "$(drain '')" in *impl3*) fail "a marker-carrying pane is the watcher's wake, not a completion report" ;; esac
+
+# (4a) ... and neither is a pane whose idle stamp is UNREADABLE - empty, or
+# zero-padded (bash arithmetic reads a leading 0 as octal): no evidence of
+# idleness, and never an arithmetic error that ends the pass before a later
+# task's completion is reported.
+reset_state; reset_completions
+task_meta idl1; seed_quiet_pane idl1 'nothing to see here'
+task_meta zz-spec; seed_report zz-spec zz/spec
+for bad in '' 0009; do
+  printf '%s' "$bad" >"$state/.change-idl1"
+  out="$(drain '')"
+  case "$out" in *"IDLE-MAY-BE-WAITING-ON-YOU: idl1"*) fail "an unreadable idle stamp ('$bad') is no evidence of idleness" ;; esac
+  assert_contains "$out" "UNACKNOWLEDGED COMPLETION: zz-spec" "an unreadable idle stamp ('$bad') must not end the completion pass"
+done
 
 # (4b) ... and neither is a <fam>-chief the WATCHER already declined to wake:
 # this fallback re-reads the watcher's own .change-<id> stamp, so without the

@@ -289,7 +289,7 @@ report_completions() {
   # One pass over the in-scope metas: the artifact channel first, the pane
   # idleness fallback only for a task with no report artifact. Read-only -
   # the ack verb is the one writer.
-  local meta id ack dir rep changed idle raw tail
+  local meta id ack dir rep changed stamp idle raw tail
   for meta in "$state_dir"/*.meta; do
     [ -e "$meta" ] || continue
     # A VERIFICATION agent (ac_meta_is_verify owns the class) owes the chief no
@@ -315,7 +315,12 @@ report_completions() {
     changed="$state_dir/.change-$id"
     [ -f "$changed" ] || continue
     [ "$changed" -nt "$ack" ] || continue
-    idle=$(( $(ac_now) - $(cat "$changed" 2>/dev/null || ac_now) ))
+    # A stamp no ac_now wrote (empty, zero-padded) is no evidence of idleness,
+    # and raw in arithmetic it ends this whole pass; the watcher's stale arm
+    # restarts it (ac-watch.sh clock_stamp).
+    stamp="$(cat "$changed" 2>/dev/null || true)"
+    case "$stamp" in ''|0*|*[!0-9]*) continue ;; esac
+    idle=$(( $(ac_now) - stamp ))
     [ "$idle" -ge "${AC_STALE:-240}" ] || continue
     # A <fam>-chief the WATCHER declined to wake is not idle news here either:
     # this fallback re-reads the watcher's own .change-<id> stamp, so the same
