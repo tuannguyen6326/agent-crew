@@ -144,6 +144,16 @@ assert_fails "$BIN/ac-room.sh" disposition widget spec --r1 "$r1" --accepted 1 -
 assert_fails "$BIN/ac-room.sh" disposition widget spec --r1 "$r1" --accepted 1,2 --disputed none --authority chief-owned --grounds no-dispute-authority
 assert_fails "$BIN/ac-room.sh" disposition widget spec --r1 "$r1" --accepted 1 --disputed 2 --authority chief-owned --grounds $'multi\nline'
 
+# A value flag left as the LAST word is a usage error that SAYS so.
+for trailing in "gate-verify widget spec --round" "gate-verify widget spec --report" \
+  "gate-route widget spec --report" "gate-route widget spec --uncertainty" \
+  "gate-route widget spec --consequence" "gate-route widget spec --authority" \
+  "disposition widget spec --r1" "disposition widget spec --accepted" \
+  "disposition widget spec --disputed" "disposition widget spec --authority"; do
+  # shellcheck disable=SC2086
+  assert_fails_with "usage: ac-room.sh" -- "$BIN/ac-room.sh" $trailing
+done
+
 # handback: posts the room record, publishes a durable wake (a record in the
 # fleet spool), shows in list until DEMOTED/CLOSED settles it.
 "$BIN/ac-room.sh" post gizmo crewchief "spawned gizmo (staged)" >/dev/null
