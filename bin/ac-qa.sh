@@ -1036,7 +1036,12 @@ EOF
     || ac_die "finish passed refused: duplicate case ids: $duplicate"
 
   evidence_root="$(cmd_evidence_dir)"
-  while IFS="$(printf '\t')" read -r id tier status cls conf grade evidence note auth repro boundary receipt; do
+  # cases.tsv is re-separated TAB -> US (\037) before `read`: TAB is IFS
+  # whitespace, so `read` collapses an empty field (`case --confidence ""`) and
+  # shifts each later one off the column the awk readers take. LC_ALL=C because
+  # the free-text columns are bytes: a UTF-8 tr stops at the first invalid
+  # sequence, and every row from there on would silently skip this gate.
+  while IFS=$'\037' read -r id tier status cls conf grade evidence note auth repro boundary receipt; do
     [ -n "$id" ] || ac_die "finish passed refused: a case has an empty id"
     case " $CASE_TIERS " in *" $tier "*) ;; *)
       ac_die "finish passed refused: case $id has invalid tier '$tier' (the closed set is $CASE_TIERS)" ;;
@@ -1082,7 +1087,7 @@ EOF
       [ "$web_missing" = 0 ] \
         || ac_die "finish passed refused: web case $id has no valid visual linked to that case id"
     fi
-  done <"$rd/cases.tsv"
+  done < <(LC_ALL=C tr '\t' '\037' <"$rd/cases.tsv")
 
   ac_qa_coverage_validate "$rd" "$repo" \
     "$(ac_meta_get "$rd/run.meta" target_sha)" \
@@ -1240,6 +1245,14 @@ repo_scope() {
   # (.crew/worktrees/<n>) must scope to the project, not the numeric slot,
   # or the teardown/reap hooks (which run from the main repo) never match.
   sanitize_compose "$(basename "$(ac_repo_root "$repo")")"
+}
+
+qa_store_path() {
+  # qa_store_path <fleet-data-dir> - the KNOWLEDGE STORE dir (header). Every
+  # verb derives it here: an install or freeze keyed apart from store-dir,
+  # store-label and store-calibration splits the history from its labels, and
+  # calibration then pairs nothing.
+  printf '%s/qa-store/%s\n' "$1" "$(repo_scope)"
 }
 
 compose_project() {
@@ -1715,16 +1728,22 @@ cmd_step() {
     [ "$(visuals_valid "$rd")" -gt 0 ] \
       || ac_die "evidence step has no visual artifact: register one with 'ac-qa.sh visual <path>' while the stack is still up, or 'step evidence skipped --note <why>' when the change has no visual surface"
   fi
-  tmp="$(mktemp)"
+  # Locked read-modify-write: two unlocked writers to steps.tsv lose a row.
+  ac_lock_acquire "$rd/.steps.lock" 30 \
+    || { rm -f "$testplan_manifest_tmp"; ac_die "steps ledger lock timeout"; }
   # ABORT, never fall through: the ledger IS the state machine's truth, and
   # `awk >tmp && mv` is a non-final AND-OR element, which errexit EXEMPTS (and
   # pipefail does not cover - it is not a pipeline). Unguarded, a failed read or
   # a failed swap left the ledger unchanged, leaked the staged temp file, and
-  # still printed `<step> -> <status>`. Mirrors ac-ship.sh cmd_step.
+  # still printed `<step> -> <status>`. The lock is released on the refusal too,
+  # and the temp is staged BESIDE steps.tsv so the swap is one rename(2): the
+  # watch board reads the ledger live, and a mv across filesystems is a copy it
+  # can catch half-written. Mirrors ac-ship.sh cmd_step.
   # The note travels via ENVIRON, never `awk -v`: -v assignment re-interprets
   # C escapes, so a literal `\t`/`\n` in the note would re-become the very
   # control characters the scrub above removed (mirrors cmd_visual).
-  if ! { AC_QA_STEP_NOTE="$note" awk -F'\t' -v OFS='\t' -v s="$name" -v st="$status" '
+  if ! { tmp="$(mktemp "$rd/.steps.tsv.XXXXXX")" \
+      && AC_QA_STEP_NOTE="$note" awk -F'\t' -v OFS='\t' -v s="$name" -v st="$status" '
       $1 == s {
         $2 = st
         if (st == "fixing") $3 = ($3 + 0) + 1
@@ -1733,8 +1752,10 @@ cmd_step() {
       NF < 4 { $4 = "-" }
       { print }' "$rd/steps.tsv" >"$tmp" && mv "$tmp" "$rd/steps.tsv"; }; then
     rm -f "$tmp" "$testplan_manifest_tmp"
+    ac_lock_release "$rd/.steps.lock"
     ac_die "step: could not update the steps ledger ($rd/steps.tsv) - failing closed"
   fi
+  ac_lock_release "$rd/.steps.lock"
   if [ -n "$testplan_sha" ]; then
     mv "$testplan_manifest_tmp" "$rd/testplan-manifest.json" \
       || { rm -f "$testplan_manifest_tmp"; ac_die "testplan completed could not publish its frozen manifest"; }
@@ -1855,23 +1876,24 @@ cmd_case() {
   # concurrently inside the one QA pane. Without the lock, two parallel writers
   # lose rows. Last write per case id wins (re-runs update the row).
   ac_lock_acquire "$rd/.cases.lock" 30 || ac_die "cases ledger lock timeout"
-  tmp="$(mktemp)"
-  # A failed rewrite must DIE with the ledger intact - swallowing it with
-  # `|| true` would leave $tmp holding only the new row and mv would destroy
-  # every case on record, the same shape visual_register's ledger rewrite dies on.
-  if ! awk -F'\t' -v id="$id" '$1 != id' "$rd/cases.tsv" >"$tmp"; then
-    rm -f "$tmp"
-    ac_lock_release "$rd/.cases.lock"
-    ac_die "cases ledger rewrite failed for: $id (the ledger is unchanged)"
-  fi
+  # A failed rewrite must DIE with the ledger intact and the lock released -
+  # swallowing it with `|| true` would leave $tmp holding only the new row and mv
+  # would destroy every case on record, the same shape visual_register's ledger
+  # rewrite dies on. Staged beside cases.tsv for cmd_step's one-rename reason.
   # authority + repro are APPENDED ($9, $10) and boundary + boundary_receipt
   # after them ($11, $12), for the same reason: every existing awk -F'\t' index
   # keeps pointing at the field it always did, and a pre-change row renders
   # with "-" by the same mechanism --note already relies on.
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$id" "$tier" "$status" "$cls" "$conf" "$grade" "$ev" "$note" "$auth" "$repro" \
-    "$boundary" "$receipt" >>"$tmp"
-  mv "$tmp" "$rd/cases.tsv"
+  if ! { tmp="$(mktemp "$rd/.cases.tsv.XXXXXX")" \
+      && awk -F'\t' -v id="$id" '$1 != id' "$rd/cases.tsv" >"$tmp" \
+      && printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$id" "$tier" "$status" "$cls" "$conf" "$grade" "$ev" "$note" "$auth" "$repro" \
+        "$boundary" "$receipt" >>"$tmp" \
+      && mv "$tmp" "$rd/cases.tsv"; }; then
+    rm -f "$tmp"
+    ac_lock_release "$rd/.cases.lock"
+    ac_die "cases ledger rewrite failed for: $id (the ledger is unchanged)"
+  fi
   ac_lock_release "$rd/.cases.lock"
   printf 'case %s: %s (tier=%s%s)\n' "$id" "$status" "$tier" "$([ "$cls" != - ] && printf ' class=%s' "$cls")"
 }
@@ -1932,19 +1954,20 @@ visual_register() {
   # PATH wins.
   ac_lock_acquire "$rd/.visuals.lock" 30 || ac_die "visuals ledger lock timeout"
   [ -f "$rd/visuals.tsv" ] || : >"$rd/visuals.tsv"   # a run started before this verb existed
-  tmp="$(mktemp)"
   # The path goes through the ENVIRONMENT, not `awk -v`, which escape-processes
   # its value: `-v p=/a\tb.png` would compare against a real tab and never match
   # the literal row, registering the same artifact twice. A failed rewrite must
-  # DIE with the ledger intact - swallowing it with `|| true` would leave $tmp
-  # holding only the new row and mv would destroy every artifact on record.
-  if ! p="$abs" awk -F'\t' '$1 != ENVIRON["p"]' "$rd/visuals.tsv" >"$tmp"; then
+  # DIE with the ledger intact and the lock released - swallowing it with
+  # `|| true` would leave $tmp holding only the new row and mv would destroy
+  # every artifact on record. Staged beside visuals.tsv so the swap is one rename.
+  if ! { tmp="$(mktemp "$rd/.visuals.tsv.XXXXXX")" \
+      && p="$abs" awk -F'\t' '$1 != ENVIRON["p"]' "$rd/visuals.tsv" >"$tmp" \
+      && printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$abs" "$kind" "$bytes" "${cid:--}" "$(ac_iso)" "$note" >>"$tmp" \
+      && mv "$tmp" "$rd/visuals.tsv"; }; then
     rm -f "$tmp"
     ac_lock_release "$rd/.visuals.lock"
     ac_die "visuals ledger rewrite failed for: $abs (the ledger is unchanged)"
   fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$abs" "$kind" "$bytes" "${cid:--}" "$(ac_iso)" "$note" >>"$tmp"
-  mv "$tmp" "$rd/visuals.tsv"
   ac_lock_release "$rd/.visuals.lock"
   printf 'visual %s registered: %s (%s bytes%s)\n' "$kind" "$abs" "$bytes" \
     "$([ -n "$cid" ] && printf ', case %s' "$cid")"
@@ -2268,7 +2291,7 @@ cmd_store_label() {
   done
   [ -n "$sha" ] && [ -n "$label" ] || ac_die "store-label needs --run <sha> and one of confirmed|not-a-defect"
   [ -n "${AC_HOME:-}" ] || ac_die "store-label is chief-side and needs AC_HOME (the labels sit beside the fleet's store)"
-  f="$(ac_data_dir)/qa-store/$(repo_scope).labels.tsv"
+  f="$(qa_store_path "$(ac_data_dir)").labels.tsv"
   mkdir -p "$(dirname "$f")"
   printf '%s\t%s\t%s\t%s\t%s\n' "$sha" "$id" "$label" "$by" "$(ac_iso)" >>"$f"
   printf 'labelled %s@%s %s (%s)\n' "$id" "$sha" "$label" "$f"
@@ -2277,7 +2300,7 @@ cmd_store_label() {
 cmd_store_calibration() {
   [ -n "${AC_HOME:-}" ] || ac_die "store-calibration is chief-side and needs AC_HOME"
   local base out
-  base="$(ac_data_dir)/qa-store/$(repo_scope)"
+  base="$(qa_store_path "$(ac_data_dir)")"
   out="$(qa_store_calibration "$base/history.tsv" "$base.labels.tsv")"
   printf '%s\n' "$out" >"$base.calibration.json"
   printf '%s\n' "$out"
@@ -2287,7 +2310,7 @@ cmd_store_install() {
   # Chief-only installation of a complete curation candidate. The candidate's
   # base manifest must still equal the current shared store, so a concurrent
   # accepted update refuses rather than being overwritten.
-  local candidate="${1:-}" source base_file base_sha home project dest lock
+  local candidate="${1:-}" source base_file base_sha home dest lock
   local current_manifest current_sha stage previous=""
   [ $# -eq 1 ] && [ -d "$candidate/store" ] \
     || ac_die "usage: ac-qa.sh store-install <candidate-dir-with-store-and-base-manifest.sha256>"
@@ -2301,11 +2324,10 @@ cmd_store_install() {
   [ -z "$(find "$source" -type l -print -quit)" ] \
     || ac_die "curation candidate store contains symlinks"
   home="$(cd "$AC_HOME" && pwd -P)"
-  project="$(ac_project_config_name "$repo")" || ac_die "cannot resolve project identity for store install"
-  dest="$home/data/qa-store/$project"
+  dest="$(qa_store_path "$home/data")"
   mkdir -p "$(dirname "$dest")"
   lock="$dest.lock"
-  ac_lock_acquire "$lock" 30 || ac_die "store-install lock timeout for $project"
+  ac_lock_acquire "$lock" 30 || ac_die "store-install lock timeout for $dest"
   current_manifest="$(mktemp)"
   qa_store_manifest_build "$dest" "$current_manifest"
   current_sha="$(ac_config_sha256 "$current_manifest")"
@@ -2314,7 +2336,7 @@ cmd_store_install() {
     ac_lock_release "$lock"
     ac_die "store-install conflict: candidate base=$base_sha current=$current_sha; review against the newer store"
   fi
-  stage="$(mktemp -d "$(dirname "$dest")/.${project}.curation.XXXXXX")"
+  stage="$(mktemp -d "$(dirname "$dest")/.$(basename "$dest").curation.XXXXXX")"
   cp -R "$source/." "$stage/"
   if [ -d "$dest" ]; then
     previous="$dest.prev"
@@ -3165,8 +3187,7 @@ cmd_store_dir() {
   # refusal). Per-project, in the fleet home - durable across worktree resets
   # and clone re-creation. No require_run: the store outlives every run, so it
   # stays resolvable with none active (rung 1 is simply unavailable then).
-  local scope dir meta store=""
-  scope="$(repo_scope)"
+  local dir meta store=""
   if [ -L "$current" ]; then
     # -f on run.meta, not the -L alone: readlink SUCCEEDS on a DANGLING link,
     # so a run dir deleted out-of-band would hand sed a missing file and kill
@@ -3177,7 +3198,7 @@ cmd_store_dir() {
   if [ -n "$store" ]; then
     dir="$store"
   elif [ -n "${AC_HOME:-}" ]; then
-    dir="$(ac_data_dir)/qa-store/$scope"
+    dir="$(qa_store_path "$(ac_data_dir)")"
   else
     ac_die "qa knowledge store unresolvable: no run recorded a store= path and this env has no AC_HOME.
 The store is per-project and durable in the FLEET HOME (see KNOWLEDGE STORE in this script's header). Resolving it from here would answer with the agent-crew checkout that owns bin/, collapsing every fleet's store into one and silently reading an empty store - so it refuses instead. Your qa brief names the absolute path; re-start this run with it:
@@ -3622,7 +3643,7 @@ EOF
   config_snapshot_sha="$(ac_config_sha256 "$bundle_tmp/config.yaml")"
   scopes_snapshot_sha="$(ac_config_sha256 "$bundle_tmp/scopes.tsv")"
 
-  store_source="$qa_home/data/qa-store/$qa_project"
+  store_source="$(qa_store_path "$qa_home/data")"
   store_manifest="$bundle_tmp/store/manifest.json"
   jq -n '{schema:"agentcrew.qa-store-snapshot/v1",entries:[]}' >"$store_manifest"
   if [ -d "$store_source" ]; then

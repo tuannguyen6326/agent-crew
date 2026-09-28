@@ -547,7 +547,9 @@ ac_qa_coverage_validate() {
     esac
   done < <(jq -r '.coverage[] | [.ac,.rung,.proof,.case] | @tsv' "$manifest")
 
-  while IFS="$(printf '\t')" read -r id tier status _ _ _ _ _ _ _ boundary receipt; do
+  # TAB -> US under LC_ALL=C: `read` collapses an empty TAB field and shifts
+  # boundary/receipt off $11/$12, and a UTF-8 tr stops at a non-UTF-8 byte.
+  while IFS=$'\037' read -r id tier status _ _ _ _ _ _ _ boundary receipt; do
     [ -n "$id" ] || continue
     started="$(ac_meta_get "$receipt" started_at)"
     completed="$(ac_meta_get "$receipt" completed_at)"
@@ -578,7 +580,7 @@ ac_qa_coverage_validate() {
       [ -n "$max_component" ] && [ "$max_component" -ge "$completed_epoch" ] \
         || max_component="$completed_epoch"
     fi
-  done <"$run/cases.tsv"
+  done < <(LC_ALL=C tr '\t' '\037' <"$run/cases.tsv")
   [ -n "$min_flow" ] || {
     AC_QA_MANIFEST_ERROR="no declared full-flow case exists in the effective ledger"
     return 1

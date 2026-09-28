@@ -80,7 +80,7 @@ qa:
   # names BOTH --scope and --app - there is no one-member inference.
   # Knowledge-store guides, cases, fixture packs, and assets are not configured
   # here. `ac-qa.sh agent` freezes the selected files from
-  # $AC_HOME/data/qa-store/<project>/ into the profile bundle; execution reads
+  # the store `ac-qa.sh store-dir` prints into the profile bundle; execution reads
   # only that hash-bound snapshot.
   # Delete this block for a single-app repo: the flat keys above are the
   # whole configuration, and nothing below is consulted.
