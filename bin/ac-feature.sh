@@ -4,7 +4,7 @@
 # A feature accumulates SEVERAL crew tasks on one branch per repo that stays
 # LOCAL until ship: create cuts it at the recorded target's freshest tip and
 # never pushes; member rows bind with the `feature:<name>` ledger token
-# (AC_DONELINE_AWK's f["feature"]) and land onto the branch through the
+# (src/backlog.ts's feature field) and land onto the branch through the
 # ordinary ac-merge-local path via the shared resolver (ac_epic_base_for);
 # `ship` publishes the branch ONCE and opens one PR per repo to the recorded
 # target. The design pins: a standalone mechanism reusable by

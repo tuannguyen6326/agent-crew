@@ -91,4 +91,16 @@ out="$("$BIN/ac-dash.sh")"
 assert_contains "$out" "in-flight:0  queued:0  done:1" \
   "a [failed]/[abandoned] Done row must not count toward the terminal backlog's done tally"
 
+# A backlog the parser could not read costs its own line, never the render:
+# --watch runs render under set -e and would die on the first bad frame.
+failbun="$TMP/failbun"
+mkdir -p "$failbun"
+printf '#!/bin/sh\nexit 1\n' >"$failbun/bun"
+chmod +x "$failbun/bun"
+rc=0
+out="$(PATH="$failbun:$PATH" "$BIN/ac-dash.sh" 2>/dev/null)" || rc=$?
+assert_eq "$rc" "0" "an unreadable backlog leaves the render's exit status alone"
+assert_contains "$out" "WARN   backlog unavailable: the parser exited 2" "an unreadable backlog is named in its section"
+assert_contains "$out" "leased:1 avail:1" "the sections after an unreadable backlog still render"
+
 pass

@@ -778,10 +778,14 @@ make_loadfail_bin() {
   # ("backend_${fn}_herdr"). Running a target script from $LOADFAIL_BIN drives
   # backend_window_alive to a REAL bash 127 (command not found) - the
   # production failure mode (a driver file that failed to load) - rather than
-  # a hand-picked sentinel return code.
-  LOADFAIL_BIN="$TMP/loadfail-bin"
+  # a hand-picked sentinel return code. src/ rides along because bin/ac-bun.sh
+  # starts every TypeScript module - the backlog parser included - from
+  # <bin>/../src.
+  LOADFAIL_BIN="$TMP/loadfail/bin"
   [ -d "$LOADFAIL_BIN" ] && return 0
+  mkdir -p "$TMP/loadfail"
   cp -R "$BIN" "$LOADFAIL_BIN"
+  cp -R "$ROOT/src" "$TMP/loadfail/src"
   chmod -R u+w "$LOADFAIL_BIN"
   sed -i.bak 's/^backend_window_alive_herdr() {/backend_window_alive_herdr_MISSING_DRIVER() {/' \
     "$LOADFAIL_BIN/ac-backend.sh"

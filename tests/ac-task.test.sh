@@ -121,7 +121,7 @@ out="$("$BIN/ac-task.sh" unhold heldrow)"
 assert_contains "$out" "already" "re-unholding reports already"
 assert_fails_with "date" -- "$BIN/ac-task.sh" hold heldrow --until soon
 
-# ---- hold state is read by THE grammar (AC_DONELINE_AWK), never a substring
+# ---- hold state is read by THE grammar (src/backlog.ts), never a substring
 #      scan: a row whose prose QUOTES the token in a code span is not held, so
 #      every verb must treat it as an ordinary row - and hold/unhold must
 #      never cut the quotation out of the prose.
@@ -167,6 +167,37 @@ assert_fails_with "sank (failed)" -- "$BIN/ac-task.sh" start onfailed
 assert_fails_with "nosuchrow (missing)" -- "$BIN/ac-task.sh" start onghost
 assert_fails_with "blocked-by malformed" -- "$BIN/ac-task.sh" start onbad
 cmp -s "$TMP/before-blk.md" "$ledger" || fail "a blocker refusal must not touch the file"
+# Blockers the parser could not read never read as "no blocker". The stub bun
+# answers the single-line hold read and fails the whole-ledger parse.
+wirefail="$TMP/wirefail"
+mkdir -p "$wirefail" "$TMP/task-tmp"
+cat >"$wirefail/bun" <<EOF
+#!/bin/sh
+[ "\$5" = --get ] && exec "$(command -v bun)" "\$@"
+exit 1
+EOF
+chmod +x "$wirefail/bun"
+assert_fails_with "the backlog parser failed" -- env PATH="$wirefail:$PATH" TMPDIR="$TMP/task-tmp" "$BIN/ac-task.sh" start onflying
+cmp -s "$TMP/before-blk.md" "$ledger" || fail "a start whose blockers could not be read must not touch the file"
+assert_eq "$(ls -A "$TMP/task-tmp")" "" "the blocker check leaves no copy of the ledger behind"
+# Nor does a copy of the ledger that could not be staged: awk handed an empty
+# operand reads stdin, finds no rows, and reports no blocker.
+assert_fails_with "cannot stage the ledger for the blocker check" -- \
+  env TMPDIR="$TMP/no-such-dir" "$BIN/ac-task.sh" start onflying </dev/null
+cmp -s "$TMP/before-blk.md" "$ledger" || fail "a start whose ledger copy could not be made must not touch the file"
+rofail="$TMP/rofail"
+mkdir -p "$rofail"
+cat >"$rofail/mktemp" <<'EOF'
+#!/bin/sh
+f="$(/usr/bin/mktemp "$@")" || exit
+case "$f" in */ac-task-ledger.*) chmod 444 "$f" ;; esac
+printf '%s\n' "$f"
+EOF
+chmod +x "$rofail/mktemp"
+assert_fails_with "cannot stage the ledger for the blocker check" -- \
+  env PATH="$rofail:$PATH" TMPDIR="$TMP/task-tmp" "$BIN/ac-task.sh" start onflying </dev/null
+cmp -s "$TMP/before-blk.md" "$ledger" || fail "a start whose ledger copy could not be written must not touch the file"
+assert_eq "$(ls -A "$TMP/task-tmp")" "" "a ledger copy that could not be written is not left behind"
 out="$("$BIN/ac-task.sh" start onlanded)"
 assert_contains "$out" "ok:" "a row whose blockers are all clean Done starts"
 grep -vE '^- \[[ x]\] (onflying|onfailed|onghost|onbad|onlanded|sank) ' "$ledger" >"$TMP/blk.md" && mv "$TMP/blk.md" "$ledger"

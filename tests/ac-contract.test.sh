@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-contract.test.sh - the DELIVERY-CONTRACT token group on a backlog row
 # (delivery-contract-on-the-row): parsed by the ONE shared line parser
-# (AC_DONELINE_AWK's f["contract"], ac-lib.sh), judged by the ONE value judge
+# (src/backlog.ts's contract field), judged by the ONE value judge
 # (ac_contract_lint), displayed - never enforced - by ac-ready.sh.
 #
 # Covers:
@@ -25,10 +25,12 @@
 make_home
 
 contract_of() {  # contract_of <line> -> f["contract"]
-  awk "$AC_DONELINE_AWK"'{ ac_doneline($0, o); print o["contract"] }' <<<"$1"
+  printf '%s\n' "$1" >"$TMP/line.md"
+  awk "$AC_DONELINE_AWK"'{ ac_doneline($0, o); print o["contract"] }' "$TMP/line.md"
 }
 field_of() {  # field_of <line> <field>
-  awk -v fld="$2" "$AC_DONELINE_AWK"'{ ac_doneline($0, o); print o[fld] }' <<<"$1"
+  printf '%s\n' "$1" >"$TMP/line.md"
+  awk -v fld="$2" "$AC_DONELINE_AWK"'{ ac_doneline($0, o); print o[fld] }' "$TMP/line.md"
 }
 
 # --- extraction: the discriminator ------------------------------------------
@@ -182,6 +184,34 @@ assert_contains "$(cat "$AC_HOME/data/g-bare/brief.md")" "Review: yes" \
 out="$("$BIN/ac-brief.sh" g-pinned-mode gproj --mode crew-ship --review yes \
   --captain-requested 'x' 2>&1)" && fail "G6: a flag contradicting the pin must refuse"
 assert_contains "$out" "contradicts the row's pinned mode" "G6: the refusal names the contradiction"
+
+# G6b: a ledger the parser could not read is never an unpinned row. The stub
+# bun fails whole-ledger parse number $STUB_FAIL_AT (every one when unset).
+failbun="$TMP/failbun"
+mkdir -p "$failbun"
+cat >"$failbun/bun" <<EOF
+#!/bin/sh
+if [ "\$4" = fields ] && [ "\$5" != --get ]; then
+  n=\$(( \$(cat "$TMP/parses" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"$TMP/parses"
+  [ -z "\${STUB_FAIL_AT:-}" ] || [ "\$n" = "\$STUB_FAIL_AT" ] && exit 1
+fi
+exec "$(command -v bun)" "\$@"
+EOF
+chmod +x "$failbun/bun"
+rc=0; (export PATH="$failbun:$PATH"; ac_row_contract_for_id g-pinned-mode "$backlog" >/dev/null 2>&1) || rc=$?
+assert_eq "$rc" "2" "G6b: ac_row_contract_for_id on a ledger it could not read"
+rm -f "$TMP/parses"
+out="$(PATH="$failbun:$PATH" STUB_FAIL_AT=1 "$BIN/ac-brief.sh" g-pinned-mode gproj --mode crew-ship --review yes \
+  --captain-requested 'x' --reason 'r' 2>&1)" && fail "G6b: a pin the parser could not read must refuse, never scaffold"
+assert_contains "$out" "cannot read the ledger $backlog for the delivery contract of g-pinned-mode" \
+  "G6b: the mode-pin read names the ledger it could not read"
+assert_no_file "$AC_HOME/data/g-pinned-mode/brief.md" "G6b: nothing scaffolded"
+rm -f "$TMP/parses"
+out="$(PATH="$failbun:$PATH" STUB_FAIL_AT=3 "$BIN/ac-brief.sh" g-norow gproj --mode local-only 2>&1)" \
+  && fail "G6b: a contract the escalation gate could not read must refuse, never scaffold"
+assert_contains "$out" "cannot read the ledger $backlog for the delivery contract of g-norow" \
+  "G6b: the escalation gate's contract read names the ledger it could not read"
+assert_no_file "$AC_HOME/data/g-norow/brief.md" "G6b: nothing scaffolded by the gate"
 
 # G7: mode has NO registry default any more - unspecified refuses, naming both
 # the flag and the pin path.

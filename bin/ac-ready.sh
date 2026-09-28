@@ -68,7 +68,7 @@
 #                           dependency read as "none" is how a one-character
 #                           slip authorized starting a story whose blocker was
 #                           still flying (the parser fills blockers_malformed;
-#                           AC_DONELINE_AWK in ac-lib.sh owns that detection).
+#                           src/backlog.ts owns that detection).
 # HELD   <id> - captain hold - ... - the row carries the `[@held]` token
 #                           (docs/backlog.md) as one of its `[...]`
 #                           groups, OR a mis-typed attempt at it - sentinel
@@ -89,8 +89,8 @@
 #                           after the id counts as the real token, so a row,
 #                           receipt, or doc line that quotes `[@held]` (wrapped
 #                           in backticks) or writes it in the wrong place never
-#                           silently holds itself (full rule: ac-lib.sh's
-#                           AC_DONELINE_AWK header, the one owner).
+#                           silently holds itself (full rule: the header of
+#                           src/backlog.ts, the one owner).
 #                           THE `@` SENTINEL is what the WELL-FORMED token and
 #                           one malformed rule match on, not the bare word: a
 #                           live ledger row was measured to false-positive on
@@ -120,8 +120,8 @@
 #                           `[@held until <YYYY-MM-DD>]`, which releases
 #                           ITSELF: HELD before that date, READY on and after
 #                           it, so a time-bound hold needs no hand-edit. The
-#                           parser extracts the date (AC_DONELINE_AWK's
-#                           f["hold_until"]), this file is the one that
+#                           parser extracts the date (src/backlog.ts's
+#                           hold_until), this file is the one that
 #                           compares it to today. A hold whose date shape is
 #                           anything else is not a dated hold: it reads
 #                           `hold malformed`, the same fail-closed direction
@@ -162,7 +162,7 @@ case "$cap" in ''|*[!0-9]*) cap=2 ;; esac
 # TSV snapshot of the ledger: section, id, marker, epic, blockers, malformed,
 # hold, hold_malformed, contract, domain, hold_until
 snapshot() {
-  # Field extraction is the ONE shared Done-line parser (AC_DONELINE_AWK in
+  # Field extraction is the ONE shared Done-line parser (src/backlog.ts, via
   # ac-lib.sh); the marker is keyed on the FIXED grammar position (token after
   # the id), never a substring, so a story documenting its own terminal states
   # in prose (the epic maps' two-terminal-state convention) never reads as if it

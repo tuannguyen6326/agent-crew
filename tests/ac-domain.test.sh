@@ -164,11 +164,13 @@ assert_contains "$(cat "$fleet_backlog")" "$row_other" "an unnamed row is untouc
 # AC-7.3 - the token changes NO field ac_doneline extracts (and f[domain]
 # reads it back - one parser, both directions).
 fields() {
-  awk "$AC_DONELINE_AWK"'{ ac_doneline($0, f); printf "%s|%s|%s|%s|%s|%s\n", f["id"], f["terminal"], f["epic"], f["blockers"], f["date"], f["verb"] }' <<<"$1"
+  printf '%s\n' "$1" >"$TMP/line.md"
+  awk "$AC_DONELINE_AWK"'{ ac_doneline($0, f); printf "%s|%s|%s|%s|%s|%s\n", f["id"], f["terminal"], f["epic"], f["blockers"], f["date"], f["verb"] }' "$TMP/line.md"
 }
 assert_eq "$(fields "$(grep 'pay-fix' "$fleet_backlog")")" "$(fields "$row_local")" \
   "AC-7.3: id/terminal/epic/blockers/date/verb are identical with and without the token"
-assert_eq "$(awk "$AC_DONELINE_AWK"'{ ac_doneline($0, f); print f["domain"] }' <<<"$(grep 'pay-fix' "$fleet_backlog")")" \
+grep 'pay-fix' "$fleet_backlog" >"$TMP/line.md"
+assert_eq "$(awk "$AC_DONELINE_AWK"'{ ac_doneline($0, f); print f["domain"] }' "$TMP/line.md")" \
   "payments" "AC-7.3: and f[domain] reads the stamp back"
 
 # Idempotent per id: a re-assign is a printed no-op, never an error.
@@ -281,6 +283,14 @@ assert_fails_with "one family, one domain" -- "$dom" validate
 "$dom" retire logistics >/dev/null 2>&1 || true
 reset_backlog
 "$dom" assign payments pay-fix >/dev/null
+# A ledger the parser could not read is an INVALID line, never a clean one.
+failbun="$TMP/failbun"
+mkdir -p "$failbun"
+printf '#!/bin/sh\nexit 1\n' >"$failbun/bun"
+chmod +x "$failbun/bun"
+rc=0; out="$(PATH="$failbun:$PATH" "$dom" validate 2>/dev/null)" || rc=$?
+assert_eq "$rc" "2" "validate over a ledger the parser could not read: exit status"
+assert_contains "$out" "INVALID ledger: cannot read $fleet_backlog" "validate names the ledger it could not read"
 
 # --- AC-2.3: list renders and ALWAYS exits 0 ---------------------------------
 # A digest block may never take session start down - the rule bin/ac-deputy.sh
@@ -297,6 +307,13 @@ assert_contains "$out" "payments" "list names the domain"
 assert_contains "$out" "scope: money movement" "list carries the scope the chief routes on"
 assert_contains "$out" "projects: 2" "list carries the project count"
 assert_contains "$out" "queued 1" "list carries the backlog tally"
+# Session start runs list under set -e: a ledger the parser could not read
+# costs the tallies and the orphan scan, never the digest.
+rc=0; out="$(PATH="$failbun:$PATH" "$dom" list 2>/dev/null)" || rc=$?
+assert_eq "$rc" "0" "list over a ledger the parser could not read: exit status"
+assert_contains "$out" "backlog: queued ?, in flight ?, done ?" "an unread tally is marked unknown, never blank"
+assert_contains "$out" "WARN"$'\t'"ledger unreadable" "an unread ledger is named in the digest"
+assert_contains "$out" "registered: " "list still renders to its last line"
 assert_eq "$(printf '%s' "$out" | grep -c 'home:' || true)" "0" "no home: field - a crewdomain has none"
 # --- AC-12.1 / AC-12.5: validate checks the project VIEW by RESOLUTION -------
 # Resolution, not a name comparison: it survives a rename, and it makes an

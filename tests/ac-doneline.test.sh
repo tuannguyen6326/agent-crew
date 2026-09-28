@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ac-doneline.test.sh - the ONE shared backlog Done-line parser (ac-lib.sh's
-# AC_DONELINE_AWK / ac_doneline()): id + terminal marker + epic + blocked-by +
+# ac-doneline.test.sh - the ONE shared backlog Done-line parser (src/backlog.ts,
+# via AC_DONELINE_AWK / ac_doneline()): id + terminal marker + epic + blocked-by +
 # date + verb, extracted from REAL records/backlog.md + backlog-archive.md
 # shapes. The fixture is grepped-verbatim real Done lines - the awkward ones the
 # earlier INERT learn-flow parser mis-handled: verbs beyond merged/reported, a

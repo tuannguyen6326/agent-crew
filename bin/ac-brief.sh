@@ -195,7 +195,8 @@ if [ "$stage" != scout ]; then
   _early_pin_mode=""
   if [ -f "$(ac_records_dir)/backlog.md" ]; then
     _early_pin_mode="$(ac_row_contract_for_id "$id" "$(ac_records_dir)/backlog.md" \
-      | tr " " "\n" | sed -n "s/^mode://p")"
+      | tr " " "\n" | sed -n "s/^mode://p")" \
+      || ac_die "cannot read the ledger $(ac_records_dir)/backlog.md for the delivery contract of $id"
   fi
   if [ -n "$mode_flag" ]; then
     case "$mode_flag" in
@@ -306,7 +307,8 @@ review_line="${review_line:-$review}"
 row_contract=""
 backlog_file="$(ac_records_dir)/backlog.md"
 if [ -f "$backlog_file" ]; then
-  row_contract="$(ac_row_contract_for_id "$id" "$backlog_file")"
+  row_contract="$(ac_row_contract_for_id "$id" "$backlog_file")" \
+    || ac_die "cannot read the ledger $backlog_file for the delivery contract of $id"
 fi
 pin_flow=""; pin_mode=""; pin_rev=""; pin_qa=""
 for _tok in $row_contract; do

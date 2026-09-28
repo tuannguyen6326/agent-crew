@@ -7,7 +7,9 @@
 #   ac-dash.sh                # render once
 #   ac-dash.sh --watch [<s>]  # redraw every <s> seconds (default 5); ctrl-c to stop
 #
-# Colors auto-disable when stdout is not a tty or NO_COLOR is set.
+# Colors auto-disable when stdout is not a tty or NO_COLOR is set. A backlog
+# the parser cannot read prints one `WARN   backlog unavailable` line in its
+# section and the render goes on, so one bad frame never ends --watch.
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
@@ -82,9 +84,9 @@ render() {
     # "done" means real done, not Done-SECTION membership - a [failed]/
     # [abandoned] row is terminal but not done (same-done-miscount-in-three-
     # more-surfaces; two-dashboards lead, ac-dash-crew-heading-swallows-
-    # verifiers). Reuses AC_DONELINE_AWK's ac_doneline terminal field, the
-    # same position-pinned parser ac-ready.sh's snapshot() uses, never a
-    # second marker parser.
+    # verifiers). Reuses ac_doneline's terminal field (src/backlog.ts via
+    # AC_DONELINE_AWK), the same position-pinned parser ac-ready.sh's
+    # snapshot() uses, never a second marker parser.
     awk "$AC_DONELINE_AWK"'
       /^## In flight/ { s = "f"; next }
       /^## Queued/ { s = "q"; next }
@@ -96,7 +98,7 @@ render() {
       }
       /^- \[/ { if (s == "f") f++; else if (s == "q") q++ }
       END { printf "  in-flight:%d  queued:%d  done:%d\n", f, q, d }
-    ' "$bl"
+    ' "$bl" || printf '  %sWARN   backlog unavailable: the parser exited %s - rerun to see why%s\n' "$C_R" "$?" "$C_0"
   else
     printf '  %s(no backlog yet)%s\n' "$C_D" "$C_0"
   fi

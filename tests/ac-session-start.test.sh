@@ -188,6 +188,16 @@ assert_contains "$dig" "ORPHAN-TOKEN" "... and surfacing a token no VALID line b
 assert_contains "$dig" "stray-row" "... by id, so the chief can unassign or re-new it"
 assert_contains "$dig" "-- crewdeputies (routing table) --" "the crewdeputy block still prints beside it"
 
+# Nor may a ledger the parser could not read.
+failbun="$TMP/failbun"
+mkdir -p "$failbun"
+printf '#!/bin/sh\nexit 1\n' >"$failbun/bun"
+chmod +x "$failbun/bun"
+dig="$(PATH="$failbun:$PATH" "$BIN/ac-session-start.sh" 2>/dev/null)" \
+  || fail "a ledger the parser could not read must not take session start down"
+assert_contains "$dig" "WARN"$'\t'"ledger unreadable" "the crewdomain block names the unread ledger"
+assert_contains "$dig" "-- supervision --" "the blocks after the crewdomain block still print"
+
 # A digest block may never take session start down: even a corrupt registry
 # leaves the run exit 0, the rule ac-deputy.sh states for its own list.
 printf 'not a registry line\n- broken\n' >"$AC_HOME/records/crewdomains.md"

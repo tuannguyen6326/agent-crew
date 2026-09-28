@@ -262,14 +262,14 @@ export interface DomainTally {
  *  bash invocation - not one shell-out per domain - so this route never grows
  *  the unbounded per-domain process-spawn loop the performance guard warns
  *  against (the ac-room.sh fork-per-room fix this same month is the fleet's
- *  own example of that cost). Absence from the returned map (spawn failure)
- *  is the caller's null-backlog case. */
-async function domainTallies(homePath: string, ids: string[]): Promise<Map<string, DomainTally>> {
+ *  own example of that cost). Absence from the returned map (spawn or tally
+ *  failure) is the caller's null-backlog case. */
+export async function domainTallies(homePath: string, ids: string[]): Promise<Map<string, DomainTally>> {
   const out = new Map<string, DomainTally>();
   if (!ids.length) return out;
   const { code, out: text } = await run(
     ["bash", "-c",
-     `. "$1/ac-lib.sh" || exit 1; shift; for id in "$@"; do printf '%s\\t' "$id"; ac_domain_tally "$id"; done`,
+     `. "$1/ac-lib.sh" || exit 1; shift; for id in "$@"; do printf '%s\\t' "$id"; ac_domain_tally "$id" || exit 2; done`,
      "--", BIN, ...ids],
     { AC_HOME: homePath },
   );
