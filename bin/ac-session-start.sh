@@ -260,7 +260,7 @@ if [ "$read_only" -eq 0 ] && command -v docker >/dev/null 2>&1; then
       rm -f "$reap_out"
     fi
     if [ "$reap_rc" -eq 124 ]; then
-      ac_warn "infra-reap sweep for $(basename "$p") did not complete (bound ${qa_secs}s) - docker is unusable or hung; reap by hand once fixed: (cd $p && $bin_dir/ac-qa.sh infra reap)"
+      ac_warn "infra-reap sweep for $(basename "$p") did not complete (bound ${qa_secs}s) - docker is unusable or hung; reap by hand once fixed: $(printf '(cd %q && %q infra reap)' "$p" "$bin_dir/ac-qa.sh")"
     fi
   done
 fi
@@ -346,7 +346,7 @@ if [ -d "$know_dir" ]; then
   for kf in "$know_dir"/*.md; do
     [ -f "$kf" ] || continue
     kname="$(basename "$kf" .md)"
-    kn="$(grep -c '^- fact\|^- scope' "$kf" 2>/dev/null || true)"
+    kn="$(awk '/^## Superseded/ { exit } /^- fact|^- scope/ { n++ } END { print n + 0 }' "$kf" 2>/dev/null || true)"
     kstamp="$AC_HOME/state/.know-verify-$kname.meta"
     if [ ! -f "$kstamp" ]; then
       know_lines="$know_lines
@@ -369,13 +369,16 @@ if [ -f "$alw_file" ]; then
   # computed ONCE by date(1) - deliberately no awk mktime, which BSD awk (this
   # host's) does not have. The full grading with remedies is `ac-learn.sh
   # stale`; the digest's job is to make the rot visible, not to relist it.
+  # The date is spelled digit by digit, never [0-9]{4}: mawk 1.3.4 before its
+  # 20200724 snapshot (the Debian-based node:22.12.0 image ships 1.3.4-20200120)
+  # has no interval expressions.
   alw_cutoff="$(date -u -v-"${alw_days}"d +%F 2>/dev/null || date -u -d "-${alw_days} days" +%F 2>/dev/null)"
   read -r alw_n alw_stale < <(awk -v cutoff="$alw_cutoff" '
-    /^## /       { n++ }
+    /^## / && $0 != "## when to reach for a learned skill" { n++ }
     /^\(learned / {
       line = $0; d = ""
-      if (match(line, /reinforced [0-9]{4}-[0-9]{2}-[0-9]{2}/)) d = substr(line, RSTART + 11, 10)
-      else if (match(line, /learned [0-9]{4}-[0-9]{2}-[0-9]{2}/)) d = substr(line, RSTART + 8, 10)
+      if (match(line, /reinforced [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) d = substr(line, RSTART + 11, 10)
+      else if (match(line, /learned [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) d = substr(line, RSTART + 8, 10)
       if (d != "" && cutoff != "" && d <= cutoff) stale++
     }
     END { print n + 0, stale + 0 }

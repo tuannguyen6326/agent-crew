@@ -194,6 +194,30 @@ assert_eq "$(grep -c 'race-fam' "$AC_HOME/state/.learn-ticks")" "1" \
   "and the landing is stamped exactly once - no stamp lost to last-mv-wins"
 rm -f "$AC_HOME/state/.learn.meta" "$AC_HOME/state/.learn-ticks"
 
+# A claim that LOSES the cadence lock is not a duplicate: nothing was stamped
+# or counted. ac-teardown.sh records only the LAST line of the tick, so an
+# "already counted" there is a false record of a landing the counter never
+# saw. The lock is held by THIS live process; a no-op `sleep` on PATH spins
+# the acquire's timeout instantly (the AC-9.6 idiom below).
+mkdir -p "$TMP/fastbin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/fastbin/sleep"
+chmod +x "$TMP/fastbin/sleep"
+cad_lock="$AC_HOME/state/.learn-cadence.lock"
+mkdir -p "$cad_lock" && printf '%s\n' "$$" >"$cad_lock/pid"
+busy_rc=0
+busy_out="$(PATH="$TMP/fastbin:$PATH" "$BIN/ac-learn.sh" tick busy-fam 2>&1)" || busy_rc=$?
+ac_lock_release "$cad_lock"
+case "$busy_out" in
+  *"already counted"*) fail "a claim lost to a busy cadence lock must not read as a duplicate: $busy_out" ;;
+esac
+assert_contains "$(printf '%s\n' "$busy_out" | tail -n 1)" "NOT counted" \
+  "the last line - the one teardown records - says the landing was not counted"
+assert_eq "$busy_rc" "1" "a tick that counted nothing exits non-zero"
+"$BIN/ac-learn.sh" tick busy-fam >/dev/null
+assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "1" \
+  "the re-run it asks for counts the landing exactly once"
+rm -f "$AC_HOME/state/.learn.meta" "$AC_HOME/state/.learn-ticks"
+
 # --- legacy-key migration: stows -> debriefs (skill rename 2026-07-18) --------
 # Live fleets carry .learn.meta files keyed `stows`. The PURE reader falls back
 # to the legacy key without touching the file; the WRITERS migrate on first
@@ -718,6 +742,9 @@ ALW="$AC_HOME/CREWMATE-learned.md"
 alw_reset() {
   printf '# Fleet-learned crewmate lessons\n<!-- written only by ac-learn.sh transactions -->\n\n' >"$ALW"
   printf '## stale-one\n\nan old lesson.\n\n(learned 2026-01-01)\n\n' >>"$ALW"
+  # The skill-pointer section sits between entries in a live file (a skill land
+  # inserts under its heading wherever it is), and it is not an entry.
+  printf '## when to reach for a learned skill\n- when a red needs attribution -> use skill characterise-the-failure\n\n' >>"$ALW"
   printf '## fresh-one\n\na fresh lesson.\n\n(learned %s)\n\n' "$(date -u +%F)" >>"$ALW"
   printf '## no-clock\n\nan unmarked legacy entry.\n' >>"$ALW"
 }
@@ -733,6 +760,9 @@ assert_contains "$(printf '%s\n' "$out" | grep 'fresh-one')" "FRESH" "S1: a curr
 assert_contains "$(printf '%s\n' "$out" | grep 'no-clock')" "NO-CLOCK" "S1: a dateless entry is named, never graded"
 assert_contains "$out" "3 entries, 1 stale" "S1: the summary counts only the genuinely stale"
 assert_contains "$out" "reinforce" "S1: a stale grade hands over the remedy"
+case "$out" in
+  *"when to reach"*) fail "S1: the skill-pointer section is not an entry and is never graded: $out" ;;
+esac
 
 # S2: the threshold is the knob, not a constant.
 printf '10000\n' >"$AC_HOME/config/learn-stale-days"
@@ -769,6 +799,98 @@ lines'
 # R5 idiom - one awk process, no early-closing pipe).
 awk '/^cmd_run\(\)/{f=1} f&&/always-loaded-staleness/{found=1} f&&/^}/{exit} END{exit !found}' "$BIN/ac-learn.sh" \
   || fail "S6: cmd_run must snapshot the staleness grading into sources/"
+
+# S7: mawk 1.3.4 before its 20200724 snapshot has no interval expressions:
+# there `[0-9]{4}` is a digit followed by the literal text `{4}` (probed in
+# node:22.12.0, mawk 1.3.4 20200120), so a clock spelled with one never
+# matches. This awk hands the host's own awk every argument with its
+# intervals turned into exactly those literal braces.
+mawk_real="$(command -v awk)"
+mkdir -p "$TMP/mawkbin"
+cat >"$TMP/mawkbin/awk" <<'EOF'
+#!/usr/bin/env bash
+args=()
+for a in "$@"; do
+  args+=("$(printf '%s\n' "$a" | sed -E 's/[{]([0-9]+(,[0-9]*)?)[}]/\\{\1\\}/g')")
+done
+exec "$MAWK_MODEL_REAL_AWK" "${args[@]}"
+EOF
+chmod +x "$TMP/mawkbin/awk"
+mawk_model() { PATH="$TMP/mawkbin:$PATH" MAWK_MODEL_REAL_AWK="$mawk_real" "$@"; }
+assert_eq "$(printf '2026\na{4}\n' | mawk_model awk '/^[0-9]{4}$|^a{4}$/')" "a{4}" \
+  "S7: the model awk reads an interval as literal braces, as mawk does"
+alw_reset
+out="$(mawk_model "$BIN/ac-learn.sh" stale)"
+assert_contains "$(printf '%s\n' "$out" | grep 'stale-one')" "STALE" \
+  "S7: under mawk a dated entry is graded by its clock, never NO-CLOCK"
+assert_contains "$out" "3 entries, 1 stale" "S7: ... and the summary counts it"
+printf '# H\n\n## twice\n\nb\n\n(learned 2026-01-01, reinforced 2026-02-01)\n' >"$ALW"
+out="$(mawk_model "$BIN/ac-learn.sh" reinforce twice --evidence 'the S7 window re-derived it')"
+assert_contains "$out" "reinforced twice" "S7: under mawk reinforce finds the entry's clock"
+grep -qxF "(learned 2026-01-01, reinforced $(date -u +%F))" "$ALW" \
+  || fail "S7: under mawk reinforce REPLACES the prior reinforced date: $(grep '^(learned' "$ALW")"
+
+# S8: GNU date(1) has no BSD -j or -v (probed: coreutils 9.1 answers
+# "invalid option -- 'j'") and reads a date with -d, where an EMPTY string is
+# today (probed). This date answers the way GNU's does for the -d forms the
+# scripts use, on top of the host's own date; on a GNU host it IS that date.
+gnu_date_real="$(command -v date)"
+mkdir -p "$TMP/gnudatebin"
+cat >"$TMP/gnudatebin/date" <<'EOF'
+#!/usr/bin/env bash
+real="$GNU_MODEL_REAL_DATE"
+"$real" --version >/dev/null 2>&1 && exec "$real" "$@"
+u=""; for a in "$@"; do [ "$a" != -u ] || u=-u; done
+out=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -j | -v*) printf "date: invalid option -- '%s'\n" "${1:1:1}" >&2; exit 1 ;;
+    -d)
+      case "${2:-}" in
+        '') out+=(-j -f '%Y-%m-%d %H:%M:%S' "$("$real" $u +%F) 00:00:00") ;;
+        @*) out+=(-r "${2#@}") ;;
+        -*' days') n="${2#-}"; out+=("-v-${n% days}d") ;;
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) out+=(-j -f '%Y-%m-%d %H:%M:%S' "$2 00:00:00") ;;
+        *) printf "date: this model reads no -d form like '%s'\n" "$2" >&2; exit 1 ;;
+      esac
+      shift 2 ;;
+    *) out+=("$1"); shift ;;
+  esac
+done
+exec "$real" "${out[@]}"
+EOF
+chmod +x "$TMP/gnudatebin/date"
+gnu_date_model() { PATH="$TMP/gnudatebin:$PATH" GNU_MODEL_REAL_DATE="$gnu_date_real" "$@"; }
+assert_fails gnu_date_model date -u -j -f '%Y-%m-%d' 2026-01-01 +%s
+assert_eq "$(gnu_date_model date -u -d 1970-01-02 +%s)" "86400" "S8: the model reads -d as GNU does"
+alw_reset
+out="$(gnu_date_model "$BIN/ac-learn.sh" stale)"
+assert_contains "$(printf '%s\n' "$out" | grep 'stale-one')" "STALE" \
+  "S8: under GNU date the age is computed, never left empty (which graded everything FRESH)"
+assert_contains "$out" "3 entries, 1 stale" "S8: ... and the summary counts it"
+# A clock that is not a date stays ungraded there too: GNU would read the
+# empty string as today and call it zero days old.
+mkdir -p "$AC_HOME/records/scenes"
+printf '# undated\nMETA: created=2026-01-01T00:00:00Z heat=0\n' >"$AC_HOME/records/scenes/undated.md"
+assert_contains "$(gnu_date_model "$BIN/ac-learn.sh" stale | grep 'undated')" "age=?d" \
+  "S8: a scene with no updated= date has an unknown age, not age 0"
+rm -rf "$AC_HOME/records/scenes"
+
+# S9: the clock is written in UTC (ac_iso), so it is READ in UTC. An entry
+# exactly learn-stale-days old by the UTC calendar is STALE in every local
+# zone - including one whose date is not UTC's today, where a local read is a
+# day off and contradicts the digest's UTC cutoff. The zone is picked so its
+# date differs from UTC's now: 12h behind before 11:00Z, 14h ahead after.
+host_date() { "$@"; }
+utc_h="$(date -u +%H)"
+if [ "${utc_h#0}" -lt 11 ]; then off_tz=XXX+12; else off_tz=XXX-14; fi
+edge_d="$(date -u -v-30d +%F 2>/dev/null || date -u -d '-30 days' +%F)"
+printf '# H\n\n## edge\n\nb\n\n(learned %s)\n' "$edge_d" >"$ALW"
+for date_as in host_date gnu_date_model; do
+  out="$(TZ="$off_tz" "$date_as" "$BIN/ac-learn.sh" stale)"
+  assert_contains "$(printf '%s\n' "$out" | grep ' edge ')" "age=30d  STALE" \
+    "S9 ($date_as, TZ=$off_tz): a UTC clock is read in UTC"
+done
 
 rm -f "$ALW"
 

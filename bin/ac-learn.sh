@@ -330,14 +330,14 @@ learn_lessons_lift() {
   # layout bin/ac-brief.sh makes law. Deeper is not a stage or a fan-out
   # slot, and an unbounded walk would follow whatever a task happened to
   # leave in its dir.
-  for rep in $(find "$base" -maxdepth 3 -name report.md -type f 2>/dev/null | sort); do
+  while IFS= read -r rep; do
     if awk "$lift_awk" "$rep" | grep -q '[^[:space:]]'; then
       printf '### %s\n\n' "${rep#$(ac_data_dir)/}" >>"$tmp"
       awk "$lift_awk" "$rep" >>"$tmp"
       printf '\n' >>"$tmp"
       n=$((n + 1))
     fi
-  done
+  done < <(find "$base" -maxdepth 3 -name report.md -type f 2>/dev/null | sort)
   if [ "$n" -gt 0 ]; then
     { printf '# Stage-report lessons: %s\n\n' "$fam"; cat "$tmp"; } >"$out"
     printf ' lessons=%s' "$n"
@@ -453,6 +453,20 @@ learn_retro_snapshot() {
 
   rm -f "$members_tsv" "$skipped_tsv"
   printf '%s\n' "$count"
+}
+
+learn_cadence_call() {
+  # learn_cadence_call <fn> <arg>... - run a cadence function from
+  # ac-maintenance-lib.sh, passing its stderr through, and answer 2 when it
+  # failed AND spoke. Those functions answer 1 both for a failure (a busy
+  # cadence lock, which they warn about) and for their ordinary refusal (a
+  # newer generation, an already-stamped landing), which is silent - so their
+  # words are the one thing that tells a caller which fact to report.
+  local err rc=0
+  err="$("$@" 2>&1)" || rc=$?
+  [ -z "$err" ] || printf '%s\n' "$err" >&2
+  [ "$rc" -eq 0 ] || [ -z "$err" ] || rc=2
+  return "$rc"
 }
 
 cmd_run() {
@@ -942,7 +956,10 @@ EOF
   # happened. Deliberately NOT gated the way the reset below is: this counter
   # paces a records-wide CURATE pass, it owns no retro window, so an attempt
   # that produced nothing costs at most one propose-only curate round early.
-  ac_curate_tick
+  # For the same reason a tick lost to its lock (the lib warns) is never fatal:
+  # it delays Curate by one run, while aborting here would skip the DISTILL
+  # reset below and leave a window this run examined due all over again.
+  ac_curate_tick || true
   local curate_n curate_every curate_out curate_cmd
   read -r curate_n curate_every < <(ac_curate_due)
   if [ "$curate_n" -ge "$curate_every" ]; then
@@ -976,9 +993,10 @@ EOF
   # written for: a scout that examined the window and proposed nothing DID run
   # the pass, writes its report.md saying so, and still consumes its cycle.
   if [ "$examined" = 1 ]; then
-    if ! ac_learn_reset "$learn_generation"; then
-      ac_warn "Learning completed, but a newer cadence generation exists; late debriefs remain due instead of being erased"
-    fi
+    learn_cadence_call ac_learn_reset "$learn_generation" || case $? in
+      2) ac_warn "Learning completed, but its cadence lock was busy - the DISTILL cycle is NOT consumed and the retro window is NOT advanced" ;;
+      *) ac_warn "Learning completed, but a newer cadence generation exists; late debriefs remain due instead of being erased" ;;
+    esac
   elif [ "$scout_complete" = 1 ]; then
     ac_warn "a maintenance gate could not judge one or more subjects - the DISTILL cycle is NOT consumed and the retro window is PRESERVED (still due; re-run after inspecting $rundir)"
   else
@@ -1005,9 +1023,10 @@ cmd_land() {
   unverified="$(learn_quote_unverified_count "$plan" "$run")"
   ac_maintenance_apply "$plan" "$run" \
     || ac_die "maintenance transaction refused candidate plan at $plan"
-  if ! ac_learn_reset "$captured"; then
-    ac_warn "landed $kind, but a newer Learning generation exists; its cadence was preserved instead of reset"
-  fi
+  learn_cadence_call ac_learn_reset "$captured" || case $? in
+    2) ac_warn "landed $kind, but its cadence lock was busy; its cadence was preserved instead of reset" ;;
+    *) ac_warn "landed $kind, but a newer Learning generation exists; its cadence was preserved instead of reset" ;;
+  esac
   printf 'landed %s through maintenance transaction %s%s\n' "$kind" "$run" \
     "$([ "$unverified" -gt 0 ] && printf ' (quote-unverified: %s)' "$unverified")"
 }
@@ -1058,15 +1077,18 @@ learn_alw_entry_date() {
   # learn_alw_entry_date <file> <slug> - the entry's LAST clock date:
   # `reinforced <d>` when present, else `learned <d>`, else empty (an entry
   # with no date line has no clock and is never graded - fail toward silence,
-  # the same direction an unmarked legacy entry deserves).
+  # the same direction an unmarked legacy entry deserves). This parser and
+  # cmd_reinforce spell a date digit by digit, never [0-9]{4}: mawk 1.3.4
+  # before its 20200724 snapshot (the Debian-based node:22.12.0 image ships
+  # 1.3.4-20200120) has no interval expressions.
   awk -v want="## $2" '
     $0 == want { in_e = 1; next }
     in_e && /^## / { exit }
     in_e && /^\(learned / {
       line = $0
-      if (match(line, /reinforced [0-9]{4}-[0-9]{2}-[0-9]{2}/))
+      if (match(line, /reinforced [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
         print substr(line, RSTART + 11, 10)
-      else if (match(line, /learned [0-9]{4}-[0-9]{2}-[0-9]{2}/))
+      else if (match(line, /learned [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/))
         print substr(line, RSTART + 8, 10)
       exit
     }
@@ -1074,10 +1096,13 @@ learn_alw_entry_date() {
 }
 
 learn_age_days() {
-  # learn_age_days <YYYY-MM-DD> - whole days since that date, or empty on a
-  # malformed date. macOS date -j; no GNU dependency.
+  # learn_age_days <YYYY-MM-DD> - whole UTC days since that date, or empty on a
+  # malformed date. Read in UTC because every clock here was written in UTC
+  # (ac_iso) and the digest's cutoff is UTC too. BSD date -j, else GNU date
+  # -d - which reads an empty string as today, so the shape is checked first.
   local then now
-  then="$(date -j -f '%Y-%m-%d' "$1" '+%s' 2>/dev/null)" || return 0
+  case "$1" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;; *) return 0 ;; esac
+  then="$(date -u -j -f '%Y-%m-%d' "$1" '+%s' 2>/dev/null || date -u -d "$1" '+%s' 2>/dev/null)" || return 0
   [ -n "$then" ] || return 0
   now="$(ac_now)"
   printf '%s\n' $(( (now - then) / 86400 ))
@@ -1110,7 +1135,7 @@ cmd_stale() {
         verdict=FRESH
       fi
       printf '  %-40s %s  age=%sd  %s\n' "$slug" "$d" "${age:-?}" "$verdict"
-    done < <(grep '^## ' "$live" | sed 's/^## //')
+    done < <(grep '^## ' "$live" | grep -vxF '## when to reach for a learned skill' | sed 's/^## //')
     printf '  -- %s entries, %s stale --\n' "$n" "$stale"
     if [ "$stale" -gt 0 ]; then
       printf '  a STALE entry must re-prove itself: reinforce it on INDEPENDENT current evidence\n'
@@ -1181,7 +1206,7 @@ cmd_reinforce() {
     in_e && /^## / { in_e = 0 }
     in_e && /^\(learned / && !done {
       line = $0
-      sub(/, reinforced [0-9]{4}-[0-9]{2}-[0-9]{2}/, "", line)
+      sub(/, reinforced [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/, "", line)
       sub(/\)$/, ", reinforced " today ")", line)
       print line; done = 1; next
     }
@@ -1844,8 +1869,8 @@ learn_crewmate_learned_guard() {
   local staged="$1" run="$2" live entries
   live="$(ac_home)/CREWMATE-learned.md"
   if [ "$(wc -c <"$staged" | tr -d ' ')" -gt 4096 ]; then
-    entries="$({ [ -f "$live" ] && grep '^## ' "$live" | sed 's/^## //'; } | tr '\n' ' ')"
-    ac_die "staged CREWMATE-learned.md exceeds its 4096-byte always-loaded budget - pair the new entry with a retire of one of: ${entries:-none}(nothing written)"
+    entries="$({ [ -f "$live" ] && grep '^## ' "$live" | grep -vxF '## when to reach for a learned skill' | sed 's/^## //' || true; } | tr '\n' ' ')"
+    ac_die "staged CREWMATE-learned.md exceeds its 4096-byte always-loaded budget - pair the new entry with a retire of one of: ${entries:-none }(nothing written)"
   fi
   ac_crewmate_learned_no_loss "$live" "$staged" "" \
     || ac_die "staged CREWMATE-learned.md drops an existing '## <slug>' entry with no retired accounting (nothing written)"
@@ -2335,10 +2360,16 @@ cmd_tick() {
     # would corrupt the stamp file's TSV line grammar, so refuse it loudly: an
     # unticked landing with a message beats a silently unreadable ledger.
     case "$key" in *[!a-z0-9-]*) ac_die "tick key must be a task/family id [a-z0-9-] (got: '$key')" ;; esac
-    if ! ac_learn_tick_claim "$key"; then
-      printf 'tick skipped: landing %s is already counted - one landing advances the counter once, whichever actor runs it\n' "$key"
-      return 0
-    fi
+    # A claim its lock refused stamped nothing, so the re-run it asks for can
+    # never double-count.
+    learn_cadence_call ac_learn_tick_claim "$key" || case $? in
+      2)
+        printf 'tick NOT counted: landing %s could not be claimed (see the warning above) - re-run this tick\n' "$key"
+        return 1 ;;
+      *)
+        printf 'tick skipped: landing %s is already counted - one landing advances the counter once, whichever actor runs it\n' "$key"
+        return 0 ;;
+    esac
   fi
   read -r before every < <(ac_learn_due)
   ac_learn_tick
