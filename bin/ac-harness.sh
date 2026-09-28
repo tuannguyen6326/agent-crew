@@ -13,13 +13,16 @@
 # WHAT LIVES HERE: the known-harness set (+ its ERE alternation), the TUI
 # busy-regex, the seeded instruction file, the pane-agent arm map, the
 # startup-dialog key, and the recorded-launch-opts policy.
-# WHAT STAYS AT ITS ARM, deliberately: the two launch COMMAND tables -
+# WHAT STAYS AT ITS ARM, deliberately: the three launch COMMAND tables.
 # ac_build_launch (ac-backend.sh, the interactive line) and oneshot_launch
-# (ac-pane-agent.sh, the --exec form) - whose own headers argue their
-# locality: two different shapes for two different lifecycles, one consumer
-# each, and both already fail closed on an unknown name. A 4th harness
-# therefore edits THIS file plus those two arms (and its harness-facts.md
-# entry), instead of thirteen files.
+# (ac-pane-agent.sh, the --exec form) argue their locality in their own
+# headers: two different shapes for two different lifecycles. synthCommand
+# (src/brain.ts, the brain's synthesize one-shot) is oneshot_launch's shape
+# again, kept as the brain's own table by captain ruling (2026-09-28) and held
+# to oneshot_launch's exact bytes by tests/ac-brain.test.sh. None of the three
+# composes a line for an unknown name. A new harness therefore edits THIS file
+# plus those three arms (and its harness-facts.md entry), instead of thirteen
+# files.
 # A CUSTOM harness (a captain's config/launch-<h> template, emitted verbatim
 # by ac-spawn.sh) is launchable without joining the registry; the facets it
 # cannot answer fail closed where a wrong answer costs work (the instruction

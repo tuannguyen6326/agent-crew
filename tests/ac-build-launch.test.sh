@@ -123,6 +123,12 @@ assert_eq "$(lib 'ac_resolve_profile --rule 1')" $'harness=grok\tmodel=g1\teffor
   "--rule resolves through ac-dispatch-select.sh"
 assert_eq "$(lib 'ac_resolve_profile --rule 1 --model opus')" \
   $'harness=grok\tmodel=opus\teffort=high' "an explicit knob overrides the resolved rule, per knob"
+# Callers capture the profile with $(...), where bash drops errexit, so a
+# refused rule must stop the caller by status - not hand it an empty profile.
+out="$(lib 'p="$(ac_resolve_profile --rule 9)"; printf "reached [%s]\n" "$p"' 2>&1)" && rc=0 || rc=$?
+assert_eq "$rc" "1" "a refused --rule stops a caller that captures the profile"
+assert_contains "$out" "ERROR: no rule 9" "the dispatcher's own refusal reaches the caller's stderr"
+case "$out" in *reached*) fail "a refused --rule must not yield a profile: $out" ;; esac
 
 # --- ac_pane_profile -----------------------------------------------------------
 # The KEYED half of the same resolution, for the mechanisms that cannot judge a

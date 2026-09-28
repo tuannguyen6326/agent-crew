@@ -616,7 +616,7 @@ ac_resolve_profile() {
     esac
   done
   if [ -n "$rule" ]; then
-    prof="$("$(ac_root)/bin/ac-dispatch-select.sh" --rule "$rule")"
+    prof="$("$(ac_root)/bin/ac-dispatch-select.sh" --rule "$rule")" || return
     IFS=$'\t' read -r p_h p_m p_e <<EOF
 $prof
 EOF
@@ -666,16 +666,17 @@ herdr_rpc_bounded() {
   # THE KILL IS THE PROCESS GROUP, and backgrounding under `set -m` is what makes
   # that group addressable at all: a job backgrounded under job control becomes
   # its own group leader, so backgrounding this way and killing the negative pid
-  # are ONE decision - the negative-pid kill without `set -m` would hit this
-  # shell's own group instead of the call's.
+  # are ONE decision - without `set -m` the negative pid names no group at all,
+  # and the kill fails with ESRCH.
   # EVERY SIGNAL BELOW ALSO TAKES A ROUTE THAT DOES NOT DEPEND ON THAT GROUPING,
   # which is the rule for this whole function rather than an argument to be made
   # again at each kill. A group kill lands only if the job actually BECAME a
   # group leader - something this function cannot verify and cannot survive
   # being wrong about. Held constant, with only `set -m` removed: the call runs
-  # past its ceiling untouched, and the elapsed check never runs because the
-  # wait never returns; and the watchdog outlives its own reap, so the wait on
-  # it costs every HEALTHY call the entire ceiling (0.02s becomes 2.03s at 2s).
+  # past its ceiling untouched, and the timeout check never runs because the
+  # wait never returns; and the watchdog outlives its own stand-down, so the
+  # wait on it costs every HEALTHY call the entire ceiling (0.02s becomes 2.03s
+  # at 2s).
   # A ceiling that silently stops bounding, and a bound that silently becomes a
   # delay, are both the fault this mechanism exists to remove. In the ordinary
   # case the group kill already carried the same process, so the second signal
@@ -708,39 +709,55 @@ herdr_rpc_bounded() {
   # place this differs from the siblings and for the same arithmetic reason: the
   # group holds ONE stateless CLI invocation with nothing to flush, while a
   # grace paid per RPC would enter the watcher's beacon-gap budget multiplied by
-  # the pass's whole RPC count rather than once. The KILL belongs to this
-  # function and not to the watchdog: `wait` returns the moment the group LEADER
-  # dies, so a watchdog escalating on its own would still be sleeping out its
-  # grace when the reap below ends it, leaving any member that ignored the TERM
-  # alive. It sweeps MEMBERS - the leader is already reaped by that `wait` - so
-  # the group is the only address it has, and it runs on the timeout path alone.
+  # the pass's whole RPC count rather than once. The KILL is this function's,
+  # sent once `wait` has reaped the group LEADER and the watchdog has reported
+  # that it fired: it sweeps MEMBERS - the leader is already gone - so the group
+  # is the only address it has, and it runs on the timeout path alone.
   #
-  # THE BASELINE IS READ BEFORE THE WATCHDOG IS FORKED, and the order is load
-  # bearing rather than tidy. SECONDS is whole seconds, so a baseline taken
-  # AFTER the fork reads one second too high whenever the tick lands in
-  # between - the comparison below then sees secs-1 at the moment the watchdog
-  # fires, skips the KILL, and returns the raw signal status while a member
-  # that ignored the TERM lives on. Reading it first floors the baseline at or
-  # below the watchdog's own start, so the elapsed count at the fire can only
-  # be >= secs. Measured both ways with the tick forced into that window: 143
-  # and a survivor, against 124 and none.
-  local secs="$1" pid wd rc=0 began
+  # THE TIMEOUT IS THE WATCHDOG'S OWN REPORT, its exit status 124, never a
+  # clock read here. SECONDS counts whole seconds, so an elapsed reading took a
+  # call that failed on its own 1.3s into a 2s ceiling for a timeout whenever a
+  # tick fell inside it (3 runs in 8, measured) and sent the KILL to its
+  # already-reaped group. The stand-down is a TERM the watchdog traps into
+  # `exit 0` only until it fires; from then on it ignores TERM, so a fired
+  # watchdog always finishes and reports, and one that stood down means the call
+  # ended on its own. It parks in `wait` on its own `sleep` because bash defers
+  # a trap until a foreground child exits, which would cost the by-pid
+  # stand-down the whole ceiling (measured: 1.89s against 0.006s). Its kills
+  # tolerate failure because it inherits the caller's errexit: a group that
+  # never formed, or a leader already reaped, would otherwise end it before the
+  # by-pid TERM and before its report. Left open is the instant where a call
+  # ending on its own meets the fire - read as the timeout. Its sleep is the
+  # system one, resolved once per process on the default PATH: a caller's PATH
+  # may put a no-op sleep first to fast-forward its own polling, and a ceiling
+  # timed by it fires at once. bash 3.2's `command -pv` ignores -p, and
+  # `command -p` in the child widens the window a stand-down can catch that
+  # child before its exec.
+  local secs="$1" pid wd rc=0 wrc=0
   shift
-  began=$SECONDS
+  [ -n "${_ac_rpc_sleep:-}" ] \
+    || _ac_rpc_sleep="$(PATH="$(getconf PATH 2>/dev/null)"; command -v sleep)" \
+    || _ac_rpc_sleep=sleep
   set -m
   "$@" &
   pid=$!
-  { sleep "$secs"; kill -TERM -"$pid" 2>/dev/null; kill -TERM "$pid" 2>/dev/null; } &
+  {
+    trap 'exit 0' TERM
+    "$_ac_rpc_sleep" "$secs" & wait "$!"
+    trap '' TERM
+    kill -TERM -"$pid" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
+    exit 124
+  } &
   wd=$!
   set +m
   wait "$pid" 2>/dev/null || rc=$?
-  kill -KILL -"$wd" 2>/dev/null || true
-  kill -KILL "$wd" 2>/dev/null || true
-  wait "$wd" 2>/dev/null || true
+  kill -TERM -"$wd" 2>/dev/null || true
+  kill -TERM "$wd" 2>/dev/null || true
+  wait "$wd" 2>/dev/null || wrc=$?
   # A call the watchdog reached is reported as the timeout it was, never as the
-  # signal death it looks like: only the watchdog signals this group, so a
-  # non-zero status at or past the deadline is that kill and nothing else.
-  if [ "$rc" != 0 ] && [ $(( SECONDS - began )) -ge "$secs" ]; then
+  # signal death it looks like.
+  if [ "$rc" != 0 ] && [ "$wrc" = 124 ]; then
     kill -KILL -"$pid" 2>/dev/null || true
     rc=124
   fi

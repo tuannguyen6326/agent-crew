@@ -112,7 +112,8 @@ One crewmate spawn:
 
 `bin/ac-harness.sh` is the one place a harness's facets live: the known set, the TUI busy regex, the instruction file, the pane-agent arm, the startup-dialog key and the recorded launch options.
 Every facet fails closed or answers a documented default.
-The two launch command tables stay at their arms (`ac_build_launch`, and `oneshot_launch` in `bin/ac-pane-agent.sh`), so a new harness edits the registry, those two arms and its entry in the `harness-operations` skill's `references/harness-facts.md`.
+The three launch command tables stay at their arms (`ac_build_launch`, `oneshot_launch` in `bin/ac-pane-agent.sh`, and the brain's `synthCommand` in `src/brain.ts`), so a new harness edits the registry, those three arms and its entry in the `harness-operations` skill's `references/harness-facts.md`.
+`synthCommand` must print exactly what `oneshot_launch` prints for the same harness, model and effort, with `ultracode` sent as `xhigh` as the one-shot arm sends it; `tests/ac-brain.test.sh` pins that.
 A captain's custom template (`config/launch-<h>`) launches without joining the registry.
 
 `ac_seed_crewmate_md` installs the crewmate layer where the harness reads it (`ac_harness_instruction_file`): `AGENTS.md` for codex, opencode, pi and cursor, `.claude/CLAUDE.md` for claude and for an existing custom template, and a refusal for anything else.

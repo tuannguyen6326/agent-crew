@@ -275,6 +275,55 @@ fi
 assert_contains "$sy3" "unavailable" "empty gather never fabricates"
 unset AC_BRAIN_SYNTH_CMD
 
+# --- synthesize's one-shot table IS oneshot_launch's ---------------------------
+# src/brain.ts keeps its own one-shot table (captain ruling 2026-09-28) and it
+# had drifted from bin/ac-pane-agent.sh's oneshot_launch, so every registry
+# harness must print the same bytes from both, with and without a model and an
+# effort - the effort after the one-shot arm's own mapping, which is what its
+# engines receive. brain.ts runs its CLI on import, so synthCommand is lifted
+# out and fed the brain-agent/-model/-effort knobs directly; oneshot_launch, the
+# arm's effort mapping and the registry's harness set the same way, so a
+# harness the registry gains is compared without anyone editing this list.
+eval "$(sed -n '/^oneshot_launch() {/,/^}/p' "$BIN/ac-pane-agent.sh")"
+effort_map="$(sed -n '/^EFFORT_FLAG="\$EFFORT"$/,/^esac$/p' "$BIN/ac-pane-agent.sh")"
+arm_effort() { local EFFORT="$1" EFFORT_FLAG; eval "$effort_map"; printf '%s' "$EFFORT_FLAG"; }
+harnesses="$(sed -n '/^ac_harness_known() {/,/^}/s/^ *case "\$1" in \(.*\)) return 0 ;;.*/\1/p' "$BIN/ac-harness.sh" | tr -d ' ' | tr '|' ' ')"
+[ -n "$harnesses" ] || fail "no harness set lifted from ac_harness_known in bin/ac-harness.sh"
+cat >"$TMP/synth-forms.ts" <<'EOF'
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+const [brainTs, ...combos] = process.argv.slice(2);
+const fn = readFileSync(brainTs, "utf8").match(/^function synthCommand\(\)[^\n]*\n[\s\S]*?\n\}\n/m);
+if (!fn) throw new Error(`no synthCommand in ${brainTs}`);
+const js = new Bun.Transpiler({ loader: "ts" }).transformSync(fn[0]);
+const synth = new Function("HOME", "readFileSync", "join", "process", `${js}\nreturn synthCommand();`);
+for (const c of combos) {
+  const [h, m, e] = c.split("|");
+  const knobs: Record<string, string> = { "brain-agent": h, "brain-model": m, "brain-effort": e };
+  const read = (p: string) => {
+    const k = p.split("/").pop()!;
+    if (!(k in knobs)) throw new Error(`ENOENT ${p}`);
+    return knobs[k];
+  };
+  console.log(synth("/no-home", read, join, { env: {} }) ?? "<null>");
+}
+EOF
+combos=()
+for h in $harnesses; do
+  for m in "" m1; do for e in "" high ultracode; do combos+=("$h|$m|$e"); done; done
+done
+brain_forms="$(bun "$TMP/synth-forms.ts" "$ROOT/src/brain.ts" "${combos[@]}")"
+drift="" i=0
+while IFS= read -r got; do
+  IFS='|' read -r h m e <<<"${combos[$i]}"
+  want="$(oneshot_launch "$h" "$m" "$(arm_effort "$e")")" || want="<null>"
+  [ "$got" = "$want" ] || drift="$drift
+  $h model='$m' effort='$e': brain '$got' vs oneshot_launch '$want'"
+  i=$((i + 1))
+done <<<"$brain_forms"
+assert_eq "$i" "${#combos[@]}" "the brain printed one form per combination"
+[ -z "$drift" ] || fail "brain.ts's one-shot forms drifted from oneshot_launch:$drift"
+
 # --- MCP stdio surface --------------------------------------------------------
 mcp="$(printf '%s\n%s\n%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
