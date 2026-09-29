@@ -38,10 +38,11 @@
 #   with a resolvable session transcript) whose last typed turn does not
 #   match what was sent is REFUTED and refused here, the same way a stranded
 #   submit already is - never "sent to" on a text that landed wrong. A
-#   target with no such capability, or whose transcript this fleet cannot
-#   read, is UNOBSERVABLE: reported honestly as `delivered (arrival
-#   unverified) to <target>`, exit unchanged - the same precedented shape
-#   --key already uses for its own unverifiable case, below.
+#   target with no such capability, whose transcript this fleet cannot
+#   read, or a slash command (`/compact`), which claude runs locally and
+#   never records as a typed turn, is UNOBSERVABLE: reported honestly as
+#   `delivered (arrival unverified) to <target>`, exit unchanged - the same
+#   precedented shape --key already uses for its own unverifiable case, below.
 #   A REFUTED refusal SAYS WHAT ARRIVED - the sizes, and whether what landed is
 #   a strict SUFFIX of what was sent. Measured over five consecutive steers into
 #   one claude pane (4700 chars arrived as 482, 1900 as 158, 1100 as 203, 2000
@@ -226,9 +227,11 @@ else
   # never arrived, because nothing else here catches it; UNOBSERVABLE (no
   # capability, no session id, no resolvable transcript) gets the SAME
   # already-precedented honest verb --key uses when it too cannot verify.
+  # A slash command runs locally and never lands as a typed turn, so there is
+  # nothing to compare it against: UNOBSERVABLE, never REFUTED.
   harness="$(ac_meta_get "$(ac_task_meta "$id")" harness)"
   verb='sent to'
-  if ac_arrival_capable "$harness"; then
+  if ac_arrival_capable "$harness" && [ "${text#/}" = "$text" ]; then
     sid="$(ac_meta_get "$(ac_task_meta "$id")" session_id)"
     arc=0
     ac_arrival_wait "$sid" "$text" || arc=$?

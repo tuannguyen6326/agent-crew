@@ -49,11 +49,14 @@ _ac_home() {
     cd "$ach" && AC_HOME="$ach" AC_SOLO=1 exec "$harness"
     return
   fi
+  # The chief's own auto-compact threshold (config/compact-pct), the same
+  # prefix bin/ac-spawn.sh puts on a roomchief launch line.
+  local cpe="$(AC_HOME="$ach" bash -c '. "$1/ac-lib.sh" && ac_compact_pct_env' _ "$bin")"
   # orca home, or already inside herdr: run the chief inline right here.
   # cwd is the HOME (workspace = home, repo = code): the home symlinks the
   # executable core (bin/ CLAUDE.md .claude/ AGENTS.md) to the repo.
   if [[ "$backend" == orca || -n "$HERDR_ENV" ]]; then
-    cd "$ach" && AC_HOME="$ach" exec "$harness"
+    cd "$ach" && AC_HOME="$ach" exec env ${=cpe} "$harness"
     return
   fi
   # One herdr session for every call below, resolved the way bin/ac-backend.sh
@@ -72,7 +75,7 @@ _ac_home() {
   local -a wsarg; [[ -n "$ws" ]] && wsarg=(--workspace "$ws")
   local pane
   pane=$(herdr "${sarg[@]}" tab create "${wsarg[@]}" --label "ac-$fleet${deputy:+-$deputy}" --cwd "$ach" --focus 2>/dev/null | jq -r '.result.root_pane.pane_id // empty')
-  [[ -n "$pane" ]] && herdr "${sarg[@]}" pane run "$pane" "cd $ach && AC_HOME=$ach exec $harness" >/dev/null 2>&1
+  [[ -n "$pane" ]] && herdr "${sarg[@]}" pane run "$pane" "cd $ach && ${cpe}AC_HOME=$ach exec $harness" >/dev/null 2>&1
   [[ -n "$ws" ]] && AC_HOME="$ach" AC_BACKEND=herdr AC_HERDR_SESSION="$sess" bash -c '. "$1/ac-lib.sh" && . "$1/ac-backend.sh" && herdr_close_default_tabs "$2"' _ "$bin" "$ws" >/dev/null 2>&1
   herdr "${sarg[@]}"
 }

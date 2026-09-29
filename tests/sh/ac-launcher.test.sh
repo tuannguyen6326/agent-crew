@@ -86,4 +86,20 @@ err="$(env -u HERDR_ENV -u AC_HERDR_SESSION HOME="$home" PATH="$TMP/stubbin:$PAT
   zsh -f -c "source '$ROOT/docs/examples/ac.zsh'; _ac_home crlf true '' '' ''" 2>&1 >/dev/null || true)"
 case "$err" in *"unknown backend"*) fail "a CRLF-saved config/backend must read as herdr: $err" ;; esac
 
+# config/compact-pct lowers the CHIEF's own auto-compact threshold on both
+# chief paths; a solo session is the captain's own and keeps the default.
+mkdir -p "$home/Work/ac-homes/lab/config"
+printf '80\n' >"$home/Work/ac-homes/lab/config/compact-pct"
+launch lab ''
+grep -q 'pane run .*CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80 ' "$FAKE_HERDR/log" \
+  || fail "the herdr chief pane must run with the threshold: $(grep 'pane run' "$FAKE_HERDR/log")"
+chief_env() { # chief_env <solo> - the environment the orca chief execs with
+  env -u HERDR_ENV -u CLAUDE_AUTOCOMPACT_PCT_OVERRIDE HOME="$home" PATH="$TMP/stubbin:$PATH" \
+    zsh -f -c "source '$ROOT/docs/examples/ac.zsh'; _ac_home lab env '' orca '$1'" 2>/dev/null
+}
+assert_contains "$(chief_env '')" "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80" "the orca chief runs with the threshold"
+case "$(chief_env 1)" in
+  *CLAUDE_AUTOCOMPACT_PCT_OVERRIDE*) fail "a solo session must keep the default threshold" ;;
+esac
+
 pass

@@ -145,6 +145,52 @@ for leak in hunter2hunter sk-abcdefghijklmnop eyJhbGciOiJIUzI1; do
 done
 assert_contains "$st" "[redacted]" "the redaction marker stands in for the secrets"
 
+# 8e. Context only shrinks when the session was compacted, so usage that falls
+#     below the last advised step re-opens advice instead of waiting for the
+#     old high-water step.
+resp 0.96 0.1
+low="$TMP/low.jsonl"; transcript "$low" 100000
+out="$(hook "$AC_HOME" "$(jq -nc --arg p "$low" '{session_id: "s-1", transcript_path: $p, stop_hook_active: false}')" AC_SOLO=)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "/compact" "a compacted session is advised again"
+
+# 10. config/compact-auto=on: a session that owns a meta (a roomchief) gets
+#     /compact typed into its own pane once the pane is idle - detached, so
+#     the Stop hook never waits on it. Everything else keeps the hint only.
+make_fake_herdr
+mk_chief() { # mk_chief <id> <session_id> <pane> <tab>
+  printf 'backend=herdr\nkind=roomchief\nsession_id=%s\n' "$2" >"$AC_HOME/state/$1.meta"
+  printf '%s %s\n' "$3" "$4" >"$AC_HOME/state/.pane-$1"
+  printf '%s\n' "$3" >"$FAKE_HERDR/tabs/$4"
+  : >"$FAKE_HERDR/panes/$3.buf"
+}
+sendlog="$AC_HOME/state/.compact-advise/send.log"
+mk_chief rc-chief s-9 pC1 tC1
+printf 'idle\n' >"$FAKE_HERDR/panes/pC1.status"
+p9="$(jq -nc --arg p "$tx" '{session_id: "s-9", transcript_path: $p, stop_hook_active: false}')"
+
+out="$(hook "$AC_HOME" "$p9" AC_SOLO=)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "Run /compact" "without compact-auto the roomchief only gets the hint"
+sleep 1
+assert_no_file "$sendlog" "without compact-auto nothing is sent"
+
+printf 'on\n' >"$AC_HOME/config/compact-auto"
+rm -f "$AC_HOME/state/.compact-advise/s-9"
+out="$(hook "$AC_HOME" "$p9" AC_SOLO=)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "rc-chief" "the message names the pane /compact is sent to"
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'rc-chief:' "$sendlog" 2>/dev/null && break; sleep 0.5; done
+assert_contains "$(cat "$FAKE_HERDR/panes/pC1.buf")" "/compact" "the idle roomchief pane receives /compact"
+assert_contains "$(cat "$sendlog")" "rc-chief: sent" "the send is logged"
+
+out="$(hook "$AC_HOME" "$(jq -c '.session_id = "s-10"' <<<"$p9")" AC_SOLO=)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "Run /compact" "a session with no meta keeps the hint"
+
+# 10b. A pane that never goes idle inside the bound is left alone.
+mk_chief busy-chief s-11 pC2 tC2
+printf 'working\n' >"$FAKE_HERDR/panes/pC2.status"
+AC_COMPACT_SEND_WAIT=1 "$ADV" --send busy-chief >>"$sendlog" 2>&1 || fail "--send must exit 0"
+assert_eq "$(cat "$FAKE_HERDR/panes/pC2.buf")" "" "a busy pane is never typed into"
+assert_contains "$(tail -n 1 "$sendlog")" "busy-chief: not idle" "the give-up is logged"
+
 # 9. Wiring: the claude Stop hooks include the adviser.
 case "$(jq -r '[.hooks.Stop[].hooks[].command] | .[]' "$ROOT/.claude/settings.json")" in
   *ac-compact-advise.sh*) ;;

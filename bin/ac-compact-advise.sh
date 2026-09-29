@@ -8,6 +8,7 @@
 # Usage:
 #   ac-compact-advise.sh <claude-transcript.jsonl> --role chief|crew
 #   ac-compact-advise.sh --hook          # claude Stop hook, payload on stdin
+#   ac-compact-advise.sh --send <id>     # AUTO's sender, detached by --hook
 #
 # JUDGMENT. Context tokens are the last assistant message's usage (input +
 # cache read + cache creation); usage = tokens / window, the window being
@@ -39,7 +40,18 @@
 # fleet home to read the knob or key from. A Stop-hook continuation
 # (stop_hook_active) is never judged. Advice goes to the human as a
 # systemMessage, never to the model, and at most once per 5-point usage step
-# per session (state/.compact-advise/<session_id>).
+# per session (state/.compact-advise/<session_id>); usage that FALLS below the
+# advised step re-opens advice, since only a compaction shrinks context.
+#
+# AUTO. config/compact-auto=on (default off) turns the advice into the act for
+# a session that owns a task meta (session_id=, i.e. a roomchief): the hook
+# detaches `--send <id>`, which waits up to AC_COMPACT_SEND_WAIT (10) seconds
+# for the pane to go idle, then types /compact through bin/ac-send.sh; a pane
+# still busy is left alone. The crewchief and a solo session own no meta and
+# keep the hint, crewmates keep the watcher's note (captain 2026-09-29).
+# Outcomes land in state/.compact-advise/send.log. orca cannot prove the
+# composer empty, so a captain typing into that pane in the seconds after its
+# turn ends can get /compact appended to the draft - a risk the captain took.
 set -u
 
 MIN_TOKENS=40000
@@ -106,6 +118,32 @@ judge() {
     | "compact=advise score=\($s) floor=\($fl) usage=\($u * 100 | round / 100)"' <<<"$out" 2>/dev/null || true
 }
 
+auto_target() {
+  # auto_target <session_id> - the task whose meta records this session, under
+  # config/compact-auto=on; nothing otherwise.
+  local m
+  [ "$(ac_config_read compact-auto off 2>/dev/null)" = on ] || return 0
+  m="$(grep -lxF "session_id=$1" "$(ac_state_dir)"/*.meta 2>/dev/null | head -n 1)" || true
+  [ -z "$m" ] || basename "$m" .meta
+}
+
+if [ "${1:-}" = --send ]; then
+  id="${2:-}"
+  [ -n "$id" ] || exit 0
+  . "$(dirname "$0")/ac-backend.sh" 2>/dev/null || exit 0
+  AC_BACKEND="$(ac_task_backend "$id")"; export AC_BACKEND
+  left="${AC_COMPACT_SEND_WAIT:-10}"
+  until backend_agent_idle "$id"; do
+    left=$((left - 1))
+    [ "$left" -gt 0 ] || { printf '%s compact-auto %s: not idle - left to the hint\n' "$(date -u +%FT%TZ)" "$id"; exit 0; }
+    sleep 1
+  done
+  verdict=sent
+  said="$("$(dirname "$0")/ac-send.sh" "$id" /compact 2>&1)" || verdict='send failed'
+  printf '%s compact-auto %s: %s (%s)\n' "$(date -u +%FT%TZ)" "$id" "$verdict" "$(tr '\n' ' ' <<<"$said")"
+  exit 0
+fi
+
 if [ "${1:-}" = --hook ]; then
   payload="$(cat 2>/dev/null || true)"
   [ "$(jq -r '.stop_hook_active // false' <<<"$payload" 2>/dev/null)" = false ] || exit 0
@@ -125,11 +163,17 @@ if [ "${1:-}" = --hook ]; then
   [ "$tokens" -ge "$MIN_TOKENS" ] || exit 0
   step="$(awk -v t="$tokens" -v w="$(window)" 'BEGIN { printf "%d", t / w * 20 }')"
   mark="$(ac_state_dir)/.compact-advise/$sid"
-  [ "$step" -gt "$(cat "$mark" 2>/dev/null || printf -- -1)" ] || exit 0
+  [ "$step" != "$(cat "$mark" 2>/dev/null || printf -- -1)" ] || exit 0
   line="$(judge "$tx" "$role" "$tokens")"
   [ -n "$line" ] || exit 0
   mkdir -p "$(dirname "$mark")" 2>/dev/null && printf '%s\n' "$step" >"$mark"
-  jq -nc --arg l "$line" '{systemMessage: ("Compact adviser: the work looks finished (" + $l + "). Run /compact to save context - the session re-orients from disk afterwards.")}'
+  act='Run /compact to save context'
+  id="$(auto_target "$sid")"
+  if [ -n "$id" ]; then
+    nohup "$0" --send "$id" </dev/null >>"$(dirname "$mark")/send.log" 2>&1 &
+    act="/compact goes to $id once this turn ends"
+  fi
+  jq -nc --arg l "$line" --arg a "$act" '{systemMessage: ("Compact adviser: the work looks finished (" + $l + "). " + $a + " - the session re-orients from disk afterwards.")}'
   exit 0
 fi
 

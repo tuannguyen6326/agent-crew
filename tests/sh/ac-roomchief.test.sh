@@ -518,8 +518,10 @@ out="$("$BIN/ac-spawn.sh" sc0 proj --solo --harness fake 2>&1 || true)"
 assert_contains "$out" "--solo requires --roomchief" "--solo on a crew spawn is a mistake, not a silent no-op"
 assert_no_file "$AC_HOME/state/sc0.meta" "the refused spawn writes no meta"
 room_seed sc1
+printf '80\n' >"$AC_HOME/config/compact-pct"
 "$BIN/ac-spawn.sh" --roomchief sc1 --solo --harness fake >/dev/null 2>&1 \
   || fail "a --solo promote must spawn like any other roomchief"
+rm -f "$AC_HOME/config/compact-pct"
 assert_eq "$(awk -F= '$1=="solo"{print $2}' "$AC_HOME/state/sc1-chief.meta")" "1" \
   "the meta records solo=1 - the field every other process reads"
 assert_eq "$(awk -F= '$1=="kind"{print $2}' "$AC_HOME/state/sc1-chief.meta")" "roomchief" \
@@ -527,6 +529,8 @@ assert_eq "$(awk -F= '$1=="kind"{print $2}' "$AC_HOME/state/sc1-chief.meta")" "r
 read -r sc1_pane _ <"$AC_HOME/state/.pane-sc1-chief"
 assert_contains "$(cat "$FAKE_HERDR/panes/$sc1_pane.buf")" "AC_CHIEF_SOLO=1" \
   "the launch line carries AC_CHIEF_SOLO=1 beside AC_SCOPE"
+assert_contains "$(cat "$FAKE_HERDR/panes/$sc1_pane.buf")" "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80" \
+  "config/compact-pct lowers the chief's own auto-compact threshold"
 sc1_kick="$(cat "$AC_HOME/data/sc1/chief/kickoff.md")"
 assert_contains "$sc1_kick" "SOLO CHIEF" "the kickoff names the role"
 assert_contains "$sc1_kick" "ac-self-task.sh start sc1-" "the kickoff names the slice verb with the family prefix"
@@ -535,7 +539,13 @@ assert_contains "$sc1_kick" "LANDED:" "the kickoff names the room receipt that s
 assert_contains "$(cat "$AC_HOME/data/sc1/room.md")" "PROMOTED: " "the promote is receipted"
 assert_contains "$(cat "$AC_HOME/data/sc1/room.md")" "solo" "...and the receipt says the chief works the family itself"
 room_seed sc2
+printf '150\n' >"$AC_HOME/config/compact-pct"
 "$BIN/ac-spawn.sh" --roomchief sc2 --harness fake >/dev/null 2>&1
+rm -f "$AC_HOME/config/compact-pct"
+read -r sc2_pane _ <"$AC_HOME/state/.pane-sc2-chief"
+case "$(cat "$FAKE_HERDR/panes/$sc2_pane.buf")" in
+  *CLAUDE_AUTOCOMPACT_PCT_OVERRIDE*) fail "an out-of-range compact-pct must not reach the launch line" ;;
+esac
 case "$(cat "$AC_HOME/data/sc2/chief/kickoff.md")" in
   *"SOLO CHIEF"*) fail "an ordinary promote's kickoff must not carry the solo section" ;;
 esac

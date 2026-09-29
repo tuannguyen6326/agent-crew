@@ -110,7 +110,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | Script | What it does |
 |---|---|
 | `ac-jev.sh ask \| label \| sha \| status` | The System One adapter: closed-set questions in, validated typed answers out, behind `config/jev` (`off` default, `shadow` logs only, `on` also prints). Every failure prints one `jev:` reason on stderr, nothing on stdout, and exits 0; answers are logged to `state/jev-shadow.jsonl`. Spec: `bin/ac-jev.sh` header. |
-| `ac-compact-advise.sh <transcript.jsonl> --role chief\|crew \| --hook` | "Should this session /compact now?" at the System One `compact` site, ported from compact-adviser (MIT). As a Stop hook it judges only a SOLO session or a fleet-home chief; every failure prints nothing and exits 0. Spec: `bin/ac-compact-advise.sh` header. |
+| `ac-compact-advise.sh <transcript.jsonl> --role chief\|crew \| --hook \| --send <id>` | "Should this session /compact now?" at the System One `compact` site, ported from compact-adviser (MIT). As a Stop hook it judges only a SOLO session or a fleet-home chief; under `config/compact-auto=on` it detaches `--send` to type `/compact` into a roomchief's own idle pane. Every failure prints nothing and exits 0. Spec: `bin/ac-compact-advise.sh` header. |
 
 ## Hooks
 

@@ -375,6 +375,15 @@ err="$("$BIN/ac-send.sh" cother 'the text that was actually sent' 2>&1)" \
 assert_contains "$err" "arrival REFUTED" "the verdict is unchanged for a wrong arrival too"
 case "$err" in *TRUNCATED*) fail "an unrelated arrival must not be reported as a truncation" ;; esac
 
+# A slash command runs locally and never lands as a typed turn (a live /compact
+# is recorded as a <command-name> entry with no promptSource), so the last
+# typed turn is still the one before it: arrival is UNOBSERVABLE, not REFUTED.
+sid_slash="12121212-1212-1212-1212-121212121212"
+mk_claude_crewmate cslash pCSL tCSL "$sid_slash"
+mk_turn "$sid_slash" "the captain's last typed line"
+out="$("$BIN/ac-send.sh" cslash /compact 2>&1)" || fail "a slash command must not be refused as a wrong arrival: $out"
+assert_contains "$out" "delivered (arrival unverified) to herdr:pane-pCSL" "a slash command's arrival is unverified, never refuted"
+
 # A LONG send into a claude composer lands as its TAIL (measured live on claude
 # 2.1.283: 4.7KB typed, the composer kept the last ~480 chars, mid-word), and
 # the Enter after it submitted that tail as the whole instruction. The composer
