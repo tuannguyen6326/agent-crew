@@ -70,6 +70,25 @@ rc=0; printf 'refs/heads/gone %s refs/heads/gone %s\n' "$zeros" "$head_sha" \
 assert_eq "$rc" "0" "hook mode skips a branch deletion (nothing outgoing)"
 git -C "$repo" reset -q --hard "$base"
 
+# --- a private identifier only a merge's conflict resolution adds refuses ----
+# Neither parent carries the line, so no ordinary commit's diff shows it; plain
+# `git log -p` prints no diff for a merge at all.
+commit_file "$repo" shared.txt "base line" "a shared file"
+fork="$(git -C "$repo" rev-parse HEAD)"
+commit_file "$repo" shared.txt "ours" "our side"
+git -C "$repo" checkout -q -b side "$fork"
+commit_file "$repo" shared.txt "theirs" "their side"
+git -C "$repo" checkout -q -
+git -C "$repo" -c user.name=crew -c user.email=crew@test merge -q side >/dev/null 2>&1 || true
+printf 'resolved for acme-internal\n' >"$repo/shared.txt"
+git -C "$repo" add shared.txt
+git -C "$repo" -c user.name=crew -c user.email=crew@test commit -q --no-edit
+rc=0; ( cd "$repo" && "$gate" check "$fork..HEAD" ) 2>"$TMP/o6" || rc=$?
+assert_eq "$rc" "1" "an identifier only a merge resolution adds refuses"
+assert_contains "$(cat "$TMP/o6")" "resolved for acme-internal" "the refusal shows the resolution's line"
+git -C "$repo" reset -q --hard "$base"
+git -C "$repo" branch -q -D side
+
 # --- missing pattern file: permissive default, fail-closed when required ----
 rc=0; ( cd "$repo" && AC_PUSH_GATE_PATTERNS="$TMP/absent" "$gate" check HEAD ) 2>"$TMP/o4" || rc=$?
 assert_eq "$rc" "0" "no pattern file passes by default (public user)"
