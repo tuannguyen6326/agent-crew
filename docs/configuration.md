@@ -91,6 +91,8 @@ The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspa
 | `config/jev-provider` | Provider `ac-jev.sh` talks to: `openrouter` (default), `typesafe`, `opencode` or `laya` (the loopback sandbox, no key). Each maps to an endpoint, a `providers.json` entry and a model id listed in the `bin/ac-jev.sh` header. |
 | `config/jev-laya-port` | Loopback port of the `laya` sandbox (`http://127.0.0.1:<port>/v1/systemone`); default 8765. |
 | `config/compact-window` | Context-window size in tokens that `bin/ac-compact-advise.sh` divides a session's context by; default 200000. `AC_COMPACT_WINDOW` wins. |
+| `config/compact-auto` | `on` makes the compact advice act for a roomchief (a session with a task meta): the Stop hook sends `/compact` into its own pane once the turn ends and the pane is idle. `off` (default) keeps the hint only; the crewchief, solo sessions and crewmates always keep the hint. Needs `config/jev=on`. Outcomes: `state/.compact-advise/send.log`; contract: the `bin/ac-compact-advise.sh` header (AUTO). |
+| `config/compact-pct` | 1-100: claude's own auto-compact fires at this percent of the context window for chief sessions (crewchief via the `ac` launcher, roomchief spawn and recover), as `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` on the launch line. Unset (default) leaves claude's threshold alone; takes effect at the next launch. |
 
 ### Remote orders and notifications
 

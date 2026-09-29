@@ -162,7 +162,8 @@
 #   ~20min once). It clears on any other captain marker, and on DEMONSTRATED
 #   LATER PROGRESS - a pane busy under a standing stamp has moved on from what
 #   parked it (that SUPERSESSION owns the rule); ac-send clears after a
-#   successful delivery (the steer IS the answer, and it is well-timed for the
+#   successful delivery other than a slash command, which answers nothing
+#   (the steer IS the answer, and it is well-timed for the
 #   one reason that matters here: the steer itself supplies the idle->working
 #   transition that re-adopts the pane); kill_window removes the stamp file
 #   with the pane.

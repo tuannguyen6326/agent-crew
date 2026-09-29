@@ -38,10 +38,11 @@
 #   with a resolvable session transcript) whose last typed turn does not
 #   match what was sent is REFUTED and refused here, the same way a stranded
 #   submit already is - never "sent to" on a text that landed wrong. A
-#   target with no such capability, or whose transcript this fleet cannot
-#   read, is UNOBSERVABLE: reported honestly as `delivered (arrival
-#   unverified) to <target>`, exit unchanged - the same precedented shape
-#   --key already uses for its own unverifiable case, below.
+#   target with no such capability, whose transcript this fleet cannot
+#   read, or a slash command (`/compact`), which claude runs locally and
+#   never records as a typed turn, is UNOBSERVABLE: reported honestly as
+#   `delivered (arrival unverified) to <target>`, exit unchanged - the same
+#   precedented shape --key already uses for its own unverifiable case, below.
 #   A REFUTED refusal SAYS WHAT ARRIVED - the sizes, and whether what landed is
 #   a strict SUFFIX of what was sent. Measured over five consecutive steers into
 #   one claude pane (4700 chars arrived as 482, 1900 as 158, 1100 as 203, 2000
@@ -83,6 +84,7 @@
 #
 # A delivered steer - text or key - also clears the pane's CAPTAIN-WAIT STAMP (contract:
 # ac-backend.sh) - the steer IS the answer the stamped pane was parked on;
+# a slash command answers nothing and leaves the stamp standing;
 # a fleet-stamped pane is NOT refused as blocked (the refusal above targets
 # real interactive prompts only).
 #
@@ -161,6 +163,7 @@ case "$alive_rc" in
   *) ac_die "the BACKEND could not be read for $id - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself (herdr status server), then send again" ;;
 esac
 
+slash=0
 if [ "${1:-}" = "--key" ]; then
   key="${2:-}"
   [ -n "$key" ] || ac_die "missing key name"
@@ -205,6 +208,11 @@ else
     text="[chief-order home=$parent_home deputy=$id] $text"
     marked=1
   fi
+  # A slash command (`/compact`) runs locally: claude never records it as a
+  # typed turn, so its arrival has nothing to compare against, and it answers
+  # no captain-wait. Read off the DELIVERED line, so a marked order is never
+  # one; a path-leading steer (/tmp/x ..., /etc: ...) is not one either.
+  [[ "$text" =~ ^/[a-z][a-z0-9_-]*(:[a-z0-9_-]+)?( |$) ]] && slash=1
   # Both failures refuse, but they are DIFFERENT facts and the captain's next
   # move differs (contract: ac-backend.sh delivery verification) - a strand is
   # resubmitted, an unreadable pane is peeked at first.
@@ -228,7 +236,7 @@ else
   # already-precedented honest verb --key uses when it too cannot verify.
   harness="$(ac_meta_get "$(ac_task_meta "$id")" harness)"
   verb='sent to'
-  if ac_arrival_capable "$harness"; then
+  if ac_arrival_capable "$harness" && [ "$slash" = 0 ]; then
     sid="$(ac_meta_get "$(ac_task_meta "$id")" session_id)"
     arc=0
     ac_arrival_wait "$sid" "$text" || arc=$?
@@ -257,5 +265,5 @@ fi
 # merely "reacting" that restores the view, so a release with no transition
 # behind it leaves the pane out of the agents panel (contract: ac-backend.sh
 # CAPTAIN-WAIT STAMP). No-op when the pane carries no stamp.
-backend_clear_wait "$id" 2>/dev/null || true
+[ "$slash" = 1 ] || backend_clear_wait "$id" 2>/dev/null || true
 printf '%s %s\n' "$verb" "$(backend_target "$id")"

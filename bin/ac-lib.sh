@@ -411,6 +411,23 @@ ac_config_read() {
   printf '%s\n' "$line"
 }
 
+ac_compact_pct_env() {
+  # ac_compact_pct_env - the CLAUDE_AUTOCOMPACT_PCT_OVERRIDE= prefix for a
+  # CHIEF launch line (crewchief, roomchief) when config/compact-pct is 1-100.
+  # Claude's own auto-compact then fires at that percent of the window instead
+  # of just under its end (claude 2.1.284: min(window*pct/100, window-13000)).
+  # Out-of-range values are dropped with one reason line on stderr, because
+  # claude ignores them silently.
+  local p
+  p="$(ac_config_read compact-pct '')"
+  [ -n "$p" ] || return 0
+  case "$p" in
+    *[!0-9]*) ;;
+    *) [ "$p" -ge 1 ] && [ "$p" -le 100 ] && { printf 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=%s ' "$p"; return 0; } ;;
+  esac
+  printf 'config/compact-pct: %s is not 1-100 - claude keeps its default threshold\n' "$p" >&2
+}
+
 # --- crewdeputy config convergence ---------------------------------------------
 # Operational knobs that stay CONVERGED parent -> crewdeputy: on every pull the
 # parent's value wins, including its absence (absence-mirroring). Only these

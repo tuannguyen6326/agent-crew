@@ -1335,7 +1335,7 @@ if [ "$recover" = 1 ] && [ "$crewdeputy" = 0 ]; then
     dom="$(ac_meta_get "$meta" domain)"
     [ -z "$dom" ] || dom_env="AC_DOMAIN=$(printf '%q' "$dom") "
     [ "$(ac_meta_get "$meta" solo)" != 1 ] || solo_env="AC_CHIEF_SOLO=1 "
-    env_prefix="AC_HOME=$(printf '%q' "$(ac_home)") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}${solo_env}"
+    env_prefix="AC_HOME=$(printf '%q' "$(ac_home)") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}${solo_env}$(ac_compact_pct_env)"
     notice="$notice Your family watcher died with the old tab: re-arm it as a background task (AC_WATCH_ONLY=\$(bin/ac-ready.sh watch-set $fam) bin/ac-watch.sh - recompute the set each re-arm so an epic keeps covering its in-flight story panes), then continue."
     export AC_WINDOW_FAMILY="$fam"
   else
@@ -1634,7 +1634,7 @@ REVIEW IS MANDATORY: nobody else reads your code, so every slice gets ONE indepe
 LANDING: land per the slice's mode (bin/ac-merge-local.sh, or a PR the captain merges), then post LANDED: $fam-<slug> - <outcome> to this room BEFORE bin/ac-teardown.sh $fam-<slug>: you may not write records/backlog.md (the ledger guard fences it), so that receipt is what the teardown gate reads where a Done row would be; the crewchief moves the family row at your hand-back. IF THE SLICE CANNOT LAND - main moved under it is the cheap way there, and ac-merge-local.sh withholds --no-ff from every scoped session on purpose - do NOT rebase to force it (a rebase changes the sha a review receipt binds by, so a clean one costs a whole extra review round): post UNLANDABLE: $fam-<slug> - <why>; crewchief to land (its OWN verb - HANDBACK: is this family's tenure-ending receipt and would flip the whole family), leave the slice IN FLIGHT, and tell the crewchief in your hand-back; the crewchief lands crew/$fam-<slug> --no-ff, and only THEN does bin/ac-teardown.sh $fam-<slug> pass, reading UNLANDABLE where LANDED would be. The gate still owes a lesson (bin/ac-learn.sh note) and a verified repo fact (bin/ac-know.sh add), or --no-lesson/--no-fact '<why>'; the lesson is read by its (by: $fam-<slug>, first-hand) attribution, so file it under whichever heading your family uses.
 HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from this session - edit with your own hands, or spawn a real crewmate when a slice outgrows you; never both on one slice."
   fi
-  AC_SEND_UNPROVEN=1 backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$(ac_home)") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}${solo_env}$launch"
+  AC_SEND_UNPROVEN=1 backend_send_line "$id" "$(launch_prompt_env "$harness" "$prompt")$(ac_claude_config_env)${codegraph_env}AC_HOME=$(printf '%q' "$(ac_home)") AC_SCOPE=$(printf '%q' "$fam") ${dom_env}${solo_env}$(ac_compact_pct_env)$launch"
   deliver_kickoff "$id" "$harness" "$prompt"
 
   ac_meta_set "$meta" backend "$backend"

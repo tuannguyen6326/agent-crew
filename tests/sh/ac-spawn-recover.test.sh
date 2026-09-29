@@ -104,11 +104,14 @@ err="$("$BIN/ac-spawn.sh" --roomchief famr --recover 2>&1)" && fail "a live room
 assert_contains "$err" "LIVE" "the live roomchief refusal says why"
 
 kill_pane famr-chief
+printf '85\n' >"$AC_HOME/config/compact-pct"
 "$BIN/ac-spawn.sh" --roomchief famr --recover >/dev/null 2>&1 || fail "a gone roomchief tab must recover"
+rm -f "$AC_HOME/config/compact-pct"
 assert_eq "$(meta_field "$cmeta" window)" "herdr:pane-$(fake_pane famr-chief)" "the roomchief meta window follows the fresh pane"
 assert_eq "$(meta_field "$cmeta" kind)" "roomchief" "the roomchief meta is otherwise untouched"
 cbuf="$(cat "$(fake_pane_buf famr-chief)")"
 assert_contains "$cbuf" "AC_SCOPE=famr" "the roomchief resumes under its own scope"
+assert_contains "$cbuf" "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85" "the resumed roomchief keeps config/compact-pct"
 assert_contains "$cbuf" "claude --permission-mode auto --resume $csid" "the roomchief's session is resumed"
 assert_contains "$cbuf" 'AC_WATCH_ONLY=$(bin/ac-ready.sh watch-set famr)' "the roomchief is told to re-arm its family watcher, which died with the tab"
 assert_contains "$(tail -n 1 "$AC_HOME/state/famr-chief.status")" "recovered:" "the roomchief status log gains a recovered: line"
