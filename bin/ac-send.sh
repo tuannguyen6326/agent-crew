@@ -162,6 +162,7 @@ case "$alive_rc" in
   *) ac_die "the BACKEND could not be read for $id - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself (herdr status server), then send again" ;;
 esac
 
+slash=0
 if [ "${1:-}" = "--key" ]; then
   key="${2:-}"
   [ -n "$key" ] || ac_die "missing key name"
@@ -170,6 +171,10 @@ if [ "${1:-}" = "--key" ]; then
 else
   text="${1:-}"
   [ -n "$text" ] || ac_die "refusing to send an empty message"
+  # A slash command (`/compact`) runs locally: claude never records it as a
+  # typed turn, so its arrival has nothing to compare against, and it answers
+  # no captain-wait. A path-leading steer (/tmp/x ...) is not one.
+  [[ "$text" =~ ^/[a-z][a-z0-9:_-]*( |$) ]] && slash=1
   if [ "$force" = 0 ] && backend_agent_blocked "$id"; then
     ac_die "$id is BLOCKED on an interactive prompt - text would feed the dialog and its Enter would ACCEPT it (digit options can grant a permanent always-allow). Peek it (bin/ac-peek.sh $id), answer deliberately with ac-send.sh $id --key <key>, or override with ac-send.sh $id --force '<text>'"
   fi
@@ -227,11 +232,9 @@ else
   # never arrived, because nothing else here catches it; UNOBSERVABLE (no
   # capability, no session id, no resolvable transcript) gets the SAME
   # already-precedented honest verb --key uses when it too cannot verify.
-  # A slash command runs locally and never lands as a typed turn, so there is
-  # nothing to compare it against: UNOBSERVABLE, never REFUTED.
   harness="$(ac_meta_get "$(ac_task_meta "$id")" harness)"
   verb='sent to'
-  if ac_arrival_capable "$harness" && [ "${text#/}" = "$text" ]; then
+  if ac_arrival_capable "$harness" && [ "$slash" = 0 ]; then
     sid="$(ac_meta_get "$(ac_task_meta "$id")" session_id)"
     arc=0
     ac_arrival_wait "$sid" "$text" || arc=$?
@@ -260,5 +263,5 @@ fi
 # merely "reacting" that restores the view, so a release with no transition
 # behind it leaves the pane out of the agents panel (contract: ac-backend.sh
 # CAPTAIN-WAIT STAMP). No-op when the pane carries no stamp.
-backend_clear_wait "$id" 2>/dev/null || true
+[ "$slash" = 1 ] || backend_clear_wait "$id" 2>/dev/null || true
 printf '%s %s\n' "$verb" "$(backend_target "$id")"

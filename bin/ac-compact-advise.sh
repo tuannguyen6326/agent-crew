@@ -41,14 +41,18 @@
 # (stop_hook_active) is never judged. Advice goes to the human as a
 # systemMessage, never to the model, and at most once per 5-point usage step
 # per session (state/.compact-advise/<session_id>); usage that FALLS below the
-# advised step re-opens advice, since only a compaction shrinks context.
+# advised step is recorded as the new baseline without a judgment, since only
+# a compaction shrinks context, and advice re-opens one step above it.
 #
 # AUTO. config/compact-auto=on (default off) turns the advice into the act for
 # a session that owns a task meta (session_id=, i.e. a roomchief): the hook
 # detaches `--send <id>`, which waits up to AC_COMPACT_SEND_WAIT (10) seconds
 # for the pane to go idle, then types /compact through bin/ac-send.sh; a pane
-# still busy is left alone. The crewchief and a solo session own no meta and
-# keep the hint, crewmates keep the watcher's note (captain 2026-09-29).
+# still busy is left alone, and the message keeps the hint for that case. On
+# herdr a roomchief stamped captain-wait (its room holds pending asks) never
+# reads idle, so the hint is all it gets until the room clears. The crewchief
+# and a solo session own no meta and keep the hint, crewmates keep the
+# watcher's note (captain 2026-09-29).
 # Outcomes land in state/.compact-advise/send.log. orca cannot prove the
 # composer empty, so a captain typing into that pane in the seconds after its
 # turn ends can get /compact appended to the draft - a risk the captain took.
@@ -132,10 +136,9 @@ if [ "${1:-}" = --send ]; then
   [ -n "$id" ] || exit 0
   . "$(dirname "$0")/ac-backend.sh" 2>/dev/null || exit 0
   AC_BACKEND="$(ac_task_backend "$id")"; export AC_BACKEND
-  left="${AC_COMPACT_SEND_WAIT:-10}"
+  deadline=$((SECONDS + ${AC_COMPACT_SEND_WAIT:-10}))
   until backend_agent_idle "$id"; do
-    left=$((left - 1))
-    [ "$left" -gt 0 ] || { printf '%s compact-auto %s: not idle - left to the hint\n' "$(date -u +%FT%TZ)" "$id"; exit 0; }
+    [ "$SECONDS" -lt "$deadline" ] || { printf '%s compact-auto %s: not idle - left to the hint\n' "$(date -u +%FT%TZ)" "$id"; exit 0; }
     sleep 1
   done
   verdict=sent
@@ -163,7 +166,12 @@ if [ "${1:-}" = --hook ]; then
   [ "$tokens" -ge "$MIN_TOKENS" ] || exit 0
   step="$(awk -v t="$tokens" -v w="$(window)" 'BEGIN { printf "%d", t / w * 20 }')"
   mark="$(ac_state_dir)/.compact-advise/$sid"
-  [ "$step" != "$(cat "$mark" 2>/dev/null || printf -- -1)" ] || exit 0
+  last="$(cat "$mark" 2>/dev/null || printf -- -1)"
+  if [ "$step" -lt "$last" ]; then
+    printf '%s\n' "$step" >"$mark"
+    exit 0
+  fi
+  [ "$step" -gt "$last" ] || exit 0
   line="$(judge "$tx" "$role" "$tokens")"
   [ -n "$line" ] || exit 0
   mkdir -p "$(dirname "$mark")" 2>/dev/null && printf '%s\n' "$step" >"$mark"
@@ -171,7 +179,7 @@ if [ "${1:-}" = --hook ]; then
   id="$(auto_target "$sid")"
   if [ -n "$id" ]; then
     nohup "$0" --send "$id" </dev/null >>"$(dirname "$mark")/send.log" 2>&1 &
-    act="/compact goes to $id once this turn ends"
+    act="/compact is typed into $id if its pane goes idle within ~10s, otherwise run /compact yourself (outcome: state/.compact-advise/send.log)"
   fi
   jq -nc --arg l "$line" --arg a "$act" '{systemMessage: ("Compact adviser: the work looks finished (" + $l + "). " + $a + " - the session re-orients from disk afterwards.")}'
   exit 0

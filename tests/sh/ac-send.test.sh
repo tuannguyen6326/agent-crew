@@ -71,6 +71,14 @@ assert_contains "$out" "delivered (arrival unverified) to herdr:pane-pA2" "stamp
 assert_no_file "$AC_HOME/state/.captain-wait-s2" "delivery clears the stamp file"
 assert_no_file "$FAKE_HERDR/panes/pA2.reported" "delivery releases the reported state"
 
+# A slash command answers nothing, so /compact typed into a stamped pane leaves
+# the stamp for the steer that does answer the captain's pending item.
+mk_crewmate s2b pA2b tA2b
+printf 'blocked\n' >"$FAKE_HERDR/panes/pA2b.reported"
+touch "$AC_HOME/state/.captain-wait-s2b"
+"$BIN/ac-send.sh" s2b /compact >/dev/null || fail "a slash command into a stamped pane must be delivered"
+assert_file "$AC_HOME/state/.captain-wait-s2b" "a slash command leaves the captain-wait stamp standing"
+
 # --- dead pane: the harness exited, TEXT would EXECUTE in the bare shell ------------
 # window-alive still answers true (the terminal lives, holding a shell), and
 # agent_blocked answers false (no dialog) - only the harness-up probe tells a
@@ -383,6 +391,12 @@ mk_claude_crewmate cslash pCSL tCSL "$sid_slash"
 mk_turn "$sid_slash" "the captain's last typed line"
 out="$("$BIN/ac-send.sh" cslash /compact 2>&1)" || fail "a slash command must not be refused as a wrong arrival: $out"
 assert_contains "$out" "delivered (arrival unverified) to herdr:pane-pCSL" "a slash command's arrival is unverified, never refuted"
+sid_path="34343434-3434-3434-3434-343434343434"
+mk_claude_crewmate cpath pCPA tCPA "$sid_path"
+mk_turn "$sid_path" "the captain's last typed line"
+err="$("$BIN/ac-send.sh" cpath '/tmp/brief.md holds the next step' 2>&1)" \
+  && fail "a steer that merely starts with a path is still arrival-checked"
+assert_contains "$err" "arrival REFUTED" "only a command-shaped first word skips the arrival check"
 
 # A LONG send into a claude composer lands as its TAIL (measured live on claude
 # 2.1.283: 4.7KB typed, the composer kept the last ~480 chars, mid-word), and
