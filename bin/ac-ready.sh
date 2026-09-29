@@ -54,9 +54,6 @@
 #                               #     brief.md with a live state/<id>.meta)
 #                               #     that names the path
 #
-# The report, queued, watch-set and validate run in src/ready.ts, which this
-# entry execs for them; overlap, glue around git, grep and ac-jev, runs here.
-#
 # READY  <id> (epic:<e>)  - a Queued item that can START NOW: blockers ALL
 #                           Done clean, and - for a story - its epic under
 #                           config/epic-parallel (default 2) in-flight
@@ -124,7 +121,7 @@
 #                           ITSELF: HELD before that date, READY on and after
 #                           it, so a time-bound hold needs no hand-edit. The
 #                           parser extracts the date (src/backlog.ts's
-#                           hold_until), src/ready.ts is the one that
+#                           hold_until), this scheduler is the one that
 #                           compares it to today. A hold whose date shape is
 #                           anything else is not a dated hold: it reads
 #                           `hold malformed`, the same fail-closed direction
@@ -153,8 +150,9 @@
 # adapter's own fail direction; chunking is not built until a fleet's ledger
 # needs it.
 set -euo pipefail
-# ac-lib.sh is sourced only past this dispatch, so the ledger verbs never pay
-# for it.
+# The report, queued, watch-set and validate run in src/ready.ts; overlap, glue
+# around git, grep and ac-jev, runs here. ac-lib.sh is sourced only past this
+# dispatch, so the ledger verbs never pay for it.
 case "${1:-}" in
   "" | queued | watch-set | validate)
     . "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh"

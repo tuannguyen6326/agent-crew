@@ -219,8 +219,8 @@ test("sha256File throws where ac_sha256_file prints no hash", () => {
   expect(() => sha256File(missing)).toThrow();
 });
 
-// ac-task.sh and ac-brief.sh still judge a contract through ac_contract_lint,
-// so the scheduler's copy must answer exactly what the shell does. No glob
+// ac-task.sh add still judges a contract through ac_contract_lint, so the
+// scheduler's copy must answer exactly what the shell does. No glob
 // characters: the shell's unquoted walk would expand them against the cwd,
 // and no parsed contract token can hold one (src/backlog.ts, contract).
 test("contractLint answers exactly what ac_contract_lint prints", () => {

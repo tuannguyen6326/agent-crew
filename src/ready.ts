@@ -233,8 +233,9 @@ try {
 }
 const recs = records(text);
 const rows = snapshot(recs);
-const now = new Date();
-const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+// date(1), not Date: ICU misreads POSIX TZ strings the libc honours, and
+// ac-task.sh start decides a dated hold is spent by date(1).
+const today = Bun.spawnSync(["date", "+%Y-%m-%d"]).stdout.toString().trim();
 // The ledger is compared as bytes, so an argument is too.
 const bytes = Buffer.from(arg, "utf8").toString("latin1");
 if (verb === "") write(report(rows, cap, today));

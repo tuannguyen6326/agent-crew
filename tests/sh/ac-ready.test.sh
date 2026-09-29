@@ -432,6 +432,14 @@ rc=0; out="$(LC_ALL=en_US.UTF-8 "$BIN/ac-ready.sh")" || rc=$?
 assert_eq "$rc:$out" "0:READY  q1"$'\n'"READY  q2" "a non-UTF-8 byte in a row never aborts the report"
 assert_eq "$(LC_ALL=en_US.UTF-8 "$BIN/ac-ready.sh" queued)" "q1"$'\n'"q2" "... nor cuts the queued set short"
 
+# A dated hold is spent on the day date(1) names - ac-task.sh start strips it by
+# that clock - so a POSIX TZ string, which the libc reads and ICU does not,
+# must decide it the same way here. XYZ-24 is always a day ahead of UTC.
+spent="$(TZ=XYZ-24 date +%Y-%m-%d)"
+printf '## In flight\n\n## Queued\n- [ ] h1 [@held until %s] - dated (repo: alpha)\n\n## Done\n' "$spent" \
+  >"$AC_HOME/records/backlog.md"
+assert_eq "$(TZ=XYZ-24 "$BIN/ac-ready.sh")" "READY  h1" "a dated hold is spent on the day date(1) names under the caller's TZ"
+
 # overlap --semantic: the System One fold-or-mint proposer (config/jev). One
 # choice question per OPEN row over the order text, all in one request; under
 # on it prints Queued rows the model calls related as fold-candidate and In

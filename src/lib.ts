@@ -88,9 +88,9 @@ export function recordsDir(): string {
   return homeSubdir("records");
 }
 
-// ac_contract_lint's twin, one violation per entry. ac-task.sh and ac-brief.sh
-// still call the shell original, so the value vocabulary lives in two places
-// and tests/ts/lib.test.ts holds this copy to that one.
+// ac_contract_lint's twin, one violation per entry. ac-task.sh add still calls
+// the shell original, so the value vocabulary lives in two places and
+// tests/ts/lib.test.ts holds this copy to that one.
 export function contractLint(c: string): string[] {
   const out: string[] = [];
   let flow = "", mode = "", rev = "";
