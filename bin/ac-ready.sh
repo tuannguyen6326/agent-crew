@@ -54,6 +54,9 @@
 #                               #     brief.md with a live state/<id>.meta)
 #                               #     that names the path
 #
+# The report, queued, watch-set and validate run in src/ready.ts, which this
+# entry execs for them; overlap, glue around git, grep and ac-jev, runs here.
+#
 # READY  <id> (epic:<e>)  - a Queued item that can START NOW: blockers ALL
 #                           Done clean, and - for a story - its epic under
 #                           config/epic-parallel (default 2) in-flight
@@ -121,7 +124,7 @@
 #                           ITSELF: HELD before that date, READY on and after
 #                           it, so a time-bound hold needs no hand-edit. The
 #                           parser extracts the date (src/backlog.ts's
-#                           hold_until), this file is the one that
+#                           hold_until), src/ready.ts is the one that
 #                           compares it to today. A hold whose date shape is
 #                           anything else is not a dated hold: it reads
 #                           `hold malformed`, the same fail-closed direction
@@ -150,248 +153,18 @@
 # adapter's own fail direction; chunking is not built until a fleet's ledger
 # needs it.
 set -euo pipefail
+# ac-lib.sh is sourced only past this dispatch, so the ledger verbs never pay
+# for it.
+case "${1:-}" in
+  "" | queued | watch-set | validate)
+    . "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh"
+    ac_bun_exec src/ready.ts "$@"
+    ;;
+esac
 . "$(dirname "$0")/ac-lib.sh"
-
-backlog="$(ac_records_dir)/backlog.md"
-# No backlog = nothing to schedule - but `overlap` reads the ledger and the
-# repos, not the backlog, and must never report "clean" by early exit.
-[ -f "$backlog" ] || [ "${1:-}" = overlap ] || exit 0
-cap="$(ac_config_read epic-parallel 2)"
-case "$cap" in ''|*[!0-9]*) cap=2 ;; esac
-
-# TSV snapshot of the ledger: section, id, marker, epic, blockers, malformed,
-# hold, hold_malformed, contract, domain, hold_until. contract is the one field
-# the parser can return holding a TAB (its tokens may be TAB-joined), so each
-# TAB in it is written as a space - a raw one would shift every later column.
-snapshot() {
-  # Field extraction is the ONE shared Done-line parser (src/backlog.ts, via
-  # ac-lib.sh); the marker is keyed on the FIXED grammar position (token after
-  # the id), never a substring, so a story documenting its own terminal states
-  # in prose (the epic maps' two-terminal-state convention) never reads as if it
-  # carried one. This walk keeps its own section tracking.
-  # Field 10 is the row's EFFECTIVE domain (crewdomain-token): its own token,
-  # else its epic row's - the same inheritance ac_domain_tally and the promote
-  # derivation apply, computed here in a first pass so every consumer fences
-  # or displays domain rows off ONE derivation.
-  awk "$AC_DONELINE_AWK"'
-    NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dm[o["id"]] = o["domain"] } next }
-    /^## In flight/ { sec = "inflight"; next }
-    /^## Queued/    { sec = "queued";   next }
-    /^## Done/      { sec = "done";     next }
-    /^- \[[ x]\] /  {
-      ac_doneline($0, o)
-      d = o["domain"]
-      if (d == "" && o["epic"] != "") d = dm[o["epic"]]
-      c = o["contract"]
-      gsub(/\t/, " ", c)
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sec, o["id"], o["terminal"], o["epic"], o["blockers"], o["blockers_malformed"], o["hold"], o["hold_malformed"], c, d, o["hold_until"]
-    }
-  ' "$backlog" "$backlog"
-}
-
-report_lint() {
-  # One WARN line per contract violation across the QUEUED rows, printed before
-  # the report body. A judge, never a gate: an invalid token must be VISIBLE
-  # at the scheduler while the row stays schedulable - enforcement belongs to
-  # ac-brief.sh's escalation gate, which reads the same lint.
-  printf '%s\n' "$1" | awk 'BEGIN { FS = "\t" } $1 == "queued" && $9 != "" { printf "%s\t%s\n", $2, $9 }' \
-    | while IFS="$(printf '\t')" read -r lid lcon; do
-        ac_contract_lint "$lcon" | while IFS= read -r v; do
-          [ -n "$v" ] || continue
-          printf 'WARN   %s contract: %s\n' "$lid" "$v"
-        done
-      done
-}
-
-cmd_report() {
-  local snap
-  snap="$(snapshot)"
-  report_lint "$snap"
-  printf '%s\n' "$snap" | awk -v cap="$cap" -v today="$(date +%Y-%m-%d)" '
-    BEGIN { FS = "\t" }
-    {
-      sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; dom = $10; contract = $9
-      # A DATED hold releases itself: HELD before its date, READY on and after
-      # it (docs/backlog.md). ISO dates compare correctly as strings.
-      if (hold != "" && $11 != "" && $11 <= today) hold = ""
-      state[id] = sec
-      mark[id] = marker
-      if (sec == "inflight" && epic != "" && marker != "epic") flying[epic]++
-      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad; qcon[id] = contract; qdom[id] = dom; quntil[id] = $11 }
-    }
-    END {
-      for (i = 1; i <= n; i++) {
-        id = qids[i]
-        # A line carrying a blocked-by token the pinned grammar did not accept
-        # has a dependency nobody can read, and an unreadable one may never
-        # read as none: the blockers below would let it READY, which is how a
-        # one-character slip authorized starting a story whose blocker still
-        # flies. Named here, never scheduled, until the line is fixed.
-        if (qbad[id] != "") {
-          printf "STUCK  %s blocked-by malformed - fix the line (docs/backlog.md: `blocked-by: id1,id2 - reason`)\n", id
-          continue
-        }
-        # A captain hold - well-formed or mis-typed, wherever it sits among
-        # the `[...]` groups on the line - refuses to offer the row, same
-        # fail-closed direction as blocked-by malformed above; it never falls
-        # through to a blocker/READY check.
-        if (qholdbad[id] != "") {
-          printf "HELD   %s hold malformed - fix the line: needs `[@held]` exactly, positioned in the leading run of `[...]` groups right after the id, or wrapped in backticks if it is only a mention (docs/backlog.md)\n", id
-          continue
-        }
-        if (qhold[id] != "") {
-          if (quntil[id] != "")
-            printf "HELD   %s - captain hold until %s; it releases itself on that date (docs/backlog.md)\n", id, quntil[id]
-          else
-            printf "HELD   %s - captain hold; release is a captain act (docs/backlog.md)\n", id
-          continue
-        }
-        # An item with no blockers and no epic is trivially READY - it has no
-        # blocker to wait on and no cap to sit under - so it falls through to
-        # the same print. The auto-fly rule is defined over this report, and
-        # it cannot start what the report never names.
-        stuck = ""; waiting = 0
-        if (qblock[id] != "") {
-          m = split(qblock[id], bs, ",")
-          for (j = 1; j <= m; j++) {
-            b = bs[j]
-            if (!(b in state)) { stuck = stuck sprintf("STUCK  %s blocker %s missing\n", id, b); continue }
-            if (mark[b] == "failed" || mark[b] == "abandoned") { stuck = stuck sprintf("STUCK  %s blocker %s %s\n", id, b, mark[b]); continue }
-            if (state[b] != "done") waiting = 1
-          }
-        }
-        if (stuck != "") { printf "%s", stuck; continue }
-        if (waiting) continue
-        if (qepic[id] != "" && flying[qepic[id]] + started[qepic[id]] >= cap) continue
-        started[qepic[id]]++
-        # The contract rides the READY line as INFORMATION - a display, never a
-        # scheduling condition: an invalid token must not stop the row, it must
-        # be visible (the lint lines above the report are the judge).
-        # A DOMAIN row is startable ONLY by promoting its domainchief - the
-        # auto-fly rule is defined over this report, so the line must say the
-        # start action or the chief flies it as an ordinary task and bypasses
-        # the domainchief (crewdomain-token, red-team mitigation).
-        dnote = (qdom[id] != "") ? sprintf(" {domain:%s - start = promote its domainchief}", qdom[id]) : ""
-        if (qepic[id] != "" && qcon[id] != "") printf "READY  %s (epic:%s) [%s]%s\n", id, qepic[id], qcon[id], dnote
-        else if (qepic[id] != "") printf "READY  %s (epic:%s)%s\n", id, qepic[id], dnote
-        else if (qcon[id] != "") printf "READY  %s [%s]%s\n", id, qcon[id], dnote
-        else printf "READY  %s%s\n", id, dnote
-      }
-    }
-  '
-}
-
-cmd_queued() {
-  # Reuses snapshot() so the backlog grammar keeps exactly ONE owner (this
-  # file). Still a separate walk from cmd_report now that both select the same
-  # startable set: this one answers "which family could take a freed slot" in
-  # BARE IDS a consumer can pipe, so it must never emit a STUCK line -
-  # ac-teardown.sh takes `head -n1` and would name a never-startable family as
-  # the next promote candidate.
-  snapshot | awk -v cap="$cap" -v today="$(date +%Y-%m-%d)" '
-    BEGIN { FS = "\t" }
-    {
-      sec = $1; id = $2; marker = $3; epic = $4; blockers = $5; bad = $6; hold = $7; holdbad = $8; dom = $10
-      if (hold != "" && $11 != "" && $11 <= today) hold = ""
-      state[id] = sec
-      mark[id] = marker
-      if (sec == "inflight" && epic != "" && marker != "epic") flying[epic]++
-      if (sec == "queued") { qids[++n] = id; qepic[id] = epic; qblock[id] = blockers; qbad[id] = bad; qhold[id] = hold; qholdbad[id] = holdbad; qdom[id] = dom }
-    }
-    END {
-      for (i = 1; i <= n; i++) {
-        id = qids[i]
-        # Same refusal as cmd_report, and this selector carries no STUCK/HELD
-        # line to say so: a malformed or held row is simply never offered.
-        if (qbad[id] != "") continue
-        if (qhold[id] != "" || qholdbad[id] != "") continue
-        # DOMAIN rows are never offered here (crewdomain-token): this list
-        # feeds auto-fly and teardown next-promote, and a domain row starts
-        # only by promoting its domainchief - offering it would double-
-        # schedule the family past the domain binding.
-        if (qdom[id] != "") continue
-        startable = 1
-        m = split(qblock[id], bs, ",")
-        for (j = 1; j <= m; j++) {
-          b = bs[j]
-          # An unknown blocker leaves state[b] empty - never "done" - so the
-          # missing/failed/abandoned cases all fall out here.
-          if (state[b] != "done" || mark[b] == "failed" || mark[b] == "abandoned") { startable = 0; break }
-        }
-        if (!startable) continue
-        if (qepic[id] != "" && flying[qepic[id]] + started[qepic[id]] >= cap) continue
-        started[qepic[id]]++
-        print id
-      }
-    }
-  '
-}
-
-cmd_watch_set() {
-  # The roomchief's read-only AC_WATCH_ONLY set (header owns the contract):
-  # <fam> plus its IN-FLIGHT story family ids, reusing snapshot()'s epic/story
-  # grammar so the backlog stays the single owner of it. A non-epic family has
-  # no story line naming it, so the set is EXACTLY <fam> - byte-identical to the
-  # single-family arming (behavior: epic-roomchief-watch-only-omits-story-ids).
-  local fam="${1:-}"
-  [ -n "$fam" ] || ac_die "usage: ac-ready.sh watch-set <family>"
-  # `in`, never ==: awk compares numeric-looking ids as numbers (07 == 7).
-  snapshot | awk -F'\t' -v fam="$fam" '
-    BEGIN { w[fam] }
-    $1 == "inflight" && ($4 in w) { set = set "," $2 }
-    END { printf "%s%s\n", fam, set }
-  '
-}
-
-cmd_validate() {
-  local epic="${1:-}"
-  [ -n "$epic" ] || ac_die "usage: ac-ready.sh validate <epic-id>"
-  local snap stories line rc=0
-  snap="$(snapshot)"
-  stories="$(awk -v e="$epic" '$0 ~ "^- \\[[ x]\\] " e " \\[EPIC\\]" && match($0, /stories: [a-zA-Z0-9_,-]+/) { print substr($0, RSTART + 9, RLENGTH - 9) }' "$backlog" | head -n 1)"
-  [ -n "$stories" ] || ac_die "no [EPIC] line with a stories: list for '$epic'"
-  local s
-  for s in ${stories//,/ }; do
-    case "$s" in
-      *-spec|*-arch|*-plan|*-review|*-ship|*-design|*-chief|*-r[0-9]|*-r[0-9][0-9])
-        printf 'INVALID id %s: collides with a reserved stage suffix\n' "$s"; rc=1 ;;
-      *[!a-zA-Z0-9_-]*)
-        printf 'INVALID id %s: bad characters\n' "$s"; rc=1 ;;
-    esac
-    # `in`, never ==: awk compares numeric-looking ids as numbers (01 == 1).
-    printf '%s\n' "$snap" | awk -F'\t' -v s="$s" 'BEGIN { w[s] } $2 in w { found = 1 } END { exit !found }' \
-      || { printf 'MISSING story line for %s\n' "$s"; rc=1; }
-  done
-  # Acyclicity (Kahn) over blocked-by edges among this epic's stories.
-  printf '%s\n' "$snap" | awk -F'\t' -v list="$stories" '
-    BEGIN {
-      n = split(list, ss, ",")
-      for (i = 1; i <= n; i++) member[ss[i]] = 1
-    }
-    member[$2] && $5 != "" {
-      m = split($5, bs, ",")
-      for (j = 1; j <= m; j++) if (member[bs[j]]) { edge[bs[j] "->" $2] = 1; indeg[$2]++ }
-    }
-    END {
-      removed = 1
-      while (removed) {
-        removed = 0
-        for (s in member) {
-          if (done[s] || indeg[s] > 0) continue
-          done[s] = 1; removed = 1
-          for (e in edge) {
-            split(e, p, "->")
-            if (p[1] == s && !cut[e]) { cut[e] = 1; indeg[p[2]]-- }
-          }
-        }
-      }
-      for (s in member) if (!done[s]) { print "CYCLE involving " s; bad = 1 }
-      exit bad
-    }
-  ' || rc=1
-  [ "$rc" = 0 ] && printf 'map OK: %s stories, DAG acyclic\n' "$(printf '%s' "$stories" | awk -F, '{print NF}')"
-  return "$rc"
-}
+# overlap reads the home only inside command substitutions, which swallow its
+# refusal - without this a homeless check would print nothing, the clean answer.
+( ac_home >/dev/null )
 
 cmd_overlap_semantic() {
   # overlap --semantic '<order text>' - the System One fold-or-mint proposer
@@ -485,10 +258,6 @@ cmd_overlap() {
 }
 
 case "${1:-}" in
-  "") cmd_report ;;
-  queued) shift; cmd_queued "$@" ;;
-  watch-set) shift; cmd_watch_set "$@" ;;
-  validate) shift; cmd_validate "$@" ;;
   overlap) shift; cmd_overlap "$@" ;;
   *) awk 'NR>1{if(!/^#/)exit; print}' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

@@ -1156,10 +1156,12 @@ unset _ac_dl
 # --- delivery-contract lint ----------------------------------------------------
 # ac_contract_lint <contract-content> - one violation per line, empty output
 # when clean, exit 0 always (a judge, not a gate). The VALUE vocabulary lives
-# HERE, the one judge - src/backlog.ts extracts shape only. Also flags the
-# two combinations AGENTS.md section 5 already outlaws (flow:staged with
-# rev:no; mode:crew-ship with rev:no) so a contract contradicting the law is
-# loud at the scheduler instead of surprising the pipeline.
+# HERE - src/backlog.ts extracts shape only, and the scheduler's copy
+# (src/lib.ts contractLint) is held to this one by tests/ts/lib.test.ts.
+# Also flags the two combinations AGENTS.md section 5 already outlaws
+# (flow:staged with rev:no; mode:crew-ship with rev:no) so a contract
+# contradicting the law is loud at the scheduler instead of surprising the
+# pipeline.
 ac_row_contract_for_id() {
   # ac_row_contract_for_id <id> <backlog-file> - the delivery-contract group
   # governing <id>: the exact row when one exists, else the FAMILY row (a

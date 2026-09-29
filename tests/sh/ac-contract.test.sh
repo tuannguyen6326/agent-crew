@@ -117,8 +117,8 @@ case "$out" in
   *"WARN   tokened-row"*) fail "a clean contract draws no WARN" ;;
 esac
 
-# A TAB may join contract tokens (src/backlog.ts), and ac-ready's snapshot is
-# TAB-separated: a raw TAB there shifted every later column, so the row read as
+# A TAB may join contract tokens (src/backlog.ts). When the scheduler's snapshot
+# was TAB-separated, a raw TAB shifted every later column, so the row read as
 # a domain row, left `queued`, and went unlinted past the TAB.
 perl -0777 -pi -e 's/(## Queued\n)/$1- [ ] tab-row [src:cap\tqa:maybe] - a TAB-joined contract (repo: x)\n/' "$backlog"
 out="$("$BIN/ac-ready.sh")"

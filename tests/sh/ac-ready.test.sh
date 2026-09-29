@@ -123,6 +123,12 @@ printf -- '- [ ] refund - refund API; epic:payv2 blocked-by: recon - CYCLE test\
 rc=0; out="$("$BIN/ac-ready.sh" validate payv2)" || rc=$?
 assert_contains "$out" "CYCLE" "cycle detected"
 [ "$rc" != 0 ] || fail "cyclic map must exit nonzero"
+# A blocker named twice is one edge: counted twice, it kept the story's
+# in-degree above zero once its only blocker was removed - a CYCLE with no cycle.
+perl -pi -e 's/blocked-by: recon - CYCLE test$/blocked-by: checkout,checkout - named twice/' "$B"
+rc=0; out="$("$BIN/ac-ready.sh" validate payv2)" || rc=$?
+assert_eq "$out" "map OK: 4 stories, DAG acyclic" "a blocker named twice is one edge, never a cycle"
+assert_eq "$rc" "0" "a map whose only oddity is a repeated blocker validates"
 
 # overlap: the intake file-interlock check - LANDED (<7d ledger hits with the
 # prior family's room), INFLIGHT (crew/* branch diffs vs the default branch),
@@ -152,6 +158,8 @@ assert_contains "$out" "INFLIGHT  src/app.js on crew/wip (repo: shop)" "in-fligh
 assert_contains "$out" "BRIEF  src/app.js named in in-flight data/livetask/brief.md" "in-flight brief naming the path reported"
 case "$out" in *deadtask*) fail "a brief with no live meta is not in flight" ;; esac
 assert_eq "$("$BIN/ac-ready.sh" overlap docs/clean.md)" "" "clean path prints nothing"
+# Silence means clean, so a check that cannot find its home must refuse.
+assert_fails_with "AC_HOME is not set" -- env -u AC_HOME "$BIN/ac-ready.sh" overlap src/app.js
 
 # The room the overlap hit names is REQUIRED READING (intake-triage skill), and
 # an overlapping family has landed - the exact class bin/ac-archive.sh moves.
@@ -415,6 +423,14 @@ if [ "$(id -u)" != 0 ]; then
   chmod 644 "$AC_HOME/records/backlog.md"
   [ "$rc" != 0 ] || fail "an unreadable ledger must fail the report, never print an empty one"
 fi
+
+# The grammar is byte-exact ASCII, so a byte that is not UTF-8 (a Latin-1 e
+# acute) is prose like any other - under a UTF-8 locale it aborted the walk.
+printf '## In flight\n\n## Queued\n- [ ] q1 - a plain row (repo: alpha)\n- [ ] q2 - caf\351 menu (repo: alpha)\n\n## Done\n' \
+  >"$AC_HOME/records/backlog.md"
+rc=0; out="$(LC_ALL=en_US.UTF-8 "$BIN/ac-ready.sh")" || rc=$?
+assert_eq "$rc:$out" "0:READY  q1"$'\n'"READY  q2" "a non-UTF-8 byte in a row never aborts the report"
+assert_eq "$(LC_ALL=en_US.UTF-8 "$BIN/ac-ready.sh" queued)" "q1"$'\n'"q2" "... nor cuts the queued set short"
 
 # overlap --semantic: the System One fold-or-mint proposer (config/jev). One
 # choice question per OPEN row over the order text, all in one request; under

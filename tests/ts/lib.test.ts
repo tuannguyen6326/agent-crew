@@ -5,7 +5,7 @@ import { test, expect, beforeEach, afterAll } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, existsSync, symlinkSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { envHome, configRead, stateDir, enterCaller, bunChild, sha256File } from "../../src/lib.ts";
+import { envHome, configRead, stateDir, enterCaller, bunChild, sha256File, contractLint } from "../../src/lib.ts";
 
 const LIB = join(import.meta.dir, "..", "..", "src", "lib.ts");
 
@@ -217,6 +217,27 @@ test("sha256File throws where ac_sha256_file prints no hash", () => {
   });
   expect(bash.stdout.toString()).toBe("");
   expect(() => sha256File(missing)).toThrow();
+});
+
+// ac-task.sh and ac-brief.sh still judge a contract through ac_contract_lint,
+// so the scheduler's copy must answer exactly what the shell does. No glob
+// characters: the shell's unquoted walk would expand them against the cwd,
+// and no parsed contract token can hold one (src/backlog.ts, contract).
+test("contractLint answers exactly what ac_contract_lint prints", () => {
+  const binDir = join(import.meta.dir, "..", "..", "bin");
+  const contracts = [
+    "", "   ", "src:cap flow:direct mode:local-only rev:no qa:no", "src:bogus flow:sideways mode:yolo rev:maybe qa:perhaps",
+    "promote:no", "promote:always", "flow:staged rev:no", "mode:crew-ship rev:no", "flow:staged\trev:no\nmode:crew-ship",
+    "flow:staged rev:no flow:direct", "rev:no rev:yes mode:crew-ship", "src:", "noColon", "a:b:c", "flow:x:y",
+    ":lead", "unknown:key src:crew", "  src:gh  qa:yes ",
+  ];
+  for (const c of contracts) {
+    const bash = Bun.spawnSync(["bash", "-c", '. "$1/ac-lib.sh"; ac_contract_lint "$2"', "--", binDir, c], {
+      env: { PATH: process.env.PATH! },
+    });
+    expect(bash.exitCode).toBe(0);
+    expect([c, contractLint(c).map((v) => `${v}\n`).join("")]).toEqual([c, bash.stdout.toString()]);
+  }
 });
 
 test("enterCaller moves to the caller's cwd, its first argument", () => {

@@ -85,7 +85,7 @@ render() {
     # [abandoned] row is terminal but not done (same-done-miscount-in-three-
     # more-surfaces; two-dashboards lead, ac-dash-crew-heading-swallows-
     # verifiers). Reuses ac_doneline's terminal field (src/backlog.ts via
-    # AC_DONELINE_AWK), the same position-pinned parser ac-ready.sh's
+    # AC_DONELINE_AWK), the same position-pinned parser src/ready.ts's
     # snapshot() uses, never a second marker parser.
     awk "$AC_DONELINE_AWK"'
       /^## In flight/ { s = "f"; next }
