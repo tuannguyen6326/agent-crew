@@ -159,6 +159,12 @@ transcript "$low" 110000
 out="$(hook "$AC_HOME" "$p1low" AC_SOLO=)"
 assert_contains "$(jq -r .systemMessage <<<"$out")" "/compact" "a compacted session is advised again one step up"
 
+# 8f. A mark that is not a number (a torn write) never silences a session.
+mkdir -p "$AC_HOME/state/.compact-advise"
+printf 'x\n' >"$AC_HOME/state/.compact-advise/s-12"
+out="$(hook "$AC_HOME" "$(jq -c '.session_id = "s-12"' <<<"$payload")" AC_SOLO=)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "/compact" "a corrupt mark reads as no mark"
+
 # 10. config/compact-auto=on: a session that owns a meta (a roomchief) gets
 #     /compact typed into its own pane once the pane is idle - detached, so
 #     the Stop hook never waits on it. Everything else keeps the hint only.

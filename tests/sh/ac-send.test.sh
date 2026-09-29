@@ -159,6 +159,12 @@ assert_contains "$(cat "$AC_HOME/state/pay.status")" "routed: fix the interest r
 "$BIN/ac-send.sh" pay --key Escape >/dev/null
 assert_eq "$(grep -c 'chief-order' "$FAKE_HERDR/panes/pP1.buf" | tr -d ' ')" "1" "--key adds no marker"
 
+# An order that merely starts with /word is typed behind the marker, so it is an
+# ordinary typed line that answers the deputy's captain-wait.
+touch "$AC_HOME/state/.captain-wait-pay"
+"$BIN/ac-send.sh" pay '/review the ledger diff' >/dev/null
+assert_no_file "$AC_HOME/state/.captain-wait-pay" "a marked order starting with /word still clears the stamp"
+
 # Every other kind is byte-unchanged: a marker leaking into ordinary crewmate
 # steering would tell a crewmate to answer on a channel it does not own.
 for k in ship scout roomchief; do

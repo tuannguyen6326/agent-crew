@@ -84,6 +84,7 @@
 #
 # A delivered steer - text or key - also clears the pane's CAPTAIN-WAIT STAMP (contract:
 # ac-backend.sh) - the steer IS the answer the stamped pane was parked on;
+# a slash command answers nothing and leaves the stamp standing;
 # a fleet-stamped pane is NOT refused as blocked (the refusal above targets
 # real interactive prompts only).
 #
@@ -171,10 +172,6 @@ if [ "${1:-}" = "--key" ]; then
 else
   text="${1:-}"
   [ -n "$text" ] || ac_die "refusing to send an empty message"
-  # A slash command (`/compact`) runs locally: claude never records it as a
-  # typed turn, so its arrival has nothing to compare against, and it answers
-  # no captain-wait. A path-leading steer (/tmp/x ...) is not one.
-  [[ "$text" =~ ^/[a-z][a-z0-9:_-]*( |$) ]] && slash=1
   if [ "$force" = 0 ] && backend_agent_blocked "$id"; then
     ac_die "$id is BLOCKED on an interactive prompt - text would feed the dialog and its Enter would ACCEPT it (digit options can grant a permanent always-allow). Peek it (bin/ac-peek.sh $id), answer deliberately with ac-send.sh $id --key <key>, or override with ac-send.sh $id --force '<text>'"
   fi
@@ -211,6 +208,11 @@ else
     text="[chief-order home=$parent_home deputy=$id] $text"
     marked=1
   fi
+  # A slash command (`/compact`) runs locally: claude never records it as a
+  # typed turn, so its arrival has nothing to compare against, and it answers
+  # no captain-wait. Read off the DELIVERED line, so a marked order is never
+  # one; a path-leading steer (/tmp/x ..., /etc: ...) is not one either.
+  [[ "$text" =~ ^/[a-z][a-z0-9_-]*(:[a-z0-9_-]+)?( |$) ]] && slash=1
   # Both failures refuse, but they are DIFFERENT facts and the captain's next
   # move differs (contract: ac-backend.sh delivery verification) - a strand is
   # resubmitted, an unreadable pane is peeked at first.

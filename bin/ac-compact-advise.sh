@@ -166,7 +166,8 @@ if [ "${1:-}" = --hook ]; then
   [ "$tokens" -ge "$MIN_TOKENS" ] || exit 0
   step="$(awk -v t="$tokens" -v w="$(window)" 'BEGIN { printf "%d", t / w * 20 }')"
   mark="$(ac_state_dir)/.compact-advise/$sid"
-  last="$(cat "$mark" 2>/dev/null || printf -- -1)"
+  last="$(cat "$mark" 2>/dev/null || true)"
+  case "$last" in ''|*[!0-9]*) last=-1 ;; esac
   if [ "$step" -lt "$last" ]; then
     printf '%s\n' "$step" >"$mark"
     exit 0
