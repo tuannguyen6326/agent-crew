@@ -72,12 +72,46 @@ export function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-export function stateDir(): string {
+function homeSubdir(name: string): string {
   if (!process.env.AC_HOME)
     die("AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one");
-  const dir = join(envHome(), "state");
+  const dir = join(envHome(), name);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+export function stateDir(): string {
+  return homeSubdir("state");
+}
+
+export function recordsDir(): string {
+  return homeSubdir("records");
+}
+
+// ac_contract_lint's twin, one violation per entry. ac-task.sh add still calls
+// the shell original, so the value vocabulary lives in two places and
+// tests/ts/lib.test.ts holds this copy to that one.
+export function contractLint(c: string): string[] {
+  const out: string[] = [];
+  let flow = "", mode = "", rev = "";
+  const want = (key: string, val: string, ok: string, why = ok) => {
+    if (!ok.split("|").includes(val)) out.push(`${key}:${val} invalid - want ${why}`);
+  };
+  for (const tok of c.split(/[ \t\n]+/)) {
+    if (tok === "") continue;
+    const i = tok.indexOf(":");
+    const key = i < 0 ? tok : tok.slice(0, i);
+    const val = tok.slice(i + 1);
+    if (key === "src") want(key, val, "cap|chief|mon|gh|crew|learn");
+    else if (key === "flow") want(key, (flow = val), "direct|staged");
+    else if (key === "mode") want(key, (mode = val), "crew-ship|direct-pr|local-only|feature-pr");
+    else if (key === "rev") want(key, (rev = val), "yes|no");
+    else if (key === "qa") want(key, val, "yes|no");
+    else if (key === "promote") want(key, val, "no", "no (always is the default and is never written)");
+  }
+  if (flow === "staged" && rev === "no") out.push("flow:staged with rev:no - staged review is mandatory (AGENTS.md section 5)");
+  if (mode === "crew-ship" && rev === "no") out.push("mode:crew-ship with rev:no - crew-ship review is mandatory (AGENTS.md section 5)");
+  return out;
 }
 
 // The module's half of bin/ac-bun.sh: bun started in the distro root, and the

@@ -89,9 +89,11 @@ space or TAB before the first or after the last (`[ src:cap]` and
 shape is the discriminator: a leading-run group with any non-`key:value`
 content keeps its existing class (provenance prose, `[EPIC]`, `[@held]`).
 `src/backlog.ts` (`contract`) is the ONE parser; `ac_contract_lint`
-(ac-lib.sh) the one value judge; `bin/ac-ready.sh` displays the group on
-READY lines and WARNs on violations - display and judgment, never a
-scheduling condition; the enforcement point is `ac-brief.sh`'s escalation
+(ac-lib.sh) the value judge, which the scheduler's `contractLint`
+(`src/lib.ts`) twins under a differential test; `bin/ac-ready.sh`
+displays the group on READY lines and WARNs on violations - display and
+judgment, never a scheduling condition; the enforcement point is
+`ac-brief.sh`'s escalation
 gate (section 5). `src` values: `cap` (captain order), `chief`
 (chief-minted), `mon` (monitor), `gh` (github), `crew` (routed up),
 `learn` (Learning/Curate). A heavy token (`flow:staged`, `mode:crew-ship`,
