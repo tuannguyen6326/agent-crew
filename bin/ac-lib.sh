@@ -2414,7 +2414,9 @@ ac_worktree_status() {
   sparse="$(git -C "$1" config --get core.sparseCheckout 2>/dev/null || printf 'false')"
   while IFS= read -r -d '' rec; do
     tag="${rec%% *}"; path="${rec#? }"
-    case "$tag" in [a-z]|S) ;; *) continue ;; esac
+    # [[:lower:]], never [a-z]: in a UTF-8 locale bash 3.2's range also matches
+    # `H`, the tag of every ordinary tracked file.
+    case "$tag" in [[:lower:]]|S) ;; *) continue ;; esac
     f="$1/$path"
     read -r mode blob _ <<<"$(git -C "$1" --literal-pathspecs ls-files -s -z -- "$path" 2>/dev/null | tr '\0' '\n' | head -n 1)"
     [ "$mode" != 160000 ] || continue

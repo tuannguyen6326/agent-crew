@@ -108,6 +108,16 @@ git -C "$wt2" update-index --skip-worktree -- "$nl"
 rm "$wt2/$nl"
 case "$("$BIN/ac-tree.sh" list --repo "$repo")" in *"leased dirty"*) ;; *) fail "an included skip-worktree deletion is work whatever its name" ;; esac
 git -C "$wt2" update-index --no-skip-worktree -- "$nl"
+# Only a file whose hidden bit is set is re-hashed, whatever the locale: in a
+# UTF-8 locale a bash [a-z] range also matches `ls-files -v`'s `H`, the tag of
+# every ordinary tracked file, and each one then costs its own git calls.
+gcount="$TMP/git-count"; mkdir -p "$gcount"
+printf '#!/usr/bin/env bash\ncase " $* " in *" hash-object "*) printf x >>"%s" ;; esac\nexec "%s" "$@"\n' \
+  "$TMP/hash-object.calls" "$(command -v git)" >"$gcount/git"
+chmod +x "$gcount/git"
+: >"$TMP/hash-object.calls"
+LC_ALL=en_US.UTF-8 PATH="$gcount:$PATH" "$BIN/ac-tree.sh" list --repo "$repo" >/dev/null
+assert_eq "$(wc -c <"$TMP/hash-object.calls" | tr -d ' ')" "0" "a tree with no hidden-bit file hashes nothing, in a UTF-8 locale too"
 git -C "$wt2" checkout -- "$nl"
 # A git older than 2.41 has no `sparse-checkout check-rules` (it exits 129):
 # then the sparse flag alone decides, as it did before, rather than every
