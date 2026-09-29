@@ -5,7 +5,7 @@
 // its wire. Awk sites reach it through the AC_DONELINE_AWK binding in
 // bin/ac-lib.sh. tests/sh/ac-backlog.test.sh holds this parser to
 // tests/fixtures/doneline.awk, the awk parser it replaced, frozen except where
-// a captain ruling changes the grammar - the ruling changes both, in one diff.
+// the grammar itself changes - such a change edits both, in one diff.
 //
 // Usage (the caller's cwd arrives first, from ac_bun_exec):
 //   ac-backlog.sh fields <file|->
@@ -36,7 +36,7 @@
 // after a final LF dropped, and CR and an unterminated last line kept; a NUL
 // byte ends its record and drops the rest of that line, as onetrue awk does.
 //
-// BYTE-EXACT ASCII (captain, 2026-09-27): the grammar is what onetrue awk
+// BYTE-EXACT ASCII: the grammar is what onetrue awk
 // does under LC_ALL=C. Bytes in, bytes out - the ledger is read and written as
 // latin1, so every byte is one character and a byte past 0x7f matches no
 // class below except a negated one. The id and the terminal token are split on
@@ -176,7 +176,7 @@
 //                 nothing bounds its left side: `preblocked-by: a` reads `a`.
 //   blockers_malformed - "1" when the line carries a `blocked-by`, in any
 //                 case and with nothing bounding either side, outside the one
-//                 run blockers read (captain TN 2026-09-28): `blocked-byz`,
+//                 run blockers read: `blocked-byz`,
 //                 `re-blocked-by: a,` and a second run before or after the
 //                 read one all trip, so blockers can be non-empty beside it
 //                 and a consumer checks this field first. Slips are detected

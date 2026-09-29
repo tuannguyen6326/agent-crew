@@ -104,8 +104,8 @@ if [ -s "$TMP/hang.pid" ]; then kill "$(cat "$TMP/hang.pid")" 2>/dev/null || tru
 assert_contains "$(cat "$TMP/piped2.out")" "-- fleet --" "a merged capture still completes past the hung sweep"
 
 # (1d) The warning's remedy is a command the reader pastes into a shell, so a
-# project path holding a space (captain 2026-09-28: such fleet homes are
-# supported) must reach that shell as ONE word.
+# project path holding a space (such fleet homes are supported) must reach
+# that shell as ONE word.
 sp_home="$TMP/sp ace home"
 mkdir -p "$sp_home/state" "$sp_home/config" "$sp_home/records" "$sp_home/data" "$sp_home/projects/proj1/.crew"
 git init -q "$sp_home/projects/proj1"

@@ -6,10 +6,10 @@
 # sites cut over to this one, over the seed and NUL-bearing rows below plus
 # 20,000 lines tests/ts/backlog-gen.ts derives from a fixed seed.
 #
-# The oracle stays frozen against drift, not against the captain: a ruling that
-# changes the grammar changes the oracle the same way in the same diff (TN
-# 2026-09-28: a `blocked-by` run the strict read did not consume is MALFORMED
-# wherever it sits), so Leg A keeps comparing two readings of ONE grammar.
+# The oracle stays frozen against drift, not against the grammar itself: a
+# grammar change changes the oracle the same way in the same diff (a
+# `blocked-by` run the strict read did not consume is MALFORMED wherever it
+# sits), so Leg A keeps comparing two readings of ONE grammar.
 #
 # Leg C is local only: `bash tests/sh/ac-backlog.test.sh <ledger>...` runs every
 # ledger named on the command line through Leg A as well, so a live

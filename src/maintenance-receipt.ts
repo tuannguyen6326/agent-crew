@@ -65,7 +65,7 @@
 //     lib's header names its minters); any other value, recognised or not,
 //     owes it over the receipt's own bytes.
 //
-// BYTE-EXACT C (captain 2026-09-28): save the divergences listed below, this is
+// BYTE-EXACT C: save the divergences listed below, this is
 // what the bash did under LC_ALL=C with onetrue awk, sed and grep -F. Files and
 // stdin are read as latin1, so a byte is one character, <label> is matched as
 // the bytes it arrived as, and output is written back the same way.

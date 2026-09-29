@@ -306,7 +306,7 @@ assert_contains "$out" "FLAG barep: registered but projects/barep is absent" \
   "a registry line with no bracket is audited"
 case "$out" in *"FLAG yolop"*) fail "a live [+yolo] project is not flagged: +yolo is not a delivery mode" ;; esac
 case "$out" in *"FLAG a:"*) fail "a prose bullet is never read as a registry line" ;; esac
-# Read byte-wise whatever the caller's locale (captain 2026-09-28): under UTF-8
+# Read byte-wise whatever the caller's locale: under UTF-8
 # the host awk stops at an invalid byte, and the audit must not pass on the rest.
 printf '# Projects\n\n- cafep [local-only] - caf\351 gone (added 2026-02-05)\n- afterp - absent, after the byte (added 2026-02-06)\n' \
   >"$records/projects.md"

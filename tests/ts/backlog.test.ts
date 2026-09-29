@@ -81,7 +81,7 @@ test("blockers are read strictly, and every slip the strict read leaves is block
     only(line, { id: "b1", blockers_malformed: "1" });
 });
 
-// Captain TN 2026-09-28: a run the strict read did not consume reads
+// A run the strict read did not consume reads
 // MALFORMED wherever it sits, after a word character or after a read run.
 test("a blocked-by run outside the one blockers consumed is blockers_malformed wherever it sits", () => {
   only("- [ ] b1 - x re-blocked-by: a,", { id: "b1", blockers_malformed: "1" });

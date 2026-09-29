@@ -1866,7 +1866,7 @@ assert_eq "$(git -C "$obb_wt" merge-base HEAD "$release_sha")" "$release_sha" \
 "$BIN/ac-teardown.sh" obb1 --force >/dev/null 2>&1
 git -C "$repo" branch -D release >/dev/null 2>&1
 
-# Epic-branch fence on the orca lease (captain ruling TN 2026-09-28): a
+# Epic-branch fence on the orca lease: a
 # fenced story is cut from its recorded integration branch under ac-tree.sh
 # get's own existence rule, never from the live checkout, and a missing
 # branch or a --base-branch naming another one refuses before any lease.

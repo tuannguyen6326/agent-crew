@@ -434,7 +434,7 @@ EOF
 } | ac_maintenance_read_evidence "$vnrun/manifest" "$vnrun/plan.json" \
   || fail "a non-ASCII payload must not set a floor its own best line cannot reach"
 
-# BYTE-EXACT C whatever the caller's locale (captain 2026-09-28). Under UTF-8 the
+# BYTE-EXACT C whatever the caller's locale. Under UTF-8 the
 # trim's [[:space:]] also eats a U+00A0, and the host's awk, sed and grep refuse
 # a quote holding an invalid byte instead of matching it.
 nbsp="$(printf '\302\240')"

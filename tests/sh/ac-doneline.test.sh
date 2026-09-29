@@ -135,7 +135,7 @@ bwant "nospace||1" "a missing space reads MALFORMED, not 'no blockers'"
 bwant "twospace||1" "a double space reads MALFORMED"
 bwant "upper||1" "a capitalised Blocked-by reads MALFORMED"
 bwant "listspace||1" "a space inside the id list reads MALFORMED, not a trailing empty id"
-# Captain TN 2026-09-28: a run the strict read did not consume is MALFORMED
+# A run the strict read did not consume is MALFORMED
 # wherever it sits, so a longer word ENDING in the token trips it too - a
 # fail-visible false alarm, never a silently READY slip like `re-blocked-by: a,`.
 bwant "unblocked||1" "prose containing 'unblocked-by' reads MALFORMED, like any unread run"

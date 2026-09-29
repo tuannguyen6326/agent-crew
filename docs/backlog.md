@@ -119,7 +119,7 @@ the ONE parser.
 TAB or end of line (conventionally ` - <reason>`). Any other `blocked-by` on
 the line, in any case and wherever it sits - after a word character
 (`re-blocked-by: a,`), or beside a run read in that shape - makes the row
-MALFORMED: `STUCK`, never `READY` (captain TN 2026-09-28).
+MALFORMED: `STUCK`, never `READY`.
 Story membership is the `epic:<epic-id>`
 token on the story line - never an id prefix. FEATURE membership is the
 `feature:<name>` token in the same anywhere-matched shape (feature-branch-mech,

@@ -102,7 +102,7 @@ case "$out" in *"READY  slip"*) fail "a malformed blocked-by line must never rea
 assert_contains "$out" "STUCK  slip blocked-by malformed" "the report names the malformed row"
 case "$("$BIN/ac-ready.sh" queued)" in *slip*) fail "the queued selector must never offer a malformed row" ;; esac
 perl -ni -e 'print unless /^- \[ \] slip /' "$B"
-# Captain TN 2026-09-28: a run the strict read did not consume is MALFORMED
+# A run the strict read did not consume is MALFORMED
 # wherever it sits - after a word character, or beside a run that was read.
 perl -0777 -pi -e 's/(## Queued\n)/$1- [ ] wordslip - x (repo: shop) re-blocked-by: checkout, - trailing comma\n- [ ] tworuns - x (repo: shop) blocked-by: refund - also blocked-by: checkout\n/' "$B"
 out="$("$BIN/ac-ready.sh")"

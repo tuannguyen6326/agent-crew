@@ -1461,7 +1461,7 @@ fi
 # reads. READ-ONLY is the scout PROMPT's law and the reviewer's tree check,
 # never a sandbox: a pane lane runs its harness's interactive launch (no
 # `codex exec -s read-only`, no `-p`) and must write its own answer file, and
-# the captain accepted that trade for visible lanes (captain 2026-09-25).
+# a visible lane is worth that trade.
 # A lane gets the reviewer's own scope and intent: on round 2+ that is the
 # fix delta, plus the prior round's open findings as already raised.
 #

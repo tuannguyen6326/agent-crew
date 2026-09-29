@@ -328,7 +328,7 @@ curate_registry_lines() {
   # line in the registry grammar `- <name> [+yolo] - <desc> (added <date>)`
   # (bin/ac-project-mode.sh header). The bracket is optional, so a line is
   # recognised by the grammar position after its name (` [` or ` - `), never
-  # by the bracket alone. Byte-wise (captain 2026-09-28): under UTF-8 the host
+  # by the bracket alone. Byte-wise: under UTF-8 the host
   # awk dies at an invalid byte, and behind `< <(...)` that death reads as a
   # shorter registry.
   local registry
