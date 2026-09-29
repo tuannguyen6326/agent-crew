@@ -779,7 +779,7 @@ FENCEDEOF
   assert_contains "$(cat "$fanout_lifted")" "fam-fanout/tasks/slug1/report.md" \
     "the block is labelled with the sub-task report's own relative path"
 
-  # A fleet home whose path holds a space (captain 2026-09-28: supported) lifts
+  # A fleet home whose path holds a space (a supported home) lifts
   # the same Lessons - a report path is never split into words.
   sp_home="$TMP/sp ace home"
   mkdir -p "$sp_home/state" "$sp_home/config" "$sp_home/records" "$sp_home/data/fam-sp/implement" "$sp_home/projects"

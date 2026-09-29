@@ -108,7 +108,7 @@
 # script has an implemented arm for it IN THE MODE ASKED FOR:
 #   SESSION (no --exec, harness claude): claude, and only claude.
 #   CREWMATE (no --exec, harness codex | opencode | pi | cursor): the crewmate
-#     contract (pi and cursor on captain order - ac_harness_pane_arm).
+#     contract (pi and cursor included - ac_harness_pane_arm).
 #   ONE-SHOT (--exec): codex, claude, opencode, pi, cursor, agy - their `codex exec
 #     -s read-only` / `claude -p` / `opencode run` / `pi -p` /
 #     `cursor-agent -p --trust` forms (oneshot_launch below, which owns the
@@ -876,7 +876,7 @@ oneshot_launch() {
   # starts with: two different shapes for two different lifecycles. This
   # script's --exec arm reads the table (bin/ac-gate.sh's judge,
   # bin/ac-verify.sh's one-shot scout lanes), and src/brain.ts's synthCommand
-  # keeps a TypeScript twin of it (captain ruling 2026-09-28) that must print
+  # keeps a TypeScript twin of it that must print
   # exactly these bytes, fed the EFFORT_FLAG mapping above -
   # tests/sh/ac-brain.test.sh fails when the two part, so a form or that mapping
   # changed here must change there too. Effort is per-harness in

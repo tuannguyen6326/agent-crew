@@ -118,8 +118,8 @@
 # hash/previous review) prepended to the validated model body BYTE-FOR-BYTE.
 # `gate-context-rN.json` records the routing receipt, gate verification,
 # repository commit, and every context file path/hash. The rN artifacts
-# are immutable. Overlapping runs of one stage and round are supported (captain
-# ruling 2026-09-28): they publish under the family lock data/<family>/.gate-lock,
+# are immutable. Overlapping runs of one stage and round are supported: they
+# publish under the family lock data/<family>/.gate-lock,
 # the first to settle owns the round, and a later one exits with the
 # existing-artifact error having published nothing; a run that cannot have the
 # lock to publish exits 1 having published nothing too, and consumes no round.

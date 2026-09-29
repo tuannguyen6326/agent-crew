@@ -1950,8 +1950,8 @@ EOF
 # ============================================================================
 # 17. overlapping runs of one family, and of one stage
 # ============================================================================
-# Concurrent same-family and same-stage runs are supported (captain ruling
-# 2026-09-28): the first run to settle a round owns it and a later one fails
+# Concurrent same-family and same-stage runs are supported: the first run to
+# settle a round owns it and a later one fails
 # instead of replacing it, and the family's running marker and busy declaration
 # hold until the LAST of its runs exits. Receipts are posted before any run
 # starts: a room written mid-run fails every run reading it.

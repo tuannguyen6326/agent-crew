@@ -276,7 +276,7 @@ assert_contains "$sy3" "unavailable" "empty gather never fabricates"
 unset AC_BRAIN_SYNTH_CMD
 
 # --- synthesize's one-shot table IS oneshot_launch's ---------------------------
-# src/brain.ts keeps its own one-shot table (captain ruling 2026-09-28) and it
+# src/brain.ts keeps its own one-shot table and it
 # had drifted from bin/ac-pane-agent.sh's oneshot_launch, so every registry
 # harness must print the same bytes from both, with and without a model and an
 # effort - the effort after the one-shot arm's own mapping, which is what its
