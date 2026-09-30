@@ -124,6 +124,7 @@ Identity and local knobs (`captain`, `launch-*`, `herdr-*`) are never copied.
 
 Example: `docs/examples/crew-dispatch.json`.
 Owner: the `src/dispatch-select.ts` header (`bin/ac-dispatch-select.sh` is its entry).
+Every profile names a harness some arm can launch - a registry harness, the one-shot-only `agy`, or one with a `config/launch-<h>` template; the resolver and the dashboard editor both refuse any other name.
 
 - Top level: `rules[]` (each a prose `when`, an atomic `use` of `harness`/`model`/`effort`, and a non-empty `why`) plus a `default`.
   When the file exists, `ac-spawn.sh` refuses to guess: the chief reads `ac-dispatch-select.sh --list`, judges which `when` matches, and resolves it with `--rule <n>`.

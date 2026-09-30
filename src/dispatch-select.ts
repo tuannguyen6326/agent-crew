@@ -63,6 +63,10 @@
 // when/why, atomic use, and - for the three mandatory-default kinds - a valid
 // `default`), dies rather than falling back: a misconfigured profile is not an
 // absent one, and ignoring it would launch something other than what it says.
+// So does a resolved profile whose harness no arm can launch (lib.ts
+// harnessLaunchable: a registry or one-shot-only harness, or the home's
+// config/launch-<h>), before any line of it prints: a mistyped name would
+// otherwise resolve and die only at pane open.
 //
 // THE THIRD PANE SHAPE - `lanes` (--lanes). A flat entry IS one profile and a
 // routed entry PICKS one by judgment; a `lanes` entry says run EVERY profile it
@@ -110,7 +114,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:os";
 import { existsSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { configRead, die, enterCaller, envHome, stateDir } from "./lib.ts";
+import { HARNESSES, ONESHOT_ONLY_HARNESSES, configRead, die, enterCaller, envHome, harnessLaunchable, stateDir } from "./lib.ts";
 
 type Json = any;
 
@@ -274,6 +278,13 @@ function main(args: string[]): void {
     return refuse(`invalid JSON: ${cfg}`);
   };
   const usage = (msg: string) => refuse(`usage: ${msg}`);
+  const resolve = (p: Json): string => {
+    const line = profileLine(p);
+    const h = captured(p.harness);
+    if (!harnessLaunchable(home, h))
+      refuse(`dispatch profile harness '${h}' is neither a registry harness (${HARNESSES.join("|")}) nor a one-shot one (${ONESHOT_ONLY_HARNESSES.join("|")}), and ${home}/config/launch-${h} is no launch template`);
+    return line;
+  };
 
   const qaValidate = (c: Json) => validQaPane(field(field(c, "panes"), "qa"))
     || refuse("panes.qa must be either one static harness/model/effort profile or routed rules with non-empty when, atomic object use, non-empty why, and an optional bare default");
@@ -307,14 +318,14 @@ function main(args: string[]): void {
       if (!isFile(cfg)) refuse(`no dispatch config at ${cfg}`);
       const rule = alt(nth(field(load(false), "rules"), n - 1), null) ?? refuse(`no rule ${a2} in ${cfg}`);
       const use = field(rule, "use");
-      if (!Array.isArray(use)) return void say(profileLine(use));
+      if (!Array.isArray(use)) return void say(resolve(use));
       if (use.length === 0) refuse(`rule ${a2} has an empty use list`);
       const rr = join(stateDir(), `.dispatch-rr-${a2}`);
       let count = 0;
       try {
         count = counterValue(readFileSync(rr, "utf8"));
       } catch {}
-      say(profileLine(rrPick(use, count)));
+      say(resolve(rrPick(use, count)));
       writeFileSync(rr, `${count + 1}\n`);
       return;
     }
@@ -335,7 +346,7 @@ function main(args: string[]): void {
         if (!lanes.every((l: Json) => isObj(l) && nonBlank(l.harness))) refuse(`every lane of panes.${k} needs a harness`);
         const dup = duplicateLane(lanes);
         if (dup) refuse(`panes.${k} has a duplicate lane (${dup}) - two lanes on the same harness and model buy one perspective twice`);
-        lanes.forEach((l: Json) => say(profileLine(l)));
+        lanes.map(resolve).forEach(say);
         return;
       }
       if (hasLanes) refuse(`panes.${k} declares lanes and has no single profile to resolve - ask for them with: ac-dispatch-select.sh --pane ${k} --lanes`);
@@ -349,7 +360,7 @@ function main(args: string[]): void {
             return;
           case "--rule":
             if (args.length !== 4) usage("ac-dispatch-select.sh --pane qa --rule <number|default>");
-            return void say(profileLine(qaRuleUse(c, a4)));
+            return void say(resolve(qaRuleUse(c, a4)));
           case "--receipt": {
             if (args.length !== 4) usage("ac-dispatch-select.sh --pane qa --receipt <number|default>");
             qaRuleUse(c, a4);
@@ -360,7 +371,7 @@ function main(args: string[]): void {
             // Routed QA needs caller judgment, so an unselected lookup is
             // absent to downstream pane agents and ac-spawn.
             if (has(pane, "rules")) return;
-            return void say(profileLine(pane));
+            return void say(resolve(pane));
           default:
             usage("ac-dispatch-select.sh --pane qa [--list | --rule <number|default> | --receipt <number|default>]");
         }
@@ -374,19 +385,19 @@ function main(args: string[]): void {
             return;
           case "--rule":
             if (args.length !== 4) usage(`ac-dispatch-select.sh --pane ${k} --rule <number|default>`);
-            return void say(profileLine(routedRuleUse(c, k, a4)));
+            return void say(resolve(routedRuleUse(c, k, a4)));
           case "":
-            return void say(profileLine(routedRuleUse(c, k, "default")));
+            return void say(resolve(routedRuleUse(c, k, "default")));
           default:
             usage(`ac-dispatch-select.sh --pane ${k} [--list | --rule <number|default>]`);
         }
       }
       if (args.length !== 2) refuse("--pane operations are supported only for routed qa/gate/codereview/roomchief");
-      return void say(profileLine(pane));
+      return void say(resolve(pane));
     }
     case "": {
       const d = isFile(cfg) ? alt(field(load(false), "default"), null) : null;
-      say(d !== null ? profileLine(d) : `harness=${configRead("crew-harness", "claude")}\tmodel=\teffort=`);
+      say(d !== null ? resolve(d) : `harness=${configRead("crew-harness", "claude")}\tmodel=\teffort=`);
       return;
     }
     case "--propose": {

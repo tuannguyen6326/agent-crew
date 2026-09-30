@@ -2,9 +2,9 @@
 // scripts under src/ need, and nothing more: a helper lands here only when a
 // port calls it. Each one keeps its bash original's observable contract (the
 // same stderr shape, exit status and homeless answer), because callers of a
-// ported bin/ac-*.sh entry cannot tell which language answered them. One
-// helper is no twin: contractLint is the delivery-contract judge itself, with
-// no shell original.
+// ported bin/ac-*.sh entry cannot tell which language answered them. Two
+// helpers are no twins: contractLint is the delivery-contract judge itself,
+// and harnessLaunchable joins facts three bash arms each hold a part of.
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -66,6 +66,21 @@ export function configRead(name: string, dflt = ""): string {
   const f = join(h, "config", name);
   if (!existsSync(f) || !statSync(f).isFile()) return dflt;
   return readFileSync(f, "utf8").split("\n")[0].replace(/\u0000/g, "").replace(SHELL_TRIM, "");
+}
+
+// Copies of two bash tables - bin/ac-harness.sh's registry (ac_harness_known)
+// and the arms only ac-pane-agent.sh's oneshot_launch has - which
+// tests/ts/lib.test.ts lifts and holds these to.
+export const HARNESSES = ["claude", "codex", "opencode", "pi", "cursor"] as const;
+export const ONESHOT_ONLY_HARNESSES = ["agy"] as const;
+const BUILT_IN: readonly string[] = [...HARNESSES, ...ONESHOT_ONLY_HARNESSES];
+
+// A name some arm can launch: a registry or one-shot-only harness, or one the
+// home gives a template ac-spawn.sh would take (`[ -f config/launch-<h> ]`).
+export function harnessLaunchable(home: string, h: string): boolean {
+  if (BUILT_IN.includes(h)) return true;
+  const f = join(home, "config", `launch-${h}`);
+  return existsSync(f) && statSync(f).isFile();
 }
 
 // ac_sha256_file's twin. A file it cannot read throws, where the shell's

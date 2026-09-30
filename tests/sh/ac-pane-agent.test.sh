@@ -457,7 +457,15 @@ case "$(cat "$HDLOG")" in *"--model sonnet"*) fail "the profile model must not s
 # per round and reports status:timeout, which reads like a slow reviewer rather
 # than a misconfiguration.
 : >"$HDLOG"
+# The resolver refuses a name no arm can launch before the pane agent sees it,
+# and its reason reaches the caller.
+out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind learning --label p-typo 2>&1 || true)"
+assert_contains "$out" '"status":"error"' "an unlaunchable harness is a protocol error"
+assert_contains "$out" "harness 'fictional'" "the resolver's refusal names the harness"
+# A custom template makes it launchable, and it still has no pane arm.
+: >"$AC_HOME/config/launch-fictional"
 out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind learning --label p-arm 2>&1 || true)"
+rm -f "$AC_HOME/config/launch-fictional"
 assert_contains "$out" '"status":"error"' "an unarmed harness is a protocol error"
 assert_contains "$out" "fictional" "the refusal names the harness it will not place"
 assert_contains "$out" "claude" "the refusal names the harnesses that ARE armed"
@@ -475,6 +483,7 @@ EOF
 out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label p-bad 2>&1 || true)"
 assert_contains "$out" '"status":"error"' "a panes entry with no harness is a protocol error"
 assert_contains "$out" "codereview" "the refusal names the kind it could not resolve"
+printf '%s' "$out" | jq -e . >/dev/null || fail "a carried refusal quoting JSON keeps the event valid JSON: $out"
 case "$(cat "$HDLOG")" in *"pane run"*) fail "an unresolvable profile must place no pane" ;; esac
 rm -f "$AC_HOME/config/crew-dispatch.json"
 

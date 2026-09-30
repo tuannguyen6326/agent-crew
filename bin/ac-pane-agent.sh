@@ -774,10 +774,12 @@ if [ -z "$HFLAG" ]; then
     # misconfigured profile that quietly degraded to the ladder below would put
     # the fleet's judge back on the defaults without saying so, which is the
     # silent-wrong-answer failure this whole ladder exists to end.
+    # A refusal prints nothing on stdout and --pane writes no state, so asking
+    # the resolver again for its reason costs only this error path.
     prc=0
     PROFILE="$(ac_pane_profile "$KIND" 2>/dev/null)" || prc=$?
     [ "$prc" = 0 ] \
-      || fail "could not resolve a pane profile for kind '$KIND' - see bin/ac-dispatch-select.sh --pane $KIND"
+      || fail "could not resolve a pane profile for kind '$KIND' ($(ac_pane_profile "$KIND" 2>&1 >/dev/null | head -n 1 | jq -Rj '@json | .[1:-1]')) - see bin/ac-dispatch-select.sh --pane $KIND"
   fi
 fi
 # CONTRADICTION CHECK (codereview only): config/codereview-agent (or its
