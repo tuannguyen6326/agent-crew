@@ -4,7 +4,7 @@
 #
 # Usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph | --graph-data
 #                               | --commit <sha> | --ref <branch>]
-#                               [--tree <worktree>]
+#                               [--tree <worktree>] [--no-guard]
 #
 # Modes (default = committed-only, base -> branch tip: the chief/roomchief
 # delivered-change review):
@@ -26,10 +26,18 @@
 # outlive its task meta). The id still names the crew branch; no meta is
 # required. Pool MEMBERSHIP gating belongs to the dashboard's /api/diff - the
 # CLI trusts its operator like every other bin/ script.
+#
+# --no-guard skips the bin/ac-guard.sh advisory, for a caller that never reads
+# stderr (the dashboard's /api/diff): the guard stamps its quiet window as it
+# prints, so an unread run would swallow the same warning from the chief's
+# next command.
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
-[ ! -x "$(dirname "$0")/ac-guard.sh" ] || "$(dirname "$0")/ac-guard.sh" || true  # warn-only advisory
+case " $* " in
+  *" --no-guard "*) ;;
+  *) [ ! -x "$(dirname "$0")/ac-guard.sh" ] || "$(dirname "$0")/ac-guard.sh" || true ;;  # warn-only advisory
+esac
 ac_require git
 
 diff_base_ref() {
@@ -56,7 +64,7 @@ diff_base_ref() {
 }
 
 id="${1:-}"; mode=committed; tree=""; gref=""
-[ -n "$id" ] || ac_die "usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph | --graph-data | --commit <sha> | --ref <branch>] [--tree <worktree>]"
+[ -n "$id" ] || ac_die "usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph | --graph-data | --commit <sha> | --ref <branch>] [--tree <worktree>] [--no-guard]"
 shift
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -71,6 +79,7 @@ while [ $# -gt 0 ]; do
       printf '%s' "$commit" | grep -Eq '^[0-9a-f]{4,40}$' || ac_die "--commit needs a sha"
       ;;
     --tree) shift; tree="${1:-}"; [ -n "$tree" ] || ac_die "--tree needs a path" ;;
+    --no-guard) ;;
     # Focus the graph modes on ONE branch (the dashboard's branch picker).
     --ref)
       shift; gref="${1:-}"

@@ -3390,7 +3390,7 @@ async function diffShow(homePath: string, id: string, mode: string, tree: string
   // carry - never a free-form rev expression.
   if (ref && !readLocalBranches(homePath).some((b) => b.branch === ref))
     return json({ error: "unknown branch" }, 404);
-  const args = [`${BIN}/ac-review-diff.sh`, id];
+  const args = [`${BIN}/ac-review-diff.sh`, id, "--no-guard"];
   if (mode === "commit") {
     if (!/^[0-9a-f]{4,40}$/.test(sha)) return json({ error: "bad sha" }, 400);
     args.push("--commit", sha);

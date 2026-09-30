@@ -68,6 +68,17 @@ case "$stat" in *landed1.txt*|*landed2.txt*)
   fail "local-only --stat buried the delta under already-landed commits" ;;
 esac
 
+# --no-guard is for a caller that never reads stderr (the dashboard's
+# /api/diff): the guard would stamp its quiet window there and so swallow the
+# same warning from the chief's next command.
+printf 'kind=ship\n' >"$AC_HOME/state/inflight.meta"
+rm -f "$AC_HOME/state/.guard-stamp"
+err="$("$BIN/ac-review-diff.sh" c1 --stat --no-guard 2>&1 >/dev/null)"
+case "$err" in *WATCHER-DOWN*) fail "--no-guard must not run the guard: $err" ;; esac
+assert_no_file "$AC_HOME/state/.guard-stamp" "--no-guard leaves the guard's quiet window alone"
+assert_contains "$("$BIN/ac-review-diff.sh" c1 --stat 2>&1 >/dev/null)" "WATCHER-DOWN" "without it the advisory still rides along"
+rm -f "$AC_HOME/state/inflight.meta" "$AC_HOME/state/.guard-stamp"
+
 # ---- Case 2: push-mode, origin FRESH ahead of a stale local -> origin-wins ---
 #      landed work lives on origin/main; local main lags at genesis (as if never
 #      fetched down). crew/c2 branches from the fresh origin tip. The base must
