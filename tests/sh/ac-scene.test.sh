@@ -143,6 +143,20 @@ assert_no_file "$STORE/merged.md" "and writes no --into"
 
 refuses "at least one source" bash -c "printf 'x\n' | '$SCENE' merge --into x --summary 'no sources'"
 
+# An --into that exists and is not a source refuses before anything moves.
+mk taken 'an unrelated scene' 'body taken'
+refuses "exists and was not among" bash -c "printf 'x\n' | '$SCENE' merge solo --into taken --summary 'should not happen'"
+assert_file "$STORE/solo.md" "a refused --into leaves every source in the store"
+assert_no_file "$ARCH/solo.md" "and archives none of them"
+
+# The slug check is ASCII whatever the locale: under en_US.UTF-8 a shell [a-z]
+# range interleaves case, so it took B, aB and a Latin letter, and refused Z.
+for bad in B aB "$(printf 'caf\303\251')"; do
+  refuses "slug must" env LC_ALL=en_US.UTF-8 bash -c "printf 'x\n' | '$SCENE' new '$bad' --summary 'nope'"
+done
+printf 'x\n' | LC_ALL=en_US.UTF-8 "$SCENE" new zz9 --summary 'the range end' >/dev/null \
+  || fail "a z-ended slug is legal under a UTF-8 locale"
+
 # --- THE TIERED CAP ----------------------------------------------------------
 # The cap is on the FILE COUNT and it gates `new` only. GREEN below max-1,
 # AMBER at max-1 (one slot left is not a slot), RED at max - and update/merge
