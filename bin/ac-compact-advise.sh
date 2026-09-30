@@ -45,9 +45,14 @@
 # a compaction shrinks context, and advice re-opens one step above it.
 #
 # AUTO. config/compact-auto=on (default off) turns the advice into the act for
-# a session that owns a task meta (session_id=, i.e. a roomchief): the hook
-# detaches `--send <id>`, which waits up to AC_COMPACT_SEND_WAIT (10) seconds
-# for the pane to go idle, then types /compact through bin/ac-send.sh; a pane
+# a session that owns a task meta (session_id=, i.e. a roomchief) once usage
+# reaches config/compact-auto-min percent (default 50); below it the advice
+# stays a hint. Upstream has no such minimum (product-contract.md: "Auto is
+# not a higher bar"), but a roomchief burning 150k tokens per quarter hour
+# cleared the 0.86 floor at 18% of a 1M window three times in 45 minutes -
+# a compaction every 15-27 minutes (captain 2026-09-30, lab pviam-p2).
+# The hook detaches `--send <id>`, which waits up to AC_COMPACT_SEND_WAIT
+# (10) seconds for the pane to go idle, then types /compact through bin/ac-send.sh; a pane
 # still busy is left alone, and the message keeps the hint for that case. On
 # herdr a roomchief stamped captain-wait (its room holds pending asks) never
 # reads idle, so the hint is all it gets until the room clears. The crewchief
@@ -123,10 +128,14 @@ judge() {
 }
 
 auto_target() {
-  # auto_target <session_id> - the task whose meta records this session, under
-  # config/compact-auto=on; nothing otherwise.
-  local m
+  # auto_target <session_id> <tokens> - the task whose meta records this
+  # session, under config/compact-auto=on at or above config/compact-auto-min
+  # percent of the window; nothing otherwise.
+  local m min
   [ "$(ac_config_read compact-auto off 2>/dev/null)" = on ] || return 0
+  min="$(ac_config_read compact-auto-min 50 2>/dev/null)"
+  case "$min" in ''|*[!0-9]*) min=50 ;; esac
+  [ $(($2 * 100)) -ge $((min * $(window))) ] || return 0
   m="$(grep -lxF "session_id=$1" "$(ac_state_dir)"/*.meta 2>/dev/null | head -n 1)" || true
   [ -z "$m" ] || basename "$m" .meta
 }
@@ -177,7 +186,7 @@ if [ "${1:-}" = --hook ]; then
   [ -n "$line" ] || exit 0
   mkdir -p "$(dirname "$mark")" 2>/dev/null && printf '%s\n' "$step" >"$mark"
   act='Run /compact to save context'
-  id="$(auto_target "$sid")"
+  id="$(auto_target "$sid" "$tokens")"
   if [ -n "$id" ]; then
     nohup "$0" --send "$id" </dev/null >>"$(dirname "$mark")/send.log" 2>&1 &
     act="/compact is typed into $id if its pane goes idle within ~10s, otherwise run /compact yourself (outcome: state/.compact-advise/send.log)"
