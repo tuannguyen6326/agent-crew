@@ -157,6 +157,7 @@ git -C "$dir" remote get-url origin >/dev/null 2>&1 && has_origin=1
 [ "$push_flag" = 0 ] || run_or_print git -C "$dir" push origin "refs/heads/$branch:refs/heads/$branch"
 
 pr1_url="$(ac_meta_get "$ships" pr1_url 2>/dev/null || printf '')"
+pr2_url="$(ac_meta_get "$ships" pr2_url 2>/dev/null || printf '')"
 open_pr() { # open_pr <base> <slot>
   local prbase="$1" slot="$2" url
   if [ "$dry" = 1 ]; then
@@ -183,7 +184,9 @@ if [ -n "$staging" ]; then
     # the RECORDED url is the other honest proof.
     [ "$(cd "$dir" && gh pr view "$pr1_url" --json state --jq .state 2>/dev/null)" = MERGED ] && merged1=1
   fi
-  if [ "$merged1" = 1 ]; then
+  if [ "$merged1" = 1 ] && [ -n "$pr2_url" ]; then
+    printf 'PR-1 (%s -> %s) proven merged; production PR already recorded: %s\n' "$branch" "$staging" "$pr2_url"
+  elif [ "$merged1" = 1 ]; then
     printf 'PR-1 (%s -> %s) proven merged; opening PR-2\n' "$branch" "$staging"
     open_pr "$default" pr2
   elif [ -n "$pr1_url" ]; then
@@ -193,8 +196,8 @@ if [ -n "$staging" ]; then
     printf 'PR-2 (-> %s) held until PR-1 is proven merged (ancestry, or the forge on the recorded url)\n' "$default"
   fi
 else
-  if [ -n "$(ac_meta_get "$ships" pr2_url 2>/dev/null || printf '')" ]; then
-    printf 'production PR already recorded: %s\n' "$(ac_meta_get "$ships" pr2_url)"
+  if [ -n "$pr2_url" ]; then
+    printf 'production PR already recorded: %s\n' "$pr2_url"
   else
     open_pr "$default" pr2
   fi

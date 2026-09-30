@@ -330,6 +330,13 @@ out="$(LC_ALL=en_US.UTF-8 "$ES" eppy5 proj --dry-run 2>&1 || true)"
 assert_contains "$out" "proven merged; opening PR-2" "a non-UTF-8 byte in ledger prose does not stop the exit"
 mv "$TMP/backlog.keep" "$AC_HOME/records/backlog.md"
 
+# Re-runs are idempotent on the staging path too: once PR-2 is recorded, a
+# re-run reports it instead of opening a second production PR.
+printf 'pr2_url=https://forge.invalid/pr/2\n' >>"$AC_HOME/data/eppy5/gate/ships.env"
+out="$("$ES" eppy5 proj --dry-run)"
+assert_contains "$out" "already recorded: https://forge.invalid/pr/2" "a recorded PR-2 is reported on a re-run"
+case "$out" in *"gh pr create"*) fail "a recorded PR-2 must never be opened again" ;; esac
+
 # The qa pin is read off the epic's OWN row. awk's == compared numeric-looking
 # ids as numbers, so an earlier row 07 stood in for epic 7 and its empty
 # contract let the exit skip the qa gate.
