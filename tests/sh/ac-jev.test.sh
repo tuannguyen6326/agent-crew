@@ -187,6 +187,22 @@ assert_eq "$(jq -r 'select(.state_sha=="'"$sha"'") | .actual' "$log" | sort -u)"
 assert_eq "$(wc -l <"$log" | tr -d ' ')" "$lines_before" "label rewrites in place"
 assert_fails "$BIN/ac-jev.sh" label --site watch --state-sha deadbeef --actual x
 
+# 10b. ask and label share one lock on the shadow log: label rewrites it whole,
+#      so a record appended during the rewrite was lost with the old copy. While
+#      another writer holds it, label refuses and ask skips its record - never
+#      its answer.
+printf 'on\n' >"$AC_HOME/config/jev"
+lock="$AC_HOME/state/.jev-shadow.lock"
+mkdir "$lock"; printf '%s\n' "$$" >"$lock/pid"
+lines_before="$(wc -l <"$log" | tr -d ' ')"
+assert_fails_with "locked" -- "$BIN/ac-jev.sh" label --site watch --state-sha "$sha" --actual other
+rc=0; err="$(ask 2>&1 >/dev/null)" || rc=$?
+assert_eq "$rc" "0" "a held shadow-log lock never fails the ask"
+assert_contains "$err" "not written" "the skipped record is said"
+assert_eq "$(wc -l <"$log" | tr -d ' ')" "$lines_before" "nothing is appended or rewritten under another writer's lock"
+assert_eq "$(jq -r 'select(.actual=="other")' "$log")" "" "the refused label changed no record"
+rm -rf "$lock"
+
 # 11. status names knob, provider and key source.
 printf 'shadow\n' >"$AC_HOME/config/jev"
 st="$("$BIN/ac-jev.sh" status)"

@@ -63,7 +63,10 @@
 # fills it with the decision the chief really made, matched by site +
 # state_sha. The log is what the captain reads to rule a site `on`, and later
 # the fine-tuning corpus for a self-hosted provider - provider-neutral on
-# purpose.
+# purpose. ask's append and label's whole-file rewrite take one lock,
+# state/.jev-shadow.lock (ac_lock_acquire, 2s): a record appended during a
+# rewrite was lost with the old copy. A held lock makes label refuse and ask
+# skip its record with a `jev:` line - never its answer.
 
 set -euo pipefail
 . "$(dirname "$0")/ac-lib.sh"
@@ -175,13 +178,19 @@ cmd_ask() {
 
   local latency; latency="$(awk -v s="${tsecs:-0}" 'BEGIN { printf "%d", s * 1000 }')"
   mkdir -p "$home/state"
-  jq -cn --arg ts "$(ac_iso)" --arg site "$site" --arg provider "$provider" --arg model "$MODEL" \
-     --arg ssha "$(sha_of "$state")" --arg qsha "$(sha_of "$questions")" --arg knob "$knob" \
-     --argjson latency "$latency" --argjson answers "$(jq -c '.answers' "$tmp/resp")" \
-     --argjson usage "$(jq -c '.usage // {}' "$tmp/resp")" \
-     '{ts:$ts, site:$site, provider:$provider, model:$model, state_sha:$ssha, questions_sha:$qsha,
-       answers:$answers, usage:$usage, latency_ms:$latency, knob:$knob, actual:null}' \
-    >>"$home/state/jev-shadow.jsonl"
+  local lock="$home/state/.jev-shadow.lock"
+  if ac_lock_acquire "$lock" 2; then
+    jq -cn --arg ts "$(ac_iso)" --arg site "$site" --arg provider "$provider" --arg model "$MODEL" \
+       --arg ssha "$(sha_of "$state")" --arg qsha "$(sha_of "$questions")" --arg knob "$knob" \
+       --argjson latency "$latency" --argjson answers "$(jq -c '.answers' "$tmp/resp")" \
+       --argjson usage "$(jq -c '.usage // {}' "$tmp/resp")" \
+       '{ts:$ts, site:$site, provider:$provider, model:$model, state_sha:$ssha, questions_sha:$qsha,
+         answers:$answers, usage:$usage, latency_ms:$latency, knob:$knob, actual:null}' \
+      >>"$home/state/jev-shadow.jsonl"
+    ac_lock_release "$lock"
+  else
+    printf 'jev: shadow log locked by another writer - record not written\n' >&2
+  fi
   if [ "$knob" = on ]; then
     jq -c --argjson q "$questions" '[.answers | to_entries[] | select(.key as $k | $q | has($k))
         | {key: .key, value: {choice: .value.choice, p: .value.probabilities, confidence: .value.confidence}}] | from_entries' "$tmp/resp"
@@ -204,6 +213,10 @@ cmd_label() {
   local home; home="$(ac_home)"
   local log="$home/state/jev-shadow.jsonl"
   [ -f "$log" ] || { printf 'ac-jev: no shadow log at %s\n' "$log" >&2; return 1; }
+  # Not local: the EXIT trap reads it after this function has returned.
+  label_lock="$home/state/.jev-shadow.lock"
+  ac_lock_acquire "$label_lock" 2 || { printf 'ac-jev: shadow log locked by another writer - nothing labelled\n' >&2; return 1; }
+  trap 'ac_lock_release "$label_lock"' EXIT
   local n; n="$(jq -c --arg s "$site" --arg h "$sha" 'select(.site == $s and .state_sha == $h)' "$log" | wc -l | tr -d ' ')"
   [ "$n" -gt 0 ] || { printf 'ac-jev: no record for site=%s state_sha=%s\n' "$site" "$sha" >&2; return 1; }
   jq -c --arg s "$site" --arg h "$sha" --arg a "$actual" \
