@@ -261,7 +261,7 @@ landing_receipt_check() {
   [ -f "$backlog" ] || return 0
   seen="$state_dir/.landing-seen"
   stamp="$state_dir/.landing-receipt-stamp"
-  cur="$(awk '/^- \[x\] /{print $3}' "$backlog" 2>/dev/null)" || return 0
+  cur="$(LC_ALL=C awk '/^- \[x\] /{print $3}' "$backlog" 2>/dev/null)" || return 0
   # First encounter: seed the baseline and stay silent (nothing is "new" yet).
   if [ ! -f "$seen" ]; then
     printf '%s\n' "$cur" >"$seen.tmp.$$" 2>/dev/null \

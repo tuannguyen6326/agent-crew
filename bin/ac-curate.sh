@@ -237,7 +237,7 @@ _backlog_plan() {
   # _backlog_plan <backlog.md> <keep-N> - emit the line numbers of Done lines to
   # ARCHIVE, ascending, one per line. Blocked-by-safe and epic-safe, keyed on the
   # real reader ac-ready.sh's exact grammar. Empty output = nothing to archive.
-  awk -v keep="$2" "$AC_DONELINE_AWK"'
+  LC_ALL=C awk -v keep="$2" "$AC_DONELINE_AWK"'
     { line[NR] = $0 }
     /^## In flight/ { sec = "inflight" }
     /^## Queued/    { sec = "queued" }

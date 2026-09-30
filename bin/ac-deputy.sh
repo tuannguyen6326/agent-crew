@@ -280,7 +280,7 @@ cmd_handoff() {
   # VALIDATE EVERY ITEM FIRST - nothing is written until all of them pass.
   local moving="" ids="" rc
   for item in "$@"; do
-    found="$(awk -v id="$item" '
+    found="$(LC_ALL=C awk -v id="$item" '
       /^## / { sec = substr($0, 4); next }
       $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { n++; s = sec; l = $0 }
       END { if (n == 1) printf "%s\t%s\n", s, l }
@@ -297,7 +297,7 @@ cmd_handoff() {
     # (src/backlog.ts); a blocked-by it cannot read may name the item too, so
     # a malformed one that mentions it refuses until the line is fixed.
     rc=0
-    awk -v id="$item" "$AC_DONELINE_AWK"'
+    LC_ALL=C awk -v id="$item" "$AC_DONELINE_AWK"'
       BEGIN { w[id] }
       /^- \[[ x]\] / {
         ac_doneline($0, o)
@@ -328,7 +328,7 @@ cmd_handoff() {
   # or at EOF when Queued is last). Queue order is meaningful: inserting right
   # after the heading would silently reprioritize the parent's items above the
   # deputy's own queued work.
-  awk -v f="$backlog.moving.$$" '
+  LC_ALL=C awk -v f="$backlog.moving.$$" '
     inq && /^## / { while ((getline l < f) > 0) print l; inq = 0 }
     { print }
     /^## Queued/ { inq = 1 }

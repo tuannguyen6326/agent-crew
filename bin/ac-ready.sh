@@ -177,7 +177,7 @@ cmd_overlap_semantic() {
   [ -n "$order" ] || ac_die "usage: ac-ready.sh overlap --semantic '<order text>'"
   f="$(ac_records_dir)/backlog.md"
   [ -f "$f" ] || return 0
-  rows="$(awk "$AC_DONELINE_AWK"'
+  rows="$(LC_ALL=C awk "$AC_DONELINE_AWK"'
     /^## In flight/ { sec = "in flight"; next }
     /^## Queued/    { sec = "queued"; next }
     /^## /          { sec = ""; next }
