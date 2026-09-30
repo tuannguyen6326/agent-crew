@@ -254,14 +254,15 @@ pr_ready_dependent() {
   # split on commas AND whitespace - a hand-written `blocked-by: a, b` (which
   # ac-ready refuses as malformed) still finds b here, where the strict match
   # once stopped at the space and read "no dependent". Substring matching
-  # would confuse s1 with s1-r2, so tokens are compared exactly. An
+  # would confuse s1 with s1-r2, so tokens are compared exactly - with `in`,
+  # never ==, which reads numeric-looking ids as numbers (01 == 1). An
   # unreadable ledger DIES in the caller instead of answering silence.
-  awk -v id="$id" '
+  LC_ALL=C awk -v id="$id" 'BEGIN { w[id] }
     /^- \[ \]/ && (i = index($0, "blocked-by:")) {
       s = substr($0, i + 11)
       if ((j = index(s, " - ")) > 0) s = substr(s, 1, j - 1)
       n = split(s, a, /[,[:space:]]+/)
-      for (k = 1; k <= n; k++) if (a[k] == id) { print $4; exit }
+      for (k = 1; k <= n; k++) if (a[k] in w) { print $4; exit }
     }' "$(ac_records_dir)/backlog.md"
 }
 
