@@ -106,7 +106,7 @@ unset _ac_fleet_prefix
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_eq() { [ "$1" = "$2" ] || fail "${3:-assert_eq}: want '$2' got '$1'"; }
-assert_contains() { [ -n "$2" ] || fail "${3:-assert_contains}: empty needle"; case "$1" in *"$2"*) ;; *) fail "${3:-assert_contains}: '$2' not found in: $1" ;; esac; }
+assert_contains() { [ -n "$2" ] || fail "${3:-assert_contains}: empty needle"; [ "$2" != -- ] || fail "${3:-assert_contains}: takes no -- (the needle is the second argument)"; case "$1" in *"$2"*) ;; *) fail "${3:-assert_contains}: '$2' not found in: $1" ;; esac; }
 assert_file() { [ -f "$1" ] || fail "${2:-assert_file}: missing $1"; }
 assert_no_file() { [ ! -e "$1" ] || fail "${2:-assert_no_file}: exists $1"; }
 assert_fails() { if "$@" >/dev/null 2>&1; then fail "expected failure: $*"; fi; }

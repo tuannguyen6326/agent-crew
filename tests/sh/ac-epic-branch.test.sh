@@ -189,7 +189,7 @@ assert_contains "$out" "staged flow requires review=yes" \
   "a NON-epic staged task still refuses --review no"
 "$BIN/ac-brief.sh" eppy3-s3 proj >/dev/null
 s3b="$(cat "$AC_HOME/data/eppy3-s3/brief.md")"
-assert_contains "$s3b" -- "--target epic/eppy3" "a crew-ship epic story's brief names the engine target"
+assert_contains "$s3b" "--target epic/eppy3" "a crew-ship epic story's brief names the engine target"
 assert_contains "$s3b" "Review: yes" "crew-ship keeps its pipeline round (story-sized via the target)"
 "$BIN/ac-brief.sh" eppy3-s4 proj >/dev/null
 assert_contains "$(cat "$AC_HOME/data/eppy3-s4/brief.md")" "epic integration branch" \
@@ -287,7 +287,7 @@ printf '{"findings":[],"reviewed_ref":"%s"}\n' "$tip5" >"$AC_HOME/data/eppy5/gat
 # gates green -> dry-run opens PR-1 to staging and HOLDS PR-2
 out="$("$ES" eppy5 proj --dry-run)"
 assert_contains "$out" "DRY-RUN: git -C" "push=yes rides the exit (dry-printed)"
-assert_contains "$out" -- "--base stagebr" "PR-1 targets the recorded staging branch"
+assert_contains "$out" "--base stagebr" "PR-1 targets the recorded staging branch"
 assert_contains "$out" "PR-2 (-> main) held" "PR-2 is held until PR-1 is proven merged"
 
 # staging proven to CONTAIN the tip (ancestry arm) -> PR-2 opens
@@ -295,7 +295,7 @@ git -C "$upstream" branch stagebr epic/eppy5
 git -C "$AC_HOME/projects/proj" fetch -q origin
 out="$("$ES" eppy5 proj --dry-run)"
 assert_contains "$out" "proven merged; opening PR-2" "the ancestry arm releases PR-2"
-assert_contains "$out" -- "--base main" "PR-2 targets the default branch"
+assert_contains "$out" "--base main" "PR-2 targets the default branch"
 
 # qa pin on the epic row: no attestation at the tip -> refuse with the caveat
 python3 - "$AC_HOME/records/backlog.md" <<'PYEOF'

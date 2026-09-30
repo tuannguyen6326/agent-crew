@@ -254,7 +254,7 @@ printf '{"findings":[],"reviewed_ref":"%s"}\n' "$tipf" >"$AC_HOME/data/shipux/ga
 # gates green -> dry-run prints the deferred push and the SINGLE PR to target
 out="$("$FT" ship shipux proj2 --dry-run)"
 assert_contains "$out" "DRY-RUN: git -C" "the deferred push rides the ship (dry-printed)"
-assert_contains "$out" -- "--base release" "the single PR targets the recorded target branch"
+assert_contains "$out" "--base release" "the single PR targets the recorded target branch"
 
 # idempotent: this repo's recorded PR is reported, never re-opened
 printf 'pr_url_proj2=https://example.test/pr/1\n' >"$AC_HOME/data/shipux/gate/ships.env"
@@ -276,7 +276,7 @@ assert_contains "$out" "no crew-qa pass attestation" "a qa:yes feature refuses w
 mkdir -p "$AC_HOME/projects/proj2/.crew/qa/passed"
 : >"$AC_HOME/projects/proj2/.crew/qa/passed/$tipf"
 out="$("$FT" ship shipux proj2 --dry-run)"
-assert_contains "$out" -- "--base release" "the attestation at the tip satisfies the qa gate"
+assert_contains "$out" "--base release" "the attestation at the tip satisfies the qa gate"
 
 # A hand edit can leave the ledger without its final newline; the last row is
 # still a row, so an open member there holds the ship like any other.
