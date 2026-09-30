@@ -203,6 +203,13 @@ printf 'not json at all\n' >"$RIG"
 assert_fails_with "records/rig.json" -- "$BIN/ac-rig.sh" drift
 rc=0; "$BIN/ac-rig.sh" drift >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "2" "an unparseable manifest refuses (exit 2), never reports OK"
+# JSON of the wrong shape refuses the same way, before any check reads it.
+for bad in '{"config":{"knobs":["model"]}}' '{"standing_jobs":"monitor"}' '{"home":"drydock"}' '[]'; do
+  printf '%s\n' "$bad" >"$RIG"
+  rc=0; out="$("$BIN/ac-rig.sh" drift 2>&1)" || rc=$?
+  assert_eq "$rc" "2" "a wrong-shaped manifest refuses (exit 2): $bad"
+  assert_contains "$out" "wrong shape" "the refusal says what is wrong: $bad"
+done
 
 rm -f "$RIG"
 drift_run
