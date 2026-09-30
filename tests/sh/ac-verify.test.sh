@@ -607,12 +607,15 @@ caller="$family-implement"
 export VERIFY_EXPECT_ID="$caller-verify-codereview"
 mkdir -p "$AC_HOME/data/$family" "$AC_HOME/data/$caller" "$AC_HOME/data/sib-req/plan"
 printf 'plan rev 3, captain-approved\n' >"$AC_HOME/data/sib-req/plan/report.md"
+printf 'the implementer says it works\n' >"$AC_HOME/data/$caller/report.md"
 cat >"$AC_HOME/data/$caller/brief.md" <<EOF
 # Brief: $caller
 
 ## Inputs
 - Accepted plan: $AC_HOME/data/sib-req/plan/report.md.
 - Requirements: $AC_HOME/data/sib-req/requirements.md (not written yet)
+
+You owe exactly one artifact next to this brief: $AC_HOME/data/$caller/report.md
 EOF
 cat >"$AC_HOME/data/$family/room.md" <<'EOF'
 # Room: flow-v2
@@ -696,6 +699,11 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Named artifact: $AC_HOME/data
   "...and every existing artifact that brief names, wherever it lives"
 case "$(cat "$VERIFY_PROMPT_CAPTURE")" in *"data/sib-req/requirements.md"*) \
   fail "an artifact the brief names but that does not exist is not listed" ;; esac
+# The brief names the task's OWN report.md as the artifact it owes; once the
+# implementer has written it, listing it as an accepted input would hand the
+# author's claims to the independent verifier as authority (captain 2026-09-30).
+case "$(cat "$VERIFY_PROMPT_CAPTURE")" in *"Named artifact: $AC_HOME/data/$caller/"*) \
+  fail "files inside the reviewed task's own dir are never listed as accepted artifacts" ;; esac
 room_snapshot="$(find "$AC_HOME/data/$family/verify/codereview" -name room-snapshot.md -type f | head -n 1)"
 room_rulings="$(find "$AC_HOME/data/$family/verify/codereview" -name room-rulings.md -type f | head -n 1)"
 assert_file "$room_snapshot" "the review round preserves its room authority input"
@@ -2599,6 +2607,9 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 {"rules":[{"when":"x","use":{"harness":"claude"}}],
  "panes":{"codereview-scout":{"lanes":[{"harness":"claude","model":"m"},{"harness":"opencode","model":"n"}]}}}
 EOF
+mkdir -p "$AC_HOME/data/$caller"
+printf '# Brief\n\n## Inputs\n- Accepted plan: %s/data/sib-req/plan/report.md\n' "$AC_HOME" \
+  >"$AC_HOME/data/$caller/brief.md"
 env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" "$BIN/ac-verify.sh" codereview \
   --repo "$repo" --ref "$target" --family "$scout_family" --caller "$caller" \
   --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
@@ -2606,6 +2617,13 @@ env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" "$BIN/ac-verify.sh" codereview \
 jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)prompt.md"
 assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT LANES" \
   "the lanes must reach the prompt for a caller with no AC_HOME - that is every production caller"
+# The task-dir lookup must resolve against the fleet home the facade derived,
+# not an AC_HOME a crewmate pane never has - or the epic-story round this
+# block exists for silently loses it.
+assert_contains "$(cat "$jp")" "Task brief: $AC_HOME/data/$caller/brief.md" \
+  "the brief reaches the prompt for a caller with no AC_HOME"
+assert_contains "$(cat "$jp")" "Named artifact: $AC_HOME/data/sib-req/plan/report.md" \
+  "...and so do the artifacts it names"
 # A claude lane stays ONE-SHOT: as a pane SESSION it would share the lease's
 # Stop hook with the reviewer and every other claude lane, so one finishing
 # ends the others' turns mid-pass.

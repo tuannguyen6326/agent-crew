@@ -1058,17 +1058,23 @@ evidence_block() {
   # and a one-line INTENT names none of them - such a round judged "every
   # accepted requirement" against the intent line and the epic room alone (lab
   # pviam-p2, 2026-09-30). Paths are read off the brief itself, existing files
-  # only, so the round still inventories nothing.
-  local tdir brief esc p
+  # under the data dir only, so the round still inventories nothing; the
+  # task's own dir is skipped - a brief names the report.md it owes, and once
+  # written that is the author's claim, never an accepted input (captain
+  # 2026-09-30).
+  local tdir brief p
   printf 'Evidence root: %s\n' "$data_dir/$family"
-  tdir="$(ac_task_dir "$caller" 2>/dev/null)" || return 0
+  # A crewmate pane carries no AC_HOME; the facade already derived the home.
+  tdir="$(AC_HOME="$fleet_home" ac_task_dir "$caller" 2>/dev/null)" || return 0
   brief="$tdir/brief.md"
   [ -f "$brief" ] || return 0
   printf 'Task brief: %s\n' "$brief"
-  esc="$(printf '%s' "$data_dir" | sed 's/[.]/\\./g')"
-  { grep -oE "$esc/[A-Za-z0-9_./-]+" "$brief" 2>/dev/null || true; } | sed 's/[.:,;]*$//' | sort -u \
+  { grep -oE '/[A-Za-z0-9_./-]+' "$brief" 2>/dev/null || true; } | sed 's/[.:,;]*$//' | sort -u \
     | while IFS= read -r p; do
-        if [ "$p" != "$brief" ] && [ -f "$p" ]; then printf 'Named artifact: %s\n' "$p"; fi
+        case "$p" in
+          "$tdir"/* | */../*) continue ;;
+          "$data_dir"/*) if [ -f "$p" ]; then printf 'Named artifact: %s\n' "$p"; fi ;;
+        esac
       done
   return 0
 }
