@@ -1,4 +1,4 @@
-function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, bunread, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv, dauth) {
+function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, bunread, hpos, hseg, hgrp, hcontent, hbody, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv, dauth) {
   f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_until"] = ""; f["hold_malformed"] = ""; f["epic"] = ""; f["feature"] = ""
   f["blockers"] = ""; f["blockers_malformed"] = ""; f["date"] = ""; f["verb"] = ""; f["contract"] = ""
   f["domain"] = ""; f["domain_malformed"] = ""
@@ -47,15 +47,16 @@ function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, f
     # contract-shaped content can also be a hold (the key set spells neither
     # "held" nor "hold"), so claiming the group here steals nothing.
     hcontent = substr(hgrp, 2, length(hgrp) - 2)
+    hbody = hcontent; gsub(/^[ \t]+|[ \t]+$/, "", hbody)
     callkv = 0
-    if (!quoted && positional && f["contract"] == "" && hcontent != "") {
-      cn = split(hcontent, ctok, /[ \t]+/)
+    if (!quoted && positional && f["contract"] == "" && hbody != "") {
+      cn = split(hbody, ctok, /[ \t]+/)
       callkv = (cn > 0)
       for (ci = 1; ci <= cn; ci++)
         if (ctok[ci] !~ /^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/) { callkv = 0; break }
     }
     if (callkv) {
-      f["contract"] = hcontent
+      f["contract"] = hbody
     } else if (quoted) {
       # a documentation mention - never a token, never an attempt
     } else if (positional && hgrp ~ /^\[@held( until [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])?\]$/) {

@@ -488,8 +488,8 @@ export function parseBacklogLine(line: string): BacklogLineFields {
   // it starts after the checkbox, ONE space and the id (a wider gap leaves the
   // row without one), and takes innermost groups with nothing but spaces and
   // TABs before each - so a backtick-quoted group ends it. The contract is its
-  // first group whose [ \t]+-split tokens are all key:value from the closed
-  // key set.
+  // first group whose [ \t]+-split tokens, padding trimmed, are all key:value
+  // from the closed key set.
   var contract = "";
   var head = /^- \[[ x]\] [^ \t]+/.exec(s);
   var pos = head ? head[0].length : 0;
@@ -498,12 +498,13 @@ export function parseBacklogLine(line: string): BacklogLineFields {
       var g = /^[ \t]*\[([^\][]*)\]/.exec(s.slice(pos));
       if (!g) break;
       pos += g[0].length;
-      if (contract || !g[1]) continue;
-      var toks = g[1].split(/[ \t]+/);
+      var body = g[1].replace(/^[ \t]+|[ \t]+$/g, "");
+      if (contract || !body) continue;
+      var toks = body.split(/[ \t]+/);
       var all = true;
       for (var ti = 0; ti < toks.length; ti++)
         if (!/^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/.test(toks[ti])) { all = false; break; }
-      if (all) contract = g[1];
+      if (all) contract = body;
     }
   }
   // The TEXT boundary is the first " - " after the bracket groups that follow

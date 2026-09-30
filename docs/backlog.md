@@ -81,10 +81,10 @@ still reads HELD hold malformed, never READY - position denies it authority,
 but a real hold mis-placed by one keystroke must not silently schedule
 either.
 The DELIVERY-CONTRACT token group: ONE leading-run `[...]` group whose
-content is `key:value` tokens joined by runs of spaces and TABs, with no
-space or TAB before the first or after the last (`[ src:cap]` and
-`[src:cap ]` are no contract), each key from the closed key set
-`src|flow|mode|rev|qa|promote` - e.g.
+content is `key:value` tokens joined by runs of spaces and TABs; spaces or
+TABs before the first or after the last are padding, so `[ src:cap]` and
+`[src:cap ]` pin exactly as `[src:cap]` does. Each key comes from the closed
+key set `src|flow|mode|rev|qa|promote` - e.g.
 `[src:cap flow:direct mode:local-only rev:no qa:no]`. The all-tokens-keyed
 shape is the discriminator: a leading-run group with any non-`key:value`
 content keeps its existing class (provenance prose, `[EPIC]`, `[@held]`).
