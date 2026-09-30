@@ -2323,7 +2323,7 @@ EOF
 
 cmd_tick() {
   # `tick [<landing-id>]`. WITH a landing id the tick is IDEMPOTENT for that
-  # landing (ac_learn_tick_claim): the landing debrief's two possible actors -
+  # landing (ac_learn_tick_keyed): the landing debrief's two possible actors -
   # the roomchief before its handback and the crewchief at close-out - cannot see
   # each other, so both ran it and the counter advanced twice per landing. The
   # key is the family/task id, the one identity BOTH already hold, so it works
@@ -2354,6 +2354,7 @@ cmd_tick() {
   # silently stamp the wrong landing - which double-advances the real one, the
   # unrecoverable direction. Refuse instead.
   [ "$#" -le 1 ] || ac_die "tick takes at most one landing id (got: $*)"
+  read -r before every < <(ac_learn_due)
   if [ -n "$key" ]; then
     # The task-id grammar (task-lifecycle skill step 1, "pick a short id") -
     # not valid_slug, which is the agentskills SKILL-name rule. Whitespace here
@@ -2362,7 +2363,7 @@ cmd_tick() {
     case "$key" in *[!a-z0-9-]*) ac_die "tick key must be a task/family id [a-z0-9-] (got: '$key')" ;; esac
     # A claim its lock refused stamped nothing, so the re-run it asks for can
     # never double-count.
-    learn_cadence_call ac_learn_tick_claim "$key" || case $? in
+    learn_cadence_call ac_learn_tick_keyed "$key" || case $? in
       2)
         printf 'tick NOT counted: landing %s could not be claimed (see the warning above) - re-run this tick\n' "$key"
         return 1 ;;
@@ -2370,9 +2371,9 @@ cmd_tick() {
         printf 'tick skipped: landing %s is already counted - one landing advances the counter once, whichever actor runs it\n' "$key"
         return 0 ;;
     esac
+  else
+    ac_learn_tick
   fi
-  read -r before every < <(ac_learn_due)
-  ac_learn_tick
   read -r after _ < <(ac_learn_due)
   # SAY what the tick did. Silence on the ordinary path is indistinguishable
   # from a silent failure (wrong cwd, unreadable state dir), so the natural

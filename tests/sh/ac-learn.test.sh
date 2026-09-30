@@ -37,9 +37,9 @@ assert_eq "$fresh" "2" "counter is durable on disk across a fresh subshell"
 
 # ROUTED-RESIDUAL 2/2 (family ac-lib-shared-helper-hardening, 2026-07-28): a
 # contended cadence lock used to swallow itself - a bare
-# `ac_lock_acquire "$lock" 10 || return 1`, no message - while its SIBLING
-# ac_learn_tick_claim (called two lines apart in ac-learn.sh cmd_tick) was
-# already made loud by F19. A log reader saw the claim succeed and nothing
+# `ac_lock_acquire "$lock" 10 || return 1`, no message - while its SIBLING,
+# the keyed landing claim (now ac_learn_tick_keyed), was already made loud by
+# F19. A log reader saw the claim succeed and nothing
 # more, and concluded the tick ran. Shadowing ac_lock_acquire (the same
 # forced-outcome technique the concurrent-claim race test below uses) proves
 # the failure without paying the real lock's 10s timeout.
@@ -182,7 +182,7 @@ claim_slow() {
     . '$ROOT/bin/ac-lib.sh'
     . '$ROOT/bin/ac-maintenance-lib.sh'
     mv() { sleep $2; command mv \"\$@\"; }
-    if ac_learn_tick_claim '$1'; then printf 'won\n'; else printf 'skipped\n'; fi"
+    if ac_learn_tick_keyed '$1'; then printf 'won\n'; else printf 'skipped\n'; fi"
 }
 claim_slow race-fam 2 >"$TMP/claim-a" &
 sleep 0.3                       # inside claimer A's widened window, before its mv
@@ -192,6 +192,23 @@ assert_eq "$(cat "$TMP/claim-a" "$TMP/claim-b" | grep -c won)" "1" \
   "concurrent claims on ONE landing: exactly one wins the tick"
 assert_eq "$(grep -c 'race-fam' "$AC_HOME/state/.learn-ticks")" "1" \
   "and the landing is stamped exactly once - no stamp lost to last-mv-wins"
+rm -f "$AC_HOME/state/.learn.meta" "$AC_HOME/state/.learn-ticks"
+
+# A keyed tick claims AND counts under one hold of the cadence lock. Taken
+# twice, another holder could slip in between: the landing was stamped as
+# counted, the counter never moved, and every re-run skipped it as a
+# duplicate. Here any second acquire fails.
+cat >"$TMP/one-hold.sh" <<EOF
+set -euo pipefail
+. '$ROOT/bin/ac-lib.sh'
+. '$ROOT/bin/ac-maintenance-lib.sh'
+eval "orig_\$(declare -f ac_lock_acquire)"
+calls=0
+ac_lock_acquire() { calls=\$((calls + 1)); [ "\$calls" -le 1 ] || return 1; orig_ac_lock_acquire "\$@"; }
+ac_learn_tick_keyed once-fam
+ac_meta_get "\$(ac_learn_meta)" debriefs
+EOF
+assert_eq "$(bash "$TMP/one-hold.sh" 2>&1)" "1" "a keyed tick counts its landing with one lock hold"
 rm -f "$AC_HOME/state/.learn.meta" "$AC_HOME/state/.learn-ticks"
 
 # A claim that LOSES the cadence lock is not a duplicate: nothing was stamped

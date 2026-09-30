@@ -6,9 +6,10 @@
 # CALLER sources both).
 #
 # Owns: the learning-loop DISTILL cadence gate (ac_learn_meta / ac_learn_migrate
-# / ac_learn_tick / ac_learn_generation / ac_learn_ticks / ac_learn_tick_claim /
-# ac_learn_due - the durable per-debrief counter that tells the chief when
-# enough raw material has accrued to warrant a learning run), the DISTILL run's
+# / ac_learn_tick / ac_learn_count_one / ac_learn_generation / ac_learn_ticks /
+# ac_learn_tick_keyed / ac_learn_due - the durable per-debrief counter that
+# tells the chief when enough raw material has accrued to warrant a learning
+# run), the DISTILL run's
 # backup + counter reset (ac_records_backup / ac_learn_backup / ac_learn_reset),
 # the records-wide CURATE interval gate (ac_curate_meta / ac_curate_tick /
 # ac_curate_generation / ac_curate_due / ac_curate_reset), and the shared
@@ -97,12 +98,10 @@ ac_learn_migrate() {
 
 ac_learn_tick() {
   # ac_learn_tick - advance the per-debrief counter by one (absent/garbage => 0).
-  local f cur gen lock
-  f="$(ac_learn_meta)"
+  local lock
   lock="$(ac_state_dir)/.learn-cadence.lock"
-  # Loud in ac_learn_tick_claim's shape/register (F19) - the two are called two
-  # lines apart in ac-learn.sh cmd_tick, and a silent failure here read as a
-  # successful tick right after a loud claim. Missing a tick only delays the
+  # Loud in ac_learn_tick_keyed's shape/register (F19): a silent failure here
+  # read as a successful tick. Missing a tick only delays the
   # next distill (the LEVEL trigger still fires); it costs latency, never
   # correctness - but only if the reader is TOLD, instead of believing the
   # counter moved when it did not.
@@ -110,6 +109,15 @@ ac_learn_tick() {
     ac_warn "learning tick: cadence lock $lock could not be acquired within 10s - the debrief counter was NOT advanced. Missing a tick only delays the next distill (the LEVEL trigger still fires); it never loses a landing outright, but a caller that assumes success will believe the counter moved when it did not."
     return 1
   }
+  ac_learn_count_one
+  ac_lock_release "$lock"
+}
+
+ac_learn_count_one() {
+  # ac_learn_count_one - the counter's +1 itself, for a caller that already
+  # holds the cadence lock (the mkdir lock is not re-entrant).
+  local f cur gen
+  f="$(ac_learn_meta)"
   ac_learn_migrate "$f"
   cur="$(ac_meta_get "$f" debriefs)"
   gen="$(ac_meta_get "$f" generation)"
@@ -117,7 +125,6 @@ ac_learn_tick() {
   case "$gen" in '' | *[!0-9]*) gen=0 ;; esac
   ac_meta_set "$f" generation "$gen"
   ac_meta_set "$f" debriefs "$((cur + 1))"
-  ac_lock_release "$lock"
 }
 
 ac_learn_generation() {
@@ -141,10 +148,10 @@ ac_learn_generation() {
 
 ac_learn_ticks() { printf '%s/.learn-ticks\n' "$(ac_state_dir)"; }
 
-ac_learn_tick_claim() {
-  # ac_learn_tick_claim <key> - claim the ONE tick a landing is owed. Exit 0 when
-  # the claim is fresh (the caller advances the counter), 1 when <key> is already
-  # stamped inside the dedupe window (the caller must NOT).
+ac_learn_tick_keyed() {
+  # ac_learn_tick_keyed <key> - claim the ONE tick a landing is owed and count
+  # it. Exit 0 when the claim was fresh and the counter advanced, 1 when <key>
+  # is already stamped inside the dedupe window (nothing counted).
   #
   # The window is 24h, the same horizon ac_landing_warn reads the landing ledger
   # at, and it is deliberately far WIDER than the minutes between one landing's
@@ -159,11 +166,12 @@ ac_learn_tick_claim() {
   # ordinary under parallel rooms. Unserialized, both read "not stamped" and
   # both advance the counter - the unrecoverable direction this stamp exists to
   # prevent - or one whole-file rewrite loses the other's stamp to last-mv-wins
-  # and double-counts later. The lock is taken and RELEASED here, never held
-  # across ac_learn_tick: the mkdir lock is not re-entrant, so a caller holding
-  # it around both would spin its own timeout and fail. Serializing the claim
-  # alone is what the invariant needs - the loser reads the winner's stamp and
-  # never reaches the tick at all.
+  # and double-counts later. The count happens under the SAME hold as the
+  # stamp (ac_learn_count_one): released in between, another holder could keep
+  # the lock past the count's timeout, leaving the landing stamped as counted
+  # with the counter unmoved - and every re-run then skipped it. The stamp
+  # goes first, so a count that fails after it under-counts, the recoverable
+  # direction.
   local key="$1" f now tmp win=86400 lock rc=0
   f="$(ac_learn_ticks)"
   lock="$(ac_state_dir)/.learn-cadence.lock"
@@ -175,8 +183,9 @@ ac_learn_tick_claim() {
     return 1
   }
   now="$(ac_now)"
+  # `in`, never ==: awk compares numeric-looking keys as numbers (07 == 7).
   if [ -f "$f" ] && awk -F'\t' -v now="$now" -v k="$key" -v win="$win" \
-    '$2 == k && now - $1 < win { hit = 1 } END { if (!hit) exit 1 }' "$f"; then
+    'BEGIN { w[k] } ($2 in w) && now - $1 < win { hit = 1 } END { if (!hit) exit 1 }' "$f"; then
     ac_lock_release "$lock"
     return 1
   fi
@@ -186,6 +195,7 @@ ac_learn_tick_claim() {
     printf '%s\t%s\n' "$now" "$key"
   } >"$tmp"
   mv "$tmp" "$f" || rc=1
+  [ "$rc" != 0 ] || ac_learn_count_one
   ac_lock_release "$lock"
   return "$rc"
 }
@@ -302,7 +312,7 @@ ac_learn_reset() {
   # last_run is ALSO the retro window anchor (ac-learn.sh learn_retro_snapshot),
   # so every caller must have read the anchor it needs BEFORE calling this.
   #
-  # It deliberately does NOT prune the landing stamps (ac_learn_tick_claim). A
+  # It deliberately does NOT prune the landing stamps (ac_learn_tick_keyed). A
   # distill run completes ASYNCHRONOUSLY to any landing, so a reset can fall
   # BETWEEN a landing's two actors; dropping the stamp there would let the second
   # actor advance the fresh cycle - the double-advance the stamps exist to stop,
