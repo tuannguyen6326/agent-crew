@@ -73,8 +73,9 @@
 # TRANSIENT conditions, so a persistent state must be reported ALONGSIDE
 # whatever else is firing instead of queueing behind it: the three earlier
 # exit-2 sites (queued wakes, standing-coverage, stale-watcher-with-inflight)
-# each append the same HANDBACK line before their own exit 2, and the
-# otherwise-clean tail still blocks on it alone via handback_check. Absent
+# and the landing-receipt block each append the same HANDBACK line before
+# their own exit 2, and the otherwise-clean tail still blocks on it alone via
+# handback_check. Absent
 # this, a busy fleet - a wake queued at most turn ends, or a watcher beacon
 # continuously stale - never reaches the otherwise-clean tail and a room can
 # sit in HANDBACK indefinitely with nothing objecting (the incident this
@@ -83,7 +84,7 @@
 # not the guard). This is a STATE check, so it catches the failure whatever
 # the CAUSE (wake lost, wake ignored, chief forgot, a drain consumed into a
 # backgrounded task nobody read) - a signal-side fix can only ever catch its
-# own half. Unlike the landing-receipt reminder it is NOT fire-once: the
+# own half. Like the landing-receipt reminder it is NOT fire-once: the
 # property is "a room cannot sit in HANDBACK across turn ends with nothing
 # objecting", and one dismissal would retire it. The chief clears it by one of
 # THREE acts: `ac-teardown.sh <family>-chief` (demote) then `ac-room.sh
@@ -286,6 +287,7 @@ $cur
 EOF
   if [ -n "$owed" ]; then
     printf 'agent-crew: a task landed (backlog Done) but its Slack done-report may be unposted for:%s. Post it then stamp it (bin/ac-remote.sh done-stamp <family>) - this repeats every turn end until it is stamped.\n' "$owed" >&2
+    handback_note
     ac_hook_trace turnend-guard "verdict=blocked reason=landing-receipt scope=${scope:-fleet} queued=${queued_word:-n/a} inflight=${inflight:-n/a} age=$(age_field) handback=$(hb_field)"
     exit 2
   fi
@@ -300,10 +302,11 @@ handback_owed() {
   # session or firing at any of its call sites below would wedge exactly the
   # turn that reports back.
   #
-  # SHARED by handback_check (the otherwise-clean tail) and the three earlier
+  # SHARED by handback_check (the otherwise-clean tail), the three earlier
   # exit-2 sites (queued wakes, standing-coverage, stale-watcher-with-inflight)
-  # via handback_note below - each turn end takes exactly one of those four
-  # paths, so this still runs at most once per invocation, never twice.
+  # and the landing-receipt block via handback_note below - each turn end takes
+  # exactly one of those five paths, so this still runs at most once per
+  # invocation, never twice.
   #
   # The HANDBACK grammar is NOT copied here: ac_room_handback_families
   # (ac-wake-lib.sh) owns it and answers for N rooms in ONE awk pass. That
@@ -335,7 +338,8 @@ handback_note() {
   # runs at most once. ADDS a line, never replaces the caller's own message
   # and never exits itself, so it is safe to call right before an earlier
   # block's own exit 2 (queued wakes, standing-coverage,
-  # stale-watcher-with-inflight) as well as from handback_check below.
+  # stale-watcher-with-inflight, landing-receipt) as well as from
+  # handback_check below.
   #
   # hb_seen is deliberately NOT local: it is this invocation's one computation
   # of handback_owed, and every trace-log call site downstream reads it back
@@ -351,8 +355,8 @@ handback_check() {
   # HANDBACK block (see header): a room whose last HANDBACK: entry is not yet
   # followed by DEMOTED:/CLOSED: is a roomchief still waiting to be demoted and
   # its room closed. Called at the otherwise-clean turn end, AFTER
-  # landing_receipt_check: this block is persistent, so running it first would
-  # starve that fire-once reminder of the run that records its seen-set. The
+  # landing_receipt_check, which is persistent too and so carries this state
+  # via handback_note in its own block - neither starves the other. The
   # three earlier exit-2 sites report the SAME state via handback_note above
   # instead of waiting for this call, which is what makes the state reachable
   # on a busy fleet too - see the HANDBACK header block for why.

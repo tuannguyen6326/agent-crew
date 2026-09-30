@@ -2341,6 +2341,9 @@ cat >"$lrbacklog" <<'EOF'
 EOF
 printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "first run seeds the baseline silently"
 assert_file "$state/.landing-seen" "the seen-set baseline is recorded"
+mkdir -p "$AC_HOME/data/old1"
+: >"$AC_HOME/data/old1/room.md"
+printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "a family in the baseline never owes a report, room or not"
 
 # A NEW Done line whose family has a room and NO stamp -> block with the reminder.
 mkdir -p "$AC_HOME/data/greet2"
@@ -2350,6 +2353,16 @@ rc=0; printf '{}' | "$BIN/ac-turnend-guard.sh" 2>"$TMP/lr.err" || rc=$?
 assert_eq "$rc" "2" "a new unstamped Done family blocks the turn"
 assert_contains "$(cat "$TMP/lr.err")" "greet2" "the reminder names the owed family"
 assert_contains "$(cat "$TMP/lr.err")" "done-stamp" "the reminder points at the done-stamp verb"
+# The landing block repeats, so it must carry a HANDBACK owed at the same time
+# rather than starve it until the landing is stamped.
+mkdir -p "$AC_HOME/data/lrhb"
+printf '# Room: lrhb\n\n- [%s] lrhb-chief> HANDBACK: landed, please demote and close\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$AC_HOME/data/lrhb/room.md"
+rc=0; printf '{}' | "$BIN/ac-turnend-guard.sh" 2>"$TMP/lr.err" || rc=$?
+assert_eq "$rc" "2" "an unstamped landing and a HANDBACK block together"
+assert_contains "$(cat "$TMP/lr.err")" "greet2" "... naming the owed landing"
+assert_contains "$(cat "$TMP/lr.err")" "HANDBACK" "... and the waiting hand-back"
+rm -rf "$AC_HOME/data/lrhb"
 
 # It REPEATS until stamped: a missed report must not go silent.
 rc=0; printf '{}' | "$BIN/ac-turnend-guard.sh" 2>/dev/null || rc=$?
@@ -2373,6 +2386,8 @@ printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "a stamped family does not remi
 
 # mirror=off -> the check is inert even with a fresh unstamped Done line.
 printf 'off\n' >"$AC_HOME/config/remote-mirror"
+mkdir -p "$AC_HOME/data/offtask"
+: >"$AC_HOME/data/offtask/room.md"
 printf -- '- [x] offtask - no slack owed - local main (merged 2026-07-19)\n' >>"$lrbacklog"
 printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "mirror=off owes no done-report -> silent"
 
@@ -2393,7 +2408,7 @@ assert_no_file "$state/.landing-seen" "a scoped session never writes the fleet s
 
 rm -f "$AC_HOME/config/remote-mirror" "$lrbacklog" \
   "$state/.landing-seen" "$state/.landing-receipt-stamp"
-rm -rf "$AC_HOME/data/greet2" "$AC_HOME/data/audit"
+rm -rf "$AC_HOME/data/greet2" "$AC_HOME/data/audit" "$AC_HOME/data/old1" "$AC_HOME/data/offtask"
 reset_state
 
 # --- HANDBACK block -----------------------------------------------------------
