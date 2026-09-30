@@ -276,7 +276,7 @@ while owed; do
   fi
 
   # The reason line is the classifier, NEVER the exit status: every ac-watch.sh
-  # close prints it on stdout (ac-watch.sh:565 - stderr is the arm log and
+  # close prints it on stdout (ac-watch.sh watch_log - stderr is the arm log and
   # "NEVER stdout") and its REFUSALS print one too while exiting 2. Erasing the
   # output on a non-zero status made every refusal arrive empty, i.e. read as a
   # watcher that died mute.
@@ -289,13 +289,13 @@ while owed; do
       continue ;;
     'already running'*|'refused: a live watcher'*)
       # The chief armed one by hand, or a previous hook still holds it. The
-      # config-swap refusal (ac-watch.sh:879) is the SAME branch and the same
+      # config-swap refusal (ac-watch.sh's `holds a DIFFERENT watch-config` refusal) is the SAME branch and the same
       # fact - the lock is held by a LIVE watcher, a dead or stale one having
       # been reclaimed first - only with a different AC_WATCH_SKIP, which the
       # chief sets inline on its own arm and this hook therefore never sees.
       # Coverage is in place; nagging the chief to release it is not this
       # hook's job. A refusal that armed NOTHING (the owner gate at
-      # ac-watch.sh:846-855) is not covered and stays in the `*)` arm.
+      # ac-watch.sh) is not covered and stays in the `*)` arm.
       ac_hook_trace watch-autoarm "verdict=stood-aside reason=already-running scope=${scope:-fleet}"
       exit 0 ;;
     '')

@@ -273,11 +273,11 @@ printf '99 /effort\n' >"$FAKE_HERDR/panes/$upane.drop-enters"
 "$BIN/ac-brief.sh" u2 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" u2 "$repo" --harness claude --effort ultracode 2>&1)"
 assert_contains "$out" "spawned u2" "spawn survives the stranded slash line"
-# Needle names the SLASH LINE. ac-spawn.sh:849's GENERIC "kickoff prompt NOT
+# Needle names the SLASH LINE. ac-spawn.sh deliver_kickoff's GENERIC "kickoff pointer NOT
 # acknowledged" contains a bare "NOT acknowledged" too, and a bare needle
 # measurably let it answer for this one: with the warning below AND its
 # kickoff-withhold deleted, the kickoff was delivered, its Enter was dropped
-# in turn, :849 fired - and this assertion stayed green over a warning that
+# in turn, the generic warning fired - and this assertion stayed green over a warning that
 # was gone.
 assert_contains "$out" "'/effort ultracode' NOT acknowledged" "stranded '/effort ultracode' warns loudly"
 assert_contains "$out" "ac-send.sh u2" "warning names the manual fallback"

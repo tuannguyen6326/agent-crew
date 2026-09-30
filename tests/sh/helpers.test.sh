@@ -220,7 +220,7 @@ assert_no_hogs "the real reap clears them"
 # reaches the publish (a fork the host cannot serve under contention, a failing
 # mktemp) killed it silently and left this file spinning for ever. Nothing above
 # it bounds that: tests/run-suite.sh has no per-test timeout here
-# (no timeout/gtimeout - run-suite.sh:153-159), so one dead child hangs the WHOLE
+# (no timeout/gtimeout - its capability probe), so one dead child hangs the WHOLE
 # suite. Measured 2026-07-25 on the real shape: the child was already reaped
 # (kill -0 said no) while the poll was still spinning 600 iterations later.
 # The bound is the same shape wait_all_dead above already uses.
@@ -412,7 +412,7 @@ herdr --session s1 tab list >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "0" "a modeled verb still dispatches"
 
 # An unmodeled verb must be REFUSED, not "succeed" with empty output. `pane run`
-# is the real instance, not a hypothetical: bin/ac-pane-agent.sh:1085 issues it
+# is the real instance, not a hypothetical: bin/ac-pane-agent.sh's step 5 launch issues it
 # against the backend, and this fake models no arm for it.
 rc=0
 out="$(herdr --session s1 pane run p1 somecmd 2>&1)" || rc=$?

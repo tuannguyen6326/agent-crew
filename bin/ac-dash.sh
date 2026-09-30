@@ -63,7 +63,7 @@ render() {
 
   # Verification agents (ac_meta_is_verify owns the class) get their own
   # heading, rendered only when at least one exists - mirroring
-  # ac-fleets.sh:388-390.
+  # ac-fleets.sh emit_home's verify block.
   if [ "$verify_found" = 1 ]; then
     printf '\n%sVERIFY (verification agents, not crew)%s\n' "$C_H" "$C_0"
     printf '%s' "$verify_lines"

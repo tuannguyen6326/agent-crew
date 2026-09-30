@@ -548,20 +548,20 @@ standing_rules() {
   # 500+-line, largely-historical-provenance file.
   # EXCLUDES `STANDING (domain:<name>):` blocks: those already reach the
   # domainchief mechanically, read directly from this SAME file at intake,
-  # BEFORE this brief is ever scaffolded (bin/ac-spawn.sh:1102) - and
+  # BEFORE this brief is ever scaffolded (bin/ac-spawn.sh's DOMAINCHIEF SECTION) - and
   # ac-brief.sh cannot know the domain at compose time anyway (AC_DOMAIN is
   # resolved and exported by ac-spawn.sh, which runs AFTER this script; this
   # script's signature takes <id> <project>, no domain argument).
   # FAILS LOUD, never silent, when the source cannot be read - the sibling
   # knowledge() no-ops silently on a STRUCTURAL absence (no clone resolves);
   # an unreadable captain.md is not structural, it is the defect this task
-  # fixes with a new cause, so the brief SAYS SO (ac-gate.sh:666-668's
+  # fixes with a new cause, so the brief SAYS SO (ac-gate.sh captain_line's
   # "(no standing preferences file on record)" is the precedent this reuses).
   # A line that CARRIES the STANDING token but never becomes part of a
   # parsed `- ` block (roomchief-verify finding on this family, citing
   # records/captain.md:63 - a STANDING rule authored as plain paragraph text
   # under a `## heading`, never a `- ` bullet) must not vanish either: WARN,
-  # do not WIDEN the selector to swallow it - bin/ac-domain.sh:150 is the
+  # do not WIDEN the selector to swallow it - the retired domain_row_tokened lesson (src/backlog.ts's domain field) is the
   # named trap (prose merely MENTIONING the token read as a real entry).
   # bin/ac-deputy.sh:31's shape is the precedent this reuses: an invalid
   # entry prints its VERBATIM source plus one reason, so the next malformed

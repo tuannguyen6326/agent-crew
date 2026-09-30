@@ -445,7 +445,7 @@ ac_backend >/dev/null
 #   --model/--effort; codex takes -m plus the effort as a CONFIG OVERRIDE,
 #   `-c model_reasoning_effort=<e>` - codex has no --effort flag, and -c is its
 #   global override mechanism (`codex --help`, codex-cli 0.144.6). The form is
-#   VERIFIED for the headless judge (bin/ac-pane-agent.sh:756, `codex exec`). The
+#   VERIFIED for the headless judge (bin/ac-pane-agent.sh oneshot_launch, `codex exec`). The
 #   INTERACTIVE TUI reading - against a config default of xhigh, launching
 #   with `-c model_reasoning_effort=low` rendered `low` in the TUI header
 #   (2026-07-21, clean CODEX_HOME) - is the fix probe's reported result, NOT
@@ -498,7 +498,7 @@ ac_backend >/dev/null
 #   routed-pane-rules-for-gate-codereview-roomchief), so this function always
 #   resolves the mandatory default for them rather than dying when no
 #   selector is at hand - exactly what a mechanism with no chief in the loop
-#   needs (the system-initiated Learning promote, ac-learn.sh:1758, carries
+#   needs (the system-initiated Learning promote, ac-learn.sh cmd_autoroom, carries
 #   no --harness and no agent to judge a `when` clause). WHO can bypass this
 #   function to choose instead differs per kind, judged by WHERE an agent
 #   with AC_HOME actually sits in each call chain (captain ruling

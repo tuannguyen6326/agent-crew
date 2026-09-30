@@ -37,7 +37,7 @@ room_seed() {
   # room_seed <family> [<text>] - the ORDER GATE precondition every real promote
   # meets. `--roomchief` takes no brief - the room IS the brief - so ac-spawn
   # refuses a promote into a room holding no entry (below). Production posts the
-  # order (crewchief) or the charter (bin/ac-learn.sh:1711) BEFORE promoting, so
+  # order (crewchief) or the charter (bin/ac-learn.sh cmd_autoroom) BEFORE promoting, so
   # these fixtures do the same rather than being exempted from the gate. The
   # default text opens with NO marker verb: a fixture must not mint a pending
   # item, and the gate matches the entry LINE SHAPE, never the prose.
@@ -74,7 +74,7 @@ out="$("$BIN/ac-spawn.sh" --roomchief og2 --harness fake 2>&1)" \
 assert_contains "$out" "holds no entry" "a room with only its header reads as empty"
 assert_no_file "$AC_HOME/state/og2-chief.meta" "no meta for the header-only room"
 
-# (3) the CHARTER-FIRST pattern passes (bin/ac-learn.sh:1711-1713 posts the
+# (3) the CHARTER-FIRST pattern passes (bin/ac-learn.sh cmd_autoroom posts the
 #     charter, then promotes) - and ANY entry satisfies the gate, so a CHARTER:
 #     entry counts exactly like an ORDER: one. No prose shape-matching.
 room_seed og3 "CHARTER: room og3 carries the captain standing order"
@@ -291,7 +291,7 @@ rm -f "$AC_HOME/config/crew-harness" "$AC_HOME/config/crew-dispatch.json"
 
 # (4) panes.roomchief PRESENT but naming no harness DIES rather than silently
 # falling back - a misconfigured profile is not an absent one (mirrors
-# bin/ac-gate.sh's panes.gate handling, bin/ac-gate.sh:622-623).
+# bin/ac-gate.sh's panes.gate handling, bin/ac-gate.sh PROFILE RESOLUTION).
 cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 {"panes": {"roomchief": {"model": "sonnet"}}}
 EOF
@@ -301,7 +301,7 @@ assert_no_file "$AC_HOME/state/dpk4-chief.meta" "a misconfigured panes.roomchief
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
 # (5) EVIDENCE: the real Learning-shaped call - --system-initiated with NO
-# --harness at all (bin/ac-learn.sh:1583's exact shape) - against a ROUTED
+# --harness at all (bin/ac-learn.sh cmd_autoroom's exact shape) - against a ROUTED
 # panes.roomchief carrying the now-MANDATORY `default` (captain ruling
 # 2026-07-28, routed-pane-rules-for-gate-codereview-roomchief). It must
 # resolve the default DETERMINISTICALLY and must NOT die: this is precisely

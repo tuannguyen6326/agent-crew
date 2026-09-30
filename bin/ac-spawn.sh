@@ -1549,7 +1549,7 @@ if [ -n "$roomchief_family" ]; then
   # through to today's config/crew-harness ladder unchanged; a
   # panes.roomchief entry that names no harness DIES rather than silently
   # falling back - mirrors bin/ac-gate.sh's panes.gate resolution
-  # (bin/ac-gate.sh:622-623). panes.roomchief may ALSO be ROUTED (`rules` +
+  # (bin/ac-gate.sh's ONE ENGINE, NO FALLBACK header). panes.roomchief may ALSO be ROUTED (`rules` +
   # a MANDATORY `default`, captain ruling 2026-07-28,
   # routed-pane-rules-for-gate-codereview-roomchief): this call passes no
   # selector, so it resolves the mandatory default - exactly what this
@@ -1618,7 +1618,7 @@ HANDBACK: the ordinary roomchief channel, bin/ac-room.sh handback $fam - there i
   # resolves NO data/ at all - ac_home refuses with AC_HOME unset.
   # AC_DOMAIN rides beside AC_SCOPE, gated on a resolved domain so an ordinary
   # roomchief's launch line stays byte-identical - the same two-place shape the
-  # scope pair already uses at :1372-1373/:1400, so no new pattern appears.
+  # scope pair already uses on the --recover and roomchief launch lines, so no new pattern appears.
   dom_env=""
   [ -z "$dom" ] || dom_env="AC_DOMAIN=$(printf '%q' "$dom") "
   # THE SOLO CHIEF SECTION (captain ruling 2026-09-16, solo-session skill).
@@ -1807,7 +1807,7 @@ if [ "$crewdeputy" = 1 ]; then
   spawn_meta_claim_release
   trap - EXIT   # the meta is complete: the deputy is addressable, teardown owns it
   # PAST THIS LINE THE CREWDEPUTY SPAWN HAS HAPPENED and is not retryable - same
-  # bookkeeping-tail shape as the roomchief promote above (:1143-1153): a failed
+  # bookkeeping-tail shape as the roomchief promote above: a failed
   # status write must WARN by name, never fail a spawn whose deputy already exists.
   ac_status_append "$id" "working: crewdeputy spawned" \
     || ac_warn "crewdeputy $id is spawned, but its status line could not be appended"
@@ -1928,7 +1928,7 @@ harness="${prof_h#harness=}"
 # lets the harness fall back to its own built-in default (`ac_build_launch`
 # omits -m/--model entirely) - the same "empty means the harness's own
 # default" rule ac-pane-agent.sh already applies to its ATOMIC pane profile
-# (bin/ac-pane-agent.sh:56-64). A CUSTOM harness (config/launch-<h>) is exempt:
+# (bin/ac-pane-agent.sh's PANE PROFILE header, `A profile is ATOMIC`). A CUSTOM harness (config/launch-<h>) is exempt:
 # its template is captain-authored and emitted verbatim, never composed by
 # ac_build_launch, so there is no silent-composition risk to guard against -
 # only the three known built-ins can. This IS a behaviour change for those

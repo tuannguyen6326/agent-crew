@@ -675,9 +675,9 @@ assert_contains "$(cat "$HDLOG")" "workspace create --label agent-crew --no-focu
   "no AC_HOME: the fixed fleet's root workspace, never the checkout basename"
 assert_no_file "$fake/config" "no AC_HOME: no config/ minted inside the checkout"
 # ...and NOT ONE BYTE on stderr. This script's stdout+stderr are ONE stream to
-# its caller: ac-verify.sh:1107-1108 launches it as `"$pane_bin" ... >"$result"
-# 2>&1` and then parses that file with `jq -c 'select(.event == "done")'`
-# (:1137). jq aborts on the first non-JSON line and emits NOTHING, so a single
+# its caller: ac-verify.sh (main pane launch) launches it as `"$pane_bin" ... >"$result"
+# 2>&1` and then parses that file with `jq -c 'select(.event == "done")'`.
+# jq aborts on the first non-JSON line and emits NOTHING, so a single
 # stray diagnostic - ac_home's homeless refusal, say - turns a valid verdict
 # into `verifier <id> emitted no terminal result` and fails EVERY codereview
 # and QA round a crewmate launches. The homeless rungs must degrade QUIETLY.
@@ -685,7 +685,7 @@ err="$(env -u AC_HOME -u AC_FLEET_STATE PATH="$stub:$PATH" HOME="$FAKEHOME" \
   "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label nohome-quiet 2>&1 >/dev/null)"
 assert_eq "$err" "" "no AC_HOME: the pane agent writes NOTHING to stderr (it shares stdout with the NDJSON its caller jq-parses)"
 # The state dir it uses is the fleet's when told, never the checkout's: same
-# AC_FLEET_STATE rung its siblings ac-done.sh:77 and ac-verify.sh:362-368 carry.
+# AC_FLEET_STATE rung its siblings ac-done.sh:77 and ac-verify.sh resolve_state_dir carry.
 fleet_state="$TMP/pa-fleet-state"
 mkdir -p "$fleet_state"
 env -u AC_HOME AC_FLEET_STATE="$fleet_state" PATH="$stub:$PATH" HOME="$FAKEHOME" \
@@ -1395,7 +1395,7 @@ assert_contains "$(cat "$XLOG.prompt")" "review this" "the prompt file reaches t
 assert_contains "$(cat "$XLOG")" "codex exec -s read-only --skip-git-repo-check" \
   "the codex one-shot form skips codex's own git-repo trust check - the gate always runs it from the fleet home, never a git repo"
 
-# The gate's judge cwd is the FLEET HOME (bin/ac-gate.sh:889), and a fleet home
+# The gate's judge cwd is the FLEET HOME (bin/ac-gate.sh's judge launch, --cwd "$(ac_home)"), and a fleet home
 # is never a git repo - every input rides in the prompt instead. Prove
 # ac-pane-agent composes and runs the form from such a cwd without erroring on
 # its own account - the stub does not run codex's real trust-check, so that
@@ -1831,8 +1831,8 @@ rm -f "$AC_HOME/config/qa-agent" "$AC_HOME/config/crew-dispatch.json"
 # render on every capture and dropping any text sent before that render settles.
 # The verifier must require a non-empty stable render as well as idle before it
 # types anything.
-# --timeout 20, matching the codex sibling at :1313: crewmate_wait_input_ready
-# (bin/ac-pane-agent.sh:1147-1178) gates BOTH harnesses through the identical
+# --timeout 20, matching the codex c-ready sibling below: crewmate_wait_input_ready
+# (bin/ac-pane-agent.sh) gates BOTH harnesses through the identical
 # observation loop, and the codex arm was MEASURED at ~8s of overhead on this
 # same stub (records/repo-knowledge/agent-crew.md, by:
 # pane-agent-codex-lacks-the-input-surface-ready-gate, 2026-07-26) - opencode,
@@ -2035,7 +2035,7 @@ missing="$TMP/idle-never-written.md"
 rm -f "$missing"
 # rc captured on THIS run rather than re-run under assert_fails: that helper
 # accepts any non-zero exit and discards stderr, so a broken harness reads
-# identically to the refusal under test (tests/sh/helpers.sh:86).
+# identically to the refusal under test (assert_fails, tests/sh/helpers.sh).
 irc=0; out="$(irun --label idle-bad --deliverable "$missing")" || irc=$?
 case "$out" in *'"status":"ok"'*) fail "an idle pane with no deliverable must never report ok" ;; esac
 assert_contains "$out" '"event":"done"' "the refusal still speaks the done protocol"

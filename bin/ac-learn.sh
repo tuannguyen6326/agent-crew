@@ -420,7 +420,7 @@ learn_retro_snapshot() {
       while IFS=$'\t' read -r id date marker doneline; do
         [ -n "$id" ] || continue
         # E7: a family id outside [a-zA-Z0-9_-] (ac-room.sh's own family
-        # validation, ac-room.sh:106) never gets a room lookup - no-room.
+        # validation, ac-room.sh cmd_post) never gets a room lookup - no-room.
         case "$id" in
           *[!a-zA-Z0-9_-]*)
             printf '%s %s %s no-room\n' "$id" "$date" "$marker" ;;
@@ -865,7 +865,7 @@ EOF
         "$(basename "$(ac_home)")" "$pane" "$rundir"
     } >"$verify_meta.tmp.$$"
     # Status is appended BEFORE the meta mv - the same order bin/ac-verify.sh's
-    # publish_meta uses (:767-772: "a reader that sees the meta always sees the
+    # publish_meta uses ("a reader that sees the meta always sees the
     # status too"). ac-learn.sh used to append status LAST, so under load an
     # observer could see the meta but miss the status; this closes that window.
     ac_status_append "$verify_id" "started learning scout pane=$pane"
@@ -1710,7 +1710,7 @@ learn_pointer_claimed() {
   # <skill>. Nothing when it carries no row for the name, or does not exist yet
   # (the LIVE ledger before a fleet's first transaction).
   # It reads BOTH pointer shapes, because the side this is compared against is
-  # learn_ledger_split's aggregate over both (consume_pointer, :1287): reading
+  # learn_ledger_split's aggregate over both (its consume_pointer): reading
   # only the canonical row would charge a skill's whole inherited LEGACY count
   # to this one transaction's delta and refuse an honest land - the very land
   # that canonicalizes the legacy row. Every legacy rung-qualified row counts
@@ -2632,7 +2632,7 @@ learn_suite_launch() {
   # supervised by the watcher like any other pane, but OUT of crew accounting,
   # which is what a non-crewmate meta must be or it nags WATCHER-DOWN, blocks a
   # room from closing, blocks a chief's demote and pollutes the crew survey (the
-  # six consumers of that class, ac-lib.sh:766). Same shape the learning scout
+  # six consumers of that class, ac-lib.sh's VERIFICATION-agent class block). Same shape the learning scout
   # already publishes for itself above.
   #
   # It opens in backend_window_new's ordinary crewmate group, NOT the pane-agent

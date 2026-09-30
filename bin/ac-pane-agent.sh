@@ -1003,7 +1003,7 @@ PROJ="$(ac_claude_transcript_root)/$SLUG"
 # the hook). The hook is MERGED into settings.local.json, never written over
 # it - contract: TURN-END ISOLATION in the header.
 # The fleet's state dir, on the same rung its siblings use: AC_FLEET_STATE
-# (what ac-verify.sh:1082 exports onto this pane's launch) > ac_state_dir >
+# (what ac-verify.sh exports onto this pane's launch) > ac_state_dir >
 # /tmp. Homeless is this script's NORMAL case (header), and ac_state_dir
 # refuses there, so its diagnostic is swallowed DELIBERATELY: stdout and stderr
 # are ONE stream to the caller (ac-verify.sh runs `"$pane_bin" ... >"$result"

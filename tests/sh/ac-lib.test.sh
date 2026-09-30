@@ -88,7 +88,7 @@ assert_eq "$(lib "ac_wake_family_spools '$empty'" | wc -l | tr -d ' ')" "0" \
 # their loop, unretried - a real ac-wake-drain.sh run hit "printf: write
 # error: Interrupted system call" (EINTR) there twice (bash builtins write
 # via direct write(), not libc stdio buffering: repo-knowledge, src:
-# tests/run-suite.sh:93). Under the set -e every real caller runs under
+# tests/run-suite.sh's RUNNING printf). Under the set -e every real caller runs under
 # (lib() above included), an interrupted printf's nonzero status aborts the
 # REST of the enumeration silently - errexit does not fire on a command used
 # as an if/while/until CONDITION, so a retrying `until printf ...; do ...;
@@ -105,7 +105,7 @@ assert_eq "$(lib "ac_wake_family_spools '$empty'" | wc -l | tr -d ' ')" "0" \
 # makes "still alive after a moment" a reliable block signal instead of a
 # race on fork/exec - the same role the precedent fixture's `ps -o comm=`
 # poll plays for its own child (repo-knowledge "DIAGNOSED+FIXED the
-# run-suite signal-fixture flake", src: tests/sh/run-suite.test.sh:112).
+# run-suite signal-fixture flake", src: run-suite.test.sh's signal-disposition regression).
 #
 # Assertion is COMPLETENESS (every expected entry present), not exact set
 # equality: this bash/kernel combination measurably (verified live, retried
@@ -1162,11 +1162,11 @@ rm -rf "$AC_HOME/data/wire" "$AC_HOME/data/wire-e34" "$AC_HOME/data/wire-c"
 # Contract and reasoning: ac_meta_get's own comment block (bin/ac-lib.sh). What
 # these cases pin: a VANISH mid-read is empty+0, a present-but-unreadable file
 # still ABORTS (fail-closed), and the ordinary reads are unchanged. The vanish
-# case is the load-sensitive red at tests/sh/ac-lock.test.sh:470 - 17% of stale
+# case is the load-sensitive red at tests/sh/ac-lock.test.sh (the stale race case) - 17% of stale
 # races under 5-way load, 0% quiet - so it needs a deterministic fixture, below.
 real_awk="$(command -v awk)"
 mkdir -p "$TMP/metabin"
-# The reaper's rm (bin/ac-lock.sh:233), made deterministic: one shim that deletes
+# The reaper's rm (bin/ac-lock.sh do_acquire), made deterministic: one shim that deletes
 # the target AFTER ac_meta_get's `-f` test has passed and BEFORE the real awk
 # opens it - no load, no second process, no timing. Same PATH-stub technique as
 # make_fake_herdr's fake CLI. Scoped to *.vanish.meta so no other awk call moves.
@@ -1568,7 +1568,7 @@ assert_no_file "$tdata/ghost/timeline.log" "no phantom durable dir for a metales
 #     dies-on-directory-status-path) --------------------------------------------
 # The mirror is fail-soft on its own account, but it must not launder the
 # primary write's failure into an always-0 return. Exercised the same way the
-# real caller (bin/ac-spawn.sh:1152) exercises it - `ac_status_append ... ||
+# real caller (bin/ac-spawn.sh's `working: roomchief promoted` append) exercises it - `ac_status_append ... ||
 # ...` - because a BARE unguarded call already aborts on its own redirect
 # error regardless of this function's return value, so it cannot tell the
 # fixed function from the broken one.

@@ -29,7 +29,7 @@
 #   ac-guard.sh today (the five call sites above are its only ones; ac-ship.sh,
 #   ac-done.sh, ac-qa.sh and the crew skills invoke none of them) except a
 #   crewmate running ac-merge-local.sh directly from its own worktree
-#   (that script's own :182 anticipates AC_CREW_ID/AC_SCOPE) - there this
+#   (that script's own scoped-actor check anticipates AC_CREW_ID/AC_SCOPE) - there this
 #   fires as a benign false positive on a fail-open advisory.
 # - DISTRO-LAG: the running tree (the anchor - the checkout owning the invoked
 #   bin/, same resolution as WIP-TOOLING above) is behind its default branch
@@ -115,7 +115,7 @@ fi
 # the resolved primary means the fleet command JUST RUN is executing a leased
 # worktree's own copy of bin/, not the primary's - almost always a chief that
 # cd'd into a leased pool worktree; the one anticipated exception is a
-# crewmate running ac-merge-local.sh directly (:182), a benign false positive.
+# crewmate running ac-merge-local.sh directly (its scoped-actor check), a benign false positive.
 if [ -n "$anchor" ] && [ -n "$root" ] && [ "$anchor" != "$root" ]; then
   warnings="${warnings}WIP-TOOLING: running bin/ from '$anchor', not the primary '$root' - this may be a crewmate's leased worktree copy
 "

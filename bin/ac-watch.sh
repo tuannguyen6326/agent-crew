@@ -254,7 +254,7 @@
 #    The asymmetry that justifies the split: a CREWMATE's pane is its ONLY
 #    channel to its chief, while a ROOMCHIEF's are DURABLE by charter - it
 #    reports back with ac-room.sh handback, which posts the room record AND
-#    queues a durable wake (bin/ac-spawn.sh:1018, "never rely on a pane line
+#    queues a durable wake (bin/ac-spawn.sh roomchief prompt, "never rely on a pane line
 #    alone") - and a captain-facing GATE:/ASK: is the room's, already covered by
 #    ac_chief_gate_parked.
 #  - RESIDUAL, stated rather than hidden: a chief that ends its turn on a
@@ -629,7 +629,7 @@
 # config/remote-poll-timeout for its own worst poll.
 # RESIDUAL THIS BOUND CREATES, named because it is new: ingest_stream commits an
 # order in two steps, the stash then its wake, and says of the gap "A death
-# BETWEEN the two is not covered and cannot be from here" (bin/ac-remote.sh:380).
+# BETWEEN the two is not covered and cannot be from here" (bin/ac-remote.sh).
 # A ceiling kill CAN now be from here. One landing in that gap leaves a stash
 # with no wake, and the stash is also the dedup sign, so that rid is silently
 # burned. The gap is ~11.7 ms per rid - MEASURED on this host, five fork+execs
@@ -1315,7 +1315,7 @@ if [ "$once" = 0 ]; then
     # predicate and scoping bin/ac-turnend-guard.sh's queued-wakes gate uses
     # (a scoped arm is judged on its own spool; a fleet arm on its own spool
     # plus any orphan). Appended to the SAME line as the prefix, never a new
-    # one - ac-watch-autoarm.sh:195-196 reduces this output to its LAST
+    # one - ac-watch-autoarm.sh's `while owed` loop reduces this output to its LAST
     # non-empty line before classifying it, so a genuinely new line would
     # replace "already running"/"refused: a live watcher" as the reason the
     # hook matches on and silently misclassify the refusal.
@@ -2024,7 +2024,7 @@ check_fleet() {
     rm -f "$state_dir/.gone-$id"
 
     # Computed here (not just for the branches below): backend_agent_blocked
-    # ALSO masks on this file (bin/ac-backend.sh:866), and the ask-alert
+    # ALSO masks on this file (bin/ac-backend.sh CAPTAIN-WAIT STAMP header), and the ask-alert
     # elif below must not mistake that mask for a real resume.
     wait_file="$(ac_wait_file "$id")"
 
@@ -2042,7 +2042,7 @@ check_fleet() {
       # EDGE only (the latch existed and is now being dropped) - never on the
       # level, which the unguarded `rm -f` used to run on EVERY poll for
       # EVERY unblocked pane. ac_status_append has no dedupe of its own
-      # (bin/ac-lib.sh:989), so an unconditional append here would spam one
+      # (bin/ac-lib.sh), so an unconditional append here would spam one
       # line per pane per poll forever (ask-alert-never-clears-its-status-line).
       # backend_agent_idle distinguishes a completed turn from a resumed one -
       # collapsing both into one generic "no longer blocked" line would render
@@ -2050,11 +2050,11 @@ check_fleet() {
       # as badly as the stale line did.
       #
       # The wait_file guard: backend_agent_blocked reads FALSE while a
-      # CAPTAIN-WAIT STAMP is live (bin/ac-backend.sh:866) - that is a MASK,
+      # CAPTAIN-WAIT STAMP is live (bin/ac-backend.sh CAPTAIN-WAIT STAMP header) - that is a MASK,
       # not a real resume, and backend_agent_idle reads the same masked
       # `reported: blocked` status, so it would also answer false and land
       # this branch on "working: ... agent resumed" for a pane that is still
-      # genuinely blocked, now on the captain (bin/ac-room.sh:262 stamps it
+      # genuinely blocked, now on the captain (bin/ac-room.sh cmd_post stamps it
       # on any room GATE/ASK edge). Leave the latch alone while the stamp is
       # live: the stale needs-decision: line stays, and it is TRUE in this
       # window - the pane really is blocked. A stamp that clears while the

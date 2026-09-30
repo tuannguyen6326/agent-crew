@@ -83,7 +83,7 @@
 # It also served no legitimate caller, which is what settled it rather than a
 # preference for symmetry: a crewmate pane carries no AC_HOME BY DESIGN, so
 # bin/ac-brief.sh already bakes a `--home`-carrying command line into every
-# brief for exactly this verb (ac-brief.sh:256-257, whose own comment says the
+# brief for exactly this verb (ac-brief.sh knowledge(), whose own comment says the
 # crewmate's ac-know.sh "would resolve a [wrong home]"). The rung therefore
 # caught only calls that had lost their --home - and "caught" them by writing
 # into whatever checkout owned the running bin/, which in a leased worktree is
@@ -350,7 +350,7 @@ settle_home() {
   # the same fail-closed direction ac_home itself took at @bf8f656.
   local home
   home="$(ac_home_resolve "${1:-}" "$2")"
-  [ -n "$home" ] || ac_die "no fleet home: pass --home <abs>, or set AC_HOME. This checkout is NOT one - a record written here lands where no fleet reads it, and in a leased worktree it is discarded on return. A crewmate pane never carries AC_HOME by design, which is exactly why bin/ac-brief.sh bakes a --home-carrying command line into every brief (ac-brief.sh:256-257) - run the line the brief gave you."
+  [ -n "$home" ] || ac_die "no fleet home: pass --home <abs>, or set AC_HOME. This checkout is NOT one - a record written here lands where no fleet reads it, and in a leased worktree it is discarded on return. A crewmate pane never carries AC_HOME by design, which is exactly why bin/ac-brief.sh bakes a --home-carrying command line into every brief (ac-brief.sh knowledge()) - run the line the brief gave you."
   export AC_HOME="$home"
 }
 

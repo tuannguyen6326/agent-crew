@@ -184,10 +184,10 @@ cmd_post() {
   # (colon-precise, never the broader `HANDBACK*`) deliberately excludes
   # HANDBACK-REFUSED: - that receipt is the CREWCHIEF refusing its
   # roomchief's hand-back (rooms-threads skill; ac_room_handback_families,
-  # bin/ac-wake-lib.sh:607), always posted unscoped while the roomchief it is
+  # bin/ac-wake-lib.sh), always posted unscoped while the roomchief it is
   # refusing is still live, and it is the turn-end guard's only way to clear
-  # an owed hand-back without demoting the family (bin/ac-turnend-guard.sh:
-  # 237) - review-confirmed 2026-07-30 (CR-001): a broad `HANDBACK*` would
+  # an owed hand-back without demoting the family (bin/ac-turnend-guard.sh's
+  # HANDBACK block) - review-confirmed 2026-07-30 (CR-001): a broad `HANDBACK*` would
   # deadlock that exact path. DECIDED is guarded like every verb above, with
   # ONE named exception: ac-spawn.sh's cap-gate exemption receipt is itself a
   # bare, unscoped DECIDED: posted the instant a roomchief is promoted

@@ -7,7 +7,7 @@
 # either) vs broken (worktree dir survives, gitdir unreadable - `ac-tree.sh
 # list` reports this as its own `broken` state, never silently as `available`,
 # because is_dirty is blind on such a tree) vs aged-leased (a durable lease -
-# empty owner_pid, ac-tree.sh:417-424 "No owner = durable" - held past
+# empty owner_pid, ac-tree.sh lease_reclaimable "No owner = durable" - held past
 # AGED_LEASE_THRESHOLD_SECS with no reclaim path of its own: acquire_slot,
 # prune_pass and remove_slot all skip a leased slot by design, so nothing
 # else ever names it). Reads pool state ONLY via `ac-tree.sh list --repo
@@ -17,11 +17,11 @@
 #
 # The aged-leased signal is SUSPICION, not death: an absent state/<id>.meta
 # for the holder proves nothing while the holder may simply not have
-# published it yet (ship-review-receipt-deadlocks, bin/ac-verify.sh:299 leases
-# at :299, publishes meta only at :957). This script never reclaims, resets
+# published it yet (ship-review-receipt-deadlocks, bin/ac-verify.sh leases
+# in verify_lease, publishes meta only later in publish_meta). This script never reclaims, resets
 # or expires anything - it only names the slot and the exact `remove
 # --include-leased` a chief may choose to run: that command's own
-# broken/dirty/unmerged gates (remove_slot, bin/ac-tree.sh:829-855) stay
+# broken/dirty/unmerged gates (remove_slot, bin/ac-tree.sh) stay
 # armed without --force, so it REFUSES instead of discarding if the slot
 # still holds real content - the confirmation the hint asks for, enforced
 # rather than merely requested.

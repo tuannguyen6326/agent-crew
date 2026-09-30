@@ -65,7 +65,7 @@ assert_eq "$(cat "$AC_HOME/state/.pane-famR-chief")" "pNEW wC:tN" "handle update
 assert_contains "$(cat "$AC_HOME/state/famR-chief.meta")" "window=herdr:pane-pNEW" "meta updated"
 
 # A domainchief (an ordinary roomchief whose meta carries domain=<name>) must
-# resume with AC_DOMAIN too, riding after AC_SCOPE - ac-spawn.sh:1367-1371's
+# resume with AC_DOMAIN too, riding after AC_SCOPE - the ac-spawn.sh roomchief path's
 # own ordering for the launch line. The needle runs contiguously through the
 # part that changes, same shape as the AC_HOME/AC_SCOPE assertion above: a
 # substring match that stops short of "claude --resume" would stay green

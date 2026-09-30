@@ -146,7 +146,7 @@ assert_contains "$(cat "$TMP/guard.err")" "stood its beacon down" \
   "... naming the routine case: a watcher exited, drain and re-arm"
 printf '%s\n' "$(( $(date +%s) - 9999 ))" >"$state/.last-watcher-beat"
 assert_eq "$(guard_err)" "2" "a genuinely stale beat still blocks"
-# age is `date +%s - beat` computed AT ASSERT TIME (bin/ac-turnend-guard.sh:165),
+# age is `date +%s - beat` computed AT ASSERT TIME (bin/ac-turnend-guard.sh's `age` assignment),
 # not derived from a frozen clock - asserting the literal '9999s' races a second
 # ticking over between the stamp above and this read (renders 10000s and reds a
 # passing guard). Assert the SHAPE plus a lower/upper bound instead: elapsed
@@ -1623,7 +1623,7 @@ lock_pid_within() {
 # the wrapper shape, the release command, and the pids read from the lock.
 # AC_LOCK_PID rides both legs even though the scoped one never consults it -
 # ac-lock.sh's do_acquire returns before self_pid on any AC_SCOPE session
-# (ac-lock.sh:186) - so the two legs differ by the disputed variable alone
+# (ac-lock.sh do_acquire) - so the two legs differ by the disputed variable alone
 # instead of by scope AND lock identity.
 AC_SCOPE=fam1 AC_LOCK_PID=$$ AC_POLL=30 AC_HEARTBEAT=300 bash -c \
   'bash "$1" >"$2" 2>/dev/null & wait' _ "$BIN/ac-watch.sh" "$sigout" &
@@ -2156,7 +2156,7 @@ hold_close set-hold "$setpid"
 # wake record sitting in the spool. Coverage-exists must not read as
 # nothing-to-do. Both refusal paths (idempotent already-running, and
 # config-mismatch) are covered, and the autoarm consumer's classification
-# prefix (ac-watch-autoarm.sh:203) must still match on a single line - a
+# prefix (ac-watch-autoarm.sh's `case "$reason"` classifier) must still match on a single line - a
 # refusal that BECOMES a second line breaks that hook's `tail -n 1` reduction
 # of the reason, so the pending state must ride the SAME line, never a new one.
 reset_state
@@ -2170,7 +2170,7 @@ printf '1\treport\tt1\tdone: shipped\n' >"$state/.wake-spool/1.1.000000"   # a w
 
 # Idempotent path (identical config) with a pending wake: still "already
 # running" (idempotent, exit 0 unchanged), but now says a wake is waiting.
-# stdout only (2>/dev/null), the same channel ac-watch-autoarm.sh:195 reads -
+# stdout only (2>/dev/null), the same channel ac-watch-autoarm.sh's `reason=` capture reads -
 # stderr carries the unrelated lock-acquire owner_note, never the reason.
 out="$(AC_LOCK_PID=$$ AC_WATCH_SKIP=ska AC_POLL=1 AC_HEARTBEAT=1 bash "$BIN/ac-watch.sh" 2>/dev/null)"
 case "$out" in
@@ -2235,7 +2235,7 @@ assert_eq "$(printf '%s\n' "$out" | sed '/^$/d' | wc -l | tr -d ' ')" "1" \
   "the refusal stays ONE line - ac-watch-autoarm.sh reduces this stdout to its LAST non-empty line before classifying"
 
 # The HOOK's own stand-aside is the untouched path, and it is the one whose
-# prefix ac-watch-autoarm.sh:203 globs on: same incumbent, same lock, exit 0.
+# prefix ac-watch-autoarm.sh's `case "$reason"` classifier globs on: same incumbent, same lock, exit 0.
 out="$(AC_AUTOARM=1 AC_LOCK_PID=$$ AC_WATCH_SKIP=ska AC_POLL=1 AC_HEARTBEAT=1 bash "$BIN/ac-watch.sh" 2>/dev/null)"
 case "$out" in
   'already running'*) : ;;
@@ -2870,7 +2870,7 @@ printf 'window=crew:scq-chief\nbackend=herdr\n' >"$state/scq-chief.meta"
 seed_pane scq-chief pSCQC tSCQC
 # A member by its meta fleet_scope: `-t1` is in no closed suffix rule, so the
 # id names no family - the shape of an epic STORY pane, whose scope ac-spawn.sh
-# records on disk (bin/ac-spawn.sh:1374). Membership is read from that, never
+# records on disk (bin/ac-spawn.sh's fleet_scope meta write). Membership is read from that, never
 # from an id prefix.
 printf 'window=crew:scq-t1\nbackend=herdr\nfleet_scope=scq\n' >"$state/scq-t1.meta"
 seed_pane scq-t1 pSCQ1 tSCQ1
@@ -3533,7 +3533,7 @@ esac
 rm -rf "$state"/.wake-spool*
 
 # An already-resumed idle pane must never append a SECOND resume line -
-# ac_status_append has no dedupe of its own (bin/ac-lib.sh:989), so the latch
+# ac_status_append has no dedupe of its own (bin/ac-lib.sh ac_status_append), so the latch
 # existing-then-dropped edge is the ONLY thing standing between this and one
 # line per pane per poll forever.
 before="$(wc -l <"$state/ral-i.status")"
@@ -3571,8 +3571,8 @@ fi
 
 # --- ask-alert resume line must NOT fire under a captain-wait mask ---------
 # backend_agent_blocked reads FALSE while a CAPTAIN-WAIT STAMP
-# (state/.captain-wait-<id>) is live (bin/ac-backend.sh:866) - a MASK, not a
-# real resume. bin/ac-room.sh:262 stamps it on any room GATE/ASK pending
+# (state/.captain-wait-<id>) is live (bin/ac-backend.sh backend_agent_blocked_herdr) - a MASK, not a
+# real resume. bin/ac-room.sh cmd_post stamps it on any room GATE/ASK pending
 # edge 0 -> >0, independent of this watcher's own poll loop, so the latch can
 # still be live when the stamp lands. Without this guard, a pane genuinely
 # still blocked (now on the captain) would render "working: ... agent

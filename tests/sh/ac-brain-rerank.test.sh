@@ -12,7 +12,7 @@
 #               b2c shop 1->1 (2 hits, below the >=3 rerank gate)
 #               ledger guard refusal 1->1 (title_phrase; the snippet itself
 #               carries the words)   worktree lease 2->3 (500 backlinks,
-#               evidence still `keyword`: the backlink boost at :848 is
+#               evidence still `keyword`: the backlink boost in searchArm is
 #               +12% at 500 links, never enough to EARN a rank, so no hit
 #               here is backlink-earned and the pin does not cover backlinks)
 #   ordinary    exponential backoff retries 1->1  refusal counts quarter 1->1

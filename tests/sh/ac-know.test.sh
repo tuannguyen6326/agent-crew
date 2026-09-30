@@ -383,7 +383,7 @@ assert_contains "$live1" "by: fam-r-fix" "the receipt carries the retiring famil
 # Happy path: retire the false entry (now uniquely addressable), byte-identical
 # move under Superseded, plus its own live receipt.
 false_line="$(awk '/^## Superseded/ { exit } /^- fact the --changed selector/' "$rrec")"
-out="$(rretire --quote 'widens to the full suite when empty' --why 'contradicts tests/run-suite.sh:74, NOT a widen')"
+out="$(rretire --quote 'widens to the full suite when empty' --why 'contradicts run-suite.sh EMPTY-SELECTION EXIT, NOT a widen')"
 assert_contains "$out" "retired from $rrec" "retire prints the record it wrote"
 live2="$(awk '/^## Superseded/ { exit } /^- /' "$rrec")"
 sup2="$(awk 'seen && /^- /; /^## Superseded/ { seen = 1 }' "$rrec")"
@@ -391,7 +391,7 @@ case "$live2" in
   *"the --changed selector widens"*) fail "the retired line must not remain live" ;;
 esac
 assert_contains "$sup2" "$false_line" "the retired line moved byte-identical under Superseded"
-assert_contains "$live2" "- fact retired: contradicts tests/run-suite.sh:74, NOT a widen" \
+assert_contains "$live2" "- fact retired: contradicts run-suite.sh EMPTY-SELECTION EXIT, NOT a widen" \
   "the second retirement's own live receipt carries its --why"
 
 # `verify` parses the record afterwards and reports on LIVE entries only: the

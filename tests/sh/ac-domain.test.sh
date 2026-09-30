@@ -82,7 +82,7 @@ for p in alpha beta; do
 done
 
 # A project the fleet lacks refuses the WHOLE command before any write - the
-# fail-closed shape bin/ac-home-seed.sh:47-65 already gives the operator.
+# fail-closed shape bin/ac-home-seed.sh's validate-before-touching-disk checks already gives the operator.
 assert_fails_with "no clone" -- "$dom" new ghosts --scope s --charter c --projects alpha,nosuch
 assert_no_file "$(pkg ghosts)" "AC-1.5: an unknown project leaves no partial package"
 assert_eq "$(grep -c 'ghosts' "$dreg" || true)" "0" "and mints no registry line"

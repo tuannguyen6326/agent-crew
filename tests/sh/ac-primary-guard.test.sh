@@ -66,7 +66,7 @@ assert_eq "$(hook "$wt" crew Edit file_path "$AC_HOME/data/pg1/report.md")" "0" 
   "a path outside the primary checkout entirely (the fleet home) is not this guard's business"
 
 # --- a CHIEF's legitimate primary writes keep working (hard constraint 2) -----
-# A roomchief's cwd IS the primary checkout (ac-spawn.sh:973 root=$(ac_root)),
+# A roomchief's cwd IS the primary checkout (ac-spawn.sh's roomchief path sets root=$(ac_root)),
 # so own tree == primary and the geometry allows it - no special case needed.
 
 assert_eq "$(hook "$repo" chief Edit file_path "$repo/AGENTS.md")" "0" \
@@ -77,7 +77,7 @@ assert_eq "$(hook "$wt" captain Edit file_path "$repo/AGENTS.md")" "0" \
   "the captain (no AC_CREW_ID/AC_SCOPE) is never fenced"
 
 # --- shapes this guard never classifies --------------------------------------
-# ensure_gitignore (ac-tree.sh:120) legitimately writes the primary, and so do
+# ensure_gitignore (ac-tree.sh) legitimately writes the primary, and so do
 # the lease helpers - all SHELL writes, which never reach an Edit/Write hook.
 # The same residual ac-ledger-guard.sh already accepts: Bash gets through.
 

@@ -13,7 +13,7 @@
 # jq is a hard dependency (bin/ac-bootstrap.sh has `need jq`, not `opt`), so
 # parsing costs one `jq -r` and cannot drift; and the *.md grammars are
 # hand-rolled sed that mis-parses free text - fed a value containing its own
-# delimiter words, bin/ac-standing-jobs.sh:49-50 returns the wrong cadence and
+# delimiter words, bin/ac-standing-jobs.sh's cadence/recreate sed parse returns the wrong cadence and
 # the wrong action, silently. A manifest carrying paths and commands walks
 # into that on day one. YAML was never a candidate: this distro has no yq,
 # only ac_yaml_get (bin/ac-pipeline-lib.sh:23), which cannot read a list.
@@ -47,19 +47,19 @@
 # symmetric: a FALSE OK is the unrecoverable one - it makes the verb
 # decorative. So an absent, unparseable, wrong-shaped or wrong-home manifest
 # REFUSES; it is never graded clean. This is the `validate` half of the
-# distro's list/validate split (bin/ac-deputy.sh:48-50): a strict twin that
+# distro's list/validate split (bin/ac-deputy.sh's `list` / `validate: the strict twin` header sections): a strict twin that
 # exits non-zero, not a digest renderer that may never take session start down.
 #
 # WHAT IS DELIBERATELY NOT DECLARED, so a reader does not add it back:
-# - SERVICE LIVENESS (dashboard, remote poll, brain). There is no pid file and
-#   no registry anywhere by explicit design (bin/ac-dashboard.sh:8), the
-#   dashboard's port lives solely in argv, and the watcher beacon is stood
-#   down to 0 on every normal exit (bin/ac-watch.sh:888-896) - a declared
+# - SERVICE LIVENESS (dashboard, remote poll, brain). Services start and stop
+#   on demand - the dashboard daemon's pid file can outlive a crash until the
+#   next start/stop reads it stale (bin/ac-dashboard.sh) - and the watcher beacon is stood
+#   down to 0 on every normal exit (bin/ac-watch.sh stand_down_beacon) - a declared
 #   expected liveness would be a false-drift generator.
 # - PROJECTS. records/projects.md is already its own single source; a copy
 #   here would be a second one.
 # - CREWDEPUTIES / CREWDOMAINS. Both already have a declared file plus a
-#   strict checker (bin/ac-deputy.sh:196, bin/ac-domain.sh:812).
+#   strict checker (bin/ac-deputy.sh cmd_validate, bin/ac-domain.sh cmd_validate).
 # - TOOLCHAIN BINARIES. bin/ac-bootstrap.sh's need/opt list is the source and
 #   already gates.
 #
@@ -75,7 +75,7 @@ bin_dir="$(cd "$(dirname "$0")" && pwd -P)"
 # Tab cannot separate these rows: it is IFS WHITESPACE, so `read` collapses a
 # run of them and an empty middle field silently shifts every later one left
 # (a knob declared `state: default` read back as a pinned value). The unit
-# separator does not collapse - same fix, same constant, as bin/ac-deputy.sh:129.
+# separator does not collapse - same fix, same constant, as bin/ac-deputy.sh FS_US.
 FS_US=$'\037'
 
 # ac_die exits 1, which is this verb's DRIFT code - a refusal must not be
@@ -241,7 +241,7 @@ check_config() {
     fi
     if [ "$kind" = pinned ]; then
       # ac_config_read, never a byte compare: it trims whitespace and CR
-      # (bin/ac-lib.sh:349-351), so raw bytes would report drift on a CRLF no
+      # (bin/ac-lib.sh), so raw bytes would report drift on a CRLF no
       # reader in the fleet can see.
       local actual
       actual="$(ac_config_read "$name" "")"

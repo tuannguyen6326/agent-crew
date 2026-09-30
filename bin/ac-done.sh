@@ -48,7 +48,7 @@
 #     its ABSENCE is what tells the watcher to adopt the pane silently (the
 #     PUSH ADOPT branch there).
 #
-# CHANNEL - a crewmate has no AC_HOME, deliberately (ac-spawn.sh:184-191), so
+# CHANNEL - a crewmate has no AC_HOME, deliberately (ac-spawn.sh's AC_FLEET_MODEL/AC_FLEET_EFFORT header block), so
 # it cannot resolve state/ the ordinary way. Two NARROW SCALARS on the
 # crewmate launch line carry exactly the knowledge this script needs and
 # nothing more, mirroring AC_FLEET_MODEL/AC_FLEET_EFFORT, which were added for
