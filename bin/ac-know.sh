@@ -394,19 +394,19 @@ cmd_add() {
   local rec name entry live sup lock sup_dups sup_line subj succ
   while [ $# -gt 0 ]; do
     case "$1" in
-      --home) home_flag="${2:-}"; shift 2 ;;
-      --repo) repo="${2:-}"; shift 2 ;;
-      --family) family="${2:-}"; shift 2 ;;
-      --src-file) src_file="${2:-}"; shift 2 ;;
-      --src-cmd) src_cmd="${2:-}"; shift 2 ;;
-      --at) at="${2:-}"; shift 2 ;;
-      --fact) fact="${2:-}"; shift 2 ;;
+      --home) home_flag="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --repo) repo="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --family) family="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --src-file) src_file="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --src-cmd) src_cmd="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --at) at="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --fact) fact="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       # The duplicate guard's two exits. `--new` DECLARES the subject genuinely
       # distinct; `--supersede` retires the named entry and adds this one in the
       # SAME locked write, so a reader never sees two claims about one subject
       # and never sees none.
       --new) declared_new=1; shift ;;
-      --supersede) supersede="${2:-}"; shift 2 ;;
+      --supersede) supersede="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       # An unknown flag is a REFUSAL, and it is what keeps the closed scope
       # list out of the crewmate-facing verb: `add --scope` cannot write it
       # even by accident, because there is no such path to take.
@@ -634,15 +634,15 @@ cmd_retire() {
   local rec name live sup lock matches n target entry sup_hit
   while [ $# -gt 0 ]; do
     case "$1" in
-      --home) home_flag="${2:-}"; shift 2 ;;
-      --repo) repo="${2:-}"; shift 2 ;;
-      --family) family="${2:-}"; shift 2 ;;
-      --src-file) src_file="${2:-}"; shift 2 ;;
-      --src-cmd) src_cmd="${2:-}"; shift 2 ;;
-      --at) at="${2:-}"; shift 2 ;;
-      --quote) quote="${2:-}"; shift 2 ;;
-      --by) by="${2:-}"; shift 2 ;;
-      --why) why="${2:-}"; shift 2 ;;
+      --home) home_flag="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --repo) repo="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --family) family="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --src-file) src_file="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --src-cmd) src_cmd="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --at) at="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --quote) quote="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --by) by="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --why) why="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "unknown flag: $1" ;;
     esac
   done
@@ -747,10 +747,10 @@ cmd_cite() {
   local rec name live sup lock matches n target prefix byval h base new sup_hit
   while [ $# -gt 0 ]; do
     case "$1" in
-      --home) home_flag="${2:-}"; shift 2 ;;
-      --repo) repo="${2:-}"; shift 2 ;;
-      --quote) quote="${2:-}"; shift 2 ;;
-      --by) by="${2:-}"; shift 2 ;;
+      --home) home_flag="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --repo) repo="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --quote) quote="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --by) by="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "unknown flag: $1" ;;
     esac
   done
@@ -879,10 +879,10 @@ cmd_recall() {
   local rec n_scene=0 n_fact=0 printed=0 shown_bytes=0 truncated=0 floor
   while [ $# -gt 0 ]; do
     case "$1" in
-      --home) home_flag="${2:-}"; shift 2 ;;
-      --repo) repo="${2:-}"; shift 2 ;;
-      --max) max="${2:-}"; shift 2 ;;
-      --bytes) bytes="${2:-}"; shift 2 ;;
+      --home) home_flag="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --repo) repo="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --max) max="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --bytes) bytes="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       --) shift; break ;;
       # A quoted question may start with -, but a bare dash-word is a mistyped
       # flag: as a query term it raises the floor and matches nothing, which
@@ -1112,16 +1112,16 @@ cmd_scope_proposal() {
   local -a app_list=()
   while [ $# -gt 0 ]; do
     case "$1" in
-      --home) home_flag="${2:-}"; shift 2 ;;
-      --repo) repo="${2:-}"; shift 2 ;;
-      --family) family="${2:-}"; shift 2 ;;
-      --src-file) src_file="${2:-}"; shift 2 ;;
-      --src-cmd) src_cmd="${2:-}"; shift 2 ;;
-      --at) at="${2:-}"; shift 2 ;;
-      --scope) scope="${2:-}"; shift 2 ;;
-      --apps) apps="${2:-}"; shift 2 ;;
-      --why) why="${2:-}"; shift 2 ;;
-      --id) id="${2:-}"; shift 2 ;;
+      --home) home_flag="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --repo) repo="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --family) family="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --src-file) src_file="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --src-cmd) src_cmd="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --at) at="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --scope) scope="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --apps) apps="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --why) why="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --id) id="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       --replace) replace=1; shift ;;
       --retire) retire=1; shift ;;
       *) ac_die "unknown flag: $1" ;;
@@ -1213,8 +1213,8 @@ cmd_scope_install() {
   shift 2>/dev/null || true
   while [ $# -gt 0 ]; do
     case "$1" in
-      --home) home_flag="${2:-}"; shift 2 ;;
-      --repo) repo="${2:-}"; shift 2 ;;
+      --home) home_flag="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --repo) repo="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "unknown flag: $1" ;;
     esac
   done
@@ -1264,8 +1264,8 @@ cmd_verify() {
   local home_flag="" repo="" rec name line rest src at tag value path rc
   while [ $# -gt 0 ]; do
     case "$1" in
-      --home) home_flag="${2:-}"; shift 2 ;;
-      --repo) repo="${2:-}"; shift 2 ;;
+      --home) home_flag="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --repo) repo="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "unknown flag: $1" ;;
     esac
   done

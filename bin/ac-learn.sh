@@ -1172,7 +1172,7 @@ cmd_reinforce() {
   local slug="" evidence="" live lock today tmp current
   while [ $# -gt 0 ]; do
     case "$1" in
-      --evidence) evidence="${2:-}"; shift 2 ;;
+      --evidence) evidence="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       -*) ac_die "unknown flag: $1" ;;
       *) [ -z "$slug" ] || ac_die "reinforce takes ONE slug (got '$slug' and '$1')"; slug="$1"; shift ;;
     esac

@@ -2014,8 +2014,8 @@ cmd_testplan_amend() {
         case "$case_id" in ''|*[!A-Za-z0-9_.-]*) ac_die "testplan-amend --case must be [A-Za-z0-9_.-]" ;; esac
         case_json="$(jq -c --arg id "$case_id" '. + [$id] | unique' <<<"$case_json")"
         shift 2 ;;
-      --authority) authority="${2:-}"; shift 2 ;;
-      --reason) reason="${2:-}"; shift 2 ;;
+      --authority) authority="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --reason) reason="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "usage: ac-qa.sh testplan-amend --case <id> [--case <id> ...] --authority <accepted-authority> --reason <why>" ;;
     esac
   done
@@ -2138,10 +2138,10 @@ cmd_harness_classify() {
   shift 1 2>/dev/null || ac_die "usage: ac-qa.sh harness-classify <path> --classification <kind> --target <target> --invariant <text> --evidence <path>"
   while [ $# -gt 0 ]; do
     case "$1" in
-      --classification) classification="${2:-}"; shift 2 ;;
-      --target) target="${2:-}"; shift 2 ;;
-      --invariant) invariant="${2:-}"; shift 2 ;;
-      --evidence) evidence="${2:-}"; shift 2 ;;
+      --classification) classification="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --target) target="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --invariant) invariant="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --evidence) evidence="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "unknown harness-classify flag: $1" ;;
     esac
   done
@@ -2264,8 +2264,8 @@ cmd_store_curate() {
   local candidate="" after=3 rd store plan sha model task n prom
   while [ $# -gt 0 ]; do
     case "$1" in
-      --candidate) candidate="${2:-}"; shift 2 ;;
-      --promote-after) after="${2:-}"; shift 2 ;;
+      --candidate) candidate="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --promote-after) after="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "usage: ac-qa.sh store-curate --candidate <dir> [--promote-after <n>]" ;;
     esac
   done
@@ -2290,8 +2290,8 @@ cmd_store_label() {
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
-      --run) sha="${2:-}"; shift 2 ;;
-      --by) by="${2:-}"; shift 2 ;;
+      --run) sha="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --by) by="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       confirmed|not-a-defect) label="$1"; shift ;;
       *) ac_die "usage: ac-qa.sh store-label <case-id> --run <sha> <confirmed|not-a-defect> [--by <who>]" ;;
     esac
@@ -2581,9 +2581,9 @@ cmd_boundary_run() {
   local case_id="" boundary="" evidence="" rd started ended rc stimulus arg
   while [ $# -gt 0 ]; do
     case "$1" in
-      --case) case_id="${2:-}"; shift 2 ;;
-      --boundary) boundary="${2:-}"; shift 2 ;;
-      --evidence) evidence="${2:-}"; shift 2 ;;
+      --case) case_id="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --boundary) boundary="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --evidence) evidence="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       --) shift; break ;;
       *) ac_die "usage: ac-qa.sh boundary-run --case <id> --boundary <http|grpc|client-cli|workflow|queue|schedule> --evidence <path> -- <command> [args...]" ;;
     esac
@@ -2628,12 +2628,12 @@ cmd_boundary_register() {
   local manifest ev_sha stimulus upstream_sha
   while [ $# -gt 0 ]; do
     case "$1" in
-      --case) case_id="${2:-}"; shift 2 ;;
-      --boundary) boundary="${2:-}"; shift 2 ;;
-      --transcript) transcript="${2:-}"; shift 2 ;;
-      --visual) visual="${2:-}"; shift 2 ;;
-      --upstream-receipt) upstream="${2:-}"; shift 2 ;;
-      --evidence) evidence="${2:-}"; shift 2 ;;
+      --case) case_id="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --boundary) boundary="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --transcript) transcript="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --visual) visual="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --upstream-receipt) upstream="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --evidence) evidence="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "usage: ac-qa.sh boundary-register --case <id> --boundary <web|e2e> [--transcript <p> --visual <p>] [--upstream-receipt <p> --evidence <p>]" ;;
     esac
   done
@@ -2845,7 +2845,7 @@ cmd_cmd() {
   case "$name" in e2e) ;; *) ac_die "usage: ac-qa.sh cmd e2e --cases <case-id>[,<case-id>...]" ;; esac
   while [ $# -gt 0 ]; do
     case "$1" in
-      --cases) selected="${2:-}"; shift 2 ;;
+      --cases) selected="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "usage: ac-qa.sh cmd e2e --cases <case-id>[,<case-id>...]" ;;
     esac
   done
@@ -2926,8 +2926,8 @@ cmd_fixture() {
   shift 1 2>/dev/null || ac_die "usage: ac-qa.sh fixture <pack-id> --selector <name> --case <id> [--case <id> ...]"
   while [ $# -gt 0 ]; do
     case "$1" in
-      --selector) selector="${2:-}"; shift 2 ;;
-      --case) case_ids+=("${2:-}"); shift 2 ;;
+      --selector) selector="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --case) case_ids+=("${2:-}"); shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "usage: ac-qa.sh fixture <pack-id> --selector <name> --case <id> [--case <id> ...]" ;;
     esac
   done
@@ -3107,7 +3107,7 @@ cmd_config_proposal() {
   local id="" name home_path cur prop out patch base_sha
   while [ $# -gt 0 ]; do
     case "$1" in
-      --id) id="${2:-}"; shift 2 ;;
+      --id) id="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "usage: ac-qa.sh config-proposal [--id <proposal-id>]" ;;
     esac
   done
@@ -3896,7 +3896,7 @@ cmd_finish() {
   case "$outcome" in passed|failed|unverifiable|cancelled) ;; *) ac_die "usage: ac-qa.sh finish <passed|failed|unverifiable|cancelled>" ;; esac
   while [ $# -gt 0 ]; do
     case "$1" in
-      --retry-reason) retry_reason="${2:-}"; shift 2 ;;
+      --retry-reason) retry_reason="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "usage: ac-qa.sh finish <passed|failed|unverifiable|cancelled> [--retry-reason <context-limit|tool-limit|capability-limit>]" ;;
     esac
   done

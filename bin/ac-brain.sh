@@ -22,7 +22,7 @@ home=""
 argv=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --home) home="${2-}"; shift 2 ;;
+    --home) home="${2-}"; shift 2 || { printf '{"error":"invalid_params","message":"--home needs a value","suggestion":"pass --home <abs path> or set AC_HOME"}\n'; exit 1; } ;;
     *) argv+=("$1"); shift ;;
   esac
 done
