@@ -52,8 +52,8 @@
 #
 # WHAT IS DELIBERATELY NOT DECLARED, so a reader does not add it back:
 # - SERVICE LIVENESS (dashboard, remote poll, brain). Services start and stop
-#   on demand - the dashboard daemon's pid and port files exist only while it
-#   runs (bin/ac-dashboard.sh start/stop) - and the watcher beacon is stood
+#   on demand - the dashboard daemon's pid file can outlive a crash until the
+#   next start/stop reads it stale (bin/ac-dashboard.sh) - and the watcher beacon is stood
 #   down to 0 on every normal exit (bin/ac-watch.sh stand_down_beacon) - a declared
 #   expected liveness would be a false-drift generator.
 # - PROJECTS. records/projects.md is already its own single source; a copy
