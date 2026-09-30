@@ -45,10 +45,10 @@
 # EXIT: 0 clean (UNVERIFIABLE alone never fails), 1 any DRIFT, 2 usage or an
 # unreadable manifest. FAIL DIRECTION, stated because the two errors are not
 # symmetric: a FALSE OK is the unrecoverable one - it makes the verb
-# decorative. So an absent, unparseable or wrong-home manifest REFUSES; it is
-# never graded clean. This is the `validate` half of the distro's list/validate
-# split (bin/ac-deputy.sh:48-50): a strict twin that exits non-zero, not a
-# digest renderer that may never take session start down.
+# decorative. So an absent, unparseable, wrong-shaped or wrong-home manifest
+# REFUSES; it is never graded clean. This is the `validate` half of the
+# distro's list/validate split (bin/ac-deputy.sh:48-50): a strict twin that
+# exits non-zero, not a digest renderer that may never take session start down.
 #
 # WHAT IS DELIBERATELY NOT DECLARED, so a reader does not add it back:
 # - SERVICE LIVENESS (dashboard, remote poll, brain). There is no pid file and
@@ -115,6 +115,13 @@ cmd_drift() {
     || refuse "no rig manifest at records/rig.json - the drift check has nothing to compare against (grammar: the bin/ac-rig.sh header)"
   jq -e . "$manifest" >/dev/null 2>&1 \
     || refuse "records/rig.json does not parse as JSON - fix it; a manifest that cannot be read is never graded clean (grammar: the bin/ac-rig.sh header)"
+  # Every container a check indexes, typed up front: under set -e a jq that
+  # cannot index its input would end the report mid-way with jq's own status.
+  jq -e 'type == "object"
+    and ([.home, .wiring, .config] | all(. == null or type == "object"))
+    and ((.config.knobs // []) | type == "array" and all(.[]; type == "object"))
+    and ((.standing_jobs // []) | type == "array")' "$manifest" >/dev/null 2>&1 \
+    || refuse "records/rig.json has the wrong shape - home, wiring and config are objects, config.knobs an array of objects, standing_jobs an array (grammar: the bin/ac-rig.sh header)"
 
   # HOME BINDING FIRST, and it refuses rather than measuring. ac-home-seed.sh
   # copies a parent's config into a crewdeputy home, so a manifest can
