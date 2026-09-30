@@ -204,6 +204,22 @@ AC_COMPACT_SEND_WAIT=1 "$ADV" --send busy-chief >>"$sendlog" 2>&1 || fail "--sen
 assert_eq "$(cat "$FAKE_HERDR/panes/pC2.buf")" "" "a busy pane is never typed into"
 assert_contains "$(tail -n 1 "$sendlog")" "busy-chief: not idle" "the give-up is logged"
 
+# 10c. Below config/compact-auto-min (default 50) percent usage the advice
+#      stays a hint: a finished roomchief at 30% is not compacted for it.
+mk_chief early-chief s-13 pC3 tC3
+printf 'idle\n' >"$FAKE_HERDR/panes/pC3.status"
+mid="$TMP/mid.jsonl"; transcript "$mid" 60000
+p13="$(jq -nc --arg p "$mid" '{session_id: "s-13", transcript_path: $p, stop_hook_active: false}')"
+resp 0.96 0.1
+out="$(hook "$AC_HOME" "$p13" AC_SOLO=)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "Run /compact" "under the auto minimum a roomchief only gets the hint"
+printf '20\n' >"$AC_HOME/config/compact-auto-min"
+transcript "$mid" 70000
+out="$(hook "$AC_HOME" "$p13" AC_SOLO=)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "early-chief" "a lowered minimum lets the same roomchief be compacted"
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'early-chief:' "$sendlog" 2>/dev/null && break; sleep 0.5; done
+rm -f "$AC_HOME/config/compact-auto-min"
+
 # 9. Wiring: the claude Stop hooks include the adviser.
 case "$(jq -r '[.hooks.Stop[].hooks[].command] | .[]' "$ROOT/.claude/settings.json")" in
   *ac-compact-advise.sh*) ;;
