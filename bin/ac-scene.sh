@@ -88,11 +88,13 @@ reject() { ac_die "scene rejected: $*"; }
 SCENE_BODY_MAX=16384
 
 assert_slug() {
-  case "${1:-}" in
-    '') reject "no slug given" ;;
-    [a-z0-9]*[!a-z0-9-]*|*[!a-z0-9-]*) reject "slug must match [a-z0-9][a-z0-9-]* (got: '$1')" ;;
-    [!a-z0-9]*) reject "slug must start with [a-z0-9] (got: '$1')" ;;
-  esac
+  local bad=0
+  [ -n "${1:-}" ] || reject "no slug given"
+  # C collation, the ac-self-task.sh idiom: under en_US.UTF-8 a range
+  # interleaves case (a,A,b,B,...,z,Z), so [a-z] admits most uppercase letters.
+  (LC_ALL=C; case "$1" in *[!a-z0-9-]*) exit 1 ;; [!a-z0-9]*) exit 2 ;; esac) || bad=$?
+  [ "$bad" != 1 ] || reject "slug must match [a-z0-9][a-z0-9-]* (got: '$1')"
+  [ "$bad" != 2 ] || reject "slug must start with [a-z0-9] (got: '$1')"
 }
 
 assert_summary() {
@@ -268,6 +270,14 @@ cmd_merge() {
     f="$(scene_file "$s")"
     [ -f "$f" ] || { rm -f "$bodyf"; scene_unlock; ac_die "merge source '$s' does not exist - nothing moved"; }
   done
+  # An --into that was NOT a source must not already exist unmerged.
+  case " $srcs " in
+    *" $into "*) ;;
+    *) if [ -e "$(scene_file "$into")" ]; then
+         rm -f "$bodyf"; scene_unlock
+         ac_die "--into '$into' exists and was not among the merged sources - name it as a source, or pick a fresh slug - nothing moved"
+       fi ;;
+  esac
   for s in $srcs; do
     f="$(scene_file "$s")"
     h="$(scene_meta "$f" heat)"; heat=$(( heat + ${h:-0} ))
@@ -285,11 +295,6 @@ cmd_merge() {
     mv "$(scene_file "$s")" "$(scene_archive_dir)/$s.md"
     moved="$moved $s"
   done
-  # An --into that was NOT a source must not already exist unmerged.
-  if [ -e "$(scene_file "$into")" ]; then
-    scene_unlock; rm -f "$bodyf"
-    ac_die "--into '$into' exists and was not among the merged sources - name it as a source, or pick a fresh slug (sources already archived: $moved)"
-  fi
   scene_write "$into" "${created:-$(ac_iso)}" "$(( heat + 1 ))" "$summary" "$bodyf"
   rm -f "$bodyf"; scene_unlock
   printf 'merged%s into %s (heat %s); sources archived verbatim in %s\n' \
