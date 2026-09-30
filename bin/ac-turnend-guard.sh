@@ -57,12 +57,13 @@
 #
 # LANDING-RECEIPT reminder (fleet only, additive): at an OTHERWISE-CLEAN turn
 # end - past every wake and coverage predicate, so it masks none - the guard
-# blocks (exit 2) when config/remote-mirror is chief/on and a NEW backlog Done
-# line (since the last check) has a family with no landing-receipt stamp: a
-# task landed but its Slack done-report may be unposted. It fires at most once
-# per Done line (a seen-set of the current Done ids) and fails open on any
-# missing dependency. The chief clears it by posting the report and running
-# `ac-remote.sh done-stamp <family>`. See landing_receipt_check below.
+# blocks (exit 2) when config/remote-mirror is chief/on and a backlog Done
+# line newer than the baseline has a family with a room and no landing-receipt
+# stamp: a task landed but its Slack done-report may be unposted. It repeats on
+# every such turn end until the family is stamped - a missed report is never
+# silent - and fails open on any missing dependency. The chief clears it by
+# posting the report and running `ac-remote.sh done-stamp <family>`. See
+# landing_receipt_check below.
 #
 # HANDBACK block (fleet only, additive, PERSISTENT): while any room sits in
 # HANDBACK - a roomchief reported back and nobody demoted it or closed the
@@ -72,8 +73,9 @@
 # TRANSIENT conditions, so a persistent state must be reported ALONGSIDE
 # whatever else is firing instead of queueing behind it: the three earlier
 # exit-2 sites (queued wakes, standing-coverage, stale-watcher-with-inflight)
-# each append the same HANDBACK line before their own exit 2, and the
-# otherwise-clean tail still blocks on it alone via handback_check. Absent
+# and the landing-receipt block each append the same HANDBACK line before
+# their own exit 2, and the otherwise-clean tail still blocks on it alone via
+# handback_check. Absent
 # this, a busy fleet - a wake queued at most turn ends, or a watcher beacon
 # continuously stale - never reaches the otherwise-clean tail and a room can
 # sit in HANDBACK indefinitely with nothing objecting (the incident this
@@ -82,7 +84,7 @@
 # not the guard). This is a STATE check, so it catches the failure whatever
 # the CAUSE (wake lost, wake ignored, chief forgot, a drain consumed into a
 # backgrounded task nobody read) - a signal-side fix can only ever catch its
-# own half. Unlike the landing-receipt reminder it is NOT fire-once: the
+# own half. Like the landing-receipt reminder it is NOT fire-once: the
 # property is "a room cannot sit in HANDBACK across turn ends with nothing
 # objecting", and one dismissal would retire it. The chief clears it by one of
 # THREE acts: `ac-teardown.sh <family>-chief` (demote) then `ac-room.sh
@@ -240,13 +242,15 @@ age_field() {
 
 landing_receipt_check() {
   # LANDING-RECEIPT reminder: under
-  # remote-mirror chief/on, a NEW backlog Done line (a `- [x]` line) whose
-  # family has no landing-receipt stamp means a task landed but its Slack
-  # done-report may be unposted. Remind (exit 2) and record every current Done
-  # id as seen, so the SAME line fires at most once. FAIL-SAFE: any
-  # missing/unreadable dependency -> record nothing, stay silent; a first run
-  # with no seen-set seeds the baseline silently (nothing is "new" before a
-  # baseline). FLEET session only - the backlog is the crewchief's, a roomchief
+  # remote-mirror chief/on, a backlog Done line (a `- [x]` line) newer than the
+  # baseline whose family has a room and no landing-receipt stamp means a task
+  # landed but its Slack done-report may be unposted. Remind (exit 2) on every
+  # such turn end until the family is stamped: a reminder that fired once let a
+  # missed report go silent forever. The baseline is the Done ids present at the
+  # first run (seeded silently, never grown), so landings older than the check
+  # owe nothing; a family with no room (a solo slice, a chief self-task) has no
+  # thread narrative to close. FAIL-SAFE: any missing/unreadable dependency ->
+  # stay silent. FLEET session only - the backlog is the crewchief's, a roomchief
   # never edits it - which also avoids a seen-set race between scopes. Called
   # ONLY at an otherwise-clean turn end (past every wake and coverage
   # predicate), so it can never mask one. The stamp is set by the chief via
@@ -256,7 +260,8 @@ landing_receipt_check() {
     chief|on) : ;;
     *) return 0 ;;
   esac
-  local backlog seen stamp cur id fam owed
+  local backlog seen stamp cur id fam owed home
+  home="$(ac_home 2>/dev/null)" || return 0
   backlog="$(ac_records_dir 2>/dev/null)/backlog.md"
   [ -f "$backlog" ] || return 0
   seen="$state_dir/.landing-seen"
@@ -271,20 +276,18 @@ landing_receipt_check() {
   owed=""
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    grep -qxF "$id" "$seen" 2>/dev/null && continue           # already seen
+    grep -qxF "$id" "$seen" 2>/dev/null && continue           # in the baseline
     fam="$(ac_family_of_id "$id" 2>/dev/null)" || continue
     [ -n "$fam" ] || continue
+    [ -f "$home/data/$fam/room.md" ] || continue
     [ -n "$(ac_meta_get "$stamp" "$fam" 2>/dev/null)" ] && continue   # stamped
     case " $owed " in *" $fam "*) ;; *) owed="$owed $fam" ;; esac
   done <<EOF
 $cur
 EOF
-  # Record the current Done ids as seen BEFORE any block, so the same line
-  # fires at most once even if the reminder is dismissed.
-  printf '%s\n' "$cur" >"$seen.tmp.$$" 2>/dev/null \
-    && mv "$seen.tmp.$$" "$seen" 2>/dev/null
   if [ -n "$owed" ]; then
-    printf 'agent-crew: a task landed (backlog Done) but its Slack done-report may be unposted for:%s. Post it then stamp it (bin/ac-remote.sh done-stamp <family>) before ending the turn.\n' "$owed" >&2
+    printf 'agent-crew: a task landed (backlog Done) but its Slack done-report may be unposted for:%s. Post it then stamp it (bin/ac-remote.sh done-stamp <family>) - this repeats every turn end until it is stamped.\n' "$owed" >&2
+    handback_note
     ac_hook_trace turnend-guard "verdict=blocked reason=landing-receipt scope=${scope:-fleet} queued=${queued_word:-n/a} inflight=${inflight:-n/a} age=$(age_field) handback=$(hb_field)"
     exit 2
   fi
@@ -299,10 +302,11 @@ handback_owed() {
   # session or firing at any of its call sites below would wedge exactly the
   # turn that reports back.
   #
-  # SHARED by handback_check (the otherwise-clean tail) and the three earlier
+  # SHARED by handback_check (the otherwise-clean tail), the three earlier
   # exit-2 sites (queued wakes, standing-coverage, stale-watcher-with-inflight)
-  # via handback_note below - each turn end takes exactly one of those four
-  # paths, so this still runs at most once per invocation, never twice.
+  # and the landing-receipt block via handback_note below - each turn end takes
+  # exactly one of those five paths, so this still runs at most once per
+  # invocation, never twice.
   #
   # The HANDBACK grammar is NOT copied here: ac_room_handback_families
   # (ac-wake-lib.sh) owns it and answers for N rooms in ONE awk pass. That
@@ -334,7 +338,8 @@ handback_note() {
   # runs at most once. ADDS a line, never replaces the caller's own message
   # and never exits itself, so it is safe to call right before an earlier
   # block's own exit 2 (queued wakes, standing-coverage,
-  # stale-watcher-with-inflight) as well as from handback_check below.
+  # stale-watcher-with-inflight, landing-receipt) as well as from
+  # handback_check below.
   #
   # hb_seen is deliberately NOT local: it is this invocation's one computation
   # of handback_owed, and every trace-log call site downstream reads it back
@@ -350,8 +355,8 @@ handback_check() {
   # HANDBACK block (see header): a room whose last HANDBACK: entry is not yet
   # followed by DEMOTED:/CLOSED: is a roomchief still waiting to be demoted and
   # its room closed. Called at the otherwise-clean turn end, AFTER
-  # landing_receipt_check: this block is persistent, so running it first would
-  # starve that fire-once reminder of the run that records its seen-set. The
+  # landing_receipt_check, which is persistent too and so carries this state
+  # via handback_note in its own block - neither starves the other. The
   # three earlier exit-2 sites report the SAME state via handback_note above
   # instead of waiting for this call, which is what makes the state reachable
   # on a busy fleet too - see the HANDBACK header block for why.

@@ -2324,11 +2324,11 @@ assert_eq "$rc" "2" "the guard blocks the post-exit turn until the watcher re-ar
 reset_state
 
 # --- landing-receipt reminder (PART 2b) ---------------------------------------
-# Under mirror=chief/on, a NEW backlog Done line whose family lacks a landing-
-# receipt stamp means a done-report may be unposted. The guard reminds ONCE
-# (exit 2) at an otherwise-clean turn end - so it never masks a wake/coverage
-# block - and records every current Done id as seen so the same line never
-# re-fires. Fail-safe (missing deps -> silent), and fleet-scope only (the
+# Under mirror=chief/on, a Done line newer than the baseline whose family has a
+# room and no landing-receipt stamp means a done-report may be unposted. The
+# guard reminds (exit 2) at EVERY otherwise-clean turn end until the family is
+# stamped - so it never masks a wake/coverage block, and a missed report is
+# never silent. Fail-safe (missing deps -> silent), and fleet-scope only (the
 # backlog is the crewchief's; a roomchief never edits it).
 rm -f "$state/.landing-seen" "$state/.landing-receipt-stamp"
 printf 'chief\n' >"$AC_HOME/config/remote-mirror"
@@ -2341,28 +2341,53 @@ cat >"$lrbacklog" <<'EOF'
 EOF
 printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "first run seeds the baseline silently"
 assert_file "$state/.landing-seen" "the seen-set baseline is recorded"
+mkdir -p "$AC_HOME/data/old1"
+: >"$AC_HOME/data/old1/room.md"
+printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "a family in the baseline never owes a report, room or not"
 
-# A NEW Done line whose family has NO stamp -> block once with the reminder.
+# A NEW Done line whose family has a room and NO stamp -> block with the reminder.
+mkdir -p "$AC_HOME/data/greet2"
+: >"$AC_HOME/data/greet2/room.md"
 printf -- '- [x] greet2 - greeting shipped - local main (merged 2026-07-19)\n' >>"$lrbacklog"
 rc=0; printf '{}' | "$BIN/ac-turnend-guard.sh" 2>"$TMP/lr.err" || rc=$?
 assert_eq "$rc" "2" "a new unstamped Done family blocks the turn"
 assert_contains "$(cat "$TMP/lr.err")" "greet2" "the reminder names the owed family"
 assert_contains "$(cat "$TMP/lr.err")" "done-stamp" "the reminder points at the done-stamp verb"
+# The landing block repeats, so it must carry a HANDBACK owed at the same time
+# rather than starve it until the landing is stamped.
+mkdir -p "$AC_HOME/data/lrhb"
+printf '# Room: lrhb\n\n- [%s] lrhb-chief> HANDBACK: landed, please demote and close\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$AC_HOME/data/lrhb/room.md"
+rc=0; printf '{}' | "$BIN/ac-turnend-guard.sh" 2>"$TMP/lr.err" || rc=$?
+assert_eq "$rc" "2" "an unstamped landing and a HANDBACK block together"
+assert_contains "$(cat "$TMP/lr.err")" "greet2" "... naming the owed landing"
+assert_contains "$(cat "$TMP/lr.err")" "HANDBACK" "... and the waiting hand-back"
+rm -rf "$AC_HOME/data/lrhb"
 
-# It fires ONCE: the same Done line is now seen -> silent.
-printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "the same Done line never re-fires (recorded as seen)"
+# It REPEATS until stamped: a missed report must not go silent.
+rc=0; printf '{}' | "$BIN/ac-turnend-guard.sh" 2>/dev/null || rc=$?
+assert_eq "$rc" "2" "an unstamped family keeps blocking until its done-report is stamped"
+"$BIN/ac-remote.sh" done-stamp greet2 >/dev/null
+printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "a stamped family stops reminding"
+
+# A new Done line with no room (a solo slice, a chief self-task) owes no report.
+printf -- '- [x] solo-fix - a solo slice - local main (merged 2026-07-19)\n' >>"$lrbacklog"
+printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "a Done family without a room owes no done-report"
 
 # A new Done line whose family IS stamped -> silent (staged: audit-ship -> audit).
 # ac_family_of_id trusts a stage suffix only once its nested brief dir exists
 # (family-of-id-suffix-collision) - a real audit-ship task always has one,
 # since ac-brief.sh mkdirs it before any crewmate can commit.
 mkdir -p "$AC_HOME/data/audit/ship"
+: >"$AC_HOME/data/audit/room.md"
 "$BIN/ac-remote.sh" done-stamp audit >/dev/null
 printf -- '- [x] audit-ship - audit delivered - local main (merged 2026-07-19)\n' >>"$lrbacklog"
 printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "a stamped family does not remind"
 
 # mirror=off -> the check is inert even with a fresh unstamped Done line.
 printf 'off\n' >"$AC_HOME/config/remote-mirror"
+mkdir -p "$AC_HOME/data/offtask"
+: >"$AC_HOME/data/offtask/room.md"
 printf -- '- [x] offtask - no slack owed - local main (merged 2026-07-19)\n' >>"$lrbacklog"
 printf '{}' | "$BIN/ac-turnend-guard.sh" || fail "mirror=off owes no done-report -> silent"
 
@@ -2383,6 +2408,7 @@ assert_no_file "$state/.landing-seen" "a scoped session never writes the fleet s
 
 rm -f "$AC_HOME/config/remote-mirror" "$lrbacklog" \
   "$state/.landing-seen" "$state/.landing-receipt-stamp"
+rm -rf "$AC_HOME/data/greet2" "$AC_HOME/data/audit" "$AC_HOME/data/old1" "$AC_HOME/data/offtask"
 reset_state
 
 # --- HANDBACK block -----------------------------------------------------------

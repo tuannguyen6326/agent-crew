@@ -65,7 +65,9 @@ your own prose, never a copy of the record line); `on` - machine auto-mirror of
 every room post + spawn announce; the two are MUTUALLY EXCLUSIVE. Safety nets
 stay automatic in EVERY mode: unanswered GATE/ASK batch-pushed into the thread
 with the mention at each wake-drain, and the chief-pane BLOCKED stamp follows the
-room's pending count.
+room's pending count. Under `chief`, a family's landing owes its thread a
+done-report and then `bin/ac-remote.sh done-stamp <family>`; the turn-end guard
+repeats its reminder at every clean turn end until that stamp exists.
 
 ## Style, room lifecycle, promotion and routing
 
