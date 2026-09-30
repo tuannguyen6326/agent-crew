@@ -907,7 +907,7 @@ release_family_is_over() {
   [ ! -e "$state_dir/$fam-chief.meta" ] || return 1
   room="$(ac_room_file "$fam" 2>/dev/null || true)"
   [ -n "$room" ] && [ -f "$room" ] || return 1
-  last="$(awk '
+  last="$(LC_ALL=C awk '
     /^- \[[^]]*\] [^>]*> PROMOTED:/ { m = "PROMOTED" }
     /^- \[[^]]*\] [^>]*> DEMOTED:/  { m = "DEMOTED" }
     /^- \[[^]]*\] [^>]*> CLOSED:/   { m = "CLOSED" }
