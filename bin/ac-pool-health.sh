@@ -50,11 +50,11 @@ AGED_LEASE_THRESHOLD_SECS=86400
 
 lease_age_secs() {
   # lease_age_secs <iso> - whole seconds since an ac_iso (%Y-%m-%dT%H:%M:%SZ)
-  # timestamp, or empty on a malformed/empty one. macOS `date -j`; no GNU
-  # dependency (same seam as ac-learn.sh's learn_age_days).
+  # timestamp, or empty on a malformed/empty one. Read in UTC, as ac_iso wrote
+  # it: BSD date -j, else GNU date -d (ac-learn.sh's learn_age_days seam).
   local then
-  [ -n "$1" ] || return 0
-  then="$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" '+%s' 2>/dev/null)" || return 0
+  case "$1" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;; *) return 0 ;; esac
+  then="$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" '+%s' 2>/dev/null || date -u -d "$1" '+%s' 2>/dev/null)" || return 0
   [ -n "$then" ] || return 0
   printf '%s\n' $(( $(ac_now) - then ))
 }
