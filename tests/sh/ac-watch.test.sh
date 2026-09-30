@@ -3747,8 +3747,12 @@ case "$out" in *stale:dsw*) fail "a pane whose last status line declares a wait 
 assert_no_file "$state/.wake-spool" "a deferred stale publishes no wake"
 assert_eq "$(defer_lines dsw)" "1" "the deferral is recorded once in the arm log"
 assert_contains "$(cat "$state/.watcher-arm.log")" "deferred-stale:dsw declared-wait paused" "the deferral names the declaration"
-[ $(( $(date +%s) - $(cat "$state/.change-dsw") )) -lt 60 ] \
-  || fail "deferral must restart the idle timer the stale arm measures from, got $(cat "$state/.change-dsw")"
+# Read before the arithmetic: on bash 3.2 an empty operand is a syntax error
+# that drops the rest of the line - the `|| fail` with it - and runs on.
+dsw_stamp="$(cat "$state/.change-dsw")"
+case "$dsw_stamp" in ''|*[!0-9]*) fail "deferral must write a numeric idle stamp, got '$dsw_stamp'" ;; esac
+[ $(( $(date +%s) - dsw_stamp )) -lt 60 ] \
+  || fail "deferral must restart the idle timer the stale arm measures from, got $dsw_stamp"
 assert_no_file "$state/.stale-dsw" "deferral is not the stale dedup marker"
 
 # (2) The SAME declaration a full window later is stale again, once, with no
