@@ -299,7 +299,9 @@ proj_before="$(cat "$records/projects.md")"
 out="$("$BIN/ac-curate.sh" projects --apply)"
 assert_eq "$(cat "$records/projects.md")" "$proj_before" "projects audit is propose-only (byte-identical even with --apply)"
 assert_contains "$out" "deadp" "the dead project is surfaced"
-assert_contains "$out" "ASSUMED" "an ASSUMED mode is flagged"
+# The registry carries no delivery mode (bin/ac-project-mode.sh header), so a
+# line's prose saying one was assumed is nothing for the captain to confirm.
+case "$out" in *"delivery mode is ASSUMED"*) fail "a registry line is never flagged for a mode the registry does not carry" ;; esac
 assert_contains "$out" "absent" "the missing project dir is flagged as a proposed drop"
 # The bracket is optional and only +yolo in it means anything (bin/ac-project-mode.sh header).
 assert_contains "$out" "FLAG barep: registered but projects/barep is absent" \
