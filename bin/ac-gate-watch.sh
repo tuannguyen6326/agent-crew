@@ -81,7 +81,7 @@ else
   c_r=""; c_b=""; c_dim=""; c_cyn=""; c_grn=""
 fi
 
-fmt_mt() { stat -f %m "$1" 2>/dev/null || echo 0; }
+fmt_mt() { ac_file_mtime "$1" || echo 0; }
 fmt_size() { wc -c <"$1" 2>/dev/null | tr -d ' ' || echo 0; }
 obs_field() { [ -f "$1" ] && jq -r --arg k "$2" '.[$k] // ""' "$1" 2>/dev/null || true; }
 

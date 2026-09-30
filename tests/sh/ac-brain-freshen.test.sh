@@ -16,7 +16,7 @@ command -v bun >/dev/null 2>&1 || { printf 'SKIP: bun not available\n'; exit 0; 
 make_home
 printf 'the fleet learned a thing\n' >"$AC_HOME/records/learnings.md"
 
-mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+mtime() { bash -c '. "$0/ac-lib.sh"; ac_file_mtime "$1"' "$BIN" "$1" 2>/dev/null || echo 0; }
 
 # 1) sync writes the freshness marker the bash side stats
 "$BIN/ac-brain.sh" sync --home "$AC_HOME" --compact >/dev/null 2>&1

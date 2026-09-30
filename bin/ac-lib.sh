@@ -147,7 +147,7 @@ ac_brain_marker_age() {
   home="$(ac_home)" || return 1
   marker="$home/state/.brain-last-sync"
   [ -f "$marker" ] || { printf -- '-1\n'; return 0; }
-  last="$(stat -f %m "$marker" 2>/dev/null || stat -c %Y "$marker" 2>/dev/null || echo 0)"
+  last="$(ac_file_mtime "$marker" || echo 0)"
   printf '%s\n' "$(( $(ac_now) - last ))"
 }
 
@@ -169,7 +169,7 @@ ac_brain_freshen() {
   age="$(ac_brain_marker_age)"
   [ "$age" -lt 0 ] || [ "$age" -ge "$iv" ] || return 0
   attempt="$home/state/.brain-freshen-attempt"
-  [ -f "$attempt" ] && la="$(stat -f %m "$attempt" 2>/dev/null || stat -c %Y "$attempt" 2>/dev/null || echo 0)"
+  [ -f "$attempt" ] && la="$(ac_file_mtime "$attempt" || echo 0)"
   [ $(( $(ac_now) - la )) -ge "$iv" ] || return 0
   : >"$attempt"
   ("$(ac_root)/bin/ac-brain.sh" sync --home "$home" --compact >/dev/null 2>&1 &)
@@ -1825,7 +1825,7 @@ ac_self_tasks_in_flight() {
     ac_meta_is_self "$m" || continue
     id="$(basename "$m" .meta)"
     proj="$(ac_meta_get "$m" project)"
-    age=$(( now - $(stat -f %m "$m" 2>/dev/null || stat -c %Y "$m" 2>/dev/null || echo "$now") ))
+    age=$(( now - $(ac_file_mtime "$m" || echo "$now") ))
     if [ "$age" -ge 86400 ]; then age="$(( age / 86400 ))d"; else age="$(( age / 3600 ))h"; fi
     printf 'self task %s (%s, opened %s ago) is in flight: land it with bin/ac-teardown.sh %s, or discard it with bin/ac-teardown.sh %s --force - its lease holds a pool slot until then\n' \
       "$id" "$proj" "$age" "$id" "$id"
