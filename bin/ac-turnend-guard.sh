@@ -57,12 +57,13 @@
 #
 # LANDING-RECEIPT reminder (fleet only, additive): at an OTHERWISE-CLEAN turn
 # end - past every wake and coverage predicate, so it masks none - the guard
-# blocks (exit 2) when config/remote-mirror is chief/on and a NEW backlog Done
-# line (since the last check) has a family with no landing-receipt stamp: a
-# task landed but its Slack done-report may be unposted. It fires at most once
-# per Done line (a seen-set of the current Done ids) and fails open on any
-# missing dependency. The chief clears it by posting the report and running
-# `ac-remote.sh done-stamp <family>`. See landing_receipt_check below.
+# blocks (exit 2) when config/remote-mirror is chief/on and a backlog Done
+# line newer than the baseline has a family with a room and no landing-receipt
+# stamp: a task landed but its Slack done-report may be unposted. It repeats on
+# every such turn end until the family is stamped - a missed report is never
+# silent - and fails open on any missing dependency. The chief clears it by
+# posting the report and running `ac-remote.sh done-stamp <family>`. See
+# landing_receipt_check below.
 #
 # HANDBACK block (fleet only, additive, PERSISTENT): while any room sits in
 # HANDBACK - a roomchief reported back and nobody demoted it or closed the
@@ -240,13 +241,15 @@ age_field() {
 
 landing_receipt_check() {
   # LANDING-RECEIPT reminder: under
-  # remote-mirror chief/on, a NEW backlog Done line (a `- [x]` line) whose
-  # family has no landing-receipt stamp means a task landed but its Slack
-  # done-report may be unposted. Remind (exit 2) and record every current Done
-  # id as seen, so the SAME line fires at most once. FAIL-SAFE: any
-  # missing/unreadable dependency -> record nothing, stay silent; a first run
-  # with no seen-set seeds the baseline silently (nothing is "new" before a
-  # baseline). FLEET session only - the backlog is the crewchief's, a roomchief
+  # remote-mirror chief/on, a backlog Done line (a `- [x]` line) newer than the
+  # baseline whose family has a room and no landing-receipt stamp means a task
+  # landed but its Slack done-report may be unposted. Remind (exit 2) on every
+  # such turn end until the family is stamped: a reminder that fired once let a
+  # missed report go silent forever. The baseline is the Done ids present at the
+  # first run (seeded silently, never grown), so landings older than the check
+  # owe nothing; a family with no room (a solo slice, a chief self-task) has no
+  # thread narrative to close. FAIL-SAFE: any missing/unreadable dependency ->
+  # stay silent. FLEET session only - the backlog is the crewchief's, a roomchief
   # never edits it - which also avoids a seen-set race between scopes. Called
   # ONLY at an otherwise-clean turn end (past every wake and coverage
   # predicate), so it can never mask one. The stamp is set by the chief via
@@ -256,7 +259,8 @@ landing_receipt_check() {
     chief|on) : ;;
     *) return 0 ;;
   esac
-  local backlog seen stamp cur id fam owed
+  local backlog seen stamp cur id fam owed home
+  home="$(ac_home 2>/dev/null)" || return 0
   backlog="$(ac_records_dir 2>/dev/null)/backlog.md"
   [ -f "$backlog" ] || return 0
   seen="$state_dir/.landing-seen"
@@ -271,20 +275,17 @@ landing_receipt_check() {
   owed=""
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    grep -qxF "$id" "$seen" 2>/dev/null && continue           # already seen
+    grep -qxF "$id" "$seen" 2>/dev/null && continue           # in the baseline
     fam="$(ac_family_of_id "$id" 2>/dev/null)" || continue
     [ -n "$fam" ] || continue
+    [ -f "$home/data/$fam/room.md" ] || continue
     [ -n "$(ac_meta_get "$stamp" "$fam" 2>/dev/null)" ] && continue   # stamped
     case " $owed " in *" $fam "*) ;; *) owed="$owed $fam" ;; esac
   done <<EOF
 $cur
 EOF
-  # Record the current Done ids as seen BEFORE any block, so the same line
-  # fires at most once even if the reminder is dismissed.
-  printf '%s\n' "$cur" >"$seen.tmp.$$" 2>/dev/null \
-    && mv "$seen.tmp.$$" "$seen" 2>/dev/null
   if [ -n "$owed" ]; then
-    printf 'agent-crew: a task landed (backlog Done) but its Slack done-report may be unposted for:%s. Post it then stamp it (bin/ac-remote.sh done-stamp <family>) before ending the turn.\n' "$owed" >&2
+    printf 'agent-crew: a task landed (backlog Done) but its Slack done-report may be unposted for:%s. Post it then stamp it (bin/ac-remote.sh done-stamp <family>) - this repeats every turn end until it is stamped.\n' "$owed" >&2
     ac_hook_trace turnend-guard "verdict=blocked reason=landing-receipt scope=${scope:-fleet} queued=${queued_word:-n/a} inflight=${inflight:-n/a} age=$(age_field) handback=$(hb_field)"
     exit 2
   fi
