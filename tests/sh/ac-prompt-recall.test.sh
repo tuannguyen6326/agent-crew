@@ -22,7 +22,7 @@ ADAPTER="$BIN/ac-prompt-recall-cursor.sh"
 [ -x "$HOOK" ] || fail "missing or non-executable $HOOK"
 [ -x "$ADAPTER" ] || fail "missing or non-executable $ADAPTER"
 
-mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+mtime() { bash -c '. "$0/ac-lib.sh"; ac_file_mtime "$1"' "$BIN" "$1" 2>/dev/null || echo 0; }
 usage_by() { grep -o '"by":"[^"]*"' "$AC_HOME/state/brain-usage.jsonl" 2>/dev/null | tail -1; }
 
 mkdir -p "$AC_HOME/data/fam-one" "$TMP/elsewhere"

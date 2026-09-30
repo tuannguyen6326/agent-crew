@@ -428,7 +428,6 @@
 # '<fleet> (pane-agent)' group and its config/herdr-workspace-agents knob are
 # retired. Session:
 # AC_HERDR_SESSION > config/herdr-session > default.
-# macOS-only bits: stat -f %m.
 set -u
 . "$(dirname "$0")/ac-lib.sh"
 . "$(dirname "$0")/ac-backend.sh"   # backend_capture_pane: the scrollback harvest
@@ -1498,14 +1497,14 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   # The moment the awaited file APPEARED is the moment the fan-out finished;
   # a final message older than it was written without the fan-out's evidence.
   [ -z "$AWAITFILE" ] || [ -n "$await_seen_at" ] || [ ! -e "$AWAITFILE" ] \
-    || await_seen_at="$(stat -f %m "$AWAITFILE" 2>/dev/null || true)"
+    || await_seen_at="$(ac_file_mtime "$AWAITFILE" || true)"
   if [ -f "$MARKER" ]; then
     # WHEN the turn-end signal arrived, kept before the marker is consumed. A
     # captured pane scrollback showed the agent still mid-tool-call at the
     # moment a round was declared over, so "the turn ended" is itself a claim
     # worth timestamping: a marker seconds old while the transcript is still
     # growing says the SIGNAL fired early, not that the model stopped.
-    marker_age="$(( $(date +%s) - $(stat -f %m "$MARKER" 2>/dev/null || date +%s) ))"
+    marker_age="$(( $(date +%s) - $(ac_file_mtime "$MARKER" || date +%s) ))"
     rm -f "$MARKER"
     # AWAIT: the agent ended a turn, but work it started is still in flight -
     # a reviewer's scout lanes, which it triggered and has not collected yet. Consume this marker and keep polling: the
@@ -1591,7 +1590,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   # the transcript for minutes, so transcript mtime alone declared turns done
   # prematurely (root cause of truncated reviews on large repos).
   if [ -n "$TRANSCRIPT" ] && [ $i -gt 45 ]; then
-    mt=$(stat -f %m "$TRANSCRIPT" 2>/dev/null || echo 0)
+    mt=$(ac_file_mtime "$TRANSCRIPT" || echo 0)
     if [ $(( $(date +%s) - mt )) -gt 120 ]; then
       ag=$(backend_agent_status_pane "$P")
       if { [ "$ag" = idle ] || [ "$ag" = "done" ]; } && has_final_text \
@@ -1648,7 +1647,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   # start: a resumed session's transcript legitimately carries the previous
   # turn's mtime at i=0, and that history is not THIS turn's stall.
   if [ -n "$TRANSCRIPT" ] && [ "${AC_PANE_STALL_MAX:-2700}" -gt 0 ]; then
-    mt=$(stat -f %m "$TRANSCRIPT" 2>/dev/null || echo 0)
+    mt=$(ac_file_mtime "$TRANSCRIPT" || echo 0)
     [ "$mt" -ge "$wait_start" ] || mt=$wait_start
     if [ $(( $(date +%s) - mt )) -gt "${AC_PANE_STALL_MAX:-2700}" ]; then
       ag=$(backend_agent_status_pane "$P")

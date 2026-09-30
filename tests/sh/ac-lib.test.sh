@@ -328,6 +328,35 @@ mstamp="$TMP/mtime-probe"
 TZ=UTC touch -t 202001010000 "$mstamp"
 assert_eq "$(lib "ac_file_mtime '$mstamp'")" "1577836800" "ac_file_mtime prints a plain epoch stamp"
 assert_fails lib "ac_file_mtime '$TMP/definitely-absent'"
+# GNU stat reads `-f` as --file-system, which takes no format: `%m` becomes a
+# missing file operand, and it still reports on the real file before it exits 1.
+gnu_stat="$TMP/gnu-stat"
+mkdir -p "$gnu_stat"
+cat >"$gnu_stat/stat" <<'EOF'
+#!/bin/sh
+case "$1" in
+  -f) printf '  File: "%s"\n    ID: 0 Namelen: 255 Type: ext2/ext3\n' "$3"; exit 1 ;;
+  -c) [ "$2" = %Y ] && exec date -r "$3" +%s ;;
+esac
+exit 2
+EOF
+chmod +x "$gnu_stat/stat"
+assert_eq "$(PATH="$gnu_stat:$PATH" lib "ac_file_mtime '$mstamp'")" "1577836800" "ac_file_mtime under GNU stat"
+mkdir -p "$AC_HOME/state"
+TZ=UTC touch -t 202001010000 "$AC_HOME/state/.brain-last-sync"
+age="$(PATH="$gnu_stat:$PATH" lib ac_brain_marker_age 2>&1)" || true
+case "$age" in ''|*[!0-9]*) fail "ac_brain_marker_age under GNU stat is not a number: $age" ;; esac
+[ "$age" -ge $(( $(date +%s) - 1577836800 - 5 )) ] || fail "ac_brain_marker_age under GNU stat: $age"
+rm -f "$AC_HOME/state/.brain-last-sync"
+printf 'kind=self\nproject=p\n' >"$AC_HOME/state/gnu-self.meta"
+TZ=UTC touch -t 202001010000 "$AC_HOME/state/gnu-self.meta"
+assert_contains "$(PATH="$gnu_stat:$PATH" lib ac_self_tasks_in_flight 2>&1)" \
+  "opened $(( ($(date +%s) - 1577836800) / 86400 ))d ago" "ac_self_tasks_in_flight ages a self task under GNU stat"
+rm -f "$AC_HOME/state/gnu-self.meta"
+# Every other mtime read in bin/ goes through ac_file_mtime.
+raw="$(awk '/^ac_file_mtime\(\) \{/ { f = 1 } f { if (/^}/) f = 0; next }
+  !/^[[:space:]]*#/ && /stat -[fc] ?%/ { print FILENAME ":" FNR ": " $0 }' "$BIN"/*.sh)"
+assert_eq "$raw" "" "no bin/ script reads raw stat output outside ac_file_mtime"
 
 # ac_lock_stale - the ONE staleness rule the reclaim path acts on.
 sd_l="$TMP/lockstate"
