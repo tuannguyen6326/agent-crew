@@ -1369,9 +1369,9 @@ case "$wcmd" in *"--family widget"*) ;; *) fail "the board must tail its own fam
 # style). Another family's board in the same session must not be reused.
 assert_contains "$(cat "$HDLOG")" "--label ac-gate-watch:widget" \
   "the auto-opened gate board label includes the family"
-# ac-ship-watch style: the run retires its own board on exit.
+# The family's last live run retires the board it opened on exit.
 assert_contains "$(cat "$HDLOG.closed")" "pG1" \
-  "the run's EXIT trap closes the board pane it opened"
+  "the run's exit closes the board pane it opened"
 before="$(grep -c 'tab create' "$HDLOG")"
 clear_gate_artifacts widget spec
 ( cd "$ROOT" && PATH="$stub:$PATH" AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=auto \
@@ -1420,8 +1420,8 @@ before="$(grep -c 'tab create' "$HDLOG")"; : >"$HDLOG.closed"
 run_watch_case '{"result":{"process_info":{"foreground_processes":[{"argv0":"bash","cmdline":"bash /x/bin/ac-gate-watch.sh --tail"}]}}}'
 assert_eq "$(grep -c 'tab create' "$HDLOG")" "$before" \
   "a LIVE board whose argv0 is bash must still be recognised and reused"
-assert_eq "$(cat "$HDLOG.closed")" "" \
-  "a live board's pane must never be closed"
+assert_eq "$(cat "$HDLOG.closed")" "pDEAD" \
+  "a live board is reused, never closed at open - the family's last run retires it at exit"
 
 # UNOBSERVABLE, both shapes: herdr could not answer, and herdr answered with an
 # empty foreground list. Neither is evidence the board died, so both keep TODAY's
@@ -1430,14 +1430,14 @@ before="$(grep -c 'tab create' "$HDLOG")"; : >"$HDLOG.closed"
 run_watch_case ''
 assert_eq "$(grep -c 'tab create' "$HDLOG")" "$before" \
   "an unreadable process-info must not be read as a dead board"
-assert_eq "$(cat "$HDLOG.closed")" "" \
-  "an unreadable process-info must close nothing"
-before="$(grep -c 'tab create' "$HDLOG")"
+assert_eq "$(cat "$HDLOG.closed")" "pDEAD" \
+  "an unreadable process-info closes nothing at open - only the last run's exit retires the board"
+before="$(grep -c 'tab create' "$HDLOG")"; : >"$HDLOG.closed"
 run_watch_case '{"result":{"process_info":{"foreground_processes":[]}}}'
 assert_eq "$(grep -c 'tab create' "$HDLOG")" "$before" \
   "an empty foreground list must not be read as a dead board"
-assert_eq "$(cat "$HDLOG.closed")" "" \
-  "an empty foreground list must close nothing"
+assert_eq "$(cat "$HDLOG.closed")" "pDEAD" \
+  "an empty foreground list closes nothing at open - only the last run's exit retires the board"
 
 # ============================================================================
 # 14. a LARGE captain.md never aborts the gate (fed as a PATH, no cap, no truncation)
@@ -2290,6 +2290,42 @@ busy_lib ac_chief_busy_leave "$AC_HOME/state" "$fam4" "$AC_HOME/data/$fam4"
 release_held bsi
 assert_eq "$(cat "$hold/bsi.rc")" "0" "the gate run settles after the verifier left"
 assert_no_file "$busy4" "the last holder's exit clears the declaration"
+
+# --- the gate board is the FAMILY's: only its last live run retires it ----------
+# The run that opened the board may exit first; a same-family run still live
+# keeps it open, and the family's last run closes it by its label.
+fam5=boardshare
+for s in spec arch; do
+  mkdir -p "$AC_HOME/data/$fam5/$s"
+  printf '# %s brief\ncontract.\n' "$s" >"$AC_HOME/data/$fam5/$s/brief.md"
+  printf '# %s report\noriginal report.\n' "$s" >"$AC_HOME/data/$fam5/$s/report.md"
+done
+for st in spec architecture; do post_receipts "$fam5" "$st" 1; done
+held_board() {  # held_board <key> <stage> <env>... - a held run with its board on
+  local key="$1" stage="$2" i=0
+  shift 2
+  ( rc=0
+    env "$@" PATH="$stub:$PATH" GATE_STUB_HOLD="$hold" GATE_STUB_KEY="$key" GATE_BODY_FILE="$hold/continue.md" \
+      AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=auto "$BIN/ac-gate.sh" "$fam5" "$stage" --repo "$gate_repo" \
+      >"$hold/$key.out" 2>"$hold/$key.err" || rc=$?
+    printf '%s\n' "$rc" >"$hold/$key.rc" ) >/dev/null 2>&1 &
+  while [ ! -e "$hold/$key.started" ] && [ ! -e "$hold/$key.rc" ]; do
+    i=$((i + 1)); [ "$i" -le 300 ] || fail "held board run $key never reached its turn"
+    sleep 0.1
+  done
+  [ -e "$hold/$key.started" ] || fail "held board run $key exited before its turn: $(cat "$hold/$key.err")"
+}
+: >"$HDLOG.closed"
+held_board bdA spec HD_PANE_LIST=
+held_board bdB architecture \
+  HD_PANE_LIST='{"result":{"panes":[{"pane_id":"pG1","label":"ac-gate-watch:boardshare","tab_id":"tG"}]}}' \
+  HD_PROC_INFO='{"result":{"process_info":{"foreground_processes":[{"argv0":"bash","cmdline":"bash /x/bin/ac-gate-watch.sh --tail"}]}}}'
+release_held bdA
+assert_eq "$(cat "$hold/bdA.rc")" "0" "the run that opened the board settles"
+assert_eq "$(cat "$HDLOG.closed")" "" "the board stays open while a same-family run is live"
+release_held bdB
+assert_eq "$(cat "$hold/bdB.rc")" "0" "the family's last run settles"
+assert_eq "$(cat "$HDLOG.closed")" "pG1" "the family's last run retires the board by its label"
 
 # --- a run starting while another of its family exits keeps its declaration ------
 # X is held inside its exit, after it found no other live run and before it clears
