@@ -102,6 +102,11 @@ assert_contains "$outA" "-- pool (worktree health) --" "header prints for an age
 assert_contains "$outA" "1 aged-leased" "aged-leased count printed"
 assert_contains "$outA" "bin/ac-tree.sh remove --include-leased <worktree-path>" "verbatim aged-lease reclaim command (no --force: the gates stay armed)"
 assert_contains "$outA" "$wtA1" "aged slot's worktree path printed"
+# The stamp is UTC (ac_iso), so its age is read in UTC whatever the host zone:
+# read as local time it was off by the zone's offset either way.
+for zone in Asia/Ho_Chi_Minh America/Los_Angeles; do
+  assert_contains "$(TZ="$zone" "$BIN/ac-pool-health.sh" --repo "$repoA")" "leased 48h ago" "a 2-day lease reads 48h under TZ=$zone"
+done
 case "$outA" in
   *"$wtA2"*) fail "a fresh lease must never be flagged as aged" ;;
   *"1 stuck-dirty"*) fail "an aged lease is not a dirty slot" ;;
