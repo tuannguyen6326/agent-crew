@@ -14,12 +14,14 @@
 # DAEMON verbs (captain-facing lifecycle; the dashboard is a standing service
 # of a home, so the ceremony of keeping a terminal window open for it is
 # gone - launchd stays out, this is one detached process + one pidfile):
-#   start    launch detached; pid -> $AC_HOME/state/dashboard.pid, log ->
-#            $AC_HOME/state/dashboard.log; waits until the port answers and
-#            prints the url (a boot that never answers is reported with the
-#            log tail, and the dead pid is cleaned). Idempotent: an already-
-#            running daemon is reported, never doubled; a port held by a
-#            FOREIGN process still refuses.
+#   start    launch detached; pid -> $AC_HOME/state/dashboard.pid, its port
+#            -> dashboard.port beside it, log -> $AC_HOME/state/dashboard.log;
+#            waits until the port answers and prints the url (a boot that
+#            never answers is reported with the log tail, and the dead pid is
+#            cleaned). Idempotent: an already-running daemon is reported at
+#            the port it serves, never doubled - on another --port too
+#            (restart --port moves it); a port held by a FOREIGN process
+#            still refuses.
 #   stop     kill the recorded pid (verified to be this checkout's dashboard/app.ts before the
 #            kill - a recycled pid is never shot), wait until gone, remove
 #            the pidfile. Idempotent ("not running" is a clean no-op); a
@@ -27,6 +29,7 @@
 #   restart  stop (tolerant) then start - the reload after a dashboard/ edit.
 #   status   one line: running (pid + url) exit 0, or not running exit 1.
 # The verbs need AC_HOME (the pidfile's home); the foreground path does not.
+# A verb with no --port acts on the recorded daemon's port.
 #
 # The server is stateless and read-only over fleet task/session state - it
 # never locks or drives a backend - but has FOUR write surfaces:
