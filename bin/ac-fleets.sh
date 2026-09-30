@@ -265,8 +265,8 @@ emit_home() {
     owner="$(tr -d '[:space:]' <"$sd/.watcher-owner")"
   fi
   if [ -f "$sd/.last-watcher-beat" ]; then
-    beat="$(tr -d '[:space:]' <"$sd/.last-watcher-beat")"
-    case "$beat" in ''|*[!0-9]*) beat=0 ;; esac
+    beat="$(ac_watcher_beat_read "$sd")"
+    beat="${beat%% *}"
     if [ "$beat" -eq 0 ]; then
       # The file exists but carries no usable beat - unreadable, or the 0
       # ac-watch.sh's stand_down_beacon writes on every exit. Down all the
