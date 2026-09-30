@@ -283,6 +283,18 @@ assert_fails_with "one family, one domain" -- "$dom" validate
 "$dom" retire logistics >/dev/null 2>&1 || true
 reset_backlog
 "$dom" assign payments pay-fix >/dev/null
+# Names are text: awk compares two numeric-looking strings as numbers, so the
+# tally and queue for 7 took domain:07 rows, and validate read a story on
+# domain:7 under an epic on domain:07 as one domain.
+printf '# Backlog\n\n## In flight\n\n## Queued\n\n- [ ] n7 - seven; domain:7 (repo: alpha)\n- [ ] n07 - oh-seven; domain:07 (repo: alpha)\n- [ ] e07 [EPIC] - epic; domain:07 (repo: alpha)\n- [ ] s7 - story; epic:e07; domain:7 (repo: alpha)\n\n## Done\n' >"$fleet_backlog"
+read -r tq ti td <<EOF
+$(ac_domain_tally 7)
+EOF
+assert_eq "$tq" "2" "tally 7 counts only the domain:7 rows"
+assert_eq "$("$dom" queue 7 --ids | tr '\n' ' ')" "n7 s7 " "queue 7 never lists a domain:07 row"
+assert_fails_with "one family, one domain" -- "$dom" validate
+reset_backlog
+"$dom" assign payments pay-fix >/dev/null
 # A ledger the parser could not read is an INVALID line, never a clean one.
 failbun="$TMP/failbun"
 mkdir -p "$failbun"

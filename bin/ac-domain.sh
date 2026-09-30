@@ -375,7 +375,7 @@ domain_valid_scope() {
   # registry line was removed while its package still holds rows cannot go on
   # being routed to.
   local name="$1" rec
-  rec="$(ac_domain_parse | awk -F'\t' -v n="$name" '$1 == "VALID" && $2 == n { print $4; found = 1; exit } END { exit !found }')" \
+  rec="$(ac_domain_parse | awk -F'\t' -v n="$name" 'BEGIN { w[n] } $1 == "VALID" && ($2 in w) { print $4; found = 1; exit } END { exit !found }')" \
     || ac_die "no VALID crewdomain '$name' in $REGISTRY_LABEL"
   [ -n "$rec" ] \
     || ac_die "crewdomain '$name' has an empty scope: - it is not routable, and the chief may not invent scope text for it"
@@ -605,21 +605,23 @@ cmd_queue() {
   domain_require_name "$name"
   backlog="$(ac_records_dir)/backlog.md"
   [ -f "$backlog" ] || { printf 'no fleet backlog\n'; return 0; }
-  LC_ALL=C awk "$AC_DONELINE_AWK"'
+  # `in`, never ==: awk compares numeric-looking names as numbers (07 == 7).
+  LC_ALL=C awk -v n="$name" -v ids="$([ "$mode" = --ids ] && printf 1 || printf 0)" "$AC_DONELINE_AWK"'
+    BEGIN { w[n] }
     # Pass 1 (NR==FNR): id -> authoritative domain, for epic inheritance.
     NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
     /^## /   { sec = $0; secshown = 0; next }
     /^- \[/ {
       ac_doneline($0, o)
       via = ""
-      if (o["domain"] == n) { }
-      else if (o["domain"] == "" && o["epic"] != "" && dom[o["epic"]] == n) via = " (via epic:" o["epic"] ")"
+      if (o["domain"] in w) { }
+      else if (o["domain"] == "" && o["epic"] != "" && (dom[o["epic"]] in w)) via = " (via epic:" o["epic"] ")"
       else next
       if (ids) { print o["id"]; next }
       if (!secshown && sec != "") { print sec; secshown = 1 }
       print $0 via
     }
-  ' n="$name" ids="$([ "$mode" = --ids ] && printf 1 || printf 0)" "$backlog" "$backlog"
+  ' "$backlog" "$backlog"
   return 0
 }
 
@@ -684,14 +686,15 @@ cmd_retire() {
   domain_chief_only retire
   domain_require_name "$name"
   reg="$(ac_domain_registry)"
-  ac_domain_parse "$reg" 2>/dev/null | awk -F'\t' -v n="$name" '$1 == "VALID" && $2 == n { found = 1 } END { exit !found }' \
+  ac_domain_parse "$reg" 2>/dev/null | awk -F'\t' -v n="$name" 'BEGIN { w[n] } $1 == "VALID" && ($2 in w) { found = 1 } END { exit !found }' \
     || ac_die "no VALID crewdomain '$name' in $REGISTRY_LABEL - nothing to retire"
   backlog="$(ac_records_dir)/backlog.md"
   if [ -f "$backlog" ]; then
-    open="$(LC_ALL=C awk "$AC_DONELINE_AWK"'
+    open="$(LC_ALL=C awk -v n="$name" "$AC_DONELINE_AWK"'
+      BEGIN { w[n] }
       /^## Done/ { done = 1 } /^## / && !/^## Done/ { done = 0 }
-      /^- \[/ && !done { ac_doneline($0, o); if (o["domain"] == n) print o["id"] }
-    ' n="$name" "$backlog")"
+      /^- \[/ && !done { ac_doneline($0, o); if (o["domain"] in w) print o["id"] }
+    ' "$backlog")"
     [ -z "$open" ] \
       || ac_die "crewdomain '$name' still holds OPEN tokened rows - unassign them first:
 $open"
@@ -914,7 +917,8 @@ EOF
           printf "MALFORMED %s carries a domain:-shaped run off its grammar position (backtick-quote a mention, or re-stamp with assign)\n", o["id"]
         if (o["domain"] != "")
           printf "ORPHAN %s %s\n", o["domain"], o["id"]
-        if (o["domain"] != "" && o["epic"] != "" && dom[o["epic"]] != "" && dom[o["epic"]] != o["domain"])
+        # Concatenated to strings: two numeric-looking names compare as numbers.
+        if (o["domain"] != "" && o["epic"] != "" && dom[o["epic"]] != "" && (dom[o["epic"]] "") != (o["domain"] ""))
           printf "DISAGREE story %s carries domain:%s but its epic %s carries domain:%s - one family, one domain\n", o["id"], o["domain"], o["epic"], dom[o["epic"]]
       }
     ' "$vb" "$vb")" || { printf 'INVALID ledger: cannot read %s\n' "$vb"; return 2; }

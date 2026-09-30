@@ -1507,16 +1507,18 @@ if [ -n "$roomchief_family" ]; then
   # Placed with the other pre-window refusals so a failure costs no window,
   # lease or meta and the promote stays retryable.
   dom_pair=""
-  [ ! -f "$(ac_records_dir)/backlog.md" ] || dom_pair="$(LC_ALL=C awk "$AC_DONELINE_AWK"'
+  # `in`, never ==: awk compares numeric-looking ids and names as numbers.
+  [ ! -f "$(ac_records_dir)/backlog.md" ] || dom_pair="$(LC_ALL=C awk -v f="$fam" "$AC_DONELINE_AWK"'
+    BEGIN { w[f] }
     NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") d[o["id"]] = o["domain"] } next }
     /^- \[/ {
       ac_doneline($0, o)
-      if (o["id"] != f) next
+      if (!(o["id"] in w)) next
       inh = (o["epic"] != "") ? d[o["epic"]] : ""
       printf "%s|%s\n", o["domain"], inh
       exit
     }
-  ' f="$fam" "$(ac_records_dir)/backlog.md" "$(ac_records_dir)/backlog.md")" \
+  ' "$(ac_records_dir)/backlog.md" "$(ac_records_dir)/backlog.md")" \
     || ac_die "cannot read the ledger for the domain binding of $fam"
   dom_own="${dom_pair%%|*}"; dom_inh="${dom_pair#*|}"
   [ "$dom_pair" = "$dom_own" ] && dom_inh=""   # no row found: empty pair
@@ -1532,7 +1534,7 @@ if [ -n "$roomchief_family" ]; then
     # domain (the ORPHAN-TOKEN shape `ac-domain.sh list` reports) must not go
     # on minting domainchiefs - a ghost domain nothing routes to and nothing
     # lists. Symmetric with assign, which already demands one.
-    ac_domain_parse | awk -F'\t' -v n="$dom" '$1 == "VALID" && $2 == n { f = 1 } END { exit !f }' \
+    ac_domain_parse | awk -F'\t' -v n="$dom" 'BEGIN { w[n] } $1 == "VALID" && ($2 in w) { f = 1 } END { exit !f }' \
       || ac_die "family $fam carries domain:$dom but '$dom' is not a VALID entry in records/crewdomains.md - refusing to promote a chief bound to a domain nothing routes to. Either restore its line in records/crewdomains.md, or strip the token: bin/ac-domain.sh unassign $dom $fam"
   fi
 

@@ -829,7 +829,9 @@ ac_domain_tally() {
   local name="${1:-}" f
   f="$(ac_records_dir)/backlog.md"
   [ -f "$f" ] || { printf '0 0 0\n'; return 0; }
-  LC_ALL=C awk "$AC_DONELINE_AWK"'
+  # `in`, never ==: awk compares numeric-looking names as numbers (07 == 7).
+  LC_ALL=C awk -v want="$name" "$AC_DONELINE_AWK"'
+    BEGIN { w[want] }
     NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
     /^## In flight/ { sec = "i"; next }
     /^## Queued/    { sec = "q"; next }
@@ -839,12 +841,12 @@ ac_domain_tally() {
       d = o["domain"]
       if (d == "" && o["epic"] != "") d = dom[o["epic"]]
       if (d == "") next
-      if (want != "" && d != want) next
+      if (want != "" && !(d in w)) next
       if (sec == "d" && (o["terminal"] == "failed" || o["terminal"] == "abandoned")) next
       n[sec]++
     }
     END { printf "%d %d %d\n", n["q"] + 0, n["i"] + 0, n["d"] + 0 }
-  ' want="$name" "$f" "$f"
+  ' "$f" "$f"
 }
 
 ac_require() {
@@ -1900,7 +1902,7 @@ ac_solo_landing_check() {
     line="knowledge loop: lessons=$lessons repo-knowledge=$facts landed-receipt=$done"
   else
     bl="$(ac_records_dir)/backlog.md"
-    if [ -f "$bl" ] && awk -v row="- [x] $id " '
+    if [ -f "$bl" ] && LC_ALL=C awk -v row="- [x] $id " '
         /^## Done/ { in_done = 1; next }
         /^## / { in_done = 0 }
         in_done && index($0, row) == 1 { found = 1; exit }
