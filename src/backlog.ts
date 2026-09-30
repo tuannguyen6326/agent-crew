@@ -206,12 +206,13 @@
 //                 never invents a verb the ledger did not write.
 //   contract    - the DELIVERY-CONTRACT token group (delivery-contract-on-the-
 //                 row): the FIRST leading-run, unquoted `[...]` group whose
-//                 content, split on [ \t]+, gives only `key:value` tokens with
-//                 a key from the closed set src|flow|mode|rev|qa|promote - a
-//                 leading or trailing space or TAB gives an empty token, so
-//                 `[ src:cap]` and `[src:cap ]` are none - e.g.
+//                 content, its leading and trailing spaces and TABs trimmed
+//                 and split on [ \t]+, gives only `key:value` tokens with a
+//                 key from the closed set src|flow|mode|rev|qa|promote - so
+//                 `[src:cap rev:yes ]` still pins: a stray space must never
+//                 silently drop a pin before any gate reads it - e.g.
 //                 `[src:cap flow:direct mode:local-only rev:no qa:no]` -
-//                 returned as the bare content, else "". The all-tokens-keyed
+//                 returned as the trimmed content, else "". The all-tokens-keyed
 //                 test is the discriminator that keeps every EXISTING group
 //                 class untouched: a provenance tag (`[CAPTAIN-ORDERED
 //                 2026-08-10 ...]`) carries non-kv words, `[EPIC]`/`[failed]`/
@@ -306,9 +307,10 @@ export function acDoneline(line: string): Doneline {
     // Contract-shaped content holds no `@`, so it can never be hold=1 or a
     // rule (1) attempt; claiming it first does take a value like `qa:on-hold`
     // from rule (2), leaving contractLint to judge that value.
-    const contract = !quoted && positional && f.contract === "" && hcontent !== ""
-      && hcontent.split(/[ \t]+/).every((t) => /^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/.test(t));
-    if (contract) f.contract = hcontent;
+    const hbody = hcontent.replace(/^[ \t]+|[ \t]+$/g, "");
+    const contract = !quoted && positional && f.contract === "" && hbody !== ""
+      && hbody.split(/[ \t]+/).every((t) => /^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/.test(t));
+    if (contract) f.contract = hbody;
     else if (quoted) {
       // a documentation mention - never a token, never an attempt
     } else if (positional && /^\[@held( until [0-9]{4}-[0-9]{2}-[0-9]{2})?\]$/.test(hgrp)) {

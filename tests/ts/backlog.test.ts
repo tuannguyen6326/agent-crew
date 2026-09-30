@@ -57,10 +57,15 @@ test("contract is the first unquoted leading-run group whose every token is a cl
   only("- [ ] t2 [EPIC 3 stories] [src:cap] - x", { id: "t2", contract: "src:cap" });
   only("- [ ] t3 [src:cap\tqa:yes] - x", { id: "t3", contract: "src:cap\tqa:yes" });
   only("- [ ] t7 [src:cap] [mode:crew-ship] - first wins", { id: "t7", contract: "src:cap" });
+  // Padding inside the brackets is not part of the group: a pin written with a
+  // stray space still pins, rather than silently reaching no gate.
+  only("- [ ] t4 [ src:cap] - x", { id: "t4", contract: "src:cap" });
+  only("- [ ] t5 [src:cap rev:yes ] - x", { id: "t5", contract: "src:cap rev:yes" });
+  only("- [ ] t6 [\tsrc:cap\tqa:yes\t] - x", { id: "t6", contract: "src:cap\tqa:yes" });
   for (const line of [
     "- [ ] t1 - text mentions [mode:local-only] later",
     "- [ ] t1 [src:cap bogus:v] - x",
-    "- [ ] t1 [ src:cap] - x",
+    "- [ ] t1 [ ] - x",
     "- [ ] t1 `[@held]` [src:cap] - x",
   ]) only(line, { id: "t1" });
 });
