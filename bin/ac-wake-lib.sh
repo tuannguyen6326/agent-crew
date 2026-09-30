@@ -84,7 +84,7 @@
 
 ac_wake_scope_ok() {
   # ac_wake_scope_ok <scope> - 0 when <scope> is a legal family name, i.e. a
-  # bare single path segment [A-Za-z0-9_-]+ (ac-spawn.sh:491, ac-room.sh:106).
+  # bare single path segment [A-Za-z0-9_-]+ (ac-spawn.sh's --roomchief family check, ac-room.sh cmd_post).
   # Empty, dot-bearing, slash-bearing or otherwise odd scopes are refused, so
   # a malformed AC_SCOPE can neither leak a stray file nor escape state/.
   case "${1:-}" in

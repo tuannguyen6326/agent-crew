@@ -853,7 +853,7 @@ test("parseCrewdomains: registry absent/empty both yield []", () => {
 });
 
 // Differential test against the actual authority: parseCrewdomains claims to
-// be a second READER of ac_domain_parse's grammar (bin/ac-lib.sh:497-550),
+// be a second READER of ac_domain_parse's grammar (bin/ac-lib.sh `crewdomain routing table` block),
 // never a second grammar - so its (cls, reason) sequence must match the real
 // bash function's, byte-for-byte input included (a naive rstrip once made
 // this diverge on trailing whitespace / CRLF, since ac_domain_parse anchors
@@ -1827,7 +1827,7 @@ test("collectFamilyTasks reads live + archived metas, prefers fleet_scope, and s
     mkdirSync(`${home}/state/archive/signup-api`, { recursive: true });
     mkdirSync(`${home}/state/archive/checkout`, { recursive: true });
     writeFileSync(`${home}/state/signup.meta`, "project=gateway\nfleet_scope=signup\npr=https://github.com/o/gateway/pull/86\n");
-    writeFileSync(`${home}/state/signup-chief.meta`, "project=signup\nkind=roomchief\n"); // ac-spawn.sh:1126 - the FAMILY, never a repo
+    writeFileSync(`${home}/state/signup-chief.meta`, "project=signup\nkind=roomchief\n"); // ac-spawn.sh roomchief path - the FAMILY, never a repo
     writeFileSync(`${home}/state/archive/signup-api/meta`, "project=api-services\npr=https://github.com/o/api/pull/297\npr_merged=1\n"); // no fleet_scope -> prefix
     writeFileSync(`${home}/state/archive/checkout/meta`, "project=other\nfleet_scope=checkout\n"); // another family
     const rows = collectFamilyTasks(home, ["signup"], ["signup", "checkout"]);

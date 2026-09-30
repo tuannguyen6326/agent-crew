@@ -35,7 +35,7 @@
 # The per-project qa-infra reap sweep is BOUNDED (default 10s per project;
 # AC_SESSION_QA_TIMEOUT overrides, non-numeric falls back - the same shape as
 # ac-teardown.sh's AC_TEARDOWN_QA_TIMEOUT/qa_infra_timeout, itself the
-# fetch_bounded watchdog at bin/ac-sync.sh:55-75): a wedged docker daemon
+# fetch_bounded watchdog at bin/ac-sync.sh): a wedged docker daemon
 # (`docker ps -a` hangs) is killed on timeout, warned once by project, and
 # the digest continues - session start sweeps EVERY registered project
 # serially, so one wedged daemon must never block the whole fleet digest.
@@ -206,7 +206,7 @@ session_qa_timeout() {
 
 infra_reap_bounded() {
   # infra_reap_bounded <dir> <secs> <outfile> - one project's `ac-qa.sh infra
-  # reap` under a watchdog (the fetch_bounded shape, bin/ac-sync.sh:55-75):
+  # reap` under a watchdog (the fetch_bounded shape, bin/ac-sync.sh):
   # the child is killed once <secs> elapse (TERM, short grace, KILL).
   # Returns the reap's own status, or 124 on timeout. The docker grandchild
   # several levels down (ac-qa.sh -> docker ps -a) is orphaned, not reaped -

@@ -163,7 +163,7 @@ esac
 rm -rf "$dstub/jq-old" "$dstub/jq-new"
 
 # ac-session-start.test.sh - the crewdeputy config-converge ride-along
-# (bin/ac-session-start.sh:72-83) must resolve its PARENT config dir from the
+# (bin/ac-session-start.sh's "Crewdeputy ride-along" block) must resolve its PARENT config dir from the
 # LIVE AC_HOME by walking `$home/../../config` - tests/sh/ac-config-converge.test.sh
 # only ever drives the underlying ac_config_converge_from_parent function with
 # a hand-picked parent path, never through this script's own path derivation,

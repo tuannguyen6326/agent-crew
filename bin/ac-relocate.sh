@@ -96,12 +96,12 @@ notice="Notice: your window was relocated to the $group workspace ($ws) - same s
 if [ "$kind" = roomchief ]; then
   fam="$(awk -F= '$1=="project"{print $2}' "$meta")"
   # A roomchief's meta "worktree" field holds its fleet HOME, not a leased
-  # worktree (ac-spawn.sh:1377 sets it to ac_home) - the fresh pane shell
-  # here inherits nothing either, same as the original spawn (ac-spawn.sh:1365-1367).
+  # worktree (ac-spawn.sh's --roomchief branch sets it to ac_home) - the fresh pane shell
+  # here inherits nothing either, same as the original spawn (ac-spawn.sh's --roomchief launch line).
   # A domainchief is a roomchief whose meta also carries domain=<name>
-  # (ac-spawn.sh:1386); dom_env rides after AC_SCOPE, gated on that field so
+  # (ac-spawn.sh roomchief path); dom_env rides after AC_SCOPE, gated on that field so
   # an ordinary roomchief's resume line stays byte-identical - the same
-  # shape ac-spawn.sh:1367-1371 uses on the original launch line.
+  # shape ac-spawn.sh's roomchief path uses on the original launch line.
   dom="$(awk -F= '$1=="domain"{print $2}' "$meta")"
   dom_env=""
   [ -z "$dom" ] || dom_env="AC_DOMAIN=$(printf '%q' "$dom") "

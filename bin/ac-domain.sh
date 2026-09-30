@@ -718,7 +718,7 @@ $open"
 
 cmd_list() {
   # cmd_list - the session-start digest block. ALWAYS exits 0 and renders even
-  # on a corrupt ledger: the rule bin/ac-deputy.sh:48-50 states for its own
+  # on a corrupt ledger: the rule bin/ac-deputy.sh's header states for its own
   # list, adopted here for the same reason - a digest block may never take
   # session start down.
   local reg records cls id charter scope reason n=0 invalid=0

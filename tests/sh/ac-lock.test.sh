@@ -158,7 +158,7 @@ assert_contains "$out" "lock: acquired (pid $$)" "acquire succeeds past the reus
 AC_LOCK_PID=$$ "$BIN/ac-lock.sh" release >/dev/null
 
 # Reap gate exclusivity, deterministic (no load, no concurrency, one process).
-# The gate's contract (ac-lock.sh:68-76) documents a RESIDUAL: a reap dir that
+# The gate's contract (the reap-DIR bullet of ac-lock.sh's ATOMIC CLAIM CONTRACT header) documents a RESIDUAL: a reap dir that
 # already exists (e.g. leaked by a reaper SIGKILLed between its mkdir/rmdir)
 # must make stale recovery REFUSE, never reap around it. Pre-create the reap
 # dir so mkdir fails every attempt: with the gate this spins to max_attempts
@@ -634,7 +634,7 @@ assert_eq "$(count_results "$TMP/race-stale" 'lock: acquired')" "1" "stale race:
 assert_eq "$(count_results "$TMP/race-stale" 'another chief session owns this home')" "1" "stale race: the loser refused the live winner"
 recov="$(count_results "$TMP/race-stale" 'recovering stale lock')"
 # Exactly 1, not merely >=1: the reap gate serializes so only the sole reaper
-# ever runs the recover branch (ac-lock.sh:68-76) - a mut-nogate leak lets both
+# ever runs the recover branch (the reap-DIR bullet of ac-lock.sh's ATOMIC CLAIM CONTRACT header) - a mut-nogate leak lets both
 # recoverers reap, tightening this to catch that instead of tolerating it.
 assert_eq "$recov" "1" "stale race: exactly one recoverer runs the reap (gate serializes concurrent reaps)"
 assert_file "$lockf" "stale race: the winner's lock is on disk"

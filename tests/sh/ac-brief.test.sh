@@ -583,7 +583,7 @@ rm -f "$AC_HOME/records/captain.md"
 # Regression (roomchief verify, real records/captain.md:63): a line that
 # CARRIES the STANDING token but is authored as plain paragraph text under a
 # `## heading` - never a `- ` bullet - must not vanish silently. WARN, do not
-# widen the `- ` block selector to swallow it (bin/ac-domain.sh:150 names the
+# widen the `- ` block selector to swallow it (src/backlog.ts's `domain` field doc names the
 # trap: prose merely MENTIONING the token read as a real entry).
 cat >"$AC_HOME/records/captain.md" <<'CAP'
 - 2026-02-01: STANDING (captain): BULLETED-MARKER, this one parses fine.

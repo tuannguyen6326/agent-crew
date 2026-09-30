@@ -1681,7 +1681,7 @@ for _ in $(seq 1 100); do
 done
 assert_contains "$(cat "${killed_round}pane-result.ndjson")" '"event":"done"' \
   "the terminal result the orphaned pane reaches lands in the same file"
-# kill -9 runs no EXIT trap, so the busy declaration ac-verify.sh clears at :251
+# kill -9 runs no EXIT trap, so the busy declaration ac-verify.sh clears in that trap
 # survives too - and the pane stand-in globs every one of them on each later run.
 rm -f "$AC_HOME/state/$VERIFY_EXPECT_ID.meta" "$AC_HOME/state/$VERIFY_EXPECT_ID.status" \
   "$AC_HOME/state/.pane-$VERIFY_EXPECT_ID" "$AC_HOME/state/.chief-busy-until.$killed_family"

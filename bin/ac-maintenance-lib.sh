@@ -35,16 +35,16 @@
 # that they do not matter:
 #   - curate_policy_receipt (bin/ac-curate.sh:676) mints `continue` for the
 #     deterministic-records plan, and that receipt IS validated here
-#     (bin/ac-curate.sh:1387, which ac_dies the whole pass unless the answer is
+#     (bin/ac-curate.sh cmd_run, which ac_dies the whole pass unless the answer is
 #     `continue`). THIS is the one the exemption exists for: Curate built those
 #     files itself, deterministically, with no judge in the loop to be blind.
 #   - curate_ask_receipt (bin/ac-curate.sh:775) and learn_policy_ask_receipt
-#     (bin/ac-learn.sh:1903) mint `ask-captain` for a gate that was unavailable
+#     (bin/ac-learn.sh) mint `ask-captain` for a gate that was unavailable
 #     and for a captain-owned `kind: rule`. Neither receipt ever reaches this
 #     function - both callers escalate and return first - so the exemption
 #     carries them nowhere; they take the value to keep one receipt shape.
 # A fourth receipt written beside them is not this exemption at all:
-# bin/ac-learn.sh:1779 mints `agentcrew.captain-decision/v1` for the legacy
+# bin/ac-learn.sh learn_prepare_candidate_plan mints `agentcrew.captain-decision/v1` for the legacy
 # manual land, and the schema check rejects it before `authority` is read.
 # Every other authority, recognised or not, owes its proof.
 #

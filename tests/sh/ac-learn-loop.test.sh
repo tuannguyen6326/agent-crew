@@ -1134,7 +1134,7 @@ printf '## Retro\n\nsee ./retro.md.\n\none candidate proposed (smoke).\n' >"$cwd
   printf '===skill===\n# envfail-skill\n\nDo the thing.\n'
 } >"$cwd/candidate-envfail-skill.md"
 # The LEG'S ENVIRONMENT, applied to the one file the gate prompt hands the judge
-# and the caller only ever stats (bin/ac-learn.sh:847,862 test it with -s, never
+# and the caller only ever stats (bin/ac-learn.sh cmd_run's two report.md checks test it with -s, never
 # read it): with this set, the judge below is denied the run report it is told to
 # read, while every other input stays exactly as the legs that do not set it.
 [ -z "${AC_PROBE_DENY_REPORT:-}" ] || chmod 000 "$cwd/report.md"
@@ -1353,7 +1353,7 @@ GATE3
     # Combined output: cmd_run's withheld-cadence WARN goes to stderr, and it is
     # the one place learn_auto_apply_candidates' OWN return value is observable
     # from outside - it is printed exactly when that call returned non-zero
-    # (bin/ac-learn.sh:865-868).
+    # (bin/ac-learn.sh cmd_run's `! learn_auto_apply_candidates` arm).
     local rc=0
     if [ "$1" = real ]; then
       AC_PROBE_DENY_REPORT="${2:-}" AC_PANE_AGENT="$TMP/stub-pane-envfail.sh" \

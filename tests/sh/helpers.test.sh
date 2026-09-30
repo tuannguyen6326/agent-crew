@@ -412,7 +412,7 @@ herdr --session s1 tab list >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "0" "a modeled verb still dispatches"
 
 # An unmodeled verb must be REFUSED, not "succeed" with empty output. `pane run`
-# is the real instance, not a hypothetical: bin/ac-pane-agent.sh:1085 issues it
+# is the real instance, not a hypothetical: bin/ac-pane-agent.sh's step 5 launch issues it
 # against the backend, and this fake models no arm for it.
 rc=0
 out="$(herdr --session s1 pane run p1 somecmd 2>&1)" || rc=$?

@@ -751,7 +751,7 @@ reset_state; reset_completions
 task_meta scq-chief; seed_quiet_pane scq-chief 'still waiting on scq-t1'
 # scq-t1 is a member by its meta fleet_scope ALONE - `-t1` is in no closed
 # suffix rule, so its id names no family. That is the shape of an epic STORY
-# pane, whose scope ac-spawn.sh records on disk (bin/ac-spawn.sh:1374).
+# pane, whose scope ac-spawn.sh records on disk (bin/ac-spawn.sh's fleet_scope meta write).
 task_meta scq-t1; printf 'fleet_scope=scq\n' >>"$state/scq-t1.meta"
 : >"$state/.mock-win-scq-t1"
 case "$(drain '')" in

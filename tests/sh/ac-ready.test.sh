@@ -261,7 +261,7 @@ assert_contains "$out" "MISSING story line for 1" "validate never takes row 01 f
 # the id - contiguous, no other text between them - can carry AUTHORITY, so
 # only a `[@held]` sitting there ever sets hold=1) and a CODE SPAN (a group
 # wrapped in backticks is a QUOTATION, exempt from both hold and malformed,
-# the same backtick-wrap convention `bin/ac-spawn.sh:1096` already uses for
+# the same backtick-wrap convention the roomchief kickoff prompt in `bin/ac-spawn.sh` already uses for
 # marker verbs). A bare, unquoted token-shaped group OUTSIDE that leading run
 # still falls to `hold malformed` rather than READY - the residual fail-open
 # of a position-only rule (a real token typed in the wrong place must never

@@ -171,7 +171,7 @@ if ! grep -q 'spawn_meta_claim_acquire' "$BIN/ac-spawn.sh"; then
 fi
 
 # -- E2-SIGKILL: A dies INSIDE its pre-meta window and B contends for it -------
-# The half E2 above cannot reach, and what makes the name check at :124 above
+# The half E2 above cannot reach, and what makes the name claim E2 describes
 # behavioral. Racer A is SIGKILLed while its ac-spawn.sh child is parked
 # pre-meta; that child SURVIVES; B starts at that instant, finds A's caller lock
 # held by a DEAD pid, reclaims it with no grace (ac_lock_stale), re-reads DUE
@@ -190,7 +190,7 @@ fi
 #     claim at all;
 #   B's arrival is a pass-through `head` shim keyed on a read of config/model.
 #     ac_config_read is `head -n1 <file>` (ac-lib.sh) and `ac_config_read model`
-#     is executed by exactly ONE site on the spawn path (ac-spawn.sh:509, which
+#     is executed by exactly ONE site on the spawn path (ac-spawn.sh's "Fleet-wide defaults" block, which
 #     resolves the fleet defaults before any window or lease), so the record
 #     means "racer B's ac-spawn.sh RAN" and nothing weaker. That is the false
 #     green this case exists to exclude: if B bails at the caller lock it never

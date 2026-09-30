@@ -1170,8 +1170,8 @@ grep -q "leased.*duale2e" <<<"$("$BIN/ac-tree.sh" list --repo "$dual_e2e_repo")"
   && fail "teardown must return the E2E lease of a dual-ref verifier"
 
 # Story 4: an ORDINARY crew/local-only task (kind=ship) with a SECOND lease
-# goes through teardown's CREW return loop (:627) - a separate code path from
-# Story 3's verifier loop (:467). Before ac-tree.sh get appended a second
+# goes through teardown's CREW return loop - a separate code path from
+# Story 3's verifier loop (archive_and_reap_verifier). Before ac-tree.sh get appended a second
 # lease into a live crew meta, a spawn's single lease meant leases= could
 # never carry more than one entry here, so this loop never actually ran on a
 # multi-entry list. Take the second lease the same way a crewmate would: a
@@ -1285,7 +1285,7 @@ git -C "$repo" worktree remove --force "$stray19" >/dev/null 2>&1 || true
 git -C "$repo" branch -D crew/t19 >/dev/null 2>&1 || true
 
 # --- the same silence one loop away: a verifier's own vanished lease ----------
-# bin/ac-teardown.sh:471 (archive_and_reap_verifier) carries the IDENTICAL
+# bin/ac-teardown.sh (archive_and_reap_verifier) carries the IDENTICAL
 # predicate @9b39f00 fixed one statement above it in the sibling loop - a
 # verifier lease whose directory has vanished was skipped in total silence.
 # Torn down directly (the dualqa idiom above): a verifier meta IS the id.
@@ -1347,7 +1347,7 @@ assert_contains "$(cat "$AC_HOME/data/dem/room.md")" "DEMOTED" "the demote recei
 rm -f "$AC_HOME/state/dem-review.meta"
 
 # --- DEMOTED room post failure is no longer swallowed in total silence --------
-# bin/ac-teardown.sh:615 posted DEMOTED with `>/dev/null 2>&1 || true`, which
+# bin/ac-teardown.sh's roomchief demote block posted DEMOTED with `>/dev/null 2>&1 || true`, which
 # swallowed BOTH the room record AND ac-room.sh's own refusal text - unlike
 # every other best-effort step in this file, which at least ac_warns. A family
 # name with a space is a real, deterministic refusal (ac-room.sh post's own
@@ -1365,9 +1365,9 @@ assert_contains "$err23" "post it by hand:" "the warning names the exact command
 assert_contains "$err23" "ac-room.sh post dem bad crewchief" "the hand command names the family and actor"
 
 # --- reap_pane_file: a read failure keeps the record instead of deleting it ---
-# bin/ac-teardown.sh:305 (reap_pane_file) collapsed "could not read the file"
+# bin/ac-teardown.sh (reap_pane_file) collapsed "could not read the file"
 # into the same silent rm -f as "no first field" - the function's own header
-# (:294-297) promises a read failure is warned by pane id/path AND the record
+# promises a read failure is warned by pane id/path AND the record
 # KEPT so a later attempt still has it. Verified empirically on this host
 # (awk, under this script's `set -euo pipefail`):
 # DISPUTED: whether `awk 'NR==1{print $1}' "$f" 2>/dev/null` exits non-zero on
@@ -1399,7 +1399,7 @@ assert_contains "$err22" "$AC_HOME/state/.pane-$vunread" "the warning names the 
 assert_file "$AC_HOME/state/.pane-$vunread" "an unreadable pane file record is KEPT, not deleted"
 
 # --- kill_serve_pid: a read failure keeps the record instead of deleting it ---
-# bin/ac-teardown.sh:340 is symmetric with reap_pane_file above: unreadable and
+# bin/ac-teardown.sh kill_serve_pid is symmetric with reap_pane_file above: unreadable and
 # empty collapsed into the same silent no-op-then-delete, so a genuinely
 # running qa serve process behind an unreadable pid file was abandoned with its
 # record erased and no signal - the next qa run then hits a port collision with

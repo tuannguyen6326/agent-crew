@@ -33,8 +33,8 @@
 # (<repo>/.crew/worktrees/<n>), so the own-tree test is checked FIRST - and in
 # the primary itself the two are the same tree, so a chief's legitimate primary
 # write passes by geometry rather than by a special case.
-# WHO (D2, likewise): AC_CREW_ID (a crewmate, ac-spawn.sh:1282) or AC_SCOPE (a
-# roomchief, ac-spawn.sh:1022) - the captain carries neither and is never fenced,
+# WHO (D2, likewise): AC_CREW_ID (a crewmate, ac-spawn.sh crew_launch_env) or AC_SCOPE (a
+# roomchief, ac-spawn.sh's --roomchief launch line) - the captain carries neither and is never fenced,
 # even when their own session runs inside a leased worktree.
 #
 # Fails open: neither crew scalar, a non-matching tool, missing jq, an
@@ -45,7 +45,7 @@
 # RESIDUAL: like its two siblings, this covers the claude harness's
 # Edit/Write/NotebookEdit tools only. A write performed through the Bash tool
 # (sed, echo >, a heredoc) still gets through - as do the fleet's own shell
-# writes to the primary, e.g. ensure_gitignore (ac-tree.sh:120), which is why
+# writes to the primary, e.g. ensure_gitignore (ac-tree.sh), which is why
 # they need no exemption here.
 
 set -uo pipefail

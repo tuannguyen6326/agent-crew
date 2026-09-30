@@ -153,11 +153,11 @@ export function learningsCiteFamily(text: string, family: string): boolean {
 
 // ---------------------------------------------------------------------------
 // Crewdomains (dash-domain-records): read-only render of records/crewdomains.md
-// (the routing table, bin/ac-lib.sh:461-550) and each registered package at
+// (the routing table, bin/ac-lib.sh `crewdomain routing table` block) and each registered package at
 // crewdomains/<name>/ (the three-member shape plus the optional `qa-repo`,
 // bin/ac-domain.sh's `new` header).
 // The tally is the ONE piece of accounting this file never re-derives: it
-// shells out to the fleet's own ac_domain_tally (bin/ac-lib.sh:625) instead of
+// shells out to the fleet's own ac_domain_tally (bin/ac-lib.sh) instead of
 // counting backlog lines a second way.
 // ---------------------------------------------------------------------------
 
@@ -171,7 +171,7 @@ export interface DomainRegistryRow {
 }
 
 /** Parse records/crewdomains.md (the "crewdomain routing table" grammar owned
- *  by bin/ac-lib.sh:461-550 / ac_domain_parse) read-only for display. Mirrors
+ *  by bin/ac-lib.sh's crewdomain routing table header / ac_domain_parse) read-only for display. Mirrors
  *  that awk's field order and failure reasons exactly, so this table and the
  *  session-start digest never disagree about which line is valid - it is a
  *  second READER of the one grammar, not a second grammar, and it exists only
@@ -185,7 +185,7 @@ export function parseCrewdomains(md: string): DomainRegistryRow[] {
   });
   for (const line of md.split("\n")) {
     // NO rstrip: ac_domain_parse anchors ` \(added [^)]*\)$` on the RAW line
-    // (bin/ac-lib.sh:496), so trailing whitespace or a CRLF '\r' here must
+    // (bin/ac-lib.sh ac_domain_parse), so trailing whitespace or a CRLF '\r' here must
     // fail the added-suffix check exactly like the awk does - trimming it
     // first would accept a line the CLI's own `list` refuses.
     if (line.slice(0, 2) !== "- ") continue; // heading/blank/prose - never parsed

@@ -677,7 +677,7 @@ qa_infra_timeout() {
 
 qa_infra_down_bounded() {
   # qa_infra_down_bounded <secs> - the task's qa stack torn down under a
-  # watchdog (the fetch_bounded shape, bin/ac-sync.sh:55-75): the child is
+  # watchdog (the fetch_bounded shape, bin/ac-sync.sh): the child is
   # killed once <secs> elapse (TERM, short grace, KILL). Returns the sweep's
   # own status, or 124 on timeout. The child's docker grandchild is orphaned,
   # not reaped - bounding TEARDOWN is the point, and the stack stays

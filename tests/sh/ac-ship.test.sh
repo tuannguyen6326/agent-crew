@@ -390,7 +390,7 @@ cd "$repo" || fail "cd back from samehead"
 # L5 is a fix finding with NO authority: the shared normalizer downgrades it,
 # and the fixer must SEE why it is parked rather than wonder where it went.
 printf '%s' '[
-  {"id":"L1","severity":"error","action":"fix","file":"bin/x.sh","line":7,"description":"unquoted var","authority_class":"internal","authority":"bin/ac-lint.sh:12 declares the quoting rule"},
+  {"id":"L1","severity":"error","action":"fix","file":"bin/x.sh","line":7,"description":"unquoted var","authority_class":"internal","authority":"the bin/ac-lint.sh shellcheck pass declares the quoting rule"},
   {"id":"L2","severity":"warning","action":"ask-user","description":"rename flag?","decision":"yes, rename to --force"},
   {"id":"L3","severity":"warning","action":"ask-user","description":"drop legacy path?"},
   {"id":"L4","severity":"info","action":"no-op","description":"style nit"},
@@ -402,7 +402,7 @@ assert_contains "$fr" "step lint (fix round 3/5)" "round and cap in header"
 assert_contains "$fr" "Intent: ship the widget" "intent carried"
 assert_contains "$fr" "## Findings to fix (2)" "to-fix count"
 assert_contains "$fr" "bin/x.sh:7 - unquoted var (L1)" "file:line rendering"
-assert_contains "$fr" "authority: bin/ac-lint.sh:12 declares the quoting rule" "to-fix lines carry the authority"
+assert_contains "$fr" "authority: the bin/ac-lint.sh shellcheck pass declares the quoting rule" "to-fix lines carry the authority"
 assert_contains "$fr" "DECIDED: yes, rename to --force" "decided ask-user included"
 assert_contains "$fr" "Parked - awaiting captain" "undecided parks"
 assert_contains "$fr" "drop legacy path?" "parked item listed"
@@ -482,7 +482,7 @@ grep -qE '^checks-passed: ' <<<"$finish_out" || fail "finish emits the anchored 
 assert_eq "$(git -C "$repo" status --porcelain)" "" "repo stays clean"
 
 # An ALREADY-GONE reviewer pane must not abort finish (mirrors ac-qa.sh's
-# `|| true` guard on the same herdr close call, ac-qa.sh:3818-3822): a
+# `|| true` guard on the same herdr close call, ac-qa.sh cmd_finish): a
 # pane-helper stub that fails on `close` still lets finish record the
 # outcome and print its marker. cancelled/failed skip the fail-closed gate,
 # so no step setup is needed for this run. Runs in its own repo - $repo's

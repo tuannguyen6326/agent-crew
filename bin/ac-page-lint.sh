@@ -23,7 +23,7 @@
 #
 # PAGES is a FIXED list, not derived from the route table: every route in
 # dashboard/app.ts that unconditionally serves a full HTML document belongs in
-# it (checked against source 2026-08-22 - dashboard/app.ts:6474-6484 gates
+# it (checked against source 2026-08-22 - dashboard/app.ts's Bun.serve fetch handler gates
 # /term-frame and /attach-frame behind a ?path=<home> that must pass
 # allowedHomePaths(), so those two are excluded). Adding a new unconditional
 # HTML page route to dashboard/app.ts means adding it here too.

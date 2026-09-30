@@ -596,8 +596,8 @@
 # the store cures, now invisible instead of merely absent. The guard precedes
 # the mkdir, so a refusal mints nothing.
 # HOW THE PATH TRAVELS: not the environment. qa panes (ac-pane-agent.sh) and
-# crewmate panes (ac-spawn.sh:184-191) carry NO AC_HOME - only the roomchief and
-# crewdeputy launch lines ride it (ac-spawn.sh:1022,1154). So the actor that HAS
+# crewmate panes (ac-spawn.sh's AC_FLEET_MODEL/AC_FLEET_EFFORT header block) carry NO AC_HOME - only the roomchief and
+# crewdeputy launch lines ride it (ac-spawn.sh's --roomchief and --crewdeputy launch lines). So the actor that HAS
 # AC_HOME bakes the absolute path into the qa brief, the agent passes it at
 # `start`, and run.meta holds it for every later store-dir (load at step 2,
 # curate at step 10) - the same route --evidence already travels.

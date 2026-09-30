@@ -601,7 +601,7 @@ printf 'backend=herdr\nkind=roomchief\n' >"$AC_HOME/state/sfam-chief.meta"
 printf 'pR1 tR1\n' >"$AC_HOME/state/.pane-sfam-chief"
 printf 'pR1\n' >"$FAKE_HERDR/tabs/tR1"; : >"$FAKE_HERDR/panes/pR1.buf"
 # AC_SCOPE=sfam: this stands in for the live roomchief itself (its launch
-# line sets AC_SCOPE to its own family - bin/ac-spawn.sh:1025); without it,
+# line sets AC_SCOPE to its own family - bin/ac-spawn.sh's roomchief path); without it,
 # the family-owned-receipt guard added below would now refuse this exact
 # ASK as an unscoped write into a family whose roomchief (sfam-chief,
 # seeded live above) is up.
@@ -703,8 +703,8 @@ done
 # reading-zero, observed live 2026-07-28 on family
 # routed-pane-rules-for-gate-codereview-roomchief: both panes stamped
 # needs-decision while `list`/`pending` read 0). The liveness source is the
-# watcher's OWN stamp (bin/ac-watch.sh:1162 touches state/.ask-<id> the
-# instant backend_agent_blocked is true, :1169 rm -f's it the instant it
+# watcher's OWN stamp (bin/ac-watch.sh check_fleet's ask-alert touches state/.ask-<id> the
+# instant backend_agent_blocked is true and rm -f's it the instant it
 # clears, with no clearing status line) - constructed directly here, never a
 # live repro.
 "$BIN/ac-room.sh" post stuck crewchief "spawned stuck (direct)" >/dev/null
@@ -883,8 +883,8 @@ assert_contains "$(cat "$AC_HOME/data/ownfam/room.md")" "decision=skip grounds=s
   "the live roomchief's own STAGE-ADMISSION receipt is never refused"
 
 # GREEN 3: every landing-path verb this guard deliberately exempts still posts
-# unscoped while the roomchief is live - bin/ac-spawn.sh:1055 (PROMOTED, never
-# matched by the guarded verb set at all), bin/ac-teardown.sh:616 (DEMOTED),
+# unscoped while the roomchief is live - bin/ac-spawn.sh's roomchief path (PROMOTED, never
+# matched by the guarded verb set at all), bin/ac-teardown.sh's roomchief demote post (DEMOTED),
 # and the crewchief's own CORRECTION withdrawing a bad entry (the live
 # example: family ac-learn-ledger-transaction-... at 14:30:01Z).
 "$BIN/ac-room.sh" post ownfam crewchief \
@@ -898,7 +898,7 @@ for w in PROMOTED: CORRECTION DEMOTED:; do
 done
 
 # GREEN 4: the ONE named DECIDED exception - ac-spawn.sh's cap-gate exemption
-# receipt DECLARES itself via AC_ROOM_PROMOTE_RECEIPT=1 (bin/ac-spawn.sh:1076,
+# receipt DECLARES itself via AC_ROOM_PROMOTE_RECEIPT=1 (bin/ac-spawn.sh's roomchief-path DECIDED: receipt post,
 # the roomchief's own explicit-signal ruling 2026-07-30, not text-shape
 # matching) and must post through, unscoped, while the SAME roomchief is live.
 AC_ROOM_PROMOTE_RECEIPT=1 "$BIN/ac-room.sh" post ownfam crewchief \

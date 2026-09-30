@@ -87,7 +87,7 @@ assert_contains "$outM" "1 broken" "mixed pool: exactly one broken slot"
 assert_contains "$outM" "3 total" "mixed pool: all three slots counted"
 
 # AGED-LEASED, own bucket: a durable lease (empty owner_pid - "no owner =
-# durable", ac-tree.sh:417-424) held past the threshold has no other reporting
+# durable", ac-tree.sh lease_reclaimable) held past the threshold has no other reporting
 # path (acquire/prune/remove all skip a leased slot by design), so it must be
 # named here with the reclaim command - and a FRESH lease must not be flagged.
 repoA="$(make_repo aged)"

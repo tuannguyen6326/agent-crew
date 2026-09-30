@@ -257,7 +257,7 @@ EOF
 # default is mandatory and present -> a lookup with NO selector resolves it
 # deterministically instead of dying. This is exactly the shape a
 # --system-initiated roomchief promote with no --harness needs
-# (bin/ac-learn.sh:1583 - no agent anywhere in the loop to read a `when`).
+# (bin/ac-learn.sh cmd_autoroom - no agent anywhere in the loop to read a `when`).
 assert_eq "$("$BIN/ac-dispatch-select.sh" --pane gate)" $'harness=codex\tmodel=gpt-lo\teffort=high' \
   "routed panes.gate with no selector resolves the mandatory default"
 assert_eq "$("$BIN/ac-dispatch-select.sh" --pane codereview)" $'harness=claude\tmodel=sonnet\teffort=high' \

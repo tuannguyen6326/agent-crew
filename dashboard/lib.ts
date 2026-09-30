@@ -1156,9 +1156,9 @@ export function fleetAttnItems(snap: any): { fleet: string; kind: string; family
 
 /**
  * Map the top-level `verify[]` array `ac-fleets.sh --json` emits (story
- * `verify-meta-namespace`, bin/ac-fleets.sh:139-172,355) into Processes rows.
+ * `verify-meta-namespace`, bin/ac-fleets.sh emit_home) into Processes rows.
  * The bucket token is the literal `'verify'` - no `verify-*` prefix matching
- * here, because the bash side (`ac_meta_is_verify`, bin/ac-lib.sh:777-784)
+ * here, because the bash side (`ac_meta_is_verify`, bin/ac-lib.sh)
  * already decided what a verifier is; this is the one place that reads its
  * answer off the wire, so the expand key (`row.kind+':'+row.id`, unchanged)
  * comes out `verify:<id>`. `work` shows the entry's own meta kind (e.g.

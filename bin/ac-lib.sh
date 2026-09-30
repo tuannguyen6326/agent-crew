@@ -396,7 +396,7 @@ ac_config_read() {
   # model/effort knobs from one on every invocation. No home means no knob file,
   # so the default answers, which is the same value a homeless read already got:
   # the only knob the phantom checkout ever grew is config/herdr-workspace, and
-  # that knob is retired and read by nothing (ac-backend.sh:266).
+  # that knob is retired and read by nothing (ac-backend.sh FAMILY WORKSPACE GROUPING).
   # ac_home_resolve is THE homeless ladder - one copy on purpose. The
   # TypeScript twin, src/lib.ts's configRead, is pinned to this function by
   # a differential test (tests/ts/lib.test.ts).
@@ -704,7 +704,7 @@ ac_domain_name_ok() {
   # C collation, in a SUBSHELL so the caller's locale is untouched: under a
   # collation that interleaves case (en_US.UTF-8 orders a,A,b,B,...) a plain
   # a-z range admits most uppercase letters, so this glob would pass `UPPER`.
-  # Same trap bin/ac-home-seed.sh:42-46 already documents for its own name check.
+  # Same trap bin/ac-home-seed.sh already documents for its own name check.
   (LC_ALL=C; case "$1" in *[!a-z0-9-]*) exit 1 ;; esac)
 }
 
@@ -1359,8 +1359,8 @@ ac_arrival_wait() {
 #
 # AUTHORITATIVE for what makes a `state/<id>.meta` a verification agent rather
 # than a crewmate. `state/<id>.meta` is not storage, it is a NAMESPACE meaning
-# "a crewmate in flight" (that is why the learn/curate counters at :332 and :454
-# are dot-prefixed - a bare .meta there reads as a phantom crewmate). A
+# "a crewmate in flight" (that is why the learn/curate counters in
+# bin/ac-maintenance-lib.sh are dot-prefixed - a bare .meta there reads as a phantom crewmate). A
 # verification pane agent - a ship reviewer, a gate judge, a qa run - lives in
 # that namespace so the watcher can supervise it, but it is NOT crew: it holds
 # no backlog row and no crew branch. Exact-ref codereview/qa verifiers do hold a
@@ -1438,7 +1438,7 @@ ac_crew_metas() {
   # loop over <state_dir>/*.meta that filters by crew-ness; each one calls
   # this and NAMES its policy as skip-classes. The policies stay deliberately
   # different per consumer - the watcher skips only self (verifier panes are
-  # supervised; ac-watch.sh:1067's contract), supervision tallies skip
+  # supervised; ac-watch.sh check_fleet's contract), supervision tallies skip
   # verify+self (a self task owes no watcher - the SELF-TASK block above),
   # accounting skips only verify (a self task is still listed) - but the
   # class DEFINITIONS live here once, in ONE awk pass for N metas instead of
@@ -2728,7 +2728,7 @@ ac_home_resolve() {
   #      tests the variable itself;
   #   3. neither - prints NOTHING and returns 0. What "no home" means is the
   #      caller's to decide: ac-know.sh REFUSES outright, every verb alike
-  #      (settle_home, ac-know.sh:339-347 - cmd_verify was the last holdout
+  #      (settle_home, ac-know.sh - cmd_verify was the last holdout
   #      and lost its own rung 3 too); ac-qa.sh's two verbs answer a homeless
   #      run DIFFERENTLY ON PURPOSE - `start` KEEPS RUNNING, freezing an empty
   #      config (or refusing when a selector was given), while `agent`

@@ -266,8 +266,8 @@ guard_install() {
     # <hook>.ac-crew-prev - that slot belongs to a chained project hook and
     # run_chained EXECs it, so our own old guard landing there would run as its
     # own chained hook. It is EPOCH-STAMPED, following ac_records_backup's
-    # never-clobber convention (bin/ac-maintenance-lib.sh:189), not the single-slot
-    # `<file>.prev` one (bin/ac-qa.sh:3051), which keeps ONE copy and would let a
+    # never-clobber convention (bin/ac-maintenance-lib.sh), not the single-slot
+    # `<file>.prev` one (bin/ac-qa.sh cmd_config_install), which keeps ONE copy and would let a
     # second upgrade destroy a preserved hand-edit; git runs only the exact hook
     # names, so a stamped sidecar is never executed, and cp -p keeps the mode too
     # so a hand-edit is restorable as it was. An occupied $bak is NOT cleaned up

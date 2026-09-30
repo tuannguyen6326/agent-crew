@@ -60,7 +60,7 @@ EOF
 
 # stub_watch_refusal <rc> <line> - one invocation printing <line> on STDOUT and
 # exiting <rc>: the shape every ac-watch.sh REFUSAL takes. The reason travels on
-# stdout whatever the status (ac-watch.sh:565 - stderr carries the arm log and
+# stdout whatever the status (ac-watch.sh watch_log - stderr carries the arm log and
 # "NEVER stdout: that channel carries the exit reason and nothing else").
 stub_watch_refusal() {
   : >"$TMP/watch.calls"
@@ -159,7 +159,7 @@ assert_contains "$(sed -n '2p' "$trace_log")" "reason=already-running" "...disti
 
 # --- a config-swap refusal is a LIVE watcher, not an absent one -------------
 # ac-watch.sh refuses a second arm carrying a DIFFERENT AC_WATCH_SKIP than the
-# running singleton (ac-watch.sh:881, exit 2). It reaches that branch only when
+# running singleton (ac-watch.sh's config-aware re-arm refusal, exit 2). It reaches that branch only when
 # the lock is held by a LIVE process - a dead or stale one is reclaimed first -
 # so the refusal carries exactly the fact `already running` carries, and the
 # hook must stand aside instead of reporting the watcher absent.
@@ -168,7 +168,7 @@ assert_eq "$(run_hook)" "0" "a config-swap refusal stands aside: the singleton i
 assert_eq "$(cat "$TMP/hook.err")" "" "and a beating watcher is never reported as missing"
 
 # --- every OTHER refusal still reaches the chief, with its own reason -------
-# The owner gate (another session holds the home, ac-watch.sh:854) refuses with
+# The owner gate (another session holds the home, ac-watch.sh's `refused: fleet watcher not armed` branch) refuses with
 # NOTHING armed: that one must still wake the chief, and say why.
 stub_watch_refusal 2 'refused: fleet watcher not armed - another session owns this home'
 assert_eq "$(run_hook)" "2" "a refusal that armed nothing wakes the chief"

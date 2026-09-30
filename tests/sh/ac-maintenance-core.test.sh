@@ -656,7 +656,7 @@ assert_no_file "$AC_HOME/skills/tampered/SKILL.md" "the mismatched copy never re
 rm -rf "$txroot/learning-tampered-tampered"
 
 # Callers read apply's bare 1 as a stale receipt or a refused plan
-# (bin/ac-learn.sh:1006/2197) or point at "the cause above" (:2291), so a busy
+# (bin/ac-learn.sh cmd_land/learn_auto_apply_candidates) or point at "the cause above" (cmd_maintenance's resume arm), so a busy
 # writer lock has to name itself.
 guard_plan busy
 lockerr="$( (ac_lock_acquire() { return 1; }; guard_apply busy) 2>&1 >/dev/null )" \
