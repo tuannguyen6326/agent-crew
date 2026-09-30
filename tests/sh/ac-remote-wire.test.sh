@@ -134,6 +134,23 @@ out="$("$BIN/ac-remote.sh" push-pending)"
 assert_eq "$out" "" "pending 0: silent"
 assert_eq "$(reply_calls)" "$sent_before" "pending 0: nothing sent"
 
+# The pushed lines are the ones ac_room_pending counts, by the room grammar
+# (bin/ac-wake-lib.sh): a settled GATE is never sent in place of a pending
+# `ASK (1 of 2):`, a relay quoting `> GATE:` is never sent as an item, and a
+# second pending ASK makes a new set.
+"$BIN/ac-room.sh" post fam4 crewchief "GATE: spec report ready" >/dev/null
+"$BIN/ac-room.sh" post fam4 crewchief "DECIDED fam4: approved" >/dev/null
+"$BIN/ac-room.sh" post fam4 crewchief "ASK (1 of 2): which store?" >/dev/null
+"$BIN/ac-room.sh" post fam4 crewchief "relay from thread: the partner wrote > GATE: not ours" >/dev/null
+out="$("$BIN/ac-remote.sh" push-pending)"
+assert_contains "$out" "pushed fam4 (1 pending)" "the pending ASK is one item"
+sent="$(tail -n 4 "$RLOG")"
+assert_contains "$sent" "ASK (1 of 2): which store?" "the pending ASK is the line pushed"
+case "$sent" in *"spec report ready"* | *"not ours"*) fail "a settled GATE or a quoted marker was pushed: $sent" ;; esac
+"$BIN/ac-room.sh" post fam4 crewchief "ASK (2 of 2): which region?" >/dev/null
+out="$("$BIN/ac-remote.sh" push-pending)"
+assert_contains "$out" "pushed fam4 (2 pending)" "a second pending ASK is a new set, pushed"
+
 # No reply hook at all: silent exit 0, even with pending items.
 rm -f "$CFG/remote-reply"
 "$BIN/ac-room.sh" post third crewchief "GATE: q" >/dev/null

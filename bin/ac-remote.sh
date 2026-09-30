@@ -156,9 +156,8 @@
 # push-pending - batch the captain's pending inbox OUT to the remote channel.
 #   Silent no-op (exit 0) without an executable config/remote-reply hook. Per
 #   family with a room (data/<family>/room.md), the unanswered GATE/ASK lines
-#   (count from `ac-room.sh pending` - the authoritative accounting; because
-#   decisions settle oldest-first, the unanswered items are exactly the LAST
-#   <count> GATE/ASK entries) are hashed against the family's stamp in
+#   (ac_room_pending_lines in bin/ac-wake-lib.sh - the room grammar and count
+#   `ac-room.sh pending` reads) are hashed against the family's stamp in
 #   state/.remote-push-stamp: only a family whose pending set is NEW since
 #   the last push gets a message, and it gets exactly ONE - a compact list
 #   of the pending lines - through the reply hook. Threading: the mapping
@@ -737,12 +736,9 @@ cmd_push_pending() {
       ac_warn "push-pending: skipped family with unsafe name: $family"
       continue
     fi
-    count="$("$(dirname "$0")/ac-room.sh" pending "$family" 2>/dev/null || printf '0')"
-    case "$count" in ''|*[!0-9]*) count=0 ;; esac
-    [ "$count" -gt 0 ] || continue
-    # Decisions settle oldest-first (ac-wake-lib.sh ac_room_pending), so the
-    # unanswered items are exactly the LAST <count> GATE/ASK entries.
-    lines="$(grep -E '^- \[.*\] .*> (GATE|ASK):' "$f" | tail -n "$count")"
+    lines="$(ac_room_pending_lines "$f" 2>/dev/null)" || continue
+    [ -n "$lines" ] || continue
+    count="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
     hash="$(printf '%s' "$lines" | shasum -a 256 | awk '{print $1}')"
     prev="$(ac_meta_get "$stamp" "$family")"
     [ "$hash" = "$prev" ] && continue

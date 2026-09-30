@@ -663,6 +663,19 @@ ac_room_pending() {
   ' "$@"
 }
 
+ac_room_pending_lines() {
+  # ac_room_pending_lines <room-file> - the unanswered GATE/ASK entries
+  # themselves, oldest first: exactly as many as ac_room_pending counts, by its
+  # own rules - a DECIDED settles the oldest open item, and one with nothing
+  # open settles nothing. The remote push sends these lines, so what reaches
+  # the captain's channel is what the inbox counts.
+  ac_room_scan '^- \[[^]]*\] [^>]*> (GATE|ASK|DECIDED)' '
+    /^- \[[^]]*\] [^>]*> (GATE|ASK)( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { open[++n] = $0 }
+    /^- \[[^]]*\] [^>]*> DECIDED( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { if (settled < n) settled++ }
+    END { for (i = settled + 1; i <= n; i++) print open[i] }
+  ' "$1"
+}
+
 ac_room_marker_malformed() {
   # ac_room_marker_malformed <text> - the WRITE-SIDE twin of ac_room_pending's
   # counting grammar, kept in this same function block so the two can never
