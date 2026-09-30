@@ -506,9 +506,9 @@ validate_r1_artifact() {
   dec="$(review_field_exact "$file" decision)" || return 1
   case "$dec" in continue|revise|ask-captain) ;; *) return 1 ;; esac
   bsha="$(review_field_exact "$file" brief_sha256)" || return 1
-  printf '%s\n' "$bsha" | grep -Eq '^[0-9a-f]{64}$' || return 1
+  grep -Eq '^[0-9a-f]{64}$' <<<"$bsha" || return 1
   rsha="$(review_field_exact "$file" report_sha256)" || return 1
-  printf '%s\n' "$rsha" | grep -Eq '^[0-9a-f]{64}$' || return 1
+  grep -Eq '^[0-9a-f]{64}$' <<<"$rsha" || return 1
   # Backward-compatible migration: pre-routing R1 artifacts had no context
   # field. New artifacts bind their durable context manifest exactly once.
   ccount="$(review_frontmatter "$file" | grep -cE '^context_sha256: ' || true)"
@@ -516,7 +516,7 @@ validate_r1_artifact() {
     0) ;;
     1)
       csha="$(review_field_exact "$file" context_sha256)" || return 1
-      printf '%s\n' "$csha" | grep -Eq '^[0-9a-f]{64}$' || return 1
+      grep -Eq '^[0-9a-f]{64}$' <<<"$csha" || return 1
       context_file="$(dirname "$file")/gate-context-r1.json"
       [ -f "$context_file" ] && [ "$(ac_sha256_file "$context_file")" = "$csha" ] || return 1
       ;;
@@ -1175,7 +1175,7 @@ watch_open() {
   home="$(ac_home)"
   watch_label="ac-gate-watch:$family"
   ses="${AC_HERDR_SESSION:-$(ac_config_read herdr-session default)}"
-  if herdr --session "$ses" pane list 2>/dev/null | grep -Fq "\"label\":\"$watch_label\""; then
+  if grep -Fq "\"label\":\"$watch_label\"" < <(herdr --session "$ses" pane list 2>/dev/null); then
     # Reuse a LIVE board only. A dead board keeps its label, and keyed on the
     # label alone that stale pane suppressed the launch for every later gate in
     # this family+session - so a live gate ran with no board while its tab still

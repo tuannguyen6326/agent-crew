@@ -448,7 +448,7 @@ mk_meta cns "$rns"
 main_before="$(git -C "$rns" rev-parse main)"
 out="$(AC_SCOPE=test-family "$BIN/ac-merge-local.sh" cns 2>&1)" && fail "expected refusal on a non-fast-forwardable branch under AC_SCOPE"
 assert_contains "$out" "not fast-forwardable" "the scoped refusal names the ff problem"
-printf '%s' "$out" | grep -q -- "ac-merge-local.sh cns --no-ff" \
+grep -q -- "ac-merge-local.sh cns --no-ff" <<<"$out" \
   && fail "the scoped refusal must not recommend running --no-ff (the commit guard refuses it)"
 assert_contains "$out" "rebase" "the scoped refusal names the rebase remedy"
 assert_contains "$out" "crewchief" "the scoped refusal names the hand-back-to-crewchief remedy"

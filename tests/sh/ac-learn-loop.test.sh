@@ -30,8 +30,8 @@ case "$arc" in
 esac
 # Never loose in state/ where the state/*.meta glob would read it as a phantom crewmate.
 assert_no_file "$AC_HOME/state/backups.tar.gz" "backup is in a subdir, not loose in state/"
-tar -tzf "$arc" | grep -q 'records/learnings.md' || fail "records/ is in the backup"
-tar -tzf "$arc" | grep -q 'skills/existing/SKILL.md' || fail "the skills store is in the backup"
+grep -q 'records/learnings.md' < <(tar -tzf "$arc") || fail "records/ is in the backup"
+grep -q 'skills/existing/SKILL.md' < <(tar -tzf "$arc") || fail "the skills store is in the backup"
 # Restoring the archive recreates the files.
 rm -f "$AC_HOME/records/learnings.md" "$AC_HOME/skills/existing/SKILL.md"
 tar -xzf "$arc" -C "$AC_HOME"
@@ -312,7 +312,7 @@ ac_crewmate_learned_no_loss "$TMP/nl-live.md" "$TMP/nl-live.md" "" \
 
 # --- crewmate layer rides the reversibility backup ---------------------------
 arc2="$(ac_records_backup learn)"
-tar -tzf "$arc2" | grep -q 'CREWMATE-learned.md' || fail "CREWMATE-learned.md is in the records backup"
+grep -q 'CREWMATE-learned.md' < <(tar -tzf "$arc2") || fail "CREWMATE-learned.md is in the records backup"
 
 # --- land refuses an UNAPPROVED candidate (no writes happen) -----------------
 

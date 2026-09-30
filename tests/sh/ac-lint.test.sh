@@ -20,10 +20,10 @@ git -C "$repo" config user.name t
 lint() { (cd "$repo" && ./bin/ac-lint.sh "$@"); }
 
 # --- arg handling ---
-lint -h | grep -q 'Usage: ac-lint.sh' || fail "-h prints usage"
+grep -q 'Usage: ac-lint.sh' < <(lint -h) || fail "-h prints usage"
 # marker-bounded (repo-deep-review F38): -h must reach the end of its own
 # header, not stop mid-list on a stale line-range pin.
-lint -h | grep -q 'AC_LINT_ALLOW_MISSING' || fail "-h must print the full header, not a stale line-pinned prefix"
+grep -q 'AC_LINT_ALLOW_MISSING' < <(lint -h) || fail "-h must print the full header, not a stale line-pinned prefix"
 rc=0; lint bogus >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" 2 "an unknown arg exits 2"
 

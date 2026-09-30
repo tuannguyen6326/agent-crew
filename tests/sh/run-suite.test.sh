@@ -513,7 +513,7 @@ cpid=$!
 # races the child's setup and makes the outcome nondeterministic. This is a
 # readiness poll (no fixed deadline to lose, so it holds under load), not the
 # fixed kill -0 death-poll a prior revision removed.
-until ps -o comm= -p "$cpid" 2>/dev/null | grep -q sleep; do
+until grep -q sleep < <(ps -o comm= -p "$cpid" 2>/dev/null); do
   kill -0 "$cpid" 2>/dev/null || break
 done
 kill -INT "$cpid"

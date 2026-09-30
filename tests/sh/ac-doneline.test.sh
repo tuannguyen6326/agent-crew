@@ -124,7 +124,7 @@ bgot="$(parse_blockers "$BFX")"
 # tell a clean row from a malformed one (it read GREEN against the pre-fix
 # parser when checked).
 bwant() {
-  printf '%s\n' "$bgot" | grep -qxF "$1" \
+  grep -qxF "$1" <<<"$bgot" \
     || fail "${2:-$1}: no line exactly '$1' in: $bgot"
 }
 

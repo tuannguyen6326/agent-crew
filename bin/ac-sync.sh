@@ -128,7 +128,7 @@ prune_gone_branches() {
   needed="$(needed_branches "$repo")"
   while IFS= read -r b; do
     [ -n "$b" ] || continue
-    if printf '%s\n' "$needed" | grep -qxF "$b"; then
+    if grep -qxF "$b" <<<"$needed"; then
       printf 'kept %s: branch %s (upstream gone, still in use)\n' "$name" "$b"
       continue
     fi

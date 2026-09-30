@@ -88,8 +88,8 @@ port_answers() { (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; }
 pid_running() {
   local pid="$1"
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
-    && ps -o command= -p "$pid" 2>/dev/null \
-      | grep -qF -e "$root/dashboard/app.ts" -e "$root/bin/dashboard.ts"
+    && grep -qF -e "$root/dashboard/app.ts" -e "$root/bin/dashboard.ts" \
+      < <(ps -o command= -p "$pid" 2>/dev/null)
 }
 
 if [ -n "$verb" ]; then

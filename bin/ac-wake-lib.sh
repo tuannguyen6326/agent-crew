@@ -548,7 +548,7 @@ ac_watcher_pid() {
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   ac_pid_alive "$pid" || return 1
   # PID REUSE (see the guard above): the recorded pid must still BE a watcher.
-  ps -o command= -p "$pid" 2>/dev/null | grep -q 'ac-watch' || return 1
+  grep -q 'ac-watch' < <(ps -o command= -p "$pid" 2>/dev/null) || return 1
   printf '%s\n' "$pid"
 }
 

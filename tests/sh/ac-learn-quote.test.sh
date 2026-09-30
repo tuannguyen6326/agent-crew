@@ -55,7 +55,7 @@ grep -qF 'source-count: 4' "$evidence" || fail "all four sources are archived"
 assert_eq "$(grep -c '^quote-unverified: ' "$evidence")" "1" "exactly one fragment is flagged"
 grep -qxF 'quote-unverified: run the suite before you hand back the branch' "$evidence" \
   || fail "the paraphrase wearing backticks is flagged by its fragment"
-grep -A2 -F -- "$b_paraphrase" "$evidence" | grep -q '^quote-unverified: ' \
+grep -q '^quote-unverified: ' < <(grep -A2 -F -- "$b_paraphrase" "$evidence") \
   || fail "the flag sits under the bullet it belongs to"
 if grep -qF 'quote-unverified: show the command' "$evidence"; then
   fail "a verbatim quote (soft-wrapped in the report) is never flagged"

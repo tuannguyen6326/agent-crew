@@ -88,7 +88,7 @@ count="$(printf '%s\n' "$sites" | grep -c . || true)"
 assert_eq "$count" "1" "exactly one ac-notify.sh call site must remain in bin/ (repo-wide blocked-by-captain invariant) - found:
 $sites"
 
-printf '%s\n' "$sites" | grep -q '^'"$BIN"'/ac-room.sh:' \
+grep -q '^'"$BIN"'/ac-room.sh:' <<<"$sites" \
   || fail "the one remaining ac-notify.sh call site must be in bin/ac-room.sh (cmd_post's blocked-by-captain edge) - found:
 $sites"
 

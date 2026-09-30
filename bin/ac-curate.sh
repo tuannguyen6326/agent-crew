@@ -480,7 +480,7 @@ curate_skill_is_stale() {
     case "$archive_mtime" in ''|*[!0-9]*) return 1 ;; esac
     [ "$((now - archive_mtime))" -gt "$window" ] || return 1
   fi
-  curate_pending_candidate_targets | grep -qxF "$name" && return 1
+  grep -qxF "$name" < <(curate_pending_candidate_targets) && return 1
   dependency="$(curate_skill_active_dependency "$name" 2>/dev/null || true)"
   [ -z "$dependency" ] || return 1
   return 0
@@ -1204,7 +1204,7 @@ curate_prepare_captain_subject() {
   range="$(curate_captain_block_range "$captain" "$target")" || return 1
   start="${range% *}"
   end="${range#* }"
-  if sed -n "${start},${end}p" "$captain" | grep -qi 'holds'; then
+  if grep -qi 'holds' < <(sed -n "${start},${end}p" "$captain"); then
     return 1
   fi
   staged="$run/staged/$subject/records"

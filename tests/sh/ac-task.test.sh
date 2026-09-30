@@ -72,7 +72,7 @@ assert_contains "$(cat "$arc")" "first" "archive names the row id"
 "$BIN/ac-task.sh" update-note first $'steps:\n- [ ] one\n   - [x] two' >/dev/null \
   || fail "a body carrying a checkbox list must be accepted"
 grep -qxF -- '  - [ ] one' "$ledger" || fail "the body's checkbox line is kept, indented"
-"$BIN/ac-ready.sh" queued | grep -qx 'one' && fail "a body checkbox must never read as a row"
+grep -qx 'one' < <("$BIN/ac-ready.sh" queued) && fail "a body checkbox must never read as a row"
 "$BIN/ac-task.sh" update-note first 'a rewritten narrative' >/dev/null
 
 # ---- start: moves the row (WITH its body) to In flight and stamps since.
@@ -80,8 +80,8 @@ out="$("$BIN/ac-task.sh" start first)"
 assert_contains "$out" "ok:" "start prints an ok receipt"
 grep -qxF -- "- [ ] first - an existing queued row (repo: shop, since $today)" "$ledger" \
   || fail "start did not stamp since inside the repo group"
-awk '/^## Queued/,/^## Done/' "$ledger" | grep -q "first" && fail "start left the row in Queued"
-awk '/^## In flight/,/^## Queued/' "$ledger" | grep -qxF -- '  a rewritten narrative' \
+grep -q "first" < <(awk '/^## Queued/,/^## Done/' "$ledger") && fail "start left the row in Queued"
+grep -qxF -- '  a rewritten narrative' < <(awk '/^## In flight/,/^## Queued/' "$ledger") \
   || fail "the body did not ride the move to In flight"
 out="$("$BIN/ac-task.sh" start first)"
 assert_contains "$out" "already" "re-starting reports already"
@@ -94,7 +94,7 @@ grep -qxF -- "- [x] first - an existing queued row (repo: shop, since $today) - 
   || fail "done did not write the grammar Done line"
 firstdone="$(awk '/^## Done/{f=1;next} f && /^- \[/{print;exit}' "$ledger")"
 case "$firstdone" in '- [x] first'*) ;; *) fail "done must insert newest-first, got: $firstdone" ;; esac
-awk '/^## Done/,0' "$ledger" | grep -qxF -- '  a rewritten narrative' \
+grep -qxF -- '  a rewritten narrative' < <(awk '/^## Done/,0' "$ledger") \
   || fail "the body did not ride the move to Done"
 out="$("$BIN/ac-task.sh" done first 'x')"
 assert_contains "$out" "already" "re-doning reports already"
@@ -112,12 +112,12 @@ assert_fails_with "held" -- "$BIN/ac-task.sh" start heldrow
 grep -qF -- '[@held until 2099-01-01]' "$ledger" || fail "dated hold token missing"
 ready="$("$BIN/ac-ready.sh")"
 assert_contains "$ready" "HELD   heldrow" "an unexpired dated hold is HELD"
-"$BIN/ac-ready.sh" queued | grep -qx heldrow && fail "queued must not offer an unexpired hold"
+grep -qx heldrow < <("$BIN/ac-ready.sh" queued) && fail "queued must not offer an unexpired hold"
 "$BIN/ac-task.sh" hold heldrow --until "$yesterday" >/dev/null
 grep -qF -- "[@held until $yesterday]" "$ledger" || fail "re-hold did not update the date"
 ready="$("$BIN/ac-ready.sh")"
 assert_contains "$ready" "READY  heldrow" "an expired dated hold is READY again"
-"$BIN/ac-ready.sh" queued | grep -qx heldrow || fail "queued must offer an expired hold"
+grep -qx heldrow < <("$BIN/ac-ready.sh" queued) || fail "queued must offer an expired hold"
 "$BIN/ac-task.sh" unhold heldrow >/dev/null
 grep -qF -- '@held' "$ledger" && fail "unhold left a hold token behind"
 out="$("$BIN/ac-task.sh" unhold heldrow)"
@@ -147,10 +147,10 @@ grep -qF -- '- [ ] quoterow2 - the token is `[@held]` when the captain says so' 
 #      take it - and the spent token is stripped (the date was the release).
 "$BIN/ac-task.sh" add expiredrow 'work the captain dated' --repo shop >/dev/null
 "$BIN/ac-task.sh" hold expiredrow --until "$yesterday" >/dev/null
-"$BIN/ac-ready.sh" queued | grep -qx expiredrow || fail "fixture: expired hold must be offered"
+grep -qx expiredrow < <("$BIN/ac-ready.sh" queued) || fail "fixture: expired hold must be offered"
 out="$("$BIN/ac-task.sh" start expiredrow)"
 assert_contains "$out" "ok:" "start takes the row the scheduler offers"
-grep -F -- 'expiredrow' "$ledger" | grep -qF -- '[@held' \
+grep -qF -- '[@held' < <(grep -F -- 'expiredrow' "$ledger") \
   && fail "the spent dated token must be stripped when the row starts"
 "$BIN/ac-task.sh" done expiredrow 'x' >/dev/null
 

@@ -362,9 +362,9 @@ case "$out" in *"HELD   datedpast"*) fail "an expired dated hold must not stay H
 case "$out" in *"READY  datedbad"*) fail "a malformed dated hold must never read READY" ;; esac
 case "$out" in *"HELD   datedquote"*) fail "quoting the dated arm in a code span must never enact a hold" ;; esac
 qout="$("$BIN/ac-ready.sh" queued)"
-printf '%s\n' "$qout" | grep -qx datedpast || fail "an expired dated hold must be OFFERED by queued, not just reported READY"
-printf '%s\n' "$qout" | grep -qx datedfuture && fail "an unexpired dated hold must never be offered by queued"
-printf '%s\n' "$qout" | grep -qx datedbad && fail "a malformed dated hold must never be offered by queued"
+grep -qx datedpast <<<"$qout" || fail "an expired dated hold must be OFFERED by queued, not just reported READY"
+grep -qx datedfuture <<<"$qout" && fail "an unexpired dated hold must never be offered by queued"
+grep -qx datedbad <<<"$qout" && fail "a malformed dated hold must never be offered by queued"
 
 queued_out="$("$BIN/ac-ready.sh" queued)"
 case "$queued_out" in *heldcampaign*) fail "the queued selector must never offer a held row" ;; esac

@@ -533,7 +533,7 @@ rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat
 # green/ready in branch, which no producer ever emitted to a pane) are gone,
 # replaced by the anchored checks-passed: marker the crew-ship finish emits.
 re="$(bash -c ". '$BIN/ac-lib.sh'; printf '%s' \"\$AC_CAPTAIN_RE\"")"
-re_match() { printf '%s\n' "$2" | grep -qE "$1"; }
+re_match() { grep -qE "$1" <<<"$2"; }
 re_match "$re" 'done: x' || fail "plain done: at line start wakes"
 re_match "$re" '⏺ done: report ready' || fail "TUI bullet + done: wakes"
 re_match "$re" '⏺ needs-decision: pick A or B' || fail "TUI bullet + needs-decision: wakes"

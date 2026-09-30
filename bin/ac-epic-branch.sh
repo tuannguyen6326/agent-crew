@@ -112,7 +112,7 @@ cmd_retire() {
   chief_only retire
   f="$(ac_epic_branches_file "$epic")" \
     || ac_die "retire: no branches record for epic $epic - nothing to retire"
-  if head -1 "$f" | grep -q '^# retired'; then
+  if grep -q '^# retired' < <(head -1 "$f"); then
     printf 'already retired: %s\n' "$(head -1 "$f")"
     return 0
   fi

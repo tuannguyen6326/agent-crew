@@ -209,7 +209,7 @@ rv="$("$BRAIN" recall --home "$AC_HOME" --query "domain widget product line" --l
 case "$rv" in *search_degraded*) fail "embedded index must not stamp search_degraded: $rv" ;; esac
 printf '{"embedding":{"provider":"stub","model":"stub","dims":16}}\n' >"$AC_HOME/config/brain.json"
 if sd="$("$BRAIN" sync --home "$AC_HOME" --compact 2>&1)"; then
-  printf '%s' "$sd" | grep -q '"error"' || fail "a dims change must hard-error naming the fix (got: $sd)"
+  grep -q '"error"' <<<"$sd" || fail "a dims change must hard-error naming the fix (got: $sd)"
 fi
 assert_contains "$sd" "rebuild" "the dims error names the remedy"
 rm -f "$AC_HOME/config/brain.json"

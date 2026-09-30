@@ -121,7 +121,7 @@ while IFS= read -r tok; do
   [ -n "$tok" ] || continue
   case "$tok" in
     *_)
-      printf '%s\n' "$doc_prefixes" | grep -qxF "$tok" && continue
+      grep -qxF "$tok" <<<"$doc_prefixes" && continue
       # a dynamic construction may grep as a SHORTER root than the documented
       # family (AC_FLEET_$(tr ...)_$ru greps as AC_FLEET_) or as a LONGER
       # one; either containment direction against a templated row covers it.
@@ -136,7 +136,7 @@ EOF
       [ "$ok" = 1 ] && continue
       ;;
     *)
-      printf '%s\n' "$doc_plain" | grep -qxF "$tok" && continue
+      grep -qxF "$tok" <<<"$doc_plain" && continue
       known_extra "$tok" && continue
       # a constructed dynamic name may also appear with a literal suffix in
       # comments/examples (AC_FLEET_PROFILE_QA): the documented family covers it
@@ -160,7 +160,7 @@ EOF
 phantom=""
 while IFS= read -r name; do
   [ -n "$name" ] || continue
-  printf '%s\n' "$code_tokens" | grep -qxF "$name" || phantom="$phantom $name"
+  grep -qxF "$name" <<<"$code_tokens" || phantom="$phantom $name"
 done <<EOF
 $doc_plain
 EOF
@@ -168,9 +168,9 @@ EOF
 
 # --- the two exec hooks stay double-keyed ------------------------------------
 grep -q 'AC_TEST_HOOKS.*AC_CURATE_SNAPSHOT_HOOK\|AC_CURATE_SNAPSHOT_HOOK' "$BIN/ac-curate.sh" || fail "curate snapshot hook site vanished - update this test"
-grep -B2 '"${AC_CURATE_SNAPSHOT_HOOK}" "$records"' "$BIN/ac-curate.sh" | grep -q 'AC_TEST_HOOKS' \
+grep -q 'AC_TEST_HOOKS' < <(grep -B2 '"${AC_CURATE_SNAPSHOT_HOOK}" "$records"' "$BIN/ac-curate.sh") \
   || fail "the curate snapshot hook must stay double-keyed on AC_TEST_HOOKS (audit-f8): an inherited env var alone must never make production exec an arbitrary file"
-grep -B2 '"${AC_QA_PROFILE_RECHECK_HOOK}" "$cfg" "$know"' "$BIN/ac-qa.sh" | grep -q 'AC_TEST_HOOKS' \
+grep -q 'AC_TEST_HOOKS' < <(grep -B2 '"${AC_QA_PROFILE_RECHECK_HOOK}" "$cfg" "$know"' "$BIN/ac-qa.sh") \
   || fail "the qa profile-recheck hook must stay double-keyed on AC_TEST_HOOKS (audit-f8)"
 
 pass

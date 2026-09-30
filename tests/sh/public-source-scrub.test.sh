@@ -28,7 +28,7 @@ scrub_scan() {
     lineno="${rest%%:*}"
     content="${rest#*:}"
     redacted="$(printf '%s' "$content" | scrub_redact_base64)"
-    if printf '%s' "$redacted" | grep -qiF -- "$forbidden"; then
+    if grep -qiF -- "$forbidden" <<<"$redacted"; then
       printf '%s:%s:%s\n' "$path" "$lineno" "$redacted"
       found=1
     fi

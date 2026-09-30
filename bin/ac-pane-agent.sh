@@ -1403,7 +1403,7 @@ announce_transcript() {
     # shellcheck disable=SC2012  # newest-first ordering; names are uuid-safe
     f=$(ls -t "$PROJ"/*.jsonl 2>/dev/null | while read -r c; do
           b=$(basename "$c")
-          printf '%s\n' "$BEFORE" | grep -qxF "$b" || { echo "$c"; break; }
+          grep -qxF "$b" <<<"$BEFORE" || { echo "$c"; break; }
         done | head -1)
     [ -n "$f" ] || return 1
   fi
@@ -1465,10 +1465,10 @@ final_message_has_text() {
   # assistant message carry text? ac_transcript_final (bin/ac-pipeline-lib.sh)
   # reads exactly this and returns empty when it does not.
   [ -n "$TRANSCRIPT" ] || return 1
-  jq -rs '[.[] | select(.type == "assistant")] | last
+  grep -q '[^[:space:]]' < <(jq -rs '[.[] | select(.type == "assistant")] | last
           | if . == null then "" else
               ([(.message.content // [])[] | select(.type == "text") | .text] | join(""))
-            end' "$TRANSCRIPT" 2>/dev/null | grep -q '[^[:space:]]'
+            end' "$TRANSCRIPT" 2>/dev/null)
 }
 final_message_settles() {
   # final_message_has_text, but the turn end is allowed to SETTLE. A verdict is

@@ -80,8 +80,8 @@ case "$arc" in
   *) fail "curate backup lands under state/backups/ with a curate- prefix (got $arc)" ;;
 esac
 assert_no_file "$AC_HOME/state/backups.tar.gz" "backup is in a subdir, not loose in state/"
-tar -tzf "$arc" | grep -q 'records/learnings.md' || fail "records/ is in the backup"
-tar -tzf "$arc" | grep -q 'skills/existing/SKILL.md' || fail "the skills store is in the backup"
+grep -q 'records/learnings.md' < <(tar -tzf "$arc") || fail "records/ is in the backup"
+grep -q 'skills/existing/SKILL.md' < <(tar -tzf "$arc") || fail "the skills store is in the backup"
 rm -f "$records/learnings.md" "$AC_HOME/skills/existing/SKILL.md"
 tar -xzf "$arc" -C "$AC_HOME"
 assert_file "$records/learnings.md" "restore recreates records/"

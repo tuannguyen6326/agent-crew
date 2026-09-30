@@ -115,9 +115,9 @@ self_pid() {
       # fell through to a shared `herdr server` pid, which every pane's
       # ancestry contains - a silent double-driver, the exact failure this
       # fix must never trade for).
-      if printf '%s\n' "$cmd" | grep -qE "(^|[ /])($harness_re) bg-[a-z0-9-]+( |$)"; then
+      if grep -qE "(^|[ /])($harness_re) bg-[a-z0-9-]+( |$)" <<<"$cmd"; then
         :
-      elif printf '%s\n' "$cmd" | grep -qE "(^|[ /])($harness_re)( |$)"; then
+      elif grep -qE "(^|[ /])($harness_re)( |$)" <<<"$cmd"; then
         # OUTERMOST match, not first: a
         # Claude Stop hook fires several levels below the session's actual
         # lock-owning process (hook shell -> claude bg-spare -> claude
