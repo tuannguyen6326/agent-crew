@@ -744,6 +744,65 @@ case "$first_kept" in
   '  '*) fail "R7: the cut landed mid-block - the kept body starts with an orphaned continuation: $first_kept" ;;
 esac
 
+# R8: a candidate the last examined run did NOT apply (revise, ask-captain, an
+# unjudged gate) left its sources in Pending so the next cycle can reconsider
+# it - and those sources are the OLDEST bullets by construction, exactly what a
+# prefix rotation takes first (drydock 2026-09-22: 12 sources of three revised
+# candidates left Pending in the next run's rotation). They survive ONE more
+# rotation with their continuation and their date heading; an older run's
+# sources do not, and a run dir with no report.md (the run being staged right
+# now) is never the anchor.
+rm -rf "$ARCHDIR"
+rot_runs="$AC_HOME/data"
+rot_cand() {  # rot_cand <run-dir> <bullet> - a candidate citing one source line
+  mkdir -p "$1"
+  printf 'kind: skill\nname: held-skill\ndescription: d\n===sources===\n2026-07-01\tlabel\t%s\n===body===\nb\n' "$2" \
+    >"$1/candidate-held-skill.md"
+}
+{ printf '# Learning Ledger\n\n## Pending\n\n'
+  printf '### 2026-07-01 (family held)\n'
+  printf -- '- lesson held-a %s\n' "$rot_pad"
+  printf '  held continuation\n'
+  printf -- '- lesson old-b %s\n' "$rot_pad"
+  i=1; while [ "$i" -le 6 ]; do printf -- '- lesson %02d %s\n' "$i" "$rot_pad"; i=$((i+1)); done
+  printf '\n## Distilled\n\n- [distilled -> some-skill] sources=2 updated=2026-08-01\n'
+} >"$LEDGER"
+rot_cand "$rot_runs/learning-9000000000" "- lesson old-b $rot_pad"
+printf 'report\n' >"$rot_runs/learning-9000000000/report.md"
+rot_cand "$rot_runs/learning-9000000001" "- lesson held-a $rot_pad"
+printf 'report\n' >"$rot_runs/learning-9000000001/report.md"
+mkdir -p "$rot_runs/learning-9000000002"
+printf '300\n' >"$AC_HOME/config/learn-pending-budget"
+"$BIN/ac-learn.sh" rotate-pending >/dev/null || fail "R8: rotation failed with a prior run's sources held"
+rot_arch8="$(ls "$ARCHDIR"/pending-*.md 2>/dev/null | head -1)"
+[ -n "$rot_arch8" ] || fail "R8: the over-budget ledger still rotates"
+grep -qFx -- "- lesson held-a $rot_pad" "$LEDGER" \
+  || fail "R8: a source of the last examined run's candidate must survive the next rotation"
+if grep -qFx -- "- lesson held-a $rot_pad" "$rot_arch8"; then fail "R8: a held source is never archived"; fi
+grep -qFx -- '  held continuation' "$LEDGER" || fail "R8: a held source keeps its continuation line"
+grep -qFx -- '### 2026-07-01 (family held)' "$LEDGER" \
+  || fail "R8: a held source keeps its date heading - the scout dates a source by it"
+grep -qFx -- "- lesson old-b $rot_pad" "$rot_arch8" || fail "R8: an OLDER run's source is not held - the hold is one cycle"
+grep -qFx -- '### 2026-07-01 (family held)' "$rot_arch8" \
+  || fail "R8: a kept heading is copied to the archive, so the sibling archived from under it keeps its date"
+grep -qFx -- "- lesson 01 $rot_pad" "$rot_arch8" || fail "R8: unheld old bullets still rotate"
+rot_total=$(( $(grep -c "^- lesson" "$rot_arch8") + $(grep -c "^- lesson" "$LEDGER") ))
+assert_eq "$rot_total" "8" "R8: archive + ledger together hold every original bullet"
+rot_kept="$(awk '/^## Pending/{p=1;next}/^## Distilled/{p=0}p' "$LEDGER" | wc -c | tr -d ' ')"
+[ "$rot_kept" -le 300 ] || fail "R8: held lines count against the budget (kept $rot_kept bytes)"
+
+# R8b: the NEXT examined run releases the hold - it proposed nothing from the
+# held source, so the reconsideration the revise promised has happened, and the
+# source rotates like any old bullet instead of pinning Pending forever.
+mkdir -p "$rot_runs/learning-9000000003" && printf 'report\n' >"$rot_runs/learning-9000000003/report.md"
+i=7; while [ "$i" -le 12 ]; do "$BIN/ac-learn.sh" note "- lesson $i $rot_pad" >/dev/null; i=$((i+1)); done
+"$BIN/ac-learn.sh" rotate-pending >/dev/null || fail "R8b: second rotation failed"
+if grep -qFx -- "- lesson held-a $rot_pad" "$LEDGER"; then
+  fail "R8b: a source the next examined run passed over must rotate - a hold is one cycle, not forever"
+fi
+if grep -qFx -- '  held continuation' "$LEDGER"; then fail "R8b: the released continuation travels with its bullet"; fi
+rm -rf "$rot_runs"/learning-900000000[0-3]
+
 rm -f "$AC_HOME/config/learn-pending-budget"
 note_ledger_reset
 

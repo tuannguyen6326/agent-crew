@@ -1364,13 +1364,19 @@ cmd_note() {
 # it before staging sources/, so the scout copy is always the bounded window a
 # citation can actually reach. Old bullets lose nothing they had - they were
 # equally unread in Pending - and the archive keeps them greppable evidence.
-# Non-bullet body lines (markers included) are never archived, so a rotation
-# marker survives every later rotation. The whole rewrite runs under the
+# The one exception is the sources of the last examined run's candidates
+# (learn_prior_run_sources): a candidate it did not apply left them in Pending
+# so the next cycle can reconsider it, and they are the OLDEST bullets by
+# construction, so a plain prefix cut turned every revise into a slow delete.
+# They are retained until a later run has examined them, with their
+# continuation lines and their `### <date>` heading (the scout dates a source by
+# it). Marker lines are never archived, so a rotation marker survives every
+# later rotation. The whole rewrite runs under the
 # .learn-note.lock: rotation is a ledger read-modify-write like any note, and
 # a refused lock rewrites NOTHING. An under-budget ledger is a strict no-op -
 # the file is not even rewritten, so its bytes and mtime stay untouched.
 learn_rotate_pending() {
-  local ledger budget lock archdir ts arch marker tmp archtmp k
+  local ledger budget lock archdir ts arch marker tmp archtmp held k
   ledger="$(ac_records_dir)/learnings.md"
   [ -f "$ledger" ] || return 0
   budget="$(ac_config_read learn-pending-budget 131072)"
@@ -1384,8 +1390,10 @@ learn_rotate_pending() {
   ts="$(ac_now)"; arch="$archdir/pending-$ts.md"; k=2
   while [ -e "$arch" ]; do arch="$archdir/pending-$ts-$k.md"; k=$((k+1)); done
   marker="[pending-overflow -> learnings-archive/$(basename "$arch")]"
-  tmp="$(mktemp)"; archtmp="$(mktemp)"
-  if ! awk -v budget="$budget" -v archf="$archtmp" -v marker="$marker" '
+  tmp="$(mktemp)"; archtmp="$(mktemp)"; held="$(mktemp)"
+  learn_prior_run_sources >"$held"
+  if ! awk -v budget="$budget" -v archf="$archtmp" -v marker="$marker" -v heldf="$held" '
+    BEGIN { while ((getline l < heldf) > 0) if (l != "") held[l] = 1 }
     { lines[NR] = $0
       if ($0 == "## Pending" && !pstart) pstart = NR
       else if ($0 == "## Distilled" && pstart && !pend) pend = NR }
@@ -1401,20 +1409,30 @@ learn_rotate_pending() {
       # that as orphans. So the archive takes the oldest CONTIGUOUS prefix
       # verbatim, and the cut lands only on a SAFE boundary: a bullet start, a
       # heading, or a blank - never between a bullet and its continuations.
-      # Prior [pending-overflow -> ...] markers are the one exception: they
-      # stay in the ledger (retained below), never archived.
+      # Prior [pending-overflow -> ...] markers and held sources are the
+      # exceptions: they stay in the ledger (retained below), never archived,
+      # and a held source keeps its continuations and its owning heading.
+      for (i = lo; i <= hi; i++) {
+        if (lines[i] ~ /^### /) head = i
+        if (lines[i] ~ /^\[pending-overflow -> /) keep[i] = 1
+        else if (lines[i] in held) {
+          keep[i] = 1
+          if (head) keep[head] = 1
+          for (j = i + 1; j <= hi && lines[j] != "" && lines[j] !~ /^(- |### |\[pending-overflow -> )/; j++) keep[j] = 1
+        }
+      }
       # The marker line the rewrite adds is body too - budget the KEPT body
       # including it, or every rotation lands marker-sized bytes over budget.
       overhead = length(marker) + 1
       for (i = lo; i <= hi; i++)
-        if (lines[i] ~ /^\[pending-overflow -> /) overhead += length(lines[i]) + 1
-      # suffix[i] = bytes of non-marker lines i..hi; cut = smallest boundary i
+        if (keep[i]) overhead += length(lines[i]) + 1
+      # suffix[i] = bytes of unretained lines i..hi; cut = smallest boundary i
       # with suffix[i] + overhead <= budget. No such boundary (a pathological
       # tail) -> cut past hi: everything archivable rotates, and the receipt
       # prints the REAL kept size rather than claiming the budget held.
       run = 0
       for (i = hi; i >= lo; i--) {
-        if (lines[i] !~ /^\[pending-overflow -> /) run += length(lines[i]) + 1
+        if (!keep[i]) run += length(lines[i]) + 1
         suffix[i] = run
       }
       cut = hi + 1
@@ -1422,17 +1440,19 @@ learn_rotate_pending() {
         if ((lines[i] ~ /^- / || lines[i] ~ /^### / || lines[i] == "") && suffix[i] + overhead <= budget) { cut = i; break }
       moved_any = 0
       for (i = lo; i < cut; i++)
-        if (lines[i] !~ /^\[pending-overflow -> /) { moved[i] = 1; moved_any = 1 }
+        if (!keep[i]) { moved[i] = 1; moved_any = 1 }
       if (!moved_any) exit 0
-      for (i = lo; i < cut; i++) if (moved[i]) print lines[i] > archf
+      # A heading a held source keeps is COPIED to the archive too, so the
+      # siblings archived from under it keep their date there.
+      for (i = lo; i < cut; i++) if (moved[i] || lines[i] ~ /^### /) print lines[i] > archf
       for (i = 1; i < lo; i++) print lines[i]
-      for (i = lo; i < cut; i++) if (!moved[i]) print lines[i]   # retained markers, oldest first
+      for (i = lo; i < cut; i++) if (!moved[i]) print lines[i]   # retained lines, oldest first
       print marker
       for (i = cut; i <= hi; i++) print lines[i]
       if (pend) for (i = pend; i <= NR; i++) print lines[i]
     }
   ' "$ledger" >"$tmp"; then
-    rm -f "$tmp" "$archtmp"; ac_lock_release "$lock"
+    rm -f "$tmp" "$archtmp" "$held"; ac_lock_release "$lock"
     ac_die "rotate-pending: the ledger rewrite failed mid-pass - nothing installed, $ledger untouched"
   fi
   if [ -s "$archtmp" ]; then
@@ -1448,8 +1468,31 @@ learn_rotate_pending() {
   else
     rm -f "$tmp"
   fi
-  rm -f "$archtmp"
+  rm -f "$archtmp" "$held"
   ac_lock_release "$lock"
+}
+
+# learn_prior_run_sources - the ===sources=== lines of every candidate in the
+# newest learning run that wrote report.md: the last run whose scout read
+# Pending. An applied candidate's sources were consumed out of the ledger, so
+# listing them all holds exactly the ones that run left in place. A run dir
+# without report.md (the one cmd_run is staging now, or a pass that never
+# happened) reconsidered nothing and is skipped. Read like
+# learn_validate_sources, so a held line is exactly the line a land would cite.
+learn_prior_run_sources() {
+  local d n best="" bestn=-1 cand bullet
+  for d in "$(ac_data_dir)"/learning-[0-9]*; do
+    n="${d##*/learning-}"
+    case "$n" in *[!0-9]*) continue ;; esac
+    if [ -s "$d/report.md" ] && [ "$n" -gt "$bestn" ]; then best="$d"; bestn="$n"; fi
+  done
+  [ -n "$best" ] || return 0
+  for cand in "$best"/candidate-*.md; do
+    [ -f "$cand" ] || continue
+    while IFS=$'\t' read -r _ _ bullet; do
+      if [ -n "$bullet" ]; then printf '%s\n' "$bullet"; fi
+    done < <(candidate_section "$cand" sources)
+  done
 }
 
 # learn_validate_sources <cand> <learnings> - fail-closed PRE-CHECK that every
