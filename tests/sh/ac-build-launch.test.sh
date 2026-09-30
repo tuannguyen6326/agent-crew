@@ -114,6 +114,8 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
   "default": {"harness": "codex", "model": "gpt", "effort": "medium"}
 }
 EOF
+# grok is a captain's custom harness: its template makes it launchable.
+: >"$AC_HOME/config/launch-grok"
 
 err="$(lib 'ac_resolve_profile' 2>&1 || true)"
 assert_contains "$err" "ac-dispatch-select" "a configured dispatch table refuses to be guessed at"

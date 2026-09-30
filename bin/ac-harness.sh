@@ -21,8 +21,9 @@
 # again, kept as the brain's own table and held
 # to oneshot_launch's exact bytes by tests/sh/ac-brain.test.sh. None of the three
 # composes a line for an unknown name. A new harness therefore edits THIS file
-# plus those three arms (and its harness-facts.md entry), instead of thirteen
-# files.
+# plus those three arms, src/lib.ts's HARNESSES copy (tests/ts/lib.test.ts
+# holds it to the set below) and its harness-facts.md entry, instead of
+# thirteen files.
 # A CUSTOM harness (a captain's config/launch-<h> template, emitted verbatim
 # by ac-spawn.sh) is launchable without joining the registry; the facets it
 # cannot answer fail closed where a wrong answer costs work (the instruction

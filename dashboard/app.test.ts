@@ -1953,6 +1953,29 @@ test("applyDispatchWrite writes canonical JSON + a receipt for a valid document"
   }
 });
 
+test("applyDispatchWrite refuses a harness no arm can launch, as the resolver does", () => {
+  const home = tmpHome();
+  try {
+    const docs = [
+      { rules: [{ when: "x", use: { harness: "ar" } }] },
+      { rules: [{ when: "x", use: { harness: "claude" } }], panes: { learning: { harness: "ar" } } },
+      { rules: [{ when: "x", use: { harness: "claude" } }], panes: { "codereview-scout": { lanes: [{ harness: "ar" }] } } },
+      { rules: [{ when: "x", use: { harness: "claude" } }], default: { harness: "ar" } },
+    ];
+    for (const doc of docs) {
+      const res = applyDispatchWrite(home, JSON.stringify(doc));
+      expect(res.status).toBe(400);
+      expect(String((res.body as any).error)).toContain("harness 'ar'");
+    }
+    expect(existsSync(`${home}/config/crew-dispatch.json`)).toBe(false);
+    expect(applyDispatchWrite(home, JSON.stringify({ rules: [{ when: "x", use: { harness: "agy" } }] })).status).toBe(200);
+    writeFileSync(`${home}/config/launch-ar`, "ar\n");
+    for (const doc of docs) expect(applyDispatchWrite(home, JSON.stringify(doc)).status).toBe(200);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("applyDispatchWrite accepts a lanes pane and holds the same rules the resolver does", () => {
   const home = mkdtempSync(`${tmpdir()}/dash-lanes-`);
   try {

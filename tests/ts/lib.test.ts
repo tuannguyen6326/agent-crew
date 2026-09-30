@@ -2,10 +2,10 @@
 // bin/ac-lib.sh helpers a ported script needs. Run through tests/sh/src.test.sh.
 
 import { test, expect, beforeEach, afterAll } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, existsSync, symlinkSync, chmodSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, realpathSync, existsSync, symlinkSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { envHome, configRead, stateDir, enterCaller, bunChild, sha256File, contractLint, pidAlive, lockAcquire, lockRelease } from "../../src/lib.ts";
+import { envHome, configRead, stateDir, enterCaller, bunChild, sha256File, contractLint, pidAlive, lockAcquire, lockRelease, HARNESSES, ONESHOT_ONLY_HARNESSES, harnessLaunchable } from "../../src/lib.ts";
 
 const LIB = join(import.meta.dir, "..", "..", "src", "lib.ts");
 
@@ -384,4 +384,32 @@ test("configRead drops NUL bytes, as the shell's $(...) did", () => {
   process.env.AC_HOME = h;
   writeFileSync(join(h, "config", "crew-harness"), "co\u0000dex\n");
   expect(configRead("crew-harness")).toBe("codex");
+});
+
+// The lists are copies of two bash tables; lifting both keeps the copies honest.
+function bashFn(file: string, fn: string): string {
+  const src = readFileSync(join(import.meta.dir, "..", "..", "bin", file), "utf8");
+  const at = src.indexOf(`\n${fn}() {\n`);
+  expect(at).toBeGreaterThan(-1);
+  return src.slice(at, src.indexOf("\n}\n", at));
+}
+
+test("the harness lists are ac_harness_known's registry plus oneshot_launch's other arms", () => {
+  const registry = (/case "\$1" in ([^)]*)\) return 0/.exec(bashFn("ac-harness.sh", "ac_harness_known")) ?? ["", ""])[1]
+    .split("|").map((s) => s.trim());
+  const oneshot = [...bashFn("ac-pane-agent.sh", "oneshot_launch").matchAll(/^ {4}([a-z-]+)\)\s+printf/gm)].map((m) => m[1]);
+  expect(oneshot.length).toBeGreaterThan(0);
+  expect([...HARNESSES].sort()).toEqual(registry.sort());
+  expect([...HARNESSES, ...ONESHOT_ONLY_HARNESSES].sort()).toEqual([...new Set([...registry, ...oneshot])].sort());
+});
+
+test("harnessLaunchable: a registry or one-shot name, or the home's config/launch-<h> template", () => {
+  const h = freshHome();
+  for (const n of [...HARNESSES, ...ONESHOT_ONLY_HARNESSES]) expect(harnessLaunchable(h, n)).toBe(true);
+  expect(harnessLaunchable(h, "ar")).toBe(false);
+  writeFileSync(join(h, "config", "launch-ar"), "ar\n");
+  expect(harnessLaunchable(h, "ar")).toBe(true);
+  // ac-spawn.sh takes a template only when `[ -f ]` holds.
+  mkdirSync(join(h, "config", "launch-dir"));
+  expect(harnessLaunchable(h, "dir")).toBe(false);
 });

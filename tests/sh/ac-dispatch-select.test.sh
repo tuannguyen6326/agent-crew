@@ -10,6 +10,30 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 make_home
+# grok and x are a captain's custom harnesses in these fixtures: a template
+# makes each launchable.
+: >"$AC_HOME/config/launch-grok"
+: >"$AC_HOME/config/launch-x"
+
+# A profile resolves only to a harness some arm can launch - the registry, a
+# one-shot-only form, or the home's config/launch-<h> template - so a mistyped
+# name dies here, naming itself, instead of at pane open.
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{"rules": [{"when": "anything", "use": {"harness": "ar"}}],
+ "panes": {"learning": {"harness": "ar"},
+           "codereview-scout": {"lanes": [{"harness": "claude"}, {"harness": "ar"}]}}}
+EOF
+for form in "--rule 1" "--pane learning" "--pane codereview-scout --lanes"; do
+  rc=0
+  # shellcheck disable=SC2086
+  out="$("$BIN/ac-dispatch-select.sh" $form 2>"$TMP/err")" || rc=$?
+  assert_eq "$rc:$out" "1:" "$form: an unlaunchable harness is refused with nothing resolved"
+  assert_contains "$(cat "$TMP/err")" "harness 'ar'" "$form: the refusal names the harness"
+done
+: >"$AC_HOME/config/launch-ar"
+assert_eq "$("$BIN/ac-dispatch-select.sh" --pane learning)" $'harness=ar\tmodel=\teffort=' \
+  "a config/launch-<h> template makes a custom harness launchable"
+rm -f "$AC_HOME/config/launch-ar" "$AC_HOME/config/crew-dispatch.json"
 
 # No config: fall back to crew-harness (default claude).
 assert_eq "$("$BIN/ac-dispatch-select.sh")" $'harness=claude\tmodel=\teffort=' "fallback claude"
@@ -457,6 +481,7 @@ assert_eq "$rc" "1" "a relative AC_HOME from a cwd with no name is refused, neve
 assert_contains "$out" "current directory" "the refusal names the unresolvable cwd"
 mkdir -p "$TMP/relhome/config"
 printf '{"default":{"harness":"rel"}}' >"$TMP/relhome/config/crew-dispatch.json"
+: >"$TMP/relhome/config/launch-rel"
 assert_eq "$(cd "$TMP" && AC_HOME=relhome "$BIN/ac-dispatch-select.sh")" $'harness=rel\tmodel=\teffort=' \
   "a relative AC_HOME resolves against the caller's cwd"
 assert_fails_with "no dispatch config at //config/crew-dispatch.json" -- env AC_HOME=/ "$BIN/ac-dispatch-select.sh" --list
