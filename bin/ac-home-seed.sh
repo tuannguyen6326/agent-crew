@@ -107,9 +107,11 @@ for p in $requested; do
   if [ -n "$origin_url" ]; then
     git -C "$home_dir/projects/$p" remote set-url origin "$origin_url"
   fi
-  # Carry the parent's registry line (mode included) when it has one.
-  reg_line="$(grep -E "^- $p \[" "$(ac_records_dir)/projects.md" 2>/dev/null | head -n1 || true)"
-  printf '%s\n' "${reg_line:-- $p [crew-ship] - inherited from parent (added $(ac_iso))}" >>"$home_dir/records/projects.md"
+  # Carry the parent's registry line as written when it has one, bracket or
+  # not (bin/ac-project-mode.sh header); `in`, never ==, so name 07 is not 7.
+  reg_line="$(LC_ALL=C awk -v p="$p" 'BEGIN { w[p] } $1 == "-" && ($2 in w) && ($3 == "-" || $3 ~ /^\[/) { print; exit }' \
+    "$(ac_records_dir)/projects.md" 2>/dev/null || true)"
+  printf '%s\n' "${reg_line:-- $p - inherited from parent (added $(ac_iso))}" >>"$home_dir/records/projects.md"
   cloned="${cloned:+$cloned,}$p"
 done
 
