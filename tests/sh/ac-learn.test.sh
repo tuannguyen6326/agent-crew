@@ -759,14 +759,17 @@ rot_cand() {  # rot_cand <run-dir> <bullet> - a candidate citing one source line
   printf 'kind: skill\nname: held-skill\ndescription: d\n===sources===\n2026-07-01\tlabel\t%s\n===body===\nb\n' "$2" \
     >"$1/candidate-held-skill.md"
 }
-{ printf '# Learning Ledger\n\n## Pending\n\n'
-  printf '### 2026-07-01 (family held)\n'
-  printf -- '- lesson held-a %s\n' "$rot_pad"
-  printf '  held continuation\n'
-  printf -- '- lesson old-b %s\n' "$rot_pad"
-  i=1; while [ "$i" -le 6 ]; do printf -- '- lesson %02d %s\n' "$i" "$rot_pad"; i=$((i+1)); done
-  printf '\n## Distilled\n\n- [distilled -> some-skill] sources=2 updated=2026-08-01\n'
-} >"$LEDGER"
+rot_held_ledger() {
+  { printf '# Learning Ledger\n\n## Pending\n\n'
+    printf '### 2026-07-01 (family held)\n'
+    printf -- '- lesson held-a %s\n' "$rot_pad"
+    printf '  held continuation\n'
+    printf -- '- lesson old-b %s\n' "$rot_pad"
+    i=1; while [ "$i" -le 6 ]; do printf -- '- lesson %02d %s\n' "$i" "$rot_pad"; i=$((i+1)); done
+    printf '\n## Distilled\n\n- [distilled -> some-skill] sources=2 updated=2026-08-01\n'
+  } >"$LEDGER"
+}
+rot_held_ledger
 rot_cand "$rot_runs/learning-9000000000" "- lesson old-b $rot_pad"
 printf 'report\n' >"$rot_runs/learning-9000000000/report.md"
 rot_cand "$rot_runs/learning-9000000001" "- lesson held-a $rot_pad"
@@ -801,7 +804,25 @@ if grep -qFx -- "- lesson held-a $rot_pad" "$LEDGER"; then
   fail "R8b: a source the next examined run passed over must rotate - a hold is one cycle, not forever"
 fi
 if grep -qFx -- '  held continuation' "$LEDGER"; then fail "R8b: the released continuation travels with its bullet"; fi
+rot_arch8b="$(ls "$ARCHDIR"/pending-*.md | grep -vFx -- "$rot_arch8")"
+grep -qFx -- "- lesson held-a $rot_pad" "$rot_arch8b" || fail "R8b: a released source is ARCHIVED, never dropped"
+grep -qFx -- '  held continuation' "$rot_arch8b" || fail "R8b: the released continuation is archived with it"
+rot_total=$(( $(cat "$ARCHDIR"/pending-*.md | grep -c "^- lesson") + $(grep -c "^- lesson" "$LEDGER") ))
+assert_eq "$rot_total" "14" "R8b: the archives + ledger still hold every bullet across the release"
 rm -rf "$rot_runs"/learning-900000000[0-3]
+
+# R8c: held sources that alone outgrow the budget are still held - the hold
+# ends after one examined run, while an evicted source never comes back - but
+# the receipt says the body is OVER budget instead of claiming it held.
+rm -rf "$ARCHDIR"; rot_held_ledger
+rot_cand "$rot_runs/learning-9000000001" "- lesson held-a $rot_pad"
+printf 'report\n' >"$rot_runs/learning-9000000001/report.md"
+printf '100\n' >"$AC_HOME/config/learn-pending-budget"
+rot_out="$("$BIN/ac-learn.sh" rotate-pending 2>&1)" || fail "R8c: an over-budget hold still rotates the rest"
+grep -qFx -- "- lesson held-a $rot_pad" "$LEDGER" || fail "R8c: the held source stays even when it outgrows the budget"
+assert_contains "$rot_out" "OVER budget" "R8c: the receipt names an over-budget body"
+case "$rot_out" in *"kept within"*) fail "R8c: an over-budget body must not be reported as kept within budget: $rot_out" ;; esac
+rm -rf "$rot_runs"/learning-9000000001
 
 rm -f "$AC_HOME/config/learn-pending-budget"
 note_ledger_reset

@@ -1370,13 +1370,16 @@ cmd_note() {
 # construction, so a plain prefix cut turned every revise into a slow delete.
 # They are retained until a later run has examined them, with their
 # continuation lines and their `### <date>` heading (the scout dates a source by
-# it). Marker lines are never archived, so a rotation marker survives every
-# later rotation. The whole rewrite runs under the
-# .learn-note.lock: rotation is a ledger read-modify-write like any note, and
+# it). They count against the budget; when they alone outgrow it they are still
+# kept and the receipt warns OVER budget - the overshoot ends with the hold one
+# examined run later, while refusing would wedge every run (a dead run writes
+# no report.md, so the anchor never moves). Marker lines are never archived,
+# so a rotation marker survives every later rotation. The whole rewrite runs
+# under the .learn-note.lock: rotation is a ledger read-modify-write like any note, and
 # a refused lock rewrites NOTHING. An under-budget ledger is a strict no-op -
 # the file is not even rewritten, so its bytes and mtime stay untouched.
 learn_rotate_pending() {
-  local ledger budget lock archdir ts arch marker tmp archtmp held k
+  local ledger budget lock archdir ts arch marker tmp archtmp held keptf kept k
   ledger="$(ac_records_dir)/learnings.md"
   [ -f "$ledger" ] || return 0
   budget="$(ac_config_read learn-pending-budget 131072)"
@@ -1390,9 +1393,9 @@ learn_rotate_pending() {
   ts="$(ac_now)"; arch="$archdir/pending-$ts.md"; k=2
   while [ -e "$arch" ]; do arch="$archdir/pending-$ts-$k.md"; k=$((k+1)); done
   marker="[pending-overflow -> learnings-archive/$(basename "$arch")]"
-  tmp="$(mktemp)"; archtmp="$(mktemp)"; held="$(mktemp)"
+  tmp="$(mktemp)"; archtmp="$(mktemp)"; held="$(mktemp)"; keptf="$(mktemp)"
   learn_prior_run_sources >"$held"
-  if ! awk -v budget="$budget" -v archf="$archtmp" -v marker="$marker" -v heldf="$held" '
+  if ! awk -v budget="$budget" -v archf="$archtmp" -v marker="$marker" -v heldf="$held" -v keptf="$keptf" '
     BEGIN { while ((getline l < heldf) > 0) if (l != "") held[l] = 1 }
     { lines[NR] = $0
       if ($0 == "## Pending" && !pstart) pstart = NR
@@ -1428,8 +1431,9 @@ learn_rotate_pending() {
         if (keep[i]) overhead += length(lines[i]) + 1
       # suffix[i] = bytes of unretained lines i..hi; cut = smallest boundary i
       # with suffix[i] + overhead <= budget. No such boundary (a pathological
-      # tail) -> cut past hi: everything archivable rotates, and the receipt
-      # prints the REAL kept size rather than claiming the budget held.
+      # tail, or held sources that alone outgrow the budget) -> cut past hi:
+      # everything archivable rotates, and the receipt prints the REAL kept
+      # size rather than claiming the budget held.
       run = 0
       for (i = hi; i >= lo; i--) {
         if (!keep[i]) run += length(lines[i]) + 1
@@ -1442,6 +1446,7 @@ learn_rotate_pending() {
       for (i = lo; i < cut; i++)
         if (!keep[i]) { moved[i] = 1; moved_any = 1 }
       if (!moved_any) exit 0
+      print overhead + (cut <= hi ? suffix[cut] : 0) > keptf
       # A heading a held source keeps is COPIED to the archive too, so the
       # siblings archived from under it keep their date there.
       for (i = lo; i < cut; i++) if (moved[i] || lines[i] ~ /^### /) print lines[i] > archf
@@ -1452,7 +1457,7 @@ learn_rotate_pending() {
       if (pend) for (i = pend; i <= NR; i++) print lines[i]
     }
   ' "$ledger" >"$tmp"; then
-    rm -f "$tmp" "$archtmp" "$held"; ac_lock_release "$lock"
+    rm -f "$tmp" "$archtmp" "$held" "$keptf"; ac_lock_release "$lock"
     ac_die "rotate-pending: the ledger rewrite failed mid-pass - nothing installed, $ledger untouched"
   fi
   if [ -s "$archtmp" ]; then
@@ -1463,12 +1468,17 @@ learn_rotate_pending() {
       cat "$archtmp"
     } >"$arch"
     mv "$tmp" "$ledger"
-    printf 'rotated %s bullet(s) into %s (Pending kept within %s bytes)\n' \
-      "$(grep -c '^- ' "$arch")" "$arch" "$budget"
+    kept="$(cat "$keptf")"
+    if [ "$kept" -le "$budget" ]; then
+      printf 'rotated %s bullet(s) into %s (Pending kept within %s bytes)\n' \
+        "$(grep -c '^- ' "$arch")" "$arch" "$budget"
+    else
+      ac_warn "rotated $(grep -c '^- ' "$arch") bullet(s) into $arch, but Pending is OVER budget: $kept of $budget bytes kept - no safe cut fits it beside the retained markers and the last examined run's held sources"
+    fi
   else
     rm -f "$tmp"
   fi
-  rm -f "$archtmp" "$held"
+  rm -f "$archtmp" "$held" "$keptf"
   ac_lock_release "$lock"
 }
 
