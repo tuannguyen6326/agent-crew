@@ -125,6 +125,14 @@ assert_fails_with "not archived" -- "$BIN/ac-archive.sh" restore nosuchfam
 "$BIN/ac-archive.sh" archive >/dev/null 2>&1 || true
 assert_no_file "$D/archive/2026/archive" "the archive root is never archived into itself"
 
+# --- room prose in any encoding ----------------------------------------------
+# A byte that is not UTF-8 (a Latin-1 e acute) aborted the closing-year read
+# under a UTF-8 locale and, through set -e, the whole run.
+room latinfam "$(printf '[2026-02-01T00:00:00Z] crewchief> caf\351 menu')" \
+  '[2026-02-02T00:00:00Z] crewchief> CLOSED: landed'
+LC_ALL=en_US.UTF-8 "$BIN/ac-archive.sh" archive >/dev/null 2>&1 || true
+assert_file "$D/archive/2026/latinfam/room.md" "a non-UTF-8 byte never aborts the run: the room is archived under its year"
+
 # --- the migration has NO caller on any automatic path -----------------------
 # The whole point of splitting code from the move: a migration that can fire by
 # itself defeats the split. The predicate is EXECUTION, not mention - a comment

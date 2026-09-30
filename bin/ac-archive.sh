@@ -59,8 +59,9 @@ closed_year() {
   # empty when the room has no CLOSED: entry or no resolvable year on it.
   # Position-pinned to the room's own entry grammar (ac-room.sh's header):
   # `- [<iso>] <actor>> CLOSED: ...`, so a prose mention of CLOSED: inside a
-  # message never sets the year.
-  awk '
+  # message never sets the year. The C locale: room prose is bytes
+  # (bin/ac-wake-lib.sh, ac_room_scan).
+  LC_ALL=C awk '
     /^- \[[0-9]{4}-/ && /^- \[[^]]*\] [^>]*> CLOSED:/ {
       y = substr($0, 4, 4)
     }

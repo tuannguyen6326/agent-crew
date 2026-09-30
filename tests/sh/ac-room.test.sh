@@ -387,6 +387,29 @@ printf -- '- [2026-07-28T00:00:02Z] crewchief> SELF-APPROVED: spec - grounds: re
 assert_contains "$(rr_lib "ac_room_review_rulings '$rrfile'")" "SELF-APPROVED: spec - grounds: real approval" \
   "a real line-opening SELF-APPROVED still projects"
 
+# Room prose is bytes and the grammar is ASCII: a byte that is not UTF-8 (a
+# Latin-1 e acute) aborted every reader under a UTF-8 locale - the inbox read
+# empty and the turn-end guard lost every HANDBACK, fleet-wide.
+mkdir -p "$TMP/latin/a" "$TMP/latin/b"
+printf -- '- [2026-09-29T00:00:00Z] crewchief> caf\351 menu\n- [2026-09-29T00:00:01Z] crewchief> GATE: pick one\n' \
+  >"$TMP/latin/a/room.md"
+printf -- '- [2026-09-29T00:00:02Z] b-chief> HANDBACK: caf\351 done\n' >"$TMP/latin/b/room.md"
+latin() { LC_ALL=en_US.UTF-8 rr_lib "$1 '$TMP/latin/a/room.md' '$TMP/latin/b/room.md'"; }
+assert_eq "$(latin ac_room_pending)" "1" "a non-UTF-8 byte never aborts the pending count"
+assert_eq "$(latin ac_room_handback_families)" "b" "... nor hides a HANDBACK"
+assert_eq "$(latin ac_room_list_rows | LC_ALL=C cut -d $'\037' -f 1-3 | LC_ALL=C tr '\037\n' ':;')" "1:0:a;0:1:b;" \
+  "... nor empties the inbox"
+assert_contains "$(LC_ALL=en_US.UTF-8 rr_lib "ac_room_review_rulings '$TMP/latin/a/room.md'")" "GATE: pick one" \
+  "... nor the review projection"
+# An unreadable room stays a failure, never a count from the others: close and
+# the PARKED check both read no answer as pending.
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$TMP/latin/b/room.md"
+  rc=0; out="$(latin ac_room_pending 2>/dev/null)" || rc=$?
+  chmod 644 "$TMP/latin/b/room.md"
+  assert_eq "$rc:$out" "2:" "an unreadable room fails the count and prints none"
+fi
+
 # The paren-attribution form `DECIDED (<attr>):` (a parenthesis between the verb
 # and the colon, e.g. what a captain actually writes) settles a pending item,
 # exactly like the bare and `DECIDED <family>:` forms.

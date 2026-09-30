@@ -1929,7 +1929,7 @@ ac_solo_landing_check() {
       END { exit(found ? 0 : 1) }' "$rec"; then facts=yes; fi
   if [ -n "$scope" ]; then
     room="$(ac_room_file "$scope" 2>/dev/null || true)"
-    if [ -n "$room" ] && [ -f "$room" ] && awk -v landed="> LANDED: $id " -v unland="> UNLANDABLE: $id " '
+    if [ -n "$room" ] && [ -f "$room" ] && LC_ALL=C awk -v landed="> LANDED: $id " -v unland="> UNLANDABLE: $id " '
         /^- \[/ && (index($0, landed) || index($0, unland)) { found = 1; exit }
         END { exit(found ? 0 : 1) }' "$room"; then done=yes; fi
     line="knowledge loop: lessons=$lessons repo-knowledge=$facts landed-receipt=$done"

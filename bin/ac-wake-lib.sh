@@ -589,13 +589,39 @@ ac_room_review_rulings() {
   # room-snapshot.md for targeted surrounding context, never default reading.
   local file="$1"
   [ -f "$file" ] || return 0
-  awk '
+  LC_ALL=C awk '
     /^- \[[^]]*\] [^>]*> (GATE|ASK):/ { print; next }
     /^- \[[^]]*\] [^>]*> DECIDED( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { print; next }
     /^- \[[^]]*\] [^>]*> (TRIAGE|SELF-APPROVED):/ { print; next }
     /^- \[[^]]*\] [^>]*> GATE-PASSED \(auto\):/ { print; next }
     /^- \[[^]]*\] [^>]*> CORRECTION( \([^)]*\))?:/ { print; next }
   ' "$file"
+}
+
+ac_room_scan() {
+  # ac_room_scan <ere> <awk-body> <room-file>... - run <awk-body> over just the
+  # lines of the given rooms that match <ere>, with `file` naming each line's
+  # room where FILENAME would. The room set only grows and the turn-end guard
+  # reads all of it on every fleet stop, so grep, several times faster than
+  # awk at a scan, drops first every line no rule can match: <ere> must match
+  # a superset of <awk-body>'s rules, which still judge each surviving line.
+  # Both run in the C locale - room prose is bytes, a byte that is not UTF-8
+  # aborts the host awk under a UTF-8 locale, and the grammar is ASCII. A room grep
+  # cannot read fails the scan with nothing printed, as awk's own open failure
+  # did, so a caller reads no answer as pending, never as the others' count.
+  local ere="$1" body="$2" out
+  shift 2
+  # set +e: both statuses are judged below, whatever errexit the caller armed.
+  out="$(set +e; LC_ALL=C grep -a -H -E -- "$ere" "$@" | LC_ALL=C awk '
+    BEGIN { for (i = 1; i < ARGC; i++) { files[i] = ARGV[i]; delete ARGV[i] }; nfiles = ARGC - 1; at = 1 }
+    {
+      while (at <= nfiles && substr($0, 1, length(files[at]) + 1) != files[at] ":") at++
+      file = files[at]
+      $0 = substr($0, length(file) + 2)
+    }
+  '"$body" "$@"
+    s=("${PIPESTATUS[@]}"); [ "${s[0]}" -le 1 ] || exit 2; exit "${s[1]}")" || return
+  [ -z "$out" ] || printf '%s\n' "$out"
 }
 
 ac_room_pending() {
@@ -628,9 +654,9 @@ ac_room_pending() {
   # the whole file stays internally consistent. No actor name may contain `>` - ids
   # are [a-z0-9-] (task-lifecycle skill) and a family is [a-zA-Z0-9_-]
   # (ac-room.sh cmd_post) - so pinning it excludes no legitimate entry.
-  [ "$#" -gt 0 ] || { printf '0\n'; return 0; }   # no files: never awk's stdin
-  awk '
-    FILENAME != cur { total += (open > 0 ? open : 0); cur = FILENAME; open = 0 }
+  [ "$#" -gt 0 ] || { printf '0\n'; return 0; }   # no files: never grep's stdin
+  ac_room_scan '^- \[[^]]*\] [^>]*> (GATE|ASK|DECIDED)' '
+    file != cur { total += (open > 0 ? open : 0); cur = file; open = 0 }
     /^- \[[^]]*\] [^>]*> (GATE|ASK)( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { open++ }
     /^- \[[^]]*\] [^>]*> DECIDED( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { if (open > 0) open-- }
     END { print total + (open > 0 ? open : 0) }
@@ -684,12 +710,12 @@ ac_room_handback_families() {
   #
   # The family is the room file's parent directory - data/<family>/room.md,
   # ac-room.sh's layout. Portable multi-file bookkeeping: gawk's ENDFILE is not
-  # everywhere, so a file is flushed when FILENAME changes and the last at END.
+  # everywhere, so a file is flushed when its name changes and the last at END.
   # An empty room yields no records and so is never in handback - correct.
   [ "$#" -gt 0 ] || return 0
-  awk '
+  ac_room_scan '^- \[[^]]*\] [^>]*> (HANDBACK|DEMOTED|CLOSED)' '
     function fam(p,   n, a) { n = split(p, a, "/"); return (n >= 2 ? a[n - 1] : p) }
-    FILENAME != cur { if (cur != "" && hb) print fam(cur); cur = FILENAME; hb = 0 }
+    file != cur { if (cur != "" && hb) print fam(cur); cur = file; hb = 0 }
     /^- \[[^]]*\] [^>]*> HANDBACK:/ { hb = 1 }
     /^- \[[^]]*\] [^>]*> HANDBACK-REFUSED:/ { hb = 0 }
     /^- \[[^]]*\] [^>]*> (DEMOTED|CLOSED):/ { hb = 0 }
@@ -731,9 +757,10 @@ ac_room_list_rows() {
   # PENDING-CAPTAIN(1)+BLOCKED). Keying open/hb/last by FILENAME directly and
   # emitting from an ARGV walk in END sidesteps that: an untouched array
   # element reads as 0/"" - exactly an empty room's correct row - with no
-  # dependency on ever having read a line from it.
+  # dependency on ever having read a line from it. The C locale for the reason
+  # ac_room_scan gives.
   [ "$#" -gt 0 ] || return 0
-  awk '
+  LC_ALL=C awk '
     function fam(p,   n, a) { n = split(p, a, "/"); return (n >= 2 ? a[n - 1] : p) }
     /^- \[[^]]*\] [^>]*> (GATE|ASK)( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { open[FILENAME]++ }
     /^- \[[^]]*\] [^>]*> DECIDED( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { if (open[FILENAME] > 0) open[FILENAME]-- }
