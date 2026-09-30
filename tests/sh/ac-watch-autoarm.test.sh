@@ -17,7 +17,11 @@
 lab="$TMP/autoarm-bin"
 mkdir -p "$lab"
 cp "$BIN/ac-watch-autoarm.sh" "$lab/"
-for f in ac-lib.sh ac-ready.sh; do cp "$BIN/$f" "$lab/"; done
+for f in ac-lib.sh ac-harness.sh; do cp "$BIN/$f" "$lab/"; done
+# ac-ready.sh runs its verbs in src/ready.ts, which ac-bun.sh finds beside its
+# own bin/ - a copy here would find none and fail every watch-set.
+printf '#!/bin/sh\nexec "%s/ac-ready.sh" "$@"\n' "$BIN" >"$lab/ac-ready.sh"
+chmod +x "$lab/ac-ready.sh"
 hook="$lab/ac-watch-autoarm.sh"
 
 # stub_watch <line> [<line2> ...] - each invocation prints the next line and
@@ -275,13 +279,13 @@ assert_eq "$(cat "$TMP/watch.env.only")" "" \
   "... and never an AC_WATCH_ONLY, which would scope the fleet watcher"
 
 stub_watch_env 'report:t9'
-printf '## In flight\n- [ ] famA - a promoted family (repo: p, since 2026-07-27)\n' \
+printf '## In flight\n- [ ] famA - a promoted family (repo: p, since 2026-07-27)\n- [ ] famA-s1 epic:famA - a story (repo: p, since 2026-07-27)\n' \
   >"$AC_HOME/records/backlog.md"
 rc=0
 ( cd "$AC_HOME" && printf '{}' | AC_SCOPE=famA "$hook" >/dev/null 2>&1 ) || rc=$?
 assert_eq "$rc" "2" "the scoped arm still translates its close"
-assert_eq "$(cat "$TMP/watch.env.only")" "famA" \
-  "a roomchief arms with its own watch set"
+assert_eq "$(cat "$TMP/watch.env.only")" "famA,famA-s1" \
+  "a roomchief arms with its own watch set - its family and its in-flight stories"
 assert_eq "$(cat "$TMP/watch.env.skip")" "" \
   "... and never a skip: a scoped watcher exists to cover that family"
 
