@@ -605,7 +605,18 @@ output="$TMP/review.json"
 family=flow-v2
 caller="$family-implement"
 export VERIFY_EXPECT_ID="$caller-verify-codereview"
-mkdir -p "$AC_HOME/data/$family"
+mkdir -p "$AC_HOME/data/$family" "$AC_HOME/data/$caller" "$AC_HOME/data/sib-req/plan"
+printf 'plan rev 3, captain-approved\n' >"$AC_HOME/data/sib-req/plan/report.md"
+printf 'the implementer says it works\n' >"$AC_HOME/data/$caller/report.md"
+cat >"$AC_HOME/data/$caller/brief.md" <<EOF
+# Brief: $caller
+
+## Inputs
+- Accepted plan: $AC_HOME/data/sib-req/plan/report.md.
+- Requirements: $AC_HOME/data/sib-req/requirements.md (not written yet)
+
+You owe exactly one artifact next to this brief: $AC_HOME/data/$caller/report.md
+EOF
 cat >"$AC_HOME/data/$family/room.md" <<'EOF'
 # Room: flow-v2
 
@@ -677,6 +688,22 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Applicable room rulings:" \
   "canonical review reads the precomputed room ruling projection first"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Evidence root: $AC_HOME/data/$family" \
   "canonical review can resolve intent-named artifacts without repo-wide discovery"
+# The reviewed task's OWN brief and the artifacts it names are evidence too: an
+# epic story's --family is the epic, so its brief, the accepted requirements
+# and the captain-approved plan of a sibling family all sit OUTSIDE the
+# evidence root, and a one-line INTENT names none of them (lab pviam-p2,
+# 2026-09-30: 31 reviewer tool calls, none opened them).
+assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Task brief: $AC_HOME/data/$caller/brief.md" \
+  "the reviewer is handed the reviewed task's own brief"
+assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Named artifact: $AC_HOME/data/sib-req/plan/report.md" \
+  "...and every existing artifact that brief names, wherever it lives"
+case "$(cat "$VERIFY_PROMPT_CAPTURE")" in *"data/sib-req/requirements.md"*) \
+  fail "an artifact the brief names but that does not exist is not listed" ;; esac
+# The brief names the task's OWN report.md as the artifact it owes; once the
+# implementer has written it, listing it as an accepted input would hand the
+# author's claims to the independent verifier as authority (captain 2026-09-30).
+case "$(cat "$VERIFY_PROMPT_CAPTURE")" in *"Named artifact: $AC_HOME/data/$caller/"*) \
+  fail "files inside the reviewed task's own dir are never listed as accepted artifacts" ;; esac
 room_snapshot="$(find "$AC_HOME/data/$family/verify/codereview" -name room-snapshot.md -type f | head -n 1)"
 room_rulings="$(find "$AC_HOME/data/$family/verify/codereview" -name room-rulings.md -type f | head -n 1)"
 assert_file "$room_snapshot" "the review round preserves its room authority input"
@@ -708,9 +735,12 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "question, options, matching t
 # 552->600 (siblings by the same 48) for the workspace-boundary fence;
 # 600->690 (siblings by the same 90) for the authorization/privacy axis;
 # 690->750 (siblings by the same 60) for the defect-class-once rule.
+# 750->780 (siblings by the same 30) for the task brief and named-artifact
+# lines plus the rule to read them (the fixture names one artifact; a real
+# brief adds three words per artifact it names).
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 750 ] \
-  || fail "canonical review prompt exceeds its 750-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 780 ] \
+  || fail "canonical review prompt exceeds its 780-word scaffold budget: $scaffold_words"
 assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Reserve action=fix" \
   "fix is reserved for delivery-blocking findings; advisory items ride as no-op"
 # Bug-fix durability + anti-overreach: a fix claim is judged durable-vs-
@@ -909,8 +939,8 @@ assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "Review exactly: git diff $bas
 # rejections needed); the ledger payload itself stays excluded like INTENT.
 # +40 for the reviewed_paths coverage clause that backs a resolved_ids entry.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 860 ] \
-  || fail "history review prompt exceeds its 860-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 890 ] \
+  || fail "history review prompt exceeds its 890-word scaffold budget: $scaffold_words"
 
 # A previous-round ledger (the ac-ship review-agent shape) NARROWS round 2+ to
 # the interdiff scope: the previous entry's reviewed_ref
@@ -1034,8 +1064,8 @@ case "$(prompt_unwrapped "$VERIFY_PROMPT_CAPTURE")" in *"REJECTS this verdict: C
 # this bounds the PROSE, which is the part that drifts. +40 for the
 # reviewed_paths coverage clause, same as the legacy-shape budget above.
 scaffold_words="$(prompt_scaffold_words "$VERIFY_PROMPT_CAPTURE")"
-[ "$scaffold_words" -le 940 ] \
-  || fail "previous-round ledger review prompt exceeds its 940-word scaffold budget: $scaffold_words"
+[ "$scaffold_words" -le 970 ] \
+  || fail "previous-round ledger review prompt exceeds its 970-word scaffold budget: $scaffold_words"
 
 # --- A resolved_ids CLAIM IS HONOURED ONLY WHEN THE ROUND'S COVERAGE BACKS IT --
 # Until now a resolved_ids entry closed a prior finding on the reviewer's WORD.
@@ -2286,6 +2316,9 @@ export AC_VERIFY_SCOUT_TIMEOUT=2
 scout_family=flow-v2-scout
 caller="$scout_family-implement"
 export VERIFY_EXPECT_ID="$caller-verify-codereview" VERIFY_REF="$target"
+mkdir -p "$AC_HOME/data/$caller"
+printf '# Brief\n\n## Inputs\n- Accepted plan: %s/data/sib-req/plan/report.md\n' "$AC_HOME" \
+  >"$AC_HOME/data/$caller/brief.md"
 cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 {
   "rules": [{"when": "anything", "use": {"harness": "claude"}}],
@@ -2377,6 +2410,13 @@ assert_contains "$(cat "$sdir/prompt.md")" "Trace, do not skim" "the lane is tol
 # The reviewer never runs a lane, so it is shown each lane's label, not the
 # ~700-byte command line it is forbidden to run.
 assert_contains "$(cat "$jp")" "LANE 1 (codex gpt-5.6-sol)" "the reviewer sees each lane's label"
+case "$(cat "$jp")" in *"LANE 1 (codex gpt-5.6-sol):"*) fail "the label line must not end in the colon that introduced the withheld command" ;; esac
+# A lane judges "deviations from the stated intent" against the same accepted
+# inputs the reviewer holds, not against a one-line INTENT alone.
+assert_contains "$(cat "$sdir/prompt.md")" "Task brief: $AC_HOME/data/$caller/brief.md" \
+  "the lane is handed the reviewed task's own brief"
+assert_contains "$(cat "$sdir/prompt.md")" "Named artifact: $AC_HOME/data/sib-req/plan/report.md" \
+  "...and the artifacts it names"
 case "$(cat "$jp")" in *"--kind codereview-scout"*) fail "the reviewer prompt must not carry the lane command lines" ;; esac
 
 # NO SECOND LEASE - the whole point of running the lanes in the round's own
@@ -2567,6 +2607,9 @@ cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
 {"rules":[{"when":"x","use":{"harness":"claude"}}],
  "panes":{"codereview-scout":{"lanes":[{"harness":"claude","model":"m"},{"harness":"opencode","model":"n"}]}}}
 EOF
+mkdir -p "$AC_HOME/data/$caller"
+printf '# Brief\n\n## Inputs\n- Accepted plan: %s/data/sib-req/plan/report.md\n' "$AC_HOME" \
+  >"$AC_HOME/data/$caller/brief.md"
 env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" "$BIN/ac-verify.sh" codereview \
   --repo "$repo" --ref "$target" --family "$scout_family" --caller "$caller" \
   --base "$base" --intent "$intent" --output "$scout_out" >/dev/null 2>&1 \
@@ -2574,6 +2617,13 @@ env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" "$BIN/ac-verify.sh" codereview \
 jp="$(ls -d "$AC_HOME/data/$scout_family/verify/codereview"/*/ | newest_round_dir)prompt.md"
 assert_contains "$(cat "$jp")" "INDEPENDENT SCOUT LANES" \
   "the lanes must reach the prompt for a caller with no AC_HOME - that is every production caller"
+# The task-dir lookup must resolve against the fleet home the facade derived,
+# not an AC_HOME a crewmate pane never has - or the epic-story round this
+# block exists for silently loses it.
+assert_contains "$(cat "$jp")" "Task brief: $AC_HOME/data/$caller/brief.md" \
+  "the brief reaches the prompt for a caller with no AC_HOME"
+assert_contains "$(cat "$jp")" "Named artifact: $AC_HOME/data/sib-req/plan/report.md" \
+  "...and so do the artifacts it names"
 # A claude lane stays ONE-SHOT: as a pane SESSION it would share the lease's
 # Stop hook with the reviewer and every other claude lane, so one finishing
 # ends the others' turns mid-pass.
