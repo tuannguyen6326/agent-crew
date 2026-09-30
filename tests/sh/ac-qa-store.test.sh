@@ -112,4 +112,11 @@ assert_file "$sd.labels.tsv" "store-label writes beside that store"
 out="$(cd "$keyrepo" && "$BIN/ac-qa.sh" store-calibration)"
 assert_eq "$(jq -r .n <<<"$out")" "1" "calibration pairs the installed history with the label"
 
+# An install that dies inside its lock (an unsafe path in the current store)
+# releases it, so the next install is not refused by a dead holder's lock.
+: >"$sd/$(printf 'bad\tname')"
+out="$(cd "$keyrepo" && "$BIN/ac-qa.sh" store-install "$cand" 2>&1)" && fail "an unsafe path in the store must refuse the install"
+assert_contains "$out" "unsafe relative path" "the refusal names the unsafe path"
+assert_no_file "$sd.lock" "a refused install leaves no lock behind"
+
 pass

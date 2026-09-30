@@ -1808,6 +1808,7 @@ cmd_case() {
     -) ;;
     *$'\t'*) ac_die "--evidence must not contain a tab: $ev" ;;
     *$'\n'*) ac_die "--evidence must not contain a newline: $ev" ;;
+    *$'\037'*) ac_die "--evidence must not contain a unit separator (\\037): $ev" ;;
   esac
   # FINDING AUTHORITY (header-owned): asserting a DEFECT is the act that turns a
   # statement into a fixer's work, so it is the only act bound here - a park, a
@@ -1866,12 +1867,18 @@ cmd_case() {
   # a service the declaration does not name, docker absent - parks WITH why.
   # Scrubbed like cmd_visual's note and for the same reason: the ledger rewrite
   # below must never run on a value that would break the row it rewrites.
-  note="$(printf '%s' "$note" | tr '\t\n' '  ')"
+  # \037 too: the pass gate and ac-verify read these columns US-separated. The
+  # C locale because a UTF-8 tr stops at the first byte that is not UTF-8.
+  note="$(printf '%s' "$note" | LC_ALL=C tr '\t\n\037' '   ')"
   # Scrubbed AFTER the -f/-x checks resolved the real path, for the same reason
   # the note is: the ledger rewrite below must never run on a value that would
   # break the row it rewrites.
-  auth="$(printf '%s' "$auth" | tr '\t\n' '  ')"
-  repro="$(printf '%s' "$repro" | tr '\t\n' '  ')"
+  auth="$(printf '%s' "$auth" | LC_ALL=C tr '\t\n\037' '   ')"
+  repro="$(printf '%s' "$repro" | LC_ALL=C tr '\t\n\037' '   ')"
+  # --confidence and --boundary ride the same row, the boundary scrubbed only
+  # after the receipt check above compared it verbatim.
+  conf="$(printf '%s' "$conf" | LC_ALL=C tr '\t\n\037' '   ')"
+  boundary="$(printf '%s' "$boundary" | LC_ALL=C tr '\t\n\037' '   ')"
   # Locked read-modify-write: supervised case subprocesses may finish
   # concurrently inside the one QA pane. Without the lock, two parallel writers
   # lose rows. Last write per case id wins (re-runs update the row).
@@ -2328,12 +2335,16 @@ cmd_store_install() {
   mkdir -p "$(dirname "$dest")"
   lock="$dest.lock"
   ac_lock_acquire "$lock" 30 || ac_die "store-install lock timeout for $dest"
-  current_manifest="$(mktemp)"
+  # Every exit past here releases the lock - a failed mktemp or an unsafe path
+  # in the current store dies inside it. Script-scope names: the trap may run
+  # after this function has returned.
+  store_lock="$lock" store_manifest=""
+  trap 'rm -f "$store_manifest"; ac_lock_release "$store_lock"' EXIT
+  store_manifest="$(mktemp)"
+  current_manifest="$store_manifest"
   qa_store_manifest_build "$dest" "$current_manifest"
   current_sha="$(ac_config_sha256 "$current_manifest")"
   if [ "$current_sha" != "$base_sha" ]; then
-    rm -f "$current_manifest"
-    ac_lock_release "$lock"
     ac_die "store-install conflict: candidate base=$base_sha current=$current_sha; review against the newer store"
   fi
   stage="$(mktemp -d "$(dirname "$dest")/.$(basename "$dest").curation.XXXXXX")"
@@ -2346,6 +2357,7 @@ cmd_store_install() {
   mv "$stage" "$dest"
   rm -f "$current_manifest"
   ac_lock_release "$lock"
+  trap - EXIT
   printf 'QA-STORE-INSTALLED: %s base=%s%s\n' "$dest" "$base_sha" \
     "${previous:+ previous=$previous}"
 }

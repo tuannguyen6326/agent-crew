@@ -2677,6 +2677,24 @@ out="$(LC_ALL=en_US.UTF-8 "$QA" finish passed 2>&1)" \
   && fail "a gradeless row after a non-UTF-8 byte must still refuse the pass"
 assert_contains "$out" "case U8-2 has no valid grade" "...on that row's own check"
 "$QA" finish cancelled >/dev/null
+# --confidence and --boundary are scrubbed like --note: a TAB or newline added
+# a column or a row. A US byte (\037) in a free-text column split the gate's
+# US-separated read, so an honest pass was refused.
+"$QA" start --target "$sha_gn" --task scrub-col >/dev/null
+rdsc="$repo/.crew/qa/$(readlink "$repo/.crew/qa/current")"
+mk_png "$TMP/sc.png"
+"$QA" visual "$TMP/sc.png" >/dev/null
+qa_case SC-1 pass api --grade A --confidence "$(printf 'high\tsure')" --note "$(printf 'a\037b')" >/dev/null
+assert_eq "$(awk -F'\t' '{print NF}' "$rdsc/cases.tsv")" "12" "a TAB in --confidence adds no column"
+prepare_pass
+assert_contains "$("$QA" finish passed 2>&1)" "QA_VERDICT=passed" "a US byte in a note never refuses an honest pass"
+"$QA" start --target "$sha_gn" --task scrub-bnd >/dev/null
+rdsb="$repo/.crew/qa/$(readlink "$repo/.crew/qa/current")"
+ensure_default_testplan
+"$QA" case SC-2 unverifiable --tier api --boundary "$(printf 'http\nx')" --note 'no boundary reachable' >/dev/null
+assert_eq "$(awk -F'\t' '{print NF}' "$rdsb/cases.tsv") $(wc -l <"$rdsb/cases.tsv" | tr -d ' ')" "12 1" \
+  "a newline in --boundary adds no column and no row"
+"$QA" finish cancelled >/dev/null
 
 # --- step --note: awk escapes never reintroduce the scrubbed control chars --------
 # The scrub removes REAL tabs/newlines; the ledger rewrite must not let a
