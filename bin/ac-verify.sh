@@ -1050,6 +1050,30 @@ pane_result="$round_dir/pane-result.ndjson"
 transcript_copy="$round_dir/transcript.jsonl"
 [ -z "$history" ] || cp "$history" "$round_dir/input-history.json"
 
+evidence_block() {
+  # evidence_block - what a round may read outside the repository. The
+  # evidence root is the --family dir; for an epic story that is the EPIC, so
+  # the story's own brief and what its Inputs and Scope amends name (accepted
+  # requirements, a captain-approved plan, a sibling brief) all sit outside it,
+  # and a one-line INTENT names none of them - such a round judged "every
+  # accepted requirement" against the intent line and the epic room alone (lab
+  # pviam-p2, 2026-09-30). Paths are read off the brief itself, existing files
+  # only, so the round still inventories nothing.
+  local tdir brief esc p
+  printf 'Evidence root: %s\n' "$data_dir/$family"
+  tdir="$(ac_task_dir "$caller" 2>/dev/null)" || return 0
+  brief="$tdir/brief.md"
+  [ -f "$brief" ] || return 0
+  printf 'Task brief: %s\n' "$brief"
+  esc="$(printf '%s' "$data_dir" | sed 's/[.]/\\./g')"
+  { grep -oE "$esc/[A-Za-z0-9_./-]+" "$brief" 2>/dev/null || true; } | sed 's/[.:,;]*$//' | sort -u \
+    | while IFS= read -r p; do
+        if [ "$p" != "$brief" ] && [ -f "$p" ]; then printf 'Named artifact: %s\n' "$p"; fi
+      done
+  return 0
+}
+evidence="$(evidence_block)"
+
 case "$kind" in
   codereview)
     room_snapshot="$round_dir/room-snapshot.md"
@@ -1145,7 +1169,7 @@ Exact reviewed ref: $sha
 Base ref: $base_sha
 Room snapshot: $room_snapshot
 Applicable room rulings: $room_rulings
-Evidence root: $data_dir/$family
+$evidence
 $scope_review
 
 Read room rulings first; empty means none. Inspect the full snapshot
@@ -1163,8 +1187,9 @@ $scope_duty
 Assess risky-behavior coverage; do not run tests, lint, builds, or type checks.
 Ignore pending test/document/lint/push/PR/CI
 outcomes; later gates own them.
-Resolve only artifacts named by INTENT under the evidence root; do not inventory
-unrelated task history.
+Read the task brief and named artifacts above - the accepted requirements and
+gate decisions you check are stated there; resolve only what they or INTENT
+name, never unrelated task history.
 When a finding materially depends on external behavior, verify the authoritative
 pinned version; if unsettled, use action=ask-user.
 
@@ -1541,8 +1566,11 @@ not bound one. Never hunt the machine for a tool.
 Repository: $main_repo
 Exact reviewed ref: $sha
 Base ref: $base_sha
+$evidence
 $scope_review
-${scout_round2}Your working directory $lease is checked out at $sha: read files there, or
+${scout_round2}The evidence paths above are accepted inputs outside the repository - read
+them; "the stated intent" includes the brief's requirements and acceptance
+criteria. Your working directory $lease is checked out at $sha: read files there, or
 with git show $sha:<path>, never under the Repository path, whose own checkout
 may sit on another branch. Project instruction files (CLAUDE.md / AGENTS.md)
 in this worktree may be neutralized stubs; their true content is
@@ -1650,7 +1678,7 @@ if [ "$kind" = codereview ] && [ "${scout_count:-0}" -gt 0 ] && [ -s "$scout_dir
     printf 'their own panes and run WHILE you review:\n'
     printf '  bash %s/launch-lanes.sh\n' "$scout_dir"
     printf 'Never run a lane yourself and never hand one to a subagent. The lanes:\n'
-    grep '^LANE ' "$scout_dir/commands.txt"
+    grep '^LANE ' "$scout_dir/commands.txt" | sed 's/:$//'
     printf '\n'
     printf 'Then do your own review of the diff.\n\n'
     printf 'Then COLLECT, in the FOREGROUND, never in the background, with a\n'

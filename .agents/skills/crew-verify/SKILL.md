@@ -22,8 +22,11 @@ you do next.
   Set it first; never let it default.
 - You know the INTENT file: the brief (`data/<family>/.../brief.md`) for a
   crewmate, or a file holding the order verbatim for a solo slice.
-  The reviewer judges against it and nothing else, so an intent that does not
-  say what the change is for buys a review of the wrong question.
+  The reviewer judges against it, the `--caller` task's own brief and the
+  artifacts that brief names (accepted requirements, an approved plan, a
+  sibling brief - listed in its prompt as `Task brief:` / `Named artifact:`),
+  and nothing else, so an intent that does not say what the change is for
+  buys a review of the wrong question.
 - You know your IDENTITY: `--family` is the task family, `--caller` is the id
   that signs the round (`$AC_CREW_ID` in a crewmate session, the self-task id in
   a solo session), `--output` is the durable result the round publishes.
