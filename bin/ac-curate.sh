@@ -341,7 +341,7 @@ curate_registry_lines() {
 }
 
 curate_projects() {
-  local projects proj_dir line name pd flags=0
+  local projects proj_dir name pd flags=0
   projects="$(ac_records_dir)/projects.md"
   printf '== projects: correctness-audit (propose-only; deletion stays a captain call) ==\n'
   if [ ! -f "$projects" ]; then
@@ -349,10 +349,7 @@ curate_projects() {
     return 0
   fi
   proj_dir="$(ac_projects_dir)"
-  while IFS=$'\t' read -r _ name line; do
-    case "$line" in
-      *ASSUMED* | *assumed*) printf '  FLAG %s: delivery mode is ASSUMED - confirm with the captain\n' "$name"; flags=$((flags + 1)) ;;
-    esac
+  while IFS=$'\t' read -r _ name _; do
     pd="$proj_dir/$name"
     if [ ! -e "$pd" ]; then
       printf '  FLAG %s: registered but projects/%s is absent - dead project? (propose drop; deletion is a captain call)\n' "$name" "$name"
