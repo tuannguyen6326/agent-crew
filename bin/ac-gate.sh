@@ -204,8 +204,8 @@
 # file it names, so --tail can still point back to it once the gate settles.
 # ac-gate.sh opens the board PER RUN, ac-ship-watch style:
 # labelled ac-gate-watch:<family>, in the family's workspace, family-pinned
-# --tail, closed by the run's EXIT trap (watch_open owns the contract;
-# AC_GATE_WATCH=off disables).
+# --tail, closed by the exit of the family's last live run (watch_open owns the
+# contract; AC_GATE_WATCH=off disables).
 #
 # BUSY DECLARATION (skip-grace-too-short-for-a-chief-inside-a-long-synchronous-gate,
 # 2026-07-26): a positional-mode gate blocks its CALLER - typically the family's
@@ -1076,27 +1076,51 @@ unlock_family() {
 }
 
 leave_family() {
-  # This run's marker is its own; the busy declaration is the FAMILY's, so only
-  # the family's last live holder - a gate run or a verifier call - clears it
-  # (see BUSY DECLARATION in the header). Under the family lock, so a run
-  # stamping its marker meanwhile is either seen here or declares after this
-  # clear. A dead holder's mark is swept on the way: per-run names are never
-  # overwritten by a later run.
+  # This run's marker is its own; the gate board and the busy declaration are
+  # the FAMILY's, so only the family's last live gate run retires the board,
+  # and only its last live holder - a gate run or a verifier call - clears the
+  # declaration (see BUSY DECLARATION in the header). Under the family lock, so
+  # a run stamping its marker meanwhile is either seen here or starts after
+  # this exit. A dead holder's mark is swept on the way: per-run names are
+  # never overwritten by a later run. A maintenance run has no family: it
+  # retires the board it opened.
+  local m live=""
   rm -f "$gate_running"
-  [ -n "$busy_decl" ] || return 0
+  if [ -z "$busy_decl" ]; then watch_retire; return 0; fi
   lock_family
+  for m in "$data_dir/$family"/.gate-running.*; do
+    [ -f "$m" ] || continue
+    if ac_pid_alive "$(ac_meta_get "$m" pid)"; then live=1; break; fi
+  done
+  [ -n "$live" ] || watch_retire
   ac_chief_busy_held "$(ac_state_dir)" "$family" "$data_dir/$family" || rm -f "$busy_decl"
   unlock_family
+}
+
+watch_retire() {
+  # The board this run opened, or - a family run that reused another's board -
+  # the family's board by its label. Never fails the exit.
+  local ses p
+  if [ -n "$watch_pane" ]; then
+    herdr_cli pane close "$watch_pane" >/dev/null 2>&1 || true
+    return 0
+  fi
+  [ -n "$busy_decl" ] || return 0
+  [ "${AC_GATE_WATCH:-auto}" != off ] && command -v herdr >/dev/null 2>&1 || return 0
+  ses="${AC_HERDR_SESSION:-$(ac_config_read herdr-session default)}"
+  for p in $(herdr --session "$ses" pane list 2>/dev/null \
+    | jq -r --arg l "ac-gate-watch:$family" '.result.panes[]? | select(.label == $l) | .pane_id' 2>/dev/null); do
+    herdr --session "$ses" pane close "$p" >/dev/null 2>&1 || true
+  done
 }
 # The running marker, observation descriptor, tmp outputs and the run's own gate
 # board are transient and cleared on every trappable exit, the busy declaration
 # on the family's last one - measured: bash runs an EXIT-only trap on TERM and
 # INT, not on KILL, which is exactly why the declaration also carries its own
-# bound. The board pane closes with the run, ac-ship-watch style (watch_open owns
-# the contract); a REUSED live board never lands in watch_pane, so another run's
-# board is never taken. The prompt file and settled second-chief artifacts are
-# kept.
-trap 'leave_family 2>/dev/null || true; rm -f "$obsdesc" "$tmp_out" "$tmp_canonical" "$tmp_context" 2>/dev/null; [ -z "$watch_pane" ] || herdr_cli pane close "$watch_pane" >/dev/null 2>&1 || true' EXIT
+# bound. The board pane closes with the family's last live run (watch_open owns
+# the contract), whichever run opened it. The prompt file and settled
+# second-chief artifacts are kept.
+trap 'leave_family 2>/dev/null || true; rm -f "$obsdesc" "$tmp_out" "$tmp_canonical" "$tmp_context" 2>/dev/null' EXIT
 
 helper="${AC_PANE_AGENT:-$(dirname "$0")/ac-pane-agent.sh}"
 
@@ -1138,12 +1162,13 @@ watch_open() {
   # always-open fleet board): the tab is labelled
   # ac-gate-watch:<family>, lands in the FAMILY's workspace beside the family's
   # crew tabs (ac-backend.sh FAMILY WORKSPACE GROUPING), tails THIS family's
-  # gates only, and is RETIRED with the run - the EXIT trap closes the pane
-  # recorded in watch_pane (the tail loop itself still never self-closes, and
-  # still takes no --self-pane). Idempotent per family: an existing LIVE board
-  # is reused and stays out of watch_pane, so a concurrent same-family run's
-  # board is never closed from here; a dead one is closed and replaced. Never
-  # fails the run; disabled with AC_GATE_WATCH=off.
+  # gates only, and is RETIRED with the family's last live run - that run's
+  # exit (leave_family, under the family lock) closes it, by the pane recorded
+  # in watch_pane when it opened the board, else by the board's label (the
+  # tail loop itself still never self-closes, and still takes no --self-pane).
+  # Idempotent per family: an existing LIVE board is reused and stays out of
+  # watch_pane; a dead one is closed and replaced. Never fails the run;
+  # disabled with AC_GATE_WATCH=off.
   local ses ws out p home watch_label stale
   [ "${AC_GATE_WATCH:-auto}" = off ] && return 0
   command -v herdr >/dev/null 2>&1 || return 0
@@ -1167,7 +1192,7 @@ watch_open() {
   # one - the exact prompt plus the bytes the engine emits - not the row
   # dashboard. --family pins it to THIS family so a concurrent other-family
   # gate never steals the tail. Still NO --self-pane: the close belongs to the
-  # run's EXIT trap, not to a promise tail_loop cannot perform.
+  # family's last run's exit, not to a promise tail_loop cannot perform.
   herdr --session "$ses" pane run "$p" \
     "AC_HOME=$(printf '%q' "$home") '$bin_dir/ac-gate-watch.sh' --tail --family $(printf '%q' "$family")" >/dev/null 2>&1 || true
   watch_pane="$p"
