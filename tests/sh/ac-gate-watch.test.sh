@@ -191,4 +191,20 @@ hold_close duo-holder "$HOLD_PID"
 case "$out" in *"2 active"*) ;; *) fail "two live runs of one family must both count: $out" ;; esac
 case "$out" in *spec*plan*|*plan*spec*) ;; *) fail "both runs of the family must render: $out" ;; esac
 
+# 13. The dashboard closes itself on IDLE, never on age: AC_GATE_WATCH_IDLE
+#     seconds with no active gate close it, and a live gate keeps it open
+#     however old its marker is (mk_active's are months old).
+board_state() { # board_state <seconds> - "open" or "closed" after that long
+  local p
+  AC_GATE_WATCH_IDLE=1 "$W" --interval 1 >/dev/null 2>&1 &
+  p=$!
+  sleep "$1"
+  if kill -0 "$p" 2>/dev/null; then kill "$p"; wait "$p" 2>/dev/null; echo open; else echo closed; fi
+}
+rm -f "$AC_HOME"/data/*/.gate-running*
+mk_active aged spec 1 codex 16 "PROMPT-AGED" "aged-activity"
+assert_eq "$(board_state 3 2>/dev/null)" "open" "a live gate keeps the board open however old its marker"
+rm -f "$AC_HOME"/data/*/.gate-running*
+assert_eq "$(board_state 5 2>/dev/null)" "closed" "with no active gate the board closes after AC_GATE_WATCH_IDLE"
+
 pass
