@@ -278,7 +278,7 @@ cmd_handoff() {
   [ -f "$backlog" ] || ac_die "no parent backlog at $backlog"
 
   # VALIDATE EVERY ITEM FIRST - nothing is written until all of them pass.
-  local moving="" ids=""
+  local moving="" ids="" rc
   for item in "$@"; do
     found="$(awk -v id="$item" '
       /^## / { sec = substr($0, 4); next }
@@ -293,14 +293,26 @@ cmd_handoff() {
     case "$line" in
       *epic:*) ac_die "'$item' belongs to an epic - moving it would strand its dependents in a ledger that cannot see it satisfied" ;;
     esac
-    awk -v id="$item" '
-      $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { next }
-      /blocked-by:/ {
-        bb = $0; sub(/.*blocked-by:[ ]*/, "", bb); sub(/ - .*/, "", bb)
-        n = split(bb, a, ",")
-        for (i = 1; i <= n; i++) if (a[i] == id) exit 1
+    # The dependents are read by the backlog grammar's own blockers field
+    # (src/backlog.ts); a blocked-by it cannot read may name the item too, so
+    # a malformed one that mentions it refuses until the line is fixed.
+    rc=0
+    awk -v id="$item" "$AC_DONELINE_AWK"'
+      BEGIN { w[id] }
+      /^- \[[ x]\] / {
+        ac_doneline($0, o)
+        if (o["id"] in w) next
+        n = split(o["blockers"], a, ",")
+        for (i = 1; i <= n; i++) if (a[i] in w) exit 3
+        if (o["blockers_malformed"] != "" && index($0, id)) exit 4
       }
-    ' "$backlog" || ac_die "'$item' is named in another line's blocked-by: - moving it would strand that dependent"
+    ' "$backlog" || rc=$?
+    case "$rc" in
+      0) ;;
+      3) ac_die "'$item' is named in another line's blocked-by: - moving it would strand that dependent" ;;
+      4) ac_die "'$item' may be named in a malformed blocked-by: - fix that line first (docs/backlog.md)" ;;
+      *) ac_die "cannot read $backlog to check '$item' for dependents - nothing moved" ;;
+    esac
     moving="$moving$line
 "
     ids="${ids:+$ids,}$item"
