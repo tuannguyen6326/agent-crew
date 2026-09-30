@@ -257,4 +257,40 @@ printf -- '- [x] lastrow - written without a final newline (merged 2026-08-01)' 
 grep -qxF -- '- [x] lastrow - written without a final newline (merged 2026-08-01)' "$ledger" \
   || fail "a write must keep the unterminated last row"
 
+# ---- an argument that is not UTF-8 refuses: its bytes arrive replaced by
+#      U+FFFD, and writing that would put text no caller typed into the ledger.
+cp "$ledger" "$TMP/before-bytes.md"
+assert_fails_with "not valid UTF-8" -- "$BIN/ac-task.sh" add latinrow "$(printf 'caf\351')"
+cmp -s "$TMP/before-bytes.md" "$ledger" || fail "a refused argument must not touch the file"
+
+# ---- hold writes a line the parser reads as held, whatever blanks or checkbox
+#      the row carries, and a re-hold finds the token it wrote.
+awk '{ print } /^## Queued/ { print "- [ ]  spaced - two blanks before the id"; print "- [x] ticked - a ticked row outside Done" }' \
+  "$ledger" >"$TMP/odd.md" && mv "$TMP/odd.md" "$ledger"
+for r in spaced ticked; do
+  "$BIN/ac-task.sh" hold "$r" >/dev/null || fail "hold $r"
+  assert_contains "$("$BIN/ac-ready.sh")" "HELD   $r" "hold on $r reads HELD"
+  assert_contains "$("$BIN/ac-task.sh" hold "$r")" "already" "a re-hold on $r finds its token"
+  assert_contains "$("$BIN/ac-task.sh" unhold "$r")" "ok:" "unhold releases $r"
+done
+
+# ---- a ledger missing the section a verb writes into refuses and writes
+#      nothing: the shell printed the ERROR, then wrote the row above every
+#      section and printed ok.
+printf '## Done\n- [x] only - done (merged 2026-08-01)\n' >"$TMP/nosec.md"
+cp "$ledger" "$TMP/keep.md"; cp "$TMP/nosec.md" "$ledger"
+assert_fails_with "no 'queued' section" -- "$BIN/ac-task.sh" add nosecrow 'x'
+cmp -s "$TMP/nosec.md" "$ledger" || fail "a ledger with no Queued section must not be written"
+cp "$TMP/keep.md" "$ledger"
+
+# ---- a read-only ledger refuses the write, as the copy-then-write publish
+#      always did. Skipped under root, which writes through chmod.
+if [ "$(id -u)" != 0 ]; then
+  chmod 444 "$ledger"
+  assert_fails_with "cannot write" -- "$BIN/ac-task.sh" add rorow 'x'
+  chmod 644 "$ledger"
+  grep -q rorow "$ledger" && fail "a read-only ledger must not be written"
+  assert_eq "$(ls -A "$AC_HOME/records" | grep -c 'backlog.md\.[0-9]')" "0" "a refused write leaves no temp file"
+fi
+
 pass

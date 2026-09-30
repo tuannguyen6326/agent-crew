@@ -231,7 +231,7 @@ test("contractLint judges each closed vocabulary and the two outlawed combinatio
     ["flow:agile", ["flow:agile invalid - want direct|staged"]],
     ["mode:ship", ["mode:ship invalid - want crew-ship|direct-pr|local-only|feature-pr"]],
     ["rev:maybe", ["rev:maybe invalid - want yes|no"]],
-    // Delegation-by-click was dropped when chief judgment was named the error source.
+    // qa has no `auto`: chief judgment decides it, never a click.
     ["qa:auto", ["qa:auto invalid - want yes|no"]],
     ["promote:yes", ["promote:yes invalid - want no (always is the default and is never written)"]],
     ["flow:staged rev:no", [STAGED]],
@@ -295,6 +295,21 @@ test("lockAcquire and ac_lock_acquire exclude each other and reclaim alike", asy
       expect([grace, side, got]).toEqual([grace, side, want]);
       rmSync(lock, { recursive: true, force: true });
     }
+  }
+  // A stale dir that cannot be removed is waited on and refused, never thrown.
+  for (const side of ["ts", "bash"]) {
+    mkdirSync(lock);
+    writeFileSync(join(lock, "pid"), `${gone}\n`);
+    chmodSync(lock, 0o555);
+    let got: string;
+    try {
+      got = side === "ts" ? (lockAcquire(lock, 0) ? "got" : "refused") : acquire("0");
+    } catch (e) {
+      got = `threw ${(e as { code?: string }).code}`;
+    }
+    chmodSync(lock, 0o755);
+    expect([side, got]).toEqual([side, "refused"]);
+    rmSync(lock, { recursive: true, force: true });
   }
   // Release is owner-checked: another live holder's dir survives both.
   for (const side of ["ts", "bash"]) {

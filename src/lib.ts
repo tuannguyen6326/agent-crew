@@ -3,8 +3,8 @@
 // port calls it. Each one keeps its bash original's observable contract (the
 // same stderr shape, exit status and homeless answer), because callers of a
 // ported bin/ac-*.sh entry cannot tell which language answered them. One
-// helper is no twin: contractLint, whose last shell caller was ported, is the
-// delivery-contract judge itself.
+// helper is no twin: contractLint is the delivery-contract judge itself, with
+// no shell original.
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -135,7 +135,11 @@ export function lockAcquire(dir: string, timeout: number): boolean {
       break;
     } catch {}
     if (lockStale(dir)) {
-      rmSync(dir, { recursive: true, force: true });
+      // A dir that will not go is waited on like a live holder's, so an
+      // unremovable one times out instead of spinning or throwing.
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
       if (!existsSync(dir)) continue;
     }
     if (waited >= timeout) return false;

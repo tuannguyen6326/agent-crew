@@ -3,9 +3,8 @@
 // that execs this file through bin/ac-bun.sh); THIS header is the
 // authoritative spec for the verbs, the lock, the body block and the archives.
 // The LINE grammar itself stays owned by docs/backlog.md + src/backlog.ts, and
-// the contract vocabulary by ac_contract_lint (contractLint in src/lib.ts is
-// its held twin). This module EMITS what they parse and never invents a second
-// dialect.
+// the contract vocabulary by contractLint (src/lib.ts). This module EMITS what
+// they parse and never invents a second dialect.
 //
 //   ac-task.sh add <id> <one-line> [--contract '<tokens>'] [--repo <name>]
 //   ac-task.sh start <id>                 # Queued -> In flight, stamps `since`;
@@ -17,15 +16,22 @@
 //   ac-task.sh prune [--keep <n>]         # Done tail -> dated archive
 //
 // Exit status: 0 on an ok: or already: receipt, 1 on a refusal (ERROR: on
-// stderr, nothing written), 2 on a missing or unknown verb (this text).
+// stderr, nothing written), 2 on a missing or unknown verb (this text). A
+// verb signalled while it holds the lock finishes its write, releases the
+// lock and exits 128 + the signal number.
+//
+// Arguments must be UTF-8 text: Bun decodes argv with replacement, so bytes
+// that are not UTF-8 arrive as U+FFFD, and an argument carrying one is refused
+// rather than written as text no caller typed.
 //
 // THREE PROPERTIES ARE THE POINT:
 //
 // 1. LOCKED ATOMIC WRITES. Every verb takes the advisory lock
 //    `records/.backlog.md.lock` (the lock dir ac_lock_acquire takes, through
 //    its twin lockAcquire; AC_TASK_LOCK_TIMEOUT secs, default 10), RE-READS
-//    the file inside it, and publishes by tmp+rename with the ledger's own
-//    mode. Several live sessions measurably write one ledger in a day and the
+//    the file inside it, and publishes by tmp+rename, the tmp a `cp -p` of
+//    the ledger so its mode, group, ACL and xattrs survive. Several live
+//    sessions measurably write one ledger in a day and the
 //    harness Edit path has no guard; a refused write changes nothing.
 //
 // 2. BODY OFF THE LINE. A row's narrative rides as INDENTED lines (two spaces)
@@ -54,7 +60,7 @@
 // The chief-only fence is unchanged: a scoped session is refused by
 // bin/ac-ledger-guard.sh whichever path it writes through.
 
-import { appendFileSync, chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { acDoneline, records } from "./backlog.ts";
 import { contractLint, enterCaller, lockAcquire, lockRelease, recordsDir } from "./lib.ts";
@@ -63,6 +69,8 @@ import { contractLint, enterCaller, lockAcquire, lockRelease, recordsDir } from 
 // argument written into it or echoed back from it.
 const bytes = (s: string) => Buffer.from(s, "latin1");
 const say = (s: string) => writeSync(1, bytes(`${s}\n`));
+// A path is a UTF-8 string, so it is shown as its UTF-8 bytes.
+const shown = (p: string) => Buffer.from(p, "utf8").toString("latin1");
 
 function fail(msg: string): never {
   writeSync(2, bytes(`ERROR: ${msg}\n`));
@@ -96,24 +104,43 @@ function load(): void {
   try {
     isFile = statSync(ledger).isFile();
   } catch {}
-  if (!isFile) fail(`no ledger at ${ledger}`);
+  if (!isFile) fail(`no ledger at ${shown(ledger)}`);
   let text: string;
   try {
     text = readFileSync(ledger).toString("latin1");
   } catch {
-    fail(`cannot read ${ledger}`);
+    fail(`cannot read ${shown(ledger)}`);
   }
   // The parser's own line split: every reader already stopped a line at its
   // first NUL, so a write keeps exactly the text they all saw.
   L = records(text);
 }
 
+// A failed write names its file and leaves no temp copy behind.
+function writing(path: string, act: () => void): void {
+  try {
+    act();
+  } catch (e) {
+    fail(`cannot write ${shown(path)}: ${(e as { code?: string }).code ?? e}`);
+  }
+}
+
+// `cp -p` first, then the content into that copy: the published ledger keeps
+// its mode, group, ACL and xattrs, the copy is never readable wider than the
+// ledger, and a read-only ledger refuses the write.
 function save(): void {
   const tmp = `${ledger}.${process.pid}`;
-  const mode = statSync(ledger).mode & 0o7777;
-  writeFileSync(tmp, bytes(L.length ? L.map((l) => `${l}\n`).join("") : "\n"));
-  chmodSync(tmp, mode);
-  renameSync(tmp, ledger);
+  writing(ledger, () => {
+    try {
+      const cp = Bun.spawnSync(["cp", "-p", ledger, tmp]);
+      if (cp.exitCode !== 0) throw new Error(cp.stderr.toString().trim());
+      writeFileSync(tmp, bytes(L.length ? L.map((l) => `${l}\n`).join("") : "\n"));
+      renameSync(tmp, ledger);
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw e;
+    }
+  });
 }
 
 let rowI = -1;
@@ -167,7 +194,7 @@ function sectionTail(want: "inflight" | "queued" | "done"): number {
 // parser's own position rule (src/backlog.ts), so a quoted or out-of-run shape
 // is never found here.
 function splitHold(l: string): { pre: string; grp: string; post: string } | null {
-  const head = /^- \[ \] [^ \t]+/.exec(l);
+  const head = /^- \[[ x]\] [^ \t]+/.exec(l);
   if (!head) return null;
   let at = head[0].length;
   for (;;) {
@@ -231,7 +258,6 @@ function stampSince(l: string): string {
   return `${l.slice(0, k)}(repo: ${grp}, since ${today})${after}`;
 }
 
-// Flag values, each flag taking the word after it; any other word refuses.
 function flags(words: string[], known: string[]): Map<string, string> {
   const got = new Map<string, string>();
   for (let i = 0; i < words.length; i += 2) {
@@ -318,8 +344,9 @@ function hold(id = "", ...rest: string[]): void {
   holdOf(id, L[rowI], " before re-holding");
   const h = splitHold(L[rowI]);
   let line = h ? h.pre + h.post : L[rowI];
+  // The id goes right after the checkbox, where the parser places a hold.
   const idEnd = /^- \[[ x]\] [ \t]*[^ \t]+/.exec(line)![0].length;
-  line = `${line.slice(0, idEnd)} ${token}${line.slice(idEnd)}`;
+  line = `${line.slice(0, 5)} ${id} ${token}${line.slice(idEnd)}`;
   if (why !== "" && !line.includes(` - ${why}`)) line += ` - ${why}`;
   if (line === L[rowI]) return void say(`already: ${id} holds ${token}`);
   L[rowI] = line;
@@ -346,7 +373,8 @@ function updateNote(id = "", text = ""): void {
   const old = L.slice(rowI + 1, rowEnd + 1);
   const body = text.split("\n").map((l) => `  ${l}`);
   if (old.length === body.length && old.every((l, i) => l === body[i])) return void say(`already: ${id} carries this body`);
-  if (old.length) appendFileSync(join(recs, "backlog-body-archive.md"), bytes(`\n## ${id} body replaced ${today}\n${old.map((l) => `${l}\n`).join("")}`));
+  const arc = join(recs, "backlog-body-archive.md");
+  if (old.length) writing(arc, () => appendFileSync(arc, bytes(`\n## ${id} body replaced ${today}\n${old.map((l) => `${l}\n`).join("")}`)));
   L.splice(rowI + 1, old.length, ...body);
   save();
   say(`ok: body updated on ${id} (${body.length} line(s), ${old.length} archived)`);
@@ -369,11 +397,13 @@ function prune(...rest: string[]): void {
   }
   if (cut < 0) return void say(`already: Done holds ${seen} row(s), keep is ${keep}`);
   const arc = join(recs, `backlog-archive-${today}.md`);
-  if (!existsSync(arc)) writeFileSync(arc, `# backlog Done rows pruned ${today}\n`);
   const moved = L.splice(cut, end - cut);
-  appendFileSync(arc, bytes(moved.map((l) => `${l}\n`).join("")));
+  writing(arc, () => {
+    if (!existsSync(arc)) writeFileSync(arc, `# backlog Done rows pruned ${today}\n`);
+    appendFileSync(arc, bytes(moved.map((l) => `${l}\n`).join("")));
+  });
   save();
-  say(`ok: pruned ${moved.filter((l) => l.startsWith("- [")).length} Done row(s) into ${arc}`);
+  say(`ok: pruned ${moved.filter((l) => l.startsWith("- [")).length} Done row(s) into ${shown(arc)}`);
 }
 
 // --- dispatch -----------------------------------------------------------------
@@ -381,6 +411,10 @@ function prune(...rest: string[]): void {
 const verbs: Record<string, (...a: string[]) => void> = { add, start, done, hold, unhold, "update-note": updateNote, prune };
 const [verb = "", ...rest] = args.map((a) => Buffer.from(a, "utf8").toString("latin1"));
 if (!Object.hasOwn(verbs, verb)) usage();
+if (args.some((a) => a.includes("\ufffd"))) fail("an argument is not valid UTF-8 text - nothing written");
 if (!lockAcquire(lockdir, Number(process.env.AC_TASK_LOCK_TIMEOUT || "10"))) fail("records/backlog.md is locked by another writer - nothing written");
 process.on("exit", () => lockRelease(lockdir));
+// A signal's default action ends the process before any exit handler runs and
+// leaves the lock behind; handled, it waits for the synchronous verb to finish.
+for (const [sig, n] of [["SIGHUP", 1], ["SIGINT", 2], ["SIGTERM", 15]] as const) process.on(sig, () => process.exit(128 + n));
 verbs[verb](...rest);
