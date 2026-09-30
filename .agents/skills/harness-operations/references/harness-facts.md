@@ -99,6 +99,15 @@ The two runs do NOT carry equal weight, and a fact below that rests on the fix p
   herdr agent explain "$P" --json   # on the update prompt, flag absent
   ```
   RESULT: flag absent, the gate passed on the update prompt and the composer then held `0260927T160000Z-12345/prompt.md. Do NOT print …` - the head eaten through `…/codereview/2`; flag present, the gate passed on `› Ask Codex to do anything` with the model already resolved, and the line landed whole.
+- IDLE UNDER ORCA ON 0.159, MEASURED 2026-09-30 on codex-cli 0.159.2 + Orca 1.4.215, with raw `orca terminal` calls (show, `wait --for tui-idle --timeout-ms 1000`, `read --screen`) polled every 1-2s on a pane in an agent-crew worktree.
+  A ready composer never satisfied `tui-idle` before the pane's first turn - every poll timed out for 60s and more, in a codereview-scout pane lane and in the probe - so the composer-ready gate never passed and no prompt was delivered.
+  After one turn ended it satisfied on most polls.
+  A timed-out wait answers `{"ok":false,"error":{"code":"timeout"}}`, and a stale handle answers `terminal_handle_stale` instead.
+  The cause is NOT settled by a single-variable A/B; what fits it is that Orca registered its own codex hooks (`~/.orca/agent-hooks/codex-hook.sh`, every event) in `~/.codex/hooks.json` between the lane's last green round and its first red one, and a hook-observed pane that has not yet ended a turn has no idle event to report.
+  Codex's own title is still the working signal: the cwd basename when idle, `<thread name> | <cwd basename>` after a turn, and a braille spinner before either while working and during its `Starting` boot; the footer reads `… · Starting`, `… · Ready` or `… · Working`.
+  So `bin/ac-backend-orca.sh` `backend_agent_idle_pane` also reads a spinner-free codex pane idle when its rendered screen is unchanged across the wait's timed-out window, since a working codex repaints its elapsed-time line every second.
+  RESIDUAL: the hooks review prompt appeared once in the probe (`3. Continue without trusting (hooks won't run)` / `enter confirm · esc skip`) with `agentWait` null on every poll, so Orca did not name it and a stable one now reads idle on orca exactly as the 0.157 update prompt reads idle under herdr.
+  It cleared within about 8s with no key sent by the probe, and the matching trust entry appeared in `~/.codex/config.toml`; which actor answered it is NOT settled.
 - STILL UNVERIFIED, keep fail-closed: interrupt and slash-invocation keystrokes, and every startup dialog other than the trust, update and hooks-review ones. Steer with natural language and named keys, never borrowed claude keystrokes.
 
 ## opencode

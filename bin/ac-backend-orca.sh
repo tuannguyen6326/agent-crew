@@ -572,24 +572,34 @@ backend_agent_idle_pane_orca() {
   # launched from an exec'd shell rather than as the terminal's own command)
   # tui-idle NEVER satisfies (an idle "✳ Claude Code" timed out for 105s
   # straight), so the driver reads claude's OWN title glyph - a leading ✳
-  # when idle, a spinner glyph mid-turn. For codex (0.150.1, both pane
-  # shapes) tui-idle DOES satisfy - but it also satisfies under codex's
-  # braille spinner, so the spinner, not tui-idle, tells working from idle.
-  # A pane parked on a dialog (agentWait) is never idle: the composer does
-  # not exist yet.
-  local pane="$1" out t
+  # when idle, a spinner glyph mid-turn. For codex tui-idle satisfies under
+  # its braille spinner too (0.150.1), so the spinner, not tui-idle, tells
+  # working from idle - and on 0.159.2 (orca 1.4.215) tui-idle never
+  # satisfied on a ready composer before the pane's first turn, so a
+  # spinner-free codex also reads idle when its screen did not change across
+  # the wait's timed-out window (a working codex repaints its elapsed-time
+  # line every second). Only a TIMEOUT is a window: a wait that failed
+  # outright observed nothing, and a dead terminal keeps serving its last
+  # screen. A pane parked on a dialog (agentWait) is never idle: the
+  # composer does not exist yet.
+  local pane="$1" out t before="" waited
   [ -n "$pane" ] || return 1
   out="$(orca_json terminal show --terminal "$pane" 2>/dev/null)" || return 1
   jq -e '.result.terminal.agentWait != null' <<<"$out" >/dev/null 2>&1 && return 1
   t="$(jq -r '.result.terminal.title // empty' <<<"$out")"
   orca_title_spinner "$t" && return 1
   case "$t" in "✳"*) return 0 ;; esac
+  if jq -e '.result.terminal.agentIdentity == "codex"' <<<"$out" >/dev/null 2>&1; then
+    before="$(backend_capture_pane_orca "$pane" 40 2>/dev/null)" || before=""
+  fi
   # The envelope is {"result":{"wait":{"satisfied":..}}} (measured on orca
   # CLI 1.4.188 - an earlier reading assumed a `terminal` level that the
   # real CLI does not emit, which read every satisfied wait as unsatisfied).
-  orca_json terminal wait --terminal "$pane" --for tui-idle --timeout-ms 1000 2>/dev/null \
-    | jq -e '(.result.wait.satisfied // .result.terminal.wait.satisfied) == true' >/dev/null 2>&1 && return 0
-  return 1
+  waited="$(orca terminal wait --terminal "$pane" --for tui-idle --timeout-ms 1000 --json 2>/dev/null)" || true
+  jq -e '(.result.wait.satisfied // .result.terminal.wait.satisfied) == true' <<<"$waited" >/dev/null 2>&1 && return 0
+  [ -n "$before" ] || return 1
+  jq -e '.error.code == "timeout"' <<<"$waited" >/dev/null 2>&1 || return 1
+  [ "$(backend_capture_pane_orca "$pane" 40 2>/dev/null)" = "$before" ]
 }
 
 backend_agent_idle_orca() { backend_agent_idle_pane_orca "$(orca_pane "$1")"; }
