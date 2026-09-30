@@ -234,12 +234,6 @@ tail_loop() {
   done
 }
 
-idle_since() {
-  local row
-  row="$(active_rows | head -1)"
-  [ -n "$row" ] && printf '%s\n' "${row%%$'\t'*}" || printf '0\n'
-}
-
 paint() { printf '\033[H%s\033[J\n' "$(printf '%s\n' "$1" | sed $'s/$/\033[K/')"; }
 
 if [ "$MODE" = tail ]; then
@@ -254,12 +248,13 @@ while :; do
   frame="$(render)"
   if [ "$ONCE" = 1 ]; then printf '%s\n' "$frame"; exit 0; fi
   [ "$frame" = "$last_frame" ] || { paint "$frame"; last_frame="$frame"; }
-  newest="$(idle_since)"
-  if [ "$newest" -gt 0 ]; then
+  # Idle is time with NO active gate: a live gate's marker is written once at
+  # its start, so its age says nothing about whether the board is needed.
+  if [ -n "$(active_rows | head -1)" ]; then
     waited=0
-    [ $(( $(ac_now) - newest )) -gt "${AC_GATE_WATCH_IDLE:-1800}" ] && { printf '\nno active gate - closing watch\n'; sleep 2; self_close; }
   else
-    waited=$((waited + INTERVAL)); [ "$waited" -gt 300 ] && self_close
+    waited=$((waited + INTERVAL))
+    [ "$waited" -gt "${AC_GATE_WATCH_IDLE:-1800}" ] && { printf '\nno active gate - closing watch\n'; sleep 2; self_close; }
   fi
   sleep "$INTERVAL"
 done
