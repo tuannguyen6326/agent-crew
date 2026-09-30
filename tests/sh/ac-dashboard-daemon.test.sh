@@ -44,6 +44,15 @@ esac
 # idempotent start: reports the live daemon, never a second process
 out="$("$DB" start --port "$port")"
 assert_contains "$out" "already running" "a second start reports, never doubles"
+# ... on another port too: the pidfile holds one pid, so a second daemon
+# would be orphaned where no verb could stop it. A verb with no --port acts
+# on the port the daemon really serves.
+port2=$((port + 1))
+while (exec 3<>"/dev/tcp/127.0.0.1/$port2") 2>/dev/null; do port2=$((port2 + 1)); done
+out="$("$DB" start --port "$port2")"
+assert_contains "$out" "already running (pid $pid1) - http://127.0.0.1:$port" "a start on another port reports the running daemon at its real port"
+(exec 3<>"/dev/tcp/127.0.0.1/$port2") 2>/dev/null && fail "no second daemon may start on the other port"
+assert_contains "$("$DB" status)" "http://127.0.0.1:$port" "status with no --port names the daemon's own port"
 
 out="$("$DB" restart --port "$port")"
 pid2="$(cat "$AC_HOME/state/dashboard.pid")"

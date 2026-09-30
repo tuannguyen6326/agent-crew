@@ -58,11 +58,12 @@ verb=""
 case "${1:-}" in start|stop|restart|status) verb="$1"; shift ;; esac
 
 port=8787
+port_given=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --port)
       [ $# -ge 2 ] || { printf 'ac-dashboard.sh: --port needs a value\n' >&2; exit 2; }
-      port="$2"; shift 2 ;;
+      port="$2"; port_given=1; shift 2 ;;
     -h|--help) awk 'NR>1{if(!/^#/)exit; print}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'ac-dashboard.sh: unknown arg: %s\n' "$1" >&2; exit 2 ;;
   esac
@@ -93,10 +94,15 @@ if [ -n "$verb" ]; then
     || { printf 'ac-dashboard.sh %s: AC_HOME must be set (the pidfile lives in its state/)\n' "$verb" >&2; exit 2; }
   state_dir="$AC_HOME/state"
   pidfile="$state_dir/dashboard.pid"
+  portfile="$state_dir/dashboard.port"
   logfile="$state_dir/dashboard.log"
   mkdir -p "$state_dir"
   pid=""
   [ -f "$pidfile" ] && pid="$(cat "$pidfile" 2>/dev/null || printf '')"
+  # The port the recorded daemon serves: a verb with no --port acts on it,
+  # and a start on another port must find it rather than double it.
+  served="$(cat "$portfile" 2>/dev/null || printf '')"
+  [ "$port_given" = 1 ] || [ -z "$served" ] || port="$served"
 
   do_stop() {
     if pid_running "$pid"; then
@@ -106,10 +112,10 @@ if [ -n "$verb" ]; then
         sleep 0.25
       done
       kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
-      rm -f "$pidfile"
+      rm -f "$pidfile" "$portfile"
       printf 'stopped (pid %s)\n' "$pid"
     else
-      rm -f "$pidfile"
+      rm -f "$pidfile" "$portfile"
       printf 'not running\n'
     fi
   }
@@ -117,6 +123,12 @@ if [ -n "$verb" ]; then
   do_start() {
     if pid_running "$pid" && port_answers; then
       printf 'already running (pid %s) - http://127.0.0.1:%s\n' "$pid" "$port"
+      return 0
+    fi
+    # The pidfile holds one pid: a second daemon on another port would be
+    # orphaned where no verb could stop it.
+    if pid_running "$pid" && [ -n "$served" ] && [ "$served" != "$port" ]; then
+      printf 'already running (pid %s) - http://127.0.0.1:%s (restart --port %s moves it)\n' "$pid" "$served" "$port"
       return 0
     fi
     rm -f "$pidfile"
@@ -129,6 +141,7 @@ if [ -n "$verb" ]; then
     pid=$!
     disown "$pid" 2>/dev/null || true
     printf '%s\n' "$pid" >"$pidfile"
+    printf '%s\n' "$port" >"$portfile"
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
       port_answers && break
       kill -0 "$pid" 2>/dev/null || break
@@ -138,7 +151,7 @@ if [ -n "$verb" ]; then
       printf 'ac-dashboard.sh start: the daemon never answered on %s - log tail:\n' "$port" >&2
       tail -5 "$logfile" >&2 || true
       kill "$pid" 2>/dev/null || true
-      rm -f "$pidfile"
+      rm -f "$pidfile" "$portfile"
       exit 1
     fi
     printf 'started (pid %s) - http://127.0.0.1:%s (log: %s)\n' "$pid" "$port" "$logfile"
@@ -154,7 +167,7 @@ if [ -n "$verb" ]; then
       exit 1 ;;
     stop) do_stop ;;
     start) do_start ;;
-    restart) do_stop; pid=""; do_start ;;
+    restart) do_stop; pid=""; served=""; do_start ;;
   esac
   exit 0
 fi
