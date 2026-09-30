@@ -69,6 +69,19 @@ assert_fails "$BIN/ac-home-seed.sh" mate1 --no-projects
 assert_fails "$BIN/ac-home-seed.sh" mate2 --projects nosuch
 assert_fails "$BIN/ac-home-seed.sh" mate2
 
+# The registry bracket is optional (bin/ac-project-mode.sh header): a
+# bracketless parent line is carried as written, and a project the parent never
+# registered gets a bracketless line - never a minted legacy mode.
+for p in beta gamma; do
+  git clone --quiet "$(make_repo "$p")" "$AC_HOME/projects/$p"
+done
+printf '# Projects\n\n- beta - a bracketless project (added 2026-07-13)\n' >"$AC_HOME/records/projects.md"
+bhome="$("$BIN/ac-home-seed.sh" mate-bare --projects beta,gamma 2>/dev/null)"
+breg="$(cat "$bhome/records/projects.md")"
+assert_contains "$breg" "- beta - a bracketless project (added 2026-07-13)" "a bracketless parent line is carried as written"
+assert_contains "$breg" "- gamma - inherited from parent" "an unregistered project gets a bracketless line"
+case "$breg" in *"[crew-ship]"*) fail "seeding must never mint a legacy delivery mode" ;; esac
+
 # --no-projects seeds an empty-projects home.
 "$BIN/ac-home-seed.sh" mate3 --no-projects >/dev/null 2>&1
 [ -d "$AC_HOME/crewdeputies/mate3/projects" ] || fail "mate3 projects dir missing"

@@ -851,16 +851,22 @@ domain_validate_projects() {
   # The other half of AC-1.6: a fleet DESCRIPTION copied in. Both halves are the
   # same boundary - attributes resolve from the fleet registry, and a second
   # copy here is the drift this file was designed not to have.
-  local freg fdesc fname
+  local freg fdesc fname frest
   freg="$(ac_records_dir)/projects.md"
   if [ -f "$freg" ]; then
     while IFS= read -r fline; do
       case "$fline" in '- '*) ;; *) continue ;; esac
       fname="${fline#- }"; fname="${fname%% *}"
-      # The registry grammar is `- <name> [<mode>] - <description> (added ...)`,
-      # so the description starts after `] - `. Stripping to the first `- `
-      # would eat the line's own bullet and yield the whole row.
-      case "$fline" in *'] - '*) fdesc="${fline#*'] - '}" ;; *) continue ;; esac
+      # The registry grammar is `- <name> [<bracket>] - <description> (added
+      # ...)` with the bracket optional (bin/ac-project-mode.sh header), so the
+      # description starts after the bracket's `] - ` or right after
+      # `<name> - `. Stripping to the first `- ` would eat the line's own bullet.
+      frest="${fline#"- $fname "}"
+      case "$frest" in
+        '['*'] - '*) fdesc="${frest#*'] - '}" ;;
+        '- '*) fdesc="${frest#- }" ;;
+        *) continue ;;
+      esac
       fdesc="$(printf '%s' "$fdesc" | sed 's/ *(added [^)]*)$//')"
       [ ${#fdesc} -ge 12 ] || continue
       grep -qF -- "$fdesc" "$detail" \

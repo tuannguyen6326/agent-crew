@@ -595,6 +595,11 @@ printf '# Projects\n\n- alpha [crew-ship] - the alpha service, payments edge (ad
 printf '# Projects: payments\n\n## alpha\n\nthe alpha service, payments edge\n' >"$(pkg payments)/records/projects.md"
 out="$("$dom" validate)" || fail "R5-CR-008: a copied description warns, it does not refuse"
 assert_contains "$out" "repeats the FLEET description" "R5-CR-008: the second half of the boundary is enforced"
+# The registry bracket is optional (bin/ac-project-mode.sh header), so a
+# bracketless line's description is compared too.
+printf '# Projects\n\n- alpha - the alpha service, payments edge (added 2026-08-02)\n' >"$AC_HOME/records/projects.md"
+assert_contains "$("$dom" validate)" "repeats the FLEET description" "a bracketless registry line's description is checked too"
+printf '# Projects\n\n- alpha [crew-ship] - the alpha service, payments edge (added 2026-08-02)\n' >"$AC_HOME/records/projects.md"
 
 # R5-CR-010 - a colliding id on an INVALID registry line is still a collision:
 # the parser puts the whole LINE in field 2 for INVALID records, so a field-2
