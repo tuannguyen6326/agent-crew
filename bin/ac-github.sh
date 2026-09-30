@@ -151,7 +151,7 @@ cmd_poll() {
   local repo_arg=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --repo) repo_arg="${2:-}"; shift 2 ;;
+      --repo) repo_arg="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "unknown flag: $1 (ac-github.sh poll takes --repo <path>)" ;;
     esac
   done
@@ -190,9 +190,9 @@ cmd_comment() {
   local repo_arg="" pr="" body=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --repo) repo_arg="${2:-}"; shift 2 ;;
-      --pr) pr="${2:-}"; shift 2 ;;
-      --body) body="${2:-}"; shift 2 ;;
+      --repo) repo_arg="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --pr) pr="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --body) body="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "unknown flag: $1 (ac-github.sh comment takes --repo <path> --pr <n> --body <text>)" ;;
     esac
   done

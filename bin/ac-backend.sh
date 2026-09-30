@@ -609,10 +609,10 @@ ac_resolve_profile() {
   local rule="" h="" m="" e="" prof p_h p_m p_e
   while [ $# -gt 0 ]; do
     case "$1" in
-      --rule) rule="${2:-}"; shift 2 ;;
-      --harness) h="${2:-}"; shift 2 ;;
-      --model) m="${2:-}"; shift 2 ;;
-      --effort) e="${2:-}"; shift 2 ;;
+      --rule) rule="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --harness) h="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --model) m="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --effort) e="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "ac_resolve_profile: unknown arg $1" ;;
     esac
   done

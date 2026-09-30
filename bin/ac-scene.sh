@@ -206,8 +206,8 @@ cmd_new() {
   local summary="" ff=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --summary) summary="${2:-}"; shift 2 ;;
-      --file) ff="${2:-}"; shift 2 ;;
+      --summary) summary="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --file) ff="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "unknown flag: $1" ;;
     esac
   done
@@ -228,8 +228,8 @@ cmd_update() {
   local summary="" ff="" have_summary=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --summary) summary="${2:-}"; have_summary=1; shift 2 ;;
-      --file) ff="${2:-}"; shift 2 ;;
+      --summary) summary="${2:-}"; have_summary=1; shift 2 || ac_die "$1 needs a value" ;;
+      --file) ff="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       *) ac_die "unknown flag: $1" ;;
     esac
   done
@@ -251,9 +251,9 @@ cmd_merge() {
   local into="" summary="" ff="" srcs="" s
   while [ $# -gt 0 ]; do
     case "$1" in
-      --into) into="${2:-}"; shift 2 ;;
-      --summary) summary="${2:-}"; shift 2 ;;
-      --file) ff="${2:-}"; shift 2 ;;
+      --into) into="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --summary) summary="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+      --file) ff="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
       -*) ac_die "unknown flag: $1" ;;
       *) srcs="$srcs $1"; shift ;;
     esac

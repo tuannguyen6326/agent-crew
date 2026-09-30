@@ -193,9 +193,9 @@ cmd_new() {
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --scope) scope="${2:-}"; have_scope=1; shift 2 ;;
-      --charter) charter="${2:-}"; have_charter=1; shift 2 ;;
-      --projects) projects="${2:-}"; have_projects=1; shift 2 ;;
+      --scope) scope="${2:-}"; have_scope=1; shift 2 || ac_die "$1 needs a value" ;;
+      --charter) charter="${2:-}"; have_charter=1; shift 2 || ac_die "$1 needs a value" ;;
+      --projects) projects="${2:-}"; have_projects=1; shift 2 || ac_die "$1 needs a value" ;;
       --no-projects) no_projects=1; shift ;;
       *) ac_die "unknown argument: $1" ;;
     esac

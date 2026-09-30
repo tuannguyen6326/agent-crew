@@ -82,12 +82,12 @@ captain_requested=""; captain_requested_set=0; esc_reason=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --scout) stage="scout"; staged=0; shift ;;
-    --stage) stage="${2:-}"; staged=1; shift 2 ;;
-    --mode) mode_flag="${2:-}"; shift 2 ;;
-    --review) review_flag="${2:-}"; shift 2 ;;
-    --captain-requested) captain_requested="${2:-}"; captain_requested_set=1; shift 2 ;;
-    --reason) esc_reason="${2:-}"; shift 2 ;;
-    --qa-required-profile) qa_profiles+=("${2:-}"); shift 2 ;;
+    --stage) stage="${2:-}"; staged=1; shift 2 || ac_die "$1 needs a value" ;;
+    --mode) mode_flag="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+    --review) review_flag="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+    --captain-requested) captain_requested="${2:-}"; captain_requested_set=1; shift 2 || ac_die "$1 needs a value" ;;
+    --reason) esc_reason="${2:-}"; shift 2 || ac_die "$1 needs a value" ;;
+    --qa-required-profile) qa_profiles+=("${2:-}"); shift 2 || ac_die "$1 needs a value" ;;
     *) ac_die "unknown flag: $1" ;;
   esac
 done
