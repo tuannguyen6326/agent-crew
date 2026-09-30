@@ -150,6 +150,15 @@ refuses "In flight" pay flying
 refuses "Done" pay donetask
 refuses "epic" pay qepic
 refuses "blocked-by" pay q1
+# Dependents are read by the backlog grammar (src/backlog.ts): ids end at a
+# space, a TAB or end of line, so a reason with no ` - ` still names qkeep, and
+# a blocked-by the parser cannot read may name it too.
+perl -0pi -e 's/(## Queued\n)/$1- [ ] q3 - a dependent (repo: alpha) blocked-by: qkeep until the schema lands\n/' "$parent/records/backlog.md"
+refuses "blocked-by" pay qkeep
+reset_backlog
+perl -0pi -e 's/(## Queued\n)/$1- [ ] q4 - unreadable (repo: alpha) blocked-by: qkeep, q2 - spaced\n/' "$parent/records/backlog.md"
+refuses "malformed" pay qkeep
+reset_backlog
 refuses "no line" pay nosuchitem
 refuses "no line" pay qkeep nosuchitem
 
