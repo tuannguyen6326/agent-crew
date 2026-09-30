@@ -275,7 +275,7 @@ else
     # per-call authority, its ref recorded exactly as before. `in`, never ==:
     # awk compares numeric-looking ids as numbers (01 == 1).
     _pin_rev="$(
-      [ -f "$(ac_records_dir)/backlog.md" ] && awk -v want="$id" "$AC_DONELINE_AWK"'
+      [ -f "$(ac_records_dir)/backlog.md" ] && LC_ALL=C awk -v want="$id" "$AC_DONELINE_AWK"'
         BEGIN { w[want] }
         /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] in w) { print o["contract"]; exit } }
       ' "$(ac_records_dir)/backlog.md" | tr " \t" "\n\n" | sed -n "s/^rev://p" || true

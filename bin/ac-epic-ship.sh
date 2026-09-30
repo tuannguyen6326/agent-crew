@@ -82,9 +82,7 @@ dir="$AC_HOME/projects/$repo"
 # --- 2 + 3. story terminality and the partial-epic captain receipts -----------
 ledger="$(ac_records_dir)/backlog.md"
 open_rows="" partials=""
-# index, not /^- \[/: this pass sees prose lines too, and under a UTF-8 ctype
-# a regex test on a line that is not valid UTF-8 aborts awk.
-rows="$(awk "$AC_DONELINE_AWK"'index($0, "- [") == 1 { ac_doneline($0, f); print f["id"] "\t" f["epic"] "\t" f["terminal"] "\t" $0 }' "$ledger")"
+rows="$(LC_ALL=C awk "$AC_DONELINE_AWK"'index($0, "- [") == 1 { ac_doneline($0, f); print f["id"] "\t" f["epic"] "\t" f["terminal"] "\t" $0 }' "$ledger")"
 while IFS= read -r rid; do
   id="${rid%%$'\t'*}"; restf="${rid#*$'\t'}"; repic="${restf%%$'\t'*}"; restf="${restf#*$'\t'}"
   term="${restf%%$'\t'*}"; line="${restf#*$'\t'}"
@@ -137,7 +135,7 @@ n_fix="$(jq -r '[.findings[]? | select(.action == "fix")] | length' "$review" 2>
 
 # --- 5. qa when the epic row pins it -------------------------------------------
 # `in`, never ==: awk compares numeric-looking ids as numbers (07 == 7).
-epic_contract="$(awk -v want="$epic" "$AC_DONELINE_AWK"'
+epic_contract="$(LC_ALL=C awk -v want="$epic" "$AC_DONELINE_AWK"'
   BEGIN { w[want] }
   /^- \[/ { ac_doneline($0, f); if (f["id"] in w) { print f["contract"]; exit } }' "$ledger")"
 case " ${epic_contract//$'\t'/ } " in

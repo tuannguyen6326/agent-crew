@@ -140,8 +140,6 @@ bwant "listspace||1" "a space inside the id list reads MALFORMED, not a trailing
 # fail-visible false alarm, never a silently READY slip like `re-blocked-by: a,`.
 bwant "unblocked||1" "prose containing 'unblocked-by' reads MALFORMED, like any unread run"
 
-pass
-
 # ---- domain:<name> (crewdomain-token) -------------------------------------
 # Two-arm position rule: authoritative before a trailing (repo: ...) group or
 # at end-of-line; anywhere else unquoted = malformed (fail-visible); a
@@ -198,3 +196,12 @@ fgot="$(awk "$AC_DONELINE_AWK"'
 assert_contains "$fgot" "fs1|pay-ux|" "feature:<name> is extracted anywhere on the line"
 assert_contains "$fgot" "fs2|pay-ux|payv2" "feature: and epic: are both extracted from one row"
 assert_contains "$fgot" "plainrow||" "no token reads as empty"
+
+# Every awk that reads the ledger through the binding runs in the C locale:
+# the grammar is ASCII and prose is bytes, and under a UTF-8 locale the host
+# awk aborted the whole walk on the first byte that is not UTF-8.
+unpinned="$(grep -n '"$AC_DONELINE_AWK"' "$ROOT"/bin/*.sh | grep -v 'LC_ALL=C awk' \
+  | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)"
+assert_eq "$unpinned" "" "every AC_DONELINE_AWK site runs its awk under LC_ALL=C"
+
+pass

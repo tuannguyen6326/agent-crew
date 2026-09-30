@@ -42,6 +42,12 @@ out="$("$BIN/ac-dash.sh")"
 assert_contains "$out" "t1" "crew row"
 assert_contains "$out" "PENDING-CAPTAIN(1)" "pending room"
 assert_contains "$out" "in-flight:1  queued:2  done:1" "backlog counts"
+# A byte that is not UTF-8 in row prose is prose: under a UTF-8 locale it
+# aborted the count walk and the section read "backlog unavailable".
+cp "$AC_HOME/records/backlog.md" "$TMP/dash-backlog.keep"
+printf -- '- [ ] t4 - caf\351 menu\n' >>"$AC_HOME/records/backlog.md"
+assert_contains "$(LC_ALL=en_US.UTF-8 "$BIN/ac-dash.sh")" "in-flight:1  queued:2" "a non-UTF-8 byte never costs the backlog counts"
+cp "$TMP/dash-backlog.keep" "$AC_HOME/records/backlog.md"
 assert_contains "$out" "leased:1 avail:1" "pool counts"
 
 # Verifier-only fleet: CREW says empty, the verify row shows under its own

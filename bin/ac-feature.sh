@@ -177,9 +177,7 @@ cmd_ship() {
 
   # --- 2. member terminality, epic-poisoned rows, partial receipts ------------
   ledger="$(ac_records_dir)/backlog.md"
-  # index, not /^- \[/: this pass sees prose lines too, and under a UTF-8
-  # ctype a regex test on a line that is not valid UTF-8 aborts awk.
-  rows="$(awk "$AC_DONELINE_AWK"'
+  rows="$(LC_ALL=C awk "$AC_DONELINE_AWK"'
     index($0, "- [") == 1 { ac_doneline($0, f); print f["id"] "\t" f["feature"] "\t" f["epic"] "\t" f["terminal"] "\t" $0 }' "$ledger")"
   while IFS= read -r rid; do
     id="${rid%%$'\t'*}"; rid="${rid#*$'\t'}"
@@ -232,7 +230,7 @@ cmd_ship() {
 
   # --- 5. qa when the container row pins it -------------------------------------
   # `in`, never ==: awk compares numeric-looking ids as numbers (07 == 7).
-  container_contract="$(awk -v want="$feature" "$AC_DONELINE_AWK"'
+  container_contract="$(LC_ALL=C awk -v want="$feature" "$AC_DONELINE_AWK"'
     BEGIN { w[want] }
     /^- \[/ { ac_doneline($0, f); if (f["id"] in w) { print f["contract"]; exit } }' "$ledger")"
   case " ${container_contract//$'\t'/ } " in

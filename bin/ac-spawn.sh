@@ -1507,7 +1507,7 @@ if [ -n "$roomchief_family" ]; then
   # Placed with the other pre-window refusals so a failure costs no window,
   # lease or meta and the promote stays retryable.
   dom_pair=""
-  [ ! -f "$(ac_records_dir)/backlog.md" ] || dom_pair="$(awk "$AC_DONELINE_AWK"'
+  [ ! -f "$(ac_records_dir)/backlog.md" ] || dom_pair="$(LC_ALL=C awk "$AC_DONELINE_AWK"'
     NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") d[o["id"]] = o["domain"] } next }
     /^- \[/ {
       ac_doneline($0, o)

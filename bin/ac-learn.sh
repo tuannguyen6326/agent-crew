@@ -389,7 +389,7 @@ learn_retro_snapshot() {
     # `marker` this snapshot records is the terminal state when tagged
     # (failed/abandoned), else the Done verb, else `unknown`. A line with no
     # date anywhere is SKIPPED (R1.4), never a member.
-    awk -v anchor="$anchor_date" -v mfile="$members_tsv" -v sfile="$skipped_tsv" "$AC_DONELINE_AWK"'
+    LC_ALL=C awk -v anchor="$anchor_date" -v mfile="$members_tsv" -v sfile="$skipped_tsv" "$AC_DONELINE_AWK"'
       /^## Done/ { sec = "done"; next }
       /^## /     { sec = ""; next }
       sec == "done" && /^- \[[ x]\] / {

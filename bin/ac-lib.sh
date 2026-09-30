@@ -829,7 +829,7 @@ ac_domain_tally() {
   local name="${1:-}" f
   f="$(ac_records_dir)/backlog.md"
   [ -f "$f" ] || { printf '0 0 0\n'; return 0; }
-  awk "$AC_DONELINE_AWK"'
+  LC_ALL=C awk "$AC_DONELINE_AWK"'
     NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
     /^## In flight/ { sec = "i"; next }
     /^## Queued/    { sec = "q"; next }
@@ -1115,11 +1115,11 @@ ac_room_file() {
 # --- backlog line parser: the awk binding --------------------------------------
 #
 # An awk site reads a `records/backlog.md` line's fields by prepending
-# AC_DONELINE_AWK - `awk "$AC_DONELINE_AWK"'<program>' <ledger>` - and calling
-# ac_doneline($0, f), which fills f["id"] ... f["domain_malformed"]. The grammar
-# and its 14 fields are specified in the header of src/backlog.ts, the one
-# parser; this binding runs it (bin/ac-backlog.sh) once per ledger file and
-# looks each line up in the result.
+# AC_DONELINE_AWK - `LC_ALL=C awk "$AC_DONELINE_AWK"'<program>' <ledger>` -
+# and calling ac_doneline($0, f), which fills f["id"] ... f["domain_malformed"].
+# The grammar and its 14 fields are specified in the header of src/backlog.ts,
+# the one parser; this binding runs it (bin/ac-backlog.sh) once per ledger file
+# and looks each line up in the result.
 # - Pass the ledger as a FILE operand. The parser reads the file on its own,
 #   so stdin, `-`, /dev/stdin and /dev/fd/N are refused: the parser and awk
 #   would race for the bytes behind one descriptor.
@@ -1128,6 +1128,9 @@ ac_room_file() {
 #   (awk cannot see its exit status, so its count trailer is the proof), a
 #   refused operand, or a line the parse never saw (the file was rewritten
 #   mid-read).
+# - Run the awk under LC_ALL=C: the grammar is ASCII and prose is bytes, and
+#   under a UTF-8 locale the host awk aborts the whole walk on the first byte
+#   that is not UTF-8 (tests/sh/ac-doneline.test.sh holds every site to it).
 # - Never run it once per line: every file costs one parser start. A caller
 #   holding a single line runs `ac-backlog.sh fields --get <f1,...> -`.
 read -r -d '' AC_DONELINE_AWK <<'ACAWK' || true
@@ -1186,7 +1189,7 @@ ac_row_contract_for_id() {
   [ -f "$f" ] || { printf '\n'; return 0; }
   # `in`, never ==: awk compares two numeric-looking strings as numbers, so
   # == would give id 1 the row of id 01.
-  out="$(awk -v want="$id" "$AC_DONELINE_AWK"'
+  out="$(LC_ALL=C awk -v want="$id" "$AC_DONELINE_AWK"'
     BEGIN { w[want] }
     /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] in w) { print o["contract"]; exit } }
   ' "$f")" || return 2
@@ -1194,7 +1197,7 @@ ac_row_contract_for_id() {
   sub="$(ac_stage_dir_for_id "$id")"
   [ -n "$sub" ] || { printf '\n'; return 0; }
   fam="${sub%%/*}"
-  awk -v want="$fam" "$AC_DONELINE_AWK"'
+  LC_ALL=C awk -v want="$fam" "$AC_DONELINE_AWK"'
     BEGIN { w[want] }
     /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] in w) { print o["contract"]; exit } }
   ' "$f"
@@ -2537,7 +2540,7 @@ ac_epic_base_for() {
   local id="$1" repo="$2" ledger row rc=0 row_id row_epic row_feature cand entry
   ledger="$(ac_records_dir)/backlog.md"
   [ -f "$ledger" ] || return 1
-  row="$(awk -v want="$id" "$AC_DONELINE_AWK"'
+  row="$(LC_ALL=C awk -v want="$id" "$AC_DONELINE_AWK"'
     /^- \[/ { ac_doneline($0, f); if (!(f["id"] in row)) row[f["id"]] = f["epic"] "\t" f["feature"] }
     END {
       b = want

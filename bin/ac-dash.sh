@@ -87,7 +87,7 @@ render() {
     # verifiers). Reuses ac_doneline's terminal field (src/backlog.ts via
     # AC_DONELINE_AWK), the same position-pinned parser src/ready.ts's
     # snapshot() uses, never a second marker parser.
-    awk "$AC_DONELINE_AWK"'
+    LC_ALL=C awk "$AC_DONELINE_AWK"'
       /^## In flight/ { s = "f"; next }
       /^## Queued/ { s = "q"; next }
       /^## Done/ { s = "d"; next }

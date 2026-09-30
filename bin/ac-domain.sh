@@ -401,7 +401,7 @@ domain_row_of() {
   # domain_row_of <id> <ledger> - "<section>\t<line>" for the SINGLE row with
   # this id, empty when absent or ambiguous. The one row-finder every verb
   # shares (assign/unassign had private twins under the old two-file design).
-  awk -v id="$1" '
+  LC_ALL=C awk -v id="$1" '
     /^## / { sec = substr($0, 4); next }
     $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { n++; s = sec; l = $0 }
     END { if (n == 1) printf "%s\t%s\n", s, l }
@@ -605,7 +605,7 @@ cmd_queue() {
   domain_require_name "$name"
   backlog="$(ac_records_dir)/backlog.md"
   [ -f "$backlog" ] || { printf 'no fleet backlog\n'; return 0; }
-  awk "$AC_DONELINE_AWK"'
+  LC_ALL=C awk "$AC_DONELINE_AWK"'
     # Pass 1 (NR==FNR): id -> authoritative domain, for epic inheritance.
     NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
     /^## /   { sec = $0; secshown = 0; next }
@@ -688,7 +688,7 @@ cmd_retire() {
     || ac_die "no VALID crewdomain '$name' in $REGISTRY_LABEL - nothing to retire"
   backlog="$(ac_records_dir)/backlog.md"
   if [ -f "$backlog" ]; then
-    open="$(awk "$AC_DONELINE_AWK"'
+    open="$(LC_ALL=C awk "$AC_DONELINE_AWK"'
       /^## Done/ { done = 1 } /^## / && !/^## Done/ { done = 0 }
       /^- \[/ && !done { ac_doneline($0, o); if (o["domain"] == n) print o["id"] }
     ' n="$name" "$backlog")"
@@ -772,7 +772,7 @@ EOF
   local ob orows gi
   ob="$(ac_records_dir)/backlog.md"
   if [ -f "$ob" ]; then
-    orows="$(awk "$AC_DONELINE_AWK"'
+    orows="$(LC_ALL=C awk "$AC_DONELINE_AWK"'
       /^- \[/ { ac_doneline($0, o); if (o["domain"] != "") print o["domain"], o["id"] }
     ' "$ob")" || { orows=""; printf 'WARN\tledger unreadable - backlog tallies and the ORPHAN-TOKEN scan are unavailable\n'; }
     while read -r gn gi; do
@@ -906,7 +906,7 @@ EOF
   local vb; vb="$(ac_records_dir)/backlog.md"
   if [ -f "$vb" ]; then
     local tok toks
-    toks="$(awk "$AC_DONELINE_AWK"'
+    toks="$(LC_ALL=C awk "$AC_DONELINE_AWK"'
       NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
       /^- \[/ {
         ac_doneline($0, o)

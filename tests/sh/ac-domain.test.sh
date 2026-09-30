@@ -307,6 +307,10 @@ assert_contains "$out" "payments" "list names the domain"
 assert_contains "$out" "scope: money movement" "list carries the scope the chief routes on"
 assert_contains "$out" "projects: 2" "list carries the project count"
 assert_contains "$out" "queued 1" "list carries the backlog tally"
+cp "$AC_HOME/records/backlog.md" "$TMP/dom-backlog.keep"
+printf -- '- [x] latin - caf\351 menu (merged 2026-08-01)\n' >>"$AC_HOME/records/backlog.md"
+assert_contains "$(LC_ALL=en_US.UTF-8 "$dom" list)" "queued 1" "a non-UTF-8 byte in the ledger never costs the tally"
+cp "$TMP/dom-backlog.keep" "$AC_HOME/records/backlog.md"
 # Session start runs list under set -e: a ledger the parser could not read
 # costs the tallies and the orphan scan, never the digest.
 rc=0; out="$(PATH="$failbun:$PATH" "$dom" list 2>/dev/null)" || rc=$?
