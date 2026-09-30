@@ -128,7 +128,7 @@ assert_contains "$skill" "no rows - <why>" "the empty outcome is what the record
 assert_contains "$skill" "never starts execution" "brainstorm is upstream of every execution flow"
 assert_contains "$skill" "duplicates nothing" "grammar/gate/triage stay cited, not copied"
 # the split rule bites: the skill must not carry its own copy of the closed
-# contract vocabulary (that lives in docs/backlog.md / ac_contract_lint alone)
+# contract vocabulary (that lives in docs/backlog.md / src/lib.ts contractLint alone)
 assert_not_contains "$skill" "src|flow|mode|rev|qa|promote" "no duplicated token vocabulary"
 
 # --- catalog registration ------------------------------------------------------

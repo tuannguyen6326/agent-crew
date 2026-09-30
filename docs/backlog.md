@@ -88,12 +88,10 @@ space or TAB before the first or after the last (`[ src:cap]` and
 `[src:cap flow:direct mode:local-only rev:no qa:no]`. The all-tokens-keyed
 shape is the discriminator: a leading-run group with any non-`key:value`
 content keeps its existing class (provenance prose, `[EPIC]`, `[@held]`).
-`src/backlog.ts` (`contract`) is the ONE parser; `ac_contract_lint`
-(ac-lib.sh) the value judge, which the scheduler's `contractLint`
-(`src/lib.ts`) twins under a differential test; `bin/ac-ready.sh`
-displays the group on READY lines and WARNs on violations - display and
-judgment, never a scheduling condition; the enforcement point is
-`ac-brief.sh`'s escalation
+`src/backlog.ts` (`contract`) is the ONE parser; `contractLint` (`src/lib.ts`)
+the one value judge; `bin/ac-ready.sh` displays the group on READY lines and
+WARNs on violations - display and judgment, never a scheduling condition; the
+enforcement point is `ac-brief.sh`'s escalation
 gate (section 5). `src` values: `cap` (captain order), `chief`
 (chief-minted), `mon` (monitor), `gh` (github), `crew` (routed up),
 `learn` (Learning/Curate). A heavy token (`flow:staged`, `mode:crew-ship`,
@@ -157,8 +155,8 @@ ever chosen for it.
 
 Keep it current: at spawn the chief moves an item to In flight; at teardown the chief moves it to Done or back to Queued (`bin/ac-spawn.sh` and `bin/ac-teardown.sh` never write the ledger themselves).
 
-Make those routine moves with `bin/ac-task.sh` (its header is the authoritative
-spec) rather than by re-generating markdown: `add`, `start`, `done`, `hold`,
+Make those routine moves with `bin/ac-task.sh` (the header of `src/task.ts` is
+the authoritative spec) rather than by re-generating markdown: `add`, `start`, `done`, `hold`,
 `unhold`, `update-note` and `prune` each touch ONLY the targeted row, take an
 advisory lock and publish by tmp+rename, and are idempotent with a one-line
 `ok:`/`already:` receipt. Two of its properties change how a row is WRITTEN,

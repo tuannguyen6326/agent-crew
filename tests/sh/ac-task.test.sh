@@ -44,7 +44,7 @@ assert_contains "$out" "already" "re-adding an existing id reports already"
 cmp -s "$TMP/before2.md" "$ledger" || fail "an already add must not touch the file"
 
 # ---- add: an invalid contract value refuses before any write (the CLI emits
-#      what ac_contract_lint accepts, never a second dialect).
+#      what contractLint accepts, never a second dialect).
 assert_fails_with "src:bogus" -- "$BIN/ac-task.sh" add badcon 'x' --contract 'src:bogus'
 cmp -s "$TMP/before2.md" "$ledger" || fail "a refused add must not touch the file"
 assert_fails "$BIN/ac-task.sh" add 'Bad Id' 'x'
@@ -170,37 +170,6 @@ assert_fails_with "sank (failed)" -- "$BIN/ac-task.sh" start onfailed
 assert_fails_with "nosuchrow (missing)" -- "$BIN/ac-task.sh" start onghost
 assert_fails_with "blocked-by malformed" -- "$BIN/ac-task.sh" start onbad
 cmp -s "$TMP/before-blk.md" "$ledger" || fail "a blocker refusal must not touch the file"
-# Blockers the parser could not read never read as "no blocker". The stub bun
-# answers the single-line hold read and fails the whole-ledger parse.
-wirefail="$TMP/wirefail"
-mkdir -p "$wirefail" "$TMP/task-tmp"
-cat >"$wirefail/bun" <<EOF
-#!/bin/sh
-[ "\$5" = --get ] && exec "$(command -v bun)" "\$@"
-exit 1
-EOF
-chmod +x "$wirefail/bun"
-assert_fails_with "the backlog parser failed" -- env PATH="$wirefail:$PATH" TMPDIR="$TMP/task-tmp" "$BIN/ac-task.sh" start onflying
-cmp -s "$TMP/before-blk.md" "$ledger" || fail "a start whose blockers could not be read must not touch the file"
-assert_eq "$(ls -A "$TMP/task-tmp")" "" "the blocker check leaves no copy of the ledger behind"
-# Nor does a copy of the ledger that could not be staged: awk handed an empty
-# operand reads stdin, finds no rows, and reports no blocker.
-assert_fails_with "cannot stage the ledger for the blocker check" -- \
-  env TMPDIR="$TMP/no-such-dir" "$BIN/ac-task.sh" start onflying </dev/null
-cmp -s "$TMP/before-blk.md" "$ledger" || fail "a start whose ledger copy could not be made must not touch the file"
-rofail="$TMP/rofail"
-mkdir -p "$rofail"
-cat >"$rofail/mktemp" <<'EOF'
-#!/bin/sh
-f="$(/usr/bin/mktemp "$@")" || exit
-case "$f" in */ac-task-ledger.*) chmod 444 "$f" ;; esac
-printf '%s\n' "$f"
-EOF
-chmod +x "$rofail/mktemp"
-assert_fails_with "cannot stage the ledger for the blocker check" -- \
-  env PATH="$rofail:$PATH" TMPDIR="$TMP/task-tmp" "$BIN/ac-task.sh" start onflying </dev/null
-cmp -s "$TMP/before-blk.md" "$ledger" || fail "a start whose ledger copy could not be written must not touch the file"
-assert_eq "$(ls -A "$TMP/task-tmp")" "" "a ledger copy that could not be written is not left behind"
 out="$("$BIN/ac-task.sh" start onlanded)"
 assert_contains "$out" "ok:" "a row whose blockers are all clean Done starts"
 grep -vE '^- \[[ x]\] (onflying|onfailed|onghost|onbad|onlanded|sank) ' "$ledger" >"$TMP/blk.md" && mv "$TMP/blk.md" "$ledger"
@@ -265,5 +234,63 @@ assert_eq "$(ls -l "$ledger" | cut -c1-10)" "-rw-r--r--" "the atomic publish pre
 # ---- unknown id refuses.
 assert_fails "$BIN/ac-task.sh" start ghost
 assert_fails "$BIN/ac-task.sh" update-note ghost 'x'
+
+# ---- the id and --verb checks are ASCII: a shell [a-z] range collates under a
+#      UTF-8 locale, so it took `Foo` and the verb `Merged` and refused `fooZ`.
+assert_fails_with "invalid id" -- env LC_ALL=en_US.UTF-8 "$BIN/ac-task.sh" add Foo 'x'
+"$BIN/ac-task.sh" add verbrow 'a row to finish' >/dev/null
+assert_fails_with "invalid --verb" -- env LC_ALL=en_US.UTF-8 "$BIN/ac-task.sh" done verbrow 'x' --verb Merged
+
+# ---- rows are found by the parser's id (src/backlog.ts): read up to the first
+#      space, a TAB after the id hid the row from start and let add mint a
+#      second row with the same id.
+awk '{ print } /^## Queued/ { print "- [ ] tabbed\t- a TAB after the id (repo: shop)" }' "$ledger" >"$TMP/tab.md" \
+  && mv "$TMP/tab.md" "$ledger"
+assert_contains "$("$BIN/ac-task.sh" add tabbed 'a duplicate')" "already" "add sees the TAB-separated id"
+assert_contains "$("$BIN/ac-task.sh" start tabbed)" "ok:" "start finds the TAB-separated id"
+assert_eq "$(grep -c tabbed "$ledger")" "1" "one row carries the id"
+
+# ---- an unterminated last line is a row like any other: the shell's read never
+#      returned it, so the next write deleted that row and still printed ok.
+printf -- '- [x] lastrow - written without a final newline (merged 2026-08-01)' >>"$ledger"
+"$BIN/ac-task.sh" add eolprobe 'a write after it' >/dev/null
+grep -qxF -- '- [x] lastrow - written without a final newline (merged 2026-08-01)' "$ledger" \
+  || fail "a write must keep the unterminated last row"
+
+# ---- an argument that is not UTF-8 refuses: its bytes arrive replaced by
+#      U+FFFD, and writing that would put text no caller typed into the ledger.
+cp "$ledger" "$TMP/before-bytes.md"
+assert_fails_with "not valid UTF-8" -- "$BIN/ac-task.sh" add latinrow "$(printf 'caf\351')"
+cmp -s "$TMP/before-bytes.md" "$ledger" || fail "a refused argument must not touch the file"
+
+# ---- hold writes a line the parser reads as held, whatever blanks or checkbox
+#      the row carries, and a re-hold finds the token it wrote.
+awk '{ print } /^## Queued/ { print "- [ ]  spaced - two blanks before the id"; print "- [x] ticked - a ticked row outside Done" }' \
+  "$ledger" >"$TMP/odd.md" && mv "$TMP/odd.md" "$ledger"
+for r in spaced ticked; do
+  "$BIN/ac-task.sh" hold "$r" >/dev/null || fail "hold $r"
+  assert_contains "$("$BIN/ac-ready.sh")" "HELD   $r" "hold on $r reads HELD"
+  assert_contains "$("$BIN/ac-task.sh" hold "$r")" "already" "a re-hold on $r finds its token"
+  assert_contains "$("$BIN/ac-task.sh" unhold "$r")" "ok:" "unhold releases $r"
+done
+
+# ---- a ledger missing the section a verb writes into refuses and writes
+#      nothing: the shell printed the ERROR, then wrote the row above every
+#      section and printed ok.
+printf '## Done\n- [x] only - done (merged 2026-08-01)\n' >"$TMP/nosec.md"
+cp "$ledger" "$TMP/keep.md"; cp "$TMP/nosec.md" "$ledger"
+assert_fails_with "no 'queued' section" -- "$BIN/ac-task.sh" add nosecrow 'x'
+cmp -s "$TMP/nosec.md" "$ledger" || fail "a ledger with no Queued section must not be written"
+cp "$TMP/keep.md" "$ledger"
+
+# ---- a read-only ledger refuses the write, as the copy-then-write publish
+#      always did. Skipped under root, which writes through chmod.
+if [ "$(id -u)" != 0 ]; then
+  chmod 444 "$ledger"
+  assert_fails_with "cannot write" -- "$BIN/ac-task.sh" add rorow 'x'
+  chmod 644 "$ledger"
+  grep -q rorow "$ledger" && fail "a read-only ledger must not be written"
+  assert_eq "$(ls -A "$AC_HOME/records" | grep -c 'backlog.md\.[0-9]')" "0" "a refused write leaves no temp file"
+fi
 
 pass

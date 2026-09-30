@@ -103,7 +103,7 @@
 //   hold_until  - the `<YYYY-MM-DD>` of a dated hold, else "". EXPIRY is
 //                 not judged here - the parser extracts, `bin/ac-ready.sh`
 //                 compares against today, the same extract/judge split
-//                 `contract`/`ac_contract_lint` already take. A hold whose
+//                 `contract`/`contractLint` already take. A hold whose
 //                 date shape is anything else is not a dated hold at all:
 //                 it falls to hold_malformed below, so a mis-typed date is
 //                 HELD (fail-closed), never an accidental release.
@@ -142,7 +142,7 @@
 //                     "wrong place" for it to be demoted from; two things
 //                     exempt it: QUOTATION, and being the group claimed as
 //                     `contract` below - `[qa:on-hold]` in the leading run is
-//                     the contract, and ac_contract_lint judges its value,
+//                     the contract, and contractLint judges its value,
 //                     while the same group anywhere else trips this rule.
 //                 Either rule failing CLOSED (HELD, not READY) is the same
 //                 direction blockers_malformed already picked for a
@@ -218,7 +218,7 @@
 //                 `[@held]` carry none, and a backtick-quoted group is a
 //                 mention exactly as it is for hold. VALUE validity is
 //                 deliberately NOT judged here - the parser extracts,
-//                 `ac_contract_lint` (bin/ac-lib.sh) judges - so a typo'd value
+//                 `contractLint` (src/lib.ts) judges - so a typo'd value
 //                 surfaces at lint instead of silently vanishing the whole
 //                 group.
 //   domain      - the name in a `domain:<name>` CREWDOMAIN assignment token
@@ -305,7 +305,7 @@ export function acDoneline(line: string): Doneline {
     const hcontent = substr(hgrp, 2, hgrp.length - 2);
     // Contract-shaped content holds no `@`, so it can never be hold=1 or a
     // rule (1) attempt; claiming it first does take a value like `qa:on-hold`
-    // from rule (2), leaving ac_contract_lint to judge that value.
+    // from rule (2), leaving contractLint to judge that value.
     const contract = !quoted && positional && f.contract === "" && hcontent !== ""
       && hcontent.split(/[ \t]+/).every((t) => /^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/.test(t));
     if (contract) f.contract = hcontent;

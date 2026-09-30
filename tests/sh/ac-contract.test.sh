@@ -2,14 +2,13 @@
 # ac-contract.test.sh - the DELIVERY-CONTRACT token group on a backlog row
 # (delivery-contract-on-the-row): parsed by the ONE shared line parser
 # (src/backlog.ts's contract field), judged by the ONE value judge
-# (ac_contract_lint), displayed - never enforced - by ac-ready.sh.
+# (src/lib.ts contractLint, unit-tested in tests/ts/lib.test.ts), displayed -
+# never enforced - by ac-ready.sh.
 #
 # Covers:
 #   - EXTRACTION: the all-tokens-keyed discriminator against every existing
 #     group class on a real-shaped row (provenance prose tag, [EPIC], [@held],
 #     backtick-quoted mention, a group outside the leading run);
-#   - LINT: each closed vocabulary, the two law-outlawed combinations
-#     (staged+rev:no, crew-ship+rev:no), and silence on a clean contract;
 #   - ac-ready: the contract rides the READY line as INFORMATION, an invalid
 #     token WARNs but never stops the row, and a contract-less ledger renders
 #     byte-identically to before the feature (additive grammar).
@@ -72,23 +71,6 @@ assert_eq "$(contract_of "$line")" "" "a backtick-quoted group is a mention, nev
 # First one wins.
 line='- [ ] t7 [src:cap flow:direct] [src:chief flow:staged] - body (repo: x)'
 assert_eq "$(contract_of "$line")" "src:cap flow:direct" "the FIRST leading-run contract group wins"
-
-# --- lint: the one value judge -----------------------------------------------
-
-assert_eq "$(ac_contract_lint 'src:cap flow:direct mode:local-only rev:no qa:no')" "" \
-  "a clean contract lints silent"
-assert_contains "$(ac_contract_lint 'src:boss')" "src:boss invalid" "src vocabulary is closed"
-assert_contains "$(ac_contract_lint 'flow:agile')" "flow:agile invalid" "flow vocabulary is closed"
-assert_contains "$(ac_contract_lint 'mode:ship')" "mode:ship invalid" "mode wants the FULL registry names"
-assert_eq "$(ac_contract_lint 'mode:feature-pr')" "" "mode:feature-pr is a legal mode (feature-branch-mech)"
-assert_contains "$(ac_contract_lint 'rev:maybe')" "rev:maybe invalid" "rev is yes|no"
-assert_contains "$(ac_contract_lint 'qa:auto')" "qa:auto invalid" \
-  "qa:auto is deliberately NOT a value - delegation-by-click was dropped when the captain named chief judgment as the error source"
-assert_contains "$(ac_contract_lint 'promote:yes')" "promote:yes invalid" "promote is only ever written as no"
-assert_contains "$(ac_contract_lint 'flow:staged rev:no')" "staged review is mandatory" \
-  "the staged+rev:no contradiction is flagged (AGENTS.md section 5)"
-assert_contains "$(ac_contract_lint 'mode:crew-ship rev:no')" "crew-ship review is mandatory" \
-  "the crew-ship+rev:no contradiction is flagged"
 
 # --- ac-ready: information, never a gate --------------------------------------
 

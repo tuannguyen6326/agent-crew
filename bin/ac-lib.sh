@@ -1170,15 +1170,7 @@ _ac_dl="${_ac_dl//$'\r'/\\r}"
 AC_DONELINE_AWK="${AC_DONELINE_AWK%%@SHIM@*}$_ac_dl/ac-backlog.sh${AC_DONELINE_AWK#*@SHIM@}"
 unset _ac_dl
 
-# --- delivery-contract lint ----------------------------------------------------
-# ac_contract_lint <contract-content> - one violation per line, empty output
-# when clean, exit 0 always (a judge, not a gate). The VALUE vocabulary lives
-# HERE - src/backlog.ts extracts shape only, and the scheduler's copy
-# (src/lib.ts contractLint) is held to this one by tests/ts/lib.test.ts.
-# Also flags the two combinations AGENTS.md section 5 already outlaws
-# (flow:staged with rev:no; mode:crew-ship with rev:no) so a contract
-# contradicting the law is loud at the scheduler instead of surprising the
-# pipeline.
+# --- delivery contract --------------------------------------------------------
 ac_row_contract_for_id() {
   # ac_row_contract_for_id <id> <backlog-file> - the delivery-contract group
   # governing <id>: the exact row when one exists, else the FAMILY row (a
@@ -1206,36 +1198,6 @@ ac_row_contract_for_id() {
     BEGIN { w[want] }
     /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] in w) { print o["contract"]; exit } }
   ' "$f"
-}
-
-ac_contract_lint() {
-  local c="$1" tok key val flow="" mode="" rev=""
-  [ -n "$c" ] || return 0
-  for tok in $c; do
-    key="${tok%%:*}"; val="${tok#*:}"
-    case "$key" in
-      src)
-        case "$val" in cap|chief|mon|gh|crew|learn) ;; *) printf 'src:%s invalid - want cap|chief|mon|gh|crew|learn\n' "$val" ;; esac ;;
-      flow)
-        flow="$val"
-        case "$val" in direct|staged) ;; *) printf 'flow:%s invalid - want direct|staged\n' "$val" ;; esac ;;
-      mode)
-        mode="$val"
-        case "$val" in crew-ship|direct-pr|local-only|feature-pr) ;; *) printf 'mode:%s invalid - want crew-ship|direct-pr|local-only|feature-pr\n' "$val" ;; esac ;;
-      rev)
-        rev="$val"
-        case "$val" in yes|no) ;; *) printf 'rev:%s invalid - want yes|no\n' "$val" ;; esac ;;
-      qa)
-        case "$val" in yes|no) ;; *) printf 'qa:%s invalid - want yes|no\n' "$val" ;; esac ;;
-      promote)
-        case "$val" in no) ;; *) printf 'promote:%s invalid - want no (always is the default and is never written)\n' "$val" ;; esac ;;
-    esac
-  done
-  [ "$flow" = staged ] && [ "$rev" = no ] \
-    && printf 'flow:staged with rev:no - staged review is mandatory (AGENTS.md section 5)\n'
-  [ "$mode" = crew-ship ] && [ "$rev" = no ] \
-    && printf 'mode:crew-ship with rev:no - crew-ship review is mandatory (AGENTS.md section 5)\n'
-  return 0
 }
 
 # --- task state files ---------------------------------------------------------
