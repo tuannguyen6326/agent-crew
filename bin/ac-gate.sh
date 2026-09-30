@@ -1077,19 +1077,15 @@ unlock_family() {
 
 leave_family() {
   # This run's marker is its own; the busy declaration is the FAMILY's, so only
-  # the family's last live run clears it (see BUSY DECLARATION in the header).
-  # Under the family lock, so a run stamping its marker meanwhile is either seen
-  # here or declares after this clear. A dead run's marker is swept on the way:
-  # per-run names are never overwritten by a later run.
-  local m live=""
+  # the family's last live holder - a gate run or a verifier call - clears it
+  # (see BUSY DECLARATION in the header). Under the family lock, so a run
+  # stamping its marker meanwhile is either seen here or declares after this
+  # clear. A dead holder's mark is swept on the way: per-run names are never
+  # overwritten by a later run.
   rm -f "$gate_running"
   [ -n "$busy_decl" ] || return 0
   lock_family
-  for m in "$data_dir/$family"/.gate-running.*; do
-    [ -f "$m" ] || continue
-    if ac_pid_alive "$(ac_meta_get "$m" pid)"; then live=1; else rm -f "$m"; fi
-  done
-  [ -n "$live" ] || rm -f "$busy_decl"
+  ac_chief_busy_held "$(ac_state_dir)" "$family" "$data_dir/$family" || rm -f "$busy_decl"
   unlock_family
 }
 # The running marker, observation descriptor, tmp outputs and the run's own gate
