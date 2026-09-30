@@ -410,6 +410,64 @@ if [ "$(id -u)" != 0 ]; then
   assert_eq "$rc:$out" "2:" "an unreadable room fails the count and prints none"
 fi
 
+# --- Leg A: src/room.ts rows against the awk projection it replaced -----------
+# tests/fixtures/room-list-rows.awk is ac_room_list_rows's awk program frozen as
+# it stood before the port.
+# DISPUTED: the implementation of ac_room_list_rows (tests/fixtures/room-list-rows.awk vs src/room.ts rows)
+# HELD-CONSTANT: the room files and their argument order; LC_ALL=C; /usr/bin/awk onetrue 20200816 (SKIP otherwise)
+if [ "$(/usr/bin/awk --version 2>/dev/null)" != "awk version 20200816" ]; then
+  printf 'SKIP: /usr/bin/awk is not onetrue awk 20200816 - the room rows differential skipped\n'
+else
+  rd="$TMP/rows"
+  mkdir -p "$rd/gates" "$rd/hb" "$rd/empty" "$rd/bytes" "$rd/noeol"
+  cat >"$rd/gates/room.md" <<'EOF'
+# Room: gates
+
+- [2026-09-30T00:00:00Z] gates-chief> GATE: plan
+- [2026-09-30T00:00:01Z] gates-chief> ASK (1 of 2): which port
+- [2026-09-30T00:00:02Z] gates-chief> GATE-LOOPED: rejected draft
+- [2026-09-30T00:00:03Z] gates-chief> GATE-PASSED (auto): spec
+- [2026-09-30T00:00:04Z] crewchief> relayed: > DECIDED: quoted, settles nothing
+- [2026-09-30T00:00:05Z] captain> DECIDED gates (captain): approved
+- [2026-09-30T00:00:06Z] captain> DECIDED no colon settles nothing
+- [2026-09-30T00:00:07Z] gates-chief> ASK: second
+continuation prose that is not an entry
+EOF
+  cat >"$rd/hb/room.md" <<'EOF'
+- [2026-09-30T00:00:00Z] captain> DECIDED: nothing is open yet
+- [2026-09-30T00:00:00Z] hb-chief> HANDBACK: done
+- [2026-09-30T00:00:01Z] crewchief> HANDBACK-REFUSED: remedy required
+- [2026-09-30T00:00:02Z] hb-chief> HANDBACK: done again
+- [2026-09-30T00:00:03Z] crewchief> quoting > CLOSED: keeps the handback
+EOF
+  : >"$rd/empty/room.md"
+  printf -- '- [t] b-chief> GATE: one\r\n- [t] b-chief> ASK\000: cut at the NUL\n- [t] b-chief> caf\351 \000tail\n' >"$rd/bytes/room.md"
+  printf -- '- [t] n-chief> HANDBACK: no newline\t' >"$rd/noeol/room.md"
+  rows_args=("$rd/gates/room.md" "$rd/hb/room.md" "$rd/empty/room.md" "$rd/bytes/room.md" "$rd/noeol/room.md" "$rd/gates/room.md")
+  rows_ts() { ( . "$BIN/ac-bun.sh" && ac_bun_exec src/room.ts rows "$@" ); }
+  LC_ALL=C /usr/bin/awk "$(cat "$ROOT/tests/fixtures/room-list-rows.awk")" "${rows_args[@]}" >"$TMP/rows.awk"
+  rows_ts "${rows_args[@]}" >"$TMP/rows.ts" 2>"$TMP/rows.err" || fail "src/room.ts rows failed: $(head -3 "$TMP/rows.err")"
+  cmp -s "$TMP/rows.awk" "$TMP/rows.ts" \
+    || fail "Leg A: src/room.ts rows and the frozen awk disagree:
+$(diff <(od -c "$TMP/rows.awk") <(od -c "$TMP/rows.ts") | head -n 8)"
+  # A repeated path accumulates, as awk's FILENAME-keyed arrays do.
+  assert_eq "$(tail -n 1 "$TMP/rows.ts" | LC_ALL=C cut -d $'\037' -f 1)" "4" "a room given twice counts twice"
+  # The per-room columns hold the bash readers' grammar: the port copied the
+  # patterns, so a grammar change on either side shows here.
+  for f in "${rows_args[@]:0:5}"; do
+    row="$(rows_ts "$f")"
+    assert_eq "${row%%$'\037'*}" "$(rr_lib "ac_room_pending '$f'")" "rows pending matches ac_room_pending: $f"
+    hbw=0; [ -n "$(rr_lib "ac_room_handback_families '$f'")" ] && hbw=1
+    assert_eq "$(printf '%s' "$row" | LC_ALL=C cut -d $'\037' -f 2)" "$hbw" "rows handback matches ac_room_handback_families: $f"
+  done
+  if [ "$(id -u)" != 0 ]; then
+    chmod 000 "$rd/hb/room.md"
+    rc=0; out="$(rows_ts "$rd/gates/room.md" "$rd/hb/room.md" 2>/dev/null)" || rc=$?
+    chmod 644 "$rd/hb/room.md"
+    assert_eq "$rc:$out" "2:" "an unreadable room fails the rows and prints none, as awk did"
+  fi
+fi
+
 # The paren-attribution form `DECIDED (<attr>):` (a parenthesis between the verb
 # and the colon, e.g. what a captain actually writes) settles a pending item,
 # exactly like the bare and `DECIDED <family>:` forms.

@@ -777,57 +777,16 @@ ac_room_handback_families() {
 
 ac_room_list_rows() {
   # ac_room_list_rows <room-file>... - the PER-ROOM projection `ac-room.sh
-  # list` needs: one line "<pending>\037<hb>\037<family>\037<last>" per
-  # file, in argument order, from ONE awk pass over every file given. Fields
-  # are separated by ASCII Unit Separator 0x1f (awk octal \037 - this awk has
-  # no \x hex escape, verified empirically), never a tab: bash's `read`
-  # trims a TRAILING run of IFS whitespace (space/tab/newline) from the last
-  # assigned variable even when IFS is set to only one of them, so a `last`
-  # that genuinely ends in a literal tab would lose it with a tab delimiter
-  # (verified empirically) - 0x1f carries none of that special treatment.
-  # <pending> and <hb> are per-file (never a cross-file sum - a DECIDED: in
-  # one room still settles nothing in another); <last> is the FULL last line
-  # matching `^- \[` (untruncated - the caller truncates it with a
-  # character-aware bash substring, never awk's substr(), which is
-  # byte-aware in this awk and measurably diverges from the original `cut
-  # -c1-120` on this fleet's everyday multi-byte UTF-8 room text).
-  #
-  # ADDITIVE, not a re-derivation: the GATE/ASK/DECIDED and HANDBACK/DEMOTED/
-  # CLOSED/HANDBACK-REFUSED patterns are copied verbatim from ac_room_pending
-  # and ac_room_handback_families above - "ONE copy of the room grammar"
-  # (that function's own docstring) - so all three stay byte-identical in
-  # what they match. Neither helper's signature or behavior changes for its
-  # existing callers (ac-turnend-guard.sh, ac_chief_gate_parked,
-  # ac-statusline.sh); this is a third, independent reader of the same files.
-  #
-  # EVERY argument file emits exactly one row, in argument order, INCLUDING a
-  # completely empty room.md - awk never runs a single pattern-action rule
-  # for a zero-line file (no BEGINFILE/ENDFILE in this awk), so a design that
-  # only prints on a FILENAME-change trigger never sees that file at all and
-  # silently drops it from the inbox (a live-verified failure mode: an empty
-  # room.md with a blocked-chief stamp must still surface
-  # PENDING-CAPTAIN(1)+BLOCKED). Keying open/hb/last by FILENAME directly and
-  # emitting from an ARGV walk in END sidesteps that: an untouched array
-  # element reads as 0/"" - exactly an empty room's correct row - with no
-  # dependency on ever having read a line from it. The C locale for the reason
-  # ac_room_scan gives.
+  # list` needs: one line "<pending>\037<hb>\037<family>\037<last>" per file,
+  # in argument order, empty rooms included. src/room.ts computes it and its
+  # header is the spec; it carries a COPY of the GATE/ASK/DECIDED and
+  # HANDBACK/HANDBACK-REFUSED/DEMOTED/CLOSED patterns above, so a grammar
+  # change here changes it too - tests/sh/ac-room.test.sh compares its columns
+  # with ac_room_pending and ac_room_handback_families. It runs in bun because
+  # the whole room set is read on every call (the dashboard polls it), and the
+  # awk pass it replaced was most of `ac-room.sh list`'s time.
   [ "$#" -gt 0 ] || return 0
-  LC_ALL=C awk '
-    function fam(p,   n, a) { n = split(p, a, "/"); return (n >= 2 ? a[n - 1] : p) }
-    /^- \[[^]]*\] [^>]*> (GATE|ASK)( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { open[FILENAME]++ }
-    /^- \[[^]]*\] [^>]*> DECIDED( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { if (open[FILENAME] > 0) open[FILENAME]-- }
-    /^- \[[^]]*\] [^>]*> HANDBACK:/ { hb[FILENAME] = 1 }
-    /^- \[[^]]*\] [^>]*> HANDBACK-REFUSED:/ { hb[FILENAME] = 0 }
-    /^- \[[^]]*\] [^>]*> (DEMOTED|CLOSED):/ { hb[FILENAME] = 0 }
-    /^- \[/ { last[FILENAME] = $0 }
-    END {
-      for (i = 1; i < ARGC; i++) {
-        f = ARGV[i]
-        p = (open[f] > 0 ? open[f] : 0)
-        print p "\037" (hb[f] + 0) "\037" fam(f) "\037" last[f]
-      }
-    }
-  ' "$@"
+  ( . "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh" && ac_bun_exec src/room.ts rows "$@" )
 }
 
 # --- the two CHIEF-QUIET predicates -------------------------------------------

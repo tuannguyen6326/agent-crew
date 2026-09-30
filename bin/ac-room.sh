@@ -556,14 +556,13 @@ cmd_list() {
   set -- "$data_dir"/*/room.md
   if [ -f "$1" ]; then
     state_dir="$(ac_state_dir)"
-    # BATCHED: ac_room_list_rows (bin/ac-wake-lib.sh) makes ONE awk pass over
+    # BATCHED: ac_room_list_rows (bin/ac-wake-lib.sh) makes ONE pass over
     # every room.md instead of forking ac_room_pending + ac_room_handback_families
     # + basename/dirname + grep|tail|cut per room - the same anti-pattern those
     # two helpers' own headers warn against, just never applied here until now.
     # `last` comes back UNTRUNCATED; `${last:0:120}` truncates it by CHARACTER,
-    # matching the original `cut -c1-120` in this UTF-8 locale (verified to
-    # diverge from awk's own byte-based substr() on this fleet's everyday
-    # multi-byte room text) - never re-truncate inside the shared awk.
+    # matching the original `cut -c1-120` in this UTF-8 locale - never
+    # re-truncate inside the rows pass, which reads a room byte by byte.
     while IFS=$'\x1f' read -r pending hb family last; do
       found=1
       last="${last:0:120}"
