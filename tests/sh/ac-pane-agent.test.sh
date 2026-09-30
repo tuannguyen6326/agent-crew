@@ -1831,7 +1831,7 @@ rm -f "$AC_HOME/config/qa-agent" "$AC_HOME/config/crew-dispatch.json"
 # render on every capture and dropping any text sent before that render settles.
 # The verifier must require a non-empty stable render as well as idle before it
 # types anything.
-# --timeout 20, matching the codex sibling at :1313: crewmate_wait_input_ready
+# --timeout 20, matching the codex c-ready sibling below: crewmate_wait_input_ready
 # (bin/ac-pane-agent.sh) gates BOTH harnesses through the identical
 # observation loop, and the codex arm was MEASURED at ~8s of overhead on this
 # same stub (records/repo-knowledge/agent-crew.md, by:
@@ -2035,7 +2035,7 @@ missing="$TMP/idle-never-written.md"
 rm -f "$missing"
 # rc captured on THIS run rather than re-run under assert_fails: that helper
 # accepts any non-zero exit and discards stderr, so a broken harness reads
-# identically to the refusal under test (tests/sh/helpers.sh:86).
+# identically to the refusal under test (assert_fails, tests/sh/helpers.sh).
 irc=0; out="$(irun --label idle-bad --deliverable "$missing")" || irc=$?
 case "$out" in *'"status":"ok"'*) fail "an idle pane with no deliverable must never report ok" ;; esac
 assert_contains "$out" '"event":"done"' "the refusal still speaks the done protocol"

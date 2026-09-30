@@ -407,7 +407,7 @@ rm -f "$AC_HOME/state/.learn.meta"
 # --- cmd_note: the lock over the ledger read-modify-write (RC-1) -------------
 #
 # `note` is NOT an append - it is a whole-file READ-MODIFY-WRITE (bin/ac-learn.sh
-# :726-741: awk over the entire ledger -> $ledger.tmp.$$ -> mv). Unserialized,
+# cmd_note: awk over the entire ledger -> $ledger.tmp.$$ -> mv). Unserialized,
 # two roomchiefs landing together both read the original and the later mv
 # silently discards the earlier writer's lesson. That lost update is a
 # PRE-EXISTING fleet bug - it needs no crewdomain to happen.

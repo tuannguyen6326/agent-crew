@@ -7,7 +7,7 @@
 # tests/run-suite.sh green (repo-deep-review F21).
 #
 # Skips cleanly - never a failure - when bun is absent: same house style as
-# the timeout/gtimeout probe at tests/run-suite.sh:153-159, a missing tool
+# the timeout/gtimeout capability probe in tests/run-suite.sh, a missing tool
 # must never read as a test failure.
 
 . "$(dirname "$0")/helpers.sh" \

@@ -3450,13 +3450,6 @@ function pageWhiteboards(){
   return s;
 }
 
-// Cross-home Reviews is a client-only view pref (dash-review-polish-xhome),
-// same shape as boardHideDone: persisted, and toggling it changes which
-// endpoint routeEndpoint fetches, so a fresh route poll is forced. Reuses the
-// SAME invalidation applyRoute uses on a route/fleet change (:5945) - bump
-// pollGen and abort pageCtrl - so an in-flight per-fleet fetch can never
-// resolve and render under the new flag (a stale response's gen check would
-// otherwise still match).
 // Active-only view filter (per-fleet only, no all-homes
 // toggle in the UI - /api/reviews?all=1 stays for shims). Pure client filter.
 function reviewsActiveOnly(){ try{ return localStorage.getItem('ac_dash_reviews_active')==='1'; }catch(e){ return false; } }
@@ -3608,7 +3601,7 @@ function artTree(n, r, ui, force, depth){
     // board route takes - so it links straight at the detail, un-normalized: the
     // Processes row normalizes because its input is a TASK id, this one must not.
     // EXCEPT "lavish": collectArtifacts nests the pooled worktrees' review pages
-    // under a synthetic top-level node (:1075), a bucket rather than a family.
+    // under a synthetic top-level node (see groupArtifacts), a bucket rather than a family.
     var fam=(depth===0 && d.name!=='lavish')
       ? '<a class="tlink" href="/fleets/'+enc(r.fleet)+'/board/'+enc(d.name)+'" data-link title="Open task '+esc(d.name)+'">&#8599;</a>' : '';
     s+=(fam?'<div class="tnoderow">':'');

@@ -3318,8 +3318,8 @@ export function taskFamilyOf(id: string, known: string[]): string {
  * Membership is `fleet_scope=` when the meta carries it (ac-spawn.sh writes it
  * for scoped work), else taskFamilyOf - older metas and every chief meta have no
  * fleet_scope. A CHIEF's `project=` is NOT a repo and is skipped: ac-spawn.sh
- * writes the FAMILY there for a roomchief (:1126) and a literal `-` for a
- * crewdeputy (:1266), both of which ran in the fleet home, not a project clone.
+ * writes the FAMILY there for a roomchief (roomchief path) and a literal `-` for a
+ * crewdeputy (crewdeputy path), both of which ran in the fleet home, not a project clone.
  * Metas left with neither a repo nor a PR are dropped: they add nothing either
  * list can render.
  */
@@ -6240,7 +6240,7 @@ async function loadArtifact(){
   // look (dash-review-polish-scroll defect 1): a rewrite with the same bytes
   // still bumps mtime and must NOT remount, or the captain loses their place
   // for no real change. The signature of what is mounted lives ON the
-  // element, mirroring the board view's f._loaded (:6936 house pattern) -
+  // element, mirroring the board view's f._loaded (postFrames house pattern) -
   // just derived from content here instead of a fetch generation counter.
   if (!reviewShouldRemount(frame._mountedContent, content)) return;
   // Scroll capture (defect 2): lastScrollY is pushed continuously by the

@@ -592,7 +592,7 @@ export function backlogFamilyIds(b: BacklogView): string[] {
  * Derive a story's five-state board value (done/in_flight/queued/failed/
  * abandoned) from a backlog line + its known section. Section alone is only
  * in_flight/queued/done (boardData's childrenOf entries carry {id, line,
- * section}, :6472), so it cannot distinguish a real done from a [failed]/
+ * section} in page.ts), so it cannot distinguish a real done from a [failed]/
  * [abandoned] row; parseBacklogLine's `terminal` can - the exact token right
  * after the id, as src/backlog.ts reads it - so a `[failed]` anywhere else on
  * the line, or `[FAILED]`, never flips a done row.
@@ -1477,7 +1477,7 @@ export function renderMarkdown(md: string, srcline = false): string {
         // item's paragraph instead of starting a sibling <p>. It stops at a
         // blank line or a real block start (item, heading, fence, GFM table
         // head) so it never swallows the next block; joined with <br> like
-        // the paragraph path (:1036) treats a source line break the same way
+        // the paragraph path (flushPara) treats a source line break the same way
         // inside a list as outside one.
         while (
           i < lines.length &&

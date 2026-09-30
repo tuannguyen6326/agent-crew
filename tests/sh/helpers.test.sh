@@ -220,7 +220,7 @@ assert_no_hogs "the real reap clears them"
 # reaches the publish (a fork the host cannot serve under contention, a failing
 # mktemp) killed it silently and left this file spinning for ever. Nothing above
 # it bounds that: tests/run-suite.sh has no per-test timeout here
-# (no timeout/gtimeout - run-suite.sh:153-159), so one dead child hangs the WHOLE
+# (no timeout/gtimeout - its capability probe), so one dead child hangs the WHOLE
 # suite. Measured 2026-07-25 on the real shape: the child was already reaped
 # (kill -0 said no) while the poll was still spinning 600 iterations later.
 # The bound is the same shape wait_all_dead above already uses.

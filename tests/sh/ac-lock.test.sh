@@ -598,7 +598,7 @@ count_results() {
 # if the parent died, or never wrote at all (an empty $SESSIONS races zero
 # tokens - see race_acquire's own header), a racer waited for ever and the
 # parent's `wait` waited for ever with it. tests/run-suite.sh has no per-test
-# timeout here (no timeout/gtimeout - run-suite.sh:153-159), so one dead
+# timeout here (no timeout/gtimeout - see its capability probe), so one dead
 # gate hangs the WHOLE suite. This pins the bound so a future edit cannot
 # quietly drop it back to an unbounded read.
 never_gate="$TMP/never-open.fifo"

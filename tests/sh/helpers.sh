@@ -135,7 +135,7 @@ run_on_tty() {
   # AND the pty master both reach EOF, both drop out of its watch set and it
   # calls select([],[],[]) with no fds and no timeout - which never returns on
   # macOS. The child has already exited cleanly, but waitpid is never reached, so
-  # run_on_tty hangs FOREVER and tests/run-suite.sh cannot complete (helpers.sh:103,
+  # run_on_tty hangs FOREVER and tests/run-suite.sh cannot complete (pty.spawn version,
   # repro'd 2026-08-02). We fork the pty ourselves and drain the master until it
   # EOFs (or errors), which terminates on child exit, then waitpid and decode the
   # raw wait status like a shell would (a signal death is 128+signum) rather than

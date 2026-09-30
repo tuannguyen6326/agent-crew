@@ -579,7 +579,7 @@ rm -f "$AC_HOME/config/backend" "$FAKE_ORCA/terminals/hless.buf" "$FAKE_ORCA/ter
 # question) and resolve that branch's FRESHEST tip via ac_freshest_ref (local
 # vs origin, origin wins on true divergence); an explicit override wins over
 # the live checkout. make_fake_orca's `worktree create` hands --base-branch
-# straight to `git worktree add` as a ref (tests/sh/helpers.sh:734), so this runs
+# straight to `git worktree add` as a ref (in tests/sh/helpers.sh), so this runs
 # the real branch/tip resolution end to end through the fake.
 
 # A1: live checkout on a branch OTHER than default - lease cuts from THAT branch.

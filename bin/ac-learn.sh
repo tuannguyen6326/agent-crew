@@ -865,7 +865,7 @@ EOF
         "$(basename "$(ac_home)")" "$pane" "$rundir"
     } >"$verify_meta.tmp.$$"
     # Status is appended BEFORE the meta mv - the same order bin/ac-verify.sh's
-    # publish_meta uses (:767-772: "a reader that sees the meta always sees the
+    # publish_meta uses ("a reader that sees the meta always sees the
     # status too"). ac-learn.sh used to append status LAST, so under load an
     # observer could see the meta but miss the status; this closes that window.
     ac_status_append "$verify_id" "started learning scout pane=$pane"

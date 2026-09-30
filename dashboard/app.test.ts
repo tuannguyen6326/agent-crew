@@ -1218,7 +1218,7 @@ test("storyState distinguishes done/failed/abandoned within the done section", (
 
 test("storyState never false-positives on the marker word appearing in the description", () => {
   // the marker only counts BEFORE the first " - " (parseBacklogLine's own text
-  // boundary, :443-444) - a description mentioning "failed" past that boundary
+  // boundary, its `dash`) - a description mentioning "failed" past that boundary
   // must not flip a real done story to failed
   expect(storyState("- [x] a - the retry failed once then abandoned the old plan; epic:e", "done")).toBe("done");
 });
@@ -2176,13 +2176,13 @@ test("applyDispatchWrite rejects every malformed document and writes NOTHING", (
 // ac-fleets.sh --json emits (2.1) buckets into its OWN Processes row, never a
 // crew one. verifyProcessRows is the one place that reads the bucket off the
 // wire (no verify-* prefix matching in TypeScript). Everything downstream in
-// pageProcesses keys off row.kind==='crew' (badge :2505 unchanged, backlog +
-// reports links :2538 unchanged) or row.room (attention filter :2481
+// pageProcesses keys off row.kind==='crew' (badge `stCls` unchanged, backlog +
+// reports links processExpand unchanged) or row.room (attention filter rowMatch
 // unchanged) - so a `kind:'verify', room:null` row proven here is provably
 // excluded from crew-only links without touching those branches because
 // `row.kind==='crew'` short-circuits false. A verifier may carry its supervising
 // family in `row.room` so attention can surface a blocked family. The expand
-// key (`row.kind+':'+row.id`, :2503, also unchanged)
+// key (`row.kind+':'+row.id`, `rid`, also unchanged)
 // therefore comes out `verify:<id>`, never `crew:<id>`.
 test("verifyProcessRows buckets a verify[] wire entry as kind 'verify', never 'crew'", () => {
   const rows = verifyProcessRows([{ id: "v1", kind: "verify-codereview", project: "agent-crew", status: "running", caller: "flow-implement", family: "flow", ref: "abc123", worktree: "/tmp/v1" }]);
