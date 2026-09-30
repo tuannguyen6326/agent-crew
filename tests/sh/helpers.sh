@@ -806,7 +806,13 @@ make_fake_orca() {
   #                   `send` fails terminal_not_writable (both measured on
   #                   orca CLI 1.4.188 - a closed terminal keeps serving its
   #                   retained scrollback)
-  #   <h>.idle        present = `wait --for tui-idle` satisfied immediately
+  #   <h>.idle        present = `wait --for tui-idle` satisfied immediately;
+  #                   absent = the wait times out with error code "timeout"
+  #                   (the real CLI's envelope, measured on orca 1.4.215)
+  #   <h>.screen-next moved over <h>.screen by a timed-out wait - the TUI
+  #                   repainting inside the wait's window
+  #   <h>.wait-error  content = an error code `wait` fails with instead of
+  #                   timing out (a stale handle answers terminal_handle_stale)
   #   <h>.agentwait   present = show reports agentWait non-null
   #   <h>.agent       content = the agentIdentity `show` reports (Orca's own
   #                   harness detection: "claude"/"codex" once the TUI owns
@@ -1032,7 +1038,12 @@ case "${2:-}" in
     if [ "$cond" = tui-idle ] && [ -e "$d/terminals/$term.idle" ]; then
       printf '{"ok":true,"result":{"wait":{"satisfied":true,"status":"running"}}}\n'; exit 0
     fi
-    printf '{"ok":false,"error":{"message":"timeout"}}\n'; exit 1 ;;
+    if [ -s "$d/terminals/$term.wait-error" ]; then
+      printf '{"ok":false,"error":{"code":"%s","message":"%s"}}\n' \
+        "$(head -1 "$d/terminals/$term.wait-error")" "$(head -1 "$d/terminals/$term.wait-error")"; exit 1
+    fi
+    [ -f "$d/terminals/$term.screen-next" ] && mv "$d/terminals/$term.screen-next" "$d/terminals/$term.screen"
+    printf '{"ok":false,"error":{"code":"timeout","message":"timeout"}}\n'; exit 1 ;;
   list)
     sep=""; printf '{"ok":true,"result":{"terminals":['
     for f in "$d"/terminals/*.tab; do

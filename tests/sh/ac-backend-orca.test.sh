@@ -276,8 +276,10 @@ printf 'agent-crew\n' >"$FAKE_ORCA/terminals/term1.title"
 printf 'codex\n' >"$FAKE_ORCA/terminals/term1.agent"
 run_backend orca 'backend_harness_up o1' \
   || fail "agentIdentity=codex proves the harness came up without any claude glyph"
+: >"$FAKE_ORCA/terminals/term1.screen"
 rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
-assert_eq "$rc" "1" "identity alone is not idleness - tui-idle must satisfy"
+assert_eq "$rc" "1" "identity alone is not idleness - nothing is rendered yet"
+rm -f "$FAKE_ORCA/terminals/term1.screen"
 touch "$FAKE_ORCA/terminals/term1.idle"
 run_backend orca 'backend_agent_idle o1' || fail "codex: tui-idle satisfied + plain cwd title = idle"
 assert_eq "$(run_backend orca 'backend_agent_status_pane term1')" "idle" "status reads idle for a resting codex"
@@ -286,7 +288,27 @@ rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
 assert_eq "$rc" "1" "codex: a braille spinner title is WORKING even while tui-idle satisfies"
 assert_eq "$(run_backend orca 'backend_agent_status_pane term1')" "working" "status reads working under the braille spinner"
 run_backend orca 'backend_harness_up o1' || fail "a spinner-titled codex is a harness that came up"
-rm -f "$FAKE_ORCA/terminals/term1.idle" "$FAKE_ORCA/terminals/term1.agent"
+# Measured on codex 0.159.2 under orca 1.4.215: tui-idle never satisfied on a
+# ready composer before the pane's first turn (a codex scout lane delivered
+# no prompt for it), so a spinner-free codex pane reads idle when
+# its rendered screen is unchanged across the wait's timed-out window.
+rm -f "$FAKE_ORCA/terminals/term1.idle"
+printf 'agent-crew\n' >"$FAKE_ORCA/terminals/term1.title"
+printf '> Ask Codex to do anything\n  Workspace - Ready\n' >"$FAKE_ORCA/terminals/term1.screen"
+run_backend orca 'backend_agent_idle o1' \
+  || fail "codex: a screen unchanged across a timed-out tui-idle wait is idle"
+assert_eq "$(run_backend orca 'backend_agent_status_pane term1')" "idle" "status reads idle for a quiet codex composer"
+printf '  Working (3s - esc to interrupt)\n' >"$FAKE_ORCA/terminals/term1.screen-next"
+rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+assert_eq "$rc" "1" "codex: a screen that repaints inside the wait window is not idle"
+printf 'terminal_handle_stale\n' >"$FAKE_ORCA/terminals/term1.wait-error"
+rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+assert_eq "$rc" "1" "codex: a wait that failed rather than timed out observed no window - not idle"
+rm -f "$FAKE_ORCA/terminals/term1.wait-error"
+printf 'claude\n' >"$FAKE_ORCA/terminals/term1.agent"
+rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+assert_eq "$rc" "1" "the quiet-screen reading is codex's alone - another identity still needs its own signal"
+rm -f "$FAKE_ORCA/terminals/term1.screen" "$FAKE_ORCA/terminals/term1.agent"
 printf 'zsh\n' >"$FAKE_ORCA/terminals/term1.title"
 
 # --- startup dialogs answered BY NAME ---------------------------------------------
