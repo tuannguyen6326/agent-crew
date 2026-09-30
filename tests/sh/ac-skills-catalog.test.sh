@@ -123,17 +123,18 @@ skill_verb_refs() {
 }
 
 # script_verbs <ac-x.sh> - path to the cached list of verbs bin/<script>
-# dispatches: plain-token case arms (`verb)`, `verb|alias)`) and `cmd_<verb>()`
-# functions, the two shapes the bin/ scripts use. Empty for a single-purpose
+# dispatches: plain-token case arms (`verb)`, `verb|alias)`, and a spaced
+# `"" | verb | alias)` whose empty alternative names no verb) and `cmd_<verb>()`
+# functions, the shapes the bin/ scripts use. Empty for a single-purpose
 # script, which then has nothing to check a verb against.
 script_verbs() {
   local cache="$TMP/verbs/$1"
   if [ ! -f "$cache" ]; then
     mkdir -p "$TMP/verbs"
     awk '
-      /^[ \t]*[a-z][a-z0-9-]*(\|[a-z][a-z0-9-]*)*\)/ {
-        s = $0; sub(/^[ \t]+/, "", s); sub(/\).*/, "", s)
-        n = split(s, a, "|"); for (i = 1; i <= n; i++) print a[i]
+      /^[ \t]*(""|[a-z][a-z0-9-]*)([ \t]*\|[ \t]*(""|[a-z][a-z0-9-]*))*\)/ {
+        s = $0; sub(/^[ \t]+/, "", s); sub(/\).*/, "", s); gsub(/[ \t]/, "", s)
+        n = split(s, a, "|"); for (i = 1; i <= n; i++) if (a[i] != "\"\"") print a[i]
       }
       /^cmd_[a-z0-9_]+\(\)/ {
         s = $0; sub(/^cmd_/, "", s); sub(/\(\).*/, "", s); gsub(/_/, "-", s); print s
