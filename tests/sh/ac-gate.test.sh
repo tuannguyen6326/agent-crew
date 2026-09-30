@@ -2267,6 +2267,29 @@ assert_eq "$(cat "$hold/f.rc")" "0" "the last same-family run settles"
 assert_contains "$(board)" "0 active" "no run of the family is left on the board"
 assert_no_marker "$fam2" "the family's last run leaves no marker behind, a dead run's included"
 assert_no_file "$busyf" "the family's last run clears the busy declaration"
+# A verifier call holds the same declaration, keyed by its pid; a ( ) subshell
+# keeps this shell's $$, so the hold below belongs to a live process. Neither a
+# gate run nor the verifier may clear it while the other still holds it.
+fam4=busyshare
+for s in spec arch; do
+  mkdir -p "$AC_HOME/data/$fam4/$s"
+  printf '# %s brief\ncontract.\n' "$s" >"$AC_HOME/data/$fam4/$s/brief.md"
+  printf '# %s report\noriginal report.\n' "$s" >"$AC_HOME/data/$fam4/$s/report.md"
+done
+for st in spec architecture; do post_receipts "$fam4" "$st" 1; done
+busy4="$AC_HOME/state/.chief-busy-until.$fam4"
+busy_lib() { ( . "$BIN/ac-lib.sh"; . "$BIN/ac-wake-lib.sh"; "$@" ); }
+busy_lib ac_chief_busy_hold "$AC_HOME/state" "$fam4" "$(( $(date +%s) + 600 ))"
+held_gate bsh "$hold/continue.md" "$fam4" spec
+release_held bsh
+assert_eq "$(cat "$hold/bsh.rc")" "0" "a gate run beside a verifier call settles"
+[ -s "$busy4" ] || fail "a gate run's exit must not clear a declaration a live verifier call still holds"
+held_gate bsi "$hold/continue.md" "$fam4" architecture
+busy_lib ac_chief_busy_leave "$AC_HOME/state" "$fam4" "$AC_HOME/data/$fam4"
+[ -s "$busy4" ] || fail "a verifier's leave must not clear a declaration a live gate run still holds"
+release_held bsi
+assert_eq "$(cat "$hold/bsi.rc")" "0" "the gate run settles after the verifier left"
+assert_no_file "$busy4" "the last holder's exit clears the declaration"
 
 # --- a run starting while another of its family exits keeps its declaration ------
 # X is held inside its exit, after it found no other live run and before it clears

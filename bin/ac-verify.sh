@@ -148,7 +148,9 @@
 # family named on its own command line (--family, never inferred from the
 # environment): state/.chief-busy-until.<family> (ac_chief_busy_path, ac-wake-lib.sh,
 # which owns the contract) holds the epoch until which the caller is blocked -
-# AC_VERIFY_TIMEOUT plus a reap slack. It is cleared on every trappable exit and
+# AC_VERIFY_TIMEOUT plus a reap slack. A same-family gate run shares it, so this
+# call holds it (ac_chief_busy_hold) and on every trappable exit leaves it
+# (ac_chief_busy_leave), which clears it only when no live holder remains. It
 # SELF-EXPIRES otherwise, it never asserts coverage, and it never overrides
 # roomchief liveness: a GONE roomchief still revokes its skip immediately.
 
@@ -265,9 +267,9 @@ qa_error_report_on_exit() {
     fi
   fi
   [ -z "${output_tmp:-}" ] || rm -f "$output_tmp" "$output_tmp.final" 2>/dev/null
-  # The busy declaration goes with the synchronous call it describes, on every
-  # trappable exit (it self-expires on the untrappable ones).
-  [ -z "${busy_decl:-}" ] || rm -f "$busy_decl" 2>/dev/null || true
+  # This call's hold on the busy declaration goes on every trappable exit (it
+  # self-expires on the untrappable ones); the declaration only with its last.
+  [ -z "${busy_decl:-}" ] || ac_chief_busy_leave "$state_dir" "$family" "$data_dir/$family" 2>/dev/null || true
   # The pane-phase half of the cleanup-asymmetry fix (see the file header):
   # reached only when this process is exiting via a plain `ac_die` while
   # $qa_phase is still "pane" (published a pane handle, then failed to get a
@@ -735,7 +737,7 @@ EOF
   # The reviewer's turn is over: one live pane per (family, kind) still holds.
   reap_pane "$pane" || ac_warn "verifier $id: reviewer pane $pane did not close before the correction turn"
   pane=""
-  printf '%s\n' "$(( $(ac_now) + ${AC_VERIFY_CORRECTION_TIMEOUT:-900} + 60 ))" >"$busy_decl" || true
+  ac_chief_busy_hold "$state_dir" "$family" "$(( $(ac_now) + ${AC_VERIFY_CORRECTION_TIMEOUT:-900} + 60 ))"
   set +e
   "$pane_bin" run --cwd "$lease" --prompt-file "$cprompt" --kind "$kind" \
     --label "$id-correction" --timeout "${AC_VERIFY_CORRECTION_TIMEOUT:-900}" \
@@ -1719,7 +1721,7 @@ fi
 # degrades to exactly today's behaviour (the fleet revokes the skip after the
 # grace) - the safe direction.
 busy_decl="$(ac_chief_busy_path "$state_dir" "$family")"
-printf '%s\n' "$(( $(ac_now) + ${AC_VERIFY_TIMEOUT:-7200} + 60 ))" >"$busy_decl" || true
+ac_chief_busy_hold "$state_dir" "$family" "$(( $(ac_now) + ${AC_VERIFY_TIMEOUT:-7200} + 60 ))"
 set +e
 qa_phase=pane
 # STRAIGHT to the path publish_meta records, never a staging name renamed on

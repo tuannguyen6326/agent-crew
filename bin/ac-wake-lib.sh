@@ -214,9 +214,9 @@ ac_chief_busy_path() {
   # roomchief: the epoch (one line) until which that chief is blocked inside ONE
   # bounded synchronous call and therefore CANNOT take a turn. Written by the
   # blocking caller itself (ac-gate.sh, ac-verify.sh), read by ac-watch.sh's
-  # AC_WATCH_SKIP revalidation, cleared by the writer on its trappable exit -
-  # ac-gate.sh clears it only from the family's last live gate run, because
-  # overlapping runs of one family share this one file
+  # AC_WATCH_SKIP revalidation, cleared on a writer's trappable exit only by
+  # the family's last live holder - gate runs and verifier calls of one family
+  # share this one file (ac_chief_busy_held below)
   # (behavior: skip-grace-too-short-for-a-chief-inside-a-long-synchronous-gate).
   #
   # DELIBERATELY NOT the beacon (ac_watcher_beat_path above): that file asserts "a
@@ -232,6 +232,45 @@ ac_chief_busy_path() {
   # clean up (SIGKILL - the EXIT trap covers TERM/INT) holds the skip until the
   # bound passes and no longer.
   printf '%s/.chief-busy-until.%s\n' "$1" "$2"
+}
+
+ac_chief_busy_hold() {
+  # ac_chief_busy_hold <state_dir> <family> <until-epoch> - this process (a
+  # verifier call) joins <family>'s busy declaration: its holder mark first,
+  # then the bound, never shortened - a later bound covers another blocking
+  # call still inside its own window. Best-effort like every declaration write.
+  local decl prev
+  decl="$(ac_chief_busy_path "$1" "$2")"
+  printf 'pid=%s\n' "$$" >"$1/.chief-busy-holder.$2.$$" 2>/dev/null || true
+  prev="$(cat "$decl" 2>/dev/null || true)"
+  case "$prev" in '' | *[!0-9]*) prev=0 ;; esac
+  [ "$prev" -ge "$3" ] || printf '%s\n' "$3" >"$decl" 2>/dev/null || true
+}
+
+ac_chief_busy_held() {
+  # ac_chief_busy_held <state_dir> <family> <family-data-dir> - 0 while a live
+  # holder remains: a gate run's marker (<family-data-dir>/.gate-running.<pid>)
+  # or a verifier call's (<state_dir>/.chief-busy-holder.<family>.<pid>). A dead
+  # holder's mark is swept on the way. Called under the family lock
+  # (<family-data-dir>/.gate-lock), which orders a clear against a new hold.
+  local m held=1
+  for m in "$3"/.gate-running.* "$1"/.chief-busy-holder."$2".*; do
+    [ -f "$m" ] || continue
+    if ac_pid_alive "$(ac_meta_get "$m" pid)"; then held=0; else rm -f "$m"; fi
+  done
+  return "$held"
+}
+
+ac_chief_busy_leave() {
+  # ac_chief_busy_leave <state_dir> <family> <family-data-dir> - this process
+  # drops its hold, and the declaration goes only with the family's last live
+  # holder. The family lock is best-effort, as ac-gate.sh takes it at exit; a
+  # family with no data dir has no gate run to order against.
+  local locked=""
+  rm -f "$1/.chief-busy-holder.$2.$$"
+  [ ! -d "$3" ] || ! ac_lock_acquire "$3/.gate-lock" || locked=1
+  ac_chief_busy_held "$1" "$2" "$3" || rm -f "$(ac_chief_busy_path "$1" "$2")"
+  [ -z "$locked" ] || ac_lock_release "$3/.gate-lock"
 }
 
 ac_wake_family_spools() {
