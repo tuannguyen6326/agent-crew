@@ -551,11 +551,14 @@ cmd_show() {
 }
 
 cmd_list() {
-  local data_dir state_dir family pending hb last found=0 blocked disp
-  data_dir="$(ac_data_dir)"
+  local home data_dir state_dir family pending hb last found=0 blocked disp
+  # A read: the paths are named, never created - ac_data_dir and ac_state_dir
+  # mkdir, which minted data/ and state/ in every home a survey walked.
+  home="$(ac_home)"
+  data_dir="$home/data"
   set -- "$data_dir"/*/room.md
   if [ -f "$1" ]; then
-    state_dir="$(ac_state_dir)"
+    state_dir="$home/state"
     # BATCHED: ac_room_list_rows (bin/ac-wake-lib.sh) makes ONE pass over
     # every room.md instead of forking ac_room_pending + ac_room_handback_families
     # + basename/dirname + grep|tail|cut per room - the same anti-pattern those

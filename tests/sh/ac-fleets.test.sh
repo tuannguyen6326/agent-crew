@@ -88,6 +88,16 @@ home_after="$(snapshot "$AC_HOME")"
 [ "$home_before" = "$home_after" ] || fail "run wrote into its own AC_HOME ($AC_HOME) - read-only means nowhere"
 # the partial home must not have gained a state/ dir
 assert_no_file "$beta/state" "read-only run must not create beta/state"
+# A home with rooms but no state/: its inbox read goes through ac-room.sh
+# list, which must create nothing either.
+c2="$TMP/container-rooms-no-state"
+mkdir -p "$c2/delta/config" "$c2/delta/data/dfam"
+printf 'TN\n' >"$c2/delta/config/captain"
+printf '# Room: dfam\n\n- [%s] crewchief> GATE: a question?\n' "$(iso)" >"$c2/delta/data/dfam/room.md"
+before2="$(snapshot "$c2")"
+out_d="$(fleets "$c2")" || fail "ac-fleets.sh must exit 0 on a home with rooms but no state/"
+[ "$before2" = "$(snapshot "$c2")" ] || fail "run MUTATED a home with rooms but no state/: $(diff <(printf '%s\n' "$before2") <(snapshot "$c2") | head -5)"
+assert_contains "$out_d" "1 pending" "a home with rooms but no state/ still reads its inbox"
 
 # -- alpha: every field present --------------------------------------------------
 assert_contains "$out" "alpha" "lists the alpha home"
@@ -329,6 +339,14 @@ assert_contains "$outz" "down (no beat on record" "a zero beat renders no comput
 case "$outz" in *"down (beat "*) fail "no age may be computed from a zero beat: $outz" ;; esac
 assert_eq "$(jq -r '.homes[] | select(.name=="alpha") | .watcher.age' <<<"$(fleets --json "$container")")" \
   "null" "--json carries a null age when no beat is on record"
+
+# A zero-padded beat is unreadable (bash arithmetic reads 0009 as octal and
+# dies on it), never an age - and never drops the home from the survey.
+printf '0009\n' >"$alpha/state/.last-watcher-beat"
+outp="$(fleets "$container")" || fail "a zero-padded beat must not fail the survey"
+assert_contains "$outp" "down (no beat on record" "a zero-padded beat renders no computable age"
+assert_eq "$(jq -r '.homes[] | select(.name=="alpha") | .watcher.age' <<<"$(fleets --json "$container")")" \
+  "null" "--json keeps the home, with a null age, on a zero-padded beat"
 
 date +%s >"$alpha/state/.last-watcher-beat"   # restore fresh
 

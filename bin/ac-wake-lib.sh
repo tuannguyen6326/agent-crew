@@ -146,9 +146,9 @@ ac_watcher_beat_read() {
   # DIFFERENT file with a near-identical name - repeated the bug untouched):
   #   ac-turnend-guard.sh, ac-wake-drain.sh - the two that RENDER a figure; both
   #     read through this helper.
-  #   ac-fleets.sh - renders one too, and already branches absent ("no beacon")
-  #     from non-numeric/0 ("no beat on record") inline; converting it would
-  #     change no output, so it is left alone.
+  #   ac-fleets.sh - renders one too, and reads through this helper: its own
+  #     digits-only test let a zero-padded beat reach arithmetic, which read it
+  #     as octal, failed, and dropped the home from the survey.
   #   ac-guard.sh, ac-statusline.sh - age as a BOOLEAN ("WATCHER-DOWN", " WATCH!");
   #     they print no number, so no figure can be nonsense.
   #   ac-watch.sh skip_coverage_live - age as a boolean too, deciding whether a
