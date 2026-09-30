@@ -2,10 +2,12 @@
 // scripts under src/ need, and nothing more: a helper lands here only when a
 // port calls it. Each one keeps its bash original's observable contract (the
 // same stderr shape, exit status and homeless answer), because callers of a
-// ported bin/ac-*.sh entry cannot tell which language answered them.
+// ported bin/ac-*.sh entry cannot tell which language answered them. One
+// helper is no twin: contractLint, whose last shell caller was ported, is the
+// delivery-contract judge itself.
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -88,9 +90,74 @@ export function recordsDir(): string {
   return homeSubdir("records");
 }
 
-// ac_contract_lint's twin, one violation per entry. ac-task.sh add still calls
-// the shell original, so the value vocabulary lives in two places and
-// tests/ts/lib.test.ts holds this copy to that one.
+// ac_pid_alive's twin: an owner is a canonical positive pid, and a process this
+// user may not signal (EPERM) exists - reading it as dead would hand a live
+// holder's lock to a second writer.
+export function pidAlive(pid: string): boolean {
+  if (!/^[1-9][0-9]*$/.test(pid)) return false;
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch (e) {
+    return (e as { code?: string }).code === "EPERM";
+  }
+}
+
+function lockOwner(dir: string): string {
+  try {
+    return readFileSync(join(dir, "pid"), "latin1").replace(/\n+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+// ac_lock_stale's twin: a dead owner is stale at once; a dir with no owner yet
+// (an acquirer between its mkdir and its pid write) only after the grace.
+function lockStale(dir: string): boolean {
+  const owner = lockOwner(dir);
+  if (owner !== "") return !pidAlive(owner);
+  let mtime: number;
+  try {
+    mtime = Math.floor(statSync(dir).mtimeMs / 1000);
+  } catch {
+    return false;
+  }
+  return Math.floor(Date.now() / 1000) - mtime >= Number(process.env.AC_LOCK_STALE_GRACE || "5");
+}
+
+// ac_lock_acquire's twin, the same lock dir and pid file, so bash and
+// TypeScript writers exclude each other (tests/ts/lib.test.ts).
+export function lockAcquire(dir: string, timeout: number): boolean {
+  let waited = 0;
+  for (;;) {
+    try {
+      mkdirSync(dir);
+      break;
+    } catch {}
+    if (lockStale(dir)) {
+      rmSync(dir, { recursive: true, force: true });
+      if (!existsSync(dir)) continue;
+    }
+    if (waited >= timeout) return false;
+    Bun.sleepSync(1000);
+    waited++;
+  }
+  writeFileSync(join(dir, "pid"), `${process.pid}\n`);
+  return true;
+}
+
+// ac_lock_release's twin: a reclaim may have handed the dir to another writer
+// since this one took it, so only an unowned dir or our own is removed.
+export function lockRelease(dir: string): void {
+  const owner = lockOwner(dir);
+  if (owner === "" || owner === String(process.pid)) rmSync(dir, { recursive: true, force: true });
+}
+
+// The delivery-contract value judge, one violation per entry and none when the
+// contract is clean. The VALUE vocabulary lives HERE - src/backlog.ts extracts
+// shape only. It also flags the two combinations AGENTS.md section 5 outlaws
+// (flow:staged with rev:no; mode:crew-ship with rev:no), so a contract that
+// contradicts the law is loud at the scheduler and refused by ac-task.sh add.
 export function contractLint(c: string): string[] {
   const out: string[] = [];
   let flow = "", mode = "", rev = "";

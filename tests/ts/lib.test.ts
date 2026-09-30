@@ -5,7 +5,7 @@ import { test, expect, beforeEach, afterAll } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, existsSync, symlinkSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { envHome, configRead, stateDir, enterCaller, bunChild, sha256File, contractLint } from "../../src/lib.ts";
+import { envHome, configRead, stateDir, enterCaller, bunChild, sha256File, contractLint, pidAlive, lockAcquire, lockRelease } from "../../src/lib.ts";
 
 const LIB = join(import.meta.dir, "..", "..", "src", "lib.ts");
 
@@ -219,24 +219,90 @@ test("sha256File throws where ac_sha256_file prints no hash", () => {
   expect(() => sha256File(missing)).toThrow();
 });
 
-// ac-task.sh add still judges a contract through ac_contract_lint, so the
-// scheduler's copy must answer exactly what the shell does. No glob
-// characters: the shell's unquoted walk would expand them against the cwd,
-// and no parsed contract token can hold one (src/backlog.ts, contract).
-test("contractLint answers exactly what ac_contract_lint prints", () => {
-  const binDir = join(import.meta.dir, "..", "..", "bin");
-  const contracts = [
-    "", "   ", "src:cap flow:direct mode:local-only rev:no qa:no", "src:bogus flow:sideways mode:yolo rev:maybe qa:perhaps",
-    "promote:no", "promote:always", "flow:staged rev:no", "mode:crew-ship rev:no", "flow:staged\trev:no\nmode:crew-ship",
-    "flow:staged rev:no flow:direct", "rev:no rev:yes mode:crew-ship", "src:", "noColon", "a:b:c", "flow:x:y",
-    ":lead", "unknown:key src:crew", "  src:gh  qa:yes ",
+const STAGED = "flow:staged with rev:no - staged review is mandatory (AGENTS.md section 5)";
+const CREWSHIP = "mode:crew-ship with rev:no - crew-ship review is mandatory (AGENTS.md section 5)";
+test("contractLint judges each closed vocabulary and the two outlawed combinations", () => {
+  const cases: [string, string[]][] = [
+    ["", []],
+    ["src:cap flow:direct mode:local-only rev:no qa:no", []],
+    ["mode:feature-pr", []],
+    ["promote:no", []],
+    ["src:boss", ["src:boss invalid - want cap|chief|mon|gh|crew|learn"]],
+    ["flow:agile", ["flow:agile invalid - want direct|staged"]],
+    ["mode:ship", ["mode:ship invalid - want crew-ship|direct-pr|local-only|feature-pr"]],
+    ["rev:maybe", ["rev:maybe invalid - want yes|no"]],
+    // Delegation-by-click was dropped when chief judgment was named the error source.
+    ["qa:auto", ["qa:auto invalid - want yes|no"]],
+    ["promote:yes", ["promote:yes invalid - want no (always is the default and is never written)"]],
+    ["flow:staged rev:no", [STAGED]],
+    ["mode:crew-ship rev:no", [CREWSHIP]],
+    ["flow:staged\trev:no\nmode:crew-ship", [STAGED, CREWSHIP]],
+    ["flow:staged rev:no flow:direct", []],
+    ["noColon a:b:c unknown:key", []],
+    ["flow:x:y", ["flow:x:y invalid - want direct|staged"]],
+    ["src:", ["src: invalid - want cap|chief|mon|gh|crew|learn"]],
   ];
-  for (const c of contracts) {
-    const bash = Bun.spawnSync(["bash", "-c", '. "$1/ac-lib.sh"; ac_contract_lint "$2"', "--", binDir, c], {
-      env: { PATH: process.env.PATH! },
-    });
-    expect(bash.exitCode).toBe(0);
-    expect([c, contractLint(c).map((v) => `${v}\n`).join("")]).toEqual([c, bash.stdout.toString()]);
+  for (const [c, want] of cases) expect([c, contractLint(c)]).toEqual([c, want]);
+});
+
+// src/task.ts takes the backlog lock through the lock-dir protocol every bash
+// writer takes through ac_lock_acquire, so an older checkout's ac-task.sh and
+// the port must read one lock dir the same way: who is alive, when it is
+// stale, and whose it is to release. The shell answer is the authority.
+const LIB_BIN = join(import.meta.dir, "..", "..", "bin");
+const bashLib = (body: string, ...args: string[]) =>
+  Bun.spawnSync(["bash", "-c", `. "$0/ac-lib.sh"; ${body}`, LIB_BIN, ...args], { env: { PATH: process.env.PATH! } });
+
+test("pidAlive answers exactly what ac_pid_alive does", () => {
+  const gone = Bun.spawnSync(["sh", "-c", "echo $$"]).stdout.toString().trim();
+  for (const pid of [String(process.pid), "1", gone, "0", "", "01", "abc", "-5", "99999999999999999999"]) {
+    const bash = bashLib('ac_pid_alive "$1" && echo alive || echo dead', pid);
+    expect([pid, pidAlive(pid) ? "alive" : "dead"]).toEqual([pid, bash.stdout.toString().trim()]);
+  }
+});
+
+test("lockAcquire and ac_lock_acquire exclude each other and reclaim alike", async () => {
+  const d = tempDir("ac-lib-ts-lock-");
+  const lock = join(d, "x.lock");
+  const acquire = (timeout: string) => bashLib('ac_lock_acquire "$1" "$2" && echo got || echo refused', lock, timeout).stdout.toString().trim();
+  // A live bash holder refuses the TypeScript writer.
+  const holder = Bun.spawn(["bash", "-c", '. "$0/ac-lib.sh"; ac_lock_acquire "$1" 5 && sleep 3; ac_lock_release "$1"', LIB_BIN, lock]);
+  while (!existsSync(join(lock, "pid"))) await Bun.sleep(20);
+  expect(lockAcquire(lock, 1)).toBe(false);
+  await holder.exited;
+  // A live TypeScript holder refuses the bash writer.
+  expect(lockAcquire(lock, 0)).toBe(true);
+  expect(acquire("1")).toBe("refused");
+  lockRelease(lock);
+  expect(existsSync(lock)).toBe(false);
+  // A dead owner is stale to both.
+  const gone = Bun.spawnSync(["sh", "-c", "echo $$"]).stdout.toString().trim();
+  for (const side of ["ts", "bash"]) {
+    mkdirSync(lock);
+    writeFileSync(join(lock, "pid"), `${gone}\n`);
+    expect([side, side === "ts" ? (lockAcquire(lock, 0) ? "got" : "refused") : acquire("0")]).toEqual([side, "got"]);
+    rmSync(lock, { recursive: true, force: true });
+  }
+  // A pid-less dir is stale only once its grace has passed.
+  for (const [grace, want] of [["60", "refused"], ["0", "got"]]) {
+    for (const side of ["ts", "bash"]) {
+      mkdirSync(lock);
+      process.env.AC_LOCK_STALE_GRACE = grace;
+      const got = side === "ts"
+        ? (lockAcquire(lock, 0) ? "got" : "refused")
+        : bashLib('AC_LOCK_STALE_GRACE="$2" ac_lock_acquire "$1" 0 && echo got || echo refused', lock, grace).stdout.toString().trim();
+      delete process.env.AC_LOCK_STALE_GRACE;
+      expect([grace, side, got]).toEqual([grace, side, want]);
+      rmSync(lock, { recursive: true, force: true });
+    }
+  }
+  // Release is owner-checked: another live holder's dir survives both.
+  for (const side of ["ts", "bash"]) {
+    mkdirSync(lock);
+    writeFileSync(join(lock, "pid"), "1\n");
+    if (side === "ts") lockRelease(lock); else bashLib('ac_lock_release "$1"', lock);
+    expect([side, existsSync(lock)]).toEqual([side, true]);
+    rmSync(lock, { recursive: true, force: true });
   }
 });
 
