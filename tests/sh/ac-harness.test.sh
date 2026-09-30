@@ -21,7 +21,7 @@ for h in claude codex opencode; do
   case "$h" in
     claude | codex | opencode) ;;
   esac
-  printf '%s' "$h" | grep -qE "^($(lib 'printf %s "$AC_HARNESS_RE"'))$" \
+  grep -qE "^($(lib 'printf %s "$AC_HARNESS_RE"'))$" <<<"$h" \
     || fail "AC_HARNESS_RE matches registry member $h"
 done
 lib "ac_harness_known tmux" && fail "a removed backend name is not a harness"

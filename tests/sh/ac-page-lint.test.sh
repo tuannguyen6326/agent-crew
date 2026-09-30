@@ -66,7 +66,7 @@ EOF
 lint() { (cd "$repo" && ./bin/ac-page-lint.sh "$@"); }
 
 # --- arg handling ------------------------------------------------------------
-lint -h | grep -q 'Usage: ac-page-lint.sh' || fail "-h prints usage"
+grep -q 'Usage: ac-page-lint.sh' < <(lint -h) || fail "-h prints usage"
 rc=0; lint bogus >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" 2 "an unknown arg exits 2"
 

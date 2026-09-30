@@ -310,7 +310,7 @@ elif [ "$kind" = codereview ]; then
       sd="$(grep -o "[^ ]*/scouts/launch-lanes.sh" "$prompt" | head -1)"; sd="${sd%/launch-lanes.sh}"
       if [ "${VERIFY_SCOUT_MODE:-ok}" != skip ]; then
         bash "$sd/launch-lanes.sh" >/dev/null
-        while bash "$sd/wait-lanes.sh" | grep -q '^PENDING'; do :; done
+        while grep -q '^PENDING' < <(bash "$sd/wait-lanes.sh"); do :; done
         # The facade must then judge the verdict's age by the lanes' own writes.
         [ "${VERIFY_SCOUT_NO_LEDGER:-0}" != 1 ] || rm -f "$sd/lanes.tsv"
       fi

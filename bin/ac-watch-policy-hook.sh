@@ -39,19 +39,19 @@ deny() {
 }
 
 # pkill/killall with a watch-mentioning argument in the same segment.
-if printf '%s\n' "$lc" | grep -qE '(^|[^[:alnum:]_-])(pkill|killall)[^|;&]*watch'; then
+if grep -qE '(^|[^[:alnum:]_-])(pkill|killall)[^|;&]*watch' <<<"$lc"; then
   deny 'denied: pkill/killall pattern targets a watcher'
 fi
 
 # kill of pgrep-derived pids in a watch-mentioning command.
-if printf '%s\n' "$lc" | grep -q 'kill' \
-  && printf '%s\n' "$lc" | grep -q 'pgrep' \
-  && printf '%s\n' "$lc" | grep -q 'watch'; then
+if grep -q 'kill' <<<"$lc" \
+  && grep -q 'pgrep' <<<"$lc" \
+  && grep -q 'watch' <<<"$lc"; then
   deny 'denied: kill of pgrep-derived pids mentioning watch'
 fi
 
 # kill of a variable whose name mentions watch.
-if printf '%s\n' "$lc" | grep -qE '(^|[^[:alnum:]_-])kill[^|;&]*[$][{"]*[a-z_]*watch'; then
+if grep -qE '(^|[^[:alnum:]_-])kill[^|;&]*[$][{"]*[a-z_]*watch' <<<"$lc"; then
   deny 'denied: kill of a watch-named variable'
 fi
 

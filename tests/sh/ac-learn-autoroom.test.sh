@@ -375,7 +375,7 @@ e2k_reap() {
     # escalation that is not CONFIRMED is not a reap, so rc only clears when a
     # second bounded poll OBSERVES the candidate gone.
     if [ -n "$cand" ] && ps -p "$cand" >/dev/null 2>&1 \
-       && ps -o args= -p "$cand" 2>/dev/null | grep -q 'ac-spawn\.sh' \
+       && grep -q 'ac-spawn\.sh' < <(ps -o args= -p "$cand" 2>/dev/null) \
        && e2k_env_anchored "$cand"; then
       kill -9 "$cand" 2>/dev/null || true
       if e2k_wait_settled "$cand"; then rc=0; fi
@@ -816,7 +816,7 @@ printf 'kind=verify-suite\nbackend=herdr\nwindow=x\n' >"$AC_HOME/state/$dead2.me
 printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-$dead2"
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
 [ ! -e "$snap_dir" ] || fail "the killed-pane reclaim must remove the snapshot worktree it left behind"
-git -C "$ROOT" worktree list | grep -q "learn-suite-snapshots/$dead2" \
+grep -q "learn-suite-snapshots/$dead2" < <(git -C "$ROOT" worktree list) \
   && fail "the killed-pane reclaim must also retire the worktree's git registration" || true
 assert_contains "$out" "started the full-suite run" "and a fresh run starts"
 suite_task_clear

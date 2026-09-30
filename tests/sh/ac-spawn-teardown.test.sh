@@ -156,7 +156,7 @@ chmod +x "$TMP/nouuid/uuidgen"
 "$BIN/ac-brief.sh" t2u proj --mode local-only >/dev/null
 PATH="$TMP/nouuid:$PATH" "$BIN/ac-spawn.sh" t2u "$repo" --harness claude >/dev/null 2>&1
 sidu="$(awk -F= '$1=="session_id"{print $2}' "$AC_HOME/state/t2u.meta")"
-printf '%s\n' "$sidu" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' \
+grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' <<<"$sidu" \
   || fail "without uuidgen the pinned session id must be a lowercase v4 UUID, got '$sidu'"
 grep -q -- "--session-id $sidu" "$(fake_pane_buf t2u)" || fail "the launch line pins that id"
 "$BIN/ac-teardown.sh" t2u --force >/dev/null 2>&1
@@ -350,7 +350,7 @@ printf 'p90\n' >"$FAKE_HERDR/tabs/t90"
 "$BIN/ac-brief.sh" t4 proj --mode local-only >/dev/null
 assert_fails "$BIN/ac-spawn.sh" t4 "$repo" --harness fake
 assert_no_file "$AC_HOME/state/t4.meta" "no half-written meta"
-"$BIN/ac-tree.sh" list --repo "$repo" | grep -q 'leased.*t4' && fail "leaked leased slot for t4"
+grep -q 'leased.*t4' < <("$BIN/ac-tree.sh" list --repo "$repo") && fail "leaked leased slot for t4"
 rm -f "$AC_HOME/state/.pane-t4" "$FAKE_HERDR/tabs/t90" "$FAKE_HERDR/panes/p90.buf"
 
 # Staged-flow layout: a --stage brief nests under the family; spawn resolves

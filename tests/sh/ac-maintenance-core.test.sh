@@ -688,26 +688,26 @@ arc="$(ac_records_backup domaincover)"
 assert_file "$arc" "AC-1.4: the backup archive is written"
 for m in crewdomains/payments/records/backlog.md crewdomains/payments/records/projects.md \
          crewdomains/payments/CREWMATE.md; do
-  tar -tzf "$arc" | grep -q "$m" || fail "AC-1.4: $m is inside the reversibility floor"
+  grep -q "$m" < <(tar -tzf "$arc") || fail "AC-1.4: $m is inside the reversibility floor"
 done
 
 # The tar must NOT gain -h: projects/ is stored as LINKS, so a backup can never
 # swallow a whole clone. This is the constraint that actually bites - the
 # archive would otherwise grow by every repo in every domain's scope.
-if tar -tzf "$arc" | grep -q 'BIG.txt'; then
+if grep -q 'BIG.txt' < <(tar -tzf "$arc"); then
   fail "AC-1.4: clone CONTENT leaked in - the tar dereferenced a projects/ symlink"
 fi
 
 # A crewdeputy home is a SEPARATE home with its own records/ and its own clones;
 # it backs itself up against its own $AC_HOME and must never be dragged in here.
-if tar -tzf "$arc" | grep -q 'crewdeputies/'; then
+if grep -q 'crewdeputies/' < <(tar -tzf "$arc"); then
   fail "AC-1.4: the backup reached into \$AC_HOME/crewdeputies/"
 fi
 
 # CR-006 - the projects/ VIEW is authoritative membership state and the registry
 # deliberately does not duplicate it, so an archive without it restores a domain
 # that no longer knows which projects it may work.
-tar -tzf "$arc" | grep -q 'crewdomains/payments/projects/alpha' \
+grep -q 'crewdomains/payments/projects/alpha' < <(tar -tzf "$arc") \
   || fail "AC-1.4: the projects/ view is inside the reversibility floor"
 
 # Members are home-relative, so a restore stays `tar -xzf <arc> -C <home>`.
@@ -733,7 +733,7 @@ case "$second_arc" in
   "$AC_HOME/state/backups/same-"*.tar.gz) ;;
   *) fail "a same-second backup keeps the <prefix>-*.tar.gz shape its readers glob (got $second_arc)" ;;
 esac
-tar -tzf "$second_arc" | grep -q 'records/later.md' || fail "the second archive holds its own pre-state"
+grep -q 'records/later.md' < <(tar -tzf "$second_arc") || fail "the second archive holds its own pre-state"
 # The name is claimed before tar runs, so a failed tar must not leave that
 # claimed file behind to pass for a floor, nor a path to it.
 failed_arc="$(tar() { return 1; }; ac_records_backup tarfail)" \

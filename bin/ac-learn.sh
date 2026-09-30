@@ -331,7 +331,7 @@ learn_lessons_lift() {
   # slot, and an unbounded walk would follow whatever a task happened to
   # leave in its dir.
   while IFS= read -r rep; do
-    if awk "$lift_awk" "$rep" | grep -q '[^[:space:]]'; then
+    if grep -q '[^[:space:]]' < <(awk "$lift_awk" "$rep"); then
       printf '### %s\n\n' "${rep#$(ac_data_dir)/}" >>"$tmp"
       awk "$lift_awk" "$rep" >>"$tmp"
       printf '\n' >>"$tmp"
@@ -2003,7 +2003,7 @@ learn_prepare_candidate_plan() {
       # The heading is COMPOSED here, never taken from the body: a body
       # carrying its own '## ' line could smuggle a second entry under a name
       # the dedup and no-loss guards never checked.
-      if printf '%s\n' "$body" | grep -q '^## '; then
+      if grep -q '^## ' <<<"$body"; then
         ac_die "crewmate '===crewmate===' body must be lesson prose only - the transaction composes the '## $name' heading itself (nothing written)"
       fi
       # The per-entry budget: the file is always-loaded, so an entry is a few

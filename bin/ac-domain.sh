@@ -273,7 +273,7 @@ cmd_new() {
   # yet, and this check runs BEFORE any write by design.
   local probe; probe="$(mktemp "${TMPDIR:-/tmp}/ac-domain-line.XXXXXX")"
   printf '%s\n' "$candidate" >"$probe"
-  if ! ac_domain_parse "$probe" | grep -q '^VALID'; then
+  if ! grep -q '^VALID' < <(ac_domain_parse "$probe"); then
     local why; why="$(ac_domain_parse "$probe" | cut -f5)"
     rm -f "$probe"
     ac_die "the routing line these arguments would write does not parse VALID ($why) - refusing before any write. Check --charter and --scope for a ' - <word>:' token, which this grammar reads as an unknown field."
@@ -768,7 +768,7 @@ EOF
     [ -d "$gd" ] || continue
     gn="${gd%/}"; gn="${gn##*/}"
     ac_domain_name_ok "$gn" || continue
-    printf '%s\n' "$records" | grep -q "VALID${FS_US}${gn}${FS_US}" && continue
+    grep -q "VALID${FS_US}${gn}${FS_US}" <<<"$records" && continue
     printf 'UNREGISTERED\t%s\tpackage on disk with no VALID registry line - re-adopt it with `new`, restore its line in %s, or leave it as kept knowledge\n' \
       "$gn" "$REGISTRY_LABEL"
   done
@@ -780,7 +780,7 @@ EOF
     ' "$ob")" || { orows=""; printf 'WARN\tledger unreadable - backlog tallies and the ORPHAN-TOKEN scan are unavailable\n'; }
     while read -r gn gi; do
       [ -n "$gn" ] || continue
-      printf '%s\n' "$records" | grep -q "VALID${FS_US}${gn}${FS_US}" && continue
+      grep -q "VALID${FS_US}${gn}${FS_US}" <<<"$records" && continue
       printf 'ORPHAN-TOKEN\t%s\t%s - the row names a domain with no VALID registry line (unassign it, or re-`new` the domain)\n' "$gn" "$gi"
     done <<<"$orows"
   fi
@@ -881,11 +881,11 @@ domain_validate_projects() {
   links="$(domain_view_names "$name" | LC_ALL=C sort)"
   headings="$(awk '/^## / { print substr($0, 4) }' "$detail" | LC_ALL=C sort)"
   for n in $links; do
-    printf '%s\n' "$headings" | grep -qxF -- "$n" \
+    grep -qxF -- "$n" <<<"$headings" \
       || printf 'WARN %s: projects/%s is in the view but has no "## %s" heading in records/projects.md - the detail prose has lagged the view\n' "$name" "$n" "$n"
   done
   for n in $headings; do
-    printf '%s\n' "$links" | grep -qxF -- "$n" \
+    grep -qxF -- "$n" <<<"$links" \
       || printf 'WARN %s: records/projects.md documents "## %s" but the view does not link it - the detail prose names a project this domain cannot work\n' "$name" "$n"
   done
   return "$rc"
@@ -934,7 +934,7 @@ EOF
         MALFORMED*) printf 'INVALID token: %s\n' "${tok#MALFORMED }"; rc=1 ;;
         DISAGREE*)  printf 'INVALID token: %s\n' "${tok#DISAGREE }"; rc=1 ;;
         ORPHAN*)
-          printf '%s\n' "$(domain_names)" | grep -qxF -- "$(printf '%s' "${tok#ORPHAN }" | awk "{print \$1}")" \
+          grep -qxF -- "$(printf '%s' "${tok#ORPHAN }" | awk "{print \$1}")" <<<"$(domain_names)" \
             || { printf 'INVALID token: orphan domain token %s\n' "${tok#ORPHAN }"; rc=1; } ;;
       esac
     done <<<"$toks"

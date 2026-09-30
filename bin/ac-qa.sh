@@ -651,7 +651,7 @@ watch_open() {
   [ "${AC_QA_WATCH:-auto}" = off ] && return 0
   command -v herdr >/dev/null 2>&1 || return 0
   ses="${AC_HERDR_SESSION:-$(ac_config_read herdr-session default)}"
-  herdr --session "$ses" pane list 2>/dev/null | grep -q '"label":"ac-qa-watch"' && return 0
+  grep -q '"label":"ac-qa-watch"' < <(herdr --session "$ses" pane list 2>/dev/null) && return 0
   label="ac-qa-watch-$(sanitize_compose "$task")"
   # The watch tab joins its FAMILY's workspace (ac-backend.sh FAMILY
   # WORKSPACE GROUPING), family from the task id through the scope ladder.
@@ -743,8 +743,8 @@ qa_case_evidence_exists() {
   # Selection becomes immutable once any command has produced case evidence.
   local rd="$1"
   [ -s "$rd/cases.tsv" ] && return 0
-  find "$rd/boundaries" "$rd/fixtures/receipts" "$rd/e2e/receipts" \
-    -type f -print -quit 2>/dev/null | grep -q .
+  grep -q . < <(find "$rd/boundaries" "$rd/fixtures/receipts" "$rd/e2e/receipts" \
+    -type f -print -quit 2>/dev/null)
 }
 
 qa_pgid_alive() {
@@ -2392,9 +2392,9 @@ infra_detect() {
       }; } | tr '[:upper:]' '[:lower:]'
     true
   )"
-  printf '%s' "$hay" | grep -qE 'psycopg|postgres|pg8000|asyncpg|sqlalchemy|pgx|lib/pq|jackc/pgx|database_url|pg_|activerecord.*postgres' && want="$want postgres"
-  printf '%s' "$hay" | grep -qE 'redis|ioredis|go-redis|redis_url|redigo' && want="$want redis"
-  printf '%s' "$hay" | grep -qE 'temporal' && want="$want temporal"
+  grep -qE 'psycopg|postgres|pg8000|asyncpg|sqlalchemy|pgx|lib/pq|jackc/pgx|database_url|pg_|activerecord.*postgres' <<<"$hay" && want="$want postgres"
+  grep -qE 'redis|ioredis|go-redis|redis_url|redigo' <<<"$hay" && want="$want redis"
+  grep -qE 'temporal' <<<"$hay" && want="$want temporal"
   printf '%s\n' "$want" | tr -s ' ' | sed -e 's/^ //' -e 's/ /,/g'
 }
 

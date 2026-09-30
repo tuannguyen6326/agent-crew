@@ -667,7 +667,7 @@ watch_open() {
   [ "${AC_SHIP_WATCH:-auto}" = off ] && return 0
   command -v herdr >/dev/null 2>&1 || return 0
   ses="${AC_HERDR_SESSION:-$(ac_config_read herdr-session default)}"
-  herdr --session "$ses" pane list 2>/dev/null | grep -q '"label":"ac-ship-watch"' && return 0
+  grep -q '"label":"ac-ship-watch"' < <(herdr --session "$ses" pane list 2>/dev/null) && return 0
   label="ac-ship-watch-$(printf '%s' "$branch" | tr '/' '-')"
   # The watch tab joins its FAMILY's workspace (ac-backend.sh FAMILY
   # WORKSPACE GROUPING): family from the crew/<id> branch's id, through the

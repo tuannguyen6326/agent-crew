@@ -881,8 +881,8 @@ EOF
       # format (same idiom as ac-merge-local.sh's merge-STATE checks, not
       # merge-prose parsing) - a `branch refs/heads/<name>` line names the
       # worktree that's holding it, structurally immune to $LANG.
-      if git -C "$project_dir" worktree list --porcelain \
-        | grep -Fxq "branch refs/heads/$branch"; then
+      if grep -Fxq "branch refs/heads/$branch" \
+        < <(git -C "$project_dir" worktree list --porcelain); then
         reclaim="free it from that worktree, then git branch -D $branch"
       else
         reclaim="git branch -D $branch"

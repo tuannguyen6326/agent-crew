@@ -477,8 +477,8 @@ assert_contains "$(cat "$run_dir/run.meta")" "outcome=checks-passed" "outcome"
 # checks-passed: marker (AC_CAPTAIN_RE) so the chief wakes and stamps the pane
 # as awaiting the captain's merge. A colon-anchored line-start marker.
 re="$(bash -c ". '$BIN/ac-lib.sh'; printf '%s' \"\$AC_CAPTAIN_RE\"")"
-printf '%s\n' "$finish_out" | grep -qE "$re" || fail "finish checks-passed emits a line the chief wakes on"
-printf '%s\n' "$finish_out" | grep -qE '^checks-passed: ' || fail "finish emits the anchored checks-passed: marker"
+grep -qE "$re" <<<"$finish_out" || fail "finish checks-passed emits a line the chief wakes on"
+grep -qE '^checks-passed: ' <<<"$finish_out" || fail "finish emits the anchored checks-passed: marker"
 assert_eq "$(git -C "$repo" status --porcelain)" "" "repo stays clean"
 
 # An ALREADY-GONE reviewer pane must not abort finish (mirrors ac-qa.sh's
@@ -539,7 +539,7 @@ git -C "$work" config user.name test
   && "$BIN/ac-ship.sh" push >/dev/null 2>&1 ) || fail "guarded push of new branch"
 assert_eq "$(git -C "$origin_bare" rev-parse refs/heads/crew/p1)" \
   "$(git -C "$work" rev-parse HEAD)" "new branch pushed"
-( cd "$work" && "$BIN/ac-ship.sh" push 2>&1 | grep -q up-to-date ) || fail "up-to-date detection"
+( cd "$work" && grep -q up-to-date < <("$BIN/ac-ship.sh" push 2>&1) ) || fail "up-to-date detection"
 # Simulate an unincorporated remote commit: push must refuse (fail closed).
 other="$TMP/pushother"
 git clone -q "$origin_bare" "$other" 2>/dev/null

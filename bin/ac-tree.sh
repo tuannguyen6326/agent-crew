@@ -202,7 +202,7 @@ ensure_gitignore() {
     ac_warn "added /.crew/ to $ex"
   fi
   if [ -f "$gi" ] && grep -qxF '/.crew/' "$gi" \
-    && ! git -C "$repo" show HEAD:.gitignore 2>/dev/null | grep -qxF '/.crew/'; then
+    && ! grep -qxF '/.crew/' < <(git -C "$repo" show HEAD:.gitignore 2>/dev/null); then
     local tmp="$gi.tmp.$$"
     grep -vxF '/.crew/' "$gi" >"$tmp" || true
     if [ -s "$tmp" ] || git -C "$repo" ls-files --error-unmatch .gitignore >/dev/null 2>&1; then
@@ -403,7 +403,7 @@ run_chained() {
 msg="${1:-}"
 [ -n "$msg" ] && [ -r "$msg" ] || run_chained "$@"
 trailers="$(git interpret-trailers --parse "$msg" 2>/dev/null)" || run_chained "$@"
-if printf '%s\n' "$trailers" | grep -qiE '^co-authored-by:[^<]*(^|[^[:alnum:]])(claude|anthropic|openai|chatgpt|gpt|copilot|cursor|codex|gemini|devin|amp|windsurf|codeium|aider|cline|junie|sourcegraph|cognition)([^[:alnum:]]|$)'; then
+if grep -qiE '^co-authored-by:[^<]*(^|[^[:alnum:]])(claude|anthropic|openai|chatgpt|gpt|copilot|cursor|codex|gemini|devin|amp|windsurf|codeium|aider|cline|junie|sourcegraph|cognition)([^[:alnum:]]|$)' <<<"$trailers"; then
   printf 'ac-crew: REFUSED an agent co-author trailer in this commit message.\n' >&2
   printf 'ac-crew: AGENTS.md section 13 - never add an agent co-author line to a commit in a project repo.\n' >&2
   printf 'ac-crew: delete that trailer line and commit again. A HUMAN co-author is fine.\n' >&2

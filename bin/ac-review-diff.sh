@@ -76,14 +76,14 @@ while [ $# -gt 0 ]; do
     --graph-data) mode=graphdata ;;
     --commit)
       shift; commit="${1:-}"; mode=commit
-      printf '%s' "$commit" | grep -Eq '^[0-9a-f]{4,40}$' || ac_die "--commit needs a sha"
+      grep -Eq '^[0-9a-f]{4,40}$' <<<"$commit" || ac_die "--commit needs a sha"
       ;;
     --tree) shift; tree="${1:-}"; [ -n "$tree" ] || ac_die "--tree needs a path" ;;
     --no-guard) ;;
     # Focus the graph modes on ONE branch (the dashboard's branch picker).
     --ref)
       shift; gref="${1:-}"
-      printf '%s' "$gref" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$' || ac_die "--ref needs a branch name"
+      grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$' <<<"$gref" || ac_die "--ref needs a branch name"
       ;;
     *) ac_die "unknown argument: $1" ;;
   esac

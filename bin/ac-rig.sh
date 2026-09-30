@@ -269,7 +269,7 @@ EOF
     # would train the reader to ignore the verb.
     [ -d "$entry" ] && continue
     case "$base" in .* | *.prev) continue ;; esac
-    printf '%s\n' "$declared_names" | grep -qxF -- "$base" && continue
+    grep -qxF -- "$base" <<<"$declared_names" && continue
     say_drift "config/$base" \
       "present in config/, declared nowhere in records/rig.json" \
       "add {\"name\": \"$base\"} to records/rig.json, or remove $entry"
@@ -292,7 +292,7 @@ check_standing_jobs() {
 
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    if printf '%s\n' "$actual" | grep -qxF -- "$id"; then
+    if grep -qxF -- "$id" <<<"$actual"; then
       say_ok "standing_jobs/$id" "declared in records/standing-jobs.md"
     else
       say_drift "standing_jobs/$id" \
@@ -305,7 +305,7 @@ EOF
 
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    printf '%s\n' "$declared" | grep -qxF -- "$id" && continue
+    grep -qxF -- "$id" <<<"$declared" && continue
     say_drift "standing_jobs/$id" \
       "declared in records/standing-jobs.md, absent from records/rig.json" \
       "add \"$id\" to standing_jobs in records/rig.json"

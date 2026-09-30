@@ -75,7 +75,7 @@ check_skill() {
   ' "$f" || return 1
   # Progressive disclosure: reference docs (.md) belong under references/, never
   # under assets/ (assets/ holds runtime artifacts like compose.yaml).
-  if [ -d "$dir/assets" ] && find "$dir/assets" -maxdepth 1 -type f -name '*.md' | grep -q .; then
+  if [ -d "$dir/assets" ] && grep -q . < <(find "$dir/assets" -maxdepth 1 -type f -name '*.md'); then
     printf 'INVALID(%s): reference .md under assets/ (belongs in references/)\n' "$pkg" >&2
     return 1
   fi

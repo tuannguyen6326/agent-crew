@@ -238,7 +238,7 @@ cmd_overlap() {
       changed="$(git -C "$repo" diff --name-only "$def...$b" 2>/dev/null || true)"
       [ -n "$changed" ] || continue
       for p in "$@"; do
-        printf '%s\n' "$changed" | grep -qxF -- "$p" \
+        grep -qxF -- "$p" <<<"$changed" \
           && printf 'INFLIGHT  %s on %s (repo: %s)\n' "$p" "$b" "$(basename "$repo")"
       done
     done < <(git -C "$repo" for-each-ref --format='%(refname:short)' 'refs/heads/crew/*')

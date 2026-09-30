@@ -54,7 +54,7 @@ grep -qF 'approve widget $(touch' "$INBOX/r1.json" || fail "dollar-paren text mu
 grep -qF '`touch' "$INBOX/r1.json" || fail "backtick text must survive verbatim into the stash"
 assert_no_file "$TMP/pwned-poll"
 assert_no_file "$TMP/pwned-poll2"
-fleet_wakes | grep -qE "^[0-9]+	remote	captain	remote-order r1$" \
+grep -qE "^[0-9]+	remote	captain	remote-order r1$" < <(fleet_wakes) \
   || fail "wake record must be queue_wake TSV shape: now<TAB>remote<TAB>captain<TAB>remote-order r1"
 
 # A remote order is the captain SPEAKING, not waiting - they already get the
@@ -327,7 +327,7 @@ assert_fails "$BIN/ac-remote.sh" done-stamp
 printf '{"rid":"rscoped","text":"approve gizmo","author":"TN","thread":"1712.43"}\n' >"$FEED"
 out="$(AC_SCOPE=fam1 "$BIN/ac-remote.sh" poll)"
 assert_contains "$out" "remote-order rscoped" "a scoped poll still queues the order"
-fleet_wakes | grep -qE "^[0-9]+	remote	captain	remote-order rscoped$" \
+grep -qE "^[0-9]+	remote	captain	remote-order rscoped$" < <(fleet_wakes) \
   || fail "a remote-order wake must reach the FLEET spool even when polled from a scoped session"
 assert_no_file "$STATE/.wake-spool.fam1" "a remote-order wake is never filed under a family scope"
 
@@ -336,7 +336,7 @@ assert_no_file "$STATE/.wake-spool.fam1" "a remote-order wake is never filed und
 # shave, the durable wake is this write).
 printf '{"rid":"iscoped","text":"approve widget","author":"TN","thread":"1712.44"}\n' \
   | AC_SCOPE=fam1 "$BIN/ac-remote.sh" ingest >/dev/null
-fleet_wakes | grep -qE "^[0-9]+	remote	captain	remote-order iscoped$" \
+grep -qE "^[0-9]+	remote	captain	remote-order iscoped$" < <(fleet_wakes) \
   || fail "an ingested order must reach the FLEET spool even from a scoped session"
 assert_no_file "$STATE/.wake-spool.fam1" "an ingested wake is never filed under a family scope"
 
@@ -418,7 +418,7 @@ assert_file "$INBOX/g1.json"
 # shellcheck disable=SC2016  # asserting the literal bytes, not expanding them
 grep -qF 'order $(touch' "$INBOX/g1.json" || fail "ingest text must survive verbatim into the stash"
 assert_no_file "$TMP/pwned-ingest"
-fleet_wakes | grep -qE "^[0-9]+	remote	captain	remote-order g1$" \
+grep -qE "^[0-9]+	remote	captain	remote-order g1$" < <(fleet_wakes) \
   || fail "ingest wake record must be queue_wake TSV shape: now<TAB>remote<TAB>captain<TAB>remote-order g1"
 
 # re-ingest of a stashed rid: nothing printed, no duplicate wake.
@@ -680,7 +680,7 @@ out="$(printf '{"rid":"wpfail","text":"re-delivered after the fault cleared","au
 assert_contains "$out" "remote-order wpfail" \
   "after a rolled-back publish the rid is free: re-delivering it ingests normally"
 assert_file "$INBOX/wpfail.json"
-fleet_wakes | grep -qE "^[0-9]+	remote	captain	remote-order wpfail$" \
+grep -qE "^[0-9]+	remote	captain	remote-order wpfail$" < <(fleet_wakes) \
   || fail "the re-delivered order must publish its wake record"
 
 # --- a LOCAL order survives a Ctrl-C in the stash-then-wake window -----------
