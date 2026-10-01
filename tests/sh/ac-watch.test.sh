@@ -3141,6 +3141,45 @@ assert_contains "$out" "heartbeat" "an undrained record present at arm never re-
 case "$out" in *push:*) fail "a re-arm must not spin on the record it armed with" ;; esac
 reset_state
 
+# (2b) ORPHAN FAMILY: a family whose roomchief is gone has no scoped watcher,
+# and its spool is the fleet's to drain (ac_wake_orphan_files) - so a push
+# into it must wake the FLEET watcher exactly as a fleet push does. A family
+# whose roomchief is LIVE keeps its own push: the fleet watcher sleeps on.
+# No scoped watcher exists to nudge, so the fleet watcher meets the record at
+# its next poll tick - the backup tick ac-done.sh names - which a 1s poll
+# brings far inside the bound, while the heartbeat stays far past it.
+outf="$TMP/push-orphan.out"
+seed_pane famL-chief pFL tFL
+printf 'kind=roomchief\nwindow=crew:famL-chief\nbackend=herdr\n' >"$state/famL-chief.meta"
+AC_LOCK_PID=$$ AC_POLL=1 AC_HEARTBEAT="$push_hb" bash "$BIN/ac-watch.sh" >"$outf" 2>/dev/null &
+wpid=$!
+await_poll_wait || fail "the watcher never armed into its poll wait"
+env -u AC_HOME -u AC_SCOPE AC_FLEET_STATE="$state" AC_FLEET_SCOPE=famL "$BIN/ac-done.sh" pl1 'done: live family' >/dev/null
+if dead_within "$wpid" 3; then fail "a live family's push must not wake the fleet watcher: $(cat "$outf")"; fi
+env -u AC_HOME -u AC_SCOPE AC_FLEET_STATE="$state" AC_FLEET_SCOPE=famO "$BIN/ac-done.sh" po1 'done: orphaned family' >/dev/null
+if ! dead_within "$wpid" "$push_bound"; then
+  kill -9 "$wpid" 2>/dev/null || true
+  wait "$wpid" 2>/dev/null || true
+  fail "a push into an orphaned family's spool must wake the fleet watcher"
+fi
+wait "$wpid" 2>/dev/null || true
+assert_contains "$(cat "$outf")" "push:po1" "the orphan push exits the fleet watcher, naming the task"
+# A scope the spool path rejects runs as the FLEET watcher, orphans included.
+outf="$TMP/push-orphan-badscope.out"
+AC_SCOPE='Bad/Scope' AC_LOCK_PID=$$ AC_POLL=1 AC_HEARTBEAT="$push_hb" bash "$BIN/ac-watch.sh" >"$outf" 2>/dev/null &
+wpid=$!
+await_poll_wait || fail "the malformed-scope watcher never armed into its poll wait"
+env -u AC_HOME -u AC_SCOPE AC_FLEET_STATE="$state" AC_FLEET_SCOPE=famO "$BIN/ac-done.sh" po2 'done: orphaned again' >/dev/null
+if ! dead_within "$wpid" "$push_bound"; then
+  kill -9 "$wpid" 2>/dev/null || true
+  wait "$wpid" 2>/dev/null || true
+  fail "a malformed-scope watcher is the fleet's and must wake on an orphan push"
+fi
+wait "$wpid" 2>/dev/null || true
+assert_contains "$(cat "$outf")" "push:po2" "...naming the task"
+rm -f "$state/famL-chief.meta"
+reset_state
+
 # (3) ONE COMPLETION, ONE WAKE. The pane carries the same completion, so the
 # push's dedup stamp must absorb the poll that later reads it off the pane -
 # including the TUI glyph the pane renders it behind, which the pushed marker
