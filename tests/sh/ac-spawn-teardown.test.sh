@@ -611,6 +611,25 @@ git -C "$repo9" rev-parse --verify --quiet refs/heads/crew/t10 >/dev/null \
 assert_contains "$err10" "kept crew/t10" "the branch teardown could not drop is named"
 assert_contains "$err10" "merged" "git's own reason for keeping it travels with the warning"
 
+# t11p: the task's OWN pushed crew branch is a PR in waiting, not a landing -
+# `git push -u` creates origin/crew/<id> before anything merged, and counting
+# it let an unmerged PR task tear down with no flag, past the dependent fence
+# --pr-ready enforces.
+"$BIN/ac-brief.sh" t11p proj9 --mode direct-pr >/dev/null
+"$BIN/ac-spawn.sh" t11p "$repo9" --harness fake --mode direct-pr >/dev/null 2>&1
+wt11p="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t11p.meta")"
+git -C "$wt11p" checkout -q -b crew/t11p
+printf 'pr work\n' >"$wt11p/t11p.txt"
+git -C "$wt11p" add -A
+git -C "$wt11p" -c user.email=t@t -c user.name=t commit -qm "unmerged PR work"
+git -C "$wt11p" push -q -u origin crew/t11p
+git -C "$repo9" fetch -q origin
+printf 'pr=https://github.com/o/r/pull/13\n' >>"$AC_HOME/state/t11p.meta"
+out="$("$BIN/ac-teardown.sh" t11p 2>&1)" && fail "a task whose only remote containment is its own PR branch is not landed: $out"
+assert_contains "$out" "not landed" "...the refusal says so"
+assert_file "$AC_HOME/state/t11p.meta" "...tearing nothing down"
+"$BIN/ac-teardown.sh" t11p --force >/dev/null 2>&1 || fail "the unmerged-PR fixture must tear down with --force"
+
 # --- family-scoped id: teardown targets the FAMILY branch, not a raw alias ----
 # id t12-r2 belongs to family t12 (ac_family_of_id strips the -r2 revision
 # suffix); the crew branch actually created (via ac_crew_branch, the SAME
