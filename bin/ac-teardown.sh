@@ -17,7 +17,8 @@
 #   sibling's rule, mirrored: uncommitted work dies just as silently at the
 #   pool return);
 # - ship tasks: the work is landed - the crew/<id> branch head is contained in
-#   the default branch (local or origin), reachable from any remote branch, or
+#   the default branch (local or origin), reachable from any remote branch
+#   but the task's own crew branch (pushing a PR creates that one), or
 #   the recorded PR was merged (pr_merged=1 in the meta; when pr_merged_head is
 #   recorded, only a head it contains) - and the worktree is clean.
 # Both kinds also prove the worktree's OWN HEAD: pool slots start on a
@@ -277,7 +278,8 @@ head_landed() {
   # head_landed <sha> - the ONE landed-containment proof, shared by every
   # kind that can hold commits on crew/<id>: the recorded PR merged
   # (pr_merged=1), the head contained in the default branch - LOCAL or
-  # origin, either one is proof - or reachable from any remote branch.
+  # origin, either one is proof - or reachable from a remote branch other than
+  # the task's own (remote_branch_contains).
   #
   # Both refs count because the delivery mode decides WHERE landed work
   # lives: a local-only project never pushes, so its landing is a ff-merge
@@ -317,7 +319,19 @@ head_landed() {
     fi
   done
   epic_branch_contains "$project_dir" "$head" && return 0
-  [ -n "$(git -C "$project_dir" branch -r --contains "$head" 2>/dev/null)" ] && return 0
+  remote_branch_contains "$project_dir" "$head" && return 0
+  return 1
+}
+
+remote_branch_contains() {
+  # remote_branch_contains <repo> <sha> - 0 when a remote branch in <repo>
+  # contains <sha>, other than the task's own crew branch: `git push -u` of an
+  # open PR creates that one, and a PR in waiting is not a landing (the merged
+  # PR has its own proof). <remote>/HEAD only aliases a default branch.
+  local ref
+  while IFS= read -r ref; do
+    [ -n "$ref" ] && [ "$ref" != "$branch" ] && [ "$ref" != HEAD ] && return 0
+  done < <(git -C "$1" for-each-ref --contains "$2" --format='%(refname:lstrip=3)' refs/remotes 2>/dev/null)
   return 1
 }
 
@@ -400,7 +414,7 @@ extra_lease_at_risk() {
         git -C "$repo" merge-base --is-ancestor "$head" "$ref" 2>/dev/null && { covered=1; break; }
       done
       [ "$covered" = 1 ] || ! epic_branch_contains "$repo" "$head" || covered=1
-      [ "$covered" = 1 ] || [ -z "$(git -C "$repo" branch -r --contains "$head" 2>/dev/null)" ] || covered=1
+      [ "$covered" = 1 ] || ! remote_branch_contains "$repo" "$head" || covered=1
     fi
     [ "$covered" = 1 ] || { printf '%s\n' "$lease"; return 0; }
   done < <(printf '%s\n' "$leases" | tr ':' '\n')
