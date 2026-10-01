@@ -483,7 +483,7 @@ ${UX_BASE}
   /* Epic story sub-list (board-epic-story-legibility-v2): a wrapping grid of
      small state-colored chips - id + icon only, no description/blocked-by text
      - so 9 near-identical rows become one scannable block instead of a column
-     that runs off the card. Reuses the EXISTING .badge tokens (:5171-5176):
+     that runs off the card. Reuses the EXISTING .badge tokens (the .badge rules above):
      ok=done, accent=in flight, err=failed, stale=abandoned, unmodified=queued. */
   .bsubs{ display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
   .bsubs .badge{ max-width:100%; overflow:hidden; text-overflow:ellipsis; }

@@ -563,7 +563,7 @@ standing_rules() {
   # under a `## heading`, never a `- ` bullet) must not vanish either: WARN,
   # do not WIDEN the selector to swallow it - the retired domain_row_tokened lesson (src/backlog.ts's domain field) is the
   # named trap (prose merely MENTIONING the token read as a real entry).
-  # bin/ac-deputy.sh:31's shape is the precedent this reuses: an invalid
+  # bin/ac-deputy.sh's INVALID-line rule is the precedent this reuses: an invalid
   # entry prints its VERBATIM source plus one reason, so the next malformed
   # line is visible instead of silently dropped.
   local src blocks warn warnfile

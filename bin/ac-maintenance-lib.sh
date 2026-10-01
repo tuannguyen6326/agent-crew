@@ -33,12 +33,12 @@
 # MINTERS ARE NAMED HERE because there are three of them and only one makes the
 # exemption load-bearing - an auditor who finds the other two has to re-derive
 # that they do not matter:
-#   - curate_policy_receipt (bin/ac-curate.sh:676) mints `continue` for the
+#   - curate_policy_receipt (bin/ac-curate.sh) mints `continue` for the
 #     deterministic-records plan, and that receipt IS validated here
 #     (bin/ac-curate.sh cmd_run, which ac_dies the whole pass unless the answer is
 #     `continue`). THIS is the one the exemption exists for: Curate built those
 #     files itself, deterministically, with no judge in the loop to be blind.
-#   - curate_ask_receipt (bin/ac-curate.sh:775) and learn_policy_ask_receipt
+#   - curate_ask_receipt (bin/ac-curate.sh) and learn_policy_ask_receipt
 #     (bin/ac-learn.sh) mint `ask-captain` for a gate that was unavailable
 #     and for a captain-owned `kind: rule`. Neither receipt ever reaches this
 #     function - both callers escalate and return first - so the exemption

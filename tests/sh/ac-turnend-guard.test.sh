@@ -2,7 +2,7 @@
 # ac-turnend-guard.test.sh - the "crewmates do not guard" exemption
 # (bin/ac-turnend-guard.sh's linked-worktree exit): when AC_HOME is itself a linked git
 # worktree, the Stop hook stays inert even carrying state that would
-# otherwise block a turn end. tests/sh/ac-watch.test.sh:39-44 proves the SAME
+# otherwise block a turn end. tests/sh/ac-watch.test.sh's stale-beacon leg proves the SAME
 # fixture (crew meta + no beacon) blocks a plain home in its ~40 invocations
 # of this script - none of them ever points AC_HOME at a linked worktree
 # (helpers.sh's isolated home is a plain, non-git directory), so this branch
