@@ -425,9 +425,9 @@ ac_backend() {
 # per TASK after sourcing (ac_task_backend: one teardown/send/watch process
 # can serve herdr and orca tasks in one run). The name is still validated at
 # source time too, so a bad config/backend or inherited AC_BACKEND refuses
-# before any primitive runs; herdr_cli's fork-free env case additionally
-# refuses a herdr RPC issued while AC_BACKEND names another driver - the leak
-# detector for a herdr-only code path reached under orca.
+# before any primitive runs; herdr_cli's per-call guard additionally refuses
+# a herdr RPC issued while ac_backend's full ladder resolves another driver -
+# the leak detector for a herdr-only code path reached under orca.
 ac_backend >/dev/null
 
 # --- shared harness launch -------------------------------------------------------
