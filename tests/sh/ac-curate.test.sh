@@ -381,6 +381,12 @@ assert_contains "$out" "records-wide CURATE pass (automatic deterministic apply)
   "run applies deterministic Curate policy by default"
 assert_contains "$out" "transaction + policy receipt committed" \
   "automatic run reports its recoverable authorization boundary"
+# The passes run against a shadow copy, but the transaction writes the live
+# records - so that is the path the report owes its reader.
+assert_contains "$out" "to $records/captain-archive.md" "the run report names the live archive"
+case "$out" in */shadow/*) fail "the run report names the shadow copy, which nothing reads again: $out" ;; esac
+assert_contains "$(cat "$AC_HOME"/data/curate-*/report.md)" "to $records/captain-archive.md" \
+  "...and so does the report.md the run leaves"
 ls "$AC_HOME"/state/backups/curate-*.tar.gz >/dev/null 2>&1 || fail "run left a curate backup on disk"
 assert_eq "$(ac_meta_get "$AC_HOME/state/.curate.meta" runs_since)" "0" "run resets the interval gate"
 grep -qF 'one-time cleanup' "$records/captain-archive.md" \

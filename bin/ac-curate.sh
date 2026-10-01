@@ -1306,7 +1306,7 @@ EOF
 
 cmd_run() {
   local dry_run="$1" generation run shadow report actions manifest plan receipt
-  local records base op changed=0 decision rn rx unresolved=0 pristine pristine_sha
+  local records base op changed=0 decision rn rx unresolved=0 pristine pristine_sha body pat live
   if [ "$dry_run" = 1 ]; then
     printf '== records-wide CURATE pass (--dry-run; read-only) ==\n'
     curate_learnings
@@ -1360,6 +1360,14 @@ cmd_run() {
     AC_HOME="$shadow" curate_captain 1 1
     AC_HOME="$shadow" curate_backlog 1 1
   } >"$report"
+  # Those passes name the shadow copy; the transaction below writes the live
+  # records, and that is the path a reader of the report acts on. The
+  # substitution takes the one shape bash 3.2 gets right - an unquoted
+  # assignment, the pattern a single quoted variable, a bare replacement -
+  # since its other quotings emit literal quote characters.
+  pat="$shadow/" live="${records%records}" body="$(cat "$report")"
+  body=${body//"$pat"/$live}
+  printf '%s\n' "$body" >"$report"
   cat "$report"
 
   : >"$actions"
