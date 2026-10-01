@@ -2115,6 +2115,40 @@ assert_no_file "$AC_HOME/state/tpr.meta" "the accepted teardown archives the met
 assert_contains "$(cat "$AC_HOME/state/archive/tpr/status")" "captain: ok to done" \
   "the captain's acceptance words are durable on the task record"
 
+# The same refusals hold with NO crew branch: the worktree's own commits are
+# then judged inside a command substitution, where a refusal that merely
+# exits read as "nothing at risk" - the acceptance landed and the tree was
+# reset under work nothing contains.
+"$BIN/ac-brief.sh" tpd proj --mode direct-pr >/dev/null
+"$BIN/ac-spawn.sh" tpd "$repo" --harness fake >/dev/null 2>&1
+pdwt="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/tpd.meta")"
+git -C "$pdwt" checkout -q --detach
+printf 'detached work\n' >"$pdwt/tpd.txt"
+git -C "$pdwt" add -A
+git -C "$pdwt" -c user.email=t@t -c user.name=t commit -qm "detached work"
+pd_head="$(git -C "$pdwt" rev-parse HEAD)"
+printf -- '- [ ] dep3 - waits on tpd (repo: proj) blocked-by: tpd - needs its merge\n' >"$AC_HOME/records/backlog.md"
+err="$("$BIN/ac-teardown.sh" tpd --pr-ready 'captain: ok to done' 2>&1 1>/dev/null)" \
+  && fail "an acceptance with no recorded PR must refuse a branchless task: $err"
+assert_contains "$err" "no recorded PR" "...naming why"
+assert_file "$AC_HOME/state/tpd.meta" "the branchless refusal tears nothing down"
+assert_eq "$(git -C "$pdwt" rev-parse HEAD)" "$pd_head" "...and leaves the unlanded commit checked out"
+printf 'pr=https://github.com/o/r/pull/11\n' >>"$AC_HOME/state/tpd.meta"
+err="$("$BIN/ac-teardown.sh" tpd --pr-ready 'captain: ok to done' 2>&1 1>/dev/null)" \
+  && fail "a waiting dependent must refuse a branchless acceptance: $err"
+assert_contains "$err" "dep3" "...naming the dependent"
+assert_eq "$(git -C "$pdwt" rev-parse HEAD)" "$pd_head" "...and the commit survives"
+printf -- '- [x] dep3 - done elsewhere (merged 2026-08-28)\n' >"$AC_HOME/records/backlog.md"
+# ...and the per-head refusal, judged inside that substitution too: a
+# recorded PR head the detached commit has moved past is not that commit.
+printf 'pr_head=%s\n' "$(git -C "$pdwt" rev-parse HEAD~1)" >>"$AC_HOME/state/tpd.meta"
+err="$("$BIN/ac-teardown.sh" tpd --pr-ready 'captain: ok to done' 2>&1 1>/dev/null)" \
+  && fail "a detached head past the recorded PR head must refuse: $err"
+assert_contains "$err" "newer than the recorded PR head" "...naming why"
+assert_file "$AC_HOME/state/tpd.meta" "...tearing nothing down"
+assert_eq "$(git -C "$pdwt" rev-parse HEAD)" "$pd_head" "...and the commit survives"
+"$BIN/ac-teardown.sh" tpd --force >/dev/null 2>&1 || fail "the branchless fixture must tear down with --force"
+
 # A MERGED PR proves only the head that was merged: commits past it on
 # crew/<id> were never part of the PR, and the teardown would destroy them as
 # landed. A record with no merged head keeps the old proof.
