@@ -120,7 +120,11 @@
 # teardown then refuses with "no crewmate meta" - safe, never double-acting,
 # but it no longer finishes a partial run: the residue above is the recovery.
 #
-# QA-INFRA SWEEP (the last step, bounded): the sweep runs under a watchdog
+# QA-INFRA SWEEP (the last step, bounded): it downs the task's own stack and
+# its family's <family>-qa stack - the --task every brief bakes into
+# `ac-qa.sh agent`, so a QA run that died before `finish` left it running -
+# unless another member of the family is still in flight, whose run may hold
+# it (teardown names that member). The sweep runs under a watchdog
 # (default 30s; AC_TEARDOWN_QA_TIMEOUT is a test-only shortener, not a config
 # knob), so an unusable OR HUNG docker degrades to skip+warn instead of parking
 # the run before the completion line and the roomchief advisory. A docker that
@@ -342,28 +346,39 @@ $dirty"
   return 1
 }
 
+family_member_in_flight() {
+  # family_member_in_flight <fam> - print the first OTHER member of <fam> that
+  # is still in flight; 1 when there is none.
+  local fam="$1" other m2
+  for m2 in "$state_dir"/*.meta; do
+    [ -e "$m2" ] || continue
+    # A VERIFICATION agent is not crew (ac_meta_is_verify owns the class):
+    # nobody tears one down, so counting it would strand the roomchief
+    # undemotable and its room unclosable.
+    ac_meta_is_verify "$m2" && continue
+    other="$(basename "$m2" .meta)"
+    [ "$other" = "$id" ] && continue
+    # Membership is AUTHORITATIVE, never an id prefix (the ROOMCHIEF DEMOTE
+    # block in this header owns the rule and why): the closed suffix grammar
+    # OR the pane's own fleet_scope.
+    if [ "$(ac_family_of_id "$other")" = "$fam" ] \
+      || [ "$(ac_meta_get "$m2" fleet_scope)" = "$fam" ]; then
+      printf '%s\n' "$other"
+      return 0
+    fi
+  done
+  return 1
+}
+
 landed_proof() {
   if [ "$kind" = roomchief ]; then
     # Demotion requires the family to be fully landed first.
-    local fam other m2
+    local fam other
     fam="${id%-chief}"
-    for m2 in "$state_dir"/*.meta; do
-      [ -e "$m2" ] || continue
-      # A VERIFICATION agent is not crew (ac_meta_is_verify owns the class):
-      # nobody tears one down, so counting it would strand the roomchief
-      # undemotable and its room unclosable.
-      ac_meta_is_verify "$m2" && continue
-      other="$(basename "$m2" .meta)"
-      [ "$other" = "$id" ] && continue
-      # Membership is AUTHORITATIVE, never an id prefix (the ROOMCHIEF DEMOTE
-      # block in this header owns the rule and why): the closed suffix grammar
-      # OR the pane's own fleet_scope.
-      if [ "$(ac_family_of_id "$other")" = "$fam" ] \
-        || [ "$(ac_meta_get "$m2" fleet_scope)" = "$fam" ]; then
-        printf 'family %s still has crew in flight: %s\n' "$fam" "$other" >&2
-        return 1
-      fi
-    done
+    if other="$(family_member_in_flight "$fam")"; then
+      printf 'family %s still has crew in flight: %s\n' "$fam" "$other" >&2
+      return 1
+    fi
     return 0
   fi
   if [ "$kind" = crewdeputy ]; then
@@ -676,14 +691,19 @@ qa_infra_timeout() {
 }
 
 qa_infra_down_bounded() {
-  # qa_infra_down_bounded <secs> - the task's qa stack torn down under a
+  # qa_infra_down_bounded <secs> - the task's qa stack, and the family stack
+  # when $fam_stack names one, torn down under one
   # watchdog (the fetch_bounded shape, bin/ac-sync.sh): the child is
   # killed once <secs> elapse (TERM, short grace, KILL). Returns the sweep's
   # own status, or 124 on timeout. The child's docker grandchild is orphaned,
   # not reaped - bounding TEARDOWN is the point, and the stack stays
   # reclaimable with the command the caller's warning names.
   local secs="$1" pid start
-  ( cd "$project_dir" && "$bin_dir/ac-qa.sh" infra down --task "$id" >/dev/null 2>&1 ) &
+  ( cd "$project_dir" || exit
+    rc=0
+    "$bin_dir/ac-qa.sh" infra down --task "$id" >/dev/null 2>&1 || rc=$?
+    [ -z "$fam_stack" ] || "$bin_dir/ac-qa.sh" infra down --task "$fam_stack" >/dev/null 2>&1 || rc=$?
+    exit "$rc" ) &
   pid=$!
   start=$SECONDS
   while kill -0 "$pid" 2>/dev/null; do
@@ -900,9 +920,16 @@ if [ -n "${project_dir:-}" ] && [ -d "$project_dir" ] && command -v docker >/dev
     # shellcheck disable=SC2064  # $sig expands NOW: the signal name IS the evidence.
     trap "ac_warn \"teardown $id: caught SIG$sig during the qa-infra sweep\"; trap - $sig; kill -$sig \$\$" "$sig"
   done
+  if [ "$kind" = roomchief ]; then qa_fam="${id%-chief}"; else qa_fam="$(ac_family_of_id "$id")"; fi
+  fam_stack="$qa_fam-qa"
+  [ "$fam_stack" != "$id" ] || fam_stack=""
+  if [ -n "$fam_stack" ] && qa_holder="$(family_member_in_flight "$qa_fam")"; then
+    printf 'qa-infra: family stack %s kept - %s is still in flight and its qa run may hold it\n' "$fam_stack" "$qa_holder"
+    fam_stack=""
+  fi
   qa_secs="$(qa_infra_timeout)"
   qa_infra_down_bounded "$qa_secs" \
-    || ac_warn "qa-infra sweep for $id did not complete (status $?, bound ${qa_secs}s) - docker is unusable or hung; any task stack survives: (cd $project_dir && $bin_dir/ac-qa.sh infra down --task $id)"
+    || ac_warn "qa-infra sweep for $id did not complete (status $?, bound ${qa_secs}s) - docker is unusable or hung; any task stack survives: (cd $project_dir && $bin_dir/ac-qa.sh infra down --task $id${fam_stack:+ && $bin_dir/ac-qa.sh infra down --task $fam_stack})"
   trap - HUP INT TERM URG
 fi
 
