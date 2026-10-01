@@ -1357,9 +1357,11 @@ verify_drop_branch "$lease" "$id"
 # without new per-harness flag facts. Names match case-insensitively: on a
 # case-insensitive filesystem (the macOS default) a claude.md the diff plants
 # IS the CLAUDE.md every reader opens.
-# Nothing here outlives the lease: the pre-round bytes are kept aside and
-# restore_neutralized writes them back before the lease is released (the
-# pool's return resets tracked files only, and an untracked seed would
+# Nothing here outlives the lease: the pre-round bytes are kept aside - in the
+# round's own evidence dir, so a round that keeps its lease (an incomplete QA
+# export, a failed reap, a kill) leaves them there rather than orphaned in
+# TMPDIR - and restore_neutralized writes them back before the lease is released
+# (the pool's return resets tracked files only, and an untracked seed would
 # otherwise carry the stub to the slot's next lessee). A SYMLINK is
 # neutralized as the link - swapped for a stub file and recreated at restore,
 # never written through: the diff under review decides where it points, and a
@@ -1370,7 +1372,7 @@ verify_drop_branch "$lease" "$id"
 # written file's inode, and a backup taken mid-loop would capture the stub
 # itself.
 neutralized=0
-ctx_backup="$(mktemp -d "${TMPDIR:-/tmp}/ac-verify-ctx.XXXXXX")"
+ctx_backup="$(mktemp -d "$round_dir/ctx-backup.XXXXXX")"
 ctx_files=()
 while IFS= read -r ctx_file; do
   ctx_files+=("$ctx_file")
