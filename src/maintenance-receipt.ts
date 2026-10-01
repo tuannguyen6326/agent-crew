@@ -258,7 +258,7 @@ export function readEvidence(manifest: string, planPath: string, input: string, 
   return [quote, unfence(quote)].some((f) => f !== "" && manifestBytes.includes(f) && score(f) >= quoteMin);
 }
 
-function frontmatter(receipt: string[]): Map<string, string> | null {
+export function frontmatter(receipt: string[]): Map<string, string> | null {
   if (receipt[0] !== "---") return null;
   const fields = new Map<string, string>();
   for (const line of receipt.slice(1)) {

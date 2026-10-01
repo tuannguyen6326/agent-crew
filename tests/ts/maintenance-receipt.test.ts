@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256File } from "../../src/lib.ts";
-import { evidenceValue, readEvidence, receiptCheck, significance } from "../../src/maintenance-receipt.ts";
+import { evidenceValue, frontmatter, readEvidence, receiptCheck, significance } from "../../src/maintenance-receipt.ts";
 
 const MODULE = join(import.meta.dir, "..", "..", "src", "maintenance-receipt.ts");
 const F = realpathSync(mkdtempSync(join(tmpdir(), "ac-maint-receipt-ts-")));
@@ -216,6 +216,16 @@ test("the frontmatter is closed: exact first line, known keys once each, quoted 
     ["hyphenated key", (l) => l.map((x) => x.replace(/^reviewed_at:/, "reviewed-at:"))],
   ];
   for (const [name, edit] of bad) expect([name, check(r, edit)]).toEqual([name, null]);
+});
+
+// The "unclosed" case above dies on the first body line, never at the end of
+// input, and the sections rule refuses a body-less receipt anyway - so the
+// frontmatter's own closing-line guard is pinned here, where nothing else can
+// hide its removal.
+test("a frontmatter carrying every key but no closing line is no frontmatter", () => {
+  const lines = readFileSync(receipt(mkRun([SKILL])), "utf8").split("\n");
+  expect(frontmatter(lines.slice(0, 12))?.get("decision")).toBe('continue');
+  expect(frontmatter(lines.slice(0, 11))).toBe(null);
 });
 
 test("a frontmatter value runs from the first to the last double quote, and a NUL ends its line", () => {
