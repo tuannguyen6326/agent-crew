@@ -39,7 +39,9 @@
 # FOREGROUND of this hook-owned process tree and translate how it closed:
 #   heartbeat        -> re-arm silently and keep going. This is the whole
 #                       point: a heartbeat costs the chief nothing instead of
-#                       one wake plus one re-arm turn every AC_HEARTBEAT.
+#                       one wake plus one re-arm turn every AC_HEARTBEAT -
+#                       unless this session's spool already holds a record,
+#                       which hands back (exit 2) instead of being re-armed over.
 #   already running  -> someone else holds the singleton; exit 0, stay out.
 #                       A config-swap REFUSAL says the same thing (a LIVE
 #                       watcher holds the lock, with another config) and stands
@@ -127,6 +129,7 @@ cat >/dev/null 2>&1 || true          # drain the payload; nothing here reads it
 
 bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$bin_dir/ac-lib.sh" 2>/dev/null || exit 0
+. "$bin_dir/ac-wake-lib.sh" 2>/dev/null || exit 0
 
 home="$(ac_home 2>/dev/null)" || exit 0
 [ -e "$home/.ac-crewdeputy-home" ] && exit 0
@@ -291,7 +294,16 @@ while owed; do
 
   case "$reason" in
     heartbeat)
-      # Silent re-arm - the tokenless half of this hook.
+      # Silent re-arm - the tokenless half of this hook - unless a record sits
+      # in this session's spool: a push that landed mid-cycle found no sleep to
+      # interrupt, and the next watcher's arm snapshot files it as old backlog
+      # (ac-watch.sh), so re-arming over it would hold it for the whole budget.
+      if ac_wake_pending "$state_dir" "$scope"; then
+        printf 'ac-watch-autoarm: queued wakes pending - drain them (bin/ac-wake-drain.sh); the watcher is re-armed automatically at your next turn end.\n' >&2
+        nudge_scoped_chief "queued wakes pending"
+        ac_hook_trace watch-autoarm "verdict=handed-back reason=queued-wakes scope=${scope:-fleet}"
+        exit 2
+      fi
       continue ;;
     'already running'*|'refused: a live watcher'*)
       # The chief armed one by hand, or a previous hook still holds it. The
