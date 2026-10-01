@@ -25,6 +25,7 @@ Read [`docs/concepts.md`](docs/concepts.md) first if you are new to the model.
   A comment states what the code cannot: the reason for a non-obvious choice, a real invariant, or why a workaround exists.
   Never narrate the next line, never decorate self-evident code, and never leave a note to the reviewer.
   An edit that invalidates a comment updates or deletes it in the same diff, and new comments match the file's existing density.
+  A comment points at another file's code by symbol (a function, variable, or header section), never by line number: a `file:N` pointer goes stale at that file's next edit, and `tests/sh/line-citations.test.sh` refuses one.
 
 - **Test first.**
   Every behavior gets a colocated `tests/sh/<name>.test.sh`.

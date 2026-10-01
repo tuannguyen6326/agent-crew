@@ -685,7 +685,7 @@ err="$(env -u AC_HOME -u AC_FLEET_STATE PATH="$stub:$PATH" HOME="$FAKEHOME" \
   "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label nohome-quiet 2>&1 >/dev/null)"
 assert_eq "$err" "" "no AC_HOME: the pane agent writes NOTHING to stderr (it shares stdout with the NDJSON its caller jq-parses)"
 # The state dir it uses is the fleet's when told, never the checkout's: same
-# AC_FLEET_STATE rung its siblings ac-done.sh:77 and ac-verify.sh resolve_state_dir carry.
+# AC_FLEET_STATE rung its siblings ac-done.sh (its state_dir) and ac-verify.sh resolve_state_dir carry.
 fleet_state="$TMP/pa-fleet-state"
 mkdir -p "$fleet_state"
 env -u AC_HOME AC_FLEET_STATE="$fleet_state" PATH="$stub:$PATH" HOME="$FAKEHOME" \

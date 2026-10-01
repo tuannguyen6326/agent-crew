@@ -16,7 +16,7 @@
 # delimiter words, bin/ac-standing-jobs.sh's cadence/recreate sed parse returns the wrong cadence and
 # the wrong action, silently. A manifest carrying paths and commands walks
 # into that on day one. YAML was never a candidate: this distro has no yq,
-# only ac_yaml_get (bin/ac-pipeline-lib.sh:23), which cannot read a list.
+# only ac_yaml_get (bin/ac-pipeline-lib.sh), which cannot read a list.
 #
 # GRAMMAR (this header is the authoritative spec):
 #
@@ -315,7 +315,7 @@ EOF
 
   # LIVENESS, the half no read-only command settles. CronCreate is
   # session-only: the job lives in harness session memory, is never written to
-  # disk, and dies with the session (bin/ac-standing-jobs.sh:6-14, which
+  # disk, and dies with the session (bin/ac-standing-jobs.sh's header, which
   # refuses to claim PRESENT/MISSING for the same reason). Every on-disk
   # footprint was checked and none attributes a run to a job - the github
   # store is a de-dup key that writes nothing when a poll finds nothing new,

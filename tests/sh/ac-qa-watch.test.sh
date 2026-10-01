@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ac-qa-watch.test.sh - RUN_BASE must resolve to .crew/qa, never accidentally
-# to its sibling .crew/ship (bin/ac-qa-watch.sh:24) - ac-qa.test.sh and
+# to its sibling .crew/ship (bin/ac-qa-watch.sh's RUN_BASE) - ac-qa.test.sh and
 # tests/sh/ac-watch-dash.test.sh only ever exercise a run that already exists at
 # the RIGHT path, so a copy-paste RUN_BASE regression between the two
 # near-identical watch scripts (ac-ship-watch.sh is the twin) would go

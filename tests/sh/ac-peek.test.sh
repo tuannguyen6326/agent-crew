@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ac-peek.test.sh - peek output must NEUTRALIZE a reprinted captain marker
-# (contract: bin/ac-peek.sh:25-29, "prefixed, never merely indented" - an
+# (contract: bin/ac-peek.sh's "prefixed, never merely indented" comment - an
 # indent alone still matches AC_CAPTAIN_RE at line start, the same F13
 # class tests/sh/ac-crew-state.test.sh pins for ac-crew-state.sh).
 

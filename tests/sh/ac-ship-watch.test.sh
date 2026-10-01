@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ac-ship-watch.test.sh - RUN_BASE must resolve to .crew/ship, never
-# accidentally to its sibling .crew/qa (bin/ac-ship-watch.sh:24) - the
+# accidentally to its sibling .crew/qa (bin/ac-ship-watch.sh's RUN_BASE) - the
 # mirror image of tests/sh/ac-qa-watch.test.sh, and the same gap: ac-ship.test.sh
 # and tests/sh/ac-watch-dash.test.sh only ever exercise a run that already
 # exists at the RIGHT path.
