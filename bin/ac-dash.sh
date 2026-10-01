@@ -88,6 +88,7 @@ render() {
     # AC_DONELINE_AWK), the same position-pinned parser src/ready.ts's
     # snapshot() uses, never a second marker parser.
     LC_ALL=C awk "$AC_DONELINE_AWK"'
+      /^## / { s = "" }
       /^## In flight/ { s = "f"; next }
       /^## Queued/ { s = "q"; next }
       /^## Done/ { s = "d"; next }

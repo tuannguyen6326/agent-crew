@@ -833,6 +833,7 @@ ac_domain_tally() {
   LC_ALL=C awk -v want="$name" "$AC_DONELINE_AWK"'
     BEGIN { w[want] }
     NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
+    /^## /          { sec = "" }
     /^## In flight/ { sec = "i"; next }
     /^## Queued/    { sec = "q"; next }
     /^## Done/      { sec = "d"; next }
