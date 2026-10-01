@@ -281,7 +281,11 @@
 # would only poll SOONER, and a wake IS this watcher's EXIT, so a record in the
 # spool is an exit condition in its own right: the check sits at the TOP of the
 # cycle (before the beacon and the poll pass) so a nudged watcher exits at once
-# without paying for a pane pass, and exits `push:<id>`. The two hazards that
+# without paying for a pane pass, and exits `push:<id>`. The FLEET watcher also
+# answers for an ORPHANED family's spool (its roomchief gone, so no scoped
+# watcher exists to nudge - the fleet drains it, ac_wake_orphan_files): such a
+# push is met at the next poll tick, the backup tick ac-done.sh names, while a
+# LIVE family's push stays its own chief's. The two hazards that
 # creates are closed here:
 #  - RE-ARM SPIN. A chief re-arms while a record it has not drained is still in
 #    the spool. That record is NOT news to a fresh watcher, and exiting on it
@@ -2341,13 +2345,24 @@ remote_iv="$(remote_poll_interval)"
 next_remote=$(( started + remote_iv ))
 
 # PUSH CHANNEL arm snapshot (see the header): the records already sitting in
-# this scope's spool are the chief's undrained backlog, not news - only a name
-# outside this set is a push worth exiting on.
+# this scope's spools are the chief's undrained backlog, not news - only a
+# record outside this set is a push worth exiting on. The FLEET watcher also
+# answers for every family spool: one whose roomchief is gone has no scoped
+# watcher and is the fleet's to drain (ac_wake_orphan_files), so a push there
+# must wake it - pushed_record asks the liveness question per new record.
 push_spool="$(ac_wake_spool_path "$state_dir" "${AC_SCOPE:-}")"
+push_spools() {
+  # A scope ac_wake_spool_path rejects runs this watcher as the fleet's, so the
+  # fleet's orphans follow the same validity test, never mere non-emptiness.
+  printf '%s\n' "$push_spool"
+  ac_wake_scope_ok "${AC_SCOPE:-}" || ac_wake_family_spools "$state_dir" 2>/dev/null || true
+}
 armed_records=""
-for _rec in "$push_spool"/*; do
-  [ -e "$_rec" ] && armed_records="$armed_records|${_rec##*/}|"
-done
+while IFS= read -r _sp; do
+  for _rec in "$_sp"/*; do
+    [ -e "$_rec" ] && armed_records="$armed_records|$_rec|"
+  done
+done < <(push_spools)
 
 push_adopt_report() {
   # push_adopt_report <id> - the ARTIFACT twin of the PUSH ADOPT branch above,
@@ -2383,18 +2398,23 @@ pushed_record() {
   # publishes) - all of them, not only the one this exit names, since two
   # agents pushing inside one poll wait are two completions the chief drains
   # together.
-  local rec name kind rid first=""
-  for rec in "$push_spool"/*; do
-    [ -e "$rec" ] || continue
-    name="${rec##*/}"
-    case "$armed_records" in *"|$name|"*) continue ;; esac
-    kind="$(awk -F'\t' 'NR==1 {print $2; exit}' "$rec" 2>/dev/null || true)"
-    rid="$(awk -F'\t' 'NR==1 {print $3; exit}' "$rec" 2>/dev/null || true)"
-    [ -n "$first" ] || first="${rid:-unknown}"
-    if [ "$kind" = report ] && [ -n "$rid" ]; then
-      push_adopt_report "$rid"
-    fi
-  done
+  local sp rec kind rid first=""
+  while IFS= read -r sp; do
+    for rec in "$sp"/*; do
+      [ -e "$rec" ] || continue
+      case "$armed_records" in *"|$rec|"*) continue ;; esac
+      # A family spool with a LIVE roomchief is that chief's own push.
+      if [ "$sp" != "$push_spool" ] && ac_roomchief_live "$state_dir" "${sp##*/.wake-spool.}"; then
+        continue
+      fi
+      kind="$(awk -F'\t' 'NR==1 {print $2; exit}' "$rec" 2>/dev/null || true)"
+      rid="$(awk -F'\t' 'NR==1 {print $3; exit}' "$rec" 2>/dev/null || true)"
+      [ -n "$first" ] || first="${rid:-unknown}"
+      if [ "$kind" = report ] && [ -n "$rid" ]; then
+        push_adopt_report "$rid"
+      fi
+    done
+  done < <(push_spools)
   [ -n "$first" ] || return 1
   printf '%s\n' "$first"
 }
