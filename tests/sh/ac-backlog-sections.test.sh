@@ -61,5 +61,12 @@ out="$("$BIN/ac-task.sh" done n1 'resolved by hand')"
 assert_contains "$out" "ok: merged n1" "a note row is not already Done - done moves it"
 assert_eq "$(awk '/^## Done/{d=1;next} /^## /{d=0} d && /^- \[x\] n1 /{print "in-done"}' "$ledger")" "in-done" \
   "...into the Done section"
+# A row already checked carries its outcome: it moves into Done as written -
+# never re-checked into `- [x] - [x] n2`, whose id would parse as `-`.
+out="$("$BIN/ac-task.sh" done n2 'resolved by hand')"
+assert_contains "$out" "already checked" "a checked row says it moved as written"
+assert_eq "$(awk '/^## Done/{d=1;next} /^## /{d=0} d' "$ledger" | grep -c '^- \[x\] n2 - an old checked note (merged 2025-01-01); domain:dom$')" "1" \
+  "...byte for byte, into the Done section"
+assert_contains "$("$BIN/ac-task.sh" done n2 'again')" "already: n2 is Done" "a second done is a no-op"
 
 pass

@@ -10,6 +10,7 @@
 //   ac-task.sh start <id>                 # Queued -> In flight, stamps `since`;
 //                                         # refuses while a blocker is not clean Done
 //   ac-task.sh done <id> <outcome> [--verb merged|reported|...]
+//                                         # a row already checked moves as written
 //   ac-task.sh hold <id> [--until <YYYY-MM-DD>] [--why <text>]
 //   ac-task.sh unhold <id>
 //   ac-task.sh update-note <id> <text>    # the row's BODY, off the line
@@ -326,11 +327,14 @@ function done(id = "", outcome = "", ...rest: string[]): void {
   if (!findRow(id)) fail(`no row for '${id}'`);
   if (rowSec === "done") return void say(`already: ${id} is Done`);
   const block = L.splice(rowI, rowEnd - rowI + 1);
-  const bare = block[0].startsWith("- [ ] ") ? block[0].slice("- [ ] ".length) : block[0];
-  block[0] = `- [x] ${bare} - ${outcome} (${verb} ${today})`;
+  // A row checked outside Done already carries its outcome: it moves as
+  // written, since re-checking it would read back as `- [x] - [x] <id>`.
+  const checked = block[0].startsWith("- [x] ");
+  if (!checked) block[0] = `- [x] ${block[0].slice("- [ ] ".length)} - ${outcome} (${verb} ${today})`;
   L.splice(sectionHead("done") + 1, 0, ...block);
   save();
-  say(`ok: ${verb} ${id} (${verb} ${today})`);
+  say(checked ? `ok: ${id} was already checked - moved into Done as written, outcome not added`
+    : `ok: ${verb} ${id} (${verb} ${today})`);
 }
 
 function hold(id = "", ...rest: string[]): void {
