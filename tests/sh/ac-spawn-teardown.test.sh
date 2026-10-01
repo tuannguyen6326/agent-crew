@@ -1507,6 +1507,31 @@ sigout="$(cat "$TMP/sig.out")"
 assert_contains "$sigout" "SIGURG" "the trap names WHICH signal"
 assert_contains "$sigout" "qa-infra sweep" "the trap names WHICH step"
 assert_contains "$sigout" "teardown sig-chief complete" "the run still finishes"
+
+# (4) the FAMILY stack. Every brief bakes `ac-qa.sh agent --task <family>-qa`,
+# so a QA run's stack is crew-qa-<repo>-<family>-qa, never the task's own
+# name - a run that died before `finish` left it running for teardown to miss.
+# It goes down with the family's last member; while another member is in
+# flight, whose run may hold it, it stays and teardown says why.
+cat >"$dstub/docker" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$TMP/docker.args"
+EOF
+rm -f "$TMP/docker.args"
+qa_chief famq-chief
+out="$("$BIN/ac-teardown.sh" famq-chief 2>&1)" || fail "teardown famq-chief failed: $out"
+assert_contains "$(cat "$TMP/docker.args")" "-famq-chief down" "the task's own stack still goes down"
+assert_contains "$(cat "$TMP/docker.args")" "-famq-qa down" "the family's last member takes the family stack down"
+rm -f "$TMP/docker.args"
+"$BIN/ac-brief.sh" famz proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" famz "$repo" --harness claude >/dev/null 2>&1
+printf 'kind=crewmate\nfleet_scope=famz\nproject_dir=%s\n' "$repo" >"$AC_HOME/state/famz-sib.meta"
+out="$("$BIN/ac-teardown.sh" famz --force 2>&1)" || fail "teardown famz failed: $out"
+assert_contains "$(cat "$TMP/docker.args")" "-famz down" "a member's own stack goes down"
+case "$(cat "$TMP/docker.args")" in *famz-qa*) fail "a family stack must outlive a member while another is in flight" ;; esac
+assert_contains "$out" "famz-qa kept" "...and teardown names the stack it kept"
+assert_contains "$out" "famz-sib" "...and the member holding it"
+rm -f "$AC_HOME/state/famz-sib.meta" "$TMP/docker.args"
 rm -f "$dstub/docker"
 unset AC_TEARDOWN_QA_TIMEOUT
 
