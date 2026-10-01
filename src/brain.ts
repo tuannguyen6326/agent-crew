@@ -64,9 +64,10 @@
 //   synthesize is the ONE expensive verb: it shells to the
 //   fleet's own harness one-shot (env AC_BRAIN_SYNTH_CMD > crew-dispatch
 //   panes.brain > config/model+crew-harness), falls back to an extractive
-//   digest when compose fails but gather succeeded, and returns a typed
-//   `unavailable` error on an empty gather or no harness - never a fabricated
-//   answer.
+//   digest when compose fails, no engine is configured, or the configured
+//   harness/effort has no one-shot form (synthesis_status names which), and
+//   returns a typed `unavailable` error on an empty gather - never a
+//   fabricated answer.
 // - Deputy reads are explicit only: recall --deputy <id> resolves the
 //   absolute home: path from records/crewdeputies.md and opens that brain
 //   READ-ONLY; there is no cross-brain write path.
@@ -1403,6 +1404,9 @@ function synthCommand(): string | null {
   // ultracode is a claude preset, not a tier: the one-shot arm sends xhigh in
   // its place (bin/ac-pane-agent.sh EFFORT_FLAG), so no engine sees the name.
   if (effort === "ultracode") effort = "xhigh";
+  // The arm refuses any other tier before a CLI sees it, so this twin does too.
+  if (effort && !["low", "medium", "high", "xhigh", "max"].includes(effort))
+    throw new Error(`invalid effort: ${effort} (expected low|medium|high|xhigh|max|ultracode)`);
   // Each form is byte-for-byte what bin/ac-pane-agent.sh's oneshot_launch
   // prints for the same harness/model/effort - that function owns why each
   // flag is there; tests/sh/ac-brain.test.sh fails the moment the two part.
@@ -1412,7 +1416,10 @@ function synthCommand(): string | null {
     case "opencode": return `opencode run${model ? ` -m ${model}` : ""}${effort ? ` --variant ${effort}` : ""}`;
     case "pi": return `pi -p${mm}${effort ? ` --thinking ${effort}` : ""}`;
     case "cursor": return `cursor-agent -p --trust${mm}`;
-    default: return null;
+    case "": return null;
+    // agy and launch-<h> templates have no brain form; a configured one is
+    // refused out loud, never a silent fall to the extractive digest.
+    default: throw new Error(`harness ${harness} has no ac-brain synthesize one-shot form (claude, codex, opencode, pi, cursor)`);
   }
 }
 async function cmdSynthesize() {
@@ -1423,7 +1430,8 @@ async function cmdSynthesize() {
   const gathered = (await searchArm(db, q, 8, true)).hits;
   if (!gathered.length)
     die("unavailable", "retrieved 0 pages; nothing to synthesize from", "sync first, or ask a question the home's records can answer");
-  const cmdline = synthCommand();
+  let cmdline: string | null = null, refused = "";
+  try { cmdline = synthCommand(); } catch (e) { refused = (e as Error).message; }
   const sources = gathered.map(h => ({ slug: h.slug, path: h.path }));
   // Full best-matching chunks, not display snippets - a composer cannot cite
   // from 14-word fragments (its own first live answer said exactly that).
@@ -1492,6 +1500,9 @@ async function cmdSynthesize() {
       if (proc.exitCode === 0 && text) { answer = text; status = "ok"; }
       else status = "llm_error";
     } catch { status = "llm_error"; }
+  } else if (!answer && refused) {
+    console.error(`ac-brain synthesize: ${refused}`);
+    status = status === "ok" ? "harness_refused" : `${status};harness_refused`;
   } else if (!answer && !sApi?.model) status = "no_llm";
   if (!answer) {
     // extractive fallback: compose ONLY from gathered pages, never fabricate
