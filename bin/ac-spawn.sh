@@ -533,8 +533,9 @@
 #     duplicate-meta check: both of those run long before the project is
 #     resolved, so neither can name the repo the ref would live in. The
 #     roomchief and crewdeputy paths exit before it (neither leases a worktree
-#     nor holds a crew branch, and a <fam>-chief id is its OWN family - a
-#     roomchief could not collide with crew/<fam> even if it reached here),
+#     nor holds a crew branch), and ac_family_owned skips those kinds when it
+#     judges ownership - a <fam>-chief id reads as <fam> once data/<fam>/chief
+#     exists, so counting the chief would disarm this refusal for its own crew,
 #     every --recover exits before it (a recovery leases nothing and keeps the
 #     task's branch as it is), and no verify-* meta is written by this script
 #     at all (ac-verify.sh owns those panes).

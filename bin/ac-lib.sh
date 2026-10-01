@@ -1599,15 +1599,17 @@ ac_family_owned() {
   # REFUSAL (ac-spawn.sh header owns the contract): membership is
   # ac_family_of_id, the SAME derivation ac_crew_branch builds the branch name
   # from, so owner and branch can never disagree. A VERIFICATION agent is not
-  # a family child and holds no crew branch (ac_meta_is_verify owns the class).
+  # a family child and holds no crew branch, and neither does a roomchief or
+  # crewdeputy - yet a <fam>-chief id reads as <fam> once the chief's own
+  # status mirror creates data/<fam>/chief, so the chief classes are skipped
+  # (ac_crew_metas owns both classes).
   local id="$1" state_dir="$2" m other fam
   fam="$(ac_family_of_id "$id")"
-  for m in "$state_dir"/*.meta; do
-    [ -e "$m" ] || continue
-    ac_meta_is_verify "$m" && continue
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
     other="$(basename "$m" .meta)"
     [ "$(ac_family_of_id "$other")" = "$fam" ] && return 0
-  done
+  done < <(ac_crew_metas "$state_dir" verify chiefs)
   return 1
 }
 

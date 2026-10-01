@@ -74,4 +74,18 @@ assert_file "$AC_HOME/state/c2-r2.meta" \
 "$BIN/ac-teardown.sh" c2-r2 --force >/dev/null 2>&1
 "$BIN/ac-teardown.sh" c2 --force >/dev/null 2>&1
 
+# --- the family's ROOMCHIEF owns no crew branch ---------------------------------
+# A promoted family's chief commits nothing on crew/<family>, yet once its own
+# status mirror creates data/<family>/chief, its id <family>-chief reads as a
+# member of <family> - and an ownership test that counted it disarmed the
+# refusal for the very default flow where a chief spawns its family's crew.
+git -C "$repo" branch crew/c3 main
+printf 'kind=roomchief\n' >"$AC_HOME/state/c3-chief.meta"
+mkdir -p "$AC_HOME/data/c3/chief"
+"$BIN/ac-brief.sh" c3 proj --mode local-only >/dev/null
+err="$("$BIN/ac-spawn.sh" c3 "$repo" --harness claude 2>&1 1>/dev/null || true)"
+assert_contains "$err" "branch -D crew/c3" "a live roomchief does not own the stale crew branch - the spawn still refuses"
+assert_no_file "$AC_HOME/state/c3.meta" "...writing no meta"
+rm -f "$AC_HOME/state/c3-chief.meta"
+
 pass
