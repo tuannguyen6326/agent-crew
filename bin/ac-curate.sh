@@ -239,6 +239,7 @@ _backlog_plan() {
   # real reader ac-ready.sh's exact grammar. Empty output = nothing to archive.
   LC_ALL=C awk -v keep="$2" "$AC_DONELINE_AWK"'
     { line[NR] = $0 }
+    /^## /          { sec = "" }
     /^## In flight/ { sec = "inflight" }
     /^## Queued/    { sec = "queued" }
     /^## Done/      { sec = "done" }

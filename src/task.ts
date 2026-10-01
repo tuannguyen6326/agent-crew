@@ -158,6 +158,7 @@ function findRow(want: string): boolean {
     if (l.startsWith("## In flight")) sec = "inflight";
     else if (l.startsWith("## Queued")) sec = "queued";
     else if (l.startsWith("## Done")) sec = "done";
+    else if (l.startsWith("## ")) sec = "";
     else if ((l.startsWith("- [ ] ") || l.startsWith("- [x] ")) && acDoneline(l).id === want) {
       rowI = i;
       rowSec = sec;
@@ -228,6 +229,7 @@ function unresolvedBlocker(want: string): string {
     if (l.startsWith("## In flight")) sec = "in flight";
     else if (l.startsWith("## Queued")) sec = "queued";
     else if (l.startsWith("## Done")) sec = "done";
+    else if (l.startsWith("## ")) sec = "";
     else if (/^- \[[ x]\] /.test(l)) {
       const f = acDoneline(l);
       state.set(f.id, sec);
@@ -243,7 +245,7 @@ function unresolvedBlocker(want: string): string {
     if (!state.has(b)) return `${b} (missing)`;
     const m = mark.get(b)!;
     if (m === "failed" || m === "abandoned") return `${b} (${m})`;
-    if (state.get(b) !== "done") return `${b} (${state.get(b)})`;
+    if (state.get(b) !== "done") return `${b} (${state.get(b) || "no section"})`;
   }
   return "";
 }
@@ -279,7 +281,7 @@ function add(id = "", text = "", ...rest: string[]): void {
   const violations = contractLint(contract);
   if (violations.length) fail(`invalid contract: ${violations.join("\n")}`);
   load();
-  if (findRow(id)) return void say(`already: ${id} exists in ${rowSec}`);
+  if (findRow(id)) return void say(`already: ${id} exists in ${rowSec || "no section"}`);
   let line = `- [ ] ${id}`;
   if (contract !== "") line += ` [${contract}]`;
   line += ` - ${text}`;
@@ -293,7 +295,7 @@ function start(id = ""): void {
   if (id === "") fail("usage: ac-task.sh start <id>");
   load();
   if (!findRow(id)) fail(`no row for '${id}'`);
-  if (rowSec !== "queued") return void say(`already: ${id} is in ${rowSec}`);
+  if (rowSec !== "queued") return void say(`already: ${id} is in ${rowSec || "no section"}`);
   const f = holdOf(id, L[rowI], "");
   let spent = "";
   if (f.hold !== "") {

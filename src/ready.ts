@@ -37,6 +37,7 @@ function snapshot(recs: string[]): Row[] {
     if (l.startsWith("## In flight")) sec = "inflight";
     else if (l.startsWith("## Queued")) sec = "queued";
     else if (l.startsWith("## Done")) sec = "done";
+    else if (l.startsWith("## ")) sec = "";
     else if (/^- \[[ x]\] /.test(l)) {
       const f = parsed[i]!;
       rows.push({

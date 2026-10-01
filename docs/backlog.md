@@ -22,6 +22,7 @@ Moved verbatim from `AGENTS.md` section 9, which keeps the one-line summary and 
 ```
 
 The grammar is byte-exact ASCII - what onetrue awk does under `LC_ALL=C` - and its one parser, `src/backlog.ts`, specifies every field in its header.
+Only those three `## ` headings open a section: any other `## ` heading (a hand-written `## Notes`, say) ends the section above it, so a row under it is neither Queued nor Done to any reader, and `ac-task prune` leaves it in place.
 
 `[failed]`/`[abandoned]` are terminal but NEVER satisfy a blocker.
 `[@held]`, as one of a row's `[...]` groups in the LEADING RUN right after the
