@@ -1485,7 +1485,9 @@ async function cmdSynthesize() {
   }
   if (!answer && cmdline) {
     try {
-      const proc = Bun.spawnSync(["bash", "-lc", `${cmdline} ${JSON.stringify(prompt)}`], { timeout: 180000 });
+      // The prompt is record text: it goes in as $1, never inside the string
+      // bash parses, which would run any $(...) a record carries.
+      const proc = Bun.spawnSync(["bash", "-lc", `${cmdline} "$1"`, "ac-brain-synthesize", prompt], { timeout: 180000 });
       const text = new TextDecoder().decode(proc.stdout).trim();
       if (proc.exitCode === 0 && text) { answer = text; status = "ok"; }
       else status = "llm_error";

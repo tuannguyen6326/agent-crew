@@ -273,6 +273,18 @@ if sy3="$("$BRAIN" synthesize "zzz-token-that-matches-nothing-anywhere" --home "
   fail "an empty gather must be the typed unavailable error (got: $sy3)"
 fi
 assert_contains "$sy3" "unavailable" "empty gather never fabricates"
+# The prompt carries the question and gathered record text verbatim, so the
+# shell must never evaluate it: it once rode inside the command string as a
+# JSON-quoted (bash double-quoted) word, which ran $(...) and backticks from
+# any record and handed the engine literal \n for every newline.
+export AC_BRAIN_SYNTH_CMD="printf '%s'"
+sy4="$("$BRAIN" synthesize "widget product line \$(touch $TMP/brain-pwned) \`touch $TMP/brain-pwned2\` \$HOME" --home "$AC_HOME" --compact)"
+[ ! -e "$TMP/brain-pwned" ] && [ ! -e "$TMP/brain-pwned2" ] || fail "synthesize must never run shell syntax from its prompt"
+sy4a="$(printf '%s' "$sy4" | j "['answer']")"
+assert_contains "$sy4a" "widget product line \$(touch $TMP/brain-pwned) \`touch $TMP/brain-pwned2\` \$HOME" \
+  "the engine receives the question verbatim"
+assert_contains "$sy4a" "
+QUESTION: " "the engine receives real newlines, not literal \\n"
 unset AC_BRAIN_SYNTH_CMD
 
 # --- synthesize's one-shot table IS oneshot_launch's ---------------------------
