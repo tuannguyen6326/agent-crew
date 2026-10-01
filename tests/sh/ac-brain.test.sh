@@ -286,6 +286,16 @@ assert_contains "$sy4a" "widget product line \$(touch $TMP/brain-pwned) \`touch 
 assert_contains "$sy4a" "
 QUESTION: " "the engine receives real newlines, not literal \\n"
 unset AC_BRAIN_SYNTH_CMD
+# A configured engine the brain cannot run is REFUSED out loud, the way the
+# one-shot arm refuses it, never a silent extractive fallback: agy has no brain
+# one-shot form. (An effort outside the arm's tiers is pinned by the parity
+# rows below, which exec nothing - a synthesize leg would run the real CLI the
+# moment that refusal regressed.)
+printf 'agy\n' >"$AC_HOME/config/brain-agent"
+sy5="$("$BRAIN" synthesize "widget product line" --home "$AC_HOME" --compact 2>"$TMP/sy5.err")"
+assert_contains "$(printf '%s' "$sy5" | j "['synthesis_status']")" "harness_refused" "a harness with no brain form is a named refusal"
+assert_contains "$(cat "$TMP/sy5.err")" "agy" "the refusal names the harness"
+rm -f "$AC_HOME/config/brain-agent"
 
 # --- synthesize's one-shot table IS oneshot_launch's ---------------------------
 # src/brain.ts keeps its own one-shot table and it
@@ -317,24 +327,32 @@ for (const c of combos) {
     if (!(k in knobs)) throw new Error(`ENOENT ${p}`);
     return knobs[k];
   };
-  console.log(synth("/no-home", read, join, { env: {} }) ?? "<null>");
+  try { console.log(synth("/no-home", read, join, { env: {} }) ?? "<null>"); }
+  catch { console.log("<refused>"); }
 }
 EOF
 combos=()
 for h in $harnesses; do
-  for m in "" m1; do for e in "" high ultracode; do combos+=("$h|$m|$e"); done; done
+  for m in "" m1; do for e in "" high ultracode bogus; do combos+=("$h|$m|$e"); done; done
 done
 brain_forms="$(bun "$TMP/synth-forms.ts" "$ROOT/src/brain.ts" "${combos[@]}")"
 drift="" i=0
 while IFS= read -r got; do
   IFS='|' read -r h m e <<<"${combos[$i]}"
-  want="$(oneshot_launch "$h" "$m" "$(arm_effort "$e")")" || want="<null>"
+  if ae="$(arm_effort "$e" 2>/dev/null)"; then
+    want="$(oneshot_launch "$h" "$m" "$ae")" || want="<null>"
+  else
+    want="<refused>"
+  fi
   [ "$got" = "$want" ] || drift="$drift
   $h model='$m' effort='$e': brain '$got' vs oneshot_launch '$want'"
   i=$((i + 1))
 done <<<"$brain_forms"
 assert_eq "$i" "${#combos[@]}" "the brain printed one form per combination"
 [ -z "$drift" ] || fail "brain.ts's one-shot forms drifted from oneshot_launch:$drift"
+# No engine configured stays "no engine" (no_llm), even beside an orphan effort.
+assert_eq "$(bun "$TMP/synth-forms.ts" "$ROOT/src/brain.ts" "||" "||bogus" | tr '\n' ' ')" "<null> <null> " \
+  "an empty harness is no engine, never a refusal of its leftover effort"
 
 # --- MCP stdio surface --------------------------------------------------------
 mcp="$(printf '%s\n%s\n%s\n' \
