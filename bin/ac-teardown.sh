@@ -23,6 +23,9 @@
 # Both kinds also prove the worktree's OWN HEAD: pool slots start on a
 # detached HEAD and the return is --force, so a commit no branch carries - or
 # one made past crew/<id> - is refused unless something landed contains it.
+# Every OTHER lease the task holds (leases=, e.g. an e2e companion checkout)
+# is returned with --force too, so each must be clean and hold nothing
+# unlanded either.
 # --pr-ready '<words>' is the OTHER PR proof: done does not wait for the
 # merge. When the recorded PR is ready to merge (CI green, review done), the
 # chief asks the captain, and the captain's acceptance - quoted as the flag's
@@ -282,7 +285,7 @@ head_landed() {
   # projects (crew-ship, direct-pr) land on origin. Checking only the
   # freshest ref (ac_default_ref: origin wins) reported a local-only
   # project's fully merged work as unlanded.
-  local head="$1" ref eb ebrc ebranch pr_head merged_head
+  local head="$1" ref pr_head merged_head
   # A merged PR proves the head it merged and what that head contains, never
   # a commit made after it; a record that predates pr_merged_head keeps the
   # bare proof.
@@ -313,24 +316,28 @@ head_landed() {
       return 0
     fi
   done
-  # Epic-target landing (epic-branch-mech): a story lands into its epic's
-  # recorded integration branch, which on a local-only repo exists ONLY
-  # locally - containment there is landed proof exactly like the default's,
-  # or every epic-landed story becomes an "unlanded" --force trap.
-  # An unreadable ledger only withholds this proof, never dies: head_landed
-  # also runs inside $(worktree_head_unlanded), where a die reads as "nothing
-  # at risk" and would let the worktree be discarded.
-  ebrc=0; eb="$(ac_epic_base_for "$id" "$(basename "$project_dir")" 2>/dev/null)" || ebrc=$?
-  [ "$ebrc" != 2 ] || ac_warn "cannot read the ledger to resolve the epic-branch fence for $id - containment in an epic branch stays unproven"
-  if [ "$ebrc" = 0 ]; then
-    ebranch="${eb%% *}"
-    for ref in "refs/heads/$ebranch" "refs/remotes/origin/$ebranch"; do
-      if git -C "$project_dir" merge-base --is-ancestor "$head" "$ref" 2>/dev/null; then
-        return 0
-      fi
-    done
-  fi
+  epic_branch_contains "$project_dir" "$head" && return 0
   [ -n "$(git -C "$project_dir" branch -r --contains "$head" 2>/dev/null)" ] && return 0
+  return 1
+}
+
+epic_branch_contains() {
+  # epic_branch_contains <repo> <sha> - epic-target landing (epic-branch-mech):
+  # a story lands into its epic's (or feature's) recorded integration branch
+  # in <repo>, which on a local-only repo exists ONLY locally - containment
+  # there is landed proof exactly like the default's, or every epic-landed
+  # story becomes an "unlanded" --force trap. An unreadable ledger only
+  # withholds this proof, never dies: head_landed also runs inside
+  # $(worktree_head_unlanded), where a die reads as "nothing at risk" and
+  # would let the worktree be discarded.
+  local repo="$1" head="$2" eb ebrc=0 ebranch ref
+  eb="$(ac_epic_base_for "$id" "$(basename "$repo")" 2>/dev/null)" || ebrc=$?
+  [ "$ebrc" != 2 ] || ac_warn "cannot read the ledger to resolve the epic-branch fence for $id - containment in an epic branch stays unproven"
+  [ "$ebrc" = 0 ] || return 1
+  ebranch="${eb%% *}"
+  for ref in "refs/heads/$ebranch" "refs/remotes/origin/$ebranch"; do
+    git -C "$repo" merge-base --is-ancestor "$head" "$ref" 2>/dev/null && return 0
+  done
   return 1
 }
 
@@ -355,6 +362,48 @@ family_member_in_flight() {
       return 0
     fi
   done
+  return 1
+}
+
+lease_repo() {
+  # lease_repo <tree> - the main checkout a worktree belongs to.
+  local common
+  common="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  (cd "$1" && cd "$common" && cd .. && pwd -P)
+}
+
+extra_lease_at_risk() {
+  # extra_lease_at_risk - every lease is returned with --force, so a lease
+  # beyond the primary tree (an e2e companion checkout, possibly of ANOTHER
+  # repository) owes the same proof: print the first one that is dirty or
+  # whose HEAD nothing landed carries; 1 when none does. It is judged in its
+  # OWN repository, by refs that contain the commit - the default branch,
+  # local or origin, the task's recorded integration branch, or a remote
+  # branch - and, in the task's own repository, by crew/<id>, which the
+  # primary proof judges. The task's PR proofs bless the PR's head, never
+  # another tree's work, so they do not apply here.
+  local lease covering primary repo head ref covered
+  covering="$(crew_branch_head)"
+  primary="$(lease_repo "$project_dir" || true)"
+  while IFS= read -r lease; do
+    [ -n "$lease" ] && [ "$lease" != "$worktree" ] && [ -d "$lease" ] || continue
+    if [ -n "$(ac_worktree_status "$lease")" ]; then printf '%s\n' "$lease"; return 0; fi
+    head="$(git -C "$lease" rev-parse --verify --quiet HEAD 2>/dev/null)" || continue
+    repo="$(lease_repo "$lease" || true)"
+    covered=0
+    if [ -n "$covering" ] && [ -n "$repo" ] && [ "$repo" = "$primary" ] \
+      && git -C "$lease" merge-base --is-ancestor "$head" "$covering" 2>/dev/null; then
+      covered=1
+    fi
+    if [ "$covered" = 0 ] && [ -n "$repo" ]; then
+      for ref in "$(ac_default_branch "$repo")" "$(ac_default_ref "$repo")"; do
+        git -C "$repo" merge-base --is-ancestor "$head" "$ref" 2>/dev/null && { covered=1; break; }
+      done
+      [ "$covered" = 1 ] || ! epic_branch_contains "$repo" "$head" || covered=1
+      [ "$covered" = 1 ] || [ -z "$(git -C "$repo" branch -r --contains "$head" 2>/dev/null)" ] || covered=1
+    fi
+    [ "$covered" = 1 ] || { printf '%s\n' "$lease"; return 0; }
+  done < <(printf '%s\n' "$leases" | tr ':' '\n')
   return 1
 }
 
@@ -398,6 +447,11 @@ landed_proof() {
     return 0
   fi
   [ -z "$pr_ready" ] || pr_ready_preconditions
+  local at_risk
+  if at_risk="$(extra_lease_at_risk)"; then
+    printf 'lease %s holds uncommitted or unlanded work and would be returned with --force; land or move it, or --force to discard\n' "$at_risk" >&2
+    return 1
+  fi
   if [ "$kind" = scout ]; then
     # Staged-flow scouts nest under their family (ac_task_dir resolves both).
     # The resolver's ambiguity die exits the substitution, not this function
