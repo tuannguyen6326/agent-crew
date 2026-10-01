@@ -350,6 +350,9 @@ while IFS= read -r got; do
 done <<<"$brain_forms"
 assert_eq "$i" "${#combos[@]}" "the brain printed one form per combination"
 [ -z "$drift" ] || fail "brain.ts's one-shot forms drifted from oneshot_launch:$drift"
+# No engine configured stays "no engine" (no_llm), even beside an orphan effort.
+assert_eq "$(bun "$TMP/synth-forms.ts" "$ROOT/src/brain.ts" "||" "||bogus" | tr '\n' ' ')" "<null> <null> " \
+  "an empty harness is no engine, never a refusal of its leftover effort"
 
 # --- MCP stdio surface --------------------------------------------------------
 mcp="$(printf '%s\n%s\n%s\n' \

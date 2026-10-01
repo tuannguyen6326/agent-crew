@@ -19,7 +19,9 @@
 # headers: two different shapes for two different lifecycles. synthCommand
 # (src/brain.ts, the brain's synthesize one-shot) is oneshot_launch's shape
 # again, kept as the brain's own table and held
-# to oneshot_launch's exact bytes by tests/sh/ac-brain.test.sh. None of the three
+# to oneshot_launch's exact bytes for every registry harness by
+# tests/sh/ac-brain.test.sh (agy, one-shot-only, has an oneshot_launch form and
+# no brain form - the brain refuses it). None of the three
 # composes a line for an unknown name. A new harness therefore edits THIS file
 # plus those three arms, src/lib.ts's HARNESSES copy (tests/ts/lib.test.ts
 # holds it to the set below) and its harness-facts.md entry, instead of

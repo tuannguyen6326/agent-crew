@@ -1404,6 +1404,8 @@ function synthCommand(): string | null {
   // ultracode is a claude preset, not a tier: the one-shot arm sends xhigh in
   // its place (bin/ac-pane-agent.sh EFFORT_FLAG), so no engine sees the name.
   if (effort === "ultracode") effort = "xhigh";
+  // No engine is not a refusal: an orphan effort knob has nothing to reach.
+  if (!harness) return null;
   // The arm refuses any other tier before a CLI sees it, so this twin does too.
   if (effort && !["low", "medium", "high", "xhigh", "max"].includes(effort))
     throw new Error(`invalid effort: ${effort} (expected low|medium|high|xhigh|max|ultracode)`);
@@ -1416,7 +1418,6 @@ function synthCommand(): string | null {
     case "opencode": return `opencode run${model ? ` -m ${model}` : ""}${effort ? ` --variant ${effort}` : ""}`;
     case "pi": return `pi -p${mm}${effort ? ` --thinking ${effort}` : ""}`;
     case "cursor": return `cursor-agent -p --trust${mm}`;
-    case "": return null;
     // agy and launch-<h> templates have no brain form; a configured one is
     // refused out loud, never a silent fall to the extractive digest.
     default: throw new Error(`harness ${harness} has no ac-brain synthesize one-shot form (claude, codex, opencode, pi, cursor)`);
