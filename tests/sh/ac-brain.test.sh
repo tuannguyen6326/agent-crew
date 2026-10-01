@@ -615,6 +615,34 @@ case "$rr" in *'"reranked":true'*) fail "a cut rerank must not stamp reranked" ;
 assert_contains "$rr" "quokka" "...and the fused order still comes back"
 rm -f "$AC_HOME/config/brain.json"; rm -rf "$AC_HOME/data/rr"
 
+# --- a harness refusal sits AFTER the earlier rungs, never over them ----------
+# agy is refused at the harness rung only once the API rung failed: the status
+# keeps that failure (llm_error;harness_refused), and an API rung that answers
+# leaves no refusal on stderr. The API rung points at a local stub through
+# synthesize.api.base_url, keyless as the ollama provider.
+synth_api_stub() {  # synth_api_stub <status> <body>
+  printf 'const s = Bun.serve({ port: 0, fetch: () => new Response(%s, { status: %s }) });\nconsole.log(s.port);\nawait new Promise(() => {});\n' \
+    "$2" "$1" >"$TMP/synth-api.ts"
+  rm -f "$TMP/synth-api.port"
+  embed_stub_up "$TMP/synth-api.ts" "$TMP/synth-api.port" || { embed_stub_down; fail "the synthesize API stub never came up"; }
+  printf '{"synthesize":{"api":{"provider":"ollama","model":"m","base_url":"http://127.0.0.1:%s/v1"}}}\n' \
+    "$EMBED_STUB_PORT" >"$AC_HOME/config/brain.json"
+}
+printf 'agy\n' >"$AC_HOME/config/brain-agent"
+synth_api_stub 500 "'{}'"
+sa1="$("$BRAIN" synthesize "widget product line" --home "$AC_HOME" --compact 2>"$TMP/sa1.err")"
+embed_stub_down
+assert_eq "$(printf '%s' "$sa1" | j "['synthesis_status']")" "llm_error;harness_refused;extractive_fallback" \
+  "a failed API rung then a refused harness keeps both in the status"
+assert_contains "$(cat "$TMP/sa1.err")" "agy" "...and stderr names the refused harness"
+synth_api_stub 200 "JSON.stringify({ choices: [{ message: { content: 'stub-api-answer' } }] })"
+sa2="$("$BRAIN" synthesize "widget product line" --home "$AC_HOME" --compact 2>"$TMP/sa2.err")"
+embed_stub_down
+assert_eq "$(printf '%s' "$sa2" | j "['synthesis_status']")" "ok" "an API rung that answers settles it"
+assert_contains "$sa2" "stub-api-answer" "...with its own answer"
+case "$(cat "$TMP/sa2.err")" in *refus*|*"no ac-brain synthesize"*) fail "an answered synthesize must not report the unreached harness rung: $(cat "$TMP/sa2.err")" ;; esac
+rm -f "$AC_HOME/config/brain.json" "$AC_HOME/config/brain-agent"
+
 # --- entity(): an exact slug is the page itself ------------------------------
 # A dedup leaves an alias from the duplicate's slug to its canonical page, and
 # that alias outlives the duplicate diverging into a page of its own - it must

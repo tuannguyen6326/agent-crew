@@ -822,6 +822,10 @@ rot_out="$("$BIN/ac-learn.sh" rotate-pending 2>&1)" || fail "R8c: an over-budget
 grep -qFx -- "- lesson held-a $rot_pad" "$LEDGER" || fail "R8c: the held source stays even when it outgrows the budget"
 assert_contains "$rot_out" "OVER budget" "R8c: the receipt names an over-budget body"
 case "$rot_out" in *"kept within"*) fail "R8c: an over-budget body must not be reported as kept within budget: $rot_out" ;; esac
+# R8d: the next rotation before a new examined run has nothing left to move,
+# and the body is still over budget - it says so instead of a silent no-op.
+rot_out="$("$BIN/ac-learn.sh" rotate-pending 2>&1)" || fail "R8d: a rotation with nothing to move must not fail"
+assert_contains "$rot_out" "OVER budget" "R8d: nothing left to move still reports the over-budget body"
 rm -rf "$rot_runs"/learning-9000000001
 
 rm -f "$AC_HOME/config/learn-pending-budget"

@@ -1445,7 +1445,8 @@ learn_rotate_pending() {
       moved_any = 0
       for (i = lo; i < cut; i++)
         if (!keep[i]) { moved[i] = 1; moved_any = 1 }
-      if (!moved_any) exit 0
+      # Nothing archivable left: the ledger stays as it is, over budget.
+      if (!moved_any) { print total > keptf; exit 0 }
       print overhead + (cut <= hi ? suffix[cut] : 0) > keptf
       # A heading a held source keeps is COPIED to the archive too, so the
       # siblings archived from under it keep their date there.
@@ -1477,6 +1478,9 @@ learn_rotate_pending() {
     fi
   else
     rm -f "$tmp"
+    kept="$(cat "$keptf")"
+    [ -z "$kept" ] \
+      || ac_warn "nothing in Pending can rotate, and it is OVER budget: $kept of $budget bytes - markers and the last examined run's held sources fill it"
   fi
   rm -f "$archtmp" "$held" "$keptf"
   ac_lock_release "$lock"
