@@ -1186,6 +1186,63 @@ assert_eq "$(awk -F= '$1=="leases"{print $2}' "$AC_HOME/state/t25.meta")" "$wt25
 out25="$("$BIN/ac-tree.sh" list --repo "$repo")"
 grep -q "leased.*t25" <<<"$out25" \
   && fail "teardown must return BOTH leases of a dual-lease crew task, not only the primary one"
+# ...and since every lease goes back with --force, the landed proof covers each
+# one, not only the primary tree: work in the second lease refuses a plain
+# teardown exactly as it would in the first.
+"$BIN/ac-brief.sh" t26 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t26 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt26b="$("$BIN/ac-tree.sh" get --repo "$repo" --id t26 --holder crew:t26 | tail -n1)"
+printf 'companion\n' >"$wt26b/companion.txt"
+err="$("$BIN/ac-teardown.sh" t26 2>&1 1>/dev/null)" && fail "a dirty second lease must refuse a plain teardown: $err"
+assert_contains "$err" "$wt26b" "...naming that lease"
+assert_file "$wt26b/companion.txt" "...and leaving its work in place"
+git -C "$wt26b" add -A
+git -C "$wt26b" -c user.email=t@t -c user.name=t commit -qm "companion work"
+t26_head="$(git -C "$wt26b" rev-parse HEAD)"
+err="$("$BIN/ac-teardown.sh" t26 2>&1 1>/dev/null)" && fail "an unlanded commit in the second lease must refuse a plain teardown: $err"
+assert_contains "$err" "$wt26b" "...naming that lease"
+assert_eq "$(git -C "$wt26b" rev-parse HEAD)" "$t26_head" "...and leaving the commit checked out"
+"$BIN/ac-teardown.sh" t26 --force >/dev/null 2>&1 || fail "the dual-lease fixture must tear down with --force"
+# A companion lease is judged in its OWN repository: a clean companion of
+# another repo sitting on that repo's landed main does not refuse ...
+repo2="$(make_repo proj2)"
+"$BIN/ac-brief.sh" t27 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t27 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt27b="$("$BIN/ac-tree.sh" get --repo "$repo2" --id t27 --holder crew:t27 | tail -n1)"
+[ "$(git -C "$wt27b" rev-parse HEAD)" = "$(git -C "$repo2" rev-parse main)" ] || fail "fixture: the companion sits on its repo's main"
+out="$("$BIN/ac-teardown.sh" t27 2>&1)" || fail "a landed companion in its own repository must not refuse the teardown: $out"
+# ... and the task's own PR proof never blesses a companion commit: a merged
+# PR with no recorded merged head lands the task's head, not another tree's.
+"$BIN/ac-brief.sh" t28 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t28 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+printf 'pr=https://github.com/o/r/pull/12\npr_merged=1\n' >>"$AC_HOME/state/t28.meta"
+wt28b="$("$BIN/ac-tree.sh" get --repo "$repo" --id t28 --holder crew:t28 | tail -n1)"
+printf 'side\n' >"$wt28b/side.txt"
+git -C "$wt28b" add -A
+git -C "$wt28b" -c user.email=t@t -c user.name=t commit -qm "companion commit no PR carries"
+t28_head="$(git -C "$wt28b" rev-parse HEAD)"
+err="$("$BIN/ac-teardown.sh" t28 2>&1 1>/dev/null)" && fail "a merged PR must not bless a companion commit nothing landed carries: $err"
+assert_contains "$err" "$wt28b" "...naming the companion lease"
+assert_eq "$(git -C "$wt28b" rev-parse HEAD)" "$t28_head" "...and the commit survives"
+"$BIN/ac-teardown.sh" t28 --force >/dev/null 2>&1 || fail "the legacy-PR fixture must tear down with --force"
+# ... while the task's recorded integration branch IS landed ground for a
+# companion too: a clean companion on a local epic tip ahead of main passes.
+rm -f "$TMP/backlog.t29"; [ ! -f "$AC_HOME/records/backlog.md" ] || cp "$AC_HOME/records/backlog.md" "$TMP/backlog.t29"
+printf -- '- [ ] t29 - story; epic:epz (repo: proj)\n' >>"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/epz"; printf 'proj epic/epz\n' >"$AC_HOME/data/epz/branches"
+git -C "$repo" branch -q epic/epz main
+epz_wt="$TMP/epz-wt"; git -C "$repo" worktree add -q "$epz_wt" epic/epz
+printf 'epic tip\n' >"$epz_wt/epz.txt"; git -C "$epz_wt" add -A
+git -C "$epz_wt" -c user.email=t@t -c user.name=t commit -qm "epic tip ahead of main"
+git -C "$repo" worktree remove -f "$epz_wt"
+"$BIN/ac-brief.sh" t29 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" t29 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt29b="$("$BIN/ac-tree.sh" get --repo "$repo" --id t29 --holder crew:t29 | tail -n1)"
+git -C "$wt29b" checkout -q --detach epic/epz
+out="$("$BIN/ac-teardown.sh" t29 2>&1)" || fail "a companion on the task's integration branch must not refuse the teardown: $out"
+git -C "$repo" branch -q -D epic/epz
+rm -rf "$AC_HOME/data/epz" "$AC_HOME/records/backlog.md"
+[ ! -f "$TMP/backlog.t29" ] || cp "$TMP/backlog.t29" "$AC_HOME/records/backlog.md"
 
 # Back-compat: a meta written before leases= existed carries only worktree=, and
 # teardown must still return that one tree (no migration script).
