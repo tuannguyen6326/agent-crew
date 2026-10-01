@@ -282,7 +282,7 @@ head_landed() {
   # projects (crew-ship, direct-pr) land on origin. Checking only the
   # freshest ref (ac_default_ref: origin wins) reported a local-only
   # project's fully merged work as unlanded.
-  local head="$1" ref eb ebrc ebranch dep dirty pr_head ledger merged_head
+  local head="$1" ref eb ebrc ebranch pr_head merged_head
   # A merged PR proves the head it merged and what that head contains, never
   # a commit made after it; a record that predates pr_merged_head keeps the
   # bare proof.
@@ -294,30 +294,18 @@ head_landed() {
   # The OTHER PR proof: done does not wait for the merge. A ready-to-merge PR
   # the captain accepted in chat lands the task - the caller carries that
   # acceptance as --pr-ready '<the captain's words>', and the merge stays the
-  # captain's own act. Fail-closed both ways: no recorded PR means nothing
-  # existed to accept, and a task an OPEN row still waits on lands only by the
-  # real merge - its dependent starts from the merged tree.
+  # captain's own act. Its task-wide preconditions are pr_ready_preconditions';
+  # what is left per head is that the captain accepted THE PR, not commits past
+  # it: with pr_head recorded (ac-pr-check writes it when gh answers), a newer
+  # head is NOT landed - a refusal returned, never died, since this also runs
+  # inside $(worktree_head_unlanded).
   if [ -n "$pr_ready" ]; then
-    [ -n "$(ac_meta_get "$meta" pr)" ] \
-      || ac_die "--pr-ready with no recorded PR for $id - record it first (bin/ac-pr-check.sh $id <url>)"
-    # The captain accepted THE PR - not work newer than it. A dirty tree, and
-    # commits past the recorded PR head, are outside that acceptance and
-    # would be destroyed as "landed": both refuse. pr_head is enforced when
-    # recorded (ac-pr-check writes it when gh answers); absent, the clean
-    # tree is the floor.
-    dirty="$(ac_worktree_status "$worktree" || true)"
-    [ -z "$dirty" ] \
-      || ac_die "--pr-ready refused: the worktree holds uncommitted work the accepted PR cannot contain - commit and push it (then re-record the PR head), or discard it deliberately, before the acceptance lands:
-$dirty"
     pr_head="$(ac_meta_get "$meta" pr_head)"
     if [ -n "$pr_head" ] && ! git -C "$worktree" merge-base --is-ancestor "$head" "$pr_head" 2>/dev/null; then
-      ac_die "--pr-ready refused: crew HEAD is newer than the recorded PR head ($pr_head) - the captain accepted the PR, not commits past it. Push and re-record (bin/ac-pr-check.sh $id <url>), then ask again"
+      printf -- '--pr-ready refused: HEAD %s is newer than the recorded PR head (%s) - the captain accepted the PR, not commits past it. Push and re-record (bin/ac-pr-check.sh %s <url>), then ask again\n' \
+        "${head:0:12}" "$pr_head" "$id" >&2
+      return 1
     fi
-    ledger="$(ac_records_dir)/backlog.md"
-    [ -r "$ledger" ] \
-      || ac_die "--pr-ready refused: cannot read $ledger to prove no open row waits on $id - an unreadable ledger must not read as 'no dependent'"
-    dep="$(pr_ready_dependent)"
-    [ -z "$dep" ] || ac_die "--pr-ready refused: open row $dep still waits on $id (blocked-by) - a dependent starts from the merged tree, so this task lands only by the real merge"
     return 0
   fi
   for ref in "$(ac_default_branch "$project_dir")" "$(ac_default_ref "$project_dir")"; do
@@ -370,6 +358,26 @@ family_member_in_flight() {
   return 1
 }
 
+pr_ready_preconditions() {
+  # What --pr-ready needs of the whole task, checked once in the main shell
+  # where a refusal really refuses. Fail-closed every way: no recorded PR
+  # means nothing existed to accept; a dirty tree is outside the accepted PR
+  # and would be destroyed as "landed"; and a task an OPEN row still waits on
+  # lands only by the real merge - its dependent starts from the merged tree.
+  local dirty ledger dep
+  [ -n "$(ac_meta_get "$meta" pr)" ] \
+    || ac_die "--pr-ready with no recorded PR for $id - record it first (bin/ac-pr-check.sh $id <url>)"
+  dirty="$(ac_worktree_status "$worktree" || true)"
+  [ -z "$dirty" ] \
+    || ac_die "--pr-ready refused: the worktree holds uncommitted work the accepted PR cannot contain - commit and push it (then re-record the PR head), or discard it deliberately, before the acceptance lands:
+$dirty"
+  ledger="$(ac_records_dir)/backlog.md"
+  [ -r "$ledger" ] \
+    || ac_die "--pr-ready refused: cannot read $ledger to prove no open row waits on $id - an unreadable ledger must not read as 'no dependent'"
+  dep="$(pr_ready_dependent)"
+  [ -z "$dep" ] || ac_die "--pr-ready refused: open row $dep still waits on $id (blocked-by) - a dependent starts from the merged tree, so this task lands only by the real merge"
+}
+
 landed_proof() {
   if [ "$kind" = roomchief ]; then
     # Demotion requires the family to be fully landed first.
@@ -389,6 +397,7 @@ landed_proof() {
     fi
     return 0
   fi
+  [ -z "$pr_ready" ] || pr_ready_preconditions
   if [ "$kind" = scout ]; then
     # Staged-flow scouts nest under their family (ac_task_dir resolves both).
     # The resolver's ambiguity die exits the substitution, not this function
