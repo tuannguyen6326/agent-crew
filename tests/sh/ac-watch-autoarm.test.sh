@@ -106,6 +106,18 @@ assert_contains "$(last_trace)" "hook=watch-autoarm" "the line names the hook"
 assert_contains "$(last_trace)" "verdict=stood-aside" "and the nothing-owed stand-aside"
 assert_contains "$(last_trace)" "reason=nothing-owed" "...distinguishably from every other stand-aside"
 
+# A live roomchief is owed the FLEET watcher - its pane reports to the
+# crewchief - so the crewchief's hook arms for it; the roomchief's own scoped
+# hook does not count its own pane, which its scoped watcher never covers.
+printf 'kind=roomchief\n' >"$AC_HOME/state/famR-chief.meta"
+stub_watch 'report:famR-chief'
+assert_eq "$(run_hook)" "2" "a live roomchief is supervision owed to the fleet session"
+rc=0
+( cd "$AC_HOME" && printf '{}' | AC_SCOPE=famR "$hook" >/dev/null 2>&1 ) || rc=$?
+assert_eq "$rc" "0" "...but not to its own scoped session"
+assert_contains "$(last_trace)" "reason=nothing-owed" "...which stands aside as nothing owed"
+rm -f "$AC_HOME/state/famR-chief.meta"
+
 # A SOLO session (AC_SOLO=1) NEVER arms: supervision is the chief's obligation,
 # and a solo hook that took the watcher would steal the chief's wake channel.
 # It also never reaches a supervision verdict - untraced (see header TRACE).

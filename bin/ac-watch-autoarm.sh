@@ -179,7 +179,13 @@ crew_in_flight() {
   local meta
   for meta in "$state_dir"/*.meta; do
     [ -e "$meta" ] || continue
-    case "$(ac_meta_get "$meta" kind)" in roomchief|crewdeputy) continue ;; esac
+    # A roomchief's pane reports to the FLEET watcher (its hand-back must wake
+    # the crewchief) and never to its own scoped one - the turn-end guard's
+    # tally, mirrored.
+    case "$(ac_meta_get "$meta" kind)" in
+      crewdeputy) continue ;;
+      roomchief) [ -z "$scope" ] || continue ;;
+    esac
     ac_meta_is_verify "$meta" && continue
     # A chief SELF TASK holds a `tail -f`, not an agent (ac_meta_is_self owns
     # the class): arming a watcher for it would cover a pane that can never
