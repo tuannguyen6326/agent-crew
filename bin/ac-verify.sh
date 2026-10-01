@@ -34,9 +34,10 @@
 # This is deliberately not a general agent launcher. It accepts only the two
 # verifier kinds above, leases one isolated worktree at the exact commit,
 # NEUTRALIZES the project's instruction files in that working tree (CLAUDE.md /
-# CLAUDE.local.md / AGENTS.md at any depth, tracked or untracked - the CONTEXT
-# NEUTRALIZATION block below owns the reasoning: the diff under review can edit
-# the very files the harness loads as identity before the prompt speaks -
+# CLAUDE.local.md / AGENTS.md in any letter case, at any depth, tracked or
+# untracked - the CONTEXT NEUTRALIZATION block below owns the reasoning: the
+# diff under review can edit the very files the harness loads as identity
+# before the prompt speaks -
 # and restores their pre-round bytes before the lease is released, on every
 # exit path, so no stub rides a pooled slot into its next lessee), and
 # calls ac-pane-agent synchronously. A valid result is durably captured before
@@ -1353,7 +1354,9 @@ verify_drop_branch "$lease" "$id"
 # range is read from git OBJECTS (git diff base..ref) and is untouched; a
 # reviewer needing an instruction file's true content reads it via git show.
 # File-based and harness-agnostic on purpose: a future harness is covered
-# without new per-harness flag facts.
+# without new per-harness flag facts. Names match case-insensitively: on a
+# case-insensitive filesystem (the macOS default) a claude.md the diff plants
+# IS the CLAUDE.md every reader opens.
 # Nothing here outlives the lease: the pre-round bytes are kept aside and
 # restore_neutralized writes them back before the lease is released (the
 # pool's return resets tracked files only, and an untracked seed would
@@ -1371,7 +1374,7 @@ ctx_backup="$(mktemp -d "${TMPDIR:-/tmp}/ac-verify-ctx.XXXXXX")"
 ctx_files=()
 while IFS= read -r ctx_file; do
   ctx_files+=("$ctx_file")
-done < <(find "$lease" \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md \) \
+done < <(find "$lease" \( -iname CLAUDE.md -o -iname CLAUDE.local.md -o -iname AGENTS.md \) \
   \( -type f -o -type l \) -not -path '*/.git/*' 2>/dev/null)
 for ctx_file in ${ctx_files[@]+"${ctx_files[@]}"}; do
   neutralized=$((neutralized + 1))
