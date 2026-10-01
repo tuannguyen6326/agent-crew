@@ -278,4 +278,18 @@ assert_eq "$rc" "2" "A5: a read-only state dir must not change the guard's own v
 assert_contains "$out" "queued wakes" "...or its message"
 rm -rf "$state/.wake-spool"
 
+# --- a live ROOMCHIEF owes the crewchief's fleet coverage --------------------
+# The fleet watcher keeps every <family>-chief pane (ac-watch.sh scoping: its
+# hand-back must wake the crewchief), so a fleet whose only live meta is a
+# roomchief is NOT parked: with no beacon the turn end must block, never tell
+# the chief to end the session. The roomchief's own scoped watcher never
+# covers its own pane, so its own session owes nothing for it.
+rh="$TMP/rc-home"; mkdir -p "$rh/state" "$rh/records" "$rh/config"; : >"$rh/records/backlog.md"
+printf 'kind=roomchief\nwindow=crew:famR-chief\n' >"$rh/state/famR-chief.meta"
+rc=0; out="$(printf '{}' | AC_HOME="$rh" "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "a live roomchief with no fleet watcher blocks the crewchief's turn end: $out"
+case "$out" in *PARKED*|*debrief*) fail "a live roomchief is not a parked fleet: $out" ;; esac
+rc=0; out="$(printf '{}' | AC_HOME="$rh" AC_SCOPE=famR "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "0" "the roomchief's own scoped session owes no coverage for its own pane: $out"
+
 pass

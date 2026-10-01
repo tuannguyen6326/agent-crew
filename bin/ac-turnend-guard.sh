@@ -192,15 +192,24 @@ if [ -z "$scope" ] && [ -f "$lock" ]; then
   fi
 fi
 
-# The turn-end coverage tally: a roomchief/crewdeputy supervises crew and is
-# not itself crew-in-flight; verifier panes are supervised runtime but not
+# The turn-end coverage tally: verifier panes are supervised runtime but not
 # crewmates; a chief SELF TASK owes no coverage (its pane holds a `tail -f`
-# and no agent) and must never pin the chief's turn while it edits. Every
-# other kind - ship/scout, and any unknown/absent kind, counted fail-safe -
-# still counts (ac_crew_metas owns the classes; audit-f4).
+# and no agent) and must never pin the chief's turn while it edits; a
+# crewdeputy supervises its own home's crew. A ROOMCHIEF counts for the fleet
+# session: the fleet watcher keeps every <family>-chief pane because its
+# hand-back must wake the crewchief (ac-watch.sh scoping), so a fleet with a
+# live roomchief is not parked. Its own scoped session never counts it - its
+# scoped watcher never covers its own pane. Every other kind - ship/scout, and
+# any unknown/absent kind, counted fail-safe - still counts (ac_crew_metas owns
+# the classes; audit-f4).
 inflight=0
-while IFS= read -r meta; do inflight=$((inflight + 1)); done \
-  < <(ac_crew_metas "$state_dir" verify self chiefs)
+while IFS= read -r meta; do
+  case "$(ac_meta_get "$meta" kind)" in
+    crewdeputy) continue ;;
+    roomchief) [ -z "$scope" ] || continue ;;
+  esac
+  inflight=$((inflight + 1))
+done < <(ac_crew_metas "$state_dir" verify self)
 # Liveness of the watcher that serves THIS session (a roomchief reads its own
 # family watcher's beat, never the fleet's). Standing coverage below reads the
 # same value: it can only fire for an unscoped session, for which this IS the

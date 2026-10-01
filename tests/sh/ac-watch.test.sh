@@ -65,14 +65,19 @@ rc=0; printf '{}' | "$BIN/ac-turnend-guard.sh" 2>/dev/null || rc=$?
 assert_eq "$rc" "2" "guard blocks on queued spool records"
 rm -rf "$state/.wake-spool"
 
-# Guard: a roomchief/crewdeputy meta is NOT crew-in-flight - a chief pane must
-# not count ITSELF and be nagged for coverage it does not owe. Only ship/scout
-# (and any unknown/absent kind, counted fail-safe) demand coverage.
+# Guard: a chief pane must not count ITSELF and be nagged for coverage it does
+# not owe - a roomchief's own scoped session never counts its own meta (the
+# crewchief's FLEET session does: tests/sh/ac-turnend-guard.test.sh), and a
+# crewdeputy meta is never crew in flight. Only ship/scout (and any
+# unknown/absent kind, counted fail-safe) demand coverage.
 rm -f "$state"/*.meta "$state/.last-watcher-beat"
 printf 'kind=roomchief\nwindow=crew:fam1-chief\n' >"$state/fam1-chief.meta"
 printf 'kind=crewdeputy\n' >"$state/dep.meta"
+printf '{}' | AC_SCOPE=fam1 "$BIN/ac-turnend-guard.sh" \
+  || fail "a roomchief's own session does not count its own pane, nor a crewdeputy"
+rm -f "$state/fam1-chief.meta"
 printf '{}' | "$BIN/ac-turnend-guard.sh" \
-  || fail "roomchief/crewdeputy metas alone are not crew in flight"
+  || fail "a crewdeputy meta alone is not crew in flight"
 printf 'kind=verify-codereview\n' >"$state/vfy.meta"
 printf '{}' | "$BIN/ac-turnend-guard.sh" \
   || fail "a verifier meta alone is supervised runtime, not crew in flight"
