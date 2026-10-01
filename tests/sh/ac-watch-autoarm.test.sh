@@ -17,7 +17,7 @@
 lab="$TMP/autoarm-bin"
 mkdir -p "$lab"
 cp "$BIN/ac-watch-autoarm.sh" "$lab/"
-for f in ac-lib.sh ac-harness.sh; do cp "$BIN/$f" "$lab/"; done
+for f in ac-lib.sh ac-harness.sh ac-wake-lib.sh; do cp "$BIN/$f" "$lab/"; done
 # ac-ready.sh runs its verbs in src/ready.ts, which ac-bun.sh finds beside its
 # own bin/ - a copy here would find none and fail every watch-set.
 printf '#!/bin/sh\nexec "%s/ac-ready.sh" "$@"\n' "$BIN" >"$lab/ac-ready.sh"
@@ -160,6 +160,25 @@ assert_eq "$(run_hook)" "2" "the hook keeps going until something actionable"
 assert_eq "$(calls)" "4" "each heartbeat re-armed the watcher in-process"
 assert_contains "$(cat "$TMP/hook.err")" "ask:t1" "only the actionable close is reported"
 case "$(cat "$TMP/hook.err")" in *heartbeat*) fail "a heartbeat must never reach the chief" ;; esac
+
+# ...but never over a record already in this session's spool: a push that
+# lands while the watcher is mid-cycle finds no sleep to interrupt, the
+# watcher closes heartbeat, and the NEXT watcher's arm snapshot files that
+# record as old backlog - a silent re-arm would sit on it for the whole budget.
+cat >"$lab/ac-watch.sh" <<EOF
+#!/usr/bin/env bash
+printf 'call\n' >>"$TMP/watch.calls"
+mkdir -p "$AC_HOME/state/.wake-spool"
+printf '3\treport\tt9\tdone: pushed mid-cycle\n' >"$AC_HOME/state/.wake-spool/9.1.000000"
+printf 'heartbeat\n'
+EOF
+chmod +x "$lab/ac-watch.sh"; : >"$TMP/watch.calls"
+rc=0
+( cd "$AC_HOME" && printf '{}' | AC_AUTOARM_BUDGET=5 AC_HEARTBEAT=1 "$hook" >/dev/null 2>"$TMP/hook.err" ) || rc=$?
+assert_eq "$rc" "2" "a record left in the spool by the closing cycle hands back"
+assert_eq "$(calls)" "1" "...at once, not after re-arming over it: $(cat "$TMP/hook.err")"
+assert_contains "$(cat "$TMP/hook.err")" "queued wakes" "...naming the queued wake"
+rm -rf "$AC_HOME/state/.wake-spool"
 
 # --- another watcher already holds the singleton ----------------------------
 rm -f "$trace_log"
