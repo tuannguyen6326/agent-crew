@@ -1532,6 +1532,23 @@ case "$(cat "$TMP/docker.args")" in *famz-qa*) fail "a family stack must outlive
 assert_contains "$out" "famz-qa kept" "...and teardown names the stack it kept"
 assert_contains "$out" "famz-sib" "...and the member holding it"
 rm -f "$AC_HOME/state/famz-sib.meta" "$TMP/docker.args"
+
+# (5) the two downs fail independently: either one failing is warned with its
+# status, and the other is still attempted.
+cat >"$dstub/docker" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$TMP/docker.args"
+if [ -n "\${DOCKER_FAIL_ON:-}" ]; then case "\$*" in *"\$DOCKER_FAIL_ON"*) exit 5 ;; esac; fi
+EOF
+for failing in -famp-chief -famp-qa; do
+  rm -f "$TMP/docker.args"
+  qa_chief famp-chief
+  out="$(DOCKER_FAIL_ON="$failing down" "$BIN/ac-teardown.sh" famp-chief 2>&1)" || fail "teardown famp-chief failed: $out"
+  assert_contains "$out" "status 5" "a failing $failing down is warned with its status"
+  assert_contains "$(cat "$TMP/docker.args")" "-famp-chief down" "...the task stack is still attempted"
+  assert_contains "$(cat "$TMP/docker.args")" "-famp-qa down" "...and so is the family stack"
+done
+rm -f "$TMP/docker.args"
 rm -f "$dstub/docker"
 unset AC_TEARDOWN_QA_TIMEOUT
 

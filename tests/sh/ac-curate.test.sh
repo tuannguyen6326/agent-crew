@@ -429,6 +429,15 @@ if LC_ALL=C grep -qF -- '- cafep ' "$records/projects.md"; then
   fail "the archived invalid-byte registry line leaves the registry"
 fi
 
+# The backlog pass reports through the same shadow home: its moved lines land
+# in the live archive, and the report names that file.
+printf '## In flight\n\n## Queued\n\n## Done\n- [x] oldone - landed - local main (merged 2026-01-01)\n' >"$records/backlog.md"
+printf 'runs_since=4\ngeneration=0\n' >"$AC_HOME/state/.curate.meta"
+out="$(AC_CURATE_KEEP=0 AC_GATE="$gate_stub" "$BIN/ac-curate.sh" run)"
+assert_contains "$out" "to $records/backlog-archive.md" "the backlog pass names the live archive"
+case "$out" in */shadow/*) fail "the backlog pass names the shadow copy: $out" ;; esac
+grep -qF -- '- [x] oldone ' "$records/backlog-archive.md" || fail "...where the moved Done line really landed"
+
 # ac_curate_reset returns the same 1 for a newer cadence generation and for a
 # busy cadence lock, so the run's own warning has to stand for both. Held by a
 # live pid, the lock costs the reset's real 10s timeout.
