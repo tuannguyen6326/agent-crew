@@ -382,6 +382,19 @@ assert_contains "$(cat "$AC_HOME/data/s11/timeline.log")" "lesson waived: nothin
   "the waiver's why lands on the record"
 assert_contains "$(cat "$AC_HOME/data/s11/timeline.log")" "repo fact waived: no repo fact was verified" \
   "the fact waiver's why lands on the record"
+# The keyed tick dedupes for 24h only, so a landing must not tick on an
+# attempt that can still die: a preflight that cannot preserve QA evidence
+# leaves the slice in flight, and its retry a day later would count it twice.
+"$BIN/ac-self-task.sh" start s13 "$repo" >/dev/null
+printf '# Backlog\n## Queued\n## Done\n- [x] s13 - a slice whose QA evidence cannot be kept\n' >"$AC_HOME/records/backlog.md"
+printf 'kind=verify-qa\nfamily=s13\ncaller=s13\nevidence=/dev/null/no-such-dir\nworktree=\nleases=\n' >"$state/s13-verify-qa.meta"
+out="$("$BIN/ac-teardown.sh" s13 --no-lesson 'x' --no-fact 'y' 2>&1)" && fail "an unpreservable QA verifier must stop the landing: $out"
+assert_contains "$out" "cannot preserve incomplete QA verifier" "the preflight's own refusal"
+assert_file "$state/s13.meta" "...leaves the slice in flight"
+grep -q "	s13$" "$state/.learn-ticks" 2>/dev/null && fail "a landing that died in the preflight must not have ticked"
+sed -i.bak '/^evidence=/d' "$state/s13-verify-qa.meta"; rm -f "$state/s13-verify-qa.meta.bak"
+out="$("$BIN/ac-teardown.sh" s13 --no-lesson 'x' --no-fact 'y' 2>&1)" || fail "the repaired retry lands: $out"
+assert_eq "$(grep -c "	s13$" "$state/.learn-ticks")" "1" "...and ticks exactly once"
 "$BIN/ac-self-task.sh" start s12 "$repo" >/dev/null
 out="$("$BIN/ac-teardown.sh" s12 --no-lesson 'x' --no-fact 'y' 2>&1)" && fail "the Done row is never waived: $out"
 assert_file "$state/s12.meta" "a missing Done row keeps the slice in flight"
