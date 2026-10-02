@@ -348,4 +348,32 @@ assert_eq "$rc" "1" "start refuses a row whose domain token is off its position:
 assert_contains "$out" "fix the line by hand" "...saying how to repair it"
 assert_eq "$(dom_fields dom-d)" "|1" "...leaving it visibly malformed"
 
+# ---- a hold on an [EPIC] row joins the leading run AFTER the epic tag: the
+# terminal token is read only right after the id, so a hold placed ahead of it
+# turned the epic into an ordinary row for as long as the hold stood.
+cat >"$ledger" <<'EOF'
+## In flight
+
+## Queued
+- [ ] ep1 [EPIC] - an epic stories: s1 (repo: proj)
+
+## Done
+EOF
+"$BIN/ac-task.sh" hold ep1 --why 'waiting on the captain' >/dev/null
+assert_eq "$("$BIN/ac-backlog.sh" fields --get id,terminal,hold "$ledger" | awk -F'\t' '$1 == "ep1" { print $2 "|" $3 }')" "epic|1" \
+  "a held epic is still an epic, and held"
+assert_contains "$(grep '^- \[ \] ep1 ' "$ledger")" "ep1 [EPIC] [@held]" "...the hold sits in a second contiguous group"
+"$BIN/ac-task.sh" unhold ep1 >/dev/null
+assert_eq "$(grep '^- \[ \] ep1 ' "$ledger")" "- [ ] ep1 [EPIC] - an epic stories: s1 (repo: proj) - waiting on the captain" \
+  "unhold takes the hold back out and leaves the epic tag where it was"
+# The separator between the id and the epic tag is the row's own: a TAB
+# survives the hold and the release byte for byte.
+printf -- '- [ ] ep2\t[EPIC] - another epic stories: s2 (repo: proj)\n' >"$TMP/ep2.line"
+awk -v l="$(cat "$TMP/ep2.line")" '{ print } /^## Queued/ { print l }' "$ledger" >"$TMP/ep2.ledger" && mv "$TMP/ep2.ledger" "$ledger"
+"$BIN/ac-task.sh" hold ep2 >/dev/null
+assert_eq "$("$BIN/ac-backlog.sh" fields --get id,terminal,hold "$ledger" | awk -F'\t' '$1 == "ep2" { print $2 "|" $3 }')" "epic|1" \
+  "a TAB-separated epic tag stays the epic tag under a hold"
+"$BIN/ac-task.sh" unhold ep2 >/dev/null
+assert_eq "$(grep '^- \[ \] ep2' "$ledger")" "$(cat "$TMP/ep2.line")" "...and the release restores the line byte for byte"
+
 pass
