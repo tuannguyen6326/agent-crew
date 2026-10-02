@@ -294,8 +294,7 @@
 #      double-spawned;
 #   4. a stale meta and its status log are RETIRED to their own slot under
 #      state/archive/<id>/<stamp>/, never deleted, so the routed-order history
-#      of EVERY earlier epoch stays readable (a deputy is recovered repeatedly,
-#      unlike a crewmate id, which teardown archives exactly once);
+#      of EVERY earlier epoch stays readable (a deputy is recovered repeatedly);
 #   5. control falls through to the ordinary crewdeputy spawn path.
 # The deputy's OWN home is never touched: its crew keeps running, its worktrees
 # keep their leases, its backlog and rooms survive, and the restored deputy
@@ -761,9 +760,8 @@ if [ "$recover" = 1 ] && [ "$crewdeputy" = 1 ]; then
       ac_die "--recover: $id is LIVE ($(AC_BACKEND="$(ac_task_backend "$id")" backend_target "$id")) - a live pane is never double-spawned"
     fi
     # Retire the stale meta, never delete it: the routed-order history stays
-    # readable. Layout mirrors ac-teardown.sh's archive, which owns it, with ONE
-    # difference the lifecycle forces: teardown archives an id exactly once, so
-    # its fixed state/archive/<id>/ slot is safe, but a crewdeputy is a
+    # readable. Layout mirrors ac-teardown.sh's archive, which owns it: the fixed
+    # state/archive/<id>/ slot is teardown's latest epoch, and a crewdeputy is a
     # LONG-LIVED identity recovered repeatedly - a fixed slot would let the
     # second retirement overwrite the first one's routed orders and break A2.
     # So each retirement gets its OWN slot under it, stamped and made unique by

@@ -865,6 +865,16 @@ fi
 # ORDER GUARANTEE). The status append and both moves are one unit.
 archive="$state_dir/archive/$id"
 mkdir -p "$archive"
+# An id is not archived only once - a re-promoted roomchief (learning-chief at
+# every DISTILL) or a retried slice reuses it. The fixed slot is the one every
+# reader resolves (ac-session.sh, ac-follow.sh, ac-remote.sh, spawn
+# --resume-from), so it takes the LATEST epoch and the epoch it held moves to
+# its own stamped dir (the verifier arm's and deputy recovery's mktemp shape).
+if [ -e "$archive/meta" ]; then
+  prior="$(mktemp -d "$archive/$(ac_now).XXXXXX")"
+  mv "$archive/meta" "$prior/meta"
+  [ ! -f "$archive/status" ] || mv "$archive/status" "$prior/status"
+fi
 [ -z "$pr_ready" ] || ac_status_append "$id" "done: captain accepted the ready-to-merge PR - $pr_ready"
 ac_status_append "$id" "resolved: teardown$([ "$force" = 1 ] && printf ' (forced)')"
 mv "$meta" "$archive/meta"
