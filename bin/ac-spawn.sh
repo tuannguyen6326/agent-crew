@@ -470,9 +470,11 @@
 #      state/.meta-claims/), taken before every window CREATE and every REAP on
 #      every path - both reap_orphan_window call sites included - and released
 #      the instant the meta is COMPLETE. That is the exact ordering invariant,
-#      and it is narrower than "before any window call": the --recover ladder
-#      probes window liveness earlier, which is a READ that creates and reaps
-#      nothing. It is what makes the pre-meta
+#      and it is narrower than "before any window call": the crewdeputy
+#      --recover ladder probes window liveness earlier, which is a READ that
+#      creates and reaps nothing. The crewmate/roomchief --recover block goes on
+#      to CREATE, so it takes the claim before its probe - a second recover
+#      then reads the first one's pane alive. It is what makes the pre-meta
 #      window single-occupancy: a contender blocks in the acquire and then dies
 #      on the duplicate-meta check INSIDE the claim, so it never reaches a reap.
 #      A dead owner is reclaimed after a grace through the shared PID-aware
@@ -734,7 +736,8 @@ spawn_meta_claim_acquire() {
   printf '%s\n' "$meta_claim_owner_pid" >"$meta_claim/pid"
   meta_claim_held=1
   meta_claim_owner_subshell="${BASH_SUBSHELL:-0}"
-  if [ -e "$meta" ]; then
+  # A recovery claims an id whose meta is the very thing it recovers.
+  if [ "${1:-}" != recover ] && [ -e "$meta" ]; then
     spawn_meta_claim_release
     ac_die "crewmate $id already exists (see $meta); tear it down first"
   fi
@@ -1300,6 +1303,8 @@ if [ "$recover" = 1 ] && [ "$crewdeputy" = 0 ]; then
   # The task's OWN backend decides the probe, never this call's flag/config.
   AC_BACKEND="$(ac_task_backend "$id")"; export AC_BACKEND
   backend="$(ac_backend)"
+  spawn_meta_claim_acquire recover
+  trap spawn_meta_claim_cleanup EXIT
   alive_rc=0; backend_window_alive "$id" || alive_rc=$?
   case "$alive_rc" in
     0) ac_die "--recover: $id is LIVE ($(backend_target "$id")) - a live pane is never double-spawned" ;;
@@ -1367,6 +1372,7 @@ if [ "$recover" = 1 ] && [ "$crewdeputy" = 0 ]; then
   backend_send_line "$id" "$notice" \
     || ac_warn "recovery notice NOT delivered to $id (see stderr above) - the session IS resumed, so re-send it only if the agent looks confused: bin/ac-send.sh $id '$notice'"
   ac_meta_set "$meta" window "$window"
+  spawn_meta_claim_release
   ac_status_append "$id" "recovered: pane reopened at $window, session $rec_sid resumed"
   printf 'recovered %s kind=%s backend=%s window=%s worktree=%s\n' \
     "$id" "$rec_kind" "$backend" "$window" "$rec_dir"
