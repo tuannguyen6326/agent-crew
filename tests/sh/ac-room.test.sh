@@ -653,6 +653,10 @@ assert_fails "$BIN/ac-room.sh" post malform captain "GATE"
 assert_fails "$BIN/ac-room.sh" post malform captain "ASK"
 assert_fails "$BIN/ac-room.sh" post malform captain "DECIDED"
 assert_fails "$BIN/ac-room.sh" post malform captain "GATE no colon at all"
+# A TAB is no separator to the counting grammar (a literal space), so a tab
+# marker would settle or open nothing while it read as well-formed here.
+assert_fails "$BIN/ac-room.sh" post malform captain "$(printf 'DECIDED\tcaptain: approve')"
+assert_fails "$BIN/ac-room.sh" post malform captain "$(printf 'ASK\t(1 of 2): pick a or b')"
 # Compound receipt verbs (word-broken by `-`, never by space/colon/end) are
 # NOT bare markers and must keep posting - the refusal never over-reaches.
 "$BIN/ac-room.sh" post malform crewchief "GATE-LOOPED: architecture r1 REJECTED, looping" >/dev/null
