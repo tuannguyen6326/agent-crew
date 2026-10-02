@@ -234,6 +234,25 @@ if [ "$(id -u)" != 0 ]; then
   assert_contains "$out" "cannot read the ledger" "merge-local names the unreadable ledger"
   assert_contains "$rd" "cannot read the ledger" "review-diff names the unreadable ledger"
 fi
+# A sibling that lands through a PR moves origin's epic branch while the local
+# one stays behind; a new story's lease is cut from origin's tip (ac-tree.sh
+# get), so its diff base must be that same ref - the stale local branch would
+# render the sibling's landed file as this story's change.
+git -C "$upstream" checkout -q epic/eppy3
+printf 'sibling via PR\n' >"$upstream/sib.txt"
+git -C "$upstream" add sib.txt; git -C "$upstream" commit -qm "sibling story landed by PR"
+git -C "$upstream" checkout -q main
+git -C "$AC_HOME/projects/proj" fetch -q origin
+printf -- '- [ ] eppy3-s7 - story; epic:eppy3 (repo: proj)\n' >>"$AC_HOME/records/backlog.md"
+wt7="$("$BIN/ac-tree.sh" get --repo "$AC_HOME/projects/proj" --id eppy3-s7 --holder t 2>/dev/null)"
+git -C "$wt7" checkout -q -B crew/eppy3-s7
+printf 'mine\n' >"$wt7/mine.txt"
+git -C "$wt7" add -A; git -C "$wt7" commit -qm "story seven"
+printf 'project_dir=%s\nworktree=%s\nproject=proj\n' "$AC_HOME/projects/proj" "$wt7" >"$AC_HOME/state/eppy3-s7.meta"
+rd="$("$BIN/ac-review-diff.sh" eppy3-s7 --stat)"
+assert_contains "$rd" "mine.txt" "review-diff shows the story's own work"
+case "$rd" in *sib.txt*) fail "review-diff must take the base the lease was cut from, not a stale local epic branch: $rd" ;; esac
+"$BIN/ac-tree.sh" return "$wt7" --force >/dev/null 2>&1; rm -f "$AC_HOME/state/eppy3-s7.meta"
 
 # --- checked-out epic target: the live practice lands in place ----------------
 # The lab clones sit ON the epic branch; `git fetch . src:dst` refuses to move
