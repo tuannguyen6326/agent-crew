@@ -191,9 +191,11 @@ backend="$(ac_backend)"
 [ -z "$base_branch" ] || [ "$backend" = orca ] \
   || ac_die "--base-branch requires an orca-backend fleet (config/backend=$backend here) - a herdr fleet leases from its own worktree pool, which has no base-branch concept"
 
-window=""
+window="" worktree=""
 self_cleanup() {
-  if [ "$backend" = orca ]; then
+  if [ -z "$worktree" ]; then
+    :
+  elif [ "$backend" = orca ]; then
     orca_worktree_release "$worktree" || true
   else
     "$bin_dir/ac-tree.sh" return "$worktree" --force >/dev/null 2>&1 || true
@@ -216,6 +218,8 @@ self_backend_why() {
   esac
 }
 
+trap self_cleanup EXIT
+
 # 1. The progress log, before the pane that tails it exists.
 ac_status_append "$id" "working: self task started by the chief"
 
@@ -227,7 +231,6 @@ if [ "$backend" = orca ]; then
 else
   worktree="$("$bin_dir/ac-tree.sh" get --repo "$project_dir" --id "$id" --holder "self:$id")"
 fi
-trap self_cleanup EXIT
 
 # Work on a worktree follows the crewmate layer, whoever holds the hands - the
 # chief, a solo session, or a session the captain opens INSIDE the tree - so
