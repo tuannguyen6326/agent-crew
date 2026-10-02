@@ -77,9 +77,9 @@
 # Model/effort ladder, per knob: the --model / --effort flag wins. For the
 # VERIFICATION panes (--kind codereview | qa) the model then reads the per-role
 # knob and DEFAULTS to claude opus: AC_FLEET_MODEL_<KIND> env (threaded by
-# ac-spawn from config/model-<kind>) > config/model-<kind> > opus - verification
+# ac-spawn from config/<kind>-model) > config/<kind>-model > opus - verification
 # runs on the strongest model, decoupled from the fleet crewmate model, unless
-# the captain pins config/model-<kind>. Every other kind (and effort for all
+# the captain pins config/<kind>-model. Every other kind (and effort for all
 # kinds) keeps the plain fleet ladder: the inherited fleet scalar AC_FLEET_MODEL
 # / AC_FLEET_EFFORT; then config/model / config/effort; nothing anywhere =
 # claude's own default. The point of the whole ladder is that an independent
@@ -299,7 +299,10 @@
 # one-shot pane runs a command, not a composer, so there is nothing to steer
 # and its pane is a VIEW of a turn already running to its own end. The stable HANDLE is the pane
 # NAME this script writes at creation - ac-<kind>-agent:<label>, the `pane
-# rename` below - and herdr is where it is looked up again. That is deliberate:
+# rename` below - and herdr is where it is looked up again. HERDR ONLY: the orca
+# arm names no pane that way (orca_place_pane titles it crew:<fleet>/...), so on
+# an orca fleet the verb refuses rather than resolve a same-named pane in
+# herdr's default session - another fleet's. That is deliberate:
 # a handle file could not be found by both sides, because ac_home() forks
 # (a crewmate-run caller - the ship reviewer, qa - has no AC_HOME, so it
 # resolves no state/ at all, and before ac_home refused it resolved the distro
@@ -477,6 +480,8 @@ if [ "${1:-}" = steer ]; then
   [ -n "$SH" ] || [ -n "$SP" ] \
     || ac_die "usage: ac-pane-agent.sh steer --agent <handle> '<text>' [--pane <pane-id>]"
   [ -n "$STEXT" ] || ac_die "refusing to steer with an empty message"
+  [ "$(ac_backend 2>/dev/null || printf herdr)" != orca ] \
+    || ac_die "steer is herdr-only: an orca pane agent carries no ac-<kind>-agent:<label> name to resolve - address it in Orca itself"
   command -v herdr >/dev/null 2>&1 || ac_die "herdr not on PATH"
   # Resolve the handle against herdr's LIVE panes - the registry both a homed
   # chief and a homeless caller share. A dead or recycled pane simply is not in

@@ -1256,6 +1256,17 @@ assert_contains "$err" "pS3" "the failure names the pane, so the chief can peek 
 case "$err" in *"steered"*) fail "a stranded steer must not claim delivery" ;; esac
 assert_contains "$(cat "$FAKE_HERDR/panes/pS3.in")" "lost steer" "the text sits in the composer, reported honestly"
 
+# Steer is HERDR-ONLY: the handle is the pane NAME the herdr arm writes, and an
+# orca pane agent carries none. On an orca fleet the verb refuses saying so -
+# never by resolving a same-named pane in herdr's default session (another
+# fleet's) and sending to it through the orca driver.
+: >"$FAKE_HERDR/log"
+err="$(AC_BACKEND=orca "$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:probe-task 'orca steer' 2>&1)" \
+  && fail "steer on an orca fleet must refuse"
+assert_contains "$err" "herdr-only" "the refusal names the real reason"
+case "$err" in *"herdr pane read"*|*"delivery"*) fail "an orca steer must not reach any pane: $err" ;; esac
+grep -q 'pane list\|send' "$FAKE_HERDR/log" && fail "an orca steer must not query or type into herdr: $(cat "$FAKE_HERDR/log")"
+
 # --- steer: the GATE JUDGE independence guard ------------------------------------
 # The gate judge is the ONE pane agent whose whole value is that the chief whose
 # stage it judges did not shape its turn, so a CHIEF steer into it is refused and
