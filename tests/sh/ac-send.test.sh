@@ -378,6 +378,18 @@ err="$("$BIN/ac-send.sh" cnl "$nl_head$nl_tail
 assert_contains "$err" "TRUNCATED" "a trailing newline on the sent text does not turn a truncation into a different text"
 assert_contains "$err" "sent $(printf '%s' "$nl_head$nl_tail" | wc -m | tr -d ' ') chars" \
   "the sent size is counted in characters, not bytes"
+# ...and an INTACT newline-terminated steer is delivered, not refused: the
+# reader drops the trailing newline from what arrived, so the comparison must
+# drop it from what was sent - or the chief is told to resend a message that
+# landed whole, and the crewmate gets it twice.
+sid_nlok="cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd"
+mk_claude_crewmate cnlok pCNLOK tCNLOK "$sid_nlok"
+mk_turn "$sid_nlok" "please rerun the suite and report"
+out="$("$BIN/ac-send.sh" cnlok "please rerun the suite and report
+" 2>&1)" || fail "an intact newline-terminated steer must be delivered: $out"
+case "$out" in *REFUTED*) fail "an intact newline-terminated steer is not a refutation: $out" ;; esac
+assert_contains "$out" "sent to herdr:pane-pCNLOK" "...and its arrival is CONFIRMED, not merely unobserved"
+case "$out" in *unverified*) fail "an intact newline-terminated steer must confirm its arrival: $out" ;; esac
 
 # A genuinely DIFFERENT arrival is not a truncation and must not be described
 # as one - a wrong message and a cut message need different next moves.
