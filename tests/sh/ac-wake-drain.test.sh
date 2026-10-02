@@ -519,6 +519,31 @@ kill "$REUSEPID" 2>/dev/null; wait "$REUSEPID" 2>/dev/null || true
 assert_contains "$out" "report t9 done: stranded by reuse" "a claim dir under a reused pid is recovered"
 assert_no_file "$state/.wake-spool-draining.$REUSEPID" "...and cleaned up"
 
+# A drainer that inherits a dead claimer's pid (exec) finds the dir under its
+# OWN pid: that is a predecessor's, swept like any dead one - kept, it would
+# also collide with this drainer's own claim of the same name.
+reset_state
+out="$(PATH="$stub:$PATH" env -u AC_SCOPE bash -c '
+  d="$1/.wake-spool-draining.$$"; mkdir -p "$d"
+  printf "1\treport\tt9\tdone: own-pid predecessor\n" >"$d/1.$$.000000"
+  exec bash "$2"' _ "$state" "$fakebin/ac-wake-drain.sh")"
+assert_contains "$out" "report t9 done: own-pid predecessor" "a claim dir under the drainer's own pid is a predecessor's"
+
+# A claimer whose command cannot be read is kept, never swept: the lookup
+# failing is no proof of a dead drainer (the next drain sweeps it).
+reset_state
+mkdir -p "$TMP/ps-blind"
+printf '#!/usr/bin/env bash\ncase "$*" in *command=*) exit 1 ;; esac\nexec /bin/ps "$@"\n' >"$TMP/ps-blind/ps"
+chmod +x "$TMP/ps-blind/ps"
+sleep 60 & BLINDPID=$!
+mkdir -p "$state/.wake-spool-draining.$BLINDPID"
+printf '1\treport\tt9\tdone: unreadable claimer\n' >"$state/.wake-spool-draining.$BLINDPID/1.$BLINDPID.000000"
+out="$(PATH="$TMP/ps-blind:$stub:$PATH" env -u AC_SCOPE bash "$fakebin/ac-wake-drain.sh")"
+kill "$BLINDPID" 2>/dev/null; wait "$BLINDPID" 2>/dev/null || true
+case "$out" in *"unreadable claimer"*) fail "a claimer whose command cannot be read must be kept: $out" ;; esac
+assert_file "$state/.wake-spool-draining.$BLINDPID/1.$BLINDPID.000000" "...its record left where it is"
+rm -rf "$state/.wake-spool-draining.$BLINDPID"
+
 # ... and recovery routes by the record's OWN id (ac_family_of_id - the same
 # derivation in_drain_scope uses, the ONE the system has), never the
 # discovering session's scope: a staged sub-id recovered by the FLEET drain
