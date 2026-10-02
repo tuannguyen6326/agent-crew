@@ -425,6 +425,40 @@ assert_file "$wtH/wip.txt" "a refused remove must not destroy the slot"
 assert_no_file "$wtH" "the named reclaim takes the slot"
 assert_no_file "$repoH/.crew/slots/1-broken.meta" "the reclaimed slot's meta is dropped"
 
+# A slot whose .git FILE is gone is broken too, and worse disguised: git walks
+# up from it and answers for the PRIMARY checkout above, so a git-dir probe
+# reads it healthy, get would reuse it by resetting and detaching the primary,
+# and prune would judge the primary's state and rm -rf the slot's files.
+repoG="$(make_repo gitless)"
+wtG="$("$BIN/ac-tree.sh" get --repo "$repoG" --id g1 2>/dev/null)"
+"$BIN/ac-tree.sh" return "$wtG" >/dev/null 2>&1
+printf 'files git can no longer report\n' >"$wtG/keep.txt"
+rm -f "$wtG/.git"
+[ "$(git -C "$wtG" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$repoG" && pwd -P)" ] \
+  || fail "fixture: git must answer for the primary from inside the gitless slot"
+out="$("$BIN/ac-tree.sh" list --repo "$repoG" 2>/dev/null)"
+assert_contains "$out" "1-gitless	broken" "a slot with no .git file lists broken, not available"
+outP="$("$BIN/ac-tree.sh" prune --repo "$repoG" 2>&1)" || fail "prune dry run failed: $outP"
+assert_contains "$outP" "skip slot 1-gitless: worktree broken" "prune never judges a gitless slot by the primary"
+wtG2="$("$BIN/ac-tree.sh" get --repo "$repoG" --id g2 2>/dev/null)"
+[ "$wtG2" != "$wtG" ] || fail "get must not reuse a gitless slot"
+assert_eq "$(git -C "$repoG" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)" "main" \
+  "the primary checkout stays on its branch"
+printf 'primary work in progress\n' >>"$repoG/file.txt"
+assert_eq "$("$BIN/ac-tree.sh" list --repo "$repoG" 2>/dev/null | awk -F'\t' '$1=="1-gitless"{print $2}')" "broken" \
+  "a dirty PRIMARY never reads as the broken slot's own dirt"
+outH="$("$BIN/ac-pool-health.sh" --repo "$repoG")"
+assert_contains "$outH" "1 broken" "pool health still buckets the gitless slot as broken"
+assert_contains "$outH" "$wtG" "...and names it for the reclaim"
+"$BIN/ac-tree.sh" return --force "$wtG" >/dev/null 2>&1 \
+  && fail "return --force must refuse a gitless slot: its reset would land on the primary"
+assert_eq "$(git -C "$repoG" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)" "main" \
+  "...and the primary checkout is still on its branch"
+assert_contains "$(cat "$repoG/file.txt")" "primary work in progress" "...with its uncommitted work intact"
+"$BIN/ac-tree.sh" remove "$wtG" >/dev/null 2>&1 \
+  && fail "remove without --force must refuse a gitless slot it cannot check"
+assert_file "$wtG/keep.txt" "the gitless slot's files survive"
+
 # A slot whose DIRECTORY has vanished has nothing left to lose: still healed.
 repoV="$(make_repo vanished)"
 wtV="$("$BIN/ac-tree.sh" get --repo "$repoV" --id v1 2>/dev/null)"
