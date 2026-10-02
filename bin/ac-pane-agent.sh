@@ -443,7 +443,7 @@ WS=""  # resolved lazily by agents_ws_create - resolving it HERE reached the
        # including `close` and a usage error. Only `run` places a pane.
 
 emit() { printf '%s\n' "$1"; }
-fail() { emit "{\"event\":\"done\",\"status\":\"error\",\"error\":\"$1\"}"; exit 1; }
+fail() { emit "$(jq -cn --arg e "$1" '{event:"done",status:"error",error:$e}')"; exit 1; }
 
 # `close --pane ID` - retire a pane (ac-ship.sh finish calls this)
 if [ "${1:-}" = close ]; then
@@ -778,7 +778,7 @@ if [ -z "$HFLAG" ]; then
     prc=0
     PROFILE="$(ac_pane_profile "$KIND" 2>/dev/null)" || prc=$?
     [ "$prc" = 0 ] \
-      || fail "could not resolve a pane profile for kind '$KIND' ($(ac_pane_profile "$KIND" 2>&1 >/dev/null | head -n 1 | jq -Rj '@json | .[1:-1]')) - see bin/ac-dispatch-select.sh --pane $KIND"
+      || fail "could not resolve a pane profile for kind '$KIND' ($(ac_pane_profile "$KIND" 2>&1 >/dev/null | head -n 1)) - see bin/ac-dispatch-select.sh --pane $KIND"
   fi
 fi
 # CONTRADICTION CHECK (codereview only): config/codereview-agent (or its
