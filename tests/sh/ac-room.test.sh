@@ -1123,4 +1123,28 @@ assert_contains "$err" "BACKEND" "the 127 refusal names the BACKEND, same as rc=
 case "$err" in *"is gone"*) fail "a 127 driver failure must never be reported as gone" ;; esac
 case "$err" in *teardown*) fail "a 127 driver failure must never invite a teardown of a possibly-live roomchief" ;; esac
 
+# --- list: an unreadable room is no answer, never an empty inbox --------------
+# The rows pass (src/room.ts) exits 2 with no rows when any room cannot be read;
+# list must say so, not print "(no rooms yet)" and exit 0 - the session-start
+# inbox would then read empty while other rooms hold gates. Skipped under root,
+# which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  "$BIN/ac-room.sh" post lrooma crewchief 'GATE: lrooma needs a call' >/dev/null
+  "$BIN/ac-room.sh" post lroomb crewchief 'GATE: lroomb needs a call' >/dev/null
+  chmod 000 "$AC_HOME/data/lroomb/room.md"
+  rc=0; out="$("$BIN/ac-room.sh" list 2>&1)" || rc=$?
+  chmod 644 "$AC_HOME/data/lroomb/room.md"
+  [ "$rc" -ne 0 ] || fail "an unreadable room must fail the list, not read as an answer: $out"
+  case "$out" in *"no rooms yet"*) fail "an unreadable room must never read as an empty inbox: $out" ;; esac
+  assert_contains "$out" "could not be read" "...and the failure says the room set could not be read"
+  # Its readers degrade to a visible WARN instead of dying under set -e.
+  chmod 000 "$AC_HOME/data/lroomb/room.md"
+  rc=0; ss="$("$BIN/ac-session-start.sh" 2>&1)" || rc=$?
+  dash="$("$BIN/ac-dash.sh" 2>&1)" || rc=$((rc + 10))
+  chmod 644 "$AC_HOME/data/lroomb/room.md"
+  assert_eq "$rc" "0" "session-start and the dashboard survive an unreadable room"
+  assert_contains "$ss" "inbox is UNKNOWN" "session-start says the inbox is unknown"
+  assert_contains "$dash" "inbox is UNKNOWN" "...and so does the dashboard"
+fi
+
 pass

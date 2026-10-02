@@ -293,7 +293,8 @@ printf -- '-- fleet --\n'
 ac_self_tasks_in_flight
 
 printf -- '-- rooms (captain inbox) --\n'
-"$bin_dir/ac-room.sh" list
+"$bin_dir/ac-room.sh" list \
+  || printf 'WARN rooms: the room set could not be read - the inbox is UNKNOWN, not empty (bin/ac-room.sh list)\n'
 
 records_dir="$(ac_records_dir)"
 printf -- '-- backlog (head) --\n'

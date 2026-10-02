@@ -551,7 +551,7 @@ cmd_show() {
 }
 
 cmd_list() {
-  local home data_dir state_dir family pending hb last found=0 blocked disp
+  local home data_dir state_dir family pending hb last found=0 blocked disp rows
   # A read: the paths are named, never created - ac_data_dir and ac_state_dir
   # mkdir, which minted data/ and state/ in every home a survey walked.
   home="$(ac_home)"
@@ -559,6 +559,10 @@ cmd_list() {
   set -- "$data_dir"/*/room.md
   if [ -f "$1" ]; then
     state_dir="$home/state"
+    # The rows pass answers all rooms or none (src/room.ts exits 2 on any
+    # unreadable room), so a failure is no answer - never an empty inbox.
+    rows="$(ac_room_list_rows "$@")" \
+      || ac_die "list: the room set could not be read - the inbox has no answer, not zero rooms"
     # BATCHED: ac_room_list_rows (bin/ac-wake-lib.sh) makes ONE pass over
     # every room.md instead of forking ac_room_pending + ac_room_handback_families
     # + basename/dirname + grep|tail|cut per room - the same anti-pattern those
@@ -567,6 +571,7 @@ cmd_list() {
     # matching the original `cut -c1-120` in this UTF-8 locale - never
     # re-truncate inside the rows pass, which reads a room byte by byte.
     while IFS=$'\x1f' read -r pending hb family last; do
+      [ -n "$family" ] || continue
       found=1
       last="${last:0:120}"
       # SILENT escalation, one rung earlier than the markerless-POST warn in
@@ -611,7 +616,7 @@ cmd_list() {
       else
         printf 'ok                  %s\t%s\n' "$family" "$last"
       fi
-    done < <(ac_room_list_rows "$@")
+    done <<<"$rows"
   fi
   [ "$found" = 1 ] || printf '(no rooms yet)\n'
   return 0
