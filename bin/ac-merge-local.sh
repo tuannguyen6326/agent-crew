@@ -9,7 +9,9 @@
 # original behavior: requires the primary checkout to be on the default
 # branch, clean, and $default to be an ancestor of crew/<id> (a pure
 # fast-forward); on success it prints `fast-forwarded <default> to <branch>`,
-# which asserts $default's tree now IS crew/<id>'s tree. The REFUSAL is
+# which asserts $default's tree now IS crew/<id>'s tree - or, when $default
+# already contains the branch (a no-op re-land), `<default> already contains
+# <branch>; nothing to move`, which asserts nothing about the trees. The REFUSAL is
 # deliberately NOT unchanged: when $default is not an ancestor of the
 # branch, the merge is never attempted (git's own bare --ff-only error would
 # say nothing useful here) - the helper refuses up front, in its own voice.
@@ -277,11 +279,17 @@ else
     [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
     ac_status_append "$id" "merged: local $target (epic)"
   else
+    noop=0
+    git -C "$project_dir" merge-base --is-ancestor "$land_sha" "refs/heads/$default" && noop=1
     if ! err="$(git -C "$project_dir" merge --ff-only "$land_sha" 2>&1 >/dev/null)"; then
       ac_die "fast-forward of $branch failed: $err ($default untouched)"
     fi
     [ "${#landed[@]}" -eq 0 ] || ac_landing_record "$family" "${landed[@]}"
     ac_status_append "$id" "merged: local $default"
-    printf 'fast-forwarded %s to %s\n' "$default" "$branch"
+    if [ "$noop" = 1 ]; then
+      printf '%s already contains %s; nothing to move\n' "$default" "$branch"
+    else
+      printf 'fast-forwarded %s to %s\n' "$default" "$branch"
+    fi
   fi
 fi
