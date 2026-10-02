@@ -252,6 +252,16 @@ assert_eq "$(git -C "$so2_wt" merge-base HEAD "$release_sha")" "$release_sha" \
 [ -f "$so2_wt/release.txt" ] || fail "the leased tree must carry the release branch's content"
 "$BIN/ac-teardown.sh" so2 --force >/dev/null 2>&1
 
+# An orca lease that fails left no worktree to give back: the cleanup releases
+# nothing - and still removes the status the start seeded.
+touch "$FAKE_ORCA/.unreachable"; : >"$FAKE_ORCA/log"
+"$BIN/ac-self-task.sh" start sofail "$repo" >/dev/null 2>&1 && fail "an unreachable orca must fail the lease"
+rm -f "$FAKE_ORCA/.unreachable"
+assert_no_file "$state/sofail.status" "an orca lease failure leaves no status either"
+case "$(cat "$FAKE_ORCA/log")" in
+  *"worktree rm"*) fail "a lease that never happened must release nothing: $(cat "$FAKE_ORCA/log")" ;;
+esac
+
 printf 'herdr
 ' >"$AC_HOME/config/backend"
 
@@ -312,6 +322,17 @@ assert_no_file "$state/sdown.meta" "the trap removes the partial meta"
 assert_no_file "$AC_HOME/data/sdown" "a start that never wrote a meta mints no task dir"
 assert_eq "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null | awk -F'\t' '$3=="sdown"{print $2}')" \
   "available" "the trap gives the lease back"
+
+# --- the LEASE failing: the seeded status goes too ----------------------------
+# The status seed comes before the lease, so a lease failure is a partial start
+# like any later one: a left-behind status reads as a task in flight, and a
+# retry of the id appends to a dead slice's log.
+repoF="$(make_repo projfull)"
+rc=0; err="$(AC_MAX_TREES=0 "$BIN/ac-self-task.sh" start sfull "$repoF" 2>&1 1>/dev/null)" || rc=$?
+[ "$rc" != 0 ] || fail "a lease that cannot be had must fail the start"
+assert_contains "$err" "pool is full" "the failure is the lease's own"
+assert_no_file "$state/sfull.status" "the trap removes the status file when the LEASE fails"
+assert_no_file "$state/sfull.meta" "...and leaves no meta"
 
 # --- the knowledge-loop gate at landing --------------------------------------
 # The solo contract owes three writes per slice and no chief asks whether
