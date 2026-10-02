@@ -113,10 +113,14 @@ fi
 [ "$ebrc" != 2 ] || ac_die "cannot read the ledger to resolve the epic-branch fence for $id"
 if [ "$ebrc" = 0 ]; then
   ebb="${eb%% *}"
-  if git -C "$worktree" rev-parse --verify --quiet "refs/heads/$ebb" >/dev/null; then
-    defref="$ebb"
-  elif git -C "$worktree" rev-parse --verify --quiet "refs/remotes/origin/$ebb" >/dev/null; then
+  # The base the lease was cut from (ac-tree.sh get): a push=deferred feature
+  # branch is local until ship; any other epic branch is origin's when origin
+  # carries it - the local copy lags as soon as a sibling lands through a PR.
+  case " ${eb#"$ebb"} " in *" push=deferred "*) eb_deferred=1 ;; *) eb_deferred=0 ;; esac
+  if [ "$eb_deferred" = 0 ] && git -C "$worktree" rev-parse --verify --quiet "refs/remotes/origin/$ebb" >/dev/null; then
     defref="origin/$ebb"
+  elif git -C "$worktree" rev-parse --verify --quiet "refs/heads/$ebb" >/dev/null; then
+    defref="$ebb"
   fi
 fi
 # A tree pinned to REWRITTEN default-branch history shares no ancestor with
