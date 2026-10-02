@@ -99,6 +99,13 @@ done
 (LC_ALL=C; case "$id" in *[!a-z0-9-]*) exit 1 ;; esac) || ac_die "id must be [a-z0-9-]: $id"
 case "$stage" in scout|spec|architecture|plan|implement|design|qa) ;; *) ac_die "unknown stage: $stage (want spec|architecture|plan|implement|design|qa)" ;; esac
 case "$review_flag" in ''|yes|no) ;; *) ac_die "invalid --review: $review_flag (want yes|no)" ;; esac
+if [ "${#qa_profiles[@]}" -gt 0 ]; then
+  for k in "${qa_profiles[@]}"; do
+    case "$k" in
+      ''|*[!A-Za-z0-9/_-]*) ac_die "invalid --qa-required-profile '$k' (want <project>/<scope>/<app>, chars [A-Za-z0-9/_-]) (nothing scaffolded)" ;;
+    esac
+  done
+fi
 # The declaration authorizes ONE thing (the optional review raise below); with no
 # --review yes there is nothing to authorize, and silently ignoring it would hide
 # a caller mistake - the same reason ac-spawn.sh refuses its cap-gate flags on a
@@ -983,11 +990,6 @@ esac
 # file is always valid JSON; the pinned profile_sha256/e2e_sha the gate matches
 # are not known at intake and are added later, so intake records keys only.
 if [ "${#qa_profiles[@]}" -gt 0 ]; then
-  for k in "${qa_profiles[@]}"; do
-    case "$k" in
-      ''|*[!A-Za-z0-9/_-]*) ac_die "invalid --qa-required-profile '$k' (want <project>/<scope>/<app>, chars [A-Za-z0-9/_-])" ;;
-    esac
-  done
   fam="$(ac_family_of_id "$id")"
   qadir="$data_dir/$fam/qa"
   mkdir -p "$qadir"
