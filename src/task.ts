@@ -378,9 +378,12 @@ function hold(id = "", ...rest: string[]): void {
   holdOf(id, L[rowI], " before re-holding");
   const h = splitHold(L[rowI]);
   let line = h ? h.pre + h.post : L[rowI];
-  // The id goes right after the checkbox, where the parser places a hold.
+  // The hold joins the leading run right after the id - but behind a terminal
+  // token ([EPIC]), which the parser reads only in that first slot.
   const idEnd = /^- \[[ x]\] [ \t]*[^ \t]+/.exec(line)![0].length;
-  line = `${line.slice(0, 5)} ${id} ${token}${line.slice(idEnd)}`;
+  const term = acDoneline(line).terminal !== "" ? /^[ \t]+\[[^\]]*\]/.exec(line.slice(idEnd)) : null;
+  const at = idEnd + (term ? term[0].length : 0);
+  line = `${line.slice(0, 5)} ${id}${term ? term[0] : ""} ${token}${line.slice(at)}`;
   if (why !== "" && !line.includes(` - ${why}`)) line += ` - ${why}`;
   if (line === L[rowI]) return void say(`already: ${id} holds ${token}`);
   L[rowI] = line;
