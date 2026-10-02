@@ -221,7 +221,12 @@ sweep_dead_claims() {
   # pass's own claim.
   #
   # NEVER touch a LIVE drainer's claim dir - the medium risk here: only a
-  # claim dir whose embedded pid (the dirname suffix) is DEAD is recovered.
+  # claim dir whose embedded pid (the dirname suffix) is DEAD, or now runs
+  # something that is not a drainer, is recovered. Pids are reused, so alive
+  # alone is no proof (ac-lock.sh holder_alive guards its holder the same
+  # way); our own pid is a dead predecessor's, since this pass has claimed
+  # nothing yet; an unreadable command fails toward live, never toward a
+  # sweep.
   # A non-numeric suffix is not a claim dir this drain recognizes at all
   # (left untouched, same as always).
   #
@@ -234,12 +239,15 @@ sweep_dead_claims() {
   # scope-respecting drain that follows decides who claims it: a family
   # that came back live between the crash and this sweep still owns its own
   # wakes, exactly as if the crashed drainer had never touched them.
-  local d pid rid fam dest f
+  local d pid rid fam dest f cmd
   for d in "$state_dir"/.wake-spool-draining.*; do
     [ -d "$d" ] || continue
     pid="${d##*.wake-spool-draining.}"
     case "$pid" in '' | *[!0-9]*) continue ;; esac
-    ac_pid_alive "$pid" && continue
+    if [ "$pid" != "$$" ] && ac_pid_alive "$pid"; then
+      cmd="$(ps -o command= -p "$pid" 2>/dev/null)" || continue
+      case "$cmd" in *ac-wake-drain*) continue ;; esac
+    fi
     for f in "$d"/*; do
       [ -e "$f" ] || continue
       rid="$(awk -F'\t' '{ print $3; exit }' "$f" 2>/dev/null)" || continue
