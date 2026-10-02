@@ -152,9 +152,10 @@ cmd_ship() {
   # AGENTS.md section-1 sanctioned write), ONE `gh pr create --base <target>`
   # PER REPO ("single PR" means no 2-PR staging chain, never one PR for a
   # multi-repo feature - two repos cannot share a PR), the url recorded in
-  # data/<feature>/gate/ships.env under the PER-REPO key pr_url_<repo> and
-  # receipted SHIPS: to the room. Re-runs are idempotent - a recorded PR is
-  # reported, not re-opened. This verb NEVER merges - the captain does.
+  # data/<feature>/gate/ships.env under the PER-REPO key pr_url_<repo> (two
+  # repos whose names fold to one key are refused) and receipted SHIPS: to the
+  # room. Re-runs are idempotent - a recorded PR is reported, not re-opened.
+  # This verb NEVER merges - the captain does.
   # KNOWN RESIDUAL on a multi-repo feature: gate/review.json is one slot for
   # the whole feature, so each repo's ship needs the review round re-run at
   # ITS tip before its exit - loud (the ref-mismatch refusal names it), never
