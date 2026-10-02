@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -930,6 +930,25 @@ test("domainProjectLinks: no projects/ dir -> []", () => {
     expect(domainProjectLinks(`${root}/crewdomains/nope`)).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ac-room.sh list exits non-zero when a room cannot be read: that is no
+// answer, so it must reach the page as UNKNOWN - an empty list reads as an
+// inbox with nothing waiting on the captain.
+test("roomList: an unreadable room set is null (unknown), never an empty inbox", async () => {
+  if (process.getuid?.() === 0) return;
+  const home = mkdtempSync(`${tmpdir()}/ac-dash-rooms-`);
+  const room = `${home}/data/fam/room.md`;
+  try {
+    mkdirSync(`${home}/data/fam`, { recursive: true });
+    writeFileSync(room, "# Room: fam\n\n- [2026-10-02T00:00:00Z] crewchief> GATE: a question?\n");
+    expect((await roomList(home))?.length).toBe(1);
+    chmodSync(room, 0o000);
+    expect(await roomList(home)).toBeNull();
+  } finally {
+    chmodSync(room, 0o644);
+    rmSync(home, { recursive: true, force: true });
   }
 });
 

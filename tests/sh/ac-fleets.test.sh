@@ -526,4 +526,22 @@ mj="$(fleets --json "$sc")"
 assert_eq "$(jq -r '.homes[] | select(.name=="selfhome") | .crew.supervised' <<<"$mj")" "1"   "--json crew.supervised counts the real crewmate"
 assert_eq "$(jq -r '.totals.watchers_down' <<<"$mj")" "1"   "--json watchers_down alarms once a supervised task is in flight"
 
+# An unreadable room fails `ac-room.sh list` - no answer, so the inbox reads
+# UNKNOWN, never "clear", in text and in --json (inbox.unreadable). Skipped
+# under root, which reads through chmod 000.
+if [ "$(id -u)" != 0 ]; then
+  c3="$TMP/container-unreadable"
+  mkdir -p "$c3/eps/config" "$c3/eps/data/efam"
+  printf '# Room: efam\n\n- [%s] crewchief> GATE: a question?\n' "$(iso)" >"$c3/eps/data/efam/room.md"
+  chmod 000 "$c3/eps/data/efam/room.md"
+  rc=0; out_u="$(fleets "$c3")" || rc=$?
+  uj="$(fleets --json "$c3")" || rc=$?
+  chmod 644 "$c3/eps/data/efam/room.md"
+  assert_eq "$rc" "0" "an unreadable room set still renders the survey"
+  assert_contains "$out_u" "inbox   : UNKNOWN" "an unreadable room set reads UNKNOWN"
+  case "$out_u" in *"inbox   : clear"*) fail "an unreadable room set must never read clear: $out_u" ;; esac
+  assert_eq "$(jq -r '.homes[] | select(.name=="eps") | .inbox.unreadable' <<<"$uj")" "true" "--json flags the unreadable inbox"
+  assert_eq "$(jq -r '.homes[] | select(.name=="eps") | .inbox.unreadable' <<<"$(fleets --json "$c3")")" "false" "...and only while it is unreadable"
+fi
+
 pass

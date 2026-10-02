@@ -1944,13 +1944,15 @@ const snapshotResult = warmMemo(HOME_PATHS_TTL_MS, () =>
   run([`${BIN}/ac-fleets.sh`, "--json"], { AC_HOME }),
 );
 
-/** ac-room.sh list for one home, gated on an existing data/ (no dir creation). */
-async function roomList(homePath: string): Promise<RoomRow[]> {
+/** ac-room.sh list for one home, gated on an existing data/ (no dir creation).
+ *  null when the list failed - a room it could not read is no answer, and an
+ *  empty list would read as nothing waiting on the captain. */
+export async function roomList(homePath: string): Promise<RoomRow[] | null> {
   if (!existsSync(`${homePath}/data`)) return [];
   const { code, out } = await run([`${BIN}/ac-room.sh`, "list"], {
     AC_HOME: homePath,
   });
-  if (code !== 0) return [];
+  if (code !== 0) return null;
   return parseRoomList(out);
 }
 
@@ -2166,8 +2168,10 @@ async function processesDetail(homePath: string): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
   const backlogFile = `${homePath}/records/backlog.md`;
+  const rooms = await roomList(homePath);
   return json({
-    rooms: await roomList(homePath),
+    rooms: rooms ?? [],
+    rooms_unreadable: rooms === null,
     usage: await usageFor(homePath),
     pools: readPools(homePath),
     branches: readLocalBranches(homePath),
