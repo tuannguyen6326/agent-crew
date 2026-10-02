@@ -92,6 +92,27 @@ assert_contains "$(cat "$FAKE_HERDR/log")" "tab create --workspace" "the fresh p
 err="$("$BIN/ac-spawn.sh" r1 "$repo" --recover 2>&1)" && fail "a recovered pane is alive - a second --recover must refuse"
 assert_contains "$err" "LIVE" "the second refusal says why"
 
+# Two recovers of one id OVERLAPPING (a roomchief and the crewchief acting on
+# the same gone pane) would each read it gone and each open a pane - the second
+# typing its own `claude --resume` into the first one's live session. The id
+# claim, taken before the probe, serializes them: the second reads the first
+# one's pane ALIVE and refuses. A slow `tab create` holds the window open.
+kill_pane r1
+mkdir -p "$TMP/slowtab"
+printf '#!/usr/bin/env bash\ncase "$*" in *"tab create"*) sleep 1.5 ;; esac\nexec %q "$@"\n' "$(command -v herdr)" \
+  >"$TMP/slowtab/herdr"
+chmod +x "$TMP/slowtab/herdr"
+: >"$FAKE_HERDR/log"
+( rc=0; PATH="$TMP/slowtab:$PATH" "$BIN/ac-spawn.sh" r1 "$repo" --recover >"$TMP/rA.out" 2>&1 || rc=$?; echo "$rc" >"$TMP/rA.rc" ) &
+rApid=$!
+sleep 0.4
+( rc=0; PATH="$TMP/slowtab:$PATH" "$BIN/ac-spawn.sh" r1 "$repo" --recover >"$TMP/rB.out" 2>&1 || rc=$?; echo "$rc" >"$TMP/rB.rc" ) &
+rBpid=$!
+wait "$rApid" "$rBpid"
+assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log")" "1" "overlapping recovers open ONE pane"
+assert_eq "$(cat "$TMP/rA.rc") $(cat "$TMP/rB.rc")" "0 1" "the first recovers, the second refuses"
+assert_contains "$(cat "$TMP/rB.out")" "LIVE" "...reading the first one's pane alive"
+
 # --- a roomchief: same guard, its own scope on the resume line ---------------------
 
 "$BIN/ac-room.sh" post famr crewchief "the captain order for famr, posted before the promote" >/dev/null
