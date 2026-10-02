@@ -436,10 +436,10 @@ printf 'files git can no longer report\n' >"$wtG/keep.txt"
 rm -f "$wtG/.git"
 [ "$(git -C "$wtG" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$repoG" && pwd -P)" ] \
   || fail "fixture: git must answer for the primary from inside the gitless slot"
-out="$("$BIN/ac-tree.sh" list --repo "$repoG" 2>&1)"
-assert_contains "$out" "slot 1-gitless: worktree broken" "a slot with no .git file is broken, not healthy"
-outP="$("$BIN/ac-tree.sh" prune --repo "$repoG" --dry-run 2>&1 || true)"
-case "$outP" in *"prune slot 1-gitless"*) fail "prune must never judge a gitless slot by the primary: $outP" ;; esac
+out="$("$BIN/ac-tree.sh" list --repo "$repoG" 2>/dev/null)"
+assert_contains "$out" "1-gitless	broken" "a slot with no .git file lists broken, not available"
+outP="$("$BIN/ac-tree.sh" prune --repo "$repoG" 2>&1)" || fail "prune dry run failed: $outP"
+assert_contains "$outP" "skip slot 1-gitless: worktree broken" "prune never judges a gitless slot by the primary"
 wtG2="$("$BIN/ac-tree.sh" get --repo "$repoG" --id g2 2>/dev/null)"
 [ "$wtG2" != "$wtG" ] || fail "get must not reuse a gitless slot"
 assert_eq "$(git -C "$repoG" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)" "main" \
@@ -448,6 +448,8 @@ assert_eq "$(git -C "$repoG" symbolic-ref --short HEAD 2>/dev/null || echo DETAC
   && fail "return --force must refuse a gitless slot: its reset would land on the primary"
 assert_eq "$(git -C "$repoG" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)" "main" \
   "...and the primary checkout is still on its branch"
+"$BIN/ac-tree.sh" remove "$wtG" >/dev/null 2>&1 \
+  && fail "remove without --force must refuse a gitless slot it cannot check"
 assert_file "$wtG/keep.txt" "the gitless slot's files survive"
 
 # A slot whose DIRECTORY has vanished has nothing left to lose: still healed.
