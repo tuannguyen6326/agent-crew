@@ -70,9 +70,10 @@ render() {
   fi
 
   printf '\n%sROOMS (captain inbox)%s\n' "$C_H" "$C_0"
-  "$bin_dir/ac-room.sh" list | while IFS= read -r line; do
+  { "$bin_dir/ac-room.sh" list 2>/dev/null \
+      || printf 'WARN   rooms unreadable - the inbox is UNKNOWN, not empty (bin/ac-room.sh list)\n'; } | while IFS= read -r line; do
     case "$line" in
-      PENDING-CAPTAIN*) printf '  %s%s%s\n' "$C_R" "$line" "$C_0" ;;
+      PENDING-CAPTAIN*|WARN*) printf '  %s%s%s\n' "$C_R" "$line" "$C_0" ;;
       *) printf '  %s%s%s\n' "$C_D" "$line" "$C_0" ;;
     esac
   done
