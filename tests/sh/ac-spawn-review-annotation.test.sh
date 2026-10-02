@@ -78,7 +78,7 @@ printf 'proj epic/epicfix\n' >"$AC_HOME/data/epicfix/branches"
 "$BIN/ac-epic-branch.sh" create epicfix proj >/dev/null
 cat >>"$AC_HOME/records/backlog.md" <<'EOF'
 - [ ] epicfix-s1 [src:cap flow:staged mode:local-only qa:no] - staged epic story, default review; epic:epicfix (repo: proj)
-- [ ] epicfix-s2 [src:cap flow:staged mode:local-only qa:no] - staged epic story, raised review; epic:epicfix (repo: proj)
+- [ ] epicfix-s2 [src:cap flow:staged mode:local-only rev:yes qa:no] - staged epic story, raised review; epic:epicfix (repo: proj)
 EOF
 
 # review_line="no (epic gate owns the review round - captain ruling 2026-08-19)"
@@ -91,10 +91,10 @@ assert_file "$AC_HOME/state/epicfix-s1.meta" "annotated epic-gate Review line sp
 assert_eq "$(meta_review epicfix-s1)" no "the annotation is stripped before the value lands in meta"
 "$BIN/ac-teardown.sh" epicfix-s1 --force >/dev/null 2>&1
 
-# review_line="yes (captain word required - see the raise guard below)"
+# review_line="yes (the captain's word: ...)" - the raise is the captain's, pinned on the row
 "$BIN/ac-brief.sh" epicfix-s2 proj --stage implement --review yes >/dev/null
 assert_contains "$(cat "$AC_HOME/data/epicfix-s2/implement/brief.md")" \
-  "Review: yes (captain word required - see the raise guard below)" \
+  "Review: yes (the captain's word: a rev:yes pin or --captain-requested, checked by the escalation gate)" \
   "fixture brief carries the captain-word annotated form"
 "$BIN/ac-spawn.sh" epicfix-s2 proj --harness claude >/dev/null 2>&1
 assert_file "$AC_HOME/state/epicfix-s2.meta" "annotated captain-word Review line spawns"

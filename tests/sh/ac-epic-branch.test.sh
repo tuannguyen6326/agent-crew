@@ -184,6 +184,19 @@ EOF
 "$BIN/ac-brief.sh" eppy3-s2 proj --stage implement >/dev/null
 assert_contains "$(cat "$AC_HOME/data/eppy3-s2/implement/brief.md")" "epic gate owns the review round" \
   "a staged epic story's EXECUTION brief derives review=no with the ruling on record"
+# Raising it back is the captain's word, exactly as on a direct story: without a
+# rev:yes pin or --captain-requested the raise is refused, nothing scaffolded.
+cat >>"$AC_HOME/records/backlog.md" <<'EOF'
+- [ ] eppy3-s5 [src:cap flow:staged mode:local-only qa:no] - staged story, no review pin; epic:eppy3 (repo: proj)
+- [ ] eppy3-s6 [src:cap flow:staged mode:local-only rev:yes qa:no] - staged story, review pinned; epic:eppy3 (repo: proj)
+EOF
+out="$("$BIN/ac-brief.sh" eppy3-s5 proj --stage implement --review yes 2>&1)" \
+  && fail "a staged epic story must not raise review without the captain's word: $out"
+assert_contains "$out" "rev:yes" "...the refusal names the unconfirmed review"
+assert_no_file "$AC_HOME/data/eppy3-s5/implement/brief.md" "...and scaffolds nothing"
+"$BIN/ac-brief.sh" eppy3-s6 proj --stage implement --review yes >/dev/null \
+  || fail "a rev:yes pin on the row authorizes the raise"
+assert_contains "$(cat "$AC_HOME/data/eppy3-s6/implement/brief.md")" "Review: yes" "...and the brief carries it"
 out="$("$BIN/ac-brief.sh" solo1-spec proj --stage spec --review no 2>&1 || true)"
 assert_contains "$out" "staged flow requires review=yes" \
   "a NON-epic staged task still refuses --review no"

@@ -243,7 +243,7 @@ fi
 if [ "$staged" = 1 ] && [ -n "$epic_eb_branch" ]; then
   review="${review_flag:-no}"
   if [ "$review" = yes ]; then
-    review_line="yes (captain word required - see the raise guard below)"
+    review_line="yes (the captain's word: a rev:yes pin or --captain-requested, checked by the escalation gate)"
   else
     review_line="no (epic gate owns the review round - captain ruling 2026-08-19)"
   fi
@@ -346,6 +346,14 @@ if [ "$stage" != scout ]; then
     wants_any=1
     # already authorized above by the raise guard (captain-requested) - a row
     # pin is the second, durable authority the raise guard now also accepts.
+  fi
+  # A staged story of a branch-recorded epic defaults to review=no (the epic
+  # gate owns the round), so raising it is discretionary too - and its arm
+  # above has no raise guard, so the authority is checked here.
+  if [ "$review" = yes ] && [ "$staged" = 1 ] && [ -n "$epic_eb_branch" ]; then
+    wants_any=1
+    [ "$pin_rev" = yes ] || [ "$captain_requested_set" = 1 ] \
+      || unauthorized="$unauthorized rev:yes"
   fi
 fi
 if [ -n "$unauthorized" ]; then
