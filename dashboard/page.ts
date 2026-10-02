@@ -6,7 +6,7 @@ import {
   THEME_INIT, THEME_VARS, UX_BASE,
   boardSystemPanes, cadenceLabel, chiefFitPx, composeFamily, contractTokens,
   deriveProgress, familyInbox, familyOfTaskId, familyRepos, familyStages, fleetAttnItems,
-  groupArtifacts, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
+  groupArtifacts, inboxUnknown, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
   parseBacklogLine, parseTimeline, readerCss, resolvePalette,
   reviewableArtifact, stemRegroup, storyState, termThemeCore, verifyProcessRows,
   diffHtml, diffStats, graphHtml,
@@ -970,6 +970,7 @@ ${isHtmlArtifact.toString()}
 ${reviewableArtifact.toString()}
 ${cadenceLabel.toString()}
 ${fleetAttnItems.toString()}
+${inboxUnknown.toString()}
 ${familyInbox.toString()}
 ${verifyProcessRows.toString()}
 ${chiefFitPx.toString()}
@@ -1764,7 +1765,7 @@ function fleetCard(entry){
 function pageProcesses(){
   var r=S.route, h=r.home; if(!h) return skeleton();
   var ui=uiFor(routeKey(r));
-  var pending = h.inbox?h.inbox.pending:0, inboxUnk = !!(h.inbox&&h.inbox.unreadable);
+  var pending = h.inbox?h.inbox.pending:0, inboxUnk = inboxUnknown(S.page, h);
   var wOk = h.watcher && h.watcher.state==='armed';
   var s='';
   s+='<div class="attn" role="group" aria-label="Processes attention">';

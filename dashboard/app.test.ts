@@ -3683,7 +3683,7 @@ test("PROVIDER_LANES: synthesize offers opencode-go, embedding does not", () => 
 });
 
 // ---- fleetAttnItems (fleets-attn-queue) -----------------------------------
-import { fleetAttnItems } from "./app.ts";
+import { fleetAttnItems, inboxUnknown } from "./app.ts";
 
 const ATTN_SNAP = {
   homes: [
@@ -3729,6 +3729,17 @@ test("fleetAttnItems: an unreadable inbox is a first-band item, never silence", 
   ] });
   expect(items.map((i) => [i.fleet, i.kind])).toEqual([["blind", "inbox"]]);
   expect(items[0].text).toContain("UNKNOWN");
+});
+
+// The Processes KPI must follow the payload it polls: the snapshot home the
+// route captured on open is never replaced, so it would hold either answer
+// past a change in the room set.
+test("inboxUnknown: the polled processes payload wins over the captured home, both ways", () => {
+  const readable = { inbox: { unreadable: false } }, unreadable = { inbox: { unreadable: true } };
+  expect(inboxUnknown({ rooms_unreadable: true }, readable)).toBe(true);
+  expect(inboxUnknown({ rooms_unreadable: false }, unreadable)).toBe(false);
+  expect(inboxUnknown(null, unreadable)).toBe(true);
+  expect(inboxUnknown({}, readable)).toBe(false);
 });
 
 test("fleetAttnItems: empty/garbage snapshot never throws", () => {

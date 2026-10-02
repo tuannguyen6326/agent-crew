@@ -1126,6 +1126,18 @@ export function cadenceLabel(c: any): { text: string; due: boolean } | null {
  * ES5-plain - PAGE interpolates its toString(), the bun test proves the same
  * code the browser runs.
  */
+/**
+ * Whether a fleet's inbox is UNKNOWN on the Processes page. The processes
+ * payload is polled fresh, while the snapshot home the route captured on open
+ * is never replaced - so the payload's rooms_unreadable wins once it has
+ * arrived, and the snapshot's inbox.unreadable only covers the load. Pure and
+ * ES5-plain - PAGE interpolates its toString().
+ */
+export function inboxUnknown(page: any, home: any): boolean {
+  if (page && typeof page.rooms_unreadable === "boolean") return page.rooms_unreadable;
+  return !!(home && home.inbox && home.inbox.unreadable);
+}
+
 export function fleetAttnItems(snap: any): { fleet: string; kind: string; family: string; text: string }[] {
   var pend = [], hand = [], watch = [];
   var homes = (snap && snap.homes) || [];
