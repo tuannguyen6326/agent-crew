@@ -528,6 +528,35 @@ assert_eq "$(spool_records "$state/.wake-spool.fam1")" "1" \
 assert_contains "$(drain fam1)" "report fam1-review done: recovered family work" \
   "fam1's own roomchief drains its recovered record"
 
+# ... and by the pane's fleet_scope when its meta records one - the spool its
+# own push went to (ac-done.sh publishes into AC_FLEET_SCOPE's), never a
+# phantom .wake-spool.<id> no roomchief drains.
+reset_state
+sh -c 'exit 0' & DEADPID3=$!; wait "$DEADPID3" 2>/dev/null || true
+printf 'window=crew:famA-api\nbackend=herdr\nfleet_scope=famA\n' >"$state/famA-api.meta"
+mkdir -p "$state/.wake-spool-draining.$DEADPID3"
+printf '1\treport\tfamA-api\tdone: api slice landed\n' >"$state/.wake-spool-draining.$DEADPID3/1.$DEADPID3.000000"
+chief_live famA
+assert_contains "$(drain famA)" "report famA-api done: api slice landed" \
+  "a scoped member's recovered record goes back to its roomchief's spool"
+[ ! -d "$state/.wake-spool.famA-api" ] || fail "recovery must not mint a phantom per-id spool"
+
+# ... and a claimed record that cannot be read is skipped, not fatal: the
+# drain still drains everything else. Skipped under root, which reads it.
+if [ "$(id -u)" != 0 ]; then
+  reset_state
+  sh -c 'exit 0' & DEADPID4=$!; wait "$DEADPID4" 2>/dev/null || true
+  mkdir -p "$state/.wake-spool-draining.$DEADPID4"
+  printf '1\treport\tt9\tdone: unreadable\n' >"$state/.wake-spool-draining.$DEADPID4/1.$DEADPID4.000000"
+  chmod 000 "$state/.wake-spool-draining.$DEADPID4/1.$DEADPID4.000000"
+  publish '' report t8 'done: still drained'
+  rc=0; out="$(drain '' 2>&1)" || rc=$?
+  chmod 644 "$state/.wake-spool-draining.$DEADPID4/1.$DEADPID4.000000"
+  assert_eq "$rc" "0" "an unreadable claimed record must not kill the drain: $out"
+  assert_contains "$out" "report t8 done: still drained" "...which drains the rest"
+  rm -rf "$state/.wake-spool-draining.$DEADPID4"
+fi
+
 # --- 6. ride-along gating (both ride-alongs) --------------------------------
 
 # The fleet-wide side effects belong to the fleet chief alone: a roomchief
