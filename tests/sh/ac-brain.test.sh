@@ -643,6 +643,19 @@ assert_contains "$sa2" "stub-api-answer" "...with its own answer"
 case "$(cat "$TMP/sa2.err")" in *refus*|*"no ac-brain synthesize"*) fail "an answered synthesize must not report the unreached harness rung: $(cat "$TMP/sa2.err")" ;; esac
 rm -f "$AC_HOME/config/brain.json" "$AC_HOME/config/brain-agent"
 
+# --- the keyless local rung asks AC_BRAIN_OLLAMA_URL, and the suite asks nobody --
+# With no synthesize api answering, a local ollama answers before the harness
+# rung - so a daemon on the operator's default port would answer every leg
+# here instead of the command under test. helpers.sh points the rung at a
+# closed port; a listener at the URL the env names IS asked.
+synth_api_stub 200 "JSON.stringify({ data: [{ id: 'local-model' }], choices: [{ message: { content: 'local-ollama-answer' } }] })"
+rm -f "$AC_HOME/config/brain.json"
+so1="$(AC_BRAIN_OLLAMA_URL="http://127.0.0.1:$EMBED_STUB_PORT/v1" "$BRAIN" synthesize "widget product line" --home "$AC_HOME" --compact 2>/dev/null)"
+so2="$("$BRAIN" synthesize "widget product line" --home "$AC_HOME" --compact 2>/dev/null)"
+embed_stub_down
+assert_contains "$so1" "local-ollama-answer" "the local rung asks the URL AC_BRAIN_OLLAMA_URL names"
+case "$so2" in *local-ollama-answer*) fail "the suite's default must reach no local daemon: $so2" ;; esac
+
 # --- entity(): an exact slug is the page itself ------------------------------
 # A dedup leaves an alias from the duplicate's slug to its canonical page, and
 # that alias outlives the duplicate diverging into a page of its own - it must

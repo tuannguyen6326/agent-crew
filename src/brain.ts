@@ -61,7 +61,9 @@
 //   nobody ever chases. A wedged sync never reaches a prompt: the catch-up
 //   fire is a detached subshell (ac_brain_freshen, bin/ac-lib.sh), measured
 //   to return in 0s against a sync binary that hangs.
-//   synthesize is the ONE expensive verb: it shells to the
+//   synthesize is the ONE expensive verb: a configured synthesize api, else a
+//   LOCAL ollama (AC_BRAIN_OLLAMA_URL, default 127.0.0.1:11434) when one
+//   answers, else it shells to the
 //   fleet's own harness one-shot (env AC_BRAIN_SYNTH_CMD > crew-dispatch
 //   panes.brain > config/model+crew-harness), falls back to an extractive
 //   digest when compose fails, no engine is configured, or the configured
@@ -1473,7 +1475,7 @@ async function cmdSynthesize() {
   // serves, and a closed port falls through in one refused connect.
   if (!answer) {
     try {
-      const base = PROVIDERS.ollama.base_url;
+      const base = process.env.AC_BRAIN_OLLAMA_URL || PROVIDERS.ollama.base_url;
       const ms = await fetch(base + "/models", { signal: AbortSignal.timeout(1500) });
       if (ms.ok) {
         const model = ((await ms.json()) as any).data?.[0]?.id;
