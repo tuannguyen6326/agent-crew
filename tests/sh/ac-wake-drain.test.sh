@@ -812,6 +812,28 @@ case "$out" in *famB-spec*) fail "a roomchief must not report another family's s
 out="$(drain '')"
 case "$out" in *famA-spec*|*famB-spec*) fail "the fleet must not report a live family's stages" ;; esac
 
+# (5b) membership is the pair the wake routing uses: the closed suffix grammar
+# OR the pane's own fleet_scope. A fan-out sub-task and an epic story belong to
+# the roomchief their fleet_scope names - their completions reach it, and the
+# fleet leaves them alone while that roomchief lives.
+reset_state; reset_completions
+chief_live famA
+task_meta famA-api; printf 'fleet_scope=famA\n' >>"$state/famA-api.meta"; seed_report famA-api famA/tasks/api
+task_meta story1; printf 'fleet_scope=famA\n' >>"$state/story1.meta"; seed_report story1 story1
+out="$(drain famA)"
+assert_contains "$out" "UNACKNOWLEDGED COMPLETION: famA-api" "a fan-out member's completion reaches its roomchief"
+assert_contains "$out" "UNACKNOWLEDGED COMPLETION: story1" "...and so does an epic story's"
+out="$(drain '')"
+case "$out" in *"famA-api"*|*"story1"*) fail "the fleet must not report a live roomchief's scoped members: $out" ;; esac
+
+# (5c) a roomchief's OWN pane is the fleet's (chief panes are fleet-scoped by
+# charter) - even once data/<fam>/chief makes its id read as the family, its
+# own drain never reports it to itself.
+reset_state; reset_completions
+chief_live famA; mkdir -p "$AC_HOME/data/famA/chief"
+seed_quiet_pane famA-chief 'reading the room'
+case "$(drain famA)" in *"IDLE-MAY-BE-WAITING-ON-YOU: famA-chief"*) fail "a roomchief must not be told about its own pane" ;; esac
+
 # (6) the ack verb is the only writer, and it silences both channels.
 reset_state; reset_completions
 task_meta famA-spec; seed_report famA-spec famA/spec

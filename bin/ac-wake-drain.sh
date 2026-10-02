@@ -274,14 +274,18 @@ in_drain_scope() {
   # in_drain_scope <id> - the completion report mirrors the wake scoping
   # (header: UNACKNOWLEDGED COMPLETIONS): a roomchief takes its own family,
   # the fleet chief takes the families no live roomchief covers plus the
-  # chief panes themselves.
+  # chief panes themselves. A chief pane is the fleet's whatever its id reads
+  # as (data/<fam>/chief makes <fam>-chief resolve to <fam>), and membership
+  # is the pair the wake routing uses: the pane's own fleet_scope, recorded at
+  # spawn for fan-out tasks and epic stories, else the closed suffix grammar.
   local id="$1" fam
-  fam="$(ac_family_of_id "$id")"
+  case "$id" in *-chief) [ -z "$scope" ]; return ;; esac
+  fam="$(ac_meta_get "$state_dir/$id.meta" fleet_scope 2>/dev/null || true)"
+  [ -n "$fam" ] || fam="$(ac_family_of_id "$id")"
   if [ -n "$scope" ]; then
     [ "$fam" = "$scope" ]
     return
   fi
-  case "$id" in *-chief) return 0 ;; esac
   ! ac_roomchief_live "$state_dir" "$fam"
 }
 
