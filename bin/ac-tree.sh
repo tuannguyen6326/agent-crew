@@ -1081,7 +1081,9 @@ list_slots() {
       state="available"
     fi
     dirty=""
-    is_dirty "$wt" && dirty=" dirty"
+    # A broken slot's porcelain is no reading of the slot: empty when git
+    # cannot read it, the PRIMARY's when its .git file is gone.
+    [ "$state" = broken ] || ! is_dirty "$wt" || dirty=" dirty"
     printf '%s\t%s%s\t%s\t%s\t%s\t%s\n' "$n" "$state" "$dirty" "${task:-'-'}" "$wt" "$leased_at" "$owner"
   done
   [ "$found" = 1 ] || ac_warn "no worktrees in pool"

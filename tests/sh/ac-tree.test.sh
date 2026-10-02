@@ -444,10 +444,17 @@ wtG2="$("$BIN/ac-tree.sh" get --repo "$repoG" --id g2 2>/dev/null)"
 [ "$wtG2" != "$wtG" ] || fail "get must not reuse a gitless slot"
 assert_eq "$(git -C "$repoG" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)" "main" \
   "the primary checkout stays on its branch"
+printf 'primary work in progress\n' >>"$repoG/file.txt"
+assert_eq "$("$BIN/ac-tree.sh" list --repo "$repoG" 2>/dev/null | awk -F'\t' '$1=="1-gitless"{print $2}')" "broken" \
+  "a dirty PRIMARY never reads as the broken slot's own dirt"
+outH="$("$BIN/ac-pool-health.sh" --repo "$repoG")"
+assert_contains "$outH" "1 broken" "pool health still buckets the gitless slot as broken"
+assert_contains "$outH" "$wtG" "...and names it for the reclaim"
 "$BIN/ac-tree.sh" return --force "$wtG" >/dev/null 2>&1 \
   && fail "return --force must refuse a gitless slot: its reset would land on the primary"
 assert_eq "$(git -C "$repoG" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)" "main" \
   "...and the primary checkout is still on its branch"
+assert_contains "$(cat "$repoG/file.txt")" "primary work in progress" "...with its uncommitted work intact"
 "$BIN/ac-tree.sh" remove "$wtG" >/dev/null 2>&1 \
   && fail "remove without --force must refuse a gitless slot it cannot check"
 assert_file "$wtG/keep.txt" "the gitless slot's files survive"
