@@ -77,9 +77,9 @@
 # Model/effort ladder, per knob: the --model / --effort flag wins. For the
 # VERIFICATION panes (--kind codereview | qa) the model then reads the per-role
 # knob and DEFAULTS to claude opus: AC_FLEET_MODEL_<KIND> env (threaded by
-# ac-spawn from config/model-<kind>) > config/model-<kind> > opus - verification
+# ac-spawn from config/<kind>-model) > config/<kind>-model > opus - verification
 # runs on the strongest model, decoupled from the fleet crewmate model, unless
-# the captain pins config/model-<kind>. Every other kind (and effort for all
+# the captain pins config/<kind>-model. Every other kind (and effort for all
 # kinds) keeps the plain fleet ladder: the inherited fleet scalar AC_FLEET_MODEL
 # / AC_FLEET_EFFORT; then config/model / config/effort; nothing anywhere =
 # claude's own default. The point of the whole ladder is that an independent
