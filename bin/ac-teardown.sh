@@ -198,14 +198,26 @@ wt_backend="$(ac_meta_get "$meta" worktree_backend)"
 # here, with the rest of the meta - it is archived long before the return.
 leases="$(ac_meta_get "$meta" leases)"
 [ -n "$leases" ] || leases="$worktree"   # pre-leases meta: worktree= is the list
-# An orca-managed worktree (orca fleets lease through the Orca CLI) is not a
-# pool slot: keep it out of the return loop - its removal has its own arm
-# after that loop.
-[ "$wt_backend" != orca ] || leases=""
 # One acquisition identity per lease, same order (grammar: the LEASES block in
 # ac-spawn.sh). Empty for a meta or a pool that predates it, and then the
 # return stays unconditional exactly as before.
 lease_ids="$(ac_meta_get "$meta" lease_ids)"
+# An orca-managed worktree (orca fleets lease through the Orca CLI) is not a
+# pool slot: keep IT out of the return loop - its removal has its own arm after
+# that loop - but not the pool leases the task took beside it, which the loop
+# still dirty-checks and returns. It is the first lease; its id slot pops with
+# it - but only from an ALIGNED list. A legacy one, appended before the id
+# separator followed leases=, is one id short and every id in it is a pool
+# lease's, so popping would shift each companion onto its neighbour's id.
+if [ "$wt_backend" = orca ]; then
+  case "$leases" in
+    "$worktree") leases="" ;;
+    "$worktree":*)
+      [ "$(printf '%s' "$lease_ids" | tr -cd :)" != "$(printf '%s' "$leases" | tr -cd :)" ] \
+        || lease_ids="${lease_ids#*:}"
+      leases="${leases#"$worktree":}" ;;
+  esac
+fi
 project_dir="$(ac_meta_get "$meta" project_dir)"
 branch="$(ac_crew_branch "$id")"
 AC_BACKEND="$(ac_task_backend "$id")"; export AC_BACKEND
@@ -692,7 +704,7 @@ archive_and_reap_verifier() {
   # archive_and_reap_verifier <meta> - verifier cleanup has no ship landed
   # proof. It archives identity first, reaps the exact pane handle, then returns
   # only leases named by the verifier record.
-  local vm="$1" vid pane_file varchive leases_v lease_v rest_v ids_v id_v family_v kind_v
+  local vm="$1" vid pane_file varchive leases_v lease_v rest_v ids_v id_v family_v kind_v backend_v
   vid="$(basename "$vm" .meta)"
   pane_file="$state_dir/.pane-$vid"
   varchive="$state_dir/archive/$vid"
@@ -709,6 +721,7 @@ archive_and_reap_verifier() {
   # lease_ids= is popped in LOCKSTEP with leases= (same order, ac-spawn.sh owns
   # the grammar), so each return is bound to the acquisition it belongs to.
   ids_v="$(ac_meta_get "$varchive/meta" lease_ids)"
+  backend_v="$(ac_meta_get "$varchive/meta" backend)"
   rest_v="$leases_v"
   while [ -n "$rest_v" ]; do
     case "$rest_v" in *:*) lease_v=${rest_v%%:*}; rest_v=${rest_v#*:} ;; *) lease_v=$rest_v; rest_v="" ;; esac
@@ -721,7 +734,14 @@ archive_and_reap_verifier() {
       ac_warn "skipping vanished verifier lease $lease_v: directory no longer exists"
       continue
     fi
-    if [ -n "$id_v" ]; then
+    # The verifier's OWN backend decides: a sweep runs under its parent task's
+    # pin, and the round resolved the fleet's backend independently.
+    if [ "${backend_v:-$(ac_backend)}" = orca ]; then
+      # An Orca lease is no pool slot: released through the CLI, the way
+      # ac-verify.sh's own return_leases does.
+      orca_worktree_release "$lease_v" \
+        || ac_warn "could not release orca verifier worktree $lease_v; inspect $varchive/meta"
+    elif [ -n "$id_v" ]; then
       "$bin_dir/ac-tree.sh" return "$lease_v" --force --if-lease-id "$id_v" >/dev/null 2>&1 \
         || ac_warn "could not return verifier worktree $lease_v (it may have been re-leased); inspect $varchive/meta"
     else

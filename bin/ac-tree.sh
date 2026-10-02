@@ -1008,10 +1008,12 @@ append_lease_to_crew_meta() {
   [ -n "$sdir" ] || return 0
   state_meta="$sdir/$id.meta"
   [ -f "$state_meta" ] || return 0
+  # The ids pair with leases= by POSITION, so the separator follows leases=:
+  # an orca first lease records no id, and keyed off lease_ids= this one would
+  # take that empty first slot.
   cur="$(ac_meta_get "$state_meta" leases)"
   ac_meta_set "$state_meta" leases "${cur:+$cur:}$wt"
-  cur="$(ac_meta_get "$state_meta" lease_ids)"
-  ac_meta_set "$state_meta" lease_ids "${cur:+$cur:}$lease_id"
+  ac_meta_set "$state_meta" lease_ids "$(ac_meta_get "$state_meta" lease_ids)${cur:+:}$lease_id"
 }
 
 crew_state_dir() {

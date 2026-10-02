@@ -2027,6 +2027,57 @@ assert_eq "$(git -C "$obb_wt" merge-base HEAD "$release_sha")" "$release_sha" \
 "$BIN/ac-teardown.sh" obb1 --force >/dev/null 2>&1
 git -C "$repo" branch -D release >/dev/null 2>&1
 
+# A POOL lease the orca task took on top (an e2e companion checkout, the
+# LEASES block in ac-spawn.sh) sits in leases= beside the orca worktree:
+# teardown still dirty-checks and returns it - only the orca entry has its own
+# arm - and its lease id stays paired with it.
+comp="$(make_repo ow4comp)"
+"$BIN/ac-brief.sh" ow4 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" ow4 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an orca spawn of ow4 must succeed"
+cwt="$("$BIN/ac-tree.sh" get --repo "$comp" --id ow4 2>/dev/null)" || fail "the companion lease is taken"
+assert_eq "$(sed -n 's/^lease_ids=//p' "$AC_HOME/state/ow4.meta")" ":$(sed -n 's/^lease_id=//p' "$comp/.crew/slots/$(basename "$cwt").meta")" \
+  "the companion's lease id is paired with the companion, not with the orca worktree"
+printf 'unlanded\n' >"$cwt/wip.txt"
+"$BIN/ac-teardown.sh" ow4 >/dev/null 2>&1 && fail "a dirty companion lease must refuse the orca task's teardown"
+rm -f "$cwt/wip.txt"
+"$BIN/ac-teardown.sh" ow4 >/dev/null 2>&1 || fail "a clean orca task with a companion lease tears down"
+assert_eq "$("$BIN/ac-tree.sh" list --repo "$comp" 2>/dev/null | awk -F'\t' -v w="$cwt" '$4==w{print $2}')" "available" \
+  "the companion slot is returned to its pool"
+# An orca VERIFIER's worktree is an Orca lease too: teardown releases it through
+# the CLI, the way ac-verify.sh's own return_leases does - never hands it to the
+# pool's return, which refuses a path that is no slot of its.
+vwt="$(orca worktree create --repo "path:$repo" --name ow5-verify-codereview --json | jq -r '.result.worktree.path')"
+[ -d "$vwt" ] || fail "fixture: the fake orca minted the verifier worktree"
+printf 'kind=verify-codereview\nfamily=ow5\ncaller=ow5\nbackend=orca\nworktree=%s\nleases=%s\n' "$vwt" "$vwt" \
+  >"$AC_HOME/state/ow5-verify-codereview.meta"
+# A LEGACY id list - appended before the separator followed leases= - is one id
+# short, every id a companion's: popping the orca lease must leave them all, or
+# each companion is returned with its neighbour's id and refused.
+"$BIN/ac-brief.sh" ow8 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" ow8 "$repo" --harness fake --mode local-only >/dev/null 2>&1 || fail "an orca spawn of ow8 must succeed"
+c1="$("$BIN/ac-tree.sh" get --repo "$comp" --id ow8 2>/dev/null)" || fail "the first companion lease is taken"
+c2="$("$BIN/ac-tree.sh" get --repo "$comp" --id ow8 2>/dev/null)" || fail "the second companion lease is taken"
+legacy="$(sed -n 's/^lease_ids=:*//p' "$AC_HOME/state/ow8.meta")"
+sed -i.bak "s/^lease_ids=.*/lease_ids=$legacy/" "$AC_HOME/state/ow8.meta" && rm -f "$AC_HOME/state/ow8.meta.bak"
+"$BIN/ac-teardown.sh" ow8 >/dev/null 2>&1 || fail "an orca task with legacy companion ids tears down"
+for c in "$c1" "$c2"; do
+  assert_eq "$("$BIN/ac-tree.sh" list --repo "$comp" 2>/dev/null | awk -F'\t' -v w="$c" '$4==w{print $2}')" "available" \
+    "a legacy-id companion is returned with its OWN id: $c"
+done
+err="$("$BIN/ac-teardown.sh" ow5-verify-codereview 2>&1)" || fail "an orca verifier tears down: $err"
+[ ! -d "$vwt" ] || fail "the orca verifier worktree is released"
+case "$err" in *"could not return verifier"*) fail "an orca verifier lease is no pool slot to return: $err" ;; esac
+# ...and decided by the VERIFIER's backend when a parent's teardown sweeps it:
+# a herdr-pinned task in this orca fleet still owns an orca verifier.
+vwt9="$(orca worktree create --repo "path:$repo" --name ow9-verify-codereview --json | jq -r '.result.worktree.path')"
+printf 'kind=ship\nbackend=herdr\nproject=proj\nproject_dir=%s\n' "$repo" >"$AC_HOME/state/ow9.meta"
+printf 'kind=verify-codereview\nfamily=ow9\ncaller=ow9\nbackend=orca\nworktree=%s\nleases=%s\n' "$vwt9" "$vwt9" \
+  >"$AC_HOME/state/ow9-verify-codereview.meta"
+err="$("$BIN/ac-teardown.sh" ow9 --force 2>&1)" || fail "a herdr-pinned task with an orca verifier tears down: $err"
+[ ! -d "$vwt9" ] || fail "the swept orca verifier is released by its own backend"
+case "$err" in *"could not return verifier"*) fail "the swept orca verifier must not reach the pool's return: $err" ;; esac
+
 # Epic-branch fence on the orca lease: a
 # fenced story is cut from its recorded integration branch under ac-tree.sh
 # get's own existence rule, never from the live checkout, and a missing
