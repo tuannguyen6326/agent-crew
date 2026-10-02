@@ -21,6 +21,11 @@ export AC_SPAWN_SETTLE=0
 # complete without a real harness's boot delay.
 : >"$FAKE_HERDR/.pane-idle-by-default"
 export AC_KICKOFF_READY_BUDGET=5
+# Dozens of spawns and teardowns below go through the bash fake herdr, and on a
+# loaded box one fake RPC can outlast the production 2s ceiling - spawn then
+# dies 124 with nothing on stderr. The ceiling is not under test here
+# (ac-backend.test.sh owns it), so this suite gives it room.
+export AC_HERDR_RPC_TIMEOUT=10
 
 make_home
 repo="$(make_repo proj)"
@@ -68,7 +73,8 @@ printf 'rid=%s\n' "$AC_REMOTE_RID" >>"$AC_SPAWN_TEST_TLOG"
 printf '1700.11\n'
 EOF
 chmod +x "$AC_HOME/config/remote-reply"
-out="$("$BIN/ac-spawn.sh" t1 "$repo" --harness fake --mode local-only 2>/dev/null)"
+out="$("$BIN/ac-spawn.sh" t1 "$repo" --harness fake --mode local-only 2>/dev/null)" \
+  || fail "the first spawn failed (rc $?)"
 assert_contains "$out" "spawned t1 harness=fake kind=ship mode=local-only" "per-task --mode overrides the registry default"
 assert_contains "$(cat "$TMP/spawn-thread.log")" "] [START] [t1]*" "announce header carries ts, verb, family in brackets"
 assert_contains "$(cat "$TMP/spawn-thread.log")" "bắt đầu task t1 (ship)" "spawn announced the start into the family thread (VN framing, ids verbatim)"
@@ -1515,7 +1521,6 @@ assert_file "$fake_lease24/.crew/qa/qrun24/serve.pid" "an unreadable serve.pid r
 # branch, so the qa-infra step and the tail after it are all that runs.
 dstub="$TMP/dstub"; mkdir -p "$dstub"
 export PATH="$dstub:$PATH"
-export AC_TEARDOWN_QA_TIMEOUT=1   # the production bound is 30s; a test may not sit for it
 qa_chief() {
   printf 'kind=roomchief\nbackend=herdr\nworktree=%s\nproject_dir=%s\n' "$repo" "$repo" \
     >"$AC_HOME/state/$1.meta"
@@ -1538,7 +1543,11 @@ exec sleep 30
 EOF
 chmod +x "$dstub/docker"
 qa_chief hung-chief
-"$BIN/ac-teardown.sh" hung-chief >"$TMP/hung.out" 2>&1 &
+# The short bound is THIS leg's alone (the production bound is 30s; a test may
+# not sit for it): teardown counts it in whole SECONDS, so 1 means anywhere in
+# (0,1] - under it a docker that merely fails slowly (a cold run, a loaded box)
+# reads as hung, which is what every leg below must not see.
+AC_TEARDOWN_QA_TIMEOUT=1 "$BIN/ac-teardown.sh" hung-chief >"$TMP/hung.out" 2>&1 &
 tdpid=$!
 # A ceiling of the test's own: without it an unbounded sweep hangs the suite
 # instead of failing it, and a hang proves nothing.
@@ -1557,8 +1566,10 @@ assert_contains "$hung" "teardown hung-chief complete" "the completion line stil
 assert_contains "$hung" "next queued family: nextup" "the roomchief advisory still prints"
 
 # (2) an UNUSABLE docker (present, exits non-zero) warns instead of passing for
-# a successful sweep - ac-qa.sh `infra down` returns the compose status.
-printf '#!/usr/bin/env bash\nexit 7\n' >"$dstub/docker"
+# a successful sweep - ac-qa.sh `infra down` returns the compose status. It
+# fails SLOWLY, as a compose down against a sick daemon does: its own status
+# must still be what surfaces, never the watchdog's.
+printf '#!/usr/bin/env bash\nsleep 1.5\nexit 7\n' >"$dstub/docker"
 qa_chief broke-chief
 out="$("$BIN/ac-teardown.sh" broke-chief 2>&1)" || fail "an unusable docker must not fail teardown"
 assert_contains "$out" "status 7" "an unusable docker surfaces its own status"
@@ -1626,7 +1637,6 @@ for failing in -famp-chief -famp-qa; do
 done
 rm -f "$TMP/docker.args"
 rm -f "$dstub/docker"
-unset AC_TEARDOWN_QA_TIMEOUT
 
 # --- the DERIVED crewdomain binding on the roomchief promote (R3) ------------
 # A promote of a family whose FLEET row carries the domain:<name> token
