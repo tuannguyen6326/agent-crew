@@ -543,6 +543,9 @@ assert_eq "$(jq -r '.required_profiles[0].profile_key' "$AC_HOME/data/mstaged/qa
 
 # A malformed profile key is refused at intake, not written as garbage.
 assert_fails "$BIN/ac-brief.sh" mbad myproj --mode local-only --qa-required-profile 'has space/scope/app'
+assert_no_file "$AC_HOME/data/mbad/brief.md" "a refused profile scaffolds no brief"
+"$BIN/ac-brief.sh" mbad myproj --mode local-only --qa-required-profile sample-platform/maple/maple-core-service >/dev/null \
+  || fail "the corrected re-run must scaffold, not die on a half-made brief"
 
 # --- Fleet standing rules (issue #3 proposal 1): a captain STANDING rule in
 # records/captain.md must reach every scaffolded brief mechanically, not by a
