@@ -3722,6 +3722,15 @@ test("fleetAttnItems: walks one level of crewdeputies (demo's dead watcher shows
   expect(w).toEqual(["demo", "lab"]);
 });
 
+test("fleetAttnItems: an unreadable inbox is a first-band item, never silence", () => {
+  const items = fleetAttnItems({ homes: [
+    { name: "ok", watcher: { state: "armed" }, inbox: { entries: [] } },
+    { name: "blind", watcher: { state: "armed" }, inbox: { unreadable: true, entries: [] } },
+  ] });
+  expect(items.map((i) => [i.fleet, i.kind])).toEqual([["blind", "inbox"]]);
+  expect(items[0].text).toContain("UNKNOWN");
+});
+
 test("fleetAttnItems: empty/garbage snapshot never throws", () => {
   expect(fleetAttnItems(null)).toEqual([]);
   expect(fleetAttnItems({ homes: [{}] })).toEqual([]);

@@ -1702,10 +1702,10 @@ function pageFleets(){
   if(attq.length){
     s+='<div class="attnq" role="list" aria-label="Waiting on captain">';
     for(var qi=0;qi<attq.length;qi++){ var q1=attq[qi];
-      var href=q1.kind==='watcher'?'/fleets/'+enc(q1.fleet)+'/processes'
+      var href=(q1.kind==='watcher'||q1.kind==='inbox')?'/fleets/'+enc(q1.fleet)+'/processes'
         :'/fleets/'+enc(q1.fleet)+'/board/'+enc(q1.family);
       var bcls=q1.kind==='watcher'?'err':'warn';
-      var blbl=q1.kind==='watcher'?'WATCHER':(q1.kind==='handback'?'HANDBACK':'GATE/ASK');
+      var blbl=q1.kind==='watcher'?'WATCHER':(q1.kind==='handback'?'HANDBACK':(q1.kind==='inbox'?'INBOX ?':'GATE/ASK'));
       s+='<a class="attnq-it" role="listitem" href="'+href+'" data-link>'
         +'<span class="badge '+bcls+'">'+blbl+'</span>'
         +(q1.family?'<span class="mono fam">'+esc(q1.family)+'</span>':'')
