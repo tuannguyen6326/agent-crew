@@ -342,8 +342,14 @@ assert_no_file "$state/sfull.meta" "...and leaves no meta"
 # new" is said out loud, never inferred: --no-lesson / --no-fact '<why>' waive
 # those two on the record; the Done row is never waived.
 "$BIN/ac-self-task.sh" start s10 "$repo" >/dev/null
+# A QA verifier mid-run on the slice: the evidence preflight is DURABLE, so a
+# landing this gate refuses must not have written it - the landed-proof rule
+# (ac-spawn-teardown.test.sh, t23) holds for every refusal before the archive.
+printf 'kind=verify-qa\nfamily=s10\ncaller=s10\nworktree=\nleases=\n' >"$state/s10-verify-qa.meta"
 out="$("$BIN/ac-teardown.sh" s10 2>&1)" && fail "a slice that wrote nothing must not land: $out"
 assert_file "$state/s10.meta" "the refused teardown leaves the slice in flight"
+assert_no_file "$AC_HOME/data/s10/verification" "a refused solo landing writes no verifier evidence"
+assert_file "$state/s10-verify-qa.meta" "...and leaves the live verifier alone"
 tl="$AC_HOME/data/s10/timeline.log"
 assert_contains "$(cat "$tl" 2>/dev/null)" "knowledge loop: lessons=none repo-knowledge=none done-row=none" \
   "a slice that wrote nothing is told so on its durable timeline"
@@ -358,6 +364,8 @@ printf -- '# proj knowledge\n- fact the widget lock lives in file.txt | src: fil
   >"$AC_HOME/records/repo-knowledge/proj.md"
 printf '# Backlog\n## Queued\n## Done\n- [x] s10 - landed the widget lock note\n' >"$AC_HOME/records/backlog.md"
 out="$("$BIN/ac-teardown.sh" s10 2>&1)" || fail "teardown must land once all three writes exist: $out"
+assert_file "$(printf '%s\n' "$AC_HOME/data/s10/verification/s10-verify-qa-incomplete-"*/incomplete-run.md | head -n1)" \
+  "past the gate the incomplete QA artifact is still preserved"
 assert_contains "$(cat "$tl")" "knowledge loop: lessons=yes repo-knowledge=yes done-row=yes" \
   "a slice that wrote all three is told so"
 case "$out" in *"missing - the solo contract"*) fail "nothing missing must print no hints: $out" ;; esac
