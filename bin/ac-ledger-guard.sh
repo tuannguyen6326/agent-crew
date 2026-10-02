@@ -51,6 +51,10 @@ case "$tool" in
   *) exit 0 ;;
 esac
 [ -n "$path" ] || exit 0
+# Both cases below judge a CANONICAL shape: APFS is case-insensitive by default
+# (Records/Backlog.md opens the fenced file), and a tool path need not be
+# normalized (records//backlog.md, records/./backlog.md).
+canon="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]' | tr -s / | sed -e ':a' -e 's#/\./#/#' -e 'ta' -e 's#^\./##')"
 
 # THE CREWDOMAIN DETAIL FILE IS EXEMPT, and the exemption has to be an
 # EXPLICIT branch rather than the absence of a matching pattern: in a bash
@@ -67,15 +71,18 @@ esac
 # glob and resolves to the FLEET captain file, so a raw-path allow arm would
 # hand a scoped session the very layer it is governed by. Refusing to exempt a
 # traversing path is fail-closed - the fence below still judges it.
-case "$path" in
+case "$canon" in
   *..*) : ;;
   crewdomains/*/records/projects.md | */crewdomains/*/records/projects.md) exit 0 ;;
 esac
 
-case "$path" in
+# A `..` hop can land on a ledger from any directory (records/scenes/../backlog.md),
+# so a traversing path that ENDS at a ledger's name is fenced wherever it starts.
+case "$canon" in
   records/backlog.md | */records/backlog.md \
   | records/projects.md | */records/projects.md \
-  | records/captain.md | */records/captain.md) : ;;
+  | records/captain.md | */records/captain.md \
+  | *..*/backlog.md | *..*/projects.md | *..*/captain.md) : ;;
   *) exit 0 ;;
 esac
 

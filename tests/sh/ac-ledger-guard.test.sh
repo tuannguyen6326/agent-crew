@@ -128,6 +128,21 @@ for esc in \
     "R5-CR-002: a traversal out of the slice is refused, not exempted"
 done
 
+# A path need not arrive normalized, and APFS is case-insensitive by default:
+# every shape below opens a fenced ledger, so every one is refused.
+for alias in \
+  '/home/fleet/records//backlog.md' \
+  'records/./backlog.md' \
+  'records/scenes/../backlog.md' \
+  'records/repo-knowledge/../captain.md' \
+  'Records/Backlog.md' \
+  '/home/fleet/records/PROJECTS.md'; do
+  assert_eq "$(hook fam1 Edit file_path "$alias")" "2" "an aliased ledger path is refused: $alias"
+done
+assert_eq "$(hook fam1 Edit file_path "Crewdomains/Payments/Records/Projects.md")" "0" \
+  "...while the crewdomain exemption holds in any case"
+assert_eq "$(hook fam1 Edit file_path "records//learnings.md")" "0" "...and an unfenced file stays unfenced"
+
 # The allow branch is the REASON, not a pattern that happens to miss: with it
 # removed, the very same paths are refused. This is the regression guard that
 # keeps someone from "simplifying" the branch away later.
