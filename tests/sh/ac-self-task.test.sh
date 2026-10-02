@@ -403,6 +403,18 @@ assert_contains "$out" "--no-lesson carries" "an empty waiver says why it is ref
 out="$("$BIN/ac-teardown.sh" s12 --force 2>&1)"
 case "$out" in *"knowledge loop"*) fail "a forced teardown discards the work and owes no checkpoint: $out" ;; esac
 assert_no_file "$state/s12.meta" "a forced teardown still lands the discard"
+# A reused id (a re-promoted roomchief, a retried slice) keeps EVERY epoch's
+# archive: the latest at the fixed slot every reader resolves, the one it
+# displaced in its own stamped dir beside it.
+"$BIN/ac-self-task.sh" start s12 "$repo" >/dev/null
+"$BIN/ac-self-task.sh" log s12 'the second epoch' >/dev/null
+"$BIN/ac-teardown.sh" s12 --force >/dev/null 2>&1
+assert_contains "$(cat "$state/archive/s12/status")" "the second epoch" "the fixed slot holds the LATEST epoch"
+prior="$(find "$state/archive/s12" -mindepth 1 -maxdepth 1 -type d)"
+assert_eq "$(printf '%s\n' "$prior" | grep -c .)" "1" "the earlier epoch moved to one stamped dir"
+assert_file "$prior/meta" "...with its meta"
+assert_contains "$(cat "$prior/status")" "lesson waived: x" "...and its own status, intact"
+case "$(cat "$prior/status")" in *"the second epoch"*) fail "the earlier epoch's status must be its own" ;; esac
 
 # --- fleet-memory read at slice open ----------------------------------------
 # The knowledge law names `ac-brain.sh recall` at intake; the start makes it
