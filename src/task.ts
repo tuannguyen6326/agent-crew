@@ -251,14 +251,35 @@ function unresolvedBlocker(want: string): string {
   return "";
 }
 
+// A `; domain:<name>` token is authoritative only right before a trailing
+// (repo: ...) group or at end of line (src/backlog.ts), so a rewrite that
+// appends to the line lifts it off here and puts it back at the very end.
+function liftDomain(l: string): [string, string] {
+  const d = acDoneline(l).domain;
+  if (d === "") return [l, ""];
+  const tok = `; domain:${d}`;
+  if (l.endsWith(tok)) return [l.slice(0, -tok.length), tok];
+  const k = l.lastIndexOf(`${tok} (repo: `);
+  return k < 0 ? [l, ""] : [l.slice(0, k) + l.slice(k + tok.length), tok];
+}
+
 function stampSince(l: string): string {
-  if (l.includes(", since ")) return l;
-  const k = l.indexOf("(repo: ");
-  if (k < 0) return `${l} (since ${today})`;
-  const tail = l.slice(k + "(repo: ".length);
+  // A line-end token is lifted before the repo group is touched: closing an
+  // unclosed group would otherwise swallow it. A token right before a closed
+  // group stays put - the stamp goes inside the group and keeps it trailing.
+  const [line, dom] = liftDomain(l);
+  const [body, end] = dom !== "" && l.endsWith(dom) ? [line, dom] : [l, ""];
+  const k = body.indexOf("(repo: ");
+  if (k < 0) {
+    if (/ \(since [0-9]{4}-[0-9]{2}-[0-9]{2}\)/.test(body)) return l;
+    return `${body} (since ${today})${end}`;
+  }
+  const tail = body.slice(k + "(repo: ".length);
   const c = tail.indexOf(")");
-  const [grp, after] = c < 0 ? [tail, tail] : [tail.slice(0, c), tail.slice(c + 1)];
-  return `${l.slice(0, k)}(repo: ${grp}, since ${today})${after}`;
+  const [grp, after] = c < 0 ? [tail, ""] : [tail.slice(0, c), tail.slice(c + 1)];
+  // Only the group's own stamp counts: prose elsewhere may say ", since ".
+  if (/(^|, )since /.test(grp)) return l;
+  return `${body.slice(0, k)}(repo: ${grp}, since ${today})${after}${end}`;
 }
 
 function flags(words: string[], known: string[]): Map<string, string> {
@@ -298,6 +319,10 @@ function start(id = ""): void {
   if (!findRow(id)) fail(`no row for '${id}'`);
   if (rowSec !== "queued") return void say(`already: ${id} is in ${rowSec || "no section"}`);
   const f = holdOf(id, L[rowI], "");
+  // Rewriting a line whose domain token sits off its grammar position could
+  // silently make it authoritative (closing a repo group), so it is refused
+  // the way a malformed hold is.
+  if (f.domain_malformed !== "") fail(`${id} carries a domain token off its grammar position - fix the line by hand (remove or backtick-quote that domain: run, then bin/ac-domain.sh assign if the row needs a domain) before starting (docs/backlog.md)`);
   let spent = "";
   if (f.hold !== "") {
     // An EXPIRED dated hold is exactly what ac-ready offers as READY, so start
@@ -330,7 +355,10 @@ function done(id = "", outcome = "", ...rest: string[]): void {
   // A row checked outside Done already carries its outcome: it moves as
   // written, since re-checking it would read back as `- [x] - [x] <id>`.
   const checked = block[0].startsWith("- [x] ");
-  if (!checked) block[0] = `- [x] ${block[0].slice("- [ ] ".length)} - ${outcome} (${verb} ${today})`;
+  if (!checked) {
+    const [line, dom] = liftDomain(block[0]);
+    block[0] = `- [x] ${line.slice("- [ ] ".length)} - ${outcome} (${verb} ${today})${dom}`;
+  }
   L.splice(sectionHead("done") + 1, 0, ...block);
   save();
   say(checked ? `ok: ${id} was already checked - moved into Done as written, outcome not added`
