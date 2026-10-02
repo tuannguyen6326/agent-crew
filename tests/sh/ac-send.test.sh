@@ -164,6 +164,11 @@ assert_eq "$(grep -c 'chief-order' "$FAKE_HERDR/panes/pP1.buf" | tr -d ' ')" "1"
 touch "$AC_HOME/state/.captain-wait-pay"
 "$BIN/ac-send.sh" pay '/review the ledger diff' >/dev/null
 assert_no_file "$AC_HOME/state/.captain-wait-pay" "a marked order starting with /word still clears the stamp"
+# A multi-line order is ONE status event: unflattened, its later lines carry no
+# timestamp and the last one reads as the deputy's current status.
+"$BIN/ac-send.sh" pay "$(printf 'reconcile the ledger\nthen report back')" >/dev/null
+assert_eq "$(tail -n 1 "$AC_HOME/state/pay.status" | sed 's/^[^ ]* //')" "routed: reconcile the ledger then report back" \
+  "a multi-line routed order is recorded as one line"
 
 # Every other kind is byte-unchanged: a marker leaking into ordinary crewmate
 # steering would tell a crewmate to answer on a channel it does not own.

@@ -249,7 +249,7 @@ else
     verb='delivered (arrival unverified) to'
   fi
   if [ "$marked" = 1 ]; then
-    ac_status_append "$id" "routed: $order"
+    ac_status_append "$id" "routed: $(printf '%s' "$order" | tr '\n' ' ')"
   else
     # The crewmate leg of the deputy routed: rule - every CONFIRMED steer is
     # recorded durably as the chief's own index of what it asked, so a
