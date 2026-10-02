@@ -36,7 +36,7 @@
 //   GET  /attach-frame?path=<home>&(fleet=1|family=<fam>)[&watch=<id>] -> standalone xterm page over the attach ws below: ONE task pane, full width, typed input via roomInput (chief-pane-native-attach, re-landed as its own URL - the chief panel stays on the snapshot stream)
 //   WS   /api/room/attach-ws?path=<home>&(fleet=1|family=<fam>)[&watch=<id>] -> native byte-stream of that pane (`herdr agent attach` on a server pty at the PANE's own geometry, reattached when the pane resizes; output-only - the attach pty is a pure viewer, measured)
 //   GET  /api/snapshot.json    -> ac-fleets.sh --json, passed through (Fleets route + shell health)
-//   GET  /api/processes?path=<home> -> {rooms,pools,remote} for the Processes route
+//   GET  /api/processes?path=<home> -> {rooms,rooms_unreadable,pools,remote} for the Processes route
 //   GET  /api/backlog?path=<home>   -> {backlog:{in_flight,queued,done}} for the Backlog route
 //   GET  /api/reports?path=<home>   -> {artifacts:[...]} master list for the Reports route
 //   GET  /api/ledgers?path=<home>   -> {records:[...]} ledger list for the Records route
