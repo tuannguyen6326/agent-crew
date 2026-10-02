@@ -152,9 +152,10 @@ cmd_ship() {
   # AGENTS.md section-1 sanctioned write), ONE `gh pr create --base <target>`
   # PER REPO ("single PR" means no 2-PR staging chain, never one PR for a
   # multi-repo feature - two repos cannot share a PR), the url recorded in
-  # data/<feature>/gate/ships.env under the PER-REPO key pr_url_<repo> and
-  # receipted SHIPS: to the room. Re-runs are idempotent - a recorded PR is
-  # reported, not re-opened. This verb NEVER merges - the captain does.
+  # data/<feature>/gate/ships.env under the PER-REPO key pr_url_<repo> (two
+  # repos whose names fold to one key are refused) and receipted SHIPS: to the
+  # room. Re-runs are idempotent - a recorded PR is reported, not re-opened.
+  # This verb NEVER merges - the captain does.
   # KNOWN RESIDUAL on a multi-repo feature: gate/review.json is one slot for
   # the whole feature, so each repo's ship needs the review round re-run at
   # ITS tip before its exit - loud (the ref-mismatch refusal names it), never
@@ -254,6 +255,14 @@ cmd_ship() {
   mkdir -p "$gate_dir"
   ships="$gate_dir/ships.env"
   repo_key="pr_url_${repo//[^a-zA-Z0-9]/_}"
+  # The fold is not one-to-one (my-app and my_app both key pr_url_my_app), so a
+  # feature recording two such repos would hand the second the first one's PR -
+  # "already recorded", nothing pushed. That pair is refused, never guessed.
+  while read -r other _; do
+    if [ "$other" != "$repo" ] && [ "pr_url_${other//[^a-zA-Z0-9]/_}" = "$repo_key" ]; then
+      ac_die "ship: repos $repo and $other of feature $feature share the ships.env key $repo_key - one url slot cannot tell their PRs apart; re-record one of them under a distinct name (the captain's word) before shipping"
+    fi
+  done < <(grep -v '^#' "$(ac_epic_branches_file "$feature")")
   pr_url="$(ac_meta_get "$ships" "$repo_key" 2>/dev/null || printf '')"
   if [ -n "$pr_url" ]; then
     printf 'PR already recorded: %s\n' "$pr_url"
