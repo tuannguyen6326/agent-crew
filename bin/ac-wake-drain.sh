@@ -226,8 +226,11 @@ sweep_dead_claims() {
   # (left untouched, same as always).
   #
   # Recovery returns each record to the spool its OWN id maps to (a
-  # `*-chief` pane stays fleet-scoped by charter, everything else via
-  # ac_family_of_id) - never emitted directly here. That way the ordinary
+  # `*-chief` pane stays fleet-scoped by charter, everything else by the
+  # membership pair: the pane's fleet_scope when its meta records one - the
+  # spool its push went to - else ac_family_of_id) - never emitted directly
+  # here. A record that cannot be read (a concurrent sweeper moved it) is
+  # skipped: under set -e it would end this drain before it drained anything. That way the ordinary
   # scope-respecting drain that follows decides who claims it: a family
   # that came back live between the crash and this sweep still owns its own
   # wakes, exactly as if the crashed drainer had never touched them.
@@ -239,8 +242,13 @@ sweep_dead_claims() {
     ac_pid_alive "$pid" && continue
     for f in "$d"/*; do
       [ -e "$f" ] || continue
-      rid="$(awk -F'\t' '{ print $3; exit }' "$f")"
-      case "$rid" in *-chief) fam="" ;; *) fam="$(ac_family_of_id "$rid")" ;; esac
+      rid="$(awk -F'\t' '{ print $3; exit }' "$f" 2>/dev/null)" || continue
+      case "$rid" in
+        *-chief) fam="" ;;
+        *)
+          fam="$(ac_meta_get "$state_dir/$rid.meta" fleet_scope 2>/dev/null || true)"
+          [ -n "$fam" ] || fam="$(ac_family_of_id "$rid")" ;;
+      esac
       dest="$(ac_wake_spool_path "$state_dir" "$fam")"
       mkdir -p "$dest"
       mv "$f" "$dest/$(basename "$f")" 2>/dev/null || true
