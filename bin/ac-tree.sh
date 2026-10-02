@@ -441,6 +441,7 @@ reset_worktree() {
   # Explicit status checks: callers must handle failure, set -e may be off.
   # An interrupted rebase, cherry-pick or bisect survives checkout and reset.
   local repo="$1" wt="$2" ref="${3:-}"
+  slot_git_ok "$wt" || return 1
   rm -rf "$wt/.crew/qa" 2>/dev/null || true
   git -C "$wt" rebase --quit >/dev/null 2>&1 || true
   git -C "$wt" cherry-pick --quit >/dev/null 2>&1 || true
@@ -460,6 +461,16 @@ fetch_origin() {
 }
 
 is_dirty() { [ -n "$(ac_worktree_status "$1")" ]; }
+
+slot_git_ok() {
+  # slot_git_ok <wt> - git answers for the slot ITSELF. A slot whose .git file
+  # is gone still gets an answer: git walks up to the primary checkout around
+  # it, so a git-dir probe reads it healthy and every status, reset or merged
+  # check after it judges the primary instead.
+  local top
+  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ "$(cd "$top" && pwd -P)" = "$(cd "$1" && pwd -P)" ]
+}
 
 caller_ancestors() {
   # This process and every ancestor up to pid 1, one per line. Non-zero when
@@ -600,7 +611,7 @@ heal_slots() {
     if [ ! -d "$wt" ]; then
       ac_warn "healed slot $n (worktree dir vanished)"
       drop_slot "$repo" "$n"
-    elif ! git -C "$wt" rev-parse --git-dir >/dev/null 2>&1; then
+    elif ! slot_git_ok "$wt"; then
       flags="--force"
       if [ "$(ac_meta_get "$meta" leased)" = "1" ]; then flags="$flags --include-leased"; fi
       ac_warn "slot $n: worktree broken (gitdir unreadable) - NOT healed, its files may be unlanded work git can no longer report; reclaim it deliberately with: bin/ac-tree.sh remove $flags $wt"
@@ -1064,7 +1075,7 @@ list_slots() {
       state="leased"
       leased_at="$(ac_meta_get "$meta" leased_at)"
       owner="$(ac_meta_get "$meta" owner_pid)"
-    elif ! git -C "$wt" rev-parse --git-dir >/dev/null 2>&1; then
+    elif ! slot_git_ok "$wt"; then
       state="broken"
     else
       state="available"
@@ -1230,6 +1241,10 @@ prune_pass() {
       printf 'skip slot %s: leased\n' "$n"
       continue
     fi
+    if ! slot_git_ok "$wt"; then
+      printf 'skip slot %s: worktree broken (git cannot read the slot itself)\n' "$n"
+      continue
+    fi
     if is_dirty "$wt"; then
       printf 'skip slot %s: dirty\n' "$n"
       continue
@@ -1325,7 +1340,7 @@ remove_slot() {
   # two gates below are blind exactly where heal_slots now declines to act. Take
   # the same --force this reachable-only-here path already asks for elsewhere,
   # so nothing destroys unverifiable contents without being told to.
-  if ! git -C "$wt" rev-parse --git-dir >/dev/null 2>&1 && [ "$force" != 1 ]; then
+  if ! slot_git_ok "$wt" && [ "$force" != 1 ]; then
     ac_die "remove: slot $n is broken (gitdir unreadable) so its contents cannot be checked; use --force to discard"
   fi
   if is_dirty "$wt" && [ "$force" != 1 ]; then

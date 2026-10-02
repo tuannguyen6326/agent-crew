@@ -425,6 +425,31 @@ assert_file "$wtH/wip.txt" "a refused remove must not destroy the slot"
 assert_no_file "$wtH" "the named reclaim takes the slot"
 assert_no_file "$repoH/.crew/slots/1-broken.meta" "the reclaimed slot's meta is dropped"
 
+# A slot whose .git FILE is gone is broken too, and worse disguised: git walks
+# up from it and answers for the PRIMARY checkout above, so a git-dir probe
+# reads it healthy, get would reuse it by resetting and detaching the primary,
+# and prune would judge the primary's state and rm -rf the slot's files.
+repoG="$(make_repo gitless)"
+wtG="$("$BIN/ac-tree.sh" get --repo "$repoG" --id g1 2>/dev/null)"
+"$BIN/ac-tree.sh" return "$wtG" >/dev/null 2>&1
+printf 'files git can no longer report\n' >"$wtG/keep.txt"
+rm -f "$wtG/.git"
+[ "$(git -C "$wtG" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$repoG" && pwd -P)" ] \
+  || fail "fixture: git must answer for the primary from inside the gitless slot"
+out="$("$BIN/ac-tree.sh" list --repo "$repoG" 2>&1)"
+assert_contains "$out" "slot 1-gitless: worktree broken" "a slot with no .git file is broken, not healthy"
+outP="$("$BIN/ac-tree.sh" prune --repo "$repoG" --dry-run 2>&1 || true)"
+case "$outP" in *"prune slot 1-gitless"*) fail "prune must never judge a gitless slot by the primary: $outP" ;; esac
+wtG2="$("$BIN/ac-tree.sh" get --repo "$repoG" --id g2 2>/dev/null)"
+[ "$wtG2" != "$wtG" ] || fail "get must not reuse a gitless slot"
+assert_eq "$(git -C "$repoG" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)" "main" \
+  "the primary checkout stays on its branch"
+"$BIN/ac-tree.sh" return --force "$wtG" >/dev/null 2>&1 \
+  && fail "return --force must refuse a gitless slot: its reset would land on the primary"
+assert_eq "$(git -C "$repoG" symbolic-ref --short HEAD 2>/dev/null || echo DETACHED)" "main" \
+  "...and the primary checkout is still on its branch"
+assert_file "$wtG/keep.txt" "the gitless slot's files survive"
+
 # A slot whose DIRECTORY has vanished has nothing left to lose: still healed.
 repoV="$(make_repo vanished)"
 wtV="$("$BIN/ac-tree.sh" get --repo "$repoV" --id v1 2>/dev/null)"
