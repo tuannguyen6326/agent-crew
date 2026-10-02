@@ -293,4 +293,59 @@ if [ "$(id -u)" != 0 ]; then
   assert_eq "$(ls -A "$AC_HOME/records" | grep -c 'backlog.md\.[0-9]')" "0" "a refused write leaves no temp file"
 fi
 
+# ---- the domain token keeps its grammar position through start and done.
+# `; domain:<name>` is authoritative only right before a trailing (repo: ...)
+# group or at end of line (docs/backlog.md): a rewrite that appends after it
+# turns the row MALFORMED and drops it out of its domain for good.
+cat >"$ledger" <<'EOF'
+## In flight
+
+## Queued
+- [ ] dom-a - x; domain:alpha (repo: proj)
+- [ ] dom-b - y; domain:alpha
+- [ ] unclosed - something odd (repo: proj
+- [ ] since-prose - retry the push, since the old path fails (repo: proj)
+
+## Done
+EOF
+"$BIN/ac-task.sh" start dom-a >/dev/null
+"$BIN/ac-task.sh" start dom-b >/dev/null
+"$BIN/ac-task.sh" done dom-a 'local main' >/dev/null
+dom_fields() { "$BIN/ac-backlog.sh" fields --get id,domain,domain_malformed "$ledger" | awk -F'\t' -v id="$1" '$1 == id { print $2 "|" $3 }'; }
+assert_eq "$(dom_fields dom-a)" "alpha|" "done keeps an authoritative domain token on the landed row"
+assert_eq "$(dom_fields dom-b)" "alpha|" "start keeps a line-end domain token authoritative"
+assert_contains "$(grep '^- \[ \] dom-b ' "$ledger")" "(since $today)" "...and still stamps since"
+# The since stamp itself: an unclosed repo group is closed, not duplicated, and
+# prose that merely says ", since " is no stamp.
+"$BIN/ac-task.sh" start unclosed >/dev/null
+assert_eq "$(grep '^- \[ \] unclosed ' "$ledger")" "- [ ] unclosed - something odd (repo: proj, since $today)" \
+  "an unclosed repo group is stamped once and closed"
+"$BIN/ac-task.sh" start since-prose >/dev/null
+assert_eq "$(grep '^- \[ \] since-prose ' "$ledger")" \
+  "- [ ] since-prose - retry the push, since the old path fails (repo: proj, since $today)" \
+  "prose saying ', since ' does not stand in for the stamp"
+# Both together: a line-end token on a row whose repo group never closed is
+# lifted before the group is closed, never swallowed into it - and survives done.
+cat >"$ledger" <<'EOF'
+## In flight
+
+## Queued
+- [ ] dom-c - z (repo: proj; domain:alpha
+- [ ] dom-d - w; domain:alpha (repo: proj
+
+## Done
+EOF
+"$BIN/ac-task.sh" start dom-c >/dev/null
+assert_contains "$(grep '^- \[ \] dom-c ' "$ledger")" "(repo: proj, since $today); domain:alpha" "fixture: dom-c really started"
+assert_eq "$(dom_fields dom-c)" "alpha|" "closing an unclosed repo group keeps the line-end domain authoritative"
+"$BIN/ac-task.sh" done dom-c 'local main' >/dev/null
+assert_eq "$(dom_fields dom-c)" "alpha|" "...through done as well"
+# A token already off its position stays visibly malformed: start refuses to
+# rewrite the line instead of closing the group under it and authorizing it.
+assert_eq "$(dom_fields dom-d)" "|1" "fixture: the token starts malformed"
+rc=0; out="$("$BIN/ac-task.sh" start dom-d 2>&1)" || rc=$?
+assert_eq "$rc" "1" "start refuses a row whose domain token is off its position: $out"
+assert_contains "$out" "fix the line by hand" "...saying how to repair it"
+assert_eq "$(dom_fields dom-d)" "|1" "...leaving it visibly malformed"
+
 pass
