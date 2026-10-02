@@ -739,7 +739,7 @@ ac_room_marker_malformed() {
   local first
   first="$(printf '%s\n' "$1" | head -n1)"
   grep -qE '^(GATE|ASK|DECIDED)([[:space:]]|:|$)' <<<"$first" || return 1
-  grep -qE '^(GATE|ASK|DECIDED)([[:space:]][A-Za-z0-9_-]+)?([[:space:]]\([^)]*\))?:' <<<"$first" && return 1
+  grep -qE '^(GATE|ASK|DECIDED)( [A-Za-z0-9_-]+)?( \([^)]*\))?:' <<<"$first" && return 1
   return 0
 }
 
