@@ -1339,6 +1339,9 @@ ac_arrival_wait() {
   # verdict that cannot say WHAT landed sends its reader to peek the pane, and
   # the pane is exactly where a truncated steer looks like a delivered one.
   local sid="$1" expected="$2" tries=7 i=0 path cur last=""
+  # The reader hands the arrived turn back through $(...), which drops its
+  # trailing newlines; the sent side is compared the same way.
+  expected="$(printf '%s' "$expected")"
   AC_ARRIVAL_LAST=""
   [ -n "$sid" ] || return 2
   path="$(ac_claude_transcript_path "$sid")" || return 2
