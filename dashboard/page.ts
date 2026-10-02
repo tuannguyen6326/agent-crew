@@ -6,7 +6,7 @@ import {
   THEME_INIT, THEME_VARS, UX_BASE,
   boardSystemPanes, cadenceLabel, chiefFitPx, composeFamily, contractTokens,
   deriveProgress, familyInbox, familyOfTaskId, familyRepos, familyStages, fleetAttnItems,
-  groupArtifacts, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
+  groupArtifacts, inboxUnknown, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
   parseBacklogLine, parseTimeline, readerCss, resolvePalette,
   reviewableArtifact, stemRegroup, storyState, termThemeCore, verifyProcessRows,
   diffHtml, diffStats, graphHtml,
@@ -970,6 +970,7 @@ ${isHtmlArtifact.toString()}
 ${reviewableArtifact.toString()}
 ${cadenceLabel.toString()}
 ${fleetAttnItems.toString()}
+${inboxUnknown.toString()}
 ${familyInbox.toString()}
 ${verifyProcessRows.toString()}
 ${chiefFitPx.toString()}
@@ -1253,7 +1254,7 @@ function blockedCount(h){
   return n;
 }
 function needsAttention(h){
-  return (h.inbox && (h.inbox.pending>0 || h.inbox.handback>0)) ||
+  return (h.inbox && (h.inbox.pending>0 || h.inbox.handback>0 || h.inbox.unreadable)) ||
          (h.watcher && h.watcher.state!=='armed' && supervisedCrew(h)>0) ||
          blockedCount(h)>0;
 }
@@ -1587,7 +1588,7 @@ function renderHealth(){
   for(var i=0;i<fs.length;i++){ blocked+=blockedCount(fs[i].h); if(needsAttention(fs[i].h)) attn++; }
   var s='';
   s+='<div><span class="n">'+t.homes+'</span> fleets &middot; <span class="n">'+t.crew+'</span> crew</div>';
-  s+='<div'+(t.pending>0?' class="w"':'')+'>'+t.pending+' pending &middot; '+t.handback+' handback</div>';
+  s+='<div'+((t.pending>0||t.inbox_unreadable>0)?' class="w"':'')+'>'+t.pending+' pending &middot; '+t.handback+' handback'+(t.inbox_unreadable>0?' &middot; '+t.inbox_unreadable+' inbox unknown':'')+'</div>';
   s+='<div'+((t.watchers_down>0)?' class="e"':'')+'>'+t.watchers_down+' watcher down &middot; '+blocked+' blocked</div>';
   // The learning-loop cadence, fleet-WIDE like every other footer line: how many
   // homes have reached their own learn/curate threshold. Both numbers and the
@@ -1690,7 +1691,7 @@ function pageFleets(){
   var s='';
   s+='<div class="attn" role="group" aria-label="Fleet attention summary">';
   s+='<div class="item '+(attn>0?'a-warn':'a-ok')+'"><span class="num">'+attn+'</span><span class="lbl2">need attention</span></div>';
-  s+='<div class="item '+((t.pending||0)>0?'a-warn':'a-ok')+'"><span class="num">'+(t.pending||0)+'</span><span class="lbl2">captain waits</span></div>';
+  s+='<div class="item '+(((t.pending||0)>0||(t.inbox_unreadable||0)>0)?'a-warn':'a-ok')+'"><span class="num">'+(t.pending||0)+((t.inbox_unreadable||0)>0?'+?':'')+'</span><span class="lbl2">captain waits</span></div>';
   s+='<div class="item '+((t.watchers_down||0)>0?'a-err':'a-ok')+'"><span class="num">'+(t.watchers_down||0)+'</span><span class="lbl2">watcher down</span></div>';
   s+='<div class="item a-ok"><span class="num">'+(t.crew||0)+'</span><span class="lbl2">active</span></div>';
   s+='</div>';
@@ -1702,10 +1703,10 @@ function pageFleets(){
   if(attq.length){
     s+='<div class="attnq" role="list" aria-label="Waiting on captain">';
     for(var qi=0;qi<attq.length;qi++){ var q1=attq[qi];
-      var href=q1.kind==='watcher'?'/fleets/'+enc(q1.fleet)+'/processes'
+      var href=(q1.kind==='watcher'||q1.kind==='inbox')?'/fleets/'+enc(q1.fleet)+'/processes'
         :'/fleets/'+enc(q1.fleet)+'/board/'+enc(q1.family);
       var bcls=q1.kind==='watcher'?'err':'warn';
-      var blbl=q1.kind==='watcher'?'WATCHER':(q1.kind==='handback'?'HANDBACK':'GATE/ASK');
+      var blbl=q1.kind==='watcher'?'WATCHER':(q1.kind==='handback'?'HANDBACK':(q1.kind==='inbox'?'INBOX ?':'GATE/ASK'));
       s+='<a class="attnq-it" role="listitem" href="'+href+'" data-link>'
         +'<span class="badge '+bcls+'">'+blbl+'</span>'
         +(q1.family?'<span class="mono fam">'+esc(q1.family)+'</span>':'')
@@ -1742,7 +1743,7 @@ function fleetCard(entry){
   s+='<div class="subline">'+esc((h.config&&h.config.flow)||'auto')+(dep?' &middot; deputy of '+esc(dep):'')+(h.captain?' &middot; captain '+esc(h.captain):'')+'</div>';
   s+='<div class="stats">';
   s+='<span class="kv"><b>'+crew+'</b> active</span>';
-  s+='<span class="kv"><b>'+pend+'</b> waiting</span>';
+  s+='<span class="kv"><b>'+(h.inbox&&h.inbox.unreadable?'?':pend)+'</b> waiting</span>';
   s+='<span class="kv"><b>'+blk+'</b> blocked</span>';
   s+='</div>';
   // The learning-loop cadence of THIS fleet - a nested deputy card renders its
@@ -1764,11 +1765,11 @@ function fleetCard(entry){
 function pageProcesses(){
   var r=S.route, h=r.home; if(!h) return skeleton();
   var ui=uiFor(routeKey(r));
-  var pending = h.inbox?h.inbox.pending:0;
+  var pending = h.inbox?h.inbox.pending:0, inboxUnk = inboxUnknown(S.page, h);
   var wOk = h.watcher && h.watcher.state==='armed';
   var s='';
   s+='<div class="attn" role="group" aria-label="Processes attention">';
-  s+='<div class="item '+(pending>0?'a-warn':'a-ok')+'"><span class="num">'+pending+'</span><span class="lbl2">waiting on captain</span></div>';
+  s+='<div class="item '+((pending>0||inboxUnk)?'a-warn':'a-ok')+'"><span class="num">'+(inboxUnk?'?':pending)+'</span><span class="lbl2">waiting on captain'+(inboxUnk?' (rooms unreadable)':'')+'</span></div>';
   s+='<div class="item '+(wOk?'a-ok':'a-err')+'"><span class="num">'+(wOk?'&#9679;':'&#9888;')+'</span><span class="lbl2">watcher '+esc(h.watcher?h.watcher.state:'?')+(h.watcher&&h.watcher.beat?' &middot; beat '+agoMs(h.watcher.beat*1000):'')+'</span></div>';
   s+='</div>';
 
@@ -1857,7 +1858,10 @@ function pageProcesses(){
   // queue already carries the cross-fleet view. History stays reachable per
   // family from its Board detail.
   var openRooms=[]; for(var ori=0;ori<rooms.length;ori++){ if(rooms[ori].pending||rooms[ori].handback) openRooms.push(rooms[ori]); }
-  if(openRooms.length){
+  if(S.page&&S.page.rooms_unreadable){
+    s+='<h2 style="font-size:14px;margin:18px 0 8px;color:var(--fg2)">Rooms waiting on captain &mdash; UNKNOWN</h2>';
+    s+='<div class="muted">the room set could not be read (bin/ac-room.sh list) - this is not an empty inbox</div>';
+  } else if(openRooms.length){
     s+='<h2 style="font-size:14px;margin:18px 0 8px;color:var(--fg2)">Rooms waiting on captain &mdash; '+openRooms.length+'</h2>';
     s+=roomInbox(openRooms);
   }
@@ -2019,13 +2023,13 @@ function loadBoardKpi(hp){
   var c=boardKpiC[hp];
   if(c && c.loading) return;
   if(c && c.ts && (Date.now()-c.ts)<12000) return;
-  boardKpiC[hp]={ ts:(c&&c.ts)||0, pending:(c&&c.pending), loading:true };
+  boardKpiC[hp]={ ts:(c&&c.ts)||0, pending:(c&&c.pending), unknown:(c&&c.unknown), loading:true };
   fetch('/api/processes?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
     var rooms=(j&&j.rooms)||[], n=0, fams=[];
     for(var i=0;i<rooms.length;i++){ if(rooms[i].pending||rooms[i].handback){ n++; fams.push(rooms[i].family); } }
-    boardKpiC[hp]={ ts:Date.now(), pending:n, fams:fams, loading:false };
+    boardKpiC[hp]={ ts:Date.now(), pending:n, unknown:!!(j&&j.rooms_unreadable), fams:fams, loading:false };
     if(S.route && S.route.name==='board') renderPage();
-  }).catch(function(){ boardKpiC[hp]={ ts:Date.now(), pending:(c&&c.pending), fams:(c&&c.fams), loading:false }; });
+  }).catch(function(){ boardKpiC[hp]={ ts:Date.now(), pending:(c&&c.pending), unknown:(c&&c.unknown), fams:(c&&c.fams), loading:false }; });
 }
 // A family WAITING ON THE CAPTAIN is highlighted in place, in the same amber
 // language as the awaiting-captain KPI tile: an open GATE/ASK/handback in its
@@ -2053,11 +2057,11 @@ function boardKpis(hp, b, bd, sysCount){
     return n;
   }
   var flying=cardCount('in_flight')+sysCount;
-  var pend=boardKpiC[hp]&&boardKpiC[hp].pending;
+  var pend=boardKpiC[hp]&&boardKpiC[hp].pending, pendUnk=!!(boardKpiC[hp]&&boardKpiC[hp].unknown);
   var tiles=[
     ['in flight', String(flying), flying>0?'ok':''],
     ['queued', String(cardCount('queued')), ''],
-    ['awaiting captain', pend==null?'…':String(pend), (pend>0)?'warn':''],
+    ['awaiting captain', pendUnk?'?':pend==null?'…':String(pend), (pendUnk||pend>0)?'warn':''],
     ['done', String(cardCount('done')), ''],
   ];
   var s='<div class="kpis">';

@@ -57,6 +57,9 @@
 #             `PENDING-CAPTAIN(n)+HANDBACK` line and is tallied under BOTH
 #             pending and handback here - ac-room.sh no longer masks the
 #             hand-back behind the gate, so it cannot rot until the gate clears.
+#             A list that FAILS (a room it cannot read) is no answer: the
+#             inbox reads UNKNOWN, never clear (--json: inbox.unreadable, and
+#             totals.inbox_unreadable counts such homes).
 #   watcher - armed or down, from the state/.last-watcher-beat liveness beacon
 #             (stale beyond AC_GUARD_GRACE seconds, default 300 = the watcher
 #             coverage floor shared with the Stop hook (ac-turnend-guard.sh),
@@ -219,7 +222,7 @@ emit_home() {
   fi
 
   # captain inbox: ac-room.sh's own pending/handback accounting, per home.
-  local inbox_pending=0 inbox_handback=0 inbox_lines="" inbox_entries_json="[]" inbox_ndjson="" line n
+  local inbox_pending=0 inbox_handback=0 inbox_unreadable=false inbox_lines="" inbox_entries_json="[]" inbox_ndjson="" line n rows
   if [ -d "$dd" ]; then
     # JSON mode collects each entry as one NDJSON line and slurps them with a
     # single `jq -s` after the loop, instead of re-parsing the whole
@@ -233,6 +236,7 @@ emit_home() {
       # errors under `set -u` at the subshell's exit instead of cleaning up.
       trap "rm -f '$inbox_ndjson'" EXIT
     fi
+    rows="$(AC_HOME="$home" "$bin_dir/ac-room.sh" list 2>/dev/null)" || inbox_unreadable=true
     while IFS= read -r line; do
       case "$line" in
         PENDING-CAPTAIN*)
@@ -255,7 +259,7 @@ emit_home() {
 "
           [ "$mode" = json ] && inbox_entry_json "$inbox_ndjson" "$line" ;;
       esac
-    done < <(AC_HOME="$home" "$bin_dir/ac-room.sh" list 2>/dev/null || true)
+    done <<<"$rows"
     [ -n "$inbox_ndjson" ] && inbox_entries_json="$(jq -s -c '.' "$inbox_ndjson")"
   fi
 
@@ -368,7 +372,7 @@ emit_home() {
       --argjson crew_count "$crew_count" --argjson supervised "$supervised_count" \
       --argjson tasks "$crew_tasks_json" \
       --argjson verify "$verify_json" \
-      --argjson pending "$inbox_pending" --argjson handback "$inbox_handback" \
+      --argjson pending "$inbox_pending" --argjson handback "$inbox_handback" --argjson unreadable "$inbox_unreadable" \
       --argjson entries "$inbox_entries_json" \
       --arg w_state "$w_state" --arg w_detail "$watcher" \
       --argjson w_age "${age:-null}" --argjson w_beat "${beat:-null}" --arg w_owner "$owner" \
@@ -384,7 +388,7 @@ emit_home() {
         config: { flow: $flow, promote: $promote, mirror: $mirror },
         crew: { count: $crew_count, supervised: $supervised, tasks: $tasks },
         verify: $verify,
-        inbox: { pending: $pending, handback: $handback, entries: $entries },
+        inbox: { pending: $pending, handback: $handback, unreadable: $unreadable, entries: $entries },
         watcher: {
           state: $w_state, age: $w_age, beat: $w_beat,
           owner: (if $w_owner == "" then null else $w_owner end),
@@ -420,7 +424,9 @@ emit_home() {
     printf '%s   verify  : %s in flight (verification agents, not crew)\n' "$pad" "$verify_count"
     printf '%s' "$verify_lines"
   fi
-  if [ "$inbox_pending" -gt 0 ] || [ "$inbox_handback" -gt 0 ]; then
+  if [ "$inbox_unreadable" = true ]; then
+    printf '%s   inbox   : UNKNOWN - the room set could not be read (bin/ac-room.sh list)\n' "$pad"
+  elif [ "$inbox_pending" -gt 0 ] || [ "$inbox_handback" -gt 0 ]; then
     printf '%s   inbox   : %s pending, %s handback\n' "$pad" "$inbox_pending" "$inbox_handback"
     printf '%s' "$inbox_lines"
   else
@@ -492,7 +498,7 @@ if [ -z "$resolved" ]; then
   if [ "$mode" = json ]; then
     jq -n --arg container "$container" --arg at "$(ac_iso)" --argjson grace "$grace" \
       '{container:$container, generated_at:$at, grace:$grace, note:"container not found",
-        totals:{homes:0, crew:0, pending:0, handback:0, watchers_down:0,
+        totals:{homes:0, crew:0, pending:0, handback:0, inbox_unreadable:0, watchers_down:0,
                 learning_due:0, curate_due:0}, homes:[]}'
     exit 0
   fi
@@ -551,6 +557,7 @@ if [ "$mode" = json ]; then
         crew: ($all | map(.crew.count) | add // 0),
         pending: ($all | map(.inbox.pending) | add // 0),
         handback: ($all | map(.inbox.handback) | add // 0),
+        inbox_unreadable: ($all | map(select(.inbox.unreadable)) | length),
         watchers_down: ($all | map(select(.crew.supervised > 0 and .watcher.state == "down")) | length),
         learning_due: ($all | map(select(.cadence.learn.due)) | length),
         curate_due: ($all | map(select(.cadence.curate.due)) | length) }

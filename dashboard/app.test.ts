@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -930,6 +930,25 @@ test("domainProjectLinks: no projects/ dir -> []", () => {
     expect(domainProjectLinks(`${root}/crewdomains/nope`)).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ac-room.sh list exits non-zero when a room cannot be read: that is no
+// answer, so it must reach the page as UNKNOWN - an empty list reads as an
+// inbox with nothing waiting on the captain.
+test("roomList: an unreadable room set is null (unknown), never an empty inbox", async () => {
+  if (process.getuid?.() === 0) return;
+  const home = mkdtempSync(`${tmpdir()}/ac-dash-rooms-`);
+  const room = `${home}/data/fam/room.md`;
+  try {
+    mkdirSync(`${home}/data/fam`, { recursive: true });
+    writeFileSync(room, "# Room: fam\n\n- [2026-10-02T00:00:00Z] crewchief> GATE: a question?\n");
+    expect((await roomList(home))?.length).toBe(1);
+    chmodSync(room, 0o000);
+    expect(await roomList(home)).toBeNull();
+  } finally {
+    chmodSync(room, 0o644);
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -3664,7 +3683,7 @@ test("PROVIDER_LANES: synthesize offers opencode-go, embedding does not", () => 
 });
 
 // ---- fleetAttnItems (fleets-attn-queue) -----------------------------------
-import { fleetAttnItems } from "./app.ts";
+import { fleetAttnItems, inboxUnknown } from "./app.ts";
 
 const ATTN_SNAP = {
   homes: [
@@ -3701,6 +3720,26 @@ test("fleetAttnItems: a combined PENDING+HANDBACK entry lands in both bands", ()
 test("fleetAttnItems: walks one level of crewdeputies (demo's dead watcher shows)", () => {
   const w = fleetAttnItems(ATTN_SNAP).filter((i) => i.kind === "watcher").map((i) => i.fleet);
   expect(w).toEqual(["demo", "lab"]);
+});
+
+test("fleetAttnItems: an unreadable inbox is a first-band item, never silence", () => {
+  const items = fleetAttnItems({ homes: [
+    { name: "ok", watcher: { state: "armed" }, inbox: { entries: [] } },
+    { name: "blind", watcher: { state: "armed" }, inbox: { unreadable: true, entries: [] } },
+  ] });
+  expect(items.map((i) => [i.fleet, i.kind])).toEqual([["blind", "inbox"]]);
+  expect(items[0].text).toContain("UNKNOWN");
+});
+
+// The Processes KPI must follow the payload it polls: the snapshot home the
+// route captured on open is never replaced, so it would hold either answer
+// past a change in the room set.
+test("inboxUnknown: the polled processes payload wins over the captured home, both ways", () => {
+  const readable = { inbox: { unreadable: false } }, unreadable = { inbox: { unreadable: true } };
+  expect(inboxUnknown({ rooms_unreadable: true }, readable)).toBe(true);
+  expect(inboxUnknown({ rooms_unreadable: false }, unreadable)).toBe(false);
+  expect(inboxUnknown(null, unreadable)).toBe(true);
+  expect(inboxUnknown({}, readable)).toBe(false);
 });
 
 test("fleetAttnItems: empty/garbage snapshot never throws", () => {

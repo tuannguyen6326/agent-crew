@@ -1117,15 +1117,27 @@ export function cadenceLabel(c: any): { text: string; due: boolean } | null {
 /**
  * The Fleets page's needs-captain QUEUE: every concrete item across the
  * container that waits on the captain, as one flat actionable list - pending
- * gates/asks first, then hand-backs, then watcher-down alerts (decisions the
- * captain OWES rank above infrastructure), original home order kept inside
- * each band. Walks each home's `crewdeputies` too (one level - the snapshot
+ * gates/asks first (an unreadable inbox among them: it may hide some), then
+ * hand-backs, then watcher-down alerts (decisions the captain OWES rank above
+ * infrastructure), original home order kept inside each band. Walks each home's `crewdeputies` too (one level - the snapshot
  * nests no deeper), so a deputy's stuck gate is as visible as its parent's.
  * The counts in the attention strip already exist; this is the list behind
  * them, so the captain jumps to the family instead of hunting it. Pure and
  * ES5-plain - PAGE interpolates its toString(), the bun test proves the same
  * code the browser runs.
  */
+/**
+ * Whether a fleet's inbox is UNKNOWN on the Processes page. The processes
+ * payload is polled fresh, while the snapshot home the route captured on open
+ * is never replaced - so the payload's rooms_unreadable wins once it has
+ * arrived, and the snapshot's inbox.unreadable only covers the load. Pure and
+ * ES5-plain - PAGE interpolates its toString().
+ */
+export function inboxUnknown(page: any, home: any): boolean {
+  if (page && typeof page.rooms_unreadable === "boolean") return page.rooms_unreadable;
+  return !!(home && home.inbox && home.inbox.unreadable);
+}
+
 export function fleetAttnItems(snap: any): { fleet: string; kind: string; family: string; text: string }[] {
   var pend = [], hand = [], watch = [];
   var homes = (snap && snap.homes) || [];
@@ -1137,6 +1149,9 @@ export function fleetAttnItems(snap: any): { fleet: string; kind: string; family
   }
   for (var j = 0; j < flat.length; j++) {
     var h = flat[j]; if (!h || !h.name) continue;
+    if (h.inbox && h.inbox.unreadable)
+      pend.push({ fleet: String(h.name), kind: "inbox", family: "",
+        text: "rooms unreadable - the inbox is UNKNOWN, not empty (bin/ac-room.sh list)" });
     var entries = (h.inbox && h.inbox.entries) || [];
     for (var e = 0; e < entries.length; e++) {
       var en = entries[e] || {};
