@@ -495,15 +495,29 @@ assert_contains "$out" "report t9 done: leaked claim" \
 assert_no_file "$state/.wake-spool-draining.$DEADPID" "the dead claim dir is cleaned up after recovery"
 
 # ... but a LIVE drainer's claim dir must NEVER be stolen (the risk this
-# sweep exists to avoid): $$ is this very shell, unambiguously alive for the
-# whole test.
+# sweep exists to avoid): a process that is alive AND still a drainer by its
+# command line.
 reset_state
-mkdir -p "$state/.wake-spool-draining.$$"
-printf '1\treport\tt9\tdone: still draining\n' >"$state/.wake-spool-draining.$$/1.$$.000000"
+bash -c 'exec -a ac-wake-drain.sh sleep 60' & LIVEPID=$!
+mkdir -p "$state/.wake-spool-draining.$LIVEPID"
+printf '1\treport\tt9\tdone: still draining\n' >"$state/.wake-spool-draining.$LIVEPID/1.$LIVEPID.000000"
 out="$(drain '')"
 case "$out" in *"still draining"*) fail "a LIVE drainer's claim dir must never be stolen by another pass" ;; esac
-assert_file "$state/.wake-spool-draining.$$/1.$$.000000" "the live claim dir is left completely alone"
-rm -rf "$state/.wake-spool-draining.$$"
+assert_file "$state/.wake-spool-draining.$LIVEPID/1.$LIVEPID.000000" "the live claim dir is left completely alone"
+kill "$LIVEPID" 2>/dev/null; wait "$LIVEPID" 2>/dev/null || true
+rm -rf "$state/.wake-spool-draining.$LIVEPID"
+
+# ... while a pid the OS handed to an unrelated process is no drainer: alive
+# is not enough (the reuse ac-lock.sh holder_alive guards the same way), and
+# kept, the record would sit stranded until that process happened to exit.
+reset_state
+sleep 60 & REUSEPID=$!
+mkdir -p "$state/.wake-spool-draining.$REUSEPID"
+printf '1\treport\tt9\tdone: stranded by reuse\n' >"$state/.wake-spool-draining.$REUSEPID/1.$REUSEPID.000000"
+out="$(drain '')"
+kill "$REUSEPID" 2>/dev/null; wait "$REUSEPID" 2>/dev/null || true
+assert_contains "$out" "report t9 done: stranded by reuse" "a claim dir under a reused pid is recovered"
+assert_no_file "$state/.wake-spool-draining.$REUSEPID" "...and cleaned up"
 
 # ... and recovery routes by the record's OWN id (ac_family_of_id - the same
 # derivation in_drain_scope uses, the ONE the system has), never the
