@@ -254,7 +254,11 @@ git -C "$r8" checkout -q main
 git -C "$r8" merge --ff-only crew/sibling >/dev/null     # main = base + c8file + siblingfile
 mk_meta c8 "$r8"
 : >"$ledger"                                             # clean ledger
-"$BIN/ac-merge-local.sh" c8 >/dev/null
+out="$("$BIN/ac-merge-local.sh" c8)" || fail "a no-op re-land succeeds: $out"
+# main already holds crew/c8 and more, so nothing moved and the trees differ:
+# the line must say so, never assert the fast-forward that did not happen.
+assert_contains "$out" "main already contains crew/c8; nothing to move" "a no-op re-land says so"
+case "$out" in *fast-forwarded*) fail "a no-op re-land must not claim a fast-forward: $out" ;; esac
 grep -q "siblingfile.txt" "$ledger" && fail "two-dot over-report: a sibling family's file recorded under c8"
 grep -q "c8file.txt" "$ledger" && fail "already-landed work re-recorded: c8's own file is already in main"
 assert_eq "$(wc -c <"$ledger" | tr -d ' ')" "0" "no-op multi-family land records nothing (branch adds nothing beyond main)"
