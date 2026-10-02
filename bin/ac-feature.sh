@@ -254,6 +254,14 @@ cmd_ship() {
   mkdir -p "$gate_dir"
   ships="$gate_dir/ships.env"
   repo_key="pr_url_${repo//[^a-zA-Z0-9]/_}"
+  # The fold is not one-to-one (my-app and my_app both key pr_url_my_app), so a
+  # feature recording two such repos would hand the second the first one's PR -
+  # "already recorded", nothing pushed. That pair is refused, never guessed.
+  while read -r other _; do
+    if [ "$other" != "$repo" ] && [ "pr_url_${other//[^a-zA-Z0-9]/_}" = "$repo_key" ]; then
+      ac_die "ship: repos $repo and $other of feature $feature share the ships.env key $repo_key - one url slot cannot tell their PRs apart; re-record one of them under a distinct name (the captain's word) before shipping"
+    fi
+  done < <(grep -v '^#' "$(ac_epic_branches_file "$feature")")
   pr_url="$(ac_meta_get "$ships" "$repo_key" 2>/dev/null || printf '')"
   if [ -n "$pr_url" ]; then
     printf 'PR already recorded: %s\n' "$pr_url"

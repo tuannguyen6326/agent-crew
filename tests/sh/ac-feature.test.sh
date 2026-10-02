@@ -344,6 +344,23 @@ out="$("$FT" ship shipux proj3 --dry-run)"
 assert_contains "$out" "gh pr create" \
   "a sibling repo's key never records THIS repo's PR"
 rm "$AC_HOME/data/shipux/gate/ships.env"
+# The key folds every non-alnum to _, so proj-3 and proj_3 share pr_url_proj_3:
+# with one's PR recorded, the other read it as its own - "already recorded",
+# rc 0, never pushed. A feature recording both is refused at the ship.
+cp "$AC_HOME/data/shipux/branches" "$TMP/shipux-branches"
+git clone -q "$up3" "$AC_HOME/projects/proj_3"
+printf 'proj-3 feat/shipux target=release push=deferred\nproj_3 feat/shipux target=release push=deferred\n' \
+  >>"$AC_HOME/data/shipux/branches"
+"$FT" create shipux proj_3 >/dev/null
+mkdir -p "$AC_HOME/projects/proj_3/.crew/qa/passed"
+: >"$AC_HOME/projects/proj_3/.crew/qa/passed/$(git -C "$AC_HOME/projects/proj_3" rev-parse refs/heads/feat/shipux)"
+printf 'pr_url_proj_3=https://example.test/pr/dash\n' >"$AC_HOME/data/shipux/gate/ships.env"
+rc=0; out="$("$FT" ship shipux proj_3 --dry-run 2>&1)" || rc=$?
+case "$out" in *"already recorded"*) fail "a colliding repo must never read a sibling's PR as its own: $out" ;; esac
+[ "$rc" != 0 ] || fail "a ships.env key shared by two repos of one feature is refused: $out"
+assert_contains "$out" "proj-3" "...naming the repo it collides with"
+rm "$AC_HOME/data/shipux/gate/ships.env"
+mv "$TMP/shipux-branches" "$AC_HOME/data/shipux/branches"
 
 # The qa pin is read off the container's OWN row. awk's == compared
 # numeric-looking ids as numbers, so an earlier row 07 stood in for feature 7
