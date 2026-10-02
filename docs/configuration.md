@@ -339,6 +339,7 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_BRAIN_EMBED_TIMEOUT` | 60 | Seconds one embedding call inside `ac-brain.sh sync` may take; past it the sync completes keyword-only. |
 | `AC_BRAIN_RERANK_TIMEOUT` | 10 | Seconds the rerank call inside `ac-brain.sh recall` may take; past it the fused order is returned unreranked. |
 | `AC_BRAIN_SYNTH_CMD` | unset | Overrides the one-shot command `ac-brain synthesize` runs, ahead of `panes.brain` and `config/brain-*`. |
+| `AC_BRAIN_OLLAMA_URL` | `http://127.0.0.1:11434/v1` | The local ollama `ac-brain synthesize` asks before the harness one-shot when no synthesize api answered (the test suite points it at a closed port). |
 | `AC_BRAIN_PATTERN_FILE` | `~/.config/agent-crew/push-gate.patterns` | Pattern file the brain's pattern floor reads (`src/brain.ts`). |
 | `AC_PROMPT_RECALL_LIMIT` | 3 | Max hits in the prompt-time recall block. |
 | `AC_JEV` | `config/jev`, else `off` | Per-session override of the System One adapter (`off`, `shadow`, `on`). |

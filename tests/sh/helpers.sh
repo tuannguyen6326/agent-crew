@@ -51,6 +51,11 @@ export AC_STARTUP_DIALOG_BUDGET=2
 # under this same root.
 export AC_CLAUDE_TRANSCRIPT_ROOT="$TMP/claude-projects"
 mkdir -p "$AC_CLAUDE_TRANSCRIPT_ROOT"
+# The same for the brain's keyless local-ollama synthesize rung (src/brain.ts):
+# it answers before the harness rung, so a daemon on the operator's default
+# port would answer every synthesize leg instead of the command under test.
+# Port 1 is never served; the connect is refused at once.
+export AC_BRAIN_OLLAMA_URL="http://127.0.0.1:1/v1"
 # Hermetic scope, too: every roomchief session runs with AC_SCOPE (and often
 # AC_WATCH_ONLY) exported, and scope changes what the scripts under test route,
 # watch and refuse - so an inherited scope reds the suite for exactly the
