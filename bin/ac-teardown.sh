@@ -836,25 +836,29 @@ if [ "$force" = 0 ]; then
   landed_proof || ac_die "refusing teardown of $id (unlanded work); land it or pass --force to discard"
 fi
 
-# Evidence preflight - after the gate, before the execution meta is archived
-# (header: VERIFIER SWEEP). It is DURABLE and records that the verifier "was
-# explicitly torn down", so ahead of the gate it wrote exactly that about a
-# verifier still running, on the one path teardown must leave untouched. If an
-# incomplete QA artifact cannot be made durable, nothing verifier-owned is
-# reaped or returned.
-prepare_task_verifiers
-
 # A landed SOLO slice answers for its knowledge loop here, while the status
 # record still exists to carry the answer, and the landing REFUSES until it
 # does (ac_solo_landing_check) - the slice stays in flight, lease and branch
 # intact, for the writes to happen. Once it passes, the landing ticks the
-# Learning cadence itself: no chief lands a solo slice, so no chief would.
-# A forced teardown discards the work and owes nothing.
+# Learning cadence itself (below the evidence preflight): no chief lands a solo
+# slice, so no chief would. A forced teardown discards the work and owes nothing.
 if [ "$kind" = self ] && [ "$force" != 1 ]; then
   [ -z "$no_lesson" ] || ac_status_append "$id" "lesson waived: $no_lesson"
   [ -z "$no_fact" ] || ac_status_append "$id" "repo fact waived: $no_fact"
   ac_solo_landing_check "$id" "$project_dir" "$no_lesson" "$no_fact" "$(ac_meta_get "$meta" fleet_scope)" \
     || ac_die "solo landing refused: the knowledge loop above is incomplete - write what is missing (or waive the lesson/fact with --no-lesson/--no-fact '<why>'), then run the teardown again"
+fi
+# Evidence preflight - after BOTH gates (the landed proof and the solo
+# knowledge loop), before the execution meta is archived (header: VERIFIER
+# SWEEP). It is DURABLE and records that the verifier "was explicitly torn
+# down", so ahead of a gate it wrote exactly that about a verifier still
+# running, on the one path teardown must leave untouched. If an incomplete QA
+# artifact cannot be made durable, nothing verifier-owned is reaped or returned.
+prepare_task_verifiers
+# The tick waits for the preflight, which can still die and leave the slice in
+# flight: the keyed tick dedupes for 24h only, so a tick on that attempt plus
+# one on a later retry would count one landing twice.
+if [ "$kind" = self ] && [ "$force" != 1 ]; then
   ac_status_append "$id" "learning tick: $("$bin_dir/ac-learn.sh" tick "$id" 2>&1 | tail -n 1)"
 fi
 # Archive task state - the FIRST durable act, before the pane-kill (header:
