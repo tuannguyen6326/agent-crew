@@ -373,6 +373,16 @@ assert_contains "$out" '"status":"error"' "invalid effort is a protocol error"
 assert_contains "$out" "invalid effort: turbo" "the error names the rejected value"
 case "$(cat "$HDLOG")" in *"pane run"*) fail "invalid effort must be refused before a pane is placed" ;; esac
 rm -f "$AC_HOME/config/effort"
+# The error event is NDJSON its readers parse with jq under pipefail
+# (ac-learn.sh, ac-gate.sh): a message carrying a quote, a backslash or a
+# newline must still be ONE valid line with the raw value intact, or the
+# reader dies before its own refusal branch.
+for bad in "$TMP/no\\such\"dir" "$(printf '%s\n%s' "$TMP/two" lines)"; do
+  out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$bad" --prompt-file "$pf" --label r-json 2>/dev/null || true)"
+  assert_eq "$(printf '%s\n' "$out" | grep -c .)" "1" "one error event per failure, never split: $bad"
+  assert_eq "$(printf '%s' "$out" | jq -r 'select(.event=="done") | .error' 2>/dev/null)" "cwd missing: $bad" \
+    "...valid JSON carrying the raw value: $bad"
+done
 
 # --- the dispatched pane profile (config/crew-dispatch.json `panes`) ------------
 # A pane agent cannot judge a prose `when`, so its profile is looked up by KIND.
