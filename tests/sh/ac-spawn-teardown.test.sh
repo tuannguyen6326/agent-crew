@@ -1975,6 +1975,39 @@ git -C "$owt" show-ref --verify -q refs/heads/fakeuser/crew-ow1 \
 [ ! -d "$owt" ] || fail "teardown must remove the orca-managed worktree"
 rm -rf "$repo/node_modules"
 
+# A family-scoped id (a revision) collapses to its FAMILY branch everywhere -
+# the brief names crew/<family>, merge-local lands it, teardown deletes it - so
+# the orca lease must sit on that branch too, never mint a crew/<id> alias.
+"$BIN/ac-brief.sh" ow6-r2 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" ow6-r2 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an orca spawn of a revision id must succeed"
+owt6="$(sed -n 's/^worktree=//p' "$AC_HOME/state/ow6-r2.meta" | head -1)"
+assert_eq "$(git -C "$owt6" branch --show-current)" "crew/ow6" \
+  "a revision's orca worktree sits on its family branch"
+printf 'revision work\n' >"$owt6/ow6.txt"
+git -C "$owt6" add ow6.txt
+git -C "$owt6" -c user.email=t@t -c user.name=t commit -qm "ow6 revision work"
+"$BIN/ac-merge-local.sh" ow6-r2 >/dev/null 2>&1 || fail "the revision lands from the branch it was handed"
+"$BIN/ac-teardown.sh" ow6-r2 >/dev/null 2>&1 || fail "the landed revision tears down"
+assert_eq "$(git -C "$repo" branch --list 'crew/ow6*')" "" "no family or alias branch survives the landing"
+# A family branch a live sibling's worktree holds cannot be switched to: the
+# lease fails, and gives back the worktree it just created instead of leaking
+# it. The sibling is in flight, so the spawn's collision refusal lets it by.
+git -C "$repo" worktree add -q -b crew/ow7 "$TMP/ow7-holder" main
+printf 'kind=ship\nbackend=orca\nworktree=%s\n' "$TMP/ow7-holder" >"$AC_HOME/state/ow7.meta"
+"$BIN/ac-brief.sh" ow7-r2 proj --mode local-only >/dev/null
+: >"$FAKE_ORCA/log"
+"$BIN/ac-spawn.sh" ow7-r2 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  && fail "a lease whose family branch is held elsewhere must fail"
+grep -q -- 'worktree create.*--name crew-ow7-r2' "$FAKE_ORCA/log" \
+  || fail "fixture: the spawn must reach the lease: $(cat "$FAKE_ORCA/log")"
+grep -q -- 'worktree rm --worktree path:.*crew-ow7-r2' "$FAKE_ORCA/log" \
+  || fail "the failed lease must release the orca worktree it created: $(cat "$FAKE_ORCA/log")"
+ls -d "$FAKE_ORCA/orca-wt/"*ow7* >/dev/null 2>&1 && fail "no orca worktree for ow7-r2 is left behind"
+rm -f "$AC_HOME/state/ow7.meta"
+git -C "$repo" worktree remove --force "$TMP/ow7-holder"
+git -C "$repo" branch -D crew/ow7 >/dev/null 2>&1
+
 # --base-branch (orca-lease-cuts-from-wrong-branch): an explicit override
 # threads from ac-spawn.sh all the way to the orca lease and wins over the
 # repo's live checkout branch (main here).

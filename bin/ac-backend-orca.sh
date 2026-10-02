@@ -126,11 +126,13 @@ orca_worktree_lease() {
   # clone removes. A COPY (APFS clonefile when available), never a
   # symlink - a crewmate's own install must not mutate the primary's
   # deps. The CLI names the branch <git-user>/<name>; the crew contract
-  # owns crew/<id>, so the checkout is switched there (adopting an
-  # existing crew/<id> on a respawn) and the minted name dropped. Prints
+  # owns the task's crew branch (ac_crew_branch: crew/<family>, the one the
+  # brief names and merge-local lands), so the checkout is switched there
+  # (adopting an existing one on a respawn or a revision) and the minted
+  # name dropped; a switch git refuses gives the new worktree back. Prints
   # the path; 1 on failure, 2 when the fence refuses (warned, nothing
   # created).
-  local id="$1" repo="$2" override="${3:-}" out path obranch base ref st
+  local id="$1" repo="$2" override="${3:-}" out path obranch base ref st cb
   local rname eb ebrc=0 ebranch ebref
   rname="$(basename "$repo")"
   eb="$(ac_epic_base_for "$id" "$rname" 2>/dev/null)" || ebrc=$?
@@ -201,10 +203,11 @@ orca_worktree_lease() {
   done
   obranch="$(jq -r '.result.worktree.branch // empty' <<<"$out")"
   obranch="${obranch#refs/heads/}"
-  if git -C "$path" show-ref --verify -q "refs/heads/crew/$id"; then
-    git -C "$path" switch "crew/$id" >/dev/null 2>&1 || return 1
+  cb="$(ac_crew_branch "$id")"
+  if git -C "$path" show-ref --verify -q "refs/heads/$cb"; then
+    git -C "$path" switch "$cb" >/dev/null 2>&1 || { orca_worktree_release "$path"; return 1; }
   else
-    git -C "$path" switch -c "crew/$id" >/dev/null 2>&1 || return 1
+    git -C "$path" switch -c "$cb" >/dev/null 2>&1 || { orca_worktree_release "$path"; return 1; }
   fi
   [ -z "$obranch" ] || git -C "$path" branch -D "$obranch" >/dev/null 2>&1 || true
   if [ -d "$repo/node_modules" ] && [ ! -e "$path/node_modules" ]; then

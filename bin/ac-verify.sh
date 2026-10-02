@@ -191,7 +191,7 @@ verify_lease() {
 }
 verify_drop_branch() {
   [ "$(ac_backend)" != orca ] \
-    || git -C "$1" branch -D "crew/$2" >/dev/null 2>&1 || true
+    || git -C "$1" branch -D "$(ac_crew_branch "$2")" >/dev/null 2>&1 || true
 }
 qa_relay_bin="${AC_VERIFY_QA_RELAY_BIN:-$bin_dir/ac-qa.sh}"
 qa_report_armed=0

@@ -93,7 +93,7 @@ It is regenerated after every slot mutation; never hand-edit it.
 - cuts it from the repo's LIVE CHECKOUT branch at its freshest tip (`ac_freshest_ref`, local vs origin), or from HEAD's exact commit when the checkout is detached;
 - lets an explicit `--base-branch` (from `ac-spawn.sh` or `ac-self-task.sh start`) name the branch instead, still resolved to its freshest tip;
 - takes the recorded integration branch as that base itself when the task id belongs to an epic or feature that records one for this repo (the epic-branch fence, held in the lease so every orca caller rides it, as `ac-tree.sh get` holds it on herdr), and refuses before creating anything when the branch is missing (the same existence rule as `ac-tree.sh get`, judged after the same best-effort fetch of origin, which only a fenced lease makes), when the ledger cannot be read, or when an explicit `--base-branch` names another branch;
-- switches the checkout to `crew/<id>` (adopting an existing one on a respawn) and deletes the branch name the CLI minted;
+- switches the checkout to the task's crew branch, `crew/<family>` (adopting an existing one on a respawn or a revision), and deletes the branch name the CLI minted - a switch git refuses gives the new worktree back;
 - copies the primary checkout's `node_modules` into the worktree (a clone where the filesystem supports it, never a symlink) when setup did not produce one.
 
 `orca_worktree_release <path>` removes the worktree through the Orca CLI at teardown; unlike a pool slot, nothing is kept.
