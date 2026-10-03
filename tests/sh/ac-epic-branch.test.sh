@@ -390,4 +390,304 @@ perl -pi -e 's/rev:no qa:yes\] - a numeric epic/rev:no\tqa:yes] - a numeric epic
 out="$("$ES" 7 proj --dry-run 2>&1 || true)"
 assert_contains "$out" "no crew-qa pass attestation" "a TAB-joined qa:yes pin gates the exit"
 
+# --- differential: src/epic-branch.ts against the frozen bash original --------
+# DISPUTED: the implementation (tests/fixtures/ac-epic-branch.sh under bash vs src/epic-branch.ts through bin/ac-epic-branch.sh)
+# HELD-CONSTANT: two homes seeded alike ($OH for the oracle, $NH for the shim) - each with its own upstream, clone (refusing pre-push hook) and local-only repo, every commit stamped with one fixed date so the shas agree - argv, cwd, LC_ALL=C on both sides; exit status, stdout and stderr (the home path spelled HOME, a retire stamp spelled STAMP) compared whole, the record bytes after every mutating verb, and the branch tips git left behind.
+obin="$(make_oracle_bin ac-epic-branch)"
+OH="$TMP/oh"; NH="$TMP/nh"
+gitc() { GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z git "$@"; }
+both() {  # both <fn> <args...> - run a seeding step with H at each home
+  local h; for h in "$OH" "$NH"; do H="$h"; "$@"; done
+}
+mkrepo() {  # mkrepo <dir> <branch> - one fixed-date commit on <branch>
+  git init -q -b "$2" "$1"
+  git -C "$1" config user.email test@test; git -C "$1" config user.name test
+  printf 'hello\n' >"$1/file.txt"; git -C "$1" add -A; gitc -C "$1" commit -qm init
+}
+mkclone() {  # mkclone <upstream> <dir>
+  git clone -q "$1" "$2"
+  git -C "$2" config user.email test@test; git -C "$2" config user.name test
+}
+seed_home() {  # the file's own fixture, rebuilt under $H
+  mkdir -p "$H/projects" "$H/data/eppy"
+  mkrepo "$H/upstream" main
+  mkclone "$H/upstream" "$H/projects/proj"
+  printf '#!/bin/sh\necho "pre-push: refused" >&2\nexit 1\n' >"$H/projects/proj/.git/hooks/pre-push"
+  chmod +x "$H/projects/proj/.git/hooks/pre-push"
+  mkrepo "$H/projects/localonly" main
+  printf 'proj epic/eppy push=yes\nlocalonly epic/eppy\n' >"$H/data/eppy/branches"
+}
+advance() {  # advance <msg> - one more fixed-date commit on upstream main
+  printf '%s\n' "$1" >>"$H/upstream/file.txt"; git -C "$H/upstream" add -A; gitc -C "$H/upstream" commit -qm "$1"
+}
+rec() {  # rec <epic> <printf-format> - a record written as bytes
+  mkdir -p "$H/data/$1"; printf -- "$2" >"$H/data/$1/branches"
+}
+run_oracle() { (cd "$TMP" && AC_HOME="$OH" LC_ALL=C "$obin/ac-epic-branch.sh" "$@") >"$TMP/o.raw" 2>"$TMP/o.err"; }
+run_shim() { (cd "$TMP" && AC_HOME="$NH" LC_ALL=C "$BIN/ac-epic-branch.sh" "$@") >"$TMP/n.raw" 2>"$TMP/n.err"; }
+norm() {  # norm <file> <home> - the home spelled HOME, a retire stamp STAMP
+  LC_ALL=C sed -e "s#$2#HOME#g" -e 's/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}Z/STAMP/g' "$1"
+}
+same() {  # same <args...> - oracle on $OH and shim on $NH answer byte-identically
+  local o_rc=0 n_rc=0
+  run_oracle "$@" || o_rc=$?
+  run_shim "$@" || n_rc=$?
+  norm "$TMP/o.raw" "$OH" >"$TMP/o.out"; norm "$TMP/o.err" "$OH" >"$TMP/o.err2"
+  norm "$TMP/n.raw" "$NH" >"$TMP/n.out"; norm "$TMP/n.err" "$NH" >"$TMP/n.err2"
+  assert_eq "$n_rc" "$o_rc" "differential exit for '$*'"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs for '$*': $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
+  cmp -s "$TMP/o.err2" "$TMP/n.err2" || fail "differential stderr differs for '$*': $(diff "$TMP/o.err2" "$TMP/n.err2" | head -n 4)"
+}
+shim_out() { cat "$TMP/n.out"; }
+shim_err() { cat "$TMP/n.err2"; }
+same_record() {  # same_record <path under data/> - the record bytes agree
+  assert_eq "$(norm "$NH/data/$1/branches" "$NH")" "$(norm "$OH/data/$1/branches" "$OH")" "differential record $1"
+}
+same_tip() {  # same_tip <repo under the home> <ref> - the same tip in both homes, or none in both
+  local o n
+  o="$(git -C "$OH/$1" rev-parse --verify -q "$2" || printf none)"
+  n="$(git -C "$NH/$1" rev-parse --verify -q "$2" || printf none)"
+  assert_eq "$n" "$o" "differential tip $1 $2"
+}
+both seed_home
+
+# 1. create cuts at origin's freshest tip (upstream advanced after the clone)
+both advance more
+same create eppy proj
+assert_eq "$(shim_out)" "created: epic/eppy on origin of proj at $(git -C "$NH/upstream" rev-parse main)" "the created line names origin's tip"
+same_tip upstream refs/heads/epic/eppy
+# 2. a second create after another advance leaves it untouched
+both advance "even more"
+same create eppy proj
+assert_eq "$(shim_out)" "exists: epic/eppy on origin of proj (left untouched)" "the exists line"
+same_tip upstream refs/heads/epic/eppy
+# 3. a local-only repo, twice
+same create eppy localonly
+assert_eq "$(shim_out)" "created: epic/eppy in localonly (local-only repo)" "the local-only created line"
+same_tip projects/localonly refs/heads/epic/eppy
+same create eppy localonly
+assert_eq "$(shim_out)" "exists: epic/eppy in localonly (left untouched)" "the local-only exists line"
+# 4. no entry; an entry whose clone is missing
+same create eppy nosuchrepo
+assert_eq "$(shim_err)" "ERROR: create: no record entry for nosuchrepo under epic eppy - write data/eppy/branches first (the captain's word, receipted DECIDED: to the room)" "no entry"
+addghost() { printf 'ghost epic/g\n' >>"$H/data/eppy/branches"; }
+both addghost
+same create eppy ghost
+assert_eq "$(shim_err)" "ERROR: no project clone at projects/ghost" "no clone"
+same verify eppy ghost
+# 5. verify: quiet green, red once the branch is gone, on origin and locally
+same verify eppy proj
+assert_eq "$(shim_out)$(shim_err)" "" "verify prints nothing on success"
+delup() { git -C "$H/upstream" branch -D epic/eppy -q; }
+both delup
+same verify eppy proj
+assert_eq "$(shim_err)" "ERROR: verify: epic/eppy is not on origin of proj - create it (ac-epic-branch.sh create eppy proj) before any story spawns against it" "verify red on origin"
+same verify eppy localonly
+dellocal() { git -C "$H/projects/localonly" branch -D epic/eppy -q; }
+both dellocal
+same verify eppy localonly
+assert_eq "$(shim_err)" "ERROR: verify: epic/eppy does not exist in localonly - create it (ac-epic-branch.sh create eppy localonly) before any story spawns against it" "verify red locally"
+# 6. the fence: create/retire refuse a scoped session, show/verify do not
+AC_SCOPE=eppy same create eppy proj
+assert_eq "$(shim_err)" "ERROR: create is the CREWCHIEF's verb and this session is scoped (AC_SCOPE=eppy) - the integration branch is cut and retired on the captain's word by the fleet chief; a scoped chief reads the record (show/verify) and never mutates it" "the create fence"
+AC_SCOPE=eppy same retire eppy
+assert_contains "$(shim_err)" "retire is the CREWCHIEF's verb" "the retire fence"
+same show eppy
+unscoped="$(shim_out)"
+AC_SCOPE=eppy same show eppy
+assert_eq "$(shim_out)" "$unscoped" "show is allowed scoped, the same output"
+AC_SCOPE=eppy same verify eppy localonly
+case "$(shim_err)" in *CREWCHIEF*) fail "verify must not be fenced" ;; esac
+# 7. show: the path then the bytes; no trailing newline; TABs, runs and a comment line (resolved to the branch too)
+same show eppy
+assert_eq "$(shim_out)" "# HOME/data/eppy/branches
+proj epic/eppy push=yes
+localonly epic/eppy
+ghost epic/g" "show prints the path and the record"
+both rec nt 'proj epic/nt'
+same show nt
+printf '# HOME/data/nt/branches\nproj epic/nt' >"$TMP/want"
+cmp -s "$TMP/want" "$TMP/n.out" || fail "show echoes a record with no trailing newline as is"
+both rec tabs '# the record\nproj\tepic/t\tpush=yes\nlocalonly   epic/s   \n'
+same show tabs
+same verify tabs proj
+assert_eq "$(shim_err)" "ERROR: verify: epic/t is not on origin of proj - create it (ac-epic-branch.sh create tabs proj) before any story spawns against it" "a TAB-separated entry resolves to its branch"
+same create tabs localonly
+assert_eq "$(shim_out)" "created: epic/s in localonly (local-only repo)" "runs and trailing blanks resolve to the branch"
+# 8. retire: the marker, idempotent, then the rc-2 refusals; show still prints
+mode_before="$(ls -l "$NH/data/eppy/branches" | cut -c1-10)"
+same retire eppy
+assert_eq "$(shim_out)" "retired: epic eppy record at HOME/data/eppy/branches" "the retired line"
+same_record eppy
+assert_eq "$(head -n 1 "$NH/data/eppy/branches" | sed 's/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}Z/STAMP/')" "# retired STAMP" "the marker line"
+# Named divergence: the original's mktemp+mv left the record with the temp
+# file's 0600; the port rewrites it with the mode the record had.
+assert_eq "$(ls -l "$OH/data/eppy/branches" | cut -c1-10)" "-rw-------" "the original leaves mktemp's mode on the record"
+assert_eq "$(ls -l "$NH/data/eppy/branches" | cut -c1-10)" "$mode_before" "the port keeps the record's mode"
+same retire eppy
+assert_eq "$(shim_out)" "already retired: # retired STAMP" "the already-retired line"
+same_record eppy
+assert_eq "$(grep -c '^# retired' "$NH/data/eppy/branches")" "1" "one marker line"
+same verify eppy localonly
+assert_eq "$(shim_err)" "ERROR: verify: the eppy record is retired (# retired STAMP) - a retired epic has no integration branch; re-record on the captain's word if the epic truly reopens" "verify names the retirement"
+same create eppy proj
+assert_eq "$(shim_err)" "ERROR: create: the eppy record is retired (# retired STAMP) - a retired epic has no integration branch; re-record on the captain's word if the epic truly reopens" "create names the retirement"
+same show eppy
+assert_contains "$(shim_out)" "# retired STAMP" "show prints a retired record"
+# 9. an archived record: show, verify, retire in place, show; the year glob in byte order
+archive_eppy2() {
+  rec eppy2 'proj epic/eppy2\n'
+  mkdir -p "$H/data/archive/2026"; mv "$H/data/eppy2" "$H/data/archive/2026/eppy2"
+}
+both archive_eppy2
+same show eppy2
+assert_eq "$(shim_out)" "# HOME/data/archive/2026/eppy2/branches
+proj epic/eppy2" "an archived record resolves"
+same verify eppy2 proj
+assert_eq "$(shim_err)" "ERROR: verify: epic/eppy2 is not on origin of proj - create it (ac-epic-branch.sh create eppy2 proj) before any story spawns against it" "verify reads the archived record"
+same retire eppy2
+assert_eq "$(shim_out)" "retired: epic eppy2 record at HOME/data/archive/2026/eppy2/branches" "retire rewrites it in place under archive/"
+same_record archive/2026/eppy2
+same show eppy2
+years() {
+  mkdir -p "$H/data/archive/10/yr" "$H/data/archive/9/yr"
+  printf 'proj epic/ten\n' >"$H/data/archive/10/yr/branches"; printf 'proj epic/nine\n' >"$H/data/archive/9/yr/branches"
+}
+both years
+same show yr
+assert_eq "$(shim_out)" "# HOME/data/archive/10/yr/branches
+proj epic/ten" "the first year in byte order (digits sort alike under every collation)"
+# 10. never recorded: the two distinct refusals
+same show never-was
+assert_eq "$(shim_err)" "ERROR: show: no branches record for epic never-was (live or archived) - this epic was never branch-recorded" "show's miss"
+same retire never-was
+assert_eq "$(shim_err)" "ERROR: retire: no branches record for epic never-was - nothing to retire" "retire's miss"
+# 11. arity first: no verb, a short create, a bare show, an unknown verb, too many
+same
+same create eppy
+same show
+same bogus eppy
+same create a b c d
+same show eppy extra
+assert_eq "$(shim_err)" "ERROR: usage: ac-epic-branch.sh create|verify <epic> <repo> | show|retire <epic>" "the usage line"
+# 12. the freshest-ref arms: local ahead, diverged, master with origin/HEAD gone, a trunk HEAD, a detached HEAD (git's own failure)
+localcommit() {  # local main = origin's tip + one unpushed commit
+  git -C "$H/projects/proj" fetch -q origin; git -C "$H/projects/proj" merge -q --ff-only origin/main
+  printf 'local\n' >>"$H/projects/proj/file.txt"; git -C "$H/projects/proj" add -A; gitc -C "$H/projects/proj" commit -qm local
+}
+both localcommit
+both rec ahead 'proj epic/ahead\n'
+same create ahead proj
+assert_eq "$(shim_out)" "created: epic/ahead on origin of proj at $(git -C "$NH/projects/proj" rev-parse main)" "a local main ahead of origin is the cut"
+same_tip upstream refs/heads/epic/ahead
+both advance diverge
+both rec diverged 'proj epic/diverged\n'
+same create diverged proj
+assert_eq "$(shim_out)" "created: epic/diverged on origin of proj at $(git -C "$NH/upstream" rev-parse main)" "a diverged main cuts at origin's tip"
+same_tip upstream refs/heads/epic/diverged
+masterrepo() {
+  mkrepo "$H/upstream-master" master
+  mkclone "$H/upstream-master" "$H/projects/pm"
+  git -C "$H/projects/pm" symbolic-ref --delete refs/remotes/origin/HEAD
+  rec mast 'pm epic/m\n'
+}
+both masterrepo
+same create mast pm
+assert_eq "$(shim_out)" "created: epic/m on origin of pm at $(git -C "$NH/upstream-master" rev-parse master)" "no origin/HEAD, no main: the master arm"
+same_tip upstream-master refs/heads/epic/m
+trunkrepo() { mkrepo "$H/projects/trunky" trunk; rec trunk 'trunky epic/tr\n'; }
+both trunkrepo
+same create trunk trunky
+assert_eq "$(shim_out)" "created: epic/tr in trunky (local-only repo)" "a trunk HEAD is the default"
+same_tip projects/trunky refs/heads/epic/tr
+detachedrepo() {
+  mkrepo "$H/projects/det" trunk; git -C "$H/projects/det" checkout -q --detach; rec det 'det epic/d\n'
+  mkrepo "$H/upstream-trunk" trunk
+  mkclone "$H/upstream-trunk" "$H/projects/dtr"
+  # create's fetch would put origin/HEAD back (git >= 2.48 follows the remote
+  # HEAD) and the trunk arm would cut; the arm under test is `main` by default
+  # with nothing to resolve it.
+  git -C "$H/projects/dtr" config remote.origin.followRemoteHEAD never
+  git -C "$H/projects/dtr" symbolic-ref --delete refs/remotes/origin/HEAD
+  git -C "$H/projects/dtr" checkout -q --detach
+  rec dtr 'dtr epic/dt\n'
+}
+both detachedrepo
+same create det det
+assert_contains "$(shim_err)" "not a valid object name" "a detached local-only repo: git branch's own refusal, its status the run's"
+same create dtr dtr
+assert_contains "$(shim_err)" "fatal: ambiguous argument 'main'" "a detached origin-backed repo: git rev-parse's own refusal, its status the run's"
+# 13. awk's numeric ==: repo 7 takes the 07 entry
+numrepo() { mkrepo "$H/projects/7" main; rec num '07 epic/a\n7 epic/b\n'; }
+both numrepo
+same create num 7
+assert_eq "$(shim_out)" "created: epic/a in 7 (local-only repo)" "07 reads as 7 (the bash reader's awk, kept)"
+same_tip projects/7 refs/heads/epic/a
+same_tip projects/7 refs/heads/epic/b
+# 14. is row 7's TAB and run records.
+# 15. a push origin refuses, then an origin that cannot be fetched: git's own lines, then the refusal
+refuse() { printf '#!/bin/sh\necho "pre-receive: refused" >&2\nexit 1\n' >"$H/upstream/.git/hooks/pre-receive"; chmod +x "$H/upstream/.git/hooks/pre-receive"; }
+both refuse
+both rec pushfail 'proj epic/pf\n'
+same create pushfail proj
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "ERROR: create: pushing epic/pf to origin of proj failed" "the push refusal"
+assert_contains "$(shim_err)" "pre-receive: refused" "git's own stderr passed through"
+unrefuse() { rm -f "$H/upstream/.git/hooks/pre-receive"; }
+both unrefuse
+nowhere() { git -C "$H/projects/proj" remote set-url origin "$H/nowhere"; }
+both nowhere
+same create pushfail proj
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "ERROR: create: fetch origin failed for proj - the branch must be cut at origin's real tip, not a stale mirror" "the fetch refusal"
+assert_contains "$(shim_err)" "does not appear to be a git repository" "git's own stderr passed through"
+back() { git -C "$H/projects/proj" remote set-url origin "$H/upstream"; }
+both back
+# 16. homeless and an unreadable home
+for args in "create eppy proj" "verify eppy proj" "show eppy" "retire eppy"; do
+  o_rc=0; (cd "$TMP" && AC_HOME= LC_ALL=C "$obin/ac-epic-branch.sh" $args) >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+  n_rc=0; (cd "$TMP" && AC_HOME= LC_ALL=C "$BIN/ac-epic-branch.sh" $args) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+  assert_eq "$o_rc $n_rc" "1 1" "homeless '$args': both refuse"
+  assert_eq "$(cat "$TMP/o.raw" "$TMP/n.raw")" "" "homeless '$args': nothing on stdout"
+  assert_eq "$(head -n 1 "$TMP/n.err")" "$(head -n 1 "$TMP/o.err")" "homeless '$args': the same refusal line"
+  assert_contains "$(head -n 1 "$TMP/n.err")" "ERROR: AC_HOME is not set" "homeless '$args': names the variable"
+  # Named divergence: the original printed the refusal twice (ac_data_dir ran
+  # on both rungs of the resolver) and then the verb's own no-record line - the
+  # resolver carried on after the refusal, reading /<epic>/branches. An
+  # artifact; the port stops at the refusal.
+  assert_eq "$(wc -l <"$TMP/o.err" | tr -d ' ')" "3" "homeless '$args': the original says it twice and goes on"
+  assert_eq "$(wc -l <"$TMP/n.err" | tr -d ' ')" "1" "homeless '$args': the port says it once"
+  o_rc=0; (cd "$TMP" && AC_HOME=/nonexistent/ac-eb LC_ALL=C "$obin/ac-epic-branch.sh" $args) >/dev/null 2>"$TMP/o.err" || o_rc=$?
+  n_rc=0; (cd "$TMP" && AC_HOME=/nonexistent/ac-eb LC_ALL=C "$BIN/ac-epic-branch.sh" $args) >/dev/null 2>"$TMP/n.err" || n_rc=$?
+  assert_eq "$o_rc $n_rc" "1 1" "unreadable home '$args': both exit 1"
+  assert_contains "$(cat "$TMP/o.err")" "No such file or directory" "unreadable home: the original fails in cd (shell-own stderr)"
+  assert_eq "$(cat "$TMP/n.err")" "ERROR: AC_HOME is not a readable directory: /nonexistent/ac-eb" "unreadable home: the port names the variable"
+done
+# the fence and the arity check precede the home
+for args in "create eppy proj" "retire eppy"; do
+  o_rc=0; (cd "$TMP" && AC_HOME= AC_SCOPE=x LC_ALL=C "$obin/ac-epic-branch.sh" $args) 2>"$TMP/o.err" || o_rc=$?
+  n_rc=0; (cd "$TMP" && AC_HOME= AC_SCOPE=x LC_ALL=C "$BIN/ac-epic-branch.sh" $args) 2>"$TMP/n.err" || n_rc=$?
+  assert_eq "$o_rc $n_rc" "1 1" "homeless scoped '$args': both refuse"
+  assert_eq "$(cat "$TMP/n.err")" "$(cat "$TMP/o.err")" "homeless scoped '$args': the fence, whole"
+  assert_contains "$(cat "$TMP/n.err")" "CREWCHIEF" "homeless scoped '$args': the fence first"
+done
+o_rc=0; (cd "$TMP" && AC_HOME= "$obin/ac-epic-branch.sh" create eppy) 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; (cd "$TMP" && AC_HOME= "$BIN/ac-epic-branch.sh" create eppy) 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$o_rc $n_rc" "1 1" "homeless usage: both exit 1"
+assert_eq "$(cat "$TMP/n.err")" "$(cat "$TMP/o.err")" "homeless: usage is checked before the home"
+# 17. a record this process cannot read: exit and stdout agree; the oracle's
+#     stderr carries head/awk/cat's own lines before (or instead of) the
+#     refusal, not reproduced. Root reads a mode-000 file, so unprivileged only.
+if [ "$(id -u)" -ne 0 ]; then
+  both rec locked 'proj epic/l\n'
+  chmod 000 "$OH/data/locked/branches" "$NH/data/locked/branches"
+  for args in "create locked proj" "show locked" "retire locked"; do
+    o_rc=0; run_oracle $args || o_rc=$?
+    n_rc=0; run_shim $args || n_rc=$?
+    assert_eq "$n_rc $o_rc" "1 1" "unreadable record '$args': both exit 1"
+    assert_eq "$(norm "$TMP/n.raw" "$NH")" "$(norm "$TMP/o.raw" "$OH")" "unreadable record '$args': the same stdout"
+    assert_eq "$(tail -n 1 "$TMP/n.err")" "$(tail -n 1 "$TMP/o.err" | grep '^ERROR:' || true)" "unreadable record '$args': the port's stderr is the refusal alone"
+  done
+  chmod 644 "$OH/data/locked/branches" "$NH/data/locked/branches"
+  assert_eq "$(cat "$NH/data/locked/branches")" "proj epic/l" "an unreadable record is left as it was"
+fi
+
 pass
