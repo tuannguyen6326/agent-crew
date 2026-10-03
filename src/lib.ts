@@ -79,18 +79,15 @@ function namedCwd(): string | null {
   }
 }
 
-// ac_home_resolve's no-flag rungs: `cd "$AC_HOME" && pwd -P`, or "" when
-// unset - a homeless caller is legitimate and decides what "no home" means.
-// A chdir round-trip, not realpath: cd tries the logical spelling (link/..
-// walks back up the link) before the physical one, needs only search
-// permission, and takes spellings Bun's realpath refuses (over PATH_MAX, a
-// backslash). A home Bun cannot name (a trailing backslash) is refused where
-// ac_home_resolve accepts it: failing closed beats reading its sibling.
-export function envHome(): string {
-  const h = process.env.AC_HOME;
-  if (!h) return "";
+// `cd "$1" && pwd -P`, or null when the cd fails. A chdir round-trip, not
+// realpath: cd tries the logical spelling (link/.. walks back up the link)
+// before the physical one, needs only search permission, and takes spellings
+// Bun's realpath refuses (over PATH_MAX, a backslash). A directory Bun cannot
+// name (a trailing backslash) is null where cd entered it: failing closed
+// beats reading its sibling. "" is the cwd, the no-op `cd ""` is.
+export function physicalDir(p: string): string | null {
   const here = process.cwd();
-  for (const dir of [resolve(h), h]) {
+  for (const dir of [resolve(p), p]) {
     try {
       process.chdir(dir);
       const named = namedCwd();
@@ -100,7 +97,15 @@ export function envHome(): string {
       process.chdir(here);
     }
   }
-  die(`AC_HOME is not a readable directory: ${h}`);
+  return null;
+}
+
+// ac_home_resolve's no-flag rungs: `cd "$AC_HOME" && pwd -P`, or "" when
+// unset - a homeless caller is legitimate and decides what "no home" means.
+export function envHome(): string {
+  const h = process.env.AC_HOME;
+  if (!h) return "";
+  return physicalDir(h) ?? die(`AC_HOME is not a readable directory: ${h}`);
 }
 
 // The shell's [:space:] under the operators' UTF-8 locale (measured, bash
