@@ -240,9 +240,9 @@ assert_eq "$(shim_err)" "ERROR: --container needs a path" "row 8: the port's own
 assert_contains "$(oracle_err)" "2: --container needs a path" "row 8: the oracle's shell-own line"
 ERR=own same nu --container
 assert_eq "$(shim_err)" "ERROR: --container needs a path" "row 8: the port's own line for a trailing --container"
-same xi --container /nope --container "$C"
+same xi --container "$WORLD/nope" --container "$C"
 assert_eq "$(shim_out)" "$C/xi" "row 8: the last --container wins"
-assert_no_file /nope "row 8: the losing --container is never made"
+assert_no_file "$WORLD/nope" "row 8: the losing --container is never made"
 same a b
 assert_eq "$(shim_err)" "ERROR: unexpected argument: b" "row 8: a second bare word"
 same --bogus
@@ -290,7 +290,7 @@ assert_eq "$(shim_err)" "ERROR: fleet home already exists: $C/alpha" "row 10: a 
 # W1: a DANGLING symlink fails `[ -e ]`, so the nine questions are asked and the
 # seed's `mkdir -p` fails with mkdir's own line - exit 1 after the captain's
 # answers, on both sides (the header's promise broken; a filed defect).
-PLANT="ln -s /nope/gone $C/alpha" same alpha --container "$C"
+PLANT="ln -s $WORLD/nope/gone $C/alpha" same alpha --container "$C"
 assert_eq "$LAST_RC" 1 "row 10: a dangling symlink at the home path fails"
 assert_contains "$(shim_err)" "seed a per-fleet CREWMATE.md yes|no (empty: no - inherit the container-wide .claude/CLAUDE.md): mkdir: $C/alpha: No such file or directory" "row 10: W1 - the questions were spent, then mkdir's own line"
 PLANT="touch $WORLD/cf" same omicron --container "$WORLD/cf"
@@ -324,9 +324,9 @@ assert_eq "$(shim_err)" "ERROR: HOME is not set" "row 12: HOME unset with no con
 assert_eq "$(cat "$TMP/n.raw")" "" "row 12: nothing on stdout"
 NOHOME=1 same chi --container "$C"
 assert_eq "$LAST_RC" 0 "row 12: HOME unset is fine when nothing reads it"
-HOMEV="" same psi --container '~/x'
-assert_eq "$LAST_RC" 1 "row 12: an EMPTY HOME expands ~/x to /x, which mkdir refuses on both sides"
-assert_contains "$(shim_err)" "mkdir: /x: " "row 12: mkdir's own line for /x"
+HOMEV="" same psi --container "~/${WORLD#/}/pc"
+assert_eq "$LAST_RC" 0 "row 12: an EMPTY HOME is a value - ~/<path> expands to /<path> on both sides"
+assert_eq "$(shim_out)" "$WORLD/pc/psi" "row 12: the home sits under the expanded container"
 
 # 13. the CREWMATE.md source missing from the root: cp's own line, exit 1, a
 # half-seeded home left behind that the next run refuses. Reachable only for the
@@ -343,5 +343,28 @@ run_side "$obin" "$TMP/o.raw" "$TMP/o.rawerr" omega --container "$C" && o_rc=0 |
 assert_eq "$o_rc" 1 "row 13: the next run refuses the half-seeded home"
 assert_eq "$(cat "$TMP/o.rawerr")" "ERROR: fleet home already exists: $C/omega" "row 13: as already existing"
 ln -s "$ROOT/docs" "$OROOT/docs"
+
+# 16. a child ended by a signal: 128+signal on both sides (bash's own
+#     `Terminated: 15` line is shell-own stderr, not reproduced); the mkdir
+#     stub dies on the HOME's own mkdir, after the questions, and passes every
+#     other call to the real mkdir (the test's world is made through PATH too)
+mkdir -p "$TMP/killmkdir"; printf '#!/bin/sh\ncase "$*" in *"/c/sig") kill -TERM $$ ;; *) exec /bin/mkdir "$@" ;; esac\n' >"$TMP/killmkdir/mkdir"; chmod +x "$TMP/killmkdir/mkdir"
+feed "$ALL9"
+PATH="$TMP/killmkdir:$PATH" ERR=own same sig --container "$C"
+assert_eq "$LAST_RC" 143 "row 16: 128+SIGTERM on both sides"
+assert_contains "$(shim_err)" "seed a per-fleet CREWMATE.md yes|no" "row 16: the questions were asked first"
+assert_eq "$(shim_err | /usr/bin/grep -c -i 'terminated')" "0" "row 16: the port adds no line of its own"
+assert_no_file "$C/sig" "row 16: nothing made"
+
+# 17. a typed container holding a byte that is not UTF-8: the bash handed mkdir
+#     the bytes and this filesystem refused them (`Illegal byte sequence`, exit
+#     1, nothing made); the port refuses before mkdir with its own line - the
+#     same result, the tool's line not reproduced (named)
+feed "$WORLD/c\377\n$ALL9"
+ERR=own same tau
+assert_eq "$LAST_RC" 1 "row 17: both refuse"
+assert_contains "$(oracle_err)" "Illegal byte sequence" "row 17: mkdir's own line on the original"
+assert_contains "$(shim_err | od -An -c | tr -d ' \n')" "$(printf 'ERROR: homes container holds a byte that is not UTF-8: %s/c\377\n' "$WORLD" | od -An -c | tr -d ' \n')" "row 17: the port's line carries the bytes (after the prompt, on the same stderr line)"
+assert_eq "$(ls "$WORLD/c")" "" "row 17: nothing made under the container"
 
 pass

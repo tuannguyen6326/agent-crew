@@ -128,13 +128,18 @@
 // Bytes: an answer is written as its bytes; the name echoed in a refusal is
 // the argv word as Bun decodes it (a non-UTF-8 byte reads as U+FFFD - refused
 // either way, echoed differently; named) or the answer's bytes. A container
-// answer is taken as UTF-8 (one that is not is mangled where the bash passed
-// its bytes; named). `-h` prints THIS header where the bash printed its own
+// answer holding a byte that is not UTF-8 is refused before mkdir (`ERROR:
+// homes container holds a byte that is not UTF-8: <bytes>`, exit 1, nothing
+// made) where the bash handed mkdir the bytes and this filesystem refused
+// them with mkdir's own `Illegal byte sequence` (exit 1, nothing made) - the
+// same result, the entry's line for the tool's (named). A child ended by a
+// signal is 128+signal, as the shell read it. `-h` prints THIS header where the bash printed its own
 // (the USAGE HEADER ruling). Callers: no bin/, src/, dashboard/ or skill
 // runs this entry (bin/ac-setup.sh names its path as text; README.md and
 // docs/getting-started.md show it to humans), so no set -e caller needs a
 // fail-soft arm for the bun dependency.
 import { existsSync, readFileSync, readSync, writeFileSync, writeSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import { resolve } from "node:path";
 import { configDir, dataDir, die, enterCaller, physicalDir, projectsDir, recordsDir, seedRuntimeLinks, stateDir } from "./lib.ts";
 
@@ -203,9 +208,12 @@ function homeEnv(): string {
   return process.env.HOME ?? die("HOME is not set");
 }
 
+// The shell's status for a child: its exit, 128+signal when a signal ended it.
 function run(cmd: string[]): void {
   const r = Bun.spawnSync(cmd, { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
-  if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);
+  if (r.exitCode === 0) return;
+  const sig = r.signalCode ? (osConstants.signals as Record<string, number>)[r.signalCode] ?? 0 : 0;
+  process.exit(r.exitCode ?? 128 + sig);
 }
 
 function printHeader(): never {
@@ -245,7 +253,13 @@ function main(args: string[], atCaller: boolean): void {
 
   if (container === "") {
     const dflt = process.env.AC_HOMES_CONTAINER || `${homeEnv()}/Work/ac-homes`;
-    container = Buffer.from(ask(`homes container [${dflt}]`), "latin1").toString("utf8") || dflt;
+    const raw = ask(`homes container [${dflt}]`);
+    // The bash handed mkdir the bytes and this filesystem refused one that is
+    // not UTF-8 (exit 1, nothing made); a spawn here carries text, so such an
+    // answer is refused before mkdir rather than minted under U+FFFD.
+    const text = Buffer.from(raw, "latin1").toString("utf8");
+    if (Buffer.from(text, "utf8").toString("latin1") !== raw) die(Buffer.concat([Buffer.from("homes container holds a byte that is not UTF-8: "), Buffer.from(raw, "latin1")]));
+    container = text || dflt;
   }
   if (container === "~" || container.startsWith("~/")) container = untilde(container, homeEnv());
   if (!atCaller && !container.startsWith("/")) die("the current directory cannot be resolved, so a relative container cannot be either");

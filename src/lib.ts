@@ -235,7 +235,9 @@ export function seedRuntimeLinks(home: string): void {
     const p = join(home, f);
     if (existsSync(p) && !lstatSync(p).isSymbolicLink()) continue;
     const r = Bun.spawnSync(["ln", "-sfn", join(ROOT, f), p], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
-    if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);
+    if (r.exitCode === 0) continue;
+    const sig = r.signalCode ? (osConstants.signals as Record<string, number>)[r.signalCode] ?? 0 : 0;
+    process.exit(r.exitCode ?? 128 + sig);
   }
 }
 
