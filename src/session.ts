@@ -18,14 +18,16 @@
 // usage line included). A worktree that is gone is a WARN, never a refusal.
 //
 // The meta is read as bytes (latin1) and written back the same way, so a path
-// the bash original printed byte for byte still is; the id arrives from Bun's
-// UTF-8 argv and is folded into that byte space before it meets them.
+// the bash original printed byte for byte still is. The filesystem wants the
+// native (UTF-8) spelling of those bytes, and the id arrives native from Bun's
+// argv: each value keeps both forms, bytes for printing, native for paths.
 import { statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { die, enterCaller, metaGet, stateDir, warn } from "./lib.ts";
 
 const bin = join(import.meta.dir, "..", "bin");
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
+const native = (s: string): string => Buffer.from(s, "latin1").toString("utf8");
 const isFile = (p: string): boolean => {
   try {
     return statSync(p).isFile();
@@ -42,7 +44,8 @@ const isDir = (p: string): boolean => {
 };
 
 const { args } = enterCaller(process.argv.slice(2));
-const id = Buffer.from(args[0] ?? "", "utf8").toString("latin1");
+const id = args[0] ?? "";
+const idB = Buffer.from(id, "utf8").toString("latin1");
 if (!id) die("usage: ac-session.sh <id> [--talk]");
 const talk = args[1] === "--talk";
 
@@ -52,7 +55,7 @@ if (!isFile(meta)) {
   meta = join(stateDir(), "archive", id, "meta");
   live = false;
 }
-if (!isFile(meta)) die(b(`no crewmate meta for ${id}`));
+if (!isFile(meta)) die(b(`no crewmate meta for ${idB}`));
 // ac_meta_get's unreadable-file status is lost inside the bash `[ ... ]` the
 // harness check runs in, so an unreadable meta reads as no harness there.
 const field = (key: string): string => {
@@ -62,9 +65,9 @@ const field = (key: string): string => {
     return "";
   }
 };
-if (field("harness") !== "claude") die(b(`${id} is not a claude crewmate`));
+if (field("harness") !== "claude") die(b(`${idB} is not a claude crewmate`));
 const sid = field("session_id");
-if (!sid) die(b(`${id} has no recorded session_id (pre-plumbing task)`));
+if (!sid) die(b(`${idB} has no recorded session_id (pre-plumbing task)`));
 const worktree = field("worktree");
 
 if (talk && live) {
@@ -73,7 +76,7 @@ if (talk && live) {
   const r = Bun.spawnSync([join(bin, "ac-crew-state.sh"), id], { stdout: "pipe", stderr: "ignore" });
   const state = (r.stdout.toString("latin1") + (r.exitCode === 0 ? "" : "unknown")).replace(/\n+$/, "");
   if (state.startsWith("busy") || state.includes("working:") || state.startsWith("validate:"))
-    die(b(`REFUSED: ${id} is mid-turn (${state}) - two writers corrupt one session. Talk when it parks, or ac-follow.sh to watch now.`));
+    die(b(`REFUSED: ${idB} is mid-turn (${state}) - two writers corrupt one session. Talk when it parks, or ac-follow.sh to watch now.`));
   // An unknown backend must not proceed here, the same direction as the
   // collision-refusal guard (ac-spawn.sh reap_orphan_window): writing an
   // un-forked --talk into a pane that turns out to still be mid-turn corrupts
@@ -82,10 +85,10 @@ if (talk && live) {
   // unknown - there is no write here to withhold, so refusing IS this
   // guard's "do nothing").
   if (state.startsWith("unobservable"))
-    die(b(`REFUSED: the backend for ${id} could not be read (${state}) - liveness is UNKNOWN, and two writers corrupt one session if it is still mid-turn. Check the backend (herdr status server), then talk again once it is readable.`));
+    die(b(`REFUSED: the backend for ${idB} could not be read (${state}) - liveness is UNKNOWN, and two writers corrupt one session if it is still mid-turn. Check the backend (herdr status server), then talk again once it is readable.`));
 }
 
-if (!isDir(worktree)) warn(b(`worktree ${worktree} is gone; mkdir -p it to let --resume load the transcript`));
+if (!isDir(native(worktree))) warn(b(`worktree ${worktree} is gone; mkdir -p it to let --resume load the transcript`));
 if (talk) {
   writeSync(1, b(`# TALK: un-forked - your words become part of what --resume-from continues\ncd '${worktree}' && claude --resume ${sid}\n`));
 } else {

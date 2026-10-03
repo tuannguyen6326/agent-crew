@@ -40,15 +40,22 @@ function prefixed(prefix: string, msg: string | Uint8Array): Uint8Array {
 // Bytes in, bytes out: the value is latin1 so a caller can print it as the
 // shell would, byte for byte.
 export function metaGet(file: string, key: string): string {
+  // `[ -f ]` first, as the bash: a FIFO or a directory is never opened (a FIFO
+  // read would wait for a writer), and a file gone by this instant is absent.
+  try {
+    if (!statSync(file).isFile()) return "";
+  } catch {
+    return "";
+  }
   let text: string;
   try {
     text = readFileSync(file, "latin1");
   } catch (e) {
-    let regular = false;
     try {
-      regular = statSync(file).isFile();
-    } catch {}
-    if (!regular) return "";
+      statSync(file);
+    } catch {
+      return "";
+    }
     warn(`cannot read meta file ${file}`);
     throw e;
   }

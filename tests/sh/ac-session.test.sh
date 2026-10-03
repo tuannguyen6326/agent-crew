@@ -99,6 +99,16 @@ same t6 --talk
 printf 'worktree=/one\r\nworktree=/tmp/đường\nharness=claude\nsession_id=a=b=c\n' >"$AC_HOME/state/t7.meta"
 same t7
 same t7 --talk
+# A worktree that EXISTS under a UTF-8 name: no WARN from either side; and a
+# non-ASCII id is looked up by its native spelling, found where the bash finds it.
+mkdir -p "$TMP/wt-đã-có"
+printf 'worktree=%s\nharness=claude\nbackend=herdr\nsession_id=00000000-0000-0000-0000-000000000008\n' "$TMP/wt-đã-có" >"$AC_HOME/state/t8.meta"
+same t8
+same t8 --talk
+printf 'worktree=%s\nharness=claude\nbackend=herdr\nsession_id=00000000-0000-0000-0000-000000000009\n' "$TMP/wt-đã-có" >"$AC_HOME/state/tđ9.meta"
+same tđ9
+same tđ9 --talk
+same tđ-missing
 # Homeless: the same refusal, exit 1. The ONE accepted divergence: the bash
 # original printed it twice (ac_home died inside the $(ac_state_dir) nested in
 # ac_task_meta's printf, whose status the assignment swallowed, then again on

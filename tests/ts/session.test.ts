@@ -51,6 +51,13 @@ test("metaGet reads what ac_meta_get reads, over every line shape a meta carries
     mkdirSync(join(dir, "adir.meta"));
     expect(metaGet(join(dir, "adir.meta"), "harness")).toBe("");
     expect(bashMetaGet(join(dir, "adir.meta"), "harness")).toEqual({ out: "", rc: 0 });
+    // A FIFO with no writer: never opened (a read would wait), empty at once.
+    const fifo = join(dir, "fifo.meta");
+    expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
+    const t0 = Date.now();
+    expect(metaGet(fifo, "harness")).toBe("");
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(bashMetaGet(fifo, "harness")).toEqual({ out: "", rc: 0 });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
