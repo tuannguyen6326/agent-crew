@@ -362,4 +362,64 @@ printf 'backend=tmux\npr=https://github.com/a/b/pull/7\351\npr_head=deadbeefcafe
 printf 'backend=tmux\npr=https://github.com/a/b/pull/7\357\277\275\npr_head=deadbeefcafe\n' | cmp -s - "$NH/state/t1.meta" || fail "the port records U+FFFD"
 assert_contains "$(cat "$NH.gh")" "$(printf 'pull/7\357\277\275]')" "the port passed U+FFFD to gh"
 
+# 21. date(1) failing when the status is stamped: the meta is already rewritten
+#     (both gh calls and both rewrites precede it), the run ends with date's
+#     status, no status line, no timeline - the bash's errexit on `ts="$(ac_iso)"`
+reset_homes; seed state/t1.meta 'backend=tmux\nkind=ship\n'
+mkdir -p "$TMP/baddate"; printf '#!/bin/sh\ncase "$*" in "-u +%%Y-%%m-%%dT%%H:%%M:%%SZ") exit 3 ;; *) exec /bin/date "$@" ;; esac\n' >"$TMP/baddate/date"; chmod +x "$TMP/baddate/date"
+o_rc=0; n_rc=0
+(cd "$TMP" && env AC_HOME="$OH" LC_ALL=C PATH="$TMP/baddate:$STUBS:$PATH" GH_LOG="$OH.gh" GH_HEAD='deadbeefcafe\n' GH_STATE='OPEN\n' GH_RC_HEAD=0 GH_RC_STATE=0 GH_ERR_HEAD= GH_ERR_STATE= "$obin/ac-pr-check.sh" t1 "$U") >"$TMP/o.raw" 2>"$TMP/o.rawerr" || o_rc=$?
+(cd "$TMP" && env AC_HOME="$NH" LC_ALL=C PATH="$TMP/baddate:$STUBS:$PATH" GH_LOG="$NH.gh" GH_HEAD='deadbeefcafe\n' GH_STATE='OPEN\n' GH_RC_HEAD=0 GH_RC_STATE=0 GH_ERR_HEAD= GH_ERR_STATE= "$BIN/ac-pr-check.sh" t1 "$U") >"$TMP/n.raw" 2>"$TMP/n.rawerr" || n_rc=$?
+assert_eq "$n_rc $o_rc" "3 3" "date failing: both end with date's status"
+assert_eq "$(cat "$TMP/o.raw" "$TMP/n.raw" "$TMP/o.rawerr" "$TMP/n.rawerr")" "" "date failing: nothing printed on either side"
+snap "$OH" "$TMP/o.tree"; snap "$NH" "$TMP/n.tree"
+cmp -s "$TMP/o.tree" "$TMP/n.tree" || fail "date failing: the homes differ: $(diff "$TMP/o.tree" "$TMP/n.tree" | head -n 6)"
+meta_is "backend=tmux\nkind=ship\npr=$U\npr_head=deadbeefcafe\n"
+assert_no_file "$NH/state/t1.status" "date failing: no status line"
+assert_no_file "$NH/data/t1/timeline.log" "date failing: no timeline"
+
+# 22. the status file cannot be appended (mode 000): the bash's errexit on the
+#     `>>` ended the run with exit 1 and bash's own redirection line, before any
+#     mirror; the port refuses with its line (shell-own stderr not reproduced) -
+#     the meta rewritten on both sides, no timeline (root writes it: unprivileged only)
+if [ "$(id -u)" != 0 ]; then
+  reset_homes; seed state/t1.meta 'backend=tmux\nkind=ship\n'; seed state/t1.status ''
+  chmod 000 "$OH/state/t1.status" "$NH/state/t1.status"
+  o_rc=0; n_rc=0
+  oracle t1 "$U" || o_rc=$?
+  shim t1 "$U" || n_rc=$?
+  chmod 644 "$OH/state/t1.status" "$NH/state/t1.status"
+  assert_eq "$n_rc $o_rc" "1 1" "unwritable status: both exit 1"
+  assert_eq "$(cat "$TMP/o.raw" "$TMP/n.raw")" "" "unwritable status: no receipt on either side"
+  assert_contains "$(cat "$TMP/o.rawerr")" "Permission denied" "unwritable status: bash's redirection line on the original"
+  assert_eq "$(cat "$TMP/n.rawerr")" "ERROR: cannot append $NH/state/t1.status" "unwritable status: the port's refusal"
+  meta_is "backend=tmux\nkind=ship\npr=$U\npr_head=deadbeefcafe\n"
+  printf 'backend=tmux\nkind=ship\npr=%s\npr_head=deadbeefcafe\n' "$U" | cmp -s - "$OH/state/t1.meta" || fail "unwritable status: the original rewrote the meta before the status"
+  assert_eq "$(cat "$OH/state/t1.status" "$NH/state/t1.status")" "" "unwritable status: no status line on either side"
+  assert_no_file "$NH/data/t1/timeline.log" "unwritable status: no mirror after the failed primary (port)"
+  assert_no_file "$OH/data/t1/timeline.log" "unwritable status: no mirror after the failed primary (original)"
+fi
+
+# 23. an id ending in LF: the meta and the status keep the LF in their names,
+#     the timeline lands under the LF-less dir `$(ac_task_dir)` captured
+#     (the leg's snap reads names line by line, so this row compares by hand)
+reset_homes; seed "state/t1
+.meta" 'backend=tmux\nkind=ship\n'
+o_rc=0; n_rc=0
+oracle "t1
+" "$U" || o_rc=$?
+shim "t1
+" "$U" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "LF id: both record"
+assert_eq "$(norm "$TMP/n.raw" "$NH")" "$(norm "$TMP/o.raw" "$OH")" "LF id: the same receipt"
+for h in "$OH" "$NH"; do
+  [ -f "$h/data/t1/timeline.log" ] || fail "LF id: the timeline must sit under the LF-less dir ($h)"
+  [ -f "$h/state/t1
+.status" ] || fail "LF id: the status keeps the LF in its name ($h)"
+  [ -f "$h/state/t1
+.meta" ] || fail "LF id: the meta keeps the LF in its name ($h)"
+done
+assert_eq "$(cat "$NH/data/t1/timeline.log")" "$(cat "$OH/data/t1/timeline.log")" "LF id: the same timeline line"
+assert_eq "$(cat "$NH/data/t1/timeline.log")" "$ISO PR ready: $U (OPEN)" "LF id: the timeline line"
+
 pass

@@ -58,11 +58,17 @@
 //                     13 remaining callers are a defect slice of their own).
 //                     The meta's mode is kept (the bash left 0644).
 //   state/<id>.status `<iso> PR ready: <url> (<state>)\n` appended, <iso> from
-//                     the PATH's date(1); a failed append refuses `ERROR:
-//                     cannot append <status>: <code>`, exit 1.
+//                     the PATH's date(1) - a date that fails ends the run with
+//                     ITS status, the meta already rewritten, nothing else
+//                     written (the bash's errexit on `ts="$(ac_iso)"`); a
+//                     failed append refuses `ERROR: cannot append <status>`,
+//                     exit 1, before any mirror (errexit on the `>>`).
 //   <taskDir>/timeline.log  the same line, fail-soft: created with the dir for
 //                     a task whose meta exists, skipped for a `kind=verify-*`
-//                     meta or an ambiguous brief layout (taskDir, src/lib.ts).
+//                     meta or an ambiguous brief layout (taskDir, src/lib.ts);
+//                     the dir as `$(ac_task_dir)` captured it, trailing LF
+//                     gone, so an id ending in LF mirrors under the LF-less
+//                     name while its meta and status keep the LF.
 // stdout, exit 0:
 //   recorded pr=<url> pr_head=<head> state=<state>
 // url, head and state print as their bytes. An argv byte that is not valid
@@ -113,5 +119,13 @@ try {
   if (err.code === "EMV") process.exit(err.status ?? 1);
   die(b(`cannot rewrite ${bytes(meta)}: ${err.code ?? "error"}`));
 }
-if (!statusAppend(id, `PR ready: ${bytes(url)} (${state})`)) die(b(`cannot append ${bytes(taskStatus(id))}`));
+let appended = false;
+try {
+  appended = statusAppend(id, `PR ready: ${bytes(url)} (${state})`, true);
+} catch (e) {
+  const err = e as { code?: string; status?: number };
+  if (err.code === "EDATE") process.exit(err.status ?? 1);
+  throw e;
+}
+if (!appended) die(b(`cannot append ${bytes(taskStatus(id))}`));
 writeSync(1, b(`recorded pr=${bytes(url)} pr_head=${head} state=${state}\n`));

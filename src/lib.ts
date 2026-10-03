@@ -701,7 +701,8 @@ function statusTimelineMirror(id: string, rec: Buffer): void {
   if (metaIsVerify(meta)) return;
   let dir: string;
   try {
-    dir = taskDir(id);
+    // `$(ac_task_dir ...)`: the capture lost every trailing LF of the path.
+    dir = taskDir(id).replace(/\n+$/, "");
   } catch {
     return;
   }
@@ -721,15 +722,29 @@ function statusTimelineMirror(id: string, rec: Buffer): void {
 // ac_status_append's twin: `<iso> <line>\n` appended to the task's status log,
 // then mirrored to its durable timeline. The primary write's own failure is
 // the answer (false), the mirror never changes it. line is bytes (latin1), id
-// a path component.
-export function statusAppend(id: string, line: string): boolean {
-  const rec = Buffer.from(`${iso()} ${line}\n`, "latin1");
+// a path component. `unguarded` is the caller whose bash ran the helper under
+// errexit (ac-pr-check.sh's bare call): a date(1) that fails ends it with
+// date's status before any write (thrown here as code EDATE), and a failed
+// primary append ends it before the mirror - the guarded callers' bash (`||`)
+// slept through both and mirrored anyway.
+export function statusAppend(id: string, line: string, unguarded = false): boolean {
+  let stamp: string;
+  if (unguarded) {
+    let r: ReturnType<typeof Bun.spawnSync> | null = null;
+    try {
+      r = Bun.spawnSync(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdin: "ignore", stdout: "pipe", stderr: "inherit", env: process.env });
+    } catch {}
+    if (r === null || r.exitCode !== 0) throw Object.assign(new Error("date failed"), { code: "EDATE", status: r?.exitCode ?? 127 });
+    stamp = r.stdout.toString("latin1").replace(/\n+$/, "");
+  } else stamp = iso();
+  const rec = Buffer.from(`${stamp} ${line}\n`, "latin1");
   let ok = true;
   try {
     appendFileSync(taskStatus(id), rec);
   } catch {
     ok = false;
   }
+  if (!ok && unguarded) return false;
   statusTimelineMirror(id, rec);
   return ok;
 }
