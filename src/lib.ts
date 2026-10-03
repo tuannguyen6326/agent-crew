@@ -486,3 +486,88 @@ export function bunChild(module: string, args: string[]): { cmd: string[]; cwd: 
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(BUN_|JSC_)/.test(k)) env[k] = v;
   return { cmd: [process.execPath, "--no-env-file", join(ROOT, module), atCallerCwd ? process.cwd() : "", ...args], cwd: ROOT, env };
 }
+
+// --- fleets twins ---
+// Appended with their own import so parallel slices adding twins below never
+// touch the header's import line.
+import { accessSync, constants as fsConstants } from "node:fs";
+
+// The shell's [:space:] (SHELL_TRIM) over a value read as bytes: a valid UTF-8
+// value is trimmed as its characters, an invalid one of ASCII whitespace only.
+function trimShellSpaceBytes(b: string): string {
+  const u = Buffer.from(b, "latin1").toString("utf8");
+  if (Buffer.from(u, "utf8").toString("latin1") !== b) return b.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g, "");
+  return Buffer.from(u.replace(SHELL_TRIM, ""), "utf8").toString("latin1");
+}
+
+// bin/ac-fleets.sh cfg_read's twin, the per-directory cousin of configRead
+// (which is bound to AC_HOME): the first line of <cfgDir>/<name>, NULs dropped
+// as a command substitution drops them, [:space:]-trimmed, <dflt> when the
+// file is absent or no regular file. Bytes in, bytes out (latin1), so a value
+// prints as the shell printed it; a present-but-unreadable file throws.
+export function configReadDir(cfgDir: string, name: string, dflt = ""): string {
+  const f = join(cfgDir, name);
+  try {
+    if (!statSync(f).isFile()) return dflt;
+  } catch {
+    return dflt;
+  }
+  return trimShellSpaceBytes(readFileSync(f, "latin1").split("\n")[0]!.replace(/\u0000/g, ""));
+}
+
+// ac_meta_is_verify's twin: the meta's kind is `verify-*`. An absent, kind-less
+// or unreadable meta is not one, and the unreadable case stays silent - the
+// bash drops ac_meta_get's WARN there (`2>/dev/null`), so readability is
+// checked before metaGet gets to warn.
+export function metaIsVerify(file: string): boolean {
+  try {
+    accessSync(file, fsConstants.R_OK);
+    return metaGet(file, "kind").startsWith("verify-");
+  } catch {
+    return false;
+  }
+}
+
+// ac_wake_scope_ok's twin: a bare single path segment. Refuses per the text -
+// bash 3.2's `[!A-Za-z0-9_-]` under a UTF-8 locale collates letters such as
+// `é` inside the range and accepts them.
+export function wakeScopeOk(scope: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(scope);
+}
+
+// ac_watcher_beat_read's twin: the `<beat> <note>` line, note empty for a
+// usable beat. The beacon is `.last-watcher-beat[.<scope>]` (ac_watcher_beat_path);
+// its content loses trailing newlines and NULs as `$(cat)` loses them, then a
+// leading zero, any non-digit (a second line, a CR) or an empty read is the
+// unreadable 0 - so a zero-padded beat can never reach a caller's arithmetic.
+export function watcherBeatRead(stateDir: string, scope = ""): string {
+  const f = join(stateDir, wakeScopeOk(scope) ? `.last-watcher-beat.${scope}` : ".last-watcher-beat");
+  if (!existsSync(f)) return "0 no beat on record (no beacon - nothing has armed a watcher here)";
+  let beat = "";
+  try {
+    beat = readFileSync(f, "latin1").replace(/\u0000/g, "").replace(/\n+$/, "");
+  } catch {}
+  if (beat === "0") return "0 no beat on record (a watcher stood its beacon down on exit - drain and re-arm)";
+  if (!/^[1-9][0-9]*$/.test(beat)) return "0 no beat on record (the beacon is unreadable)";
+  return `${beat} `;
+}
+
+// ac_wake_family_spools' twin: every `state/.wake-spool.<family>` directory
+// (a symlink to one included) whose suffix is a legal family name - which
+// excludes the fleet spool, the drain claim dirs (`.wake-spool-draining.<pid>`)
+// and a dotted or empty suffix. Byte order, the repo's `LC_ALL=C sort` idiom.
+export function wakeFamilySpools(stateDir: string): string[] {
+  let names: string[] = [];
+  try {
+    names = readdirSync(stateDir);
+  } catch {}
+  const out: string[] = [];
+  for (const n of names.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) {
+    if (!n.startsWith(".wake-spool.") || !wakeScopeOk(n.slice(".wake-spool.".length))) continue;
+    const p = join(stateDir, n);
+    try {
+      if (statSync(p).isDirectory()) out.push(p);
+    } catch {}
+  }
+  return out;
+}

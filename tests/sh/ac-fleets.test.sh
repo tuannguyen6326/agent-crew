@@ -263,25 +263,29 @@ assert_eq "$(jq -r '.homes[0] | has("crew")' <<<"$pathsjson")" "false" \
 
 # --paths must never shell out to ac-room.sh at all: the whole point of item
 # (c) is that the per-room inbox tally is SKIPPED, not merely discarded
-# downstream. A copied lab bin/ resolves bin_dir to itself (dirname "$0"),
-# the same technique tests/sh/ac-watch-autoarm.test.sh uses to stub a sibling.
+# downstream. A copied lab bin/ is the bin/ the module calls its siblings
+# from (src/fleets.ts resolves ac-room.sh beside the bin/ it was started
+# from), the same technique tests/sh/ac-watch-autoarm.test.sh uses to stub a
+# sibling; the shim needs ac-bun.sh beside it and src/ linked beside the bin/
+# (the make_oracle_bin shape), since bin/ac-bun.sh starts <bin>/../src/<module>.
 lab="$TMP/fleets-lab"
-mkdir -p "$lab"
-cp "$BIN/ac-fleets.sh" "$BIN/ac-lib.sh" "$BIN/ac-wake-lib.sh" "$BIN/ac-harness.sh" "$lab/"
+mkdir -p "$lab/bin"
+cp "$BIN/ac-fleets.sh" "$BIN/ac-bun.sh" "$BIN/ac-lib.sh" "$BIN/ac-wake-lib.sh" "$BIN/ac-harness.sh" "$lab/bin/"
+ln -s "$ROOT/src" "$lab/src"
 roomcalls="$TMP/room-calls"
 : >"$roomcalls"
-cat >"$lab/ac-room.sh" <<STUB
+cat >"$lab/bin/ac-room.sh" <<STUB
 #!/usr/bin/env bash
 printf '.' >>"$roomcalls"
 STUB
-chmod +x "$lab/ac-room.sh"
-"$lab/ac-fleets.sh" --paths "$container" >/dev/null || fail "ac-fleets.sh --paths must exit 0 (lab copy)"
+chmod +x "$lab/bin/ac-room.sh"
+"$lab/bin/ac-fleets.sh" --paths "$container" >/dev/null || fail "ac-fleets.sh --paths must exit 0 (lab copy)"
 assert_eq "$(wc -c <"$roomcalls" | tr -d ' ')" "0" \
   "--paths never shells out to ac-room.sh - the inbox tally is skipped entirely, not just discarded"
 # --json, unchanged, still calls it (alpha + gamma) - proving the lab harness
 # itself is sound, not merely silent.
 : >"$roomcalls"
-"$lab/ac-fleets.sh" --json "$container" >/dev/null || fail "ac-fleets.sh --json must exit 0 (lab copy)"
+"$lab/bin/ac-fleets.sh" --json "$container" >/dev/null || fail "ac-fleets.sh --json must exit 0 (lab copy)"
 [ "$(wc -c <"$roomcalls" | tr -d ' ')" -gt 0 ] || fail "sanity: --json must still call ac-room.sh (lab harness check)"
 
 # -- wakes: a WHOLE-HOME tally across every scope's spool -------------------------
@@ -543,5 +547,305 @@ if [ "$(id -u)" != 0 ]; then
   assert_eq "$(jq -r '.homes[] | select(.name=="eps") | .inbox.unreadable' <<<"$uj")" "true" "--json flags the unreadable inbox"
   assert_eq "$(jq -r '.homes[] | select(.name=="eps") | .inbox.unreadable' <<<"$(fleets --json "$c3")")" "false" "...and only while it is unreadable"
 fi
+
+# --- differential: src/fleets.ts against the frozen bash original -------------
+# DISPUTED: the implementation (tests/fixtures/ac-fleets.sh under bash vs src/fleets.ts through bin/ac-fleets.sh)
+# HELD-CONSTANT: the fixture containers on disk (both sides read them and run the same live ac-room.sh), argv, cwd, AC_HOME, AC_HOMES_CONTAINER, HOME, AC_GUARD_GRACE, the locale; stdout, stderr and exit status compared whole after ONE normalisation - generated_at and the clock-dependent beat age (`beat <n>s`, `"age": <n>`), nothing else
+# LC_ALL=C on both sides: the port lists dirs and metas in byte order, and
+# under a UTF-8 locale bash 3.2's glob follows libc collation instead (the
+# named divergence; no JS collator reproduces it). The two rows that pin
+# CHARACTER counting (status truncation, `${ref:0:12}`) run both sides under
+# en_US.UTF-8 with ASCII home names, where the two orders agree.
+export LC_ALL=C
+obin="$(make_oracle_bin ac-fleets)"
+norm() { LC_ALL=C sed -e 's/"generated_at": "[^"]*"/"generated_at": "T"/' -e 's/beat [0-9]*s/beat Ns/g' -e 's/"age": -\{0,1\}[0-9][0-9]*/"age": N/'; }
+same() {  # same <args...> - the oracle and the shim answer byte-identically
+  local o_rc=0 n_rc=0
+  "$obin/ac-fleets.sh" "$@" >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+  "$BIN/ac-fleets.sh" "$@" >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+  norm <"$TMP/o.raw" >"$TMP/o.out"
+  norm <"$TMP/n.raw" >"$TMP/n.out"
+  assert_eq "$n_rc" "$o_rc" "differential exit for '$*'"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs for '$*': $(diff "$TMP/o.out" "$TMP/n.out" | head -n 8)"
+  cmp -s "$TMP/o.err" "$TMP/n.err" || fail "differential stderr differs for '$*': $(diff "$TMP/o.err" "$TMP/n.err" | head -n 4)"
+}
+nout() { cat "$TMP/n.raw"; }
+
+# 1-3: the test's own fixture (alpha/beta/gamma/notahome) in every mode, with
+# the cadence/config pins re-seeded for --json; alpha's fresh beacon is the
+# clock-dependent field the normalisation covers.
+printf 'debriefs=6\nlast_run=1700000000\n' >"$alpha/state/.learn.meta"
+printf 'runs_since=5\n' >"$alpha/state/.curate.meta"
+printf '8\n' >"$alpha/config/learn-every"
+printf 'direct\n' >"$alpha/config/flow"
+# The beacon is re-struck here: the legs above took real seconds, and a beat
+# older than the grace flips alpha's watcher between the two runs.
+date +%s >"$alpha/state/.last-watcher-beat"
+same "$container"
+assert_contains "$(nout)" "⚓ alpha   captain: TN" "the anchor line, byte for byte"
+same --json "$container"
+same --paths "$container"
+
+# 4-5: the three not-found shapes for a missing dir and a regular file, and
+# an existing empty container.
+for c in "$TMP/does-not-exist" "$TMP/afile"; do
+  same "$c"; same --json "$c"; same --paths "$c"
+done
+same "$TMP/c2"; same --json "$TMP/c2"; same --paths "$TMP/c2"
+assert_eq "$(nout | jq -c '.homes')" "[]" "--paths on an empty container"
+
+# 6: glob order. Both sides run under LC_ALL=C and agree on byte order; under
+# en_US.UTF-8 the original's glob would interleave case and ignore punctuation
+# (libc collation) - the one named ordering divergence of the port.
+c6="$TMP/c6"
+for h in Zeta ac-fleets ac_fleets ac.fleets AC a10 a2 2025 ä; do mkdir -p "$c6/$h/config"; done
+same "$c6"; same --json "$c6"; same --paths "$c6"
+assert_eq "$(nout | jq -r '[.homes[].path | sub(".*/"; "")] | join(" ")')" "2025 AC Zeta a10 a2 ac-fleets ac.fleets ac_fleets ä" "homes are listed in BYTE order"
+
+# 7: meta edges, under the operators' UTF-8 locale - the `%-Ns` columns pad by
+# BYTES (bash's printf) while `${#status} -gt 100` / `${status:0:97}` count
+# CHARACTERS; an empty kind, mode=-, a repeated key (last wins), a value
+# holding `=`, a status line with no space, a trailing blank status line, an
+# id overflowing its column, a hidden meta.
+c7="$TMP/c7"; mkdir -p "$c7/edge/state"
+u110="$(printf 'ü%.0s' $(seq 1 110))"; u96="$(printf 'ü%.0s' $(seq 1 96))"
+printf 'kind=\nmode=-\nproject=p1\nproject=a=b\n' >"$c7/edge/state/e1.meta"
+printf '2026 A%sZ\n' "$u110" >"$c7/edge/state/e1.status"
+printf 'kind=ship\n' >"$c7/edge/state/e2.meta"
+printf 'nospace\n' >"$c7/edge/state/e2.status"
+printf 'kind=ship\nproject=x\n' >"$c7/edge/state/e3.meta"
+printf '2026 running\n\n' >"$c7/edge/state/e3.status"
+printf 'kind=ship\nproject=héllo\nmode=local-only\n' >"$c7/edge/state/crêpe.meta"
+printf '2026 running\n' >"$c7/edge/state/crêpe.status"
+printf 'kind=scout\n' >"$c7/edge/state/averyveryverylongid00.meta"
+printf 'kind=ship\n' >"$c7/edge/state/.hidden.meta"
+LC_ALL=en_US.UTF-8 same "$c7"
+assert_contains "$(nout)" "A${u96}..." "a status over 100 CHARACTERS keeps its first 97 characters, then ..."
+case "$(nout)" in *"A${u96}ü"*) fail "the truncation must count characters, not bytes" ;; esac
+assert_contains "$(nout)" "     crêpe           ship   héllo         running" "columns pad by BYTES: a 6-byte id gets 10 spaces, a 6-byte project 8"
+assert_contains "$(nout)" "     averyveryverylongid00 scout  -              -" "an id past 16 bytes overflows its column"
+assert_contains "$(nout)" "     e2               ship   -              nospace" "a status line with no space passes whole"
+assert_contains "$(nout)" "     e3               ship   x$(printf '%14s' '')
+" "an empty last status line reads as an empty status (13 pad bytes, the separator, nothing)"
+case "$(nout)" in *hidden*) fail "a dot meta is never listed" ;; esac
+LC_ALL=en_US.UTF-8 same --json "$c7"
+assert_eq "$(nout | jq -r '.homes[0].crew.tasks[] | select(.id=="e1") | [.kind, .mode, .project] | @tsv')" "$(printf '\t\ta=b')" "kind= is null, mode=- is null, the LAST project= wins with its ="
+
+# 8: the verification class, with a 40-hex ref and a multibyte one - `${ref:0:12}`
+# counts characters.
+c8="$TMP/c8"; mkdir -p "$c8/vh/state"
+printf 'kind=verify-codereview\nproject=agent-crew\ncaller=flow-implement\nfamily=flow\nref=0123456789abcdef0123456789abcdef01234567\nworktree=/tmp/vt\n' >"$c8/vh/state/v1.meta"
+printf '2026 reviewing the diff\n' >"$c8/vh/state/v1.status"
+e20="$(printf 'é%.0s' $(seq 1 20))"; e12="$(printf 'é%.0s' $(seq 1 12))"
+printf 'kind=verify-qa\nref=%s\n' "$e20" >"$c8/vh/state/v2.meta"
+printf 'kind=ship\n' >"$c8/vh/state/c1.meta"
+LC_ALL=en_US.UTF-8 same "$c8"
+assert_contains "$(nout)" "caller=flow-implement family=flow ref=0123456789ab" "the ref is cut to 12"
+assert_contains "$(nout)" "caller=- family=- ref=${e12}" "...12 CHARACTERS, with - for an absent caller/family"
+case "$(nout)" in *"ref=${e12}é"*) fail "the ref cut must count characters" ;; esac
+LC_ALL=en_US.UTF-8 same --json "$c8"
+assert_eq "$(nout | jq -r '.homes[0] | [.crew.count, (.verify | length), (.verify[1].caller | tostring)] | @tsv')" "$(printf '1\t2\tnull')" "verifiers sit in verify[], not crew"
+
+# 9: self-only and mixed homes (the watcher qualifier and totals.watchers_down).
+c9="$TMP/c9"; mkdir -p "$c9/selfonly/state"
+printf 'kind=self\n' >"$c9/selfonly/state/s1.meta"; printf 'kind=self\n' >"$c9/selfonly/state/s2.meta"
+same "$c9"; same --json "$c9"
+same "$sc"; same --json "$sc"
+
+# 10: beacon states, each with and without an owner (one padded with
+# whitespace); a home with crew so the qualifier stays off, and one without.
+c10="$TMP/c10"; mkdir -p "$c10/w/state" "$c10/q/config"
+printf 'kind=ship\n' >"$c10/w/state/t.meta"
+nowb="$(date +%s)"
+for owner in none "4242
+" "  77
+"; do
+  rm -f "$c10/w/state/.watcher-owner"
+  [ "$owner" = none ] || printf '%s' "$owner" >"$c10/w/state/.watcher-owner"
+  for beacon in absent "0
+" "0009
+" "12
+34
+" "$((nowb - 500))
+" "$nowb
+"; do
+    rm -f "$c10/w/state/.last-watcher-beat"
+    [ "$beacon" = absent ] || printf '%s' "$beacon" >"$c10/w/state/.last-watcher-beat"
+    same "$c10"; same --json "$c10"
+  done
+done
+assert_contains "$(nout | jq -r '.homes[] | select(.path | endswith("/w")) | .watcher.detail')" "armed (beat " "the last beacon is fresh"
+assert_eq "$(nout | jq -r '.homes[] | select(.path | endswith("/w")) | .watcher.owner')" "77" "the owner file is read with every [:space:] deleted"
+
+# 11: the session lock: absent, held by this shell, a dead pid, no pid at all,
+# a `+1` that ps accepts.
+c11="$TMP/c11"; mkdir -p "$c11/l/state"
+for lock in absent "pid=$$
+since=2026-01-01T00:00:00Z
+" "pid=999999
+since=2026-01-01T00:00:00Z
+" "since=x
+" "pid=+1
+"; do
+  rm -f "$c11/l/state/.session-lock"
+  [ "$lock" = absent ] || printf '%s' "$lock" >"$c11/l/state/.session-lock"
+  same "$c11"; same --json "$c11"
+done
+assert_eq "$(nout | jq -r '.homes[0].lock.detail')" "held pid=+1 since=?" "ps -p accepts +1, so the lock reads held"
+
+# 12: wakes across the fleet spool and the family spools; a dotted family
+# name, a drain claim dir and a dotfile inside a spool are never counted.
+c12="$TMP/c12"; mkdir -p "$c12/wk/state/.wake-spool" "$c12/wk/state/.wake-spool.fam1" "$c12/wk/state/.wake-spool.bad.name" "$c12/wk/state/.wake-spool-draining.1"
+for f in 1 2 3; do : >"$c12/wk/state/.wake-spool/1.1.00000$f"; done
+: >"$c12/wk/state/.wake-spool.fam1/a"; : >"$c12/wk/state/.wake-spool.fam1/b"; : >"$c12/wk/state/.wake-spool.fam1/.dot"
+: >"$c12/wk/state/.wake-spool.bad.name/x"; : >"$c12/wk/state/.wake-spool-draining.1/y"
+same "$c12"; same --json "$c12"
+assert_eq "$(nout | jq -r '.homes[0].wakes')" "5" "3 fleet + 2 family wakes; the rest excluded"
+
+# 13: the inbox over every ac-room.sh list shape: PENDING-CAPTAIN(2), HANDBACK,
+# the combined PENDING-CAPTAIN(1)+HANDBACK, a receipts-only room (hidden), a
+# last entry carrying a TAB and HANDBACK prose, an entry with a quote - and a
+# home whose data/ holds no room at all.
+c13="$TMP/c13"; mkdir -p "$c13/ib/data/two" "$c13/ib/data/hb" "$c13/ib/data/both" "$c13/ib/data/rcpt" "$c13/ib/data/prose" "$c13/norooms/data"
+printf '# Room: two\n\n- [2026-01-01T00:00:00Z] crewchief> GATE: one?\n- [2026-01-01T00:00:01Z] crewchief> ASK: two "quoted"?\n' >"$c13/ib/data/two/room.md"
+printf '# Room: hb\n\n- [2026-01-01T00:00:00Z] hb-chief> HANDBACK: shipped\n' >"$c13/ib/data/hb/room.md"
+printf '# Room: both\n\n- [2026-01-01T00:00:00Z] crewchief> GATE: awaiting\n- [2026-01-01T00:00:01Z] both-chief> HANDBACK: landed\n' >"$c13/ib/data/both/room.md"
+printf '# Room: rcpt\n\n- [2026-01-01T00:00:00Z] crewchief> TRIAGE: flow=direct\n' >"$c13/ib/data/rcpt/room.md"
+printf '# Room: prose\n\n- [2026-01-01T00:00:00Z] crewchief> GATE: q?\n- [2026-01-01T00:00:01Z] crewchief> note:\tno HANDBACK yet\n' >"$c13/ib/data/prose/room.md"
+same "$c13"; same --json "$c13"
+assert_eq "$(nout | jq -r '.homes[] | select(.path | endswith("/ib")) | [.inbox.pending, .inbox.handback, (.inbox.entries | length)] | @tsv')" "$(printf '4\t2\t4')" "pending 2+1+1, handback 1+1, four entries"
+assert_eq "$(nout | jq -r '.homes[] | select(.path | endswith("/ib")) | .inbox.entries[] | select(.family=="both") | .status')" "PENDING-CAPTAIN(1)+HANDBACK" "the combined status token is the entry's status"
+
+# 14: an unreadable room (skipped under root).
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$c3/eps/data/efam/room.md"
+  same "$c3"; same --json "$c3"
+  chmod 644 "$c3/eps/data/efam/room.md"
+  assert_eq "$(nout | jq -r '.homes[0].inbox.unreadable, .totals.inbox_unreadable' | tr '\n' ' ')" "true 1 " "an unreadable room set is UNKNOWN on both sides"
+fi
+
+# 15: cadence and config edges: a non-numeric learn-every (default 8), a
+# legacy stows counter, a non-numeric last_run (null), curate-every=0 (always
+# due), config values wrapped in CR, BOM and tabs.
+c15="$TMP/c15"; mkdir -p "$c15/cad/state" "$c15/cad/config"
+printf 'abc\n' >"$c15/cad/config/learn-every"
+printf 'stows=3\nlast_run=notanumber\n' >"$c15/cad/state/.learn.meta"
+printf '0\n' >"$c15/cad/config/curate-every"
+printf '\tdirect\r\n' >"$c15/cad/config/flow"
+printf '\xef\xbb\xbfalways\n' >"$c15/cad/config/promote"
+printf '  chief  \n' >"$c15/cad/config/remote-mirror"
+same --json "$c15"
+assert_eq "$(nout | jq -r '.homes[0] | [.cadence.learn.count, .cadence.learn.every, (.cadence.learn.last_run | tostring), .cadence.curate.every, .cadence.curate.due, .config.flow, .config.mirror] | @tsv')" "$(printf '3\t8\tnull\t0\ttrue\tdirect\tchief')" "cadence/config edges"
+assert_eq "$(nout | jq -r '.homes[0].config.promote' | od -An -c | tr -d ' ')" '357273277always\n' "a BOM is not [:space:] - it stays"
+
+# 16: crewdeputies three deep, a seven-deep chain, a crewdeputy child that is
+# not a home, and an empty crewdeputies/ (no label line).
+c16="$TMP/c16"
+mkdir -p "$c16/three/config/" "$c16/three/crewdeputies/a/crewdeputies/b/crewdeputies/c/config" "$c16/three/crewdeputies/a/config" "$c16/three/crewdeputies/a/crewdeputies/b/config"
+mkdir -p "$c16/deep/config"; p="$c16/deep"; for i in 1 2 3 4 5 6 7; do p="$p/crewdeputies/n$i"; mkdir -p "$p/config"; done
+mkdir -p "$c16/nothome/config" "$c16/nothome/crewdeputies/junk"
+mkdir -p "$c16/emptycd/config" "$c16/emptycd/crewdeputies"
+same "$c16"
+assert_eq "$(grep -c 'crewdeputies:' "$TMP/n.out")" "10" "the label prints once per home with a home child, the depth-6 one included"
+assert_eq "$(grep -c '⚓' "$TMP/n.out")" "13" "the depth-7 home prints nothing"
+same --paths "$c16"
+assert_eq "$(nout | jq '[.. | objects | select(has("path"))] | length')" "14" "--paths has no depth cap"
+# --json: the DEPTH POISON, a defect of the original reproduced on purpose -
+# its command substitutions ran without errexit, so the depth-7 home's empty
+# object failed every enclosing --argjson and the whole top-level home
+# vanished from homes[] and totals, exit 0. The oracle's stderr is jq's own
+# noise (not reproduced); exit and stdout are compared, stderr named.
+o_rc=0; "$obin/ac-fleets.sh" --json "$c16" >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; "$BIN/ac-fleets.sh" --json "$c16" >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+norm <"$TMP/o.raw" >"$TMP/o.out"; norm <"$TMP/n.raw" >"$TMP/n.out"
+assert_eq "$n_rc $o_rc" "0 0" "depth poison: both exit 0"
+cmp -s "$TMP/o.out" "$TMP/n.out" || fail "depth poison: stdout differs: $(diff "$TMP/o.out" "$TMP/n.out" | head -n 8)"
+assert_eq "$(nout | jq -r '([.homes[].name] | join(" ")), .totals.homes' | tr '\n' ' ')" "emptycd nothome three 6 " "the seven-deep top-level home vanishes from homes[] and totals (defect slice: the original's errexit-less subshells)"
+assert_contains "$(cat "$TMP/o.err")" "jq: invalid JSON text passed to --argjson" "...the original's stderr was jq's own"
+assert_eq "$(cat "$TMP/n.err")" "" "...the port prints no tool-own stderr"
+
+# 17: the container rungs with no argument: AC_HOMES_CONTAINER, AC_HOME's
+# parent (a symlinked AC_HOME gives the link's parent), and HOME with and
+# without Work/ac-homes.
+AC_HOMES_CONTAINER="$container" same
+AC_HOME="$container/alpha" same
+mkdir -p "$TMP/h17/Work/ac-homes/x/config"
+AC_HOME= HOME="$TMP/h17" same
+assert_contains "$(nout)" "== fleet homes: $TMP/h17/Work/ac-homes ==" "the HOME rung"
+AC_HOME= HOME="$TMP/h17b" same
+assert_contains "$(nout)" "(fleet homes container not found: $TMP/h17b/Work/ac-homes)" "the HOME rung, missing"
+mkdir -p "$TMP/c17"; ln -s "$container/alpha" "$TMP/c17/alphalink"
+AC_HOME="$TMP/c17/alphalink" same
+assert_contains "$(nout)" "== fleet homes: $TMP/c17 ==" "a symlinked AC_HOME resolves to the LINK's parent, as cd's logical walk does"
+
+# 18: argument oddities: an unknown flag is the container, the first bare word
+# wins, the last mode flag wins, and -h after a container still prints the
+# header - the port's is the src/fleets.ts header (named divergence), so only
+# exit and stderr are compared there.
+same --bogus; same --json --bogus; same --paths --bogus
+same "$container" "$TMP/c2"
+same --json --paths "$container"
+assert_eq "$(nout | jq -r 'has("totals")')" "false" "the last mode flag wins"
+same --paths --json "$container"
+assert_eq "$(nout | jq -r 'has("totals")')" "true" "...either way round"
+o_rc=0; "$obin/ac-fleets.sh" "$container" -h >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; "$BIN/ac-fleets.sh" "$container" -h >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "-h after a container: exit 0 on both sides"
+assert_eq "$(cat "$TMP/o.err")$(cat "$TMP/n.err")" "" "-h: nothing on stderr"
+assert_eq "$(head -n1 "$TMP/o.raw" | cut -c1-14)" "ac-fleets.sh -" "the original printed its own header"
+assert_eq "$(nout)" "$(awk '{if(!/^\/\//)exit; print}' "$ROOT/src/fleets.ts" | sed 's|^// \{0,1\}||')" "the port prints the src/fleets.ts header, its spec"
+n_rc=0; "$BIN/ac-fleets.sh" --help >"$TMP/n2.out" 2>&1 || n_rc=$?
+assert_eq "$n_rc $(cmp -s "$TMP/n.raw" "$TMP/n2.out" && echo same)" "0 same" "--help is -h"
+
+# 19: AC_GUARD_GRACE, huge and zero, against alpha's fresh beacon.
+date +%s >"$alpha/state/.last-watcher-beat"
+AC_GUARD_GRACE=100000 same "$container"; AC_GUARD_GRACE=100000 same --json "$container"
+assert_eq "$(nout | jq -r '.grace, (.homes[] | select(.name=="alpha") | .watcher.state)' | tr '\n' ' ')" "100000 armed " "a huge grace keeps the beaconed home armed"
+AC_GUARD_GRACE=0 same "$container"; AC_GUARD_GRACE=0 same --json "$container"
+
+# 20: jq's escaping through the ONE spawned `jq .`: DEL and a control byte as
+# \u00XX, é and U+2028 raw, an invalid byte replaced by U+FFFD exactly as the
+# original's --arg values were - jq 1.8.2 swallows the byte AFTER an invalid
+# lead into that one U+FFFD (probed: `e\xe9f` prints `e` U+FFFD, no `f`), on
+# both paths alike; a captain with a quote and a backslash.
+c20="$TMP/c20"; mkdir -p "$c20/j/state" "$c20/j/config"
+printf 'kind=ship\n' >"$c20/j/state/t.meta"
+printf '2026 a\x7fb\x01c\xc3\xa9d\xe2\x80\xa8e\xe9f\n' >"$c20/j/state/t.status"
+printf 'T"N\\x\n' >"$c20/j/config/captain"
+same --json "$c20"; same "$c20"
+same --json "$c20"
+assert_contains "$(nout)" '"status": "a\u007fb\u0001cé'"$(printf 'd\xe2\x80\xa8e\xef\xbf\xbd')"'"' "jq's own escaping and U+FFFD replacement (the f after the bad byte goes with it)"
+assert_contains "$(nout)" '"captain": "T\"N\\x"' "a quote and a backslash in a value"
+# ...and the port forks jq exactly once per run (the <=9 leg above would also
+# pass a port that never forked it at all).
+: >"$jqcount"
+PATH="$TMP/jqstub:$PATH" "$BIN/ac-fleets.sh" --json "$zc" >/dev/null || fail "jq-count run must exit 0"
+assert_eq "$(wc -c <"$jqcount" | tr -d ' ')" "1" "--json forks jq exactly once"
+: >"$jqcount"
+PATH="$TMP/jqstub:$PATH" "$BIN/ac-fleets.sh" --paths "$zc" >/dev/null || fail "jq-count run must exit 0"
+assert_eq "$(wc -c <"$jqcount" | tr -d ' ')" "1" "--paths forks jq exactly once"
+
+# 21: an unreadable meta - named divergence: `set -e` ended the original with
+# ac_meta_get's status and a partial survey; the port reads it as empty and
+# surveys on, exit 0; both print the WARN (root reads it: unprivileged only)
+if [ "$(id -u)" -ne 0 ]; then
+  c21="$TMP/c21"; mkdir -p "$c21/h/state"
+  printf 'kind=ship\n' >"$c21/h/state/t1.meta"; chmod 000 "$c21/h/state/t1.meta"
+  o_rc=0; "$obin/ac-fleets.sh" "$c21" >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+  n_rc=0; "$BIN/ac-fleets.sh" "$c21" >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+  chmod 644 "$c21/h/state/t1.meta"
+  [ "$o_rc" -ne 0 ] || fail "unreadable meta: the original's set -e ended the survey (got exit 0)"
+  assert_eq "$n_rc" "0" "unreadable meta: the port surveys on"
+  assert_contains "$(cat "$TMP/o.err")" "WARN: cannot read meta file" "unreadable meta: the original warned"
+  assert_contains "$(cat "$TMP/n.err")" "WARN: cannot read meta file" "unreadable meta: the port warns the same"
+  assert_contains "$(nout)" "   lock    : free" "unreadable meta: the port's survey reaches the end of the home"
+  assert_eq "$(nout | grep -c '^     t1 ')" "1" "unreadable meta: the meta is listed, its fields empty"
+fi
+
+# 22: a zero-padded cadence counter reads as its decimal value on both sides
+# (jq takes `--argjson 007` as 7) - probed here, not assumed
+c22="$TMP/c22"; mkdir -p "$c22/h/state"; printf 'debriefs=007\n' >"$c22/h/state/.learn.meta"
+same --json "$c22"
+assert_eq "$(jq -r '.totals.homes, .homes[0].cadence.learn.count' "$TMP/n.raw" | tr '\n' ' ')" "1 7 " "007: the home stays and the count reads 7"
 
 pass
