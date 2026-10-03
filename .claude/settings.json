@@ -1,9 +1,4 @@
 {
-  "enabledPlugins": {
-    "plugin-master@local-plugins": true,
-    "agentkit@local-plugins": true,
-    "codex@openai-codex": true
-  },
   "hooks": {
     "SessionStart": [
       {
