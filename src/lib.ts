@@ -14,9 +14,49 @@ const ROOT = resolve(import.meta.dir, "..");
 
 // writeSync, not process.stderr.write: the message must be on the fd before
 // process.exit tears the process down.
-export function die(msg: string): never {
-  writeSync(2, `ERROR: ${msg}\n`);
+export function die(msg: string | Uint8Array): never {
+  writeSync(2, prefixed("ERROR: ", msg));
   process.exit(1);
+}
+
+// ac_warn's twin: the same prefix, the same fd, the caller goes on.
+export function warn(msg: string | Uint8Array): void {
+  writeSync(2, prefixed("WARN: ", msg));
+}
+
+// A message that arrived as bytes (a meta value read as latin1, a path) is
+// written as those bytes; a string is UTF-8 like every other line.
+function prefixed(prefix: string, msg: string | Uint8Array): Uint8Array {
+  return typeof msg === "string"
+    ? Buffer.from(`${prefix}${msg}\n`, "utf8")
+    : Buffer.concat([Buffer.from(prefix, "utf8"), Buffer.from(msg), Buffer.from("\n")]);
+}
+
+// ac_meta_get's twin: `<key>=<value>` lines, the LAST one wins and an empty
+// last value reads as absent; a line that is the bare key reads as empty too
+// (the awk takes the value from past "key="). A file that is gone, or no
+// regular file, is absent - "" - because `[ -f ]` fails first; one that is
+// there and unreadable is warned and THROWN, the status 1 the bash returns.
+// Bytes in, bytes out: the value is latin1 so a caller can print it as the
+// shell would, byte for byte.
+export function metaGet(file: string, key: string): string {
+  let text: string;
+  try {
+    text = readFileSync(file, "latin1");
+  } catch (e) {
+    let regular = false;
+    try {
+      regular = statSync(file).isFile();
+    } catch {}
+    if (!regular) return "";
+    warn(`cannot read meta file ${file}`);
+    throw e;
+  }
+  let v = "";
+  for (const line of text.split("\n")) {
+    if (line === key || line.startsWith(`${key}=`)) v = line.slice(key.length + 1);
+  }
+  return v;
 }
 
 // Bun's process.cwd() drops a trailing backslash from the directory's name,
