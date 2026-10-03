@@ -112,14 +112,21 @@ export function envHome(): string {
 
 // The shell's [:space:] under the operators' UTF-8 locale (measured, bash
 // 3.2 on macOS): Unicode White_Space except U+0085; U+FEFF is not space there.
+// Under the C locale - LC_ALL, else LC_CTYPE, else LANG, naming no UTF-8
+// charset - it is the ASCII six, and a non-breaking space is a value byte.
 const SHELL_TRIM = /^(?:(?!\x85)\p{White_Space})+|(?:(?!\x85)\p{White_Space})+$/gu;
+const C_TRIM = /^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g;
+function shellTrim(): RegExp {
+  const loc = process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || "";
+  return /utf-?8/i.test(loc) ? SHELL_TRIM : C_TRIM;
+}
 
 export function configRead(name: string, dflt = ""): string {
   const h = envHome();
   if (!h) return dflt;
   const f = join(h, "config", name);
   if (!existsSync(f) || !statSync(f).isFile()) return dflt;
-  return readFileSync(f, "utf8").split("\n")[0].replace(/\u0000/g, "").replace(SHELL_TRIM, "");
+  return readFileSync(f, "utf8").split("\n")[0].replace(/\u0000/g, "").replace(shellTrim(), "");
 }
 
 // Copies of two bash tables - bin/ac-harness.sh's registry (ac_harness_known)
