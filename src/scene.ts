@@ -40,16 +40,19 @@
 //
 // <iso> is date(1)'s `-u +%Y-%m-%dT%H:%M:%SZ`. The head is READ BY NAME and
 // POSITION the way the original's sed/tr read it: a META field is the first
-// space-separated token of line 2 starting `<key>=`, "" when absent or when
-// line 2 is not a META line (heat then counts as 0, created as now, updated as
-// ""); the summary is line 3 past `summary: `, "" when line 3 is not one; the
-// body is everything after the fourth LF. Readers of this shape outside this
+// space-separated token of line 2 starting `<key>=`, whatever line 2 starts
+// with, "" when absent (heat then counts as 0, created as now, updated as
+// ""); the summary is line 3 past `summary: `, "" when line 3 is not one; a
+// head value drops its NUL bytes as `$(...)` dropped them; the body is
+// everything after the fourth LF. Readers of this shape outside this
 // module: bin/ac-session-start.sh (count, hottest), bin/ac-know.sh (recall,
 // cite's open command), bin/ac-learn.sh (`list` is a DISTILL source verbatim;
 // stale by `updated=`), src/brain.ts (kind scene, scenes-archive excluded).
-// A hand-edited heat that is not a run of digits is refused by every verb
-// that would add to it (`scene '<slug>' carries a META heat that is not a
-// count (heat=<v>) - fix line 2 by hand, nothing written`).
+// A heat is read as bash arithmetic read it: a leading zero makes it octal
+// (010 is 8), it sits in 64 bits, and one that is not a run of digits, or
+// that arithmetic refuses (08), is refused by every verb that would add to
+// it (`scene '<slug>' carries a META heat that is not a count (heat=<v>) -
+// fix line 2 by hand, nothing written`).
 //
 // `summary:` is the cheap index `list` and any recall verb rank against without
 // opening bodies, so it is single-line and refuses newline/CR/`|` exactly as
@@ -67,13 +70,17 @@
 // A never-touched scene is the coldest by construction.
 //
 // THE TIERED CAP is the whole reason this store cannot rot into a second flat
-// pile. `config/scene-max` (default 30; not a run of digits -> `config/scene-max
-// must be a count (got: '<v>')`) caps the FILE COUNT (`*.md` entries of
-// records/scenes/), and the tier changes which verbs are legal:
+// pile. `config/scene-max` (default 30; not a run of digits, or one that
+// arithmetic refuses -> `config/scene-max must be a count (got: '<v>')`) caps
+// the FILE COUNT - the lines of `ls records/scenes/*.md`, ls itself spawned, so
+// a directory named like a scene adds its heading and entries as it did - and
+// the tier changes which verbs are legal:
 //
 //   count <  max-1   GREEN   every verb
 //   count == max-1   AMBER   `new` refuses - one slot left is not a slot
+//                            (max-1 as `$(( ))` read it: 010 is 8)
 //   count >= max     RED     `new` refuses AND names the 3 coldest scenes
+//                            (max as `-ge` read it: decimal, 010 is 10)
 //                            (lowest heat, then oldest updated) plus the exact
 //                            merge command shape
 //
@@ -128,7 +135,9 @@
 //          fired on the empty `ls` of its count before the `no scenes yet in
 //          <dir> (0/<max>)` line it meant to print; kept as the wire reads
 //          (bin/ac-learn.sh's DISTILL prep already takes the failure as an
-//          empty source) until the defect slice that restores that line.
+//          empty source) until the defect slice that restores that line. That
+//          line IS reached when ls succeeds with no lines (a lone directory
+//          named like a scene), exit 0.
 // Scene refusals are prefixed `scene rejected: `. Every verb mints records/;
 // the lock mints records/scenes/.
 //
@@ -203,7 +212,7 @@ const scenesDir = (): string => join(recordsDir(), "scenes");
 const sceneFile = (slug: string): string => join(scenesDir(), `${slug}.md`);
 const archiveDir = (): string => join(scenesDir(), "scenes-archive");
 
-// The `*.md` glob in byte order: no dot entries, any type (the count took them).
+// The `*.md` glob in byte order: no dot entries, any type.
 function sceneNames(): string[] {
   let names: string[] = [];
   try {
@@ -221,23 +230,43 @@ function headLines(f: string): string[] {
   return lines;
 }
 
+// A head value as `$(...)` returned it: NUL bytes gone.
+const subst = (s: string): string => s.replace(/\0/g, "");
+
 function sceneMeta(f: string, key: string): string {
   const l2 = headLines(f)[1];
   if (l2 === undefined) return "";
-  for (const tok of l2.split(" ")) if (tok.startsWith(`${key}=`)) return tok.slice(key.length + 1);
+  for (const tok of l2.split(" ")) if (tok.startsWith(`${key}=`)) return subst(tok.slice(key.length + 1));
   return "";
 }
 
 function sceneSummary(f: string): Buffer {
   const l3 = headLines(f)[2];
-  return b(l3 !== undefined && l3.startsWith("summary: ") ? l3.slice("summary: ".length) : "");
+  return b(l3 !== undefined && l3.startsWith("summary: ") ? subst(l3.slice("summary: ".length)) : "");
 }
 
-function sceneHeat(f: string, slug: string): number {
+// A run of digits as `$(( ))` read it: octal behind a leading zero (so 08 is
+// no number), 64 bits wrapping; null where bash's arithmetic refused.
+function shellInt(digits: string): bigint | null {
+  if (/^0[0-9]*[89]/.test(digits)) return null;
+  return BigInt.asIntN(64, digits.length > 1 && digits.startsWith("0") ? BigInt(`0o${digits}`) : BigInt(digits));
+}
+
+function sceneHeat(f: string, slug: string): bigint {
   const h = sceneMeta(f, "heat");
-  if (h === "") return 0;
-  if (!/^[0-9]+$/.test(h)) refuse(b(`scene '${shown(slug)}' carries a META heat that is not a count (heat=${h}) - fix line 2 by hand, nothing written`));
-  return Number(h);
+  if (h === "") return 0n;
+  const v = /^[0-9]+$/.test(h) ? shellInt(h) : null;
+  if (v === null) refuse(b(`scene '${shown(slug)}' carries a META heat that is not a count (heat=${h}) - fix line 2 by hand, nothing written`));
+  return v;
+}
+
+// `ls *.md | wc -l`: ls itself, so a directory named like a scene counts its
+// heading, its separator and its entries exactly as it did there.
+function sceneCount(): bigint {
+  const names = sceneNames();
+  if (names.length === 0) return 0n;
+  const r = Bun.spawnSync(["ls", ...names], { cwd: scenesDir(), stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  return BigInt((r.stdout.toString("latin1").match(/\n/g) ?? []).length);
 }
 
 // `tail -n +5`: the bytes after the fourth LF, none when there are fewer.
@@ -280,7 +309,7 @@ function readBody(ff: string): Buffer {
   return Buffer.concat([kept.subarray(0, end), LF]);
 }
 
-function sceneWrite(slug: string, created: string, heat: number, summary: Buffer, body: Buffer): void {
+function sceneWrite(slug: string, created: string, heat: bigint, summary: Buffer, body: Buffer): void {
   const f = sceneFile(slug);
   mkdirSync(dirname(f), { recursive: true });
   const composed = Buffer.concat([b(`# Scene: ${slug}\nMETA: created=${created} updated=${iso()} heat=${heat}\nsummary: `), summary, b("\n\n"), body]);
@@ -338,10 +367,13 @@ function coldest(n: number): string[] {
 function tierRefusal(): string {
   const max = configRead("scene-max", "30");
   if (!/^[0-9]+$/.test(max)) return `config/scene-max must be a count (got: '${shown(max)}')`;
-  const n = sceneNames().length;
-  if (n >= Number(max))
+  const n = sceneCount();
+  // `-ge` read the cap in decimal; `$(( max - 1 ))` read it as arithmetic.
+  if (n >= BigInt(max))
     return `scene store is FULL at the cap (${n}/${max}, config/scene-max) - merge before adding. Coldest first:\n${coldest(3).join("\n")}\n  ac-scene.sh merge <slug-a> <slug-b> --into <slug-a> --summary '<line>' --file <body>`;
-  if (n === Number(max) - 1)
+  const m = shellInt(max);
+  if (m === null) return `config/scene-max must be a count (got: '${shown(max)}')`;
+  if (n === m - 1n)
     return `scene store is one slot from the cap (${n}/${max}, config/scene-max) - update an existing scene or merge two, rather than spending the last slot. Coldest first:\n${coldest(3).join("\n")}`;
   return "";
 }
@@ -374,7 +406,7 @@ function cmdNew(slug: string, rest: string[]): void {
   if (existsSync(sceneFile(slug))) refuse(`scene '${slug}' already exists - use \`update\` (a new scene never silently replaces one)`);
   const tier = tierRefusal();
   if (tier !== "") refuse(b(tier));
-  sceneWrite(slug, iso(), 1, Buffer.from(summary, "utf8"), body);
+  sceneWrite(slug, iso(), 1n, Buffer.from(summary, "utf8"), body);
   unlock();
   say(`created ${shown(sceneFile(slug))} (heat 1)`);
 }
@@ -387,7 +419,7 @@ function cmdUpdate(slug: string, rest: string[]): void {
   lock();
   const file = sceneFile(slug);
   if (!isFile(file)) refuse(`no scene '${slug}' to update - \`new\` creates one`);
-  const heat = sceneHeat(file, slug) + 1;
+  const heat = sceneHeat(file, slug) + 1n;
   const summary = f.has("--summary") ? Buffer.from(f.get("--summary")!, "utf8") : sceneSummary(file);
   sceneWrite(slug, sceneMeta(file, "created") || iso(), heat, summary, body);
   unlock();
@@ -410,10 +442,10 @@ function cmdMerge(rest: string[]): void {
   for (const s of srcs) if (!isFile(sceneFile(s))) refuse(`merge source '${s}' does not exist - nothing moved`);
   if (!srcs.includes(into) && existsSync(sceneFile(into)))
     refuse(`--into '${into}' exists and was not among the merged sources - name it as a source, or pick a fresh slug - nothing moved`);
-  let heat = 0;
+  let heat = 0n;
   let created = "";
   for (const s of srcs) {
-    heat += sceneHeat(sceneFile(s), s);
+    heat = BigInt.asIntN(64, heat + sceneHeat(sceneFile(s), s));
     // The merged scene inherits the OLDEST creation date it absorbs: the topic
     // is as old as the earliest thing that knew about it.
     const c = sceneMeta(sceneFile(s), "created");
@@ -429,9 +461,10 @@ function cmdMerge(rest: string[]): void {
       process.exit(r.exitCode ?? 1);
     }
   }
-  sceneWrite(into, created || iso(), heat + 1, Buffer.from(summary, "utf8"), body);
+  heat = BigInt.asIntN(64, heat + 1n);
+  sceneWrite(into, created || iso(), heat, Buffer.from(summary, "utf8"), body);
   unlock();
-  say(`merged${srcs.map((s) => ` ${s}`).join("")} into ${shown(sceneFile(into))} (heat ${heat + 1}); sources archived verbatim in ${shown(archiveDir())}`);
+  say(`merged${srcs.map((s) => ` ${s}`).join("")} into ${shown(sceneFile(into))} (heat ${heat}); sources archived verbatim in ${shown(archiveDir())}`);
 }
 
 function cmdShow(slug: string, rest: string[]): void {
@@ -447,7 +480,7 @@ function cmdShow(slug: string, rest: string[]): void {
     // The bump rides the READ, exactly as ac-know.sh cite does: a counter left
     // to a second deliberate act is a counter nobody keeps.
     lock();
-    const heat = sceneHeat(file, slug) + 1;
+    const heat = BigInt.asIntN(64, sceneHeat(file, slug) + 1n);
     sceneWrite(slug, sceneMeta(file, "created") || iso(), heat, sceneSummary(file), sceneBody(file));
     unlock();
   }
@@ -461,7 +494,14 @@ function cmdList(): void {
   // The original's `n="$(ls ... | wc -l)"` failed under pipefail+errexit on an
   // empty store, before its `no scenes yet` line: silent exit 1, kept.
   if (names.length === 0) process.exit(1);
-  say(`scenes: ${names.length}/${shown(max)} in ${shown(dir)}`);
+  const n = sceneCount();
+  // Reached only when ls listed something that holds no lines: a lone
+  // directory named like a scene.
+  if (n === 0n) {
+    say(`no scenes yet in ${shown(dir)} (0/${shown(max)})`);
+    return;
+  }
+  say(`scenes: ${n}/${shown(max)} in ${shown(dir)}`);
   for (const name of names) {
     const f = join(dir, name);
     if (!isFile(f)) continue;

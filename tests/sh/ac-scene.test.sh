@@ -712,4 +712,80 @@ same new zz9 --summary s
 assert_eq "$(shim_out)" "created HOME/records/scenes/zz9.md (heat 1)" "a z-ended slug is legal under a UTF-8 locale"
 LOC=C
 
+# 18. counts read as bash arithmetic read them: a leading zero is octal (010 is
+# 8, so the bump writes 9); 08 is refused on both sides (the original in its
+# arithmetic noise, the port with its count line - named divergence); 2^53
+# increments exactly (64-bit); scene-max=010 is 10 to `-ge` (decimal) but 8
+# to `$((max - 1))`, so seven scenes sit at AMBER; scene-max=08 passes `-ge`
+# and dies in the arithmetic (both exit 1, the port naming the count)
+both wipe
+octal() {
+  seed o10 "META: created=$T0 updated=$T0 heat=010" "summary: ten"
+  seed o08 "META: created=$T0 updated=$T0 heat=08" "summary: eight"
+  seed big "META: created=$T0 updated=$T0 heat=9007199254740992" "summary: big"
+}
+both octal; feed ''
+same show o10 --cite
+assert_eq "$(sed -n 2p "$NH/records/scenes/o10.md")" "META: created=$T0 updated=$T1 heat=9" "010 is octal 8: the bump writes 9"
+o_rc=0; run_oracle show o08 --cite || o_rc=$?
+n_rc=0; run_shim show o08 --cite || n_rc=$?
+assert_eq "$n_rc $o_rc" "1 1" "08: both refuse"
+assert_eq "$(cat "$TMP/n.err")" "ERROR: scene 'o08' carries a META heat that is not a count (heat=08) - fix line 2 by hand, nothing written" "08: the port names it"
+assert_eq "$(sed -n 2p "$NH/records/scenes/o08.md")" "META: created=$T0 updated=$T0 heat=08" "08: nothing written"
+oracle_leaked_lock o08
+same show big --cite
+assert_eq "$(sed -n 2p "$NH/records/scenes/big.md")" "META: created=$T0 updated=$T1 heat=9007199254740993" "2^53 + 1 exactly, as 64-bit bash arithmetic"
+feed 'm\n'
+same merge o10 big --into m --summary s
+assert_eq "$(sed -n 2p "$NH/records/scenes/m.md")" "META: created=$T0 updated=$T1 heat=9007199254741003" "merge sums octal 9 and 2^53+1, plus one"
+both wipe
+seven() { local i; for i in 1 2 3 4 5 6 7; do seed "s$i" "META: created=$T0 updated=$T0 heat=1" "summary: $i"; done; }
+both seven; both setmax 010
+feed 'x\n'
+same new s8 --summary eight
+assert_contains "$(shim_err)" "scene store is one slot from the cap (7/010, config/scene-max)" "scene-max=010: 7 is not -ge 10, and equals octal 8 minus one - AMBER"
+oracle_leaked_lock octal-max
+both setmax 08
+o_rc=0; run_oracle new s8 --summary eight || o_rc=$?
+n_rc=0; run_shim new s8 --summary eight || n_rc=$?
+assert_eq "$n_rc $o_rc" "1 1" "scene-max=08: both refuse"
+assert_eq "$(cat "$TMP/n.err")" "ERROR: config/scene-max must be a count (got: '08')" "scene-max=08: the port names it"
+assert_no_file "$NH/records/scenes/s8.md" "scene-max=08: nothing written"
+oracle_leaked_lock max-08
+
+# 19. `$(...)` drops NUL bytes from head fields: a summary with a NUL lists and
+# is inherited without it, a heat of 1 NUL reads 1 and bumps to 2; the file's
+# own bytes (plain show) keep them
+both wipe
+nulhead() { rawscene nh "# Scene: nh\nMETA: created=$T0 updated=$T0 heat=1\0\nsummary: a\0b\n\nbody\n"; }
+both nulhead; feed ''
+same list
+assert_eq "$(sed -n 2p "$TMP/n.out")" "  nh  heat=1  updated=$T0  ab" "list: the NUL in the heat and the summary is dropped"
+same show nh
+assert_eq "$(sed -n 3p "$TMP/n.raw" | od -An -c | tr -d ' \n')" "$(printf 'summary: a\0b\n' | od -An -c | tr -d ' \n')" "plain show prints the bytes"
+same show nh --cite
+assert_eq "$(sed -n 2p "$NH/records/scenes/nh.md")" "META: created=$T0 updated=$T1 heat=2" "a heat of 1 NUL reads 1 and bumps to 2"
+assert_eq "$(sed -n 3p "$NH/records/scenes/nh.md" | od -An -c | tr -d ' \n')" "$(printf 'summary: ab\n' | od -An -c | tr -d ' \n')" "the inherited summary loses the NUL"
+
+# 20. the count is `ls *.md | wc -l`: a directory named like a scene adds its
+# heading, its separator and its entries - ls itself is spawned, so the
+# reading stays the original's; alone, a directory lists its (zero) entries
+both wipe
+dirscene() { seed a "META: created=$T0 updated=$T0 heat=1" "summary: a"; mkdir -p "$D/b.md"; }
+both dirscene; feed ''
+same list
+assert_eq "$(sed -n 1p "$TMP/n.out")" "scenes: 3/30 in HOME/records/scenes" "a directory counts as ls lists it"
+both wipe
+lonedir() { mkdir -p "$D/b.md"; }
+both lonedir
+same list
+assert_eq "$(shim_out)" "no scenes yet in HOME/records/scenes (0/30)" "a lone directory: ls succeeds with no lines, so the no-scenes line is reached"
+
+# 21. line 2 is read by position and token, never by its prefix
+both wipe
+notmeta() { seed nm "not-META: created=$T0 updated=$T0 heat=1" "summary: x"; }
+both notmeta; feed ''
+same show nm --cite
+assert_eq "$(sed -n 2p "$NH/records/scenes/nm.md")" "META: created=$T0 updated=$T1 heat=2" "the tokens bind whatever line 2 starts with"
+
 pass
