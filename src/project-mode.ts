@@ -42,7 +42,7 @@
 //   aborts BSD sed (`sed: RE error: illegal byte sequence` on stderr) and the
 //   run exits with sed's status (1) and NO answer, as the original did; under
 //   LC_ALL=C the row answers normally;
-// - a NAME carrying such a byte is the one divergence: Bun's argv decodes it
+// - a NAME carrying such a byte is a named divergence: Bun's argv decodes it
 //   to U+FFFD, so the grep pattern can never match the row's bytes and the
 //   answer is off where the original's was on.
 // No registry file (or a directory there), an empty file, no row: off. The
@@ -77,13 +77,20 @@ if (!process.env.AC_HOME) writeSync(2, `ERROR: ${NO_HOME}\n`);
 else {
   const home = physicalDir(process.env.AC_HOME);
   if (home !== null) {
-    // mkdir itself, as ac_records_dir ran it: its own line on a failure, and
-    // the substitution that died there left `/projects.md` to read.
-    let made = false;
+    // mkdir itself, behind ac_records_dir's own directory check: its line on a
+    // failure, and the substitution that died there left `/projects.md` to read.
+    const records = `${home}/records`;
+    let made = true;
     try {
-      made = Bun.spawnSync(["mkdir", "-p", `${home}/records`], { stdout: "ignore", stderr: "inherit" }).exitCode === 0;
-    } catch {}
-    if (made) reg = `${home}/records/projects.md`;
+      if (!statSync(records).isDirectory()) throw 0;
+    } catch {
+      try {
+        made = Bun.spawnSync(["mkdir", "-p", records], { stdout: "ignore", stderr: "inherit" }).exitCode === 0;
+      } catch {
+        made = false;
+      }
+    }
+    if (made) reg = `${records}/projects.md`;
   }
 }
 

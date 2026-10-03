@@ -209,6 +209,14 @@ rm -rf "$AC_HOME/records"; printf 'not a directory\n' >"$AC_HOME/records"
 answer off gamma
 assert_contains "$(cat "$TMP/n.err")" "File exists" "records a file: mkdir's own line"
 rm -f "$AC_HOME/records"; mkdir -p "$AC_HOME/records"
+# an existing records/ is never mkdir'd: a PATH mkdir that refuses changes nothing
+mkdir -p "$TMP/nomkdir"; printf '#!/bin/sh\necho "mkdir ran" >&2; exit 1\n' >"$TMP/nomkdir/mkdir"; chmod +x "$TMP/nomkdir/mkdir"
+{ r1_rows; } >"$reg"
+o_rc=0; PATH="$TMP/nomkdir:$PATH" LC_ALL=C "$obin/ac-project-mode.sh" gamma >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; PATH="$TMP/nomkdir:$PATH" LC_ALL=C "$BIN/ac-project-mode.sh" gamma >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "existing records: both exit 0 with a refusing mkdir on PATH"
+assert_eq "$(cat "$TMP/o.out")$(cat "$TMP/n.out")" "yolo=onyolo=on" "existing records: both answer"
+assert_eq "$(cat "$TMP/o.err")$(cat "$TMP/n.err")" "" "existing records: neither side ran mkdir"
 { r1_rows; } >"$reg"
 if [ "$(id -u)" != 0 ]; then
   chmod 000 "$reg"
@@ -260,7 +268,7 @@ assert_eq "$n_rc $o_rc" "0 0" "CDPATH home: both exit 0"
 assert_eq "$(cat "$TMP/o.out")" "yolo=off" "CDPATH home: cd's echo spoiled the original's captured path"
 assert_eq "$(cat "$TMP/n.out")" "yolo=on" "CDPATH home: the port reads the directory AC_HOME names"
 # 13. a NAME carrying a non-UTF-8 byte: Bun's argv decodes it to U+FFFD, so
-# the port's grep never sees the row's bytes - the one divergence kept with
+# the port's grep never sees the row's bytes - a named divergence kept with
 # no exact reproduction (oracle on, port off).
 { r1_rows; printf -- '- d\xe9sc [+yolo] - x\n'; } >"$reg"
 bad_name="$(printf 'd\xe9sc')"
