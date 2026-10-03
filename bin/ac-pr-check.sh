@@ -1,28 +1,10 @@
 #!/usr/bin/env bash
-# ac-pr-check.sh - record a crewmate's PR and its head SHA on the task meta.
-#
-# Usage: ac-pr-check.sh <id> <github-pr-url>
-# Records pr= (the captain-facing PR link) and pr_head= (the PR's head SHA at
-# record time) on the task meta - the head the captain is asked to approve.
-# ac-pr-merge.sh pins its merge to pr_head, and ac-teardown.sh's --pr-ready
-# refuses commits past it.
-
+# ac-pr-check.sh - record a crewmate's PR and its head SHA on the task meta. The
+# authoritative spec is the header of src/pr-check.ts; this entry only starts it
+# through bin/ac-bun.sh, so every caller keeps this path. The module is found
+# at <this bin/>/../src physically, so a per-home override bin/ needs a
+# sibling src/.
 set -euo pipefail
-. "$(dirname "$0")/ac-lib.sh"
-ac_require gh
 
-id="${1:-}"; url="${2:-}"
-[ -n "$id" ] && [ -n "$url" ] || ac_die "usage: ac-pr-check.sh <id> <pr-url>"
-meta="$(ac_task_meta "$id")"
-[ -f "$meta" ] || ac_die "no crewmate meta for $id"
-case "$url" in
-  https://github.com/*/*/pull/[0-9]*) ;;
-  *) ac_die "not a full GitHub PR URL: $url" ;;
-esac
-
-head="$(gh pr view "$url" --json headRefOid --jq .headRefOid)"
-state="$(gh pr view "$url" --json state --jq .state)"
-ac_meta_set "$meta" pr "$url"
-ac_meta_set "$meta" pr_head "$head"
-ac_status_append "$id" "PR ready: $url ($state)"
-printf 'recorded pr=%s pr_head=%s state=%s\n' "$url" "$head" "$state"
+. "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh"
+ac_bun_exec src/pr-check.ts "$@"
