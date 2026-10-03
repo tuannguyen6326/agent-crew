@@ -152,6 +152,10 @@ export function recordsDir(): string {
   return homeSubdir("records");
 }
 
+export function dataDir(): string {
+  return homeSubdir("data");
+}
+
 // ac_pid_alive's twin: an owner is a canonical positive pid, and a process this
 // user may not signal (EPERM) exists - reading it as dead would hand a live
 // holder's lock to a second writer.
