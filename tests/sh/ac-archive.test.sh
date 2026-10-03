@@ -405,4 +405,41 @@ assert_file "$NH/data.real/lnkfam/room.md" "the target stayed put"
 same restore lnkfam
 [ -L "$NH/data/lnkfam" ] || fail "restore moved the link back"
 
+# 16. a room this process cannot read beside a CLOSED one: the original's grep
+#     could not read it, so the family was skipped as not closed and the rest
+#     processed - the port skips it the same way; stdout, exit and the tree
+#     are compared (the oracle's stderr is grep's own line, not reproduced).
+#     Root reads a mode-000 file, so the row holds only unprivileged.
+if [ "$(id -u)" -ne 0 ]; then
+  both wipe
+  both rawroom locked '- [2026-01-01T00:00:00Z] crewchief> CLOSED: x\n'
+  both rawroom open26 '- [2026-02-02T00:00:00Z] crewchief> CLOSED: y\n'
+  chmod 000 "$OH/data/locked/room.md" "$NH/data/locked/room.md"
+  o_rc=0; run_oracle C archive || o_rc=$?
+  n_rc=0; run_shim C archive || n_rc=$?
+  chmod 644 "$OH/data/locked/room.md" "$NH/data/locked/room.md"
+  assert_eq "$n_rc $o_rc" "0 0" "unreadable room: both go on and exit 0"
+  LC_ALL=C sed "s#$OH#HOME#g" "$TMP/o.raw" >"$TMP/o.out"; LC_ALL=C sed "s#$NH#HOME#g" "$TMP/n.raw" >"$TMP/n.out"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "unreadable room: stdout differs: $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
+  assert_contains "$(cat "$TMP/n.out")" "archived  open26 -> archive/2026/open26" "unreadable room: the sibling is still archived"
+  assert_eq "$(tree "$NH")" "$(tree "$OH")" "unreadable room: the same tree (locked stays live)"
+  assert_eq "$(cat "$TMP/n.err")" "" "unreadable room: the port prints no tool-own stderr"
+fi
+# 17. mv is the mover: a year bucket that exists but cannot be written into
+#     makes mv refuse on both sides - mv's own line on stderr, its status the
+#     run's, nothing more archived (unprivileged only).
+if [ "$(id -u)" -ne 0 ]; then
+  both wipe
+  both rawroom fam26 '- [2026-03-03T00:00:00Z] crewchief> CLOSED: z\n'
+  mkdir -p "$OH/data/archive/2026" "$NH/data/archive/2026"
+  chmod 555 "$OH/data/archive/2026" "$NH/data/archive/2026"
+  same archive
+  chmod 755 "$OH/data/archive/2026" "$NH/data/archive/2026"
+  assert_contains "$(cat "$TMP/n.err")" "mv:" "mv's own refusal reaches stderr"
+fi
+# The MANUAL-ONLY scan extends to src/: no module imports archive.ts or starts
+# it; the entry's own module and its test are the only mentions.
+callers="$(grep -rlE 'archive\.ts|ac-archive\.sh' "$ROOT/src" "$ROOT/tests/ts" 2>/dev/null | grep -v -e '/src/archive\.ts$' -e '/tests/ts/archive\.test\.ts$' || true)"
+[ -z "$callers" ] || fail "a TypeScript caller of the archive module appeared: $callers"
+
 pass

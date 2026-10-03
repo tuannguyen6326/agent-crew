@@ -56,9 +56,11 @@
 // locale - the bash original's grep, under a UTF-8 locale, missed a CLOSED
 // line carrying a non-UTF-8 byte and left that family live, and its glob
 // walked data/*/ in libc collation order; both are named in the differential
-// leg. The move is rename(2), as mv's was on one filesystem: a symlinked
-// family moves as the link, and a data/ split across devices fails loudly
-// instead of being copied.
+// leg. The move is `mv`, spawned as the original spawned it (a symlinked
+// family moves as the link; a data/ split across devices is copied as mv
+// copies), and `mkdir -p` the same way: their failure ends the run as errexit
+// did, with the tool's own stderr and status. A room this process cannot
+// read is skipped as not closed, the way the original's grep read it.
 //
 // MANUAL ONLY. Nothing in bin/, .agents/, docs/ or src/ may invoke this entry -
 // not ac-curate.sh's CURATE-DUE auto-run, not ac-session-start.sh, not
@@ -80,7 +82,7 @@
 // turn-end guard, the statusline, the remote push) deliberately do NOT follow:
 // every archived family is CLOSED, so it contributes no pending item and no
 // hand-back to any of them.
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, statSync, writeSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmdirSync, statSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { dataDir, die, enterCaller } from "./lib.ts";
 
@@ -89,6 +91,12 @@ const YEAR = /^- \[[0-9]{4}-/;
 const byCodePoint = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
 const out = (s: string): void => {
   writeSync(1, s);
+};
+// The tool itself, so its semantics and its failure (status, stderr) are the
+// original's: mv across devices copies, mkdir -p on a read-only parent refuses.
+const tool = (cmd: string[]): void => {
+  const r = Bun.spawnSync(cmd, { stdout: "ignore", stderr: "inherit" });
+  if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);
 };
 const isDir = (p: string): boolean => {
   try {
@@ -135,7 +143,12 @@ function cmdArchive(opt: string | undefined): number {
     if (fam === "archive") continue;
     const room = join(data, fam, "room.md");
     if (!isFile(room)) continue;
-    const lines = readFileSync(room, "latin1").split("\n");
+    let lines: string[];
+    try {
+      lines = readFileSync(room, "latin1").split("\n");
+    } catch {
+      continue;
+    }
     if (!lines.some((l) => CLOSED.test(l))) continue;
     const year = closedYear(lines);
     if (!year) {
@@ -152,8 +165,8 @@ function cmdArchive(opt: string | undefined): number {
     if (dry) {
       out(`would archive  ${fam} -> archive/${year}/${fam}\n`);
     } else {
-      mkdirSync(join(data, "archive", year), { recursive: true });
-      renameSync(join(data, fam), dest);
+      tool(["mkdir", "-p", join(data, "archive", year)]);
+      tool(["mv", join(data, fam), dest]);
       out(`archived  ${fam} -> archive/${year}/${fam}\n`);
     }
     moved++;
@@ -181,7 +194,7 @@ function cmdRestore(fam: string | undefined, opt: string | undefined): number {
     out(`would restore  ${fam} <- archive/${year}/${fam}\n`);
     return 0;
   }
-  renameSync(found, live);
+  tool(["mv", found, live]);
   // Leave no empty <year> shell behind; rmdir only ever succeeds when the year
   // bucket really is empty, so a concurrent archive is never clobbered.
   try {
