@@ -144,7 +144,7 @@
 //
 // CALLERS, audited with the port (the entry now needs bun on PATH; without it
 // the shim prints `ERROR: required tool not found: bun` and exits 1):
-//   - bin/ac-session-start.sh:131 - rc 2 is the READ-ONLY banner, any other
+//   - bin/ac-session-start.sh (its lock step) - rc 2 is the READ-ONLY banner, any other
 //     non-zero `WARN: session lock acquire failed (rc=N) - continuing unlocked`:
 //     a bun-less session start runs UNLOCKED with one WARN, already fail-soft.
 //   - bin/ac-watch.sh (the fleet watcher's owner gate) - rc 2 refuses the arm
@@ -156,7 +156,7 @@
 //     without a known owner), and a `status` read that fails after a good
 //     acquire is treated the same way (`session lock status failed ...`);
 //     pinned by tests/sh/ac-watch.test.sh with PATH bun stubs.
-//   - bin/ac-sessionstart-nudge.sh:137 (a wired SessionStart hook) runs
+//   - bin/ac-sessionstart-nudge.sh (a wired SessionStart hook) runs
 //     `status 2>/dev/null` and stays silent only on `held*`: a bun-less status
 //     answers nothing, so the nudge prints - fail-open, unchanged, but the
 //     hook is now transitively bun-dependent (the jev/compact-advise class).
