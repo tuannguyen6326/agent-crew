@@ -181,11 +181,16 @@ assert_eq "$n_rc" "1" "W2: exit 1 under UTF-8, as the original"
 assert_eq "$(cat "$TMP/n.out")" "" "W2: no answer under UTF-8"
 assert_contains "$(cat "$TMP/n.err")" "illegal byte sequence" "W2: sed's own abort line"
 DIFF_LC=en_US.UTF-8 answer on gamma
-# 6. one NUL anywhere in the registry: grep says `Binary file ... matches`
-# instead of the row, so EVERY project answers off (W3, kept).
+# 6. a NUL where grep's binary detection samples: grep says `Binary file ...
+# matches` instead of the row, so EVERY project answers off (W3, kept); a NUL
+# far past the sample leaves the earlier rows matching - whatever this host's
+# grep decides, both sides decide alike.
 { r1_rows; printf -- '- nul [+yolo] - d\x00sc\n'; } >"$reg"
 answer off gamma
 answer off nul
+{ r1_rows; awk 'BEGIN { for (i = 0; i < 20000; i++) print "- other [off] - x" }'; printf -- '- late [+yolo] - d\x00sc\n'; } >"$reg"
+same gamma
+same late
 # 7. no registry; no records/ dir (both sides mint it).
 rm -f "$reg"
 answer off gamma
@@ -195,10 +200,15 @@ answer off gamma
 rm -rf "$AC_HOME/records"
 LC_ALL=C "$BIN/ac-project-mode.sh" gamma >/dev/null
 [ -d "$AC_HOME/records" ] || fail "records/ minted by the port's read"
-# 8. registry a directory; unreadable (grep's stderr is dropped).
+# 8. registry a directory; unreadable (grep's stderr is dropped); records/ a
+# regular file (mkdir's own line on both sides, then off).
 mkdir -p "$reg"
 answer off gamma
 rmdir "$reg"
+rm -rf "$AC_HOME/records"; printf 'not a directory\n' >"$AC_HOME/records"
+answer off gamma
+assert_contains "$(cat "$TMP/n.err")" "File exists" "records a file: mkdir's own line"
+rm -f "$AC_HOME/records"; mkdir -p "$AC_HOME/records"
 { r1_rows; } >"$reg"
 if [ "$(id -u)" != 0 ]; then
   chmod 000 "$reg"
@@ -229,6 +239,26 @@ ln -s "$AC_HOME" "$TMP/homelink"
 { r1_rows; } >"$reg"
 AC_HOME="$TMP/homelink" answer on gamma
 AC_HOME="$TMP/homelink" answer off alpha
+# 12b. the two artifacts of the original's `$(cd "$AC_HOME" && pwd -P)`, named
+# divergences (the port enters the directory AC_HOME names): a home whose
+# name ends in LF - the substitution dropped the LF and the original read the
+# SIBLING; a relative AC_HOME under an exported CDPATH - cd echoed its
+# destination into the captured path and the original found no registry.
+lfhome="$TMP/lf
+"; mkdir -p "$lfhome/records" "$TMP/lf/records"
+printf -- '- gamma [+yolo] - z\n' >"$lfhome/records/projects.md"
+printf -- '- gamma [x] - z\n' >"$TMP/lf/records/projects.md"
+o_rc=0; AC_HOME="$lfhome" LC_ALL=C "$obin/ac-project-mode.sh" gamma >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; AC_HOME="$lfhome" LC_ALL=C "$BIN/ac-project-mode.sh" gamma >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "LF-named home: both exit 0"
+assert_eq "$(cat "$TMP/o.out")" "yolo=off" "LF-named home: the original read the sibling"
+assert_eq "$(cat "$TMP/n.out")" "yolo=on" "LF-named home: the port reads the directory AC_HOME names"
+mkdir -p "$TMP/cdp/home/records"; printf -- '- gamma [+yolo] - z\n' >"$TMP/cdp/home/records/projects.md"
+o_rc=0; (cd "$TMP/cdp" && CDPATH="$TMP" AC_HOME=home LC_ALL=C "$obin/ac-project-mode.sh" gamma) >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; (cd "$TMP/cdp" && CDPATH="$TMP" AC_HOME=home LC_ALL=C "$BIN/ac-project-mode.sh" gamma) >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "CDPATH home: both exit 0"
+assert_eq "$(cat "$TMP/o.out")" "yolo=off" "CDPATH home: cd's echo spoiled the original's captured path"
+assert_eq "$(cat "$TMP/n.out")" "yolo=on" "CDPATH home: the port reads the directory AC_HOME names"
 # 13. a NAME carrying a non-UTF-8 byte: Bun's argv decodes it to U+FFFD, so
 # the port's grep never sees the row's bytes - the one divergence kept with
 # no exact reproduction (oracle on, port off).

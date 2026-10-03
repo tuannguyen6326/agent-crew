@@ -34,8 +34,10 @@
 // substring `+yolo`, case-sensitive. The ERE wants exactly one space before
 // `[`; a CR is an ordinary byte. Both tools are spawned, this host's own,
 // under the caller's locale, so every reading below is theirs:
-// - one NUL byte ANYWHERE in the registry makes grep print `Binary file ...
-//   matches` instead of the row, so every project answers off;
+// - a NUL byte where this host's grep looks for one (2.6.0-FreeBSD samples
+//   the start of the file) makes it print `Binary file ... matches` instead
+//   of the row, so every project answers off; a NUL far past that sample
+//   leaves the earlier rows matching;
 // - a byte that is not valid UTF-8 on the MATCHED row under a UTF-8 locale
 //   aborts BSD sed (`sed: RE error: illegal byte sequence` on stderr) and the
 //   run exits with sed's status (1) and NO answer, as the original did; under
@@ -44,18 +46,26 @@
 //   to U+FFFD, so the grep pattern can never match the row's bytes and the
 //   answer is off where the original's was on.
 // No registry file (or a directory there), an empty file, no row: off. The
-// records/ dir is minted by the read, as ac_records_dir minted it.
+// records/ dir is minted by the read with the same spawned `mkdir -p`, so a
+// records that is a regular file prints mkdir's own line and, as the dying
+// `$(ac_records_dir)` did, leaves `/projects.md` to read: off.
 //
 // Without AC_HOME the original printed ac_home's refusal (`ERROR: AC_HOME is
 // not set - ...`) and went on: the dying `$(ac_records_dir)` left the path
 // `/projects.md`, read as any registry, and the run answered off with exit 0
 // - kept here, including the path. An AC_HOME that cannot be entered reads
 // the same path silently (the original's stderr there was bash's own `cd:`
-// line, not reproduced).
+// line, not reproduced). The home is entered as physicalDir enters it, the
+// twin every port binds its home by; the two artifacts of the original's
+// `$(cd "$AC_HOME" && pwd -P)` are named divergences, not reproduced: a home
+// directory whose NAME ends in LF lost that LF to the substitution and the
+// original read the SIBLING without it, and an exported CDPATH made a relative
+// AC_HOME's `cd` echo its destination into the captured path so no registry
+// was found - the port reads the directory AC_HOME names in both.
 //
 // The one caller, bin/ac-spawn.sh, already defaults `|| printf 'yolo=off\n'`
 // and drops stderr, so nothing there changed with the port.
-import { mkdirSync, statSync, writeSync } from "node:fs";
+import { statSync, writeSync } from "node:fs";
 import { die, enterCaller, NO_HOME, physicalDir } from "./lib.ts";
 
 const { args } = enterCaller(process.argv.slice(2));
@@ -67,10 +77,13 @@ if (!process.env.AC_HOME) writeSync(2, `ERROR: ${NO_HOME}\n`);
 else {
   const home = physicalDir(process.env.AC_HOME);
   if (home !== null) {
+    // mkdir itself, as ac_records_dir ran it: its own line on a failure, and
+    // the substitution that died there left `/projects.md` to read.
+    let made = false;
     try {
-      mkdirSync(`${home}/records`, { recursive: true });
+      made = Bun.spawnSync(["mkdir", "-p", `${home}/records`], { stdout: "ignore", stderr: "inherit" }).exitCode === 0;
     } catch {}
-    reg = `${home}/records/projects.md`;
+    if (made) reg = `${home}/records/projects.md`;
   }
 }
 
