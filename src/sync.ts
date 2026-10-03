@@ -37,7 +37,9 @@
 //   origin --prune --quiet` with its stdout and stderr discarded, bounded by
 //   <t> seconds: AC_SYNC_TIMEOUT when set and non-empty, else
 //   config/sync-timeout (first line, whitespace and CR trimmed; one this user
-//   cannot read is "" - the sweep goes on), else 60; a
+//   cannot read is "", as is the knob of an AC_HOME that cannot be entered -
+//   the sweep goes on, and the knob is not read at all under a non-empty
+//   AC_SYNC_TIMEOUT), else 60; a
 //   value that is not all ASCII digits reads as 60 (`007` stays `007` on the
 //   git command line and in the line below, and times out after 7 s).
 //   Timed out: `FAILED <name>: fetch timed out after <t>s`, exit 1, NO prune
@@ -152,15 +154,21 @@ const captured = (s: string): string => s.replace(/\n+$/, "");
 // awk's default field split: runs of blanks, the ends trimmed.
 const awkFields = (line: string): string[] => line.replace(/^[ \t]+|[ \t]+$/g, "").split(/[ \t]+/);
 
-// The knob read sat inside `$(...)` in the original, so an unreadable
-// config/sync-timeout read as "" (head's own line on stderr, not reproduced)
-// and the digit check fell back to 60 - the sweep goes on.
+// `${AC_SYNC_TIMEOUT:-$(ac_config_read ...)}`: the knob is read only when the
+// override is empty, and inside `$(...)` an AC_HOME that cannot be entered
+// (cd's own line on stderr) or a knob this user cannot read (head's) read as
+// "" - neither line is reproduced, the digit check falls back to 60 and the
+// sweep goes on.
 function syncTimeout(): string {
-  let knob = "";
-  try {
-    knob = configRead("sync-timeout", "60");
-  } catch {}
-  const t = process.env.AC_SYNC_TIMEOUT || knob;
+  let t = process.env.AC_SYNC_TIMEOUT || "";
+  if (!t) {
+    const h = process.env.AC_HOME;
+    if (!h || physicalDir(h)) {
+      try {
+        t = configRead("sync-timeout", "60");
+      } catch {}
+    }
+  }
   return /^[0-9]+$/.test(t) ? t : "60";
 }
 

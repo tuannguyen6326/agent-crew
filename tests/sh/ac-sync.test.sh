@@ -274,10 +274,10 @@ meta() { mkdir -p "$H/home/projects/$1/.crew/slots"; printf "$3" >"$H/home/proje
 HOMELESS=0
 SYNC_ENV=()
 run_side() {  # run_side <bin> <side root> <prefix> <args...> - HOME in an arg or an env value is that side's root; cwd is the root
-  local bin="$1" h="$2" p="$3" x; shift 3
+  local bin="$1" h="$2" p="$3" x v; shift 3
   local a=() e=(LC_ALL=C)
   [ "$HOMELESS" = 1 ] || e+=(AC_HOME="$h/home")
-  for x in ${SYNC_ENV[@]+"${SYNC_ENV[@]}"}; do e+=("${x//HOME/$h}"); done
+  for x in ${SYNC_ENV[@]+"${SYNC_ENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//HOME/$h}"); done
   for x in "$@"; do a+=("${x//HOME/$h}"); done
   # a side reads SYNC_STDIN when set: the first side would otherwise drain the bytes meant for both
   (cd "$h" && env -u AC_HOME "${e[@]}" "$bin/ac-sync.sh" ${a[@]+"${a[@]}"}) <"${SYNC_STDIN:-/dev/stdin}" >"$TMP/$p.raw" 2>"$TMP/$p.err"
@@ -669,5 +669,28 @@ same p17
 SYNC_ENV=(); unset SYNC_STDIN
 assert_eq "$(cat "$NH/gitin.log")" "$(cat "$OH/gitin.log")" "row 17: the fetch read the same stdin on both sides"
 assert_eq "$(cat "$NH/gitin.log")" "fed to the fetch" "row 17: the caller's bytes reached the fetch"
+
+# 18. the knob is not read under a non-empty AC_SYNC_TIMEOUT: an AC_HOME that
+#     does not exist never matters to a directory argument
+seed18() { H="$1"; project p18; }
+seed18 "$OH"; seed18 "$NH"
+HOMELESS=1; SYNC_ENV=("AC_HOME=HOME/missing" "AC_SYNC_TIMEOUT=1")
+same HOME/home/projects/p18
+HOMELESS=0; SYNC_ENV=()
+assert_eq "$(shim_out)" "fresh p18" "row 18: the override spares the knob read"
+
+# 19. without the override the knob of an AC_HOME that cannot be entered reads
+#     "" - 60 - and the sweep goes on; cd's own line on the original's stderr
+#     is not reproduced (named)
+HOMELESS=1; SYNC_ENV=("AC_HOME=HOME/missing")
+o_rc=0; run_side "$obin" "$OH" o HOME/home/projects/p18 || o_rc=$?
+n_rc=0; run_side "$BIN" "$NH" n HOME/home/projects/p18 || n_rc=$?
+HOMELESS=0; SYNC_ENV=()
+assert_eq "$n_rc $o_rc" "0 0" "row 19: both sweeps end 0"
+norm "$TMP/o.raw" "$OH" >"$TMP/o.out"; norm "$TMP/n.raw" "$NH" >"$TMP/n.out"
+cmp -s "$TMP/o.out" "$TMP/n.out" || fail "row 19: stdout differs: $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
+assert_eq "$(shim_out)" "fresh p18" "row 19: the default answered"
+assert_contains "$(cat "$TMP/o.err")" "No such file or directory" "row 19: cd's own line on the original"
+assert_eq "$(cat "$TMP/n.err")" "" "row 19: not reproduced (named)"
 
 pass
