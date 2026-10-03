@@ -406,7 +406,7 @@ signals() {
   # signals [<done-line suffix>] - the completion block EVERY brief carries, so
   # the two channels can never drift apart in one template. The printed marker
   # is the pane channel the watcher polls as the BACKUP; the push is what wakes
-  # the chief now (contract: bin/ac-done.sh). Its path is ABSOLUTE and baked
+  # the chief now (contract: src/done.ts header). Its path is ABSOLUTE and baked
   # here: the crewmate works in the PROJECT's worktree, which need not carry
   # this checkout's bin/ - the path travels in the brief, the fleet channel it
   # needs (AC_FLEET_STATE) rides its launch line.

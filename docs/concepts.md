@@ -173,7 +173,7 @@ Every actionable event is published durably to a wake spool, `state/.wake-spool/
 Agents also push their own completion with `bin/ac-done.sh <id> '<marker>'`, which publishes the same record and ends the watcher's poll wait, so a completion arrives in milliseconds.
 The watcher stays as the backup that catches an agent which crashed or forgot, and one completion still wakes the chief once.
 
-Owners: `bin/ac-done.sh` and `bin/ac-wake-lib.sh` headers.
+Owners: `src/done.ts` (the `bin/ac-done.sh` entry execs it) and `bin/ac-wake-lib.sh` headers.
 
 ### Hooks
 

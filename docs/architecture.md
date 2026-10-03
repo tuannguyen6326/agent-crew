@@ -353,7 +353,7 @@ Every tracked package follows the Agent Skills spec, enforced by `tests/sh/ac-sk
 | Backend contract and launch line | `bin/ac-backend.sh`, `bin/ac-backend-orca.sh` |
 | Worktree pool | `bin/ac-tree.sh` |
 | Spawn, kickoff, leases grammar | `bin/ac-spawn.sh` |
-| Watcher, wake keying, push, drain | `bin/ac-watch.sh`, `bin/ac-wake-lib.sh`, `bin/ac-done.sh`, `bin/ac-wake-drain.sh` |
+| Watcher, wake keying, push, drain | `bin/ac-watch.sh`, `bin/ac-wake-lib.sh`, `src/done.ts`, `bin/ac-wake-drain.sh` |
 | Rooms and gate receipts | `bin/ac-room.sh` |
 | Pane agents, exact-ref verification | `bin/ac-pane-agent.sh`, `bin/ac-verify.sh` |
 | crew-ship and QA pipelines | `bin/ac-ship.sh`, `bin/ac-qa.sh`, `bin/ac-pipeline-lib.sh` |
