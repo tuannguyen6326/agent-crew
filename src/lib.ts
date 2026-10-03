@@ -4,7 +4,9 @@
 // same stderr shape, exit status and homeless answer), because callers of a
 // ported bin/ac-*.sh entry cannot tell which language answered them. Two
 // helpers are no twins: contractLint is the delivery-contract judge itself,
-// and harnessLaunchable joins facts three bash arms each hold a part of.
+// and harnessLaunchable joins facts three bash arms each hold a part of; two
+// twin a port's own bash rather than ac-lib's: leaseAgeSecs (ac-pool-health's
+// reader of an ac_iso stamp) and tabFields (`IFS=$'\t' read -r`).
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -136,9 +138,12 @@ export function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+// ac_home's refusal, exported for an entry that must print it and then keep
+// its own exit status rather than die here.
+export const NO_HOME = "AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one";
+
 function homeSubdir(name: string): string {
-  if (!process.env.AC_HOME)
-    die("AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one");
+  if (!process.env.AC_HOME) die(NO_HOME);
   const dir = join(envHome(), name);
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -150,6 +155,54 @@ export function stateDir(): string {
 
 export function recordsDir(): string {
   return homeSubdir("records");
+}
+
+export function projectsDir(): string {
+  return homeSubdir("projects");
+}
+
+// ac_now's twin through date(1), the rung bash 3.2 (this host's /bin/bash)
+// takes, so a PATH `date` stub binds the bash and the port to one instant.
+// The live env, not Bun's startup snapshot, so a PATH set after start is the
+// one searched.
+const DATE_SPAWN = { stdout: "pipe", stderr: "ignore", env: process.env } as const;
+
+export function now(): number {
+  return Number(Bun.spawnSync(["date", "+%s"], DATE_SPAWN).stdout.toString().trim());
+}
+
+// `IFS=$'\t' read -r <n names>`: tab is IFS whitespace, so a run of tabs is
+// one delimiter, leading and trailing runs are dropped, and the last name
+// keeps the rest of the line. The ac-tree list wire is read this way, so a
+// leased row with an empty leased_at lands its owner in leased_at.
+export function tabFields(line: string, n: number): string[] {
+  const fields: string[] = [];
+  let rest = line.replace(/^\t+/, "");
+  for (let i = 1; i < n && rest !== ""; i++) {
+    const m = /\t+/.exec(rest);
+    if (!m) break;
+    fields.push(rest.slice(0, m.index));
+    rest = rest.slice(m.index + m[0].length);
+  }
+  fields.push(rest.replace(/\t+$/, ""));
+  while (fields.length < n) fields.push("");
+  return fields;
+}
+
+// lease_age_secs' twin (bin/ac-pool-health.sh, the seam ac-learn.sh's
+// learn_age_days shares): whole seconds since an ac_iso stamp, null when it
+// misses the digit pattern or date(1) refuses it. The epoch comes from the
+// same `date -u -j -f` (BSD; GNU `date -u -d` after it) the bash runs, never
+// a JS parser: BSD strptime takes Feb 30, day 00 and :60 and rolls them while
+// refusing month 13 or hour 24, and that acceptance set is what decides which
+// leases read as aged.
+export function leaseAgeSecs(ts: string): number | null {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/.test(ts)) return null;
+  let r = Bun.spawnSync(["date", "-u", "-j", "-f", "%Y-%m-%dT%H:%M:%SZ", ts, "+%s"], DATE_SPAWN);
+  if (r.exitCode !== 0) r = Bun.spawnSync(["date", "-u", "-d", ts, "+%s"], DATE_SPAWN);
+  const then = r.stdout.toString().trim();
+  if (r.exitCode !== 0 || then === "") return null;
+  return now() - Number(then);
 }
 
 // ac_pid_alive's twin: an owner is a canonical positive pid, and a process this

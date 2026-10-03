@@ -209,6 +209,8 @@ printf '#!/bin/sh\nexit 1\n' >"$failbun/bun"
 chmod +x "$failbun/bun"
 dig="$(PATH="$failbun:$PATH" "$BIN/ac-session-start.sh" 2>/dev/null)" \
   || fail "a ledger the parser could not read must not take session start down"
+assert_contains "$dig" "pool health unavailable" \
+  "a bun that cannot start leaves the pool block UNKNOWN, never silent"
 assert_contains "$dig" "WARN"$'\t'"ledger unreadable" "the crewdomain block names the unread ledger"
 assert_contains "$dig" "-- supervision --" "the blocks after the crewdomain block still print"
 
