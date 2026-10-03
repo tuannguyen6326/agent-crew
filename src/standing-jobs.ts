@@ -23,7 +23,7 @@
 //
 // Line format (one job per line):
 //   - <id> [on|off] cadence:<cadence> recreate:<exact re-create action>
-// Mirrors the records/projects.md bracket grammar (ac_project_mode). A job
+// Mirrors the records/projects.md bracket grammar (src/project-mode.ts). A job
 // line starts with `- ` and holds a `[` with a `]` somewhere after it. The id
 // is the run of non-space bytes after `- ` and NEEDS a space after it (a
 // line `- foo[x]` is a job line with no id: counted, never printed); the

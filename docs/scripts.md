@@ -22,7 +22,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | `ac-statusline.sh` | One-line fleet status for terminal status bars (`⚓<fleet> <n>▶ <m>⚑[ WATCH!]`), file reads only so it stays fast; the pending count uses the shared `ac_room_pending` matcher. Spec: `bin/ac-statusline.sh` header. |
 | `ac-notify.sh <title> <message...>` | Best-effort captain notification over the `config/wedge-alarm` channel (`off`, `auto`, `herdr`, `osascript`, `bell`, `command:<cmd>`); never fails and always exits 0. Spec: `bin/ac-notify.sh` header. |
 | `ac-sync.sh [<project>]` | Clone-freshness sweep: time-bounded fetch, fast-forward of a clean default branch, prune of local branches whose upstream is gone (keeping pool-leased `crew/*` branches). A dirty, off-default or diverged clone is reported `STUCK` and never touched; exit 1 on any STUCK or FAILED. Spec: `bin/ac-sync.sh` header. |
-| `ac-repo-pull.sh <repo-root>` | Fetch plus FAST-FORWARD-ONLY sync of one clone's default branch, the dashboard Pull button's whole authority; a diverged branch, dirty tree or detached HEAD fetches only and mutates nothing. Spec: `bin/ac-repo-pull.sh` header. |
+| `ac-repo-pull.sh <repo-root>` | Fetch plus FAST-FORWARD-ONLY sync of one clone's checked-out branch, the dashboard Pull button's whole authority; a diverged branch, dirty tree or detached HEAD fetches only and mutates nothing. Spec: `src/repo-pull.ts` header (the entry execs it). |
 
 ## Task lifecycle
 
@@ -36,7 +36,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | `ac-tree.sh get \| lease \| list \| return \| prune \| remove` | The herdr fleets' in-repo worktree pool at `<repo>/.crew/worktrees/<n>`: detached-HEAD trees reset on acquire and reused, `lease` for a state-only lease, dry-run `prune`, gated `remove`. The first lease installs the pre-commit and commit-msg guard hooks; a dirty available slot is never silently reset. Spec: `bin/ac-tree.sh` header. |
 | `ac-relocate.sh <id> [--family <fam> \| --root]` | Moves a live task window to another herdr workspace (default: its own family's) and resumes its recorded session there. Refuses an unknown task, a non-herdr backend, a missing `session_id` and a busy agent. Spec: `bin/ac-relocate.sh` header. |
 | `ac-dispatch-select.sh --list \| [--rule <n>] \| --pane <kind> [--lanes \| --list \| --rule <n\|default> \| --receipt <n\|default>] \| --propose <brief-file>` | Resolves a `config/crew-dispatch.json` profile into TAB-separated `harness= model= effort=`; the chief judges the prose `when` clauses, this script never does. An absent pane entry prints nothing; a malformed one dies. `--propose` prints a System One rule hint only under `config/jev=on`. Spec: `src/dispatch-select.ts` header (the entry execs it). |
-| `ac-project-mode.sh <project>` | Resolves the `+yolo` flag from `records/projects.md` (`yolo=<on\|off>`) and nothing else - delivery mode is per task and resolved by `ac-brief.sh`. Spec: `bin/ac-project-mode.sh` header. |
+| `ac-project-mode.sh <project>` | Resolves the `+yolo` flag from `records/projects.md` (`yolo=<on\|off>`) and nothing else - delivery mode is per task and resolved by `ac-brief.sh`. Spec: `src/project-mode.ts` header (the entry execs it). |
 | `ac-archive.sh archive [--dry-run] \| restore <family> [--dry-run]` | MANUAL ONLY, with no automatic caller by design: relocates families whose room carries `CLOSED:` to `data/archive/<year>/<family>/` and back; a closed room with no resolvable year is refused and exits 1. Idempotent and byte-reversible. Spec: `src/archive.ts` header. |
 
 ## Backends and panes
@@ -58,7 +58,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | Script | What it does |
 |---|---|
 | `ac-watch.sh [--once \| --release <pid>]` | Zero-token watcher: polls panes and stage `report.md` artifacts, publishes each actionable wake durably to its scope's spool, and exits with one reason line. Refused in a SOLO session. Spec: `bin/ac-watch.sh` header. |
-| `ac-done.sh <id> <marker>` | The agent-side completion PUSH: publishes one durable `report` wake and nudges the covering watcher, stamping the watcher's dedup so one completion wakes once; a failed publish dies loudly. Spec: `bin/ac-done.sh` header. |
+| `ac-done.sh <id> <marker>` | The agent-side completion PUSH: publishes one durable `report` wake and nudges the covering watcher, stamping the watcher's dedup so one completion wakes once; a failed publish dies loudly. Spec: `src/done.ts` header (the entry execs it). |
 | `ac-wake-drain.sh [ack <id>...]` | Atomically drains the calling session's own spool (per-record rename), reports unacknowledged completions and warns WATCHER-DOWN; the fleet chief also drains orphaned family spools. Both forms are refused in a SOLO session. Spec: `bin/ac-wake-drain.sh` header. |
 
 ## Rooms and ledger
