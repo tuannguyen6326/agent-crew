@@ -534,6 +534,19 @@ same create eppy proj
 assert_eq "$(shim_err)" "ERROR: create: the eppy record is retired (# retired STAMP) - a retired epic has no integration branch; re-record on the captain's word if the epic truly reopens" "create names the retirement"
 same show eppy
 assert_contains "$(shim_out)" "# retired STAMP" "show prints a retired record"
+# 8b. a path already at the temp name - a symlink back to the record - is never
+#     written through: the temp is created exclusively, as mktemp's was, so the
+#     record, the symlink and the directory listing all agree with the original
+link_back() { ln -s branches "$H/data/sym/branches.retire"; }
+both rec sym 'proj epic/sym\n'
+both link_back
+same retire sym
+assert_eq "$(shim_out)" "retired: epic sym record at HOME/data/sym/branches" "the retired line past a planted temp path"
+same_record sym
+assert_eq "$(sed -n 2p "$NH/data/sym/branches")" "proj epic/sym" "the record body survives"
+[ ! -L "$NH/data/sym/branches" ] || fail "the record must stay a regular file, never the planted symlink"
+assert_eq "$(readlink "$NH/data/sym/branches.retire")" "branches" "the planted symlink is left as it was"
+assert_eq "$(ls "$NH/data/sym")" "$(ls "$OH/data/sym")" "no temp file is left beside the record"
 # 9. an archived record: show, verify, retire in place, show; the year glob in byte order
 archive_eppy2() {
   rec eppy2 'proj epic/eppy2\n'

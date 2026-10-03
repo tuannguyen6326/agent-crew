@@ -210,9 +210,20 @@ function cmdRetire(epic: string): void {
   }
   const stamp = Bun.spawnSync(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdout: "pipe", stderr: "inherit" }).stdout.toString().replace(/\n+$/, "");
   // A sibling temp file renamed over the record, so a reader mid-write sees
-  // the old record or the new one, never a torn one.
-  const tmp = `${f}.retire.${process.pid}`;
-  writeFileSync(tmp, Buffer.concat([Buffer.from(`# retired ${stamp}\n`), old]));
+  // the old record or the new one, never a torn one. Created exclusively, as
+  // mktemp did: a path already at the name (a symlink back to the record,
+  // say) is never written through - the next name is tried.
+  const retired = Buffer.concat([Buffer.from(`# retired ${stamp}\n`), old]);
+  let tmp = `${f}.retire`;
+  for (let i = 1; ; i++) {
+    try {
+      writeFileSync(tmp, retired, { flag: "wx" });
+      break;
+    } catch (e) {
+      if ((e as { code?: string }).code !== "EEXIST") throw e;
+      tmp = `${f}.retire.${i}`;
+    }
+  }
   chmodSync(tmp, statSync(f).mode & 0o7777);
   renameSync(tmp, f);
   out(`retired: epic ${bytes(epic)} record at ${bytes(f)}\n`);
