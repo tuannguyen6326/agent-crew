@@ -509,4 +509,42 @@ for side in "$obin" "$BIN"; do
   assert_contains "$(cat "$TMP/w.out")" "(refreshing every 1s - ctrl-c to stop)" "the frame's trailer ($side)"
 done
 
+# 17. a regular FILE at state/, records/ or projects/: the spawned mkdir -p
+#     prints its own line on both sides and the render goes on, exit 0
+for d in state records projects; do
+  fresh_home "h17-$d"; rmdir "$AC_HOME/$d"; printf 'x\n' >"$AC_HOME/$d"
+  same
+  assert_eq "$(cat "$TMP/n.err")" "mkdir: $AC_HOME/$d: File exists" "row 17: mkdir's own line for a file at $d/"
+  assert_contains "$(nout)" "POOLS" "row 17: the render reaches POOLS past a file at $d/"
+done
+
+# 18. a project directory whose name ends in LF: `$(basename)` lost the LF, so
+#     the pool sits on ONE row with its padding measured on the LF-less name
+fresh_home h18; mkdir -p "$AC_HOME/projects/lfp
+/.crew/slots"
+same
+assert_contains "$(nout)" "$(printf '  %-20s leased:0 avail:0' lfp)" "row 18: one row, the LF-less name padded"
+
+# 19. ROOMS is streamed: a list that prints one line, waits for a barrier and
+#     prints a second shows the first BEFORE the barrier falls, on both sides
+#     (the oracle's bin and the shim's lab copy get the same stub ac-room.sh)
+stub_room() { printf '%s\n' '#!/bin/sh' "$1" >"$obin/ac-room.sh"; printf '%s\n' '#!/bin/sh' "$1" >"$lab/bin/ac-room.sh"; }
+stub_room 'printf "PENDING-CAPTAIN(1) fam\tfirst\n"; while [ ! -e "$DASH_BARRIER" ]; do sleep 0.1; done; printf "second\n"'
+fresh_home h19
+for side in o n; do
+  if [ "$side" = o ]; then b="$obin"; else b="$lab/bin"; fi
+  rm -f "$TMP/barrier-$side"; : >"$TMP/s19-$side.out"
+  DASH_BARRIER="$TMP/barrier-$side" "$b/ac-dash.sh" >"$TMP/s19-$side.out" 2>/dev/null </dev/null &
+  pid=$!
+  n=0; until /usr/bin/grep -q 'first' "$TMP/s19-$side.out" || [ $n -ge 100 ]; do sleep 0.1; n=$((n+1)); done
+  /usr/bin/grep -q 'first' "$TMP/s19-$side.out" || { kill $pid 2>/dev/null; fail "row 19: the first room line must show before the barrier falls ($side)"; }
+  /usr/bin/grep -q 'second' "$TMP/s19-$side.out" && fail "row 19: the second line cannot show before the barrier ($side)"
+  touch "$TMP/barrier-$side"
+  wait $pid || fail "row 19: exit 0 after the barrier ($side)"
+done
+cmp -s "$TMP/s19-o.out" "$TMP/s19-n.out" || fail "row 19: the streamed renders differ: $(diff "$TMP/s19-o.out" "$TMP/s19-n.out" | head -n 6)"
+assert_contains "$(cat "$TMP/s19-n.out")" "  PENDING-CAPTAIN(1) fam	first
+  second" "row 19: both lines, in order"
+cp "$BIN/ac-room.sh" "$obin/ac-room.sh"; cp "$BIN/ac-room.sh" "$lab/bin/ac-room.sh"
+
 pass

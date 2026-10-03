@@ -23,8 +23,10 @@
 // HOME: AC_HOME through physicalDir (`cd && pwd -P`). Unset -> ac_home's
 // refusal, exit 1, nothing on stdout; not enterable -> `AC_HOME is not a
 // readable directory: <AC_HOME>`, exit 1. The view MINTS state/, records/ and
-// projects/ (stateDir, recordsDir, projectsDir - the mkdir -p of the path
-// helpers the original called; config/ and data/ are not minted).
+// projects/ with a spawned `mkdir -p` each, as the path helpers the original
+// called inside `$(...)` did: a mkdir that fails (a regular file at the path)
+// prints its own line and the render goes on with that path, exit 0 - the
+// substitution still handed the path over. config/ and data/ are not minted.
 //
 // RENDER (stdout, bytes; `%-Ns` pads by BYTES like bash's printf, never cuts):
 //   ⚓ <basename of the physical home>  captain: <c>  backend: <b>  flow: <f>
@@ -53,7 +55,9 @@
 //   BACKLOG  (no backlog yet)                            records/backlog.md not a regular file
 //   <blank>
 //   POOLS
-//     <project %-20s> leased:<n> avail:<m>               per projects/<p>/.crew/slots DIRECTORY
+//     <project %-20s> leased:<n> avail:<m>               per projects/<p>/.crew/slots DIRECTORY;
+//                                                        <p> as `$(basename)` gave it, trailing
+//                                                        LFs gone, the raw name walked
 //     (no worktree pools yet)
 //
 // CREW rows: every non-dot `*.meta` entry of state/ that exists (a dangling
@@ -73,12 +77,14 @@
 // (the project read never runs). Every other read of the render sat inside a
 // `$(...)`, an `if` or an `||` and reads on.
 //
-// ROOMS: `<bin>/ac-room.sh list` (stdout streamed, stderr dropped); when it
-// exits non-zero (or cannot start) the WARN line is appended to whatever it
-// printed - joined to an unterminated last line. The stream is then read as
-// `read -r` read it: split on LF, an unterminated last line DROPPED, each line
-// cut at its first NUL. A line starting `PENDING-CAPTAIN` or `WARN` is red,
-// every other dim, each indented two spaces.
+// ROOMS: `<bin>/ac-room.sh list` (stdout STREAMED - each complete line is
+// printed as it arrives, so a pending line a slow list has already emitted is
+// visible before the list ends; stderr dropped); when it exits non-zero (or
+// cannot start) the WARN line is appended to whatever it printed - joined to
+// an unterminated last line. The stream is read as `read -r` read it: split on
+// LF, an unterminated last line DROPPED, each line cut at its first NUL. A
+// line starting `PENDING-CAPTAIN` or `WARN` is red, every other dim, each
+// indented two spaces.
 //
 // BACKLOG: records/backlog.md must be a regular file (`[ -f ]`; a directory or
 // an absent file is `(no backlog yet)`). The count walks the file's records as
@@ -148,7 +154,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { isatty } from "node:tty";
-import { bunChild, configReadDir, die, enterCaller, metaGet, metaIsVerify, NO_HOME, physicalDir, projectsDir, recordsDir, stateDir } from "./lib.ts";
+import { bunChild, configReadDir, die, enterCaller, metaGet, metaIsVerify, NO_HOME, physicalDir } from "./lib.ts";
 
 const bin = `${process.cwd()}/bin`;
 const { args } = enterCaller(process.argv.slice(2));
@@ -250,24 +256,38 @@ function renderCrew(sd: string): void {
   if (verify !== "") out(`\n${C_H}VERIFY (verification agents, not crew)${C_0}\n${verify}`);
 }
 
-function renderRooms(): void {
+const roomLine = (raw: string): void => {
+  const line = raw.replace(/\0[\s\S]*$/, "");
+  const c = line.startsWith("PENDING-CAPTAIN") || line.startsWith("WARN") ? C_R : C_D;
+  out(`  ${c}${line}${C_0}\n`);
+};
+
+// The list is read as the original's `while read -r` read its pipe: every
+// complete line printed the moment it arrives, the unterminated tail held
+// back - and joined to the WARN when the list fails, dropped when it does not.
+async function renderRooms(): Promise<void> {
   out(`\n${C_H}ROOMS (captain inbox)${C_0}\n`);
-  let text = "";
+  let buf = "";
   let failed = false;
+  const flush = (): void => {
+    const lines = buf.split("\n");
+    buf = lines.pop()!;
+    for (const l of lines) roomLine(l);
+  };
   try {
-    const r = Bun.spawnSync([`${bin}/ac-room.sh`, "list"], { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: process.env });
-    text = r.stdout.toString("latin1");
-    failed = r.exitCode !== 0;
+    const proc = Bun.spawn([`${bin}/ac-room.sh`, "list"], { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: process.env });
+    for await (const chunk of proc.stdout) {
+      buf += Buffer.from(chunk).toString("latin1");
+      flush();
+    }
+    await proc.exited;
+    failed = proc.exitCode !== 0;
   } catch {
     failed = true;
   }
-  if (failed) text += "WARN   rooms unreadable - the inbox is UNKNOWN, not empty (bin/ac-room.sh list)\n";
-  const lines = text.split("\n");
-  lines.pop();
-  for (const raw of lines) {
-    const line = raw.replace(/\0[\s\S]*$/, "");
-    const c = line.startsWith("PENDING-CAPTAIN") || line.startsWith("WARN") ? C_R : C_D;
-    out(`  ${c}${line}${C_0}\n`);
+  if (failed) {
+    buf += "WARN   rooms unreadable - the inbox is UNKNOWN, not empty (bin/ac-room.sh list)\n";
+    flush();
   }
 }
 
@@ -378,12 +398,22 @@ function renderPools(pd: string): void {
       if (v === "1") leased++;
       else avail++;
     }
-    out(`  ${padBytes(bytes(p), 20)} leased:${leased} avail:${avail}\n`);
+    out(`  ${padBytes(bytes(p).replace(/\n+$/, ""), 20)} leased:${leased} avail:${avail}\n`);
   }
   if (!found) out(`  ${C_D}(no worktree pools yet)${C_0}\n`);
 }
 
-function render(): void {
+// `$(ac_state_dir)` and its siblings: `mkdir -p` then the path - a mkdir that
+// fails prints its own line and the substitution still hands the path over.
+function mintDir(home: string, name: string): string {
+  const dir = `${home}/${name}`;
+  try {
+    Bun.spawnSync(["mkdir", "-p", dir], { stdin: "ignore", stdout: "ignore", stderr: "inherit" });
+  } catch {}
+  return dir;
+}
+
+async function render(): Promise<void> {
   const envHome = process.env.AC_HOME;
   if (!envHome) die(NO_HOME);
   const home = physicalDir(envHome) ?? die(`AC_HOME is not a readable directory: ${envHome}`);
@@ -397,10 +427,10 @@ function render(): void {
   };
   const name = bytes(home.slice(home.lastIndexOf("/") + 1)).replace(/\n+$/, "");
   out(`${C_H}${ANCHOR} ${name}${C_0}  ${C_D}captain:${C_0} ${cfg("captain", "captain")}  ${C_D}backend:${C_0} ${cfg("backend", "herdr")}  ${C_D}flow:${C_0} ${cfg("flow", "auto")}\n`);
-  renderCrew(stateDir());
-  renderRooms();
-  renderBacklog(recordsDir());
-  renderPools(projectsDir());
+  renderCrew(mintDir(home, "state"));
+  await renderRooms();
+  renderBacklog(mintDir(home, "records"));
+  renderPools(mintDir(home, "projects"));
 }
 
 // An inherited-stdio child whose failure ends the run with its status, as
@@ -423,12 +453,12 @@ if (verb === "--watch") {
   process.on("SIGINT", () => process.exit(0));
   for (;;) {
     await runOrExit(["clear"]);
-    render();
+    await render();
     out(`\n${C_D}(refreshing every ${bytes(interval)}s - ctrl-c to stop)${C_0}\n`);
     await runOrExit(["sleep", interval]);
   }
 } else if (verb === "") {
-  render();
+  await render();
 } else {
   write(2, "usage: ac-dash.sh [--watch [<seconds>]]\n");
   process.exit(2);
