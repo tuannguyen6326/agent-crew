@@ -84,8 +84,9 @@
 # INSIDE the hook's process tree, which the harness owns and reaps.
 #
 # SCOPE (mirrors ac-turnend-guard.sh, which owns the reasoning): a genuine
-# primary checkout of a fleet home, never a crewmate's linked worktree, never a
-# crewdeputy home, and for an UNSCOPED session only when this session's harness
+# primary checkout of a fleet home (a crewdeputy's own home included - the
+# deputy is the chief there), never a crewmate's linked worktree, and for an
+# UNSCOPED session only when this session's harness
 # ancestor holds the home lock - a read-only session must not arm the fleet
 # watcher. A scoped roomchief does not hold that lock and is not read-only, so
 # it arms its own family watcher with the watch set recomputed here, exactly as
@@ -115,8 +116,8 @@
 # - because the loop can hold the chief's coverage for up to
 # AC_AUTOARM_BUDGET (~50min) and a single line at exit answers nothing during
 # that whole window. NOT traced: a failure to source ac-lib.sh (the floor -
-# nothing here can resolve a home to write to), a linked worktree, and a
-# crewdeputy home. The AC_SOLO exit above is also untraced: a solo session
+# nothing here can resolve a home to write to) and a linked worktree. The
+# AC_SOLO exit above is also untraced: a solo session
 # never arms anything, so it never reaches a verdict this trace is for.
 
 set -uo pipefail
@@ -132,7 +133,6 @@ bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$bin_dir/ac-wake-lib.sh" 2>/dev/null || exit 0
 
 home="$(ac_home 2>/dev/null)" || exit 0
-[ -e "$home/.ac-crewdeputy-home" ] && exit 0
 
 gd="$(git -C "$home" rev-parse --git-dir 2>/dev/null || true)"
 gcd="$(git -C "$home" rev-parse --git-common-dir 2>/dev/null || true)"

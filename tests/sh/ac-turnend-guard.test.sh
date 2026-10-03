@@ -260,11 +260,16 @@ printf 'window=crew:tw9\n' >"$wt2/state/tw9.meta"
 printf '{}' | AC_HOME="$wt2" "$BIN/ac-turnend-guard.sh" >/dev/null 2>&1 || true
 assert_no_file "$wt2/state/.stop-hooks.log" "R4: a linked worktree (crewmate) must never write a trace line"
 
+# A crewdeputy is a chief running its own home: its crew is its own to cover,
+# so its session's guard judges that home like any fleet home - crew in flight
+# with no beacon blocks, and the verdict is traced.
 touch "$AC_HOME/.ac-crewdeputy-home"
-rm -f "$trace_log"
-printf '{}' | "$BIN/ac-turnend-guard.sh" >/dev/null 2>&1 || true
-assert_no_file "$trace_log" "R4: a crewdeputy home must never write a trace line"
-rm -f "$AC_HOME/.ac-crewdeputy-home"
+rm -f "$trace_log" "$state/.last-watcher-beat"
+printf 'kind=ship\n' >"$state/dep-crew.meta"
+rc=0; out="$(printf '{}' | "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
+assert_eq "$rc" "2" "a crewdeputy home with crew in flight and no beacon blocks its own session's turn end: $out"
+assert_file "$trace_log" "...and the verdict is traced"
+rm -f "$state/dep-crew.meta" "$AC_HOME/.ac-crewdeputy-home"
 
 # A5: fail-open. A read-only state dir must never change the guard's own
 # verdict, message, or exit status - the trace write silently does nothing.
