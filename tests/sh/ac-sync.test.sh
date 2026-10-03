@@ -279,7 +279,8 @@ run_side() {  # run_side <bin> <side root> <prefix> <args...> - HOME in an arg o
   [ "$HOMELESS" = 1 ] || e+=(AC_HOME="$h/home")
   for x in ${SYNC_ENV[@]+"${SYNC_ENV[@]}"}; do e+=("${x//HOME/$h}"); done
   for x in "$@"; do a+=("${x//HOME/$h}"); done
-  (cd "$h" && env -u AC_HOME "${e[@]}" "$bin/ac-sync.sh" ${a[@]+"${a[@]}"}) >"$TMP/$p.raw" 2>"$TMP/$p.err"
+  # a side reads SYNC_STDIN when set: the first side would otherwise drain the bytes meant for both
+  (cd "$h" && env -u AC_HOME "${e[@]}" "$bin/ac-sync.sh" ${a[@]+"${a[@]}"}) <"${SYNC_STDIN:-/dev/stdin}" >"$TMP/$p.raw" 2>"$TMP/$p.err"
 }
 norm() { LC_ALL=C sed -e "s#$2#HOME#g" "$1"; }
 same() {  # same <args...> - oracle on $OH and shim on $NH answer byte-identically
@@ -628,5 +629,45 @@ fresh ac.x (no origin)
 fresh ac_x (no origin)
 fresh $(printf '\303\251') (no origin)" "projects in byte order"
 assert_eq "$(shim_err)" "" "nothing on stderr"
+
+# 15. a slot meta value is awk's C string: `leased=1<NUL>` and `task=t9<NUL>`
+#     still protect crew/t9 on both sides; `leased=1<NUL>x` too
+seed15() { H="$1"; project p15; gone p15 crew/t9; gone p15 crew/t10; meta p15 s1 'task=t9\0\nleased=1\0\n'; meta p15 s2 'task=t10\0junk\nleased=1\0x\n'; }
+seed15 "$OH"; seed15 "$NH"
+same p15
+assert_contains "$(shim_out)" "kept p15: branch crew/t9 (upstream gone, still in use)" "row 15: NUL-cut lease and task keep the branch"
+assert_contains "$(shim_out)" "kept p15: branch crew/t10 (upstream gone, still in use)" "row 15: NUL-cut values beyond the NUL are gone"
+same_tree home/projects/p15 refs/heads
+
+# 16. config/sync-timeout this user cannot read: the knob reads "" and falls
+#     back to 60 inside the original's substitution (head's own line on stderr
+#     is not reproduced - named), the project syncs and the NEXT one is visited
+if [ "$(id -u)" != 0 ]; then
+  seed16() { H="$1"; project p16a; project p16b; printf '7\n' >"$H/home/config/sync-timeout" 2>/dev/null || { mkdir -p "$H/home/config"; printf '7\n' >"$H/home/config/sync-timeout"; }; chmod 000 "$H/home/config/sync-timeout"; }
+  seed16 "$OH"; seed16 "$NH"
+  o_rc=0; run_side "$obin" "$OH" o || o_rc=$?
+  n_rc=0; run_side "$BIN" "$NH" n || n_rc=$?
+  chmod 644 "$OH/home/config/sync-timeout" "$NH/home/config/sync-timeout"
+  assert_eq "$n_rc $o_rc" "0 0" "row 16: both sweeps end 0"
+  norm "$TMP/o.raw" "$OH" >"$TMP/o.out"; norm "$TMP/n.raw" "$NH" >"$TMP/n.out"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "row 16: stdout differs: $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
+  assert_contains "$(shim_out)" "fresh p16b" "row 16: the next project is still visited"
+  assert_contains "$(cat "$TMP/o.err")" "Permission denied" "row 16: head's own line on the original"
+  assert_eq "$(/usr/bin/grep -c 'Permission denied' "$TMP/n.err")" "0" "row 16: not reproduced (named)"
+  rm -f "$OH/home/config/sync-timeout" "$NH/home/config/sync-timeout"
+fi
+
+# 17. every git inherits the caller's stdin: a PATH git whose fetch reads it
+#     logs the same bytes on both sides
+REAL_GIT="$(command -v git)"
+mkdir -p "$TMP/gitin"; printf '#!/bin/sh\ncase " $* " in *" fetch "*) cat >"$GITIN_LOG"; exit 0 ;; esac\nexec %s "$@"\n' "$REAL_GIT" >"$TMP/gitin/git"; chmod +x "$TMP/gitin/git"
+seed17() { H="$1"; project p17; }
+seed17 "$OH"; seed17 "$NH"
+printf 'fed to the fetch\n' >"$TMP/stdin17"
+SYNC_ENV=("GITIN_LOG=HOME/gitin.log" "PATH=$TMP/gitin:$PATH"); SYNC_STDIN="$TMP/stdin17"
+same p17
+SYNC_ENV=(); unset SYNC_STDIN
+assert_eq "$(cat "$NH/gitin.log")" "$(cat "$OH/gitin.log")" "row 17: the fetch read the same stdin on both sides"
+assert_eq "$(cat "$NH/gitin.log")" "fed to the fetch" "row 17: the caller's bytes reached the fetch"
 
 pass

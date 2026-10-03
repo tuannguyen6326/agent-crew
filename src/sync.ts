@@ -36,7 +36,8 @@
 // - the fetch, `git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=<t> fetch
 //   origin --prune --quiet` with its stdout and stderr discarded, bounded by
 //   <t> seconds: AC_SYNC_TIMEOUT when set and non-empty, else
-//   config/sync-timeout (first line, whitespace and CR trimmed), else 60; a
+//   config/sync-timeout (first line, whitespace and CR trimmed; one this user
+//   cannot read is "" - the sweep goes on), else 60; a
 //   value that is not all ASCII digits reads as 60 (`007` stays `007` on the
 //   git command line and in the line below, and times out after 7 s).
 //   Timed out: `FAILED <name>: fetch timed out after <t>s`, exit 1, NO prune
@@ -58,7 +59,7 @@
 //   Every STUCK line exits 1 and the working tree is never touched.
 // - then the prune pass, STUCK or not: every `refs/heads` ref whose
 //   `%(upstream:track)` is exactly `[gone]`, in `for-each-ref` order, is
-//     kept <name>: branch <b> (upstream gone, still in use)     <b> is checked out in some worktree of the repo (`worktree list --porcelain`), or is `crew/<task>` for a slot meta <repo>/.crew/slots/*.meta whose LAST `leased=` line is `1` and whose `task=` is non-empty (read-only; the pool owns the records)
+//     kept <name>: branch <b> (upstream gone, still in use)     <b> is checked out in some worktree of the repo (`worktree list --porcelain`), or is `crew/<task>` for a slot meta <repo>/.crew/slots/*.meta whose LAST `leased=` line is `1` and whose `task=` is non-empty, each value cut at its first NUL as awk handed it over (read-only; the pool owns the records)
 //     pruned <name>: branch <b> (upstream gone)                 after `git branch -D <b>`
 //     kept <name>: branch <b> (upstream gone, delete refused)   `branch -D` failed
 //   An unreadable slot meta prints `WARN: cannot read meta file <path>` on
@@ -151,8 +152,15 @@ const captured = (s: string): string => s.replace(/\n+$/, "");
 // awk's default field split: runs of blanks, the ends trimmed.
 const awkFields = (line: string): string[] => line.replace(/^[ \t]+|[ \t]+$/g, "").split(/[ \t]+/);
 
+// The knob read sat inside `$(...)` in the original, so an unreadable
+// config/sync-timeout read as "" (head's own line on stderr, not reproduced)
+// and the digit check fell back to 60 - the sweep goes on.
 function syncTimeout(): string {
-  const t = process.env.AC_SYNC_TIMEOUT || configRead("sync-timeout", "60");
+  let knob = "";
+  try {
+    knob = configRead("sync-timeout", "60");
+  } catch {}
+  const t = process.env.AC_SYNC_TIMEOUT || knob;
   return /^[0-9]+$/.test(t) ? t : "60";
 }
 
@@ -161,9 +169,11 @@ const sleep = async (secs: string): Promise<void> => {
 };
 
 async function fetchBounded(repo: string, secs: string): Promise<number> {
+  // stdin stays the caller's (a backgrounded job under `set -m` kept it);
+  // stdout and stderr were discarded.
   const child = spawn("git", ["-C", repo, "-c", "http.lowSpeedLimit=1", `-c`, `http.lowSpeedTime=${secs}`, "fetch", "origin", "--prune", "--quiet"], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["inherit", "ignore", "ignore"],
     env: process.env,
   });
   let status: number | null = null;
@@ -220,15 +230,16 @@ function neededBranches(repo: string): string[] {
       continue;
     }
     // `[ "$(ac_meta_get ...)" = 1 ]`: the WARN of an unreadable meta has been
-    // printed and its substitution read as "" - the lease is ignored.
+    // printed and its substitution read as "" - the lease is ignored; a value
+    // is awk's C string, cut at its first NUL.
     let leased = "";
     try {
-      leased = metaGet(f, "leased");
+      leased = metaGet(f, "leased").replace(/\0[\s\S]*$/, "");
     } catch {}
     if (leased !== "1") continue;
     let task = "";
     try {
-      task = metaGet(f, "task");
+      task = metaGet(f, "task").replace(/\0[\s\S]*$/, "");
     } catch {}
     if (task !== "") needed.push(`crew/${task}`);
   }

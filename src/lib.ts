@@ -336,12 +336,12 @@ export function epicBranchEntry(epic: string, repo: string): EpicBranchEntry {
 }
 
 function gitOut(repo: string, args: string[]): string | null {
-  const r = Bun.spawnSync(["git", "-C", repo, ...args], { stdout: "pipe", stderr: "ignore" });
+  const r = Bun.spawnSync(["git", "-C", repo, ...args], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
   return r.exitCode === 0 ? r.stdout.toString().replace(/\n+$/, "") : null;
 }
 
 function gitRef(repo: string, ref: string): boolean {
-  return Bun.spawnSync(["git", "-C", repo, "show-ref", "--verify", "--quiet", ref], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  return Bun.spawnSync(["git", "-C", repo, "show-ref", "--verify", "--quiet", ref], { stdin: "inherit", stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 }
 
 // ac_default_branch's twin: origin/HEAD's target, else main, else master,
@@ -1022,7 +1022,7 @@ export function projectDir(arg: string): string | null {
   }
   let common: string | null = null;
   try {
-    const r = Bun.spawnSync(["git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"], { stdout: "pipe", stderr: "ignore" });
+    const r = Bun.spawnSync(["git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
     if (r.exitCode === 0) common = r.stdout.toString().replace(/\n+$/, "");
   } catch {}
   return common === null ? null : dirname(common);
