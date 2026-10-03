@@ -753,6 +753,26 @@ assert_eq "$(cat "$TMP/n.err")" "ERROR: config/scene-max must be a count (got: '
 assert_no_file "$NH/records/scenes/s8.md" "scene-max=08: nothing written"
 oracle_leaked_lock max-08
 
+# 18b. the signed 64-bit boundary: 2^63-1 plus one wraps negative on both
+# sides, and the wrapped heat keeps counting through update, cite and merge
+both wipe
+edge() {
+  seed e1 "META: created=$T0 updated=$T0 heat=9223372036854775807" "summary: edge"
+  seed e2 "META: created=$T0 updated=$T0 heat=9223372036854775807" "summary: edge two"
+}
+both edge; feed 'revised\n'
+same update e1
+assert_eq "$(shim_out)" "updated HOME/records/scenes/e1.md (heat -9223372036854775808)" "update wraps as 64-bit arithmetic wrapped"
+feed ''
+same show e1 --cite
+same show e1 --cite
+assert_eq "$(sed -n 2p "$NH/records/scenes/e1.md")" "META: created=$T0 updated=$T1 heat=-9223372036854775806" "a wrapped heat keeps counting through cites"
+feed 'm\n'
+same merge e1 e2 --into e3 --summary s
+assert_eq "$(sed -n 2p "$NH/records/scenes/e3.md")" "META: created=$T0 updated=$T1 heat=2" "merge sums wrapped and unwrapped heats in 64 bits"
+same list
+assert_eq "$(sed -n 2p "$TMP/n.out")" "  e3  heat=2  updated=$T1  s" "list prints the summed heat"
+
 # 19. `$(...)` drops NUL bytes from head fields: a summary with a NUL lists and
 # is inherited without it, a heat of 1 NUL reads 1 and bumps to 2; the file's
 # own bytes (plain show) keep them
@@ -780,6 +800,45 @@ lonedir() { mkdir -p "$D/b.md"; }
 both lonedir
 same list
 assert_eq "$(shim_out)" "no scenes yet in HOME/records/scenes (0/30)" "a lone directory: ls succeeds with no lines, so the no-scenes line is reached"
+# ls gets the same absolute operands, so a name starting with a dash is a
+# path, never an option: two scenes at scene-max=2 are FULL on both sides
+both wipe
+dashed() { seed a "META: created=$T0 updated=$T0 heat=1" "summary: a"; seed -x "META: created=$T0 updated=$T0 heat=1" "summary: x"; }
+both dashed; both setmax 2; feed ''
+same list
+assert_eq "$(sed -n 1p "$TMP/n.out")" "scenes: 2/2 in HOME/records/scenes" "a dashed entry is counted"
+feed 'b\n'
+same new b --summary s
+assert_contains "$(shim_err)" "scene store is FULL at the cap (2/2, config/scene-max)" "a dashed entry fills the cap"
+oracle_leaked_lock dashed
+assert_no_file "$NH/records/scenes/b.md" "FULL: nothing written"
+# an ls that fails (a directory entry it cannot read) printed its lines
+# first: list died under pipefail+errexit, exit 1 and silent, while the tier
+# gate ran under `if !` where errexit sleeps, so its three lines fill a cap
+# of 3 on both sides (root reads the directory, so unprivileged only)
+if [ "$(id -u)" -ne 0 ]; then
+  both wipe
+  shutdir() { seed a "META: created=$T0 updated=$T0 heat=1" "summary: a"; mkdir -p "$D/b.md"; chmod 000 "$D/b.md"; }
+  both shutdir; both setmax 3; feed ''
+  lo=0; run_oracle list || lo=$?
+  ln=0; run_shim list || ln=$?
+  l_out="$(cat "$TMP/o.raw" "$TMP/o.err" "$TMP/n.raw" "$TMP/n.err")"
+  feed 'c\n'
+  co=0; run_oracle new c --summary s || co=$?
+  cn=0; run_shim new c --summary s || cn=$?
+  c_err="$(cat "$TMP/o.err")"; c_err_n="$(cat "$TMP/n.err")"
+  c_out="$(cat "$TMP/o.raw" "$TMP/n.raw")"
+  chmod 755 "$OH/records/scenes/b.md" "$NH/records/scenes/b.md"
+  assert_eq "$ln $lo" "1 1" "ls failing: list exits 1 on both sides"
+  assert_eq "$l_out" "" "ls failing: list prints nothing on either side"
+  assert_eq "$cn $co" "1 1" "ls failing: new refuses on both sides"
+  assert_eq "$c_err_n" "$c_err" "ls failing: the same refusal"
+  assert_contains "$c_err_n" "scene store is FULL at the cap (3/3, config/scene-max)" "ls failing: the lines ls printed are the count"
+  assert_eq "$c_out" "" "ls failing: new prints nothing on stdout"
+  assert_no_file "$NH/records/scenes/c.md" "ls failing: nothing written"
+  oracle_leaked_lock ls-failing
+  assert_no_file "$NH/records/scenes/.lock" "ls failing: the port released"
+fi
 
 # 21. line 2 is read by position and token, never by its prefix
 both wipe

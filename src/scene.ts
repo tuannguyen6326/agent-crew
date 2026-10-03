@@ -49,10 +49,11 @@
 // cite's open command), bin/ac-learn.sh (`list` is a DISTILL source verbatim;
 // stale by `updated=`), src/brain.ts (kind scene, scenes-archive excluded).
 // A heat is read as bash arithmetic read it: a leading zero makes it octal
-// (010 is 8), it sits in 64 bits, and one that is not a run of digits, or
-// that arithmetic refuses (08), is refused by every verb that would add to
-// it (`scene '<slug>' carries a META heat that is not a count (heat=<v>) -
-// fix line 2 by hand, nothing written`).
+// (010 is 8), it sits in 64 bits and wraps there (a heat the arithmetic
+// carried past 2^63-1 reads back negative and keeps counting), and one that
+// is not a signed run of digits, or that arithmetic refuses (08), is refused
+// by every verb that would add to it (`scene '<slug>' carries a META heat
+// that is not a count (heat=<v>) - fix line 2 by hand, nothing written`).
 //
 // `summary:` is the cheap index `list` and any recall verb rank against without
 // opening bodies, so it is single-line and refuses newline/CR/`|` exactly as
@@ -72,9 +73,12 @@
 // THE TIERED CAP is the whole reason this store cannot rot into a second flat
 // pile. `config/scene-max` (default 30; not a run of digits, or one that
 // arithmetic refuses -> `config/scene-max must be a count (got: '<v>')`) caps
-// the FILE COUNT - the lines of `ls records/scenes/*.md`, ls itself spawned, so
-// a directory named like a scene adds its heading and entries as it did - and
-// the tier changes which verbs are legal:
+// the FILE COUNT - the lines of `ls records/scenes/*.md`, ls itself spawned
+// on the same absolute operands, so a directory named like a scene adds its
+// heading and entries as it did, and an ls that fails (an entry it cannot
+// read) still counts the lines it printed, since the original's gate ran
+// under `if !` where errexit sleeps - and the tier changes which verbs are
+// legal:
 //
 //   count <  max-1   GREEN   every verb
 //   count == max-1   AMBER   `new` refuses - one slot left is not a slot
@@ -137,7 +141,8 @@
 //          (bin/ac-learn.sh's DISTILL prep already takes the failure as an
 //          empty source) until the defect slice that restores that line. That
 //          line IS reached when ls succeeds with no lines (a lone directory
-//          named like a scene), exit 0.
+//          named like a scene), exit 0; an ls that fails (an entry it cannot
+//          read) is the same silent exit 1 - here errexit was awake.
 // Scene refusals are prefixed `scene rejected: `. Every verb mints records/;
 // the lock mints records/scenes/.
 //
@@ -245,28 +250,35 @@ function sceneSummary(f: string): Buffer {
   return b(l3 !== undefined && l3.startsWith("summary: ") ? subst(l3.slice("summary: ".length)) : "");
 }
 
-// A run of digits as `$(( ))` read it: octal behind a leading zero (so 08 is
-// no number), 64 bits wrapping; null where bash's arithmetic refused.
-function shellInt(digits: string): bigint | null {
+// A signed run of digits as `$(( ))` read it: octal behind a leading zero (so
+// 08 is no number), 64 bits wrapping; null where bash's arithmetic refused.
+function shellInt(signed: string): bigint | null {
+  const neg = signed.startsWith("-");
+  const digits = neg ? signed.slice(1) : signed;
   if (/^0[0-9]*[89]/.test(digits)) return null;
-  return BigInt.asIntN(64, digits.length > 1 && digits.startsWith("0") ? BigInt(`0o${digits}`) : BigInt(digits));
+  const v = digits.length > 1 && digits.startsWith("0") ? BigInt(`0o${digits}`) : BigInt(digits);
+  return BigInt.asIntN(64, neg ? -v : v);
 }
 
 function sceneHeat(f: string, slug: string): bigint {
   const h = sceneMeta(f, "heat");
   if (h === "") return 0n;
-  const v = /^[0-9]+$/.test(h) ? shellInt(h) : null;
+  const v = /^-?[0-9]+$/.test(h) ? shellInt(h) : null;
   if (v === null) refuse(b(`scene '${shown(slug)}' carries a META heat that is not a count (heat=${h}) - fix line 2 by hand, nothing written`));
   return v;
 }
 
-// `ls *.md | wc -l`: ls itself, so a directory named like a scene counts its
-// heading, its separator and its entries exactly as it did there.
-function sceneCount(): bigint {
+// `ls "$dir"/*.md | wc -l`: ls itself on the same absolute operands (a name
+// starting with `-` is a path there, never an option), so a directory named
+// like a scene counts its heading, its separator and its entries exactly as
+// it did there. `ok` is the pipeline's status: the lines are counted either
+// way, and each caller ends as its errexit context did.
+function sceneCount(): { n: bigint; ok: boolean } {
+  const dir = scenesDir();
   const names = sceneNames();
-  if (names.length === 0) return 0n;
-  const r = Bun.spawnSync(["ls", ...names], { cwd: scenesDir(), stdin: "ignore", stdout: "pipe", stderr: "ignore" });
-  return BigInt((r.stdout.toString("latin1").match(/\n/g) ?? []).length);
+  if (names.length === 0) return { n: 0n, ok: true };
+  const r = Bun.spawnSync(["ls", ...names.map((n) => join(dir, n))], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  return { n: BigInt((r.stdout.toString("latin1").match(/\n/g) ?? []).length), ok: r.exitCode === 0 };
 }
 
 // `tail -n +5`: the bytes after the fourth LF, none when there are fewer.
@@ -367,7 +379,8 @@ function coldest(n: number): string[] {
 function tierRefusal(): string {
   const max = configRead("scene-max", "30");
   if (!/^[0-9]+$/.test(max)) return `config/scene-max must be a count (got: '${shown(max)}')`;
-  const n = sceneCount();
+  // The gate ran under `if !`, where a failing ls still handed over its lines.
+  const { n } = sceneCount();
   // `-ge` read the cap in decimal; `$(( max - 1 ))` read it as arithmetic.
   if (n >= BigInt(max))
     return `scene store is FULL at the cap (${n}/${max}, config/scene-max) - merge before adding. Coldest first:\n${coldest(3).join("\n")}\n  ac-scene.sh merge <slug-a> <slug-b> --into <slug-a> --summary '<line>' --file <body>`;
@@ -419,7 +432,7 @@ function cmdUpdate(slug: string, rest: string[]): void {
   lock();
   const file = sceneFile(slug);
   if (!isFile(file)) refuse(`no scene '${slug}' to update - \`new\` creates one`);
-  const heat = sceneHeat(file, slug) + 1n;
+  const heat = BigInt.asIntN(64, sceneHeat(file, slug) + 1n);
   const summary = f.has("--summary") ? Buffer.from(f.get("--summary")!, "utf8") : sceneSummary(file);
   sceneWrite(slug, sceneMeta(file, "created") || iso(), heat, summary, body);
   unlock();
@@ -494,7 +507,9 @@ function cmdList(): void {
   // The original's `n="$(ls ... | wc -l)"` failed under pipefail+errexit on an
   // empty store, before its `no scenes yet` line: silent exit 1, kept.
   if (names.length === 0) process.exit(1);
-  const n = sceneCount();
+  const { n, ok } = sceneCount();
+  // A failing ls ended the original here under pipefail+errexit, silently.
+  if (!ok) process.exit(1);
   // Reached only when ls listed something that holds no lines: a lone
   // directory named like a scene.
   if (n === 0n) {
