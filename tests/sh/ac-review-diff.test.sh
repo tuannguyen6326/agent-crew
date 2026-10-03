@@ -289,4 +289,430 @@ if "$BIN/ac-review-diff.sh" c4 --commit 'evil;rm' >/dev/null 2>&1; then
   fail "--commit accepted a non-sha argument"
 fi
 
+# --- differential: src/review-diff.ts against the frozen bash original --------
+# DISPUTED: the implementation (tests/fixtures/ac-review-diff.sh under bash vs src/review-diff.ts through bin/ac-review-diff.sh)
+# HELD-CONSTANT: ONE fleet home ($AC_HOME, the file's own metas plus each row's seeds) and ONE repo per row, shared by both sides - the entry is read-only over both, so the oracle and the shim read the very same refs, index and working tree; the home's one write (state/.guard-stamp) is removed before each side and its presence compared after; argv, cwd ($TMP unless a row says), LC_ALL=C, AC_GUARD_ROOT pointed at a non-repo dir so the guard's checkout checks (TANGLE, WIP-TOOLING, DISTRO-LAG name where bin/ sits, which differs by construction) are silent on both sides, PATH stubs for herdr/orca/gh/claude that log and refuse; exit status, stdout and stderr compared whole (ERR=own marks the rows whose stderr is compared by hand and names why), and the repo's refs and status and the home's entries unchanged across the row.
+obin="$(make_oracle_bin ac-review-diff)"
+STUBS="$TMP/rdstubs"; mkdir -p "$STUBS" "$TMP/guard-root"
+for t in herdr orca gh claude; do
+  printf '#!/bin/sh\nprintf "STUB %%s %%s\\n" "$0" "$*" >>"%s/rdstub.log"\nexit 1\n' "$TMP" >"$STUBS/$t"; chmod +x "$STUBS/$t"
+done
+gitc() { GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z git "$@"; }
+R=""  # the row's repo, whose refs, status and HEAD must survive both sides
+repo_state() {
+  [ -n "$R" ] && git -C "$R" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  git -C "$R" for-each-ref; git -C "$R" status --porcelain -z | tr '\0' '\n'; git -C "$R" rev-parse HEAD 2>/dev/null || true
+}
+home_state() { (cd "$AC_HOME" && find . -mindepth 1 ! -name '.guard-stamp' | LC_ALL=C sort); }
+run_side() {  # run_side <out> <err> <cmd...> - one side, the guard's quiet window reset first
+  local o="$1" e="$2"; shift 2
+  local -a home
+  if [ "${HOMELESS-}" = 1 ]; then home=(-u AC_HOME); else home=(AC_HOME="${AC_HOME_ROW:-$AC_HOME}"); fi
+  rm -f "$AC_HOME/state/.guard-stamp"
+  (cd "${RD_CWD:-$TMP}" && env "${home[@]}" AC_GUARD_ROOT="$TMP/guard-root" LC_ALL=C PATH="${RD_PATH:-$STUBS:$PATH}" "$@") <"${RD_STDIN:-/dev/null}" >"$o" 2>"$e"
+}
+LAST_RC=0
+same() {  # same <args...> - oracle and shim answer byte-identically and leave the world as it was
+  local o_rc=0 n_rc=0 before_repo before_home o_stamp=none n_stamp=none
+  before_repo="$(repo_state)"; before_home="$(home_state)"
+  run_side "$TMP/o.out" "$TMP/o.err" "$obin/ac-review-diff.sh" "$@" || o_rc=$?
+  [ ! -e "$AC_HOME/state/.guard-stamp" ] || o_stamp=stamped
+  run_side "$TMP/n.out" "$TMP/n.err" "$BIN/ac-review-diff.sh" "$@" || n_rc=$?
+  [ ! -e "$AC_HOME/state/.guard-stamp" ] || n_stamp=stamped
+  LAST_RC=$n_rc
+  assert_eq "$n_rc" "$o_rc" "differential exit for '$*'"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs for '$*': $(diff "$TMP/o.out" "$TMP/n.out" | head -n 6)"
+  [ "${ERR-}" = own ] || cmp -s "$TMP/o.err" "$TMP/n.err" || fail "differential stderr differs for '$*': $(diff "$TMP/o.err" "$TMP/n.err" | head -n 6)"
+  assert_eq "$n_stamp" "$o_stamp" "differential guard stamp for '$*'"
+  assert_eq "$(repo_state)" "$before_repo" "row '$*' left the repo as it was"
+  assert_eq "$(home_state)" "$before_home" "row '$*' left the home as it was"
+}
+shim_out() { cat "$TMP/n.out"; }
+shim_err() { cat "$TMP/n.err"; }
+shim_err_last() { tail -n 1 "$TMP/n.err"; }
+nowarn() { case "$(shim_err)" in *WATCHER-DOWN*) fail "$1: the guard ran" ;; esac; }
+USAGE='ERROR: usage: ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph | --graph-data | --commit <sha> | --ref <branch>] [--tree <worktree>] [--no-guard]'
+NOHOME_LINE='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
+
+# 1. argument refusals (the guard rides the rows without --no-guard: its one
+#    WATCHER-DOWN line precedes the refusal on both sides - c1..c9 are in flight
+#    and no beacon exists)
+R="$r1"
+same
+assert_eq "$(shim_err_last)" "$USAGE" "no id: the usage line"
+assert_contains "$(shim_err)" "WATCHER-DOWN" "the guard precedes the usage die"
+same ""
+assert_eq "$(shim_err_last)" "$USAGE" "an empty id: the usage line"
+same --live
+assert_eq "$(shim_err_last)" "ERROR: no crewmate meta for --live" "a flag in the id's place IS the id"
+same -h --no-guard
+assert_eq "$(shim_err)" "ERROR: no crewmate meta for -h" "no help verb"
+same c1 --bogus --no-guard
+assert_eq "$(shim_err)" "ERROR: unknown argument: --bogus" "an unknown flag"
+same c1 --no-guard --commit
+same c1 --no-guard --commit ''
+same c1 --no-guard --commit 'evil;rm'
+assert_eq "$(shim_err)" "ERROR: --commit needs a sha" "a non-sha"
+same c1 --no-guard --commit abcd --commit
+assert_eq "$(shim_err)" "ERROR: --commit needs a sha" "a second --commit with no value"
+# W1 (kept): the `grep -Eq <<<` guard passes a multi-line value when ANY line
+# matches; git then refuses the value itself, exit 128.
+same c1 --no-guard --commit $'abcd\nxx'
+assert_eq "$LAST_RC" 128 "W1: a multi-line sha passes the guard and dies in git"
+assert_contains "$(shim_err)" "fatal: ambiguous argument" "W1: git's own refusal"
+same c1 --no-guard --commit $'xx\nabcd'
+assert_eq "$LAST_RC" 128 "W1: any matching line passes, not only the first"
+same c1 --no-guard --ref -evil
+assert_eq "$(shim_err)" "ERROR: --ref needs a branch name" "a flag-shaped ref"
+same c1 --no-guard --ref ''
+same c1 --no-guard --ref $'main\n-x'
+assert_eq "$LAST_RC" 0 "W1: a multi-line ref passes the guard; the default mode never reads it"
+same c1 --no-guard --graph --ref $'main\n-x'
+assert_eq "$LAST_RC" 128 "W1: the multi-line ref reaches git in a graph mode"
+same c1 --no-guard --tree
+assert_eq "$(shim_err)" "ERROR: --tree needs a path" "--tree without a value"
+same c1 --no-guard --tree ''
+
+# 2. meta refusals
+same nosuch --no-guard
+assert_eq "$(shim_err)" "ERROR: no crewmate meta for nosuch" "an unknown id"
+mkdir -p "$AC_HOME/state/d.meta"
+same d --no-guard
+assert_eq "$(shim_err)" "ERROR: no crewmate meta for d" "a directory named <id>.meta is no meta"
+same d
+assert_contains "$(shim_err)" "WATCHER-DOWN" "the guard still rides a directory meta"
+rmdir "$AC_HOME/state/d.meta"
+if [ "$(id -u)" != 0 ]; then
+  printf 'worktree=%s\n' "$r1" >"$AC_HOME/state/locked.meta"; chmod 000 "$AC_HOME/state/locked.meta"
+  same locked --no-guard
+  assert_eq "$LAST_RC" 1 "an unreadable meta: exit 1"
+  assert_eq "$(shim_err)" "WARN: cannot read meta file $AC_HOME/state/locked.meta" "an unreadable meta: the helper's WARN alone, no ERROR line"
+  assert_eq "$(shim_out)" "" "an unreadable meta: nothing rendered"
+  chmod 644 "$AC_HOME/state/locked.meta"; rm -f "$AC_HOME/state/locked.meta"
+fi
+printf 'project_dir=%s\n' "$r1" >"$AC_HOME/state/nowt.meta"
+same nowt --no-guard
+assert_eq "$(shim_err)" "ERROR: worktree gone: " "a meta without worktree= names an empty path"
+printf 'worktree=%s \n' "$r1" >"$AC_HOME/state/trail.meta"
+same trail --no-guard
+assert_eq "$(shim_err)" "ERROR: worktree gone: $r1 " "a trailing space is part of the path, printed raw"
+printf 'worktree=%s\r\n' "$r1" >"$AC_HOME/state/cr.meta"
+same cr --no-guard
+assert_eq "$(shim_err)" "$(printf 'ERROR: worktree gone: %s\r' "$r1")" "a CR is part of the path, printed raw (W5)"
+printf 'worktree=%s' "$r1" >"$AC_HOME/state/unterm.meta"
+same unterm --graph --no-guard
+assert_contains "$(shim_out)" "the real delta" "an unterminated meta line still reads"
+printf 'worktree=%s\0junk\n' "$r1" >"$AC_HOME/state/nul.meta"
+same nul --graph --no-guard
+assert_contains "$(shim_out)" "the real delta" "a NUL cuts the value as awk handed it over"
+printf 'worktree=/nope\nworktree=%s\n' "$r1" >"$AC_HOME/state/last.meta"
+same last --graph --no-guard
+assert_contains "$(shim_out)" "the real delta" "the last worktree= line wins"
+rm -f "$AC_HOME/state/nowt.meta" "$AC_HOME/state/trail.meta" "$AC_HOME/state/cr.meta" "$AC_HOME/state/unterm.meta" "$AC_HOME/state/nul.meta" "$AC_HOME/state/last.meta"
+
+# 3. the guard: rides unless the token --no-guard appears anywhere in argv -
+#    as a value, or inside one argument (the `case " $* "` substring, kept)
+same c1 --stat
+assert_contains "$(shim_err)" "WATCHER-DOWN" "the guard rides"
+assert_file "$AC_HOME/state/.guard-stamp" "the guard stamps its quiet window (W4)"
+same c1 --stat --no-guard
+nowarn "--no-guard"; assert_no_file "$AC_HOME/state/.guard-stamp" "--no-guard leaves no stamp"
+same c1 --tree --no-guard
+nowarn "--tree --no-guard"
+assert_eq "$(shim_err)" "ERROR: not a git worktree: --no-guard" "--no-guard as the tree's value skips the guard and is the tree"
+same c1 "x --no-guard y"
+nowarn "an argument holding the token"
+assert_eq "$(shim_err)" "ERROR: unknown argument: x --no-guard y" "then the argument is refused"
+same c1 --stat --no-guardx
+assert_contains "$(shim_err)" "WATCHER-DOWN" "a near-miss token does not skip the guard"
+assert_eq "$(shim_err_last)" "ERROR: unknown argument: --no-guardx" "and is refused"
+
+# 4. the base: local-only, push-mode, family id, orphan history
+same c1 --no-guard
+same c1 --stat --no-guard
+R="$r2"; same c2 --no-guard; same c2 --stat --no-guard
+R="$r3"; same foo-r2 --no-guard; same foo-r2 --stat --no-guard
+R="$r7"; same c7 --no-guard; same c7 --stat --no-guard; same c7 --live --no-guard
+same c7 --graph-data --no-guard
+case "$(shim_out)" in *'#base'*) fail "no merge-base: no #base trailer" ;; esac
+
+# 5. every mode on the live tree (committed + dirty + untracked), last flag wins
+R="$r4"
+same c4 --no-guard
+same c4 --stat --no-guard
+same c4 --live --no-guard
+same c4 --uncommitted --no-guard
+same c4 --untracked --no-guard
+same c4 --graph --no-guard
+same c4 --graph-data --no-guard
+[ "$(shim_out | head -n 1 | awk -F'\t' '{print NF}')" = 4 ] || fail "graph-data rows are 4 TAB fields"
+assert_contains "$(shim_out)" "#base	$(git -C "$r4" rev-parse --short main)" "graph-data trails #base"
+same c4 --no-guard --commit "$csha"
+same c4 --no-guard --commit "$(git -C "$r4" rev-parse crew/c4)"
+same c4 --no-guard --commit "$csha" --stat
+assert_contains "$(shim_out)" "committed.txt |" "--commit then --stat renders stat (last mode wins)"
+same c4 --stat --live --no-guard
+assert_contains "$(shim_out)" "uncommitted edit" "--stat --live renders live"
+same c4 --live --stat --no-guard
+assert_contains "$(shim_out)" "committed.txt |" "--live --stat renders stat"
+same c4 --ref main --no-guard
+same c4 --no-guard --no-guard --stat
+
+# 6. the graph-data merge: 45 fillers, a parked ref, an epic branch behind, a
+#    merge commit, a TAB subject (W2), % and backslash, a same-second tie, a
+#    recent ref whose slice overlaps HEAD's window (dedupe)
+R="$r9"
+git -C "$r9" checkout -q -b side main~3
+GIT_COMMITTER_DATE='@1900000100 +0000' GIT_AUTHOR_DATE='@1900000100 +0000' commit "$r9" sidefile.txt "side work" >/dev/null
+git -C "$r9" checkout -q main
+GIT_COMMITTER_DATE='@1900000101 +0000' GIT_AUTHOR_DATE='@1900000101 +0000' git -C "$r9" merge -q --no-ff -m "merge side" side
+printf 'tab\n' >"$r9/tab.txt"; git -C "$r9" add -A
+GIT_COMMITTER_DATE='@1900000102 +0000' GIT_AUTHOR_DATE='@1900000102 +0000' git -C "$r9" commit -qm "$(printf 'tab\there subject')"
+GIT_COMMITTER_DATE='@1900000103 +0000' GIT_AUTHOR_DATE='@1900000103 +0000' commit "$r9" pct.txt 'pct % and back\slash %x09 %h' >/dev/null
+git -C "$r9" checkout -q -b crew/tie-a main
+GIT_COMMITTER_DATE='@1900000200 +0000' GIT_AUTHOR_DATE='@1900000200 +0000' commit "$r9" tiea.txt "tie a" >/dev/null
+git -C "$r9" checkout -q -b crew/tie-b main
+GIT_COMMITTER_DATE='@1900000200 +0000' GIT_AUTHOR_DATE='@1900000200 +0000' commit "$r9" tieb.txt "tie b" >/dev/null
+git -C "$r9" checkout -q -b crew/recent main
+GIT_COMMITTER_DATE='@1900000300 +0000' GIT_AUTHOR_DATE='@1900000300 +0000' commit "$r9" recent.txt "recent delta" >/dev/null
+git -C "$r9" checkout -q main
+same c9 --graph-data --no-guard
+assert_eq "$(shim_out | grep -c "$(git -C "$r9" rev-parse --short crew/recent)")" 1 "a hash in HEAD's window and in its ref's slice is printed once"
+assert_contains "$(shim_out)" "$(printf '\ttab\n')" "W2: a TAB in the subject is cut at the TAB in the merged path"
+assert_contains "$(shim_out)" 'pct % and back\slash %x09 %h' "% and backslash in a subject pass through"
+assert_contains "$(shim_out)" "$(git -C "$r9" rev-parse --short main~2^1) $(git -C "$r9" rev-parse --short main~2^2)" "a merge commit carries both parents"
+same c9 --graph-data --ref main --no-guard
+assert_contains "$(shim_out)" "$(printf 'tab\there subject')" "W2: the --ref path keeps the subject whole"
+same c9 --graph-data --ref epic-integration --no-guard
+same c9 --graph-data --ref crew/recent --no-guard
+same c9 --graph-data --ref crew/tie-b --no-guard
+same c9 --graph --no-guard
+same c9 --graph --ref crew/parked --no-guard
+same c9 --no-guard
+same c9 --stat --no-guard
+git -C "$r9" checkout -q --detach
+same c9 --graph-data --no-guard
+same c9 --graph --no-guard
+same c9 --no-guard
+git -C "$r9" checkout -q main
+re="$TMP/empty"; git init -q -b main "$re"; mk_meta ce "$re"; R="$re"
+same ce --no-guard
+assert_eq "$LAST_RC" 128 "an empty repo: git's own 128"
+assert_contains "$(shim_err)" "fatal:" "an empty repo: git's own line"
+same ce --stat --no-guard
+same ce --live --no-guard
+same ce --uncommitted --no-guard
+same ce --untracked --no-guard
+same ce --graph --no-guard
+same ce --graph-data --no-guard
+same ce --graph-data --ref main --no-guard
+same ce --no-guard --commit abcd
+# A ref naming an object the repo does not have: the first log of the merged
+# path fails (nothing reached the merge), git's status ends the run.
+rb="$TMP/broken-ref"; git init -q -b main "$rb"; git_id "$rb"
+commit "$rb" file.txt genesis >/dev/null
+printf '%s\n' 0123456789abcdef0123456789abcdef01234567 >"$rb/.git/refs/heads/broken"
+mk_meta cb "$rb"; R="$rb"
+same cb --graph-data --no-guard
+assert_eq "$LAST_RC" 128 "a broken ref: the merged path ends with git's 128"
+assert_eq "$(shim_out)" "" "a broken ref: no rows reached the merge"
+same cb --graph --no-guard
+same cb --no-guard
+
+# 7. untracked names: a space, a newline, a leading dash, UTF-8, an unreadable
+#    file, a binary, an ignored file, a worktree that is a subdirectory
+ru="$TMP/untracked-names"; git init -q -b main "$ru"; git_id "$ru"
+commit "$ru" file.txt genesis >/dev/null
+printf 'spaced\n' >"$ru/with space.txt"
+printf 'newline\n' >"$ru/$(printf 'nl\nx.txt')"
+printf 'dash\n' >"$ru/-dash.txt"
+printf 'utf8\n' >"$ru/$(printf 'caf\303\251.txt')"
+printf '\0\1\2bin\n' >"$ru/blob.bin"
+printf 'ignored.txt\n' >"$ru/.gitignore"; printf 'hidden\n' >"$ru/ignored.txt"
+mkdir -p "$ru/sub"; printf 'inner\n' >"$ru/sub/inner.txt"
+mk_meta cu "$ru"; R="$ru"
+same cu --untracked --no-guard
+assert_contains "$(shim_out)" "+++ b/with space.txt" "a name with a space"
+assert_contains "$(shim_out)" '+++ "b/nl\nx.txt"' "a name with a newline, quoted by git"
+assert_contains "$(shim_out)" "+++ b/-dash.txt" "a name with a leading dash"
+assert_contains "$(shim_out)" '+++ "b/caf\303\251.txt"' "a UTF-8 name, octal-quoted by git (core.quotePath)"
+assert_contains "$(shim_out)" "Binary files /dev/null and b/blob.bin differ" "a binary"
+case "$(shim_out)" in *"b/ignored.txt"*) fail "an ignored file is excluded" ;; esac
+same cu --live --no-guard
+same cu --untracked --tree "$ru/sub" --no-guard
+assert_eq "$(shim_out | grep '^+++ ')" "+++ b/inner.txt" "a subdirectory worktree lists its own files, relative"
+if [ "$(id -u)" != 0 ]; then
+  printf 'locked\n' >"$ru/locked.txt"; chmod 000 "$ru/locked.txt"
+  same cu --untracked --no-guard
+  assert_eq "$LAST_RC" 0 "an unreadable untracked file: the run goes on"
+  assert_contains "$(shim_err)" "locked.txt" "an unreadable untracked file: git's own error names it"
+  chmod 644 "$ru/locked.txt"; rm -f "$ru/locked.txt"
+fi
+# A name that is not UTF-8 cannot exist on APFS (the filesystem refuses the
+# byte); where it can, the names reach git untouched through xargs -0.
+if printf 'raw\n' 2>/dev/null >"$ru/$(printf 'bad\351.txt')"; then
+  same cu --untracked --no-guard
+  assert_contains "$(shim_out)" '+++ "b/bad\351.txt"' "a non-UTF-8 name renders as git renders it"
+fi
+
+# 8. the epic fence: meta project=proj, ledger rows, branch records
+r8="$TMP/epic-fence"; git init -q -b main "$r8"; git_id "$r8"
+gen8="$(commit "$r8" file.txt genesis)"
+git -C "$r8" checkout -q -b epic/e1
+commit "$r8" epicwork.txt "epic work" >/dev/null
+git -C "$r8" update-ref refs/remotes/origin/epic/e1 HEAD
+commit "$r8" epicmore.txt "epic local more" >/dev/null
+git -C "$r8" branch feat/f1
+git -C "$r8" checkout -q -b crew/e1-s1
+commit "$r8" story.txt "story one" >/dev/null
+git -C "$r8" checkout -q main
+printf 'project_dir=%s\nworktree=%s\nproject=proj\n' "$r8" "$r8" >"$AC_HOME/state/e1-s1.meta"
+printf 'project_dir=%s\nworktree=%s\nproject=proj\n' "$r8" "$r8" >"$AC_HOME/state/e1-s1-x.meta"
+printf 'project_dir=%s\nworktree=%s\nproject=\n' "$r8" "$r8" >"$AC_HOME/state/noproj.meta"
+LEDGER="$AC_HOME/records/backlog.md"; rm -rf "$LEDGER"; R="$r8"
+same e1-s1 --stat --no-guard
+assert_contains "$(shim_out)" "epicwork.txt" "no ledger: the default base renders the epic's own work as the story's"
+mkdir -p "$LEDGER"
+same e1-s1 --stat --no-guard
+assert_contains "$(shim_out)" "epicwork.txt" "a ledger that is a directory is no ledger (rc 1), never rc 2"
+rm -rf "$LEDGER"
+printf -- '- [ ] e1-s1 - story; epic:e1 (repo: proj)\n' >"$LEDGER"
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$LEDGER"
+  for m in "" --stat --live --uncommitted --untracked --graph --graph-data "--commit $gen8"; do
+    # shellcheck disable=SC2086
+    same e1-s1 $m --no-guard
+    assert_eq "$LAST_RC" 1 "an unreadable ledger refuses in mode '$m'"
+    assert_eq "$(shim_err)" "ERROR: cannot read the ledger to resolve the epic-branch fence for e1-s1" "an unreadable ledger: the refusal in mode '$m'"
+    assert_eq "$(shim_out)" "" "an unreadable ledger: nothing rendered in mode '$m'"
+  done
+  same e1-s1 --stat --tree "$r8" --no-guard
+  assert_eq "$LAST_RC" 1 "--tree still reads the meta's project and refuses"
+  same noproj --stat --no-guard
+  assert_eq "$LAST_RC" 0 "an empty project= is no fence"
+  chmod 644 "$LEDGER"
+fi
+mkdir -p "$AC_HOME/data/e1" "$AC_HOME/data/f1"
+printf 'proj epic/e1 push=deferred\n' >"$AC_HOME/data/e1/branches"
+same e1-s1 --stat --no-guard
+assert_eq "$(shim_out | grep -c 'txt')" 1 "push=deferred: the LOCAL epic branch is the base (only the story)"
+assert_contains "$(shim_out)" "story.txt" "push=deferred: the story's own file"
+printf 'proj epic/e1\n' >"$AC_HOME/data/e1/branches"
+same e1-s1 --stat --no-guard
+assert_contains "$(shim_out)" "epicmore.txt" "origin carries the epic branch: origin's tip is the base (the local lag renders)"
+case "$(shim_out)" in *epicwork.txt*) fail "origin's epic tip must not render the landed epic work" ;; esac
+git -C "$r8" update-ref -d refs/remotes/origin/epic/e1
+same e1-s1 --stat --no-guard
+assert_eq "$(shim_out | grep -c 'txt')" 1 "only a local epic branch: it is the base"
+printf '# retired 2026-01-01T00:00:00Z\nproj epic/e1\n' >"$AC_HOME/data/e1/branches"
+same e1-s1 --stat --no-guard
+assert_contains "$(shim_out)" "epicwork.txt" "a retired record is no fence: the default base"
+printf 'other epic/e1\n' >"$AC_HOME/data/e1/branches"
+same e1-s1 --stat --no-guard
+assert_contains "$(shim_out)" "epicwork.txt" "a record naming another repo is no fence"
+printf -- '- [ ] e1-s1 - story; feature:f1 (repo: proj)\n' >"$LEDGER"
+printf 'proj feat/f1 push=deferred\n' >"$AC_HOME/data/f1/branches"
+same e1-s1 --stat --no-guard
+assert_eq "$(shim_out | grep -c 'txt')" 1 "a feature: token fences on the feature branch"
+printf -- '- [ ] e1-s1 - story; epic:e1 (repo: proj)\n' >"$LEDGER"
+printf 'proj epic/e1\n' >"$AC_HOME/data/e1/branches"
+same e1-s1-x --stat --no-guard
+same e1-s1-x --graph-data --no-guard
+assert_contains "$(shim_out)" "#base	$(git -C "$r8" rev-parse --short "$gen8")" "a sub-task id resolves by prefix; its #base is the epic's merge-base with HEAD"
+printf -- '- [ ] e1-s1 - prose\0junk epic:e1 (repo: proj)\n' >"$LEDGER"
+same e1-s1 --stat --no-guard
+assert_contains "$(shim_out)" "epicwork.txt" "a NUL in the row cuts the record before its token: no fence"
+rm -f "$LEDGER" "$AC_HOME/state/e1-s1.meta" "$AC_HOME/state/e1-s1-x.meta" "$AC_HOME/state/noproj.meta"; rm -rf "$AC_HOME/data/e1" "$AC_HOME/data/f1"
+
+# 9. staged ids: the family grammar decides the crew branch
+R="$r1"
+for sid in c1-ship c1-r2 c1-spec-r2; do mk_meta "$sid" "$r1"; done
+same c1-ship --no-guard
+assert_eq "$(shim_out)" "" "c1-ship without data/c1/ship/ is its own family: crew/c1-ship is absent, HEAD diffs empty"
+mkdir -p "$AC_HOME/data/c1/ship"
+same c1-ship --no-guard
+assert_contains "$(shim_out)" "crewdelta.txt" "c1-ship with data/c1/ship/ is family c1: crew/c1"
+same c1-r2 --no-guard
+assert_contains "$(shim_out)" "crewdelta.txt" "a bare revision is unconditional"
+same c1-spec-r2 --no-guard
+assert_eq "$(shim_out)" "" "c1-spec-r2 without data/c1/spec/ resolves to c1-spec: no such branch"
+mkdir -p "$AC_HOME/data/c1/spec"
+same c1-spec-r2 --no-guard
+assert_contains "$(shim_out)" "crewdelta.txt" "c1-spec-r2 with data/c1/spec/ is family c1"
+rm -rf "$AC_HOME/data/c1"; rm -f "$AC_HOME/state/c1-ship.meta" "$AC_HOME/state/c1-r2.meta" "$AC_HOME/state/c1-spec-r2.meta"
+
+# 10. --tree: a named worktree with and without a meta, a plain dir, a relative
+#     path from inside the repo, a path with a space
+R="$r5b"
+mk_meta c5 "$r5a"
+same c5 --live --tree "$r5b" --no-guard
+same c5 --tree "$r5b" --no-guard
+rm -f "$AC_HOME/state/c5.meta"
+same c5 --live --tree "$r5b" --no-guard
+assert_contains "$(shim_out)" "second-tree.txt" "--tree renders without a meta"
+mkdir -p "$TMP/plain"
+same c5 --tree "$TMP/plain" --no-guard
+assert_eq "$(shim_err)" "ERROR: not a git worktree: $TMP/plain" "a plain dir is refused"
+RD_CWD="$r5b" same c5 --tree . --no-guard
+assert_contains "$(shim_out)" "second-tree.txt" "a relative --tree resolves against the caller's cwd"
+RD_CWD="$r5b" same c5 --tree sub/.. --no-guard
+cp -R "$r5b" "$TMP/sp ace"
+same c5 --live --tree "$TMP/sp ace" --no-guard
+assert_contains "$(shim_out)" "second-tree.txt" "a worktree path with a space"
+if [ "$(id -u)" != 0 ]; then
+  mk_meta c5 "$r5a"; chmod 000 "$AC_HOME/state/c5.meta"
+  same c5 --tree "$r5b" --no-guard
+  assert_eq "$LAST_RC" 1 "--tree with an unreadable meta: the project read dies, exit 1"
+  assert_eq "$(shim_err)" "WARN: cannot read meta file $AC_HOME/state/c5.meta" "--tree with an unreadable meta: the WARN alone"
+  chmod 644 "$AC_HOME/state/c5.meta"; rm -f "$AC_HOME/state/c5.meta"
+fi
+
+# 11. homeless: two ERROR lines without --tree; with --tree the refusal and a
+#     rendered diff, exit 0 (W3, kept); a home cd cannot enter
+R="$r1"
+HOMELESS=1 same c1 --no-guard
+assert_eq "$LAST_RC" 1 "homeless: exit 1"
+assert_eq "$(shim_err)" "$NOHOME_LINE
+ERROR: no crewmate meta for c1" "homeless: the refusal, then the entry's own line (the ac_task_meta swallow)"
+HOMELESS=1 same c1
+assert_eq "$(shim_err_last)" "ERROR: no crewmate meta for c1" "homeless: the guard says nothing"
+HOMELESS=1 same c1 --tree "$r1" --no-guard
+assert_eq "$LAST_RC" 0 "W3: homeless --tree renders, exit 0"
+assert_eq "$(shim_err)" "$NOHOME_LINE" "W3: the refusal is printed once"
+assert_contains "$(shim_out)" "crewdelta.txt" "W3: and the diff follows"
+HOMELESS=1 same c1-spec-r2 --tree "$r1" --no-guard
+assert_eq "$(shim_err)" "$NOHOME_LINE
+$NOHOME_LINE" "W3: a staged id prints the refusal again from the data-dir test"
+HOMELESS=1 same c1 --graph-data --tree "$r1" --no-guard
+# Named divergence (HOME RESOLUTION ruling): the original fails inside `cd`
+# with the shell's own line; the port names the variable. Exit and stdout agree.
+AC_HOME_ROW="$TMP/nohome" ERR=own same c1 --no-guard
+assert_eq "$LAST_RC" 1 "an unenterable home: exit 1"
+assert_eq "$(shim_out)" "" "an unenterable home: nothing rendered"
+assert_contains "$(cat "$TMP/o.err")" "No such file or directory" "an unenterable home: the original's cd noise (shell-own stderr)"
+assert_eq "$(shim_err)" "ERROR: AC_HOME is not a readable directory: $TMP/nohome
+ERROR: no crewmate meta for c1" "an unenterable home: the port names the variable, then the same refusal"
+assert_eq "$(tail -n 1 "$TMP/o.err")" "$(shim_err_last)" "an unenterable home: the entry's own last line agrees"
+
+# 12. git absent from PATH: the refusal, after the guard's lines
+NOGIT="$TMP/nogit"; mkdir -p "$NOGIT"
+for d in /usr/bin /bin "$(dirname "$(command -v bun)")"; do
+  for f in "$d"/*; do [ -x "$f" ] && [ "$(basename "$f")" != git ] && [ ! -e "$NOGIT/$(basename "$f")" ] && ln -s "$f" "$NOGIT/$(basename "$f")"; done
+done
+RD_PATH="$NOGIT:$STUBS" same c1 --no-guard
+assert_eq "$(shim_err)" "ERROR: required tool not found: git" "no git on PATH"
+RD_PATH="$NOGIT:$STUBS" same c1
+assert_contains "$(shim_err)" "WATCHER-DOWN" "no git: the guard still rides first"
+assert_eq "$(shim_err_last)" "ERROR: required tool not found: git" "no git: then the refusal"
+# 13. every git inherits the caller's stdin: an external diff that reads it
+#     sees the same bytes on both sides (the bash never redirected git's stdin)
+printf '#!/bin/sh\nprintf "ext-diff %%s <" "$1"; cat; printf ">\\n"\n' >"$TMP/xdiff"; chmod +x "$TMP/xdiff"
+printf 'from the caller\n' >"$TMP/rd-stdin"
+RD_STDIN="$TMP/rd-stdin" GIT_EXTERNAL_DIFF="$TMP/xdiff" same c1 --no-guard
+assert_eq "$LAST_RC" 0 "row 13: the external diff ran on both sides"
+assert_contains "$(shim_out)" "<from the caller
+>" "row 13: the external diff read the caller's stdin"
+
+[ ! -s "$TMP/rdstub.log" ] || fail "a leg row reached a backend stub: $(cat "$TMP/rdstub.log")"
+
 pass
