@@ -9,7 +9,7 @@
 // reader of an ac_iso stamp) and tabFields (`IFS=$'\t' read -r`).
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -214,6 +214,32 @@ export function leaseAgeSecs(ts: string): number | null {
   const n = now();
   if (!Number.isFinite(n)) return null;
   return n - Number(then);
+}
+
+// ac_seed_runtime_links's twin (the bash copy stays for bin/ac-fleet-new.sh;
+// tests/ts/home-seed.test.ts holds the two together): the executable core
+// linked into a home so a chief runs with cwd = home. A REAL entry is a
+// per-home override and is left alone; `ln -sfn` is spawned, not re-done, so
+// a stale or dangling link is repointed exactly as it is there, and its
+// failure ends the run with its status as `set -e` did.
+export function seedRuntimeLinks(home: string): void {
+  for (const f of ["bin", "CLAUDE.md", ".claude", "AGENTS.md"]) {
+    const p = join(home, f);
+    if (existsSync(p) && !lstatSync(p).isSymbolicLink()) continue;
+    const r = Bun.spawnSync(["ln", "-sfn", join(ROOT, f), p], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+    if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);
+  }
+}
+
+// ac_iso's twin: date(1) is spawned, not Date, so a PATH stub freezes a port
+// and its bash oracle alike.
+export function iso(): string {
+  const r = Bun.spawnSync(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdin: "ignore", stdout: "pipe", stderr: "inherit", env: process.env });
+  return r.stdout.toString("latin1").replace(/\n+$/, "");
+}
+
+export function dataDir(): string {
+  return homeSubdir("data");
 }
 
 // ac_pid_alive's twin: an owner is a canonical positive pid, and a process this

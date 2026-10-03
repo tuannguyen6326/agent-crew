@@ -1070,7 +1070,7 @@ ac_task_dir() {
 ac_room_file() {
   # ac_room_file <family|fan-out-sub-task-id> - the room path a HISTORY read
   # must use: the live data/<family>/room.md when it exists, else the archived
-  # copy that bin/ac-archive.sh (that script's header owns the archive layout)
+  # copy that src/archive.ts (that script's header owns the archive layout)
   # moved to data/archive/<year>/<family>/room.md. Neither existing prints the
   # LIVE path, so a caller that CREATES a room still writes it live.
   #
