@@ -6,7 +6,7 @@ description: Crewchief fleet-level project lifecycle judgment - add, clone, crea
 # project-management
 
 Judgment for the fleet-level lifecycle of a registered project: add, clone, create, initialize, change the `+yolo` posture of, retire, or remove it.
-The registry format, the parser, and every command belong to `records/projects.md` and the `bin/ac-project-mode.sh` header; this skill owns only the lifecycle judgment and its consent and destructive-action boundaries.
+The registry format, the parser, and every command belong to `records/projects.md` and the `src/project-mode.ts` header (the `bin/ac-project-mode.sh` entry execs it); this skill owns only the lifecycle judgment and its consent and destructive-action boundaries.
 
 ## When to load - and what this skill does NOT own
 
@@ -25,7 +25,7 @@ You never edit project files, run project builds, or commit project work - that 
 
 ## Add and clone
 
-`records/projects.md` and the `bin/ac-project-mode.sh` header remain the authoritative registry format and parser contract.
+`records/projects.md` and the `src/project-mode.ts` header (behind the `bin/ac-project-mode.sh` entry) remain the authoritative registry format and parser contract.
 Before adding a project, resolve: the source or creation intent; the unused local name and destination; the `+yolo` posture only when explicitly requested; and whether the repo carries an origin remote (a remoteless repo can only ever take `local-only` tasks).
 
 - Clone existing projects into `projects/<name>` only after confirming the destination is unused.
