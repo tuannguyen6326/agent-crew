@@ -38,7 +38,9 @@ test("metaGet reads what ac_meta_get reads, over every line shape a meta carries
     };
     for (const [name, body] of Object.entries(cases)) {
       const f = join(dir, `${name}.meta`);
-      writeFileSync(f, body, "latin1");
+      // utf8: the fixture carries real UTF-8 bytes; the twin reads them as latin1
+      // and must answer the bytes bash answers.
+      writeFileSync(f, body, "utf8");
       for (const key of ["harness", "session_id", "worktree", "window", "harnessx", "missing"]) {
         const want = bashMetaGet(f, key);
         expect(want.rc).toBe(0);
@@ -75,7 +77,14 @@ test("metaGet warns and throws where ac_meta_get warns and returns 1 (present, u
     );
     expect(r.exitCode).toBe(1);
     expect(r.stderr.toString()).toBe(`WARN: cannot read meta file ${f}\n`);
-    expect(() => metaGet(f, "harness")).toThrow();
+    // The twin's WARN bytes and its failure, read from a subprocess so the fd-2
+    // write is captured, not only the throw.
+    const t = Bun.spawnSync(
+      [process.execPath, "-e", 'import { metaGet } from "./src/lib.ts"; try { metaGet(process.argv[1], "harness"); } catch { process.exit(3); }', f],
+      { cwd: join(import.meta.dir, "..", ".."), stdout: "pipe", stderr: "pipe" },
+    );
+    expect(t.exitCode).toBe(3);
+    expect(t.stderr.toString()).toBe(r.stderr.toString());
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
