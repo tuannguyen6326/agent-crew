@@ -1,5 +1,5 @@
 // home-seed.test.ts - the lib.ts twins src/home-seed.ts introduced, held to
-// their bash originals differentially: seedRuntimeLinks against
+// their bash originals differentially: seedRuntimeLinks against the frozen
 // ac_seed_runtime_links over every entry state a home can hold, iso against
 // ac_iso under one PATH date stub; and the module's two pure readers against
 // the shell they replace (the `IFS=',' read -ra` + `tr -d ' '` split, the awk
@@ -13,11 +13,14 @@ import { iso, seedRuntimeLinks } from "../../src/lib.ts";
 import { registryLine, splitProjects } from "../../src/home-seed.ts";
 
 const binDir = join(import.meta.dir, "..", "..", "bin");
+// ac_seed_runtime_links left bin/ac-lib.sh with the fleet-new port (its last
+// bash caller); the pin holds the twin to the frozen copy.
+const retired = join(import.meta.dir, "..", "fixtures", "ac-seed-runtime-links.sh");
 const LINKS = ["bin", "CLAUDE.md", ".claude", "AGENTS.md"];
 
 function bashLib(fn: string, args: string[], env?: Record<string, string>) {
   return Bun.spawnSync(
-    ["bash", "-c", `. "$1/ac-lib.sh"; shift; ${fn} "$@"`, "--", binDir, ...args],
+    ["bash", "-c", `. "$1/ac-lib.sh"; . "$2"; shift 2; ${fn} "$@"`, "--", binDir, retired, ...args],
     { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...env } },
   );
 }

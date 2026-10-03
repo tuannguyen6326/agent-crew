@@ -223,8 +223,9 @@ export function leaseAgeSecs(ts: string): number | null {
   return n - Number(then);
 }
 
-// ac_seed_runtime_links's twin (the bash copy stays for bin/ac-fleet-new.sh;
-// tests/ts/home-seed.test.ts holds the two together): the executable core
+// ac_seed_runtime_links's twin, and since the fleet-new port its only form -
+// the bash helper is retired, frozen at tests/fixtures/ac-seed-runtime-links.sh
+// where tests/ts/home-seed.test.ts holds the two together: the executable core
 // linked into a home so a chief runs with cwd = home. A REAL entry is a
 // per-home override and is left alone; `ln -sfn` is spawned, not re-done, so
 // a stale or dangling link is repointed exactly as it is there, and its
@@ -952,4 +953,17 @@ export function statusAppend(id: string, line: string, unguarded = false): boole
   if (!ok && unguarded) return false;
   statusTimelineMirror(id, rec);
   return ok;
+}
+
+// --- fleet-new twins ---
+
+// ac_config_dir / ac_projects_dir twins: the dir minted under the home AC_HOME
+// names. With stateDir, dataDir and recordsDir these ARE the fleet-home layout
+// ac-lib.sh defines, which is why src/fleet-new.ts seeds through them.
+export function configDir(): string {
+  return homeSubdir("config");
+}
+
+export function projectsDir(): string {
+  return homeSubdir("projects");
 }
