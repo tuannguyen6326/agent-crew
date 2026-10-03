@@ -953,3 +953,12 @@ export function statusAppend(id: string, line: string, unguarded = false): boole
   statusTimelineMirror(id, rec);
   return ok;
 }
+
+// --- dash twins ---
+
+// ac_projects_dir's twin: `<home>/projects`, minted on the way like state/ and
+// records/ (homeSubdir), so a view that walks the pools mints the dir as the
+// bash did; the many bash callers keep their copy.
+export function projectsDir(): string {
+  return homeSubdir("projects");
+}
