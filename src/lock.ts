@@ -153,8 +153,9 @@
 //     read as a foreign owner - dishonest. It now arms WITHOUT the owner gate
 //     after `WARN: session lock acquire failed (rc=N, ac-lock.sh) - arming
 //     without the owner gate`, the owner beacon emptied (no remote poller
-//     without a known owner); pinned by tests/sh/ac-watch.test.sh with a PATH
-//     bun stub.
+//     without a known owner), and a `status` read that fails after a good
+//     acquire is treated the same way (`session lock status failed ...`);
+//     pinned by tests/sh/ac-watch.test.sh with PATH bun stubs.
 //   - bin/ac-sessionstart-nudge.sh:137 (a wired SessionStart hook) runs
 //     `status 2>/dev/null` and stays silent only on `held*`: a bun-less status
 //     answers nothing, so the nudge prints - fail-open, unchanged, but the

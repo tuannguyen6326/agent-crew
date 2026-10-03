@@ -3961,6 +3961,21 @@ esac
 assert_contains "$(cat "$TMP/failbun.err")" "bun stub: cannot start" "the entry's own stderr is still relayed"
 assert_contains "$(cat "$TMP/failbun.err")" "WARN: session lock acquire failed (rc=1, ac-lock.sh) - arming without the owner gate" "the WARN names the entry and the rc"
 assert_eq "$(cat "$state/.watcher-owner")" "" "no owner on record: a stale beacon is emptied, never kept"
+# The owner READ is the same entry again: a bun that starts `acquire` but fails
+# `status` must not end the arm under errexit+pipefail either.
+reset_state
+statusbun="$TMP/statusbun"
+mkdir -p "$statusbun"
+printf '#!/bin/sh\ncase " $* " in *" status "*|*" status") echo "bun stub: status down" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v bun)" >"$statusbun/bun"
+chmod +x "$statusbun/bun"
+printf 'stale-owner\n' >"$state/.watcher-owner"
+rc=0; out="$(PATH="$statusbun:$PATH" AC_LOCK_PID=$$ AC_POLL=1 AC_HEARTBEAT=0 bash "$BIN/ac-watch.sh" 2>"$TMP/statusbun.err")" || rc=$?
+assert_eq "$rc" "0" "a failing owner read after a good acquire does not ground the fleet watcher"
+assert_contains "$out" "heartbeat" "the watcher armed and ran past the owner read"
+assert_contains "$(cat "$TMP/statusbun.err")" "bun stub: status down" "the entry's own stderr is still relayed"
+assert_contains "$(cat "$TMP/statusbun.err")" "WARN: session lock status failed (rc=1, ac-lock.sh) - arming without the owner gate" "the WARN names the entry, the verb and the rc"
+assert_eq "$(cat "$state/.watcher-owner")" "" "no owner on record after a failed read"
+assert_contains "$(cat "$state/.session-lock")" "pid=$$" "the acquire itself stood"
 # A foreign LIVE holder is still the refusal, rc 2 and the same line.
 printf 'pid=%s\nsince=2026-01-01T00:00:00Z\n' "$$" >"$state/.session-lock"
 rc=0; out="$(AC_LOCK_PID=99999999 AC_POLL=1 AC_HEARTBEAT=0 bash "$BIN/ac-watch.sh" 2>/dev/null)" || rc=$?

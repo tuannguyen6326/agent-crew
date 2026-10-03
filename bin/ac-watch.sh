@@ -740,8 +740,9 @@
 # home for the arming session), but a live foreign holder REFUSES the arm
 # (prints `refused: ...`, exit 2). The holder pid is recorded to
 # state/.watcher-owner beside the beacon. An acquire that fails any OTHER
-# way (rc 1: bun missing from PATH, an unreadable lock) is no foreign owner:
-# the watcher arms with a WARN naming the entry and an EMPTY owner record.
+# way (rc 1: bun missing from PATH, an unreadable lock) is no foreign owner,
+# and neither is a status read that fails after a good acquire: the watcher
+# arms with a WARN naming the entry and an EMPTY owner record.
 # Scoped watchers (AC_WATCH_ONLY) and --once checkpoints are exempt.
 #
 # Scoping (design C): AC_WATCH_ONLY=<fam1,fam2> watches only those
@@ -1306,8 +1307,15 @@ if [ "$once" = 0 ]; then
       ac_warn "session lock acquire failed (rc=$lock_rc, ac-lock.sh) - arming without the owner gate"
       : >"$state_dir/.watcher-owner"
     else
+      # The owner read is the same entry again, so it can fail the same way
+      # after a good acquire; errexit+pipefail would end the arm here.
+      lock_rc=0
       "$(dirname "$0")/ac-lock.sh" status \
-        | sed -n 's/^held pid=\([0-9][0-9]*\).*/\1/p' >"$state_dir/.watcher-owner"
+        | sed -n 's/^held pid=\([0-9][0-9]*\).*/\1/p' >"$state_dir/.watcher-owner" || lock_rc=$?
+      if [ "$lock_rc" -ne 0 ]; then
+        ac_warn "session lock status failed (rc=$lock_rc, ac-lock.sh) - arming without the owner gate"
+        : >"$state_dir/.watcher-owner"
+      fi
     fi
   fi
   if ! ac_lock_acquire "$lock" 0; then
