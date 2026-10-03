@@ -93,6 +93,7 @@ The script headers of `tests/run-suite.sh` and `bin/ac-lint.sh` are the authorit
 - A ported script keeps its `bin/ac-<name>.sh` entry as a shim that starts `src/<name>.ts` through `bin/ac-bun.sh` (see `bin/ac-dispatch-select.sh`), so callers, hooks and skills keep the path and nothing in a caller's cwd or environment configures bun; the `src/` module's header is the spec, and it reads its arguments through `enterCaller` (`src/lib.ts`).
 - A `bin/ac-lib.sh` helper gets a twin in `src/lib.ts` only when a port calls it, keeps its bash original's observable contract, and is pinned to that original by a differential test.
 - Unit tests go in `tests/ts/<name>.test.ts`; the black-box `tests/sh/ac-<name>.test.sh` stays the CLI contract and must pass unchanged across the port.
+- A port that replaces a whole entry freezes the bash original at `tests/fixtures/ac-<name>.sh` and adds a differential leg to that contract test: `make_oracle_bin ac-<name>` (tests/sh/helpers.sh) runs the frozen original beside the live scripts, and every case compares stdout, stderr and exit status whole against the shim; a divergence the port keeps on purpose is named in the leg, never silently absorbed.
 
 ### Every script
 

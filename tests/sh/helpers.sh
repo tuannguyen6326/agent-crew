@@ -186,6 +186,21 @@ make_repo() {
   printf '%s\n' "$r"
 }
 
+make_oracle_bin() {
+  # make_oracle_bin <ac-name> - a bin/ for a port's differential leg: every
+  # live script copied beside the bash original frozen at
+  # tests/fixtures/<ac-name>.sh, under a root that links src/ and dashboard/, so
+  # a sibling shim (bin/ac-bun.sh resolves <bin>/..) still starts its module.
+  # Prints the bin dir; the leg runs the oracle from here, the shim from $BIN.
+  local d="$TMP/oracle-$1"
+  mkdir -p "$d/bin"
+  cp "$BIN"/*.sh "$d/bin/"
+  ln -s "$ROOT/src" "$d/src"
+  ln -s "$ROOT/dashboard" "$d/dashboard"
+  cp "$ROOT/tests/fixtures/$1.sh" "$d/bin/$1.sh"
+  printf '%s\n' "$d/bin"
+}
+
 # --- load harness -------------------------------------------------------------
 #
 # AUTHORITATIVE for how a test generates CPU contention and gives it back.
