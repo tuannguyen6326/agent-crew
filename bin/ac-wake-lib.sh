@@ -512,7 +512,8 @@ ac_wake_publish() {
 #
 # AUTHORITATIVE for how a publisher ends the covering watcher's poll wait
 # early, and for the WRONG-KILL GUARD that makes it safe. Two callers share it:
-# ac-done.sh's agent-side push (whose header owns the PUSH contract) and
+# ac-done.sh's agent-side push (src/done.ts, whose header owns the PUSH
+# contract, and whose watcherNudge twin this block pins) and
 # ac-room.sh's hand-back. Both publish first and nudge second - the record is
 # the guarantee, the nudge is only an accelerator, so a nudge that finds
 # nothing to end is the correct QUIET outcome and never an error.
