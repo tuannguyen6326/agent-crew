@@ -797,11 +797,20 @@ assert_eq "$(nout)" "$(awk '{if(!/^\/\//)exit; print}' "$ROOT/src/fleets.ts" | s
 n_rc=0; "$BIN/ac-fleets.sh" --help >"$TMP/n2.out" 2>&1 || n_rc=$?
 assert_eq "$n_rc $(cmp -s "$TMP/n.raw" "$TMP/n2.out" && echo same)" "0 same" "--help is -h"
 
-# 19: AC_GUARD_GRACE, huge and zero, against alpha's fresh beacon.
-date +%s >"$alpha/state/.last-watcher-beat"
+# 19: AC_GUARD_GRACE, huge and zero, against alpha's fresh beacon. Zero is
+# only deterministic when the clock stands still: both sides read `date +%s`
+# through a PATH stub frozen at the beacon's own second (one tick between the
+# two runs would flip armed/down), the rest of date passes through.
+mkdir -p "$TMP/clockstub"
+printf '#!/bin/sh\ncase "$*" in "+%%s") echo 1700000000 ;; *) exec /bin/date "$@" ;; esac\n' >"$TMP/clockstub/date"; chmod +x "$TMP/clockstub/date"
+printf '1700000000\n' >"$alpha/state/.last-watcher-beat"
+export PATH="$TMP/clockstub:$PATH"
 AC_GUARD_GRACE=100000 same "$container"; AC_GUARD_GRACE=100000 same --json "$container"
 assert_eq "$(nout | jq -r '.grace, (.homes[] | select(.name=="alpha") | .watcher.state)' | tr '\n' ' ')" "100000 armed " "a huge grace keeps the beaconed home armed"
 AC_GUARD_GRACE=0 same "$container"; AC_GUARD_GRACE=0 same --json "$container"
+assert_contains "$(nout)" '"state": "armed"' "grace 0 with a beat this second: armed"
+PATH="${PATH#"$TMP/clockstub:"}"; export PATH
+date +%s >"$alpha/state/.last-watcher-beat"
 
 # 20: jq's escaping through the ONE spawned `jq .`: DEL and a control byte as
 # \u00XX, Ã© and U+2028 raw, an invalid byte replaced by U+FFFD exactly as the
@@ -825,27 +834,110 @@ assert_eq "$(wc -c <"$jqcount" | tr -d ' ')" "1" "--json forks jq exactly once"
 PATH="$TMP/jqstub:$PATH" "$BIN/ac-fleets.sh" --paths "$zc" >/dev/null || fail "jq-count run must exit 0"
 assert_eq "$(wc -c <"$jqcount" | tr -d ' ')" "1" "--paths forks jq exactly once"
 
-# 21: an unreadable meta - named divergence: `set -e` ended the original with
-# ac_meta_get's status and a partial survey; the port reads it as empty and
-# surveys on, exit 0; both print the WARN (root reads it: unprivileged only)
+# 21: a per-home read this user cannot make. TEXT: `set -e` ended the original
+# on that assignment with exit 1 after the header, every earlier home and the
+# blank line before the dying one - the port ends there too (an unreadable
+# meta: the same WARN; an unreadable status or config: the tool's own stderr
+# is not reproduced - named). --json: the read sat inside a command
+# substitution, the value is "" and the survey goes on, exit 0, on both sides.
+# Root reads everything, so unprivileged only.
 if [ "$(id -u)" -ne 0 ]; then
-  c21="$TMP/c21"; mkdir -p "$c21/h/state"
+  c21="$TMP/c21"; mkdir -p "$c21/a/state" "$c21/h/state" "$c21/h/config"
   printf 'kind=ship\n' >"$c21/h/state/t1.meta"; chmod 000 "$c21/h/state/t1.meta"
   o_rc=0; "$obin/ac-fleets.sh" "$c21" >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
   n_rc=0; "$BIN/ac-fleets.sh" "$c21" >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+  assert_eq "$n_rc $o_rc" "1 1" "unreadable meta, text: both end with exit 1"
+  cmp -s "$TMP/o.raw" "$TMP/n.raw" || fail "unreadable meta, text: the partial stdout differs: $(diff "$TMP/o.raw" "$TMP/n.raw" | head -n 6)"
+  assert_eq "$(nout | tail -n 2 | head -n 1)" "   lock    : free" "unreadable meta, text: the earlier home printed whole, then the blank line"
+  assert_eq "$(cat "$TMP/n.err")" "$(cat "$TMP/o.err")" "unreadable meta, text: the same WARN, nothing else"
+  same --json "$c21"
+  assert_eq "$(nout | jq -r '.totals.homes, .homes[1].crew.tasks[0].kind')" "2
+null" "unreadable meta, --json: the survey goes on, the kind reads empty"
   chmod 644 "$c21/h/state/t1.meta"
-  [ "$o_rc" -ne 0 ] || fail "unreadable meta: the original's set -e ended the survey (got exit 0)"
-  assert_eq "$n_rc" "0" "unreadable meta: the port surveys on"
-  assert_contains "$(cat "$TMP/o.err")" "WARN: cannot read meta file" "unreadable meta: the original warned"
-  assert_contains "$(cat "$TMP/n.err")" "WARN: cannot read meta file" "unreadable meta: the port warns the same"
-  assert_contains "$(nout)" "   lock    : free" "unreadable meta: the port's survey reaches the end of the home"
-  assert_eq "$(nout | grep -c '^     t1 ')" "1" "unreadable meta: the meta is listed, its fields empty"
+  printf 'x y\n' >"$c21/h/state/t1.status"; chmod 000 "$c21/h/state/t1.status"
+  o_rc=0; "$obin/ac-fleets.sh" "$c21" >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+  n_rc=0; "$BIN/ac-fleets.sh" "$c21" >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+  assert_eq "$n_rc $o_rc" "1 1" "unreadable status, text: both end with exit 1"
+  cmp -s "$TMP/o.raw" "$TMP/n.raw" || fail "unreadable status, text: the partial stdout differs"
+  assert_eq "$(cat "$TMP/n.err")" "" "unreadable status, text: tail's own line is not reproduced (named)"
+  o_rc=0; "$obin/ac-fleets.sh" --json "$c21" >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+  n_rc=0; "$BIN/ac-fleets.sh" --json "$c21" >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+  assert_eq "$n_rc $o_rc" "0 0" "unreadable status, --json: both go on"
+  assert_eq "$(norm <"$TMP/n.raw")" "$(norm <"$TMP/o.raw")" "unreadable status, --json: the same document"
+  assert_contains "$(cat "$TMP/o.err")" "Permission denied" "unreadable status, --json: tail's own line on the original"
+  assert_eq "$(cat "$TMP/n.err")" "" "unreadable status, --json: not reproduced (named)"
+  chmod 644 "$c21/h/state/t1.status"
+  # config/captain is the one read the original guarded (`head ... 2>/dev/null
+  # || true`): "" in both modes, exit 0, nothing on stderr
+  printf 'TN\n' >"$c21/h/config/captain"; chmod 000 "$c21/h/config/captain"
+  same "$c21"
+  assert_eq "$(nout | /usr/bin/grep -c 'captain:')" "0" "unreadable captain, text: no captain, the survey goes on"
+  same --json "$c21"
+  assert_eq "$(nout | jq -r '.homes[1].captain')" "null" "unreadable captain, --json: reads empty, not the default"
+  chmod 644 "$c21/h/config/captain"
+  # a nested home dying: the parent's block and its crewdeputies label are out
+  mkdir -p "$c21/h/crewdeputies/d/state"; printf 'kind=ship\n' >"$c21/h/crewdeputies/d/state/x.meta"; chmod 000 "$c21/h/crewdeputies/d/state/x.meta"
+  o_rc=0; "$obin/ac-fleets.sh" "$c21" >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+  n_rc=0; "$BIN/ac-fleets.sh" "$c21" >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+  chmod 644 "$c21/h/crewdeputies/d/state/x.meta"
+  assert_eq "$n_rc $o_rc" "1 1" "unreadable nested meta, text: both end with exit 1"
+  cmp -s "$TMP/o.raw" "$TMP/n.raw" || fail "unreadable nested meta, text: the partial stdout differs: $(diff "$TMP/o.raw" "$TMP/n.raw" | head -n 6)"
+  assert_eq "$(nout | tail -n 1)" "   crewdeputies:" "unreadable nested meta, text: the parent printed through its label"
 fi
 
 # 22: a zero-padded cadence counter reads as its decimal value on both sides
-# (jq takes `--argjson 007` as 7) - probed here, not assumed
-c22="$TMP/c22"; mkdir -p "$c22/h/state"; printf 'debriefs=007\n' >"$c22/h/state/.learn.meta"
+# (jq takes `--argjson 007` as 7) - probed here, not assumed; and `due` compares
+# the integers themselves, so 2^53 against 2^53+1 is not due
+c22="$TMP/c22"; mkdir -p "$c22/h/state" "$c22/h/config"; printf 'debriefs=007\n' >"$c22/h/state/.learn.meta"
 same --json "$c22"
 assert_eq "$(jq -r '.totals.homes, .homes[0].cadence.learn.count' "$TMP/n.raw" | tr '\n' ' ')" "1 7 " "007: the home stays and the count reads 7"
+printf 'debriefs=9007199254740992\n' >"$c22/h/state/.learn.meta"; printf '9007199254740993\n' >"$c22/h/config/learn-every"
+printf 'runs_since=9007199254740992\n' >"$c22/h/state/.curate.meta"; printf '9007199254740993\n' >"$c22/h/config/curate-every"
+same --json "$c22"
+assert_eq "$(jq -r '.homes[0].cadence.learn.due, .homes[0].cadence.curate.due, .totals.learning_due' "$TMP/n.raw" | tr '\n' ' ')" "false false 0 " "2^53 is not due against 2^53+1"
+
+# 23: a meta value is awk's C string, cut at its first NUL: `kind=self<NUL>`
+# is self (unsupervised, no coverage alarm), `kind=veri<NUL>fy-qa` is `veri`
+c23="$TMP/c23"; mkdir -p "$c23/h/state"
+printf 'kind=self\0\nproject=x\n' >"$c23/h/state/s.meta"
+printf 'kind=veri\0fy-qa\n' >"$c23/h/state/v.meta"
+same "$c23"; same --json "$c23"
+assert_eq "$(nout | jq -r '.homes[0].crew.supervised, .totals.watchers_down, .homes[0].crew.tasks[1].kind')" "1
+1
+veri" "NUL-cut meta values: self is self, veri<NUL>fy-qa is veri and counts as crew"
+
+# 24: the C locale: bash counts BYTES and [:space:] is ASCII there, so a status
+# of 60 ü (120 bytes) is cut at 97 bytes, a ref of 20 é at 12 bytes, and a
+# non-breaking space around captain, flow and owner stays; the same inputs
+# under en_US.UTF-8 count characters and trim the space (rows 7-8's reading)
+c24="$TMP/c24"; mkdir -p "$c24/h/state" "$c24/h/config"
+printf 'kind=ship\n' >"$c24/h/state/t.meta"; printf '2026 %s\n' "$(printf '\303\274%.0s' $(seq 1 60))" >"$c24/h/state/t.status"
+printf 'kind=verify-qa\ncaller=c\nfamily=f\nref=%s\n' "$(printf '\303\251%.0s' $(seq 1 20))" >"$c24/h/state/v.meta"
+printf '\302\240TN\302\240\n' >"$c24/h/config/captain"; printf '\302\240direct\302\240\n' >"$c24/h/config/flow"
+printf '\302\24077\302\240\n' >"$c24/h/state/.watcher-owner"; date +%s >"$c24/h/state/.last-watcher-beat"
+LC_ALL=C same "$c24"
+assert_eq "$(nout | /usr/bin/grep -a -o 'ref=[^ ]*' | LC_ALL=C /usr/bin/sed 's/ref=//' | wc -c | awk '{print $1}')" "13" "C: the text ref column is cut at 12 bytes (6 e-acute)"
+LC_ALL=C same --json "$c24"
+assert_eq "$(nout | jq -r '.homes[0].captain, .homes[0].config.flow, .homes[0].watcher.owner')" "$(printf '\302\240TN\302\240\n\302\240direct\302\240\n\302\24077\302\240')" "C: the non-breaking spaces stay"
+LC_ALL=en_US.UTF-8 same "$c24"
+assert_contains "$(nout)" "captain: TN" "UTF-8: the non-breaking spaces are trimmed"
+assert_eq "$(nout | /usr/bin/grep -a -o 'ref=[^ ]*' | /usr/bin/sed 's/ref=//' | wc -c | awk '{print $1}')" "25" "UTF-8: the text ref column is cut at 12 characters (12 e-acute)"
+LC_ALL=en_US.UTF-8 same --json "$c24"
+
+# 25: grace is one standalone `--argjson` value: a canonical integer is placed
+# as is, `007` and `1e2` are what jq makes of them, and `300,"x":1` is jq's
+# refusal (exit 2, its own stderr) - never spliced into the document
+AC_GUARD_GRACE=007 same --json "$container"
+# a grace `[ -le ]` cannot read made bash print its own `integer expression
+# expected` line (shell-own stderr, not reproduced): exit and stdout compared
+for g in 1e2 '300,"injected":true' abc; do
+  o_rc=0; AC_GUARD_GRACE="$g" "$obin/ac-fleets.sh" --json "$container" >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+  n_rc=0; AC_GUARD_GRACE="$g" "$BIN/ac-fleets.sh" --json "$container" >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+  assert_eq "$n_rc" "$o_rc" "grace '$g': the same exit"
+  assert_eq "$(norm <"$TMP/n.raw")" "$(norm <"$TMP/o.raw")" "grace '$g': the same document"
+done
+AC_GUARD_GRACE='300,"injected":true' "$BIN/ac-fleets.sh" --json "$container" >"$TMP/n.raw" 2>"$TMP/n.err" && fail "an injected grace must be refused" || true
+assert_eq "$(cat "$TMP/n.raw")" "" "injected grace: nothing on stdout"
+assert_contains "$(cat "$TMP/n.err")" "invalid JSON text passed to --argjson" "injected grace: jq's own refusal"
 
 pass

@@ -14,10 +14,17 @@
 // wins, anywhere); `-h`/`--help` prints this header to stdout and exits 0 the
 // moment it is seen; any other word - an unknown `--flag` included - is the
 // container when none was taken yet, later words are ignored. stdin is never
-// read. EXIT 0 always: a missing container, a regular file as container and an
-// unreadable room set all exit 0 with their text. Nothing of its own goes to
-// stderr (`ac-room.sh list`'s stderr is discarded; an unreadable meta carries
-// ac_meta_get's WARN).
+// read. EXIT 0 on every surveyed path: a missing container, a regular file as
+// container and an unreadable room set all exit 0 with their text. Nothing of
+// its own goes to stderr (`ac-room.sh list`'s stderr is discarded; an
+// unreadable meta carries ac_meta_get's WARN). In TEXT mode a per-home read
+// that fails - a meta, a status or the watcher owner this user cannot read
+// (config/captain was the one read the original guarded: "" in every mode) -
+// ends the run with exit 1 after what was printed so far
+// (the header, every earlier home, and the blank line or the parent's block
+// before the dying home), as `set -e` ended the original on that assignment;
+// in --json the same reads sit inside the original's command substitutions,
+// where errexit sleeps, so the value reads "" and the survey goes on.
 //
 // CONTAINER (first hit wins): the <container> argument > $AC_HOMES_CONTAINER >
 // `cd "$AC_HOME/.." && pwd -P` when AC_HOME is set (a symlinked AC_HOME gives
@@ -38,8 +45,11 @@
 //             state/<id>.status after its first space (`tail -n1 | cut -d' '
 //             -f2-`: a line with no space passes whole, an empty last line
 //             reads ""), `-` when the file is absent or empty; a status over
-//             100 CHARACTERS becomes its first 97 + `...` (an invalid UTF-8
-//             byte is one character, as bash counts it). A meta whose kind is
+//             100 CHARACTERS becomes its first 97 + `...` - characters as bash
+//             counts them under the caller's locale (LC_ALL, else LC_CTYPE,
+//             else LANG): UTF-8 sequences, an invalid byte one character, under
+//             a UTF-8 name; plain BYTES under C. A meta value is read as awk
+//             handed it to the shell: cut at its first NUL. A meta whose kind is
 //             `verify-*` (metaIsVerify) is a VERIFICATION agent, listed apart
 //             and never in the crew tally; `kind=self` is listed but not
 //             supervised.
@@ -58,7 +68,8 @@
 //             grace that is not an integer compares false, as `[ -le ]` did;
 //             AC_GUARD_GRACE, default 300). `, owner pid <pid>` rides inside
 //             the parentheses when state/.watcher-owner holds one (every
-//             [:space:] deleted). A down line gains ` - no crew in flight` (no
+//             [:space:] deleted - the locale's class, ASCII under C). A down
+//             line gains ` - no crew in flight` (no
 //             crew) or ` - no supervised crew in flight (<n> self task(s) owe
 //             none)` (self tasks only).
 //   wakes   - the non-dot entries of state/.wake-spool/ plus those of every
@@ -69,11 +80,13 @@
 //             succeeds (spawned, so `+42` is alive and `abc` is not),
 //             `stale pid=<p|?> since=<s|?>` otherwise.
 //   config, cadence - --json only: config/flow|promote|remote-mirror (first
-//             line, [:space:]-trimmed - configReadDir; defaults auto / always
-//             / off); learn count = state/.learn.meta debriefs, else stows,
-//             non-digits -> 0; last_run digits or null; learn-every (default
-//             8) and curate-every (default 5), non-digits -> the default;
-//             curate count = state/.curate.meta runs_since; due = count >= every.
+//             line, [:space:]-trimmed under the locale's class - configReadDir;
+//             defaults auto / always / off); learn count = state/.learn.meta
+//             debriefs, else stows, non-digits -> 0; last_run digits or null;
+//             learn-every (default 8) and curate-every (default 5), non-digits
+//             -> the default; curate count = state/.curate.meta runs_since;
+//             due = count >= every, compared as the integers they are (bash's
+//             64-bit `-ge`), never as doubles.
 //
 // TEXT (default), bytes exact; <pad> is 3*depth spaces:
 //   == fleet homes: <resolved container> ==
@@ -118,8 +131,11 @@
 //   arithmetic over every emitted home, nested ones included; watchers_down
 //   counts homes with supervised > 0 and a down watcher. Not found:
 //   {container, generated_at, grace, note:"container not found", totals (all
-//   0), homes:[]}. A grace that is not a JSON number makes jq refuse the
-//   document and the run ends with jq's status, as the original's did.
+//   0), homes:[]}. grace is ONE standalone JSON value as `--argjson` took it:
+//   a canonical integer is placed as is; anything else is handed to a spawned
+//   `jq -cn --argjson` first, whose refusal (exit 2, its own stderr) ends the
+//   run as the original's did and whose answer is the token placed - so
+//   `300,"x":1` is refused, not spliced into the document.
 //   DEPTH POISON (reproduced; a defect of the original, whose command
 //   substitutions ran without errexit, so a depth-7 home's empty object failed
 //   every enclosing `--argjson` and the whole TOP-LEVEL home vanished from
@@ -146,16 +162,19 @@
 // NAMED DIVERGENCES from the frozen original: `-h` prints THIS header; dirs
 // and metas are listed in byte order (bash's glob followed libc collation
 // under a UTF-8 locale); jq's stderr on the depth poison is not reproduced;
-// an unreadable meta, config or status file reads as empty and the survey
-// goes on, exit 0, where `set -e` ended the original with status 1 or 2. A
-// zero-padded cadence counter reads as its decimal value on both sides (jq
-// takes `--argjson 007` as 7). Reads only - no lock, no mkdir, no temp file,
-// nothing written under any home.
+// on a text-mode read that fails, the tool's own stderr (`tail: ...:
+// Permission denied`, `head: ...`) is not reproduced - exit and stdout are;
+// the home is bound through physicalDir. A zero-padded cadence counter reads
+// as its decimal value on both sides (jq takes `--argjson 007` as 7). Reads
+// only - no lock, no mkdir, no temp file, nothing written under any home.
 import { existsSync, readdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { configReadDir, die, enterCaller, iso, metaGet, metaIsVerify, now, physicalDir, wakeFamilySpools, watcherBeatRead } from "./lib.ts";
 
 const bin = `${process.cwd()}/bin`;
-const nowSecs = now();
+// `now="$(ac_now)"` survived a date(1) that could not run: `${EPOCHSECONDS:-$(date
+// +%s)}` left now empty, and bash's arithmetic read the empty string as 0, so
+// every beat compared as `0 - beat` - armed. A NaN here would read as down.
+const nowSecs = ((n: number): number => (Number.isNaN(n) ? 0 : n))(now());
 const { args } = enterCaller(process.argv.slice(2));
 
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
@@ -185,6 +204,17 @@ for (const a of args) {
 
 const grace = process.env.AC_GUARD_GRACE || "300";
 const graceInt = /^[+-]?[0-9]+$/.test(grace) ? Number(grace) : null;
+// bash's character and [:space:] readings follow the locale it was given.
+const utf8Locale = /utf-?8/i.test(process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || "");
+
+// In text mode a failing per-home read ended the original on its assignment
+// (`set -e`); the lines before it were already on stdout. In --json the same
+// read sat inside a command substitution and the value is "".
+class Fatal extends Error {}
+const fatalOr = <T,>(v: T): T => {
+  if (mode === "text") throw new Fatal();
+  return v;
+};
 
 const isDir = (p: string): boolean => {
   try {
@@ -210,20 +240,23 @@ const listDir = (d: string): string[] => {
   }
 };
 const readBytes = (p: string): string => readFileSync(p, "latin1").replace(NUL, "");
+// The value as awk handed it to the shell: a C string, cut at its first NUL.
 const meta = (file: string, key: string): string => {
   try {
-    return metaGet(file, key);
+    return metaGet(file, key).replace(/\0[\s\S]*$/, "");
   } catch {
-    return "";
+    return fatalOr("");
   }
 };
 const isHome = (h: string): boolean => isDir(`${h}/data`) || isDir(`${h}/state`) || isDir(`${h}/config`);
 const homeChildren = (dir: string): string[] => listDir(dir).map((n) => `${dir}/${n}`).filter((p) => isDir(p) && isHome(p));
 
-// bash's characters under the UTF-8 locale over a bytes string: one valid
-// UTF-8 sequence or one invalid byte each, so a slice keeps the raw bytes.
+// bash's characters over a bytes string: under a UTF-8 locale one valid UTF-8
+// sequence or one invalid byte each (so a slice keeps the raw bytes); under C
+// every byte is one.
 function chars(b: string): string[] {
   const out: string[] = [];
+  if (!utf8Locale) return b.split("");
   for (let i = 0; i < b.length; ) {
     const c = b.charCodeAt(i);
     let n = c >= 0xc2 && c <= 0xdf ? 2 : c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 1;
@@ -241,10 +274,11 @@ function chars(b: string): string[] {
 const padBytes = (b: string, w: number): string => b + " ".repeat(Math.max(0, w - b.length));
 
 // The shell's [:space:] over a bytes string: White_Space minus U+0085 (lib.ts
-// SHELL_TRIM's class) when the bytes are valid UTF-8, ASCII whitespace when not.
+// SHELL_TRIM's class) when the locale is UTF-8 and the bytes are valid UTF-8,
+// ASCII whitespace otherwise.
 function onShellSpace(b: string, f: (s: string, ws: string) => string): string {
   const u = Buffer.from(b, "latin1").toString("utf8");
-  const valid = Buffer.from(u, "utf8").toString("latin1") === b;
+  const valid = utf8Locale && Buffer.from(u, "utf8").toString("latin1") === b;
   const out = f(valid ? u : b, valid ? "(?!\\x85)\\p{White_Space}" : "[\\t\\n\\v\\f\\r ]");
   return valid ? Buffer.from(out, "utf8").toString("latin1") : out;
 }
@@ -258,7 +292,7 @@ function lastStatus(stf: string): string {
     if (statSync(stf).size === 0) return "-";
     text = readFileSync(stf, "latin1");
   } catch {
-    return existsSync(stf) ? "" : "-";
+    return existsSync(stf) ? fatalOr("") : "-";
   }
   if (text.endsWith("\n")) text = text.slice(0, -1);
   const line = text.slice(text.lastIndexOf("\n") + 1);
@@ -277,6 +311,7 @@ const psAlive = (pid: string): boolean => {
 type Row = { id: string; kind: string; project: string; status: string; text: string };
 type Entry = { status: string; family: string; last: string };
 type Home = {
+  home: string;
   name: string;
   path: string;
   captain: string;
@@ -293,7 +328,7 @@ type Home = {
   capped: boolean;
 };
 
-function survey(home: string, depth: number): Home {
+function survey(home: string, depth: number, recurse = true): Home {
   const pad = " ".repeat(depth * 3);
   const sd = `${home}/state`;
   const cfgd = `${home}/config`;
@@ -301,13 +336,22 @@ function survey(home: string, depth: number): Home {
     try {
       return configReadDir(cfgd, n, d);
     } catch {
-      return "";
+      return fatalOr("");
     }
   };
   const h: Home = {
+    home,
     name: bytes(home.slice(home.lastIndexOf("/") + 1)).replace(/\n+$/, ""),
     path: bytes(home),
-    captain: cfg("captain", ""),
+    // `head -n1 ... 2>/dev/null || true`: the one per-home read the original
+    // guarded itself, so an unreadable captain is "" in every mode.
+    captain: ((): string => {
+      try {
+        return configReadDir(cfgd, "captain", "");
+      } catch {
+        return "";
+      }
+    })(),
     crew: [],
     verify: [],
     supervised: 0,
@@ -369,7 +413,9 @@ function survey(home: string, depth: number): Home {
   if (isFile(`${sd}/.watcher-owner`)) {
     try {
       h.watcher.owner = delSpace(readBytes(`${sd}/.watcher-owner`));
-    } catch {}
+    } catch {
+      fatalOr(undefined);
+    }
   }
   const ownerSfx = h.watcher.owner ? `, owner pid ${h.watcher.owner}` : "";
   if (isFile(`${sd}/.last-watcher-beat`)) {
@@ -404,17 +450,21 @@ function survey(home: string, depth: number): Home {
     const lev = digits(cfg("learn-every", "8"), "8");
     const ccur = digits(meta(`${sd}/.curate.meta`, "runs_since"), "0");
     const cev = digits(cfg("curate-every", "5"), "5");
-    h.cadence = { lcur, lev, ldue: parseInt(lcur, 10) >= parseInt(lev, 10), lrun: /^[0-9]+$/.test(lrun) ? lrun : null, ccur, cev, cdue: parseInt(ccur, 10) >= parseInt(cev, 10) };
+    h.cadence = { lcur, lev, ldue: BigInt(lcur) >= BigInt(lev), lrun: /^[0-9]+$/.test(lrun) ? lrun : null, ccur, cev, cdue: BigInt(ccur) >= BigInt(cev) };
   }
 
-  for (const cd of homeChildren(`${home}/crewdeputies`)) {
-    if (depth >= 6) h.capped = true;
-    else h.deputies.push(survey(cd, depth + 1));
+  if (recurse) {
+    for (const cd of homeChildren(`${home}/crewdeputies`)) {
+      if (depth >= 6) h.capped = true;
+      else h.deputies.push(survey(cd, depth + 1));
+    }
   }
   return h;
 }
 
-function renderText(h: Home, depth: number): string {
+// Each block reaches stdout before the next home is read, so a read that
+// fails leaves exactly what the original had printed by then.
+function renderText(h: Home, depth: number): void {
   const pad = " ".repeat(depth * 3);
   let o = `${pad}${ANCHOR} ${h.name}${h.captain ? `   captain: ${h.captain}` : ""}\n`;
   if (h.crew.length > 0) {
@@ -431,11 +481,20 @@ function renderText(h: Home, depth: number): string {
     for (const l of h.inbox.lines) o += `${pad}     ${l}\n`;
   } else o += `${pad}   inbox   : clear\n`;
   o += `${pad}   watcher : ${h.watcher.detail}\n${pad}   wakes   : ${h.wakes} queued\n${pad}   lock    : ${h.lock.detail}\n`;
-  if (h.deputies.length > 0 || h.capped) {
-    o += `${pad}   crewdeputies:\n`;
-    for (const d of h.deputies) o += renderText(d, depth + 1);
+  const kids = homeChildren(`${h.home}/crewdeputies`);
+  if (kids.length > 0) o += `${pad}   crewdeputies:\n`;
+  write(1, Buffer.from(o, "latin1"));
+  if (depth >= 6) return;
+  for (const cd of kids) renderText(textSurvey(cd, depth + 1), depth + 1);
+}
+
+function textSurvey(home: string, depth: number): Home {
+  try {
+    return survey(home, depth, false);
+  } catch (e) {
+    if (e instanceof Fatal) process.exit(1);
+    throw e;
   }
-  return o;
 }
 
 // The document jq pretty-prints: strings are latin1 bytes escaped only where
@@ -482,6 +541,21 @@ const poisoned = (h: Home): boolean => h.capped || h.deputies.some(poisoned);
 const flat = (h: Home): Home[] => [h, ...h.deputies.flatMap(flat)];
 const pathsJson = (home: string): J => ({ path: bytes(home), crewdeputies: homeChildren(`${home}/crewdeputies`).map(pathsJson) });
 
+// `--argjson grace "$grace"`: one standalone value. A canonical integer needs
+// no jq; anything else is handed to jq alone first, so its refusal (and its
+// stderr) ends the run as the original's did, and its answer is the token.
+function graceToken(): Raw {
+  if (/^(0|-?[1-9][0-9]*)$/.test(grace)) return new Raw(grace);
+  let r: ReturnType<typeof Bun.spawnSync>;
+  try {
+    r = Bun.spawnSync(["jq", "-cn", "--argjson", "g", grace, "$g"], { stdout: "pipe", stderr: "inherit", env: process.env });
+  } catch {
+    die("required tool not found: jq");
+  }
+  if (r.exitCode !== 0) process.exit(r.exitCode ?? 2);
+  return new Raw(r.stdout.toString("latin1").replace(/\n+$/, ""));
+}
+
 function emitJson(doc: J): never {
   let r: ReturnType<typeof Bun.spawnSync>;
   try {
@@ -498,7 +572,7 @@ if (!container) container = `${process.env.HOME ?? ""}/Work/ac-homes`;
 const resolved = physicalDir(container);
 if (resolved === null) {
   if (mode === "json") {
-    emitJson({ container: bytes(container), generated_at: iso(), grace: new Raw(grace), note: "container not found", totals: { homes: 0, crew: 0, pending: 0, handback: 0, inbox_unreadable: 0, watchers_down: 0, learning_due: 0, curate_due: 0 }, homes: [] });
+    emitJson({ container: bytes(container), generated_at: iso(), grace: graceToken(), note: "container not found", totals: { homes: 0, crew: 0, pending: 0, handback: 0, inbox_unreadable: 0, watchers_down: 0, learning_due: 0, curate_due: 0 }, homes: [] });
   }
   if (mode === "paths") emitJson({ container: bytes(container), homes: [] });
   write(1, Buffer.from(`(fleet homes container not found: ${bytes(container)})\n`, "latin1"));
@@ -516,7 +590,7 @@ if (mode === "json") {
   emitJson({
     container: bytes(resolved),
     generated_at: iso(),
-    grace: new Raw(grace),
+    grace: graceToken(),
     totals: {
       homes: all.length,
       crew: sum((h) => h.crew.length),
@@ -531,7 +605,9 @@ if (mode === "json") {
   });
 }
 
-let out = `== fleet homes: ${bytes(resolved)} ==\n`;
-for (const p of topHomes) out += `\n${renderText(survey(p, 0), 0)}`;
-if (topHomes.length === 0) out += `\n(no fleet homes under ${bytes(resolved)})\n`;
-write(1, Buffer.from(out, "latin1"));
+write(1, Buffer.from(`== fleet homes: ${bytes(resolved)} ==\n`, "latin1"));
+for (const p of topHomes) {
+  write(1, Buffer.from("\n"));
+  renderText(textSurvey(p, 0), 0);
+}
+if (topHomes.length === 0) write(1, Buffer.from(`\n(no fleet homes under ${bytes(resolved)})\n`, "latin1"));

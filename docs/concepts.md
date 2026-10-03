@@ -173,7 +173,7 @@ Every actionable event is published durably to a wake spool, `state/.wake-spool/
 Agents also push their own completion with `bin/ac-done.sh <id> '<marker>'`, which publishes the same record and ends the watcher's poll wait, so a completion arrives in milliseconds.
 The watcher stays as the backup that catches an agent which crashed or forgot, and one completion still wakes the chief once.
 
-Owners: `bin/ac-done.sh` and `bin/ac-wake-lib.sh` headers.
+Owners: `src/done.ts` (the `bin/ac-done.sh` entry execs it) and `bin/ac-wake-lib.sh` headers.
 
 ### Hooks
 
@@ -209,7 +209,7 @@ Learning happens at landing, never deferred to a manual debrief.
 
 At intake the chief reads by the order's question with `bin/ac-know.sh recall` and cites what it used; citing is what bumps an entry's heat.
 
-Owners: [`task-lifecycle`](../.agents/skills/task-lifecycle/SKILL.md) skill, the `bin/ac-know.sh`, `bin/ac-learn.sh`, `bin/ac-scene.sh` and `src/brain.ts` headers.
+Owners: [`task-lifecycle`](../.agents/skills/task-lifecycle/SKILL.md) skill, the `bin/ac-know.sh`, `bin/ac-learn.sh`, `src/scene.ts` and `src/brain.ts` headers.
 
 ## Review and QA as obligations
 

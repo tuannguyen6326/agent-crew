@@ -70,7 +70,7 @@ The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspa
 | `config/learn-suite-gate` | `on` makes the DISTILL trigger wait for a green `tests/run-suite.sh` verdict for the current generation and tree; anything else (default) = off. |
 | `config/learn-pending-budget` | Byte budget for the learnings ledger's `## Pending` body at DISTILL staging; default 131072. Older bullets past it are archived verbatim to `records/learnings-archive/` (`ac-learn.sh rotate-pending`), except the sources of the last examined run's candidates, which stay until the next run has reconsidered them. |
 | `config/learn-stale-days` | Age in days past which an always-loaded `CREWMATE-learned.md` entry or a scene grades stale; default 30. Grading is read-only (`ac-learn.sh stale`, the session-start `-- knowledge --` block). |
-| `config/scene-max` | Tiered file-count cap on the L2 scene store `records/scenes/`; default 30. It gates `new` only; `update` and `merge` stay legal. Owner: the `bin/ac-scene.sh` header. |
+| `config/scene-max` | Tiered file-count cap on the L2 scene store `records/scenes/`; default 30. It gates `new` only; `update` and `merge` stay legal. Owner: the `src/scene.ts` header. |
 | `config/codegraph` | Automatic CodeGraph indexing of each leased crew worktree: `on` (default) or `off`. Background and best-effort; needs `codegraph` on PATH. |
 
 ### Memory engine (brain)
@@ -144,10 +144,10 @@ These files live under `$AC_HOME/records/` (resolved by `ac_records_dir`) and ar
 | File | Purpose |
 | --- | --- |
 | `records/captain.md` | The captain's standing rules and preferences, including `STANDING (domain:<name>):` lines for crewdomains. Read by intake and many guards; scoped sessions may not edit it (`bin/ac-ledger-guard.sh`). `bin/ac-curate.sh` archives only fully superseded or non-standing blocks. |
-| `records/projects.md` | Project registry, one line per project: `- <name> [+yolo] - <description> (added <date>)`. Delivery mode is per task, not per project; a legacy `[<mode>]` is ignored. Grammar owner: the `bin/ac-project-mode.sh` header. |
+| `records/projects.md` | Project registry, one line per project: `- <name> [+yolo] - <description> (added <date>)`. Delivery mode is per task, not per project; a legacy `[<mode>]` is ignored. Grammar owner: the `src/project-mode.ts` header (the `bin/ac-project-mode.sh` entry execs it). |
 | `records/crewdeputies.md` | Crewdeputy routing table: one line per deputy home with charter, `home:`, `scope:` and clones. Grammar owner: the `crewdeputy routing table` block in `bin/ac-lib.sh`; strict check `bin/ac-deputy.sh validate`. |
 | `records/standing-jobs.md` | Declared standing jobs (id, cadence, on/off, re-create action) reported in the session-start digest. Grammar owner: the `src/standing-jobs.ts` header. |
-| `records/rig.json` | Rig manifest: the home's declared identity, distro checkout, config-knob inventory and standing-job ids. Read only by `bin/ac-rig.sh drift`, whose header owns the grammar. |
+| `records/rig.json` | Rig manifest: the home's declared identity, distro checkout, config-knob inventory and standing-job ids. Read only by `bin/ac-rig.sh drift`; the `src/rig.ts` header owns the grammar. |
 
 ## Crewmate instruction and settings layers
 
