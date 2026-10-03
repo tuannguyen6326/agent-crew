@@ -58,7 +58,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | Script | What it does |
 |---|---|
 | `ac-watch.sh [--once \| --release <pid>]` | Zero-token watcher: polls panes and stage `report.md` artifacts, publishes each actionable wake durably to its scope's spool, and exits with one reason line. Refused in a SOLO session. Spec: `bin/ac-watch.sh` header. |
-| `ac-done.sh <id> <marker>` | The agent-side completion PUSH: publishes one durable `report` wake and nudges the covering watcher, stamping the watcher's dedup so one completion wakes once; a failed publish dies loudly. Spec: `bin/ac-done.sh` header. |
+| `ac-done.sh <id> <marker>` | The agent-side completion PUSH: publishes one durable `report` wake and nudges the covering watcher, stamping the watcher's dedup so one completion wakes once; a failed publish dies loudly. Spec: `src/done.ts` header (the entry execs it). |
 | `ac-wake-drain.sh [ack <id>...]` | Atomically drains the calling session's own spool (per-record rename), reports unacknowledged completions and warns WATCHER-DOWN; the fleet chief also drains orphaned family spools. Both forms are refused in a SOLO session. Spec: `bin/ac-wake-drain.sh` header. |
 
 ## Rooms and ledger

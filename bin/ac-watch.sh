@@ -273,7 +273,7 @@
 #    fails in.
 #
 # PUSH CHANNEL (agent-done-push). The watcher is the BACKUP; a finished agent
-# announces itself (bin/ac-done.sh, which owns the push contract) and the chief
+# announces itself (bin/ac-done.sh; src/done.ts owns the push contract) and the chief
 # wakes in tens of milliseconds instead of at the next tick. The agent PUBLISHES
 # its record into this scope's spool and then kills this watcher's poll `sleep`
 # CHILD - behavior poll_wait already documents ("A kill aimed at the sleep CHILD
