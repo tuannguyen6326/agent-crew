@@ -4,10 +4,12 @@
 // same stderr shape, exit status and homeless answer), because callers of a
 // ported bin/ac-*.sh entry cannot tell which language answered them. Two
 // helpers are no twins: contractLint is the delivery-contract judge itself,
-// and harnessLaunchable joins facts three bash arms each hold a part of.
+// and harnessLaunchable joins facts three bash arms each hold a part of; two
+// twin a port's own bash rather than ac-lib's: leaseAgeSecs (ac-pool-health's
+// reader of an ac_iso stamp) and tabFields (`IFS=$'\t' read -r`).
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -79,18 +81,15 @@ function namedCwd(): string | null {
   }
 }
 
-// ac_home_resolve's no-flag rungs: `cd "$AC_HOME" && pwd -P`, or "" when
-// unset - a homeless caller is legitimate and decides what "no home" means.
-// A chdir round-trip, not realpath: cd tries the logical spelling (link/..
-// walks back up the link) before the physical one, needs only search
-// permission, and takes spellings Bun's realpath refuses (over PATH_MAX, a
-// backslash). A home Bun cannot name (a trailing backslash) is refused where
-// ac_home_resolve accepts it: failing closed beats reading its sibling.
-export function envHome(): string {
-  const h = process.env.AC_HOME;
-  if (!h) return "";
+// `cd "$1" && pwd -P`, or null when the cd fails. A chdir round-trip, not
+// realpath: cd tries the logical spelling (link/.. walks back up the link)
+// before the physical one, needs only search permission, and takes spellings
+// Bun's realpath refuses (over PATH_MAX, a backslash). A directory Bun cannot
+// name (a trailing backslash) is null where cd entered it: failing closed
+// beats reading its sibling. "" is the cwd, the no-op `cd ""` is.
+export function physicalDir(p: string): string | null {
   const here = process.cwd();
-  for (const dir of [resolve(h), h]) {
+  for (const dir of [resolve(p), p]) {
     try {
       process.chdir(dir);
       const named = namedCwd();
@@ -100,7 +99,15 @@ export function envHome(): string {
       process.chdir(here);
     }
   }
-  die(`AC_HOME is not a readable directory: ${h}`);
+  return null;
+}
+
+// ac_home_resolve's no-flag rungs: `cd "$AC_HOME" && pwd -P`, or "" when
+// unset - a homeless caller is legitimate and decides what "no home" means.
+export function envHome(): string {
+  const h = process.env.AC_HOME;
+  if (!h) return "";
+  return physicalDir(h) ?? die(`AC_HOME is not a readable directory: ${h}`);
 }
 
 // The shell's [:space:] under the operators' UTF-8 locale (measured, bash
@@ -136,9 +143,12 @@ export function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+// ac_home's refusal, exported for an entry that must print it and then keep
+// its own exit status rather than die here.
+export const NO_HOME = "AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one";
+
 function homeSubdir(name: string): string {
-  if (!process.env.AC_HOME)
-    die("AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one");
+  if (!process.env.AC_HOME) die(NO_HOME);
   const dir = join(envHome(), name);
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -150,6 +160,82 @@ export function stateDir(): string {
 
 export function recordsDir(): string {
   return homeSubdir("records");
+}
+
+// ac_now's twin through date(1), the rung bash 3.2 (this host's /bin/bash)
+// takes, so a PATH `date` stub binds the bash and the port to one instant.
+// The live env, not Bun's startup snapshot, so a PATH set after start is the
+// one searched.
+const DATE_SPAWN = { stdout: "pipe", stderr: "ignore", env: process.env } as const;
+
+export function now(): number {
+  try {
+    return Number(Bun.spawnSync(["date", "+%s"], DATE_SPAWN).stdout.toString().trim());
+  } catch {
+    return NaN;
+  }
+}
+
+// `IFS=$'\t' read -r <n names>`: tab is IFS whitespace, so a run of tabs is
+// one delimiter, leading and trailing runs are dropped, and the last name
+// keeps the rest of the line. The ac-tree list wire is read this way, so a
+// leased row with an empty leased_at lands its owner in leased_at.
+export function tabFields(line: string, n: number): string[] {
+  const fields: string[] = [];
+  let rest = line.replace(/^\t+/, "");
+  for (let i = 1; i < n && rest !== ""; i++) {
+    const m = /\t+/.exec(rest);
+    if (!m) break;
+    fields.push(rest.slice(0, m.index));
+    rest = rest.slice(m.index + m[0].length);
+  }
+  fields.push(rest.replace(/\t+$/, ""));
+  while (fields.length < n) fields.push("");
+  return fields;
+}
+
+// lease_age_secs' twin (bin/ac-pool-health.sh, the seam ac-learn.sh's
+// learn_age_days shares): whole seconds since an ac_iso stamp, null when it
+// misses the digit pattern or date(1) refuses it. The epoch comes from the
+// same `date -u -j -f` (BSD; GNU `date -u -d` after it) the bash runs, never
+// a JS parser: BSD strptime takes Feb 30, day 00 and :60 and rolls them while
+// refusing month 13 or hour 24, and that acceptance set is what decides which
+// leases read as aged.
+export function leaseAgeSecs(ts: string): number | null {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/.test(ts)) return null;
+  // A date(1) that cannot run at all reads as no age, as `|| return 0` did.
+  let then = "";
+  try {
+    let r = Bun.spawnSync(["date", "-u", "-j", "-f", "%Y-%m-%dT%H:%M:%SZ", ts, "+%s"], DATE_SPAWN);
+    if (r.exitCode !== 0) r = Bun.spawnSync(["date", "-u", "-d", ts, "+%s"], DATE_SPAWN);
+    if (r.exitCode === 0) then = r.stdout.toString().trim();
+  } catch {}
+  if (then === "") return null;
+  const n = now();
+  if (!Number.isFinite(n)) return null;
+  return n - Number(then);
+}
+
+// ac_seed_runtime_links's twin (the bash copy stays for bin/ac-fleet-new.sh;
+// tests/ts/home-seed.test.ts holds the two together): the executable core
+// linked into a home so a chief runs with cwd = home. A REAL entry is a
+// per-home override and is left alone; `ln -sfn` is spawned, not re-done, so
+// a stale or dangling link is repointed exactly as it is there, and its
+// failure ends the run with its status as `set -e` did.
+export function seedRuntimeLinks(home: string): void {
+  for (const f of ["bin", "CLAUDE.md", ".claude", "AGENTS.md"]) {
+    const p = join(home, f);
+    if (existsSync(p) && !lstatSync(p).isSymbolicLink()) continue;
+    const r = Bun.spawnSync(["ln", "-sfn", join(ROOT, f), p], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+    if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);
+  }
+}
+
+// ac_iso's twin: date(1) is spawned, not Date, so a PATH stub freezes a port
+// and its bash oracle alike.
+export function iso(): string {
+  const r = Bun.spawnSync(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdin: "ignore", stdout: "pipe", stderr: "inherit", env: process.env });
+  return r.stdout.toString("latin1").replace(/\n+$/, "");
 }
 
 export function dataDir(): string {

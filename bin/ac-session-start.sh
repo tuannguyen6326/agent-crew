@@ -286,7 +286,11 @@ fi
 # Pool-health ride-along: surface stuck available-dirty worktree-pool slots
 # (task-lifecycle skill) with the exact reclaim command. Silent when every
 # scanned pool is healthy; the script owns the whole block (ac-pool-health.sh).
-"$bin_dir/ac-pool-health.sh"
+# It runs on bun now: a bun that cannot start must not take the digest down,
+# so the block degrades to a line that says the pools are UNKNOWN - never
+# silence, which reads as healthy.
+"$bin_dir/ac-pool-health.sh" \
+  || printf 'WARN: pool health unavailable (bin/ac-pool-health.sh failed) - the worktree pools are UNKNOWN, not healthy; run bin/ac-pool-health.sh by hand\n'
 
 printf -- '-- fleet --\n'
 "$bin_dir/ac-fleet-view.sh"
@@ -468,8 +472,11 @@ fi
 # told. Placed last, right before supervision: this is the block a chief
 # reads on the way OUT of the digest and into work, the exact point the
 # measured failure (straight into the backlog, monitor never re-created)
-# skipped past.
-"$bin_dir/ac-standing-jobs.sh"
+# skipped past. The entry runs on bun now: a bun that cannot start must not
+# take the digest down, so the block degrades to a line that says the jobs
+# are UNKNOWN - never silence, which reads as "nothing declared".
+"$bin_dir/ac-standing-jobs.sh" \
+  || printf 'WARN: standing jobs digest unavailable (bin/ac-standing-jobs.sh failed) - the declared jobs are UNKNOWN, not none; read records/standing-jobs.md by hand\n'
 
 printf -- '-- supervision --\n'
 cat <<'EOF'

@@ -13,7 +13,7 @@
 # jq is a hard dependency (bin/ac-bootstrap.sh has `need jq`, not `opt`), so
 # parsing costs one `jq -r` and cannot drift; and the *.md grammars are
 # hand-rolled sed that mis-parses free text - fed a value containing its own
-# delimiter words, bin/ac-standing-jobs.sh's cadence/recreate sed parse returns the wrong cadence and
+# delimiter words, src/standing-jobs.ts's cadence/recreate parse returns the wrong cadence and
 # the wrong action, silently. A manifest carrying paths and commands walks
 # into that on day one. YAML was never a candidate: this distro has no yq,
 # only ac_yaml_get (bin/ac-pipeline-lib.sh), which cannot read a list.
@@ -315,7 +315,7 @@ EOF
 
   # LIVENESS, the half no read-only command settles. CronCreate is
   # session-only: the job lives in harness session memory, is never written to
-  # disk, and dies with the session (bin/ac-standing-jobs.sh's header, which
+  # disk, and dies with the session (src/standing-jobs.ts's header, which
   # refuses to claim PRESENT/MISSING for the same reason). Every on-disk
   # footprint was checked and none attributes a run to a job - the github
   # store is a de-dup key that writes nothing when a poll finds nothing new,
