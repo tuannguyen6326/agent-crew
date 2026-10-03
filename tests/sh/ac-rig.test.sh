@@ -645,11 +645,13 @@ assert_eq "$(tail -n 1 "$TMP/n.out")" "rig: 8 ok, 1 drift, 1 unverifiable" "no g
 if [ "$(id -u)" -ne 0 ]; then
   # The port finds its sibling beside the module it runs from, through the
   # symlink bun resolves, so the shim's tree carries a real copy of src/.
-  nbin="$(make_oracle_bin ac-rig)"; cp "$BIN/ac-rig.sh" "$nbin/ac-rig.sh"
-  rm "$nbin/../src"; cp -R "$ROOT/src" "$nbin/../src"
-  chmod 000 "$obin/ac-standing-jobs.sh" "$nbin/ac-standing-jobs.sh"
-  SHIM_BIN="$nbin" same drift; SHIM_BIN=
+  nroot="$TMP/shim-tree"; mkdir -p "$nroot/bin"
+  cp "$BIN"/*.sh "$nroot/bin/"; cp -R "$ROOT/src" "$nroot/src"
+  chmod 000 "$obin/ac-standing-jobs.sh" "$nroot/bin/ac-standing-jobs.sh"
+  SHIM_BIN="$nroot/bin" same drift; SHIM_BIN=
   chmod 755 "$obin/ac-standing-jobs.sh"
+  assert_eq "$(head -c 2 "$obin/ac-rig.sh")" "#!" "the oracle still runs the frozen original"
+  cmp -s "$obin/ac-rig.sh" "$ROOT/tests/fixtures/ac-rig.sh" || fail "the oracle tree must hold the fixture, never the shim"
   assert_eq "$(shim_err)" "ERROR: bin/ac-standing-jobs.sh --ids failed - the declared standing-job id set could not be read, and grading it as empty would report every declared job as drift" "an unlaunchable sibling is refusal 9"
   assert_eq "$(tail -n 1 "$TMP/n.out")" "OK: config/scene-max - declared absent - runs on the reader's default" "the report up to the config lines stays printed"
 fi
