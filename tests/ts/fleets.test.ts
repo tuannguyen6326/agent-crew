@@ -148,11 +148,22 @@ test("configReadDir reads what the original's cfg_read reads: first line, [:spac
       utf8: "đường\n",
       digits: " 8 \n",
     };
-    for (const [name, body] of Object.entries(cases)) {
-      writeFileSync(join(dir, name), body, "utf8");
-      const want = bash('eval "$(sed -n "/^cfg_read()/,/^}/p" "$1")"; cfg_read "$2" "$3" "$4"', "en_US.UTF-8", oracle, dir, name, "dflt");
-      expect(want.rc).toBe(0);
-      expect([name, configReadDir(dir, name, "dflt")]).toEqual([name, want.out]);
+    // The helper reads the process locale as bash reads its own: both sides
+    // held to one locale per pass, UTF-8 then C.
+    const wasLocale = process.env.LC_ALL;
+    try {
+      for (const locale of ["en_US.UTF-8", "C"]) {
+        process.env.LC_ALL = locale;
+        for (const [name, body] of Object.entries(cases)) {
+          writeFileSync(join(dir, name), body, "utf8");
+          const want = bash('eval "$(sed -n "/^cfg_read()/,/^}/p" "$1")"; cfg_read "$2" "$3" "$4"', locale, oracle, dir, name, "dflt");
+          expect(want.rc).toBe(0);
+          expect([locale, name, configReadDir(dir, name, "dflt")]).toEqual([locale, name, want.out]);
+        }
+      }
+    } finally {
+      if (wasLocale === undefined) delete process.env.LC_ALL;
+      else process.env.LC_ALL = wasLocale;
     }
     mkdirSync(join(dir, "adir"));
     for (const name of ["absent", "adir"]) {

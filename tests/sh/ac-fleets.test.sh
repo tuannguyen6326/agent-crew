@@ -895,6 +895,19 @@ printf 'debriefs=9007199254740992\n' >"$c22/h/state/.learn.meta"; printf '900719
 printf 'runs_since=9007199254740992\n' >"$c22/h/state/.curate.meta"; printf '9007199254740993\n' >"$c22/h/config/curate-every"
 same --json "$c22"
 assert_eq "$(jq -r '.homes[0].cadence.learn.due, .homes[0].cadence.curate.due, .totals.learning_due' "$TMP/n.raw" | tr '\n' ' ')" "false false 0 " "2^53 is not due against 2^53+1"
+# bash's signed 64-bit domain: 2^63-1 against 8 is due; 2^63 made `[` refuse
+# (its own line on stderr - shell-own, not reproduced) and read false
+printf 'debriefs=9223372036854775807\n' >"$c22/h/state/.learn.meta"; printf '8\n' >"$c22/h/config/learn-every"
+printf 'runs_since=9223372036854775807\n' >"$c22/h/state/.curate.meta"; printf '8\n' >"$c22/h/config/curate-every"
+same --json "$c22"
+assert_eq "$(jq -r '.homes[0].cadence.learn.due, .homes[0].cadence.curate.due' "$TMP/n.raw" | tr '\n' ' ')" "true true " "2^63-1 is due against 8"
+printf 'debriefs=9223372036854775808\n' >"$c22/h/state/.learn.meta"; printf 'runs_since=9223372036854775808\n' >"$c22/h/state/.curate.meta"
+o_rc=0; "$obin/ac-fleets.sh" --json "$c22" >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; "$BIN/ac-fleets.sh" --json "$c22" >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "2^63: both exit 0"
+assert_eq "$(norm <"$TMP/n.raw")" "$(norm <"$TMP/o.raw")" "2^63: the same document"
+assert_eq "$(jq -r '.homes[0].cadence.learn.due, .homes[0].cadence.curate.due, .totals.learning_due, .totals.curate_due' "$TMP/n.raw" | tr '\n' ' ')" "false false 0 0 " "2^63 is past bash's range: not due"
+assert_contains "$(cat "$TMP/o.err")" "integer expression expected" "2^63: the original's [ refused (shell-own stderr)"
 
 # 23: a meta value is awk's C string, cut at its first NUL: `kind=self<NUL>`
 # is self (unsupervised, no coverage alarm), `kind=veri<NUL>fy-qa` is `veri`

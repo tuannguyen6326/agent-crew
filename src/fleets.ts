@@ -86,7 +86,8 @@
 //             learn-every (default 8) and curate-every (default 5), non-digits
 //             -> the default; curate count = state/.curate.meta runs_since;
 //             due = count >= every, compared as the integers they are (bash's
-//             64-bit `-ge`), never as doubles.
+//             `-ge`), never as doubles; an operand past the signed 64-bit range
+//             made `[` refuse there, so due reads false.
 //
 // TEXT (default), bytes exact; <pad> is 3*depth spaces:
 //   == fleet homes: <resolved container> ==
@@ -450,7 +451,7 @@ function survey(home: string, depth: number, recurse = true): Home {
     const lev = digits(cfg("learn-every", "8"), "8");
     const ccur = digits(meta(`${sd}/.curate.meta`, "runs_since"), "0");
     const cev = digits(cfg("curate-every", "5"), "5");
-    h.cadence = { lcur, lev, ldue: BigInt(lcur) >= BigInt(lev), lrun: /^[0-9]+$/.test(lrun) ? lrun : null, ccur, cev, cdue: BigInt(ccur) >= BigInt(cev) };
+    h.cadence = { lcur, lev, ldue: due(lcur, lev), lrun: /^[0-9]+$/.test(lrun) ? lrun : null, ccur, cev, cdue: due(ccur, cev) };
   }
 
   if (recurse) {
@@ -515,6 +516,14 @@ function ser(v: J): string {
     .join(",")}}`;
 }
 const orNull = (s: string): string | null => (s === "" ? null : s);
+
+// `[ "$count" -ge "$every" ]`: the integers themselves, inside bash's signed
+// 64-bit domain - an operand past it made `[` refuse and the branch read false.
+const INT64_MAX = 9223372036854775807n;
+const due = (count: string, every: string): boolean => {
+  const c = BigInt(count), e = BigInt(every);
+  return c <= INT64_MAX && e <= INT64_MAX && c >= e;
+};
 
 function homeJson(h: Home): J {
   const c = h.cadence;
