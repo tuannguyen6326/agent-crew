@@ -156,6 +156,13 @@ export function dataDir(): string {
   return homeSubdir("data");
 }
 
+// ac_iso's twin: date(1) is spawned, not Date, so a PATH stub freezes a port
+// and its bash oracle alike.
+export function iso(): string {
+  const r = Bun.spawnSync(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdin: "ignore", stdout: "pipe", stderr: "inherit", env: process.env });
+  return r.stdout.toString("latin1").replace(/\n+$/, "");
+}
+
 // ac_pid_alive's twin: an owner is a canonical positive pid, and a process this
 // user may not signal (EPERM) exists - reading it as dead would hand a live
 // holder's lock to a second writer.
@@ -192,8 +199,10 @@ function lockStale(dir: string): boolean {
 }
 
 // ac_lock_acquire's twin, the same lock dir and pid file, so bash and
-// TypeScript writers exclude each other (tests/ts/lib.test.ts).
-export function lockAcquire(dir: string, timeout: number): boolean {
+// TypeScript writers exclude each other (tests/ts/lib.test.ts). A caller whose
+// contract test fast-forwards the bash `sleep 1` through a PATH stub passes a
+// wait that spawns the PATH's sleep (tests/ts/scene.test.ts).
+export function lockAcquire(dir: string, timeout: number, wait: () => void = () => Bun.sleepSync(1000)): boolean {
   let waited = 0;
   for (;;) {
     try {
@@ -209,7 +218,7 @@ export function lockAcquire(dir: string, timeout: number): boolean {
       if (!existsSync(dir)) continue;
     }
     if (waited >= timeout) return false;
-    Bun.sleepSync(1000);
+    wait();
     waited++;
   }
   writeFileSync(join(dir, "pid"), `${process.pid}\n`);

@@ -70,7 +70,7 @@ The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspa
 | `config/learn-suite-gate` | `on` makes the DISTILL trigger wait for a green `tests/run-suite.sh` verdict for the current generation and tree; anything else (default) = off. |
 | `config/learn-pending-budget` | Byte budget for the learnings ledger's `## Pending` body at DISTILL staging; default 131072. Older bullets past it are archived verbatim to `records/learnings-archive/` (`ac-learn.sh rotate-pending`), except the sources of the last examined run's candidates, which stay until the next run has reconsidered them. |
 | `config/learn-stale-days` | Age in days past which an always-loaded `CREWMATE-learned.md` entry or a scene grades stale; default 30. Grading is read-only (`ac-learn.sh stale`, the session-start `-- knowledge --` block). |
-| `config/scene-max` | Tiered file-count cap on the L2 scene store `records/scenes/`; default 30. It gates `new` only; `update` and `merge` stay legal. Owner: the `bin/ac-scene.sh` header. |
+| `config/scene-max` | Tiered file-count cap on the L2 scene store `records/scenes/`; default 30. It gates `new` only; `update` and `merge` stay legal. Owner: the `src/scene.ts` header. |
 | `config/codegraph` | Automatic CodeGraph indexing of each leased crew worktree: `on` (default) or `off`. Background and best-effort; needs `codegraph` on PATH. |
 
 ### Memory engine (brain)
