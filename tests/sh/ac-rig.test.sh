@@ -319,7 +319,7 @@ assert_contains "$out" "AC_HOME" "the refusal names what is missing"
 obin="$(make_oracle_bin ac-rig)"
 SAME_ENV=
 run_oracle() { (cd "$TMP" && env $SAME_ENV LC_ALL="${1:-C}" "$obin/ac-rig.sh" "${@:2}") >"$TMP/o.raw" 2>"$TMP/o.err"; }
-run_shim() { (cd "$TMP" && env $SAME_ENV LC_ALL="${1:-C}" "$BIN/ac-rig.sh" "${@:2}") >"$TMP/n.raw" 2>"$TMP/n.err"; }
+run_shim() { (cd "$TMP" && env $SAME_ENV LC_ALL="${1:-C}" "${SHIM_BIN:-$BIN}/ac-rig.sh" "${@:2}") >"$TMP/n.raw" 2>"$TMP/n.err"; }
 spell() { LC_ALL=C sed "s#$AC_HOME#HOME#g; s#$root#ROOT#g" "$1"; }
 same() {  # same <args...> - the oracle and the shim answer byte-identically
   local o_rc=0 n_rc=0
@@ -629,5 +629,45 @@ run_oracle en_US.UTF-8 drift || true
 assert_eq "$(LC_ALL=C sort "$TMP/o.raw")" "$(LC_ALL=C sort "$TMP/n.raw")" "UTF-8 locale: the original names the same set"
 run_shim en_US.UTF-8 drift || true
 assert_eq "$(spell "$TMP/n.raw")" "$(shim_out)" "the port's order does not move with the locale"
+
+# 17. a child that cannot be launched keeps the verdict the original gave it:
+#     no git on PATH is a checkout that is not a repository; a standing-jobs
+#     sibling of mode 000 is refusal 9, exit 2 (root launches it anyway)
+fresh
+farm="$TMP/nogit"; mkdir -p "$farm"
+IFS=: read -ra pathdirs <<<"$PATH"
+for d in "${pathdirs[@]}"; do
+  for x in "$d"/*; do [ -x "$x" ] && [ ! -e "$farm/$(basename "$x")" ] && ln -s "$x" "$farm/"; done
+done 2>/dev/null; rm -f "$farm/git"
+SAME_ENV="PATH=$farm"; same drift; SAME_ENV=
+assert_contains "$(shim_out)" "DRIFT: wiring/distro_checkout - declared ROOT, and the path is not a git repository" "no git: the wiring drift, not a crash"
+assert_eq "$(tail -n 1 "$TMP/n.out")" "rig: 8 ok, 1 drift, 1 unverifiable" "no git: the rest of the report still runs"
+if [ "$(id -u)" -ne 0 ]; then
+  # The port finds its sibling beside the module it runs from, through the
+  # symlink bun resolves, so the shim's tree carries a real copy of src/.
+  nbin="$(make_oracle_bin ac-rig)"; cp "$BIN/ac-rig.sh" "$nbin/ac-rig.sh"
+  rm "$nbin/../src"; cp -R "$ROOT/src" "$nbin/../src"
+  chmod 000 "$obin/ac-standing-jobs.sh" "$nbin/ac-standing-jobs.sh"
+  SHIM_BIN="$nbin" same drift; SHIM_BIN=
+  chmod 755 "$obin/ac-standing-jobs.sh"
+  assert_eq "$(shim_err)" "ERROR: bin/ac-standing-jobs.sh --ids failed - the declared standing-job id set could not be read, and grading it as empty would report every declared job as drift" "an unlaunchable sibling is refusal 9"
+  assert_eq "$(tail -n 1 "$TMP/n.out")" "OK: config/scene-max - declared absent - runs on the reader's default" "the report up to the config lines stays printed"
+fi
+
+# 18. `$(...)` drops NUL bytes: a home.name or a pointer carrying one binds as
+#     the bytes around it
+fresh; manifest "{'home': {'name': 'home\x00', 'path': '$AC_HOME'}}"; same drift
+assert_eq "$(sed -n 1p "$TMP/n.out")" "OK: home/home - manifest binds this home (HOME)" "a NUL in home.name is dropped as command substitution drops it"
+fresh; printf '%s\0\n' "$root" >"$AC_HOME/state/.ac-root"; same drift
+assert_eq "$(sed -n 2p "$TMP/n.out")" "OK: wiring/distro_checkout - ROOT (state/.ac-root)" "a NUL in the pointer is dropped"
+
+# 19. a pinned value under LC_ALL=C: [:space:] is the ASCII six there, so a
+#     non-breaking space is a value byte and the pin drifts; under a UTF-8
+#     locale the reader trims it on both sides and the pin holds
+fresh; printf '\302\240direct\302\240\n' >"$AC_HOME/config/flow"; same drift
+assert_contains "$(shim_out)" "DRIFT: config/flow - declared 'direct', config/flow reads '$(printf '\302\240direct\302\240')'" "C locale: the non-breaking space is a value byte"
+run_oracle en_US.UTF-8 drift || true; run_shim en_US.UTF-8 drift || true
+assert_eq "$(grep '^OK: config/flow' "$TMP/n.raw")" "OK: config/flow - pinned value 'direct'" "UTF-8 locale: the port trims it"
+assert_eq "$(grep '^OK: config/flow' "$TMP/o.raw")" "$(grep '^OK: config/flow' "$TMP/n.raw")" "UTF-8 locale: as the original does"
 
 pass

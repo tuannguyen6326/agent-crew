@@ -207,12 +207,12 @@ const sayDrift = (id: string, what: string, fix: string): void => {
   drift++;
 };
 
-// jq's answer as bytes with every trailing newline dropped, as `$(...)`
-// dropped them; null when jq failed.
+// jq's answer as bytes with every NUL and every trailing newline dropped, as
+// `$(...)` dropped them; null when jq failed.
 function jq(args: string[], file: string): string | null {
   const r = Bun.spawnSync(["jq", ...args, file], { stdout: "pipe", stderr: "ignore" });
   if (r.exitCode !== 0) return null;
-  return r.stdout.toString("latin1").replace(/\n+$/, "");
+  return r.stdout.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
 }
 
 // The resolved path, or the literal when it does not exist: a declared path
@@ -278,14 +278,18 @@ function checkWiring(manifest: string): void {
   }
   let actual = "";
   try {
-    actual = readFileSync(ptr, "latin1").replace(/\n+$/, "");
+    actual = readFileSync(ptr, "latin1").replace(/\0/g, "").replace(/\n+$/, "");
   } catch {}
   if (canon(declared) !== canon(actual)) {
     sayDrift("wiring/distro_checkout", `declared ${declared}, state/.ac-root says ${actual}`, "correct records/rig.json, or repoint the checkout this fleet runs from");
     return;
   }
-  const g = Bun.spawnSync(["git", "-C", native(actual), "rev-parse", "--git-dir"], { stdout: "ignore", stderr: "ignore" });
-  if (g.exitCode !== 0) {
+  // A git that cannot be launched at all is the same `! git ...` branch.
+  let isRepo = false;
+  try {
+    isRepo = Bun.spawnSync(["git", "-C", native(actual), "rev-parse", "--git-dir"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  } catch {}
+  if (!isRepo) {
     sayDrift("wiring/distro_checkout", `declared ${declared}, and the path is not a git repository`, `restore the checkout at ${actual}, or correct records/rig.json`);
     return;
   }
@@ -361,10 +365,15 @@ function checkStandingJobs(manifest: string): void {
   // reported every declared job as drift with a fix naming a line already
   // sitting in the file. A verb that is fail-closed about its own manifest has
   // to be fail-closed about its inputs too.
-  const r = Bun.spawnSync([join(bin, "ac-standing-jobs.sh"), "--ids"], { stdout: "pipe", stderr: "ignore" });
-  if (r.exitCode !== 0)
+  // A sibling that cannot be launched (gone, mode 000) failed the `||` too.
+  let ids: string | null = null;
+  try {
+    const r = Bun.spawnSync([join(bin, "ac-standing-jobs.sh"), "--ids"], { stdout: "pipe", stderr: "ignore" });
+    if (r.exitCode === 0) ids = r.stdout.toString("latin1");
+  } catch {}
+  if (ids === null)
     refuse("bin/ac-standing-jobs.sh --ids failed - the declared standing-job id set could not be read, and grading it as empty would report every declared job as drift");
-  const actual = r.stdout.toString("latin1").replace(/\n+$/, "").split("\n");
+  const actual = ids.replace(/\n+$/, "").split("\n");
 
   for (const id of declared) {
     if (id === "") continue;
