@@ -112,7 +112,9 @@
 // signal, 127 for one that could not start. Every git is spawned with the
 // original's arguments and io: diffs, show and log stream through inherited
 // stdout/stderr (the bytes are git's own; a 400 KB diff is never buffered
-// here); the probes (rev-parse, show-ref, merge-base) are quiet. The untracked
+// here) and every git inherits the caller's stdin (an external diff
+// configured through GIT_EXTERNAL_DIFF may read it); the probes (rev-parse,
+// show-ref, merge-base) are quiet. The untracked
 // names go from `ls-files -z` to `xargs -0 -r -n1 git ... diff --no-index --
 // /dev/null` without passing through this process, because a JS string cannot
 // carry a file name that is not UTF-8 (a space, a newline, a leading `-`, a
@@ -151,11 +153,12 @@ const native = (s: string): string => Buffer.from(s, "latin1").toString("utf8");
 type Io = "inherit" | "ignore" | "pipe";
 
 // The shell's status for a child: its exit, 128+signal, 127 when it could not
-// start.
+// start. stdin is the caller's unless a buffer is fed (xargs, sort): every git
+// the bash ran inherited it, and an external diff may read it.
 function run(cmd: string[], stdout: Io, stderr: Io, opts: { stdin?: Buffer; env?: Record<string, string | undefined> } = {}): { status: number; out: Buffer } {
   let r: ReturnType<typeof Bun.spawnSync>;
   try {
-    r = Bun.spawnSync(cmd, { stdin: opts.stdin ?? "ignore", stdout, stderr, env: opts.env ?? process.env });
+    r = Bun.spawnSync(cmd, { stdin: opts.stdin ?? "inherit", stdout, stderr, env: opts.env ?? process.env });
   } catch {
     return { status: 127, out: Buffer.alloc(0) };
   }

@@ -309,7 +309,7 @@ run_side() {  # run_side <out> <err> <cmd...> - one side, the guard's quiet wind
   local -a home
   if [ "${HOMELESS-}" = 1 ]; then home=(-u AC_HOME); else home=(AC_HOME="${AC_HOME_ROW:-$AC_HOME}"); fi
   rm -f "$AC_HOME/state/.guard-stamp"
-  (cd "${RD_CWD:-$TMP}" && env "${home[@]}" AC_GUARD_ROOT="$TMP/guard-root" LC_ALL=C PATH="${RD_PATH:-$STUBS:$PATH}" "$@") >"$o" 2>"$e"
+  (cd "${RD_CWD:-$TMP}" && env "${home[@]}" AC_GUARD_ROOT="$TMP/guard-root" LC_ALL=C PATH="${RD_PATH:-$STUBS:$PATH}" "$@") <"${RD_STDIN:-/dev/null}" >"$o" 2>"$e"
 }
 LAST_RC=0
 same() {  # same <args...> - oracle and shim answer byte-identically and leave the world as it was
@@ -704,6 +704,15 @@ assert_eq "$(shim_err)" "ERROR: required tool not found: git" "no git on PATH"
 RD_PATH="$NOGIT:$STUBS" same c1
 assert_contains "$(shim_err)" "WATCHER-DOWN" "no git: the guard still rides first"
 assert_eq "$(shim_err_last)" "ERROR: required tool not found: git" "no git: then the refusal"
+# 13. every git inherits the caller's stdin: an external diff that reads it
+#     sees the same bytes on both sides (the bash never redirected git's stdin)
+printf '#!/bin/sh\nprintf "ext-diff %%s <" "$1"; cat; printf ">\\n"\n' >"$TMP/xdiff"; chmod +x "$TMP/xdiff"
+printf 'from the caller\n' >"$TMP/rd-stdin"
+RD_STDIN="$TMP/rd-stdin" GIT_EXTERNAL_DIFF="$TMP/xdiff" same c1 --no-guard
+assert_eq "$LAST_RC" 0 "row 13: the external diff ran on both sides"
+assert_contains "$(shim_out)" "<from the caller
+>" "row 13: the external diff read the caller's stdin"
+
 [ ! -s "$TMP/rdstub.log" ] || fail "a leg row reached a backend stub: $(cat "$TMP/rdstub.log")"
 
 pass

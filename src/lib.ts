@@ -1034,7 +1034,10 @@ function awkAssign(v: string): string {
       continue;
     }
     const n = v[++i];
-    if (n === undefined) return out + "\\";
+    if (n === undefined) {
+      out += "\\";
+      break;
+    }
     const simple: Record<string, string> = { n: "\n", t: "\t", b: "\b", f: "\f", r: "\r", v: "\v", a: "\x07", "\\": "\\", '"': '"', "/": "/" };
     if (simple[n] !== undefined) out += simple[n];
     else if (/[0-9]/.test(n)) {

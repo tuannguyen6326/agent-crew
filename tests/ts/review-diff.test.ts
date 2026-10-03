@@ -152,7 +152,9 @@ test("epicBaseFor reads the id as awk -v read it: `\\-` is a dash, `\\q` is q, o
   const h = freshHome();
   ledger(h, "- [ ] e1-s1 - story; epic:e1 (repo: proj)\n- [ ] eq - q; epic:e1 (repo: proj)\n- [ ] A - octal; epic:e1 (repo: proj)\n");
   record(h, "e1", "proj epic/e1\n");
-  for (const id of ["e1\\-s1", "e1\\-s1-x", "e\\q", "\\101", "e1-s1\\0zz", "e1-s1\\", "e1\\\\-s1", "e1\\ts1"]) sameBase(id, "proj");
+  for (const id of ["e1\\-s1", "e1\\-s1-x", "e\\q", "\\101", "e1-s1\\0zz", "e1-s1\\", "e1\\\\-s1", "e1\\ts1", "e1-s1\\0zz\\", "\\0\\"]) sameBase(id, "proj");
+  // An escaped NUL cuts the string even when a lone backslash ends it.
+  expect(epicBaseFor("e1-s1\\0zz\\", "proj")).toEqual({ rc: 0, entry: "epic/e1" });
   expect(epicBaseFor("e1\\-s1", "proj")).toEqual({ rc: 0, entry: "epic/e1" });
   expect(epicBaseFor("e\\q", "proj")).toEqual({ rc: 0, entry: "epic/e1" });
   expect(epicBaseFor("\\101", "proj")).toEqual({ rc: 0, entry: "epic/e1" });
