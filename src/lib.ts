@@ -891,3 +891,25 @@ export function statusAppend(id: string, line: string, unguarded = false): boole
   statusTimelineMirror(id, rec);
   return ok;
 }
+
+// --- promote twins ---
+
+// ac_delivery_mode_block's twin (bin/ac-pipeline-lib.sh), whose bash copy stays
+// live for bin/ac-brief.sh: two renderers of the one per-mode delivery
+// contract, held together by tests/ts/promote.test.ts so a promoted scout and
+// a briefed worker can never read different rules. No trailing newline, ""
+// for a mode the bash case has no arm for.
+export function deliveryModeBlock(mode: string, branch: string, base: string, integ: string, loop: string): string {
+  switch (mode) {
+    case "crew-ship":
+      return "- Mode crew-ship: run the `crew-ship` skill. Its `ac-ship` engine owns the guarded 8-step delivery pipeline (intent, rebase, review, test, document, lint, push, pr). Hand over only after checks pass and include the PR URL.";
+    case "direct-pr":
+      return `- Mode direct-pr: after ${loop}, push \`${branch}\` and open a PR against ${base}. The PR body covers intent, changes, and verification evidence.`;
+    case "feature-pr":
+      return `- Mode feature-pr: after ${loop}, leave \`${branch}\` clean and fully committed - it lands onto the feature integration branch \`${integ}\` (the chief runs ac-merge-local). Never push or open a PR; publication happens ONCE at the feature ship.`;
+    case "local-only":
+      return `- Mode local-only: after ${loop}, leave \`${branch}\` clean and fully committed. Never push or open a PR.`;
+    default:
+      return "";
+  }
+}
