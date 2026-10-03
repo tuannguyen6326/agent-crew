@@ -40,7 +40,9 @@
 //   task <id> is kind=<kind|unset>, not scout (only scouts promote)
 //                                        the meta's LAST kind= line is not the
 //                                        bytes `scout` (`scout\r` and `Scout`
-//                                        are not); no kind= reads `unset`
+//                                        are not; `scout<NUL>` IS - awk handed
+//                                        the shell a C string, cut at the NUL);
+//                                        no kind= reads `unset`
 //   mode unspecified for promoting '<id>': pass --mode <crew-ship|direct-pr|local-only>. Mode is per-task now - the registry default is gone
 //   invalid --mode: <v> (want crew-ship|direct-pr|local-only)
 //   promoting '<id>' into crew-ship is a time-expensive choice: ... Nothing promoted
@@ -117,10 +119,8 @@
 // id, mode, ref and reason print and record as their bytes. An argv byte that
 // is not valid UTF-8 reaches this module as U+FFFD (bun's argv decoding), so
 // such a reason is recorded as EF BF BD where the bash carried the byte -
-// named divergence. An id carrying `$` or a back-tick met the bash heredoc's
-// expansion (under set -u a `$x` was fatal mid-run, after the meta had
-// flipped); ids come from the backlog grammar and carry neither, so the
-// template here interpolates them literally - not reproduced, not pinned.
+// named divergence. An id carrying `$` or a back-tick is interpolated
+// literally on both sides (the bash quoted its heredoc's expansions).
 //
 // Callers: none in bin/, src/, dashboard/ or .agents/ run this entry -
 // chiefs run it by hand on bin/ac-teardown.sh's remedy text (`promote it
@@ -160,7 +160,8 @@ if (!isFile) die(b(`no crewmate meta for ${bytes(id)}`));
 
 let kind: string;
 try {
-  kind = metaGet(meta, "kind");
+  // awk's C string: the value ends at its first NUL, as the shell received it.
+  kind = metaGet(meta, "kind").replace(/\0[\s\S]*$/, "");
 } catch {
   process.exit(1);
 }

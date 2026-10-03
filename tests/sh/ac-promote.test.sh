@@ -473,4 +473,75 @@ assert_eq "$LAST_RC" 0 "an absent data/ is minted"
 assert_file "$NH/data/s1/ship-instructions.md"
 assert_file "$NH/data/s1/timeline.log"
 
+# 16. a NUL in the kind value: awk handed the shell `scout`, so both promote; the
+#     meta keeps its bytes on the port (row 11's divergence), the rest agrees
+reset_homes; seed state/s1.meta 'kind=scout\0\nmode=-\n'
+TREE=own same s1 --mode local-only
+assert_eq "$LAST_RC" 0 "NUL kind: both promote"
+assert_eq "$(shim_out)" "promoted s1: kind scout -> ship, mode=local-only (ship teardown protection now applies)
+crewmate window not reachable; promotion recorded in meta only" "NUL kind: the receipt"
+shim_meta_is 'kind=ship\nmode=local-only\n'
+
+# 17. the writes that fail after the meta flipped - each row compared by hand
+#     where the shell's own stderr is the divergence; the pane buffer stays
+#     empty on both sides (no notice is attempted)
+# a date that fails when the status is stamped: date's status, meta flipped,
+# no status line, no instructions
+mkdir -p "$TMP/baddate"; printf '#!/bin/sh\ncase "$*" in "-u +%%Y-%%m-%%dT%%H:%%M:%%SZ") exit 3 ;; *) exec /bin/date "$@" ;; esac\n' >"$TMP/baddate/date"; chmod +x "$TMP/baddate/date"
+reset_homes; mk s1
+o_rc=0; n_rc=0
+: >"$FAKE_HERDR/panes/$PANE.buf"
+(cd "$TMP" && env AC_HOME="$OH" LC_ALL=C PATH="$TMP/baddate:$STUBS:$PATH" "$obin/ac-promote.sh" s1 --mode local-only) >"$TMP/o.raw" 2>"$TMP/o.rawerr" || o_rc=$?
+o_buf="$(cat "$FAKE_HERDR/panes/$PANE.buf")"; : >"$FAKE_HERDR/panes/$PANE.buf"
+(cd "$TMP" && env AC_HOME="$NH" LC_ALL=C PATH="$TMP/baddate:$STUBS:$PATH" "$BIN/ac-promote.sh" s1 --mode local-only) >"$TMP/n.raw" 2>"$TMP/n.rawerr" || n_rc=$?
+n_buf="$(cat "$FAKE_HERDR/panes/$PANE.buf")"
+assert_eq "$n_rc $o_rc" "3 3" "date failing: both end with date's status"
+assert_eq "$(cat "$TMP/o.raw" "$TMP/n.raw" "$TMP/o.rawerr" "$TMP/n.rawerr")" "" "date failing: nothing printed on either side"
+assert_eq "$o_buf$n_buf" "" "date failing: no notice on either side"
+for h in "$OH" "$NH"; do
+  file_is "$h/state/s1.meta" "project=p1\nproject_dir=/p1\nworktree=/p1/.crew/worktrees/1\nkind=ship\nmode=local-only\n"
+  assert_no_file "$h/state/s1.status" "date failing: no status line ($h)"
+  assert_no_file "$h/data/s1/ship-instructions.md" "date failing: no instructions ($h)"
+done
+# a status file that cannot be appended: exit 1, bash's redirection line vs the
+# port's `cannot append` (shell-own stderr, named); meta flipped, no mirror
+if [ "$(id -u)" != 0 ]; then
+  reset_homes; mk s1; seed state/s1.status ''
+  chmod 000 "$OH/state/s1.status" "$NH/state/s1.status"
+  o_rc=0; n_rc=0
+  : >"$FAKE_HERDR/panes/$PANE.buf"
+  run_side "$OH" "$TMP/o.raw" "$TMP/o.rawerr" "$TMP/o.rawbuf" "$obin/ac-promote.sh" s1 --mode local-only || o_rc=$?
+  run_side "$NH" "$TMP/n.raw" "$TMP/n.rawerr" "$TMP/n.rawbuf" "$BIN/ac-promote.sh" s1 --mode local-only || n_rc=$?
+  n_buf="$(cat "$FAKE_HERDR/panes/$PANE.buf")"
+  chmod 644 "$OH/state/s1.status" "$NH/state/s1.status"
+  assert_eq "$n_rc $o_rc" "1 1" "unwritable status: both exit 1"
+  assert_eq "$(cat "$TMP/o.raw" "$TMP/n.raw")" "" "unwritable status: no receipt on either side"
+  assert_contains "$(cat "$TMP/o.rawerr")" "Permission denied" "unwritable status: bash's redirection line on the original"
+  assert_eq "$(cat "$TMP/n.rawerr")" "ERROR: cannot append $NH/state/s1.status" "unwritable status: the port's refusal"
+  assert_eq "$n_buf" "" "unwritable status: no notice"
+  for h in "$OH" "$NH"; do
+    file_is "$h/state/s1.meta" "project=p1\nproject_dir=/p1\nworktree=/p1/.crew/worktrees/1\nkind=ship\nmode=local-only\n"
+    assert_no_file "$h/data/s1/timeline.log" "unwritable status: no mirror after the failed primary ($h)"
+    assert_no_file "$h/data/s1/ship-instructions.md" "unwritable status: no instructions ($h)"
+  done
+fi
+# data/<id> blocked by a FILE: the spawned mkdir -p fails with its own line on
+# both sides, exit 1; meta and status written, no instructions, no notice
+reset_homes; mk s1; seed data/s1 'a file\n'
+same s1 --mode local-only
+assert_eq "$LAST_RC" 1 "mkdir blocked: both exit 1 with mkdir's status"
+assert_eq "$(shim_out)" "promoted s1: kind scout -> ship, mode=local-only (ship teardown protection now applies)" "mkdir blocked: the first line only"
+assert_contains "$(shim_err)" "File exists" "mkdir blocked: mkdir's own line"
+assert_eq "$(shim_buf)" "" "mkdir blocked: no notice"
+assert_file "$NH/state/s1.status"
+# the instructions path is a directory: bash's redirection line vs the port's
+# `cannot write` (shell-own stderr, named); exit 1, no notice
+reset_homes; mk s1
+for h in "$OH" "$NH"; do mkdir -p "$h/data/s1/ship-instructions.md"; done
+ERR=own same s1 --mode local-only
+assert_eq "$LAST_RC" 1 "instructions a directory: both exit 1"
+assert_contains "$(oracle_err)" "Is a directory" "instructions a directory: bash's redirection line on the original"
+assert_eq "$(shim_err)" "ERROR: cannot write HOME/data/s1/ship-instructions.md: EISDIR" "instructions a directory: the port's refusal"
+assert_eq "$(shim_buf)" "" "instructions a directory: no notice"
+
 pass
