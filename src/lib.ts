@@ -9,7 +9,7 @@
 // reader of an ac_iso stamp) and tabFields (`IFS=$'\t' read -r`).
 
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { accessSync, constants, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -410,8 +410,10 @@ function lockStale(dir: string): boolean {
 }
 
 // ac_lock_acquire's twin, the same lock dir and pid file, so bash and
-// TypeScript writers exclude each other (tests/ts/lib.test.ts).
-export function lockAcquire(dir: string, timeout: number): boolean {
+// TypeScript writers exclude each other (tests/ts/lib.test.ts). A caller whose
+// contract test fast-forwards the bash `sleep 1` through a PATH stub passes a
+// wait that spawns the PATH's sleep (tests/ts/scene.test.ts).
+export function lockAcquire(dir: string, timeout: number, wait: () => void = () => Bun.sleepSync(1000)): boolean {
   let waited = 0;
   for (;;) {
     try {
@@ -427,7 +429,7 @@ export function lockAcquire(dir: string, timeout: number): boolean {
       if (!existsSync(dir)) continue;
     }
     if (waited >= timeout) return false;
-    Bun.sleepSync(1000);
+    wait();
     waited++;
   }
   writeFileSync(join(dir, "pid"), `${process.pid}\n`);
@@ -492,4 +494,139 @@ export function bunChild(module: string, args: string[]): { cmd: string[]; cwd: 
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(BUN_|JSC_)/.test(k)) env[k] = v;
   return { cmd: [process.execPath, "--no-env-file", join(ROOT, module), atCallerCwd ? process.cwd() : "", ...args], cwd: ROOT, env };
+}
+
+// --- done twins ---
+
+// ac_wake_scope_ok's twin (bin/ac-wake-lib.sh): a legal family name is one bare
+// path segment of [A-Za-z0-9_-], read per the text under any locale.
+export function wakeScopeOk(scope: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(scope);
+}
+
+// ac_wake_spool_path's twin: the family spool for a legal scope, else the
+// FLEET spool - a malformed scope lands on the crewchief, the catch-all. Pure.
+export function wakeSpoolPath(sd: string, scope: string): string {
+  return wakeScopeOk(scope) ? `${sd}/.wake-spool.${scope}` : `${sd}/.wake-spool`;
+}
+
+// _ac_wake_seq's twin: strictly increasing for the life of the process, never
+// reset, so two same-stamp records from one process can never share a name.
+let wakeSeq = 0;
+
+// ac_wake_seam's twin: the test-only fault-injection hook, inert unless
+// AC_WAKE_SEAM_AT names the label; the hook's own status is ignored, as the
+// bash's is inside the `||` list every producer calls ac_wake_publish from.
+function wakeSeam(label: string): void {
+  if (process.env.AC_WAKE_SEAM_AT !== label) return;
+  const hook = process.env.AC_WAKE_SEAM_RUN ?? "";
+  try {
+    accessSync(hook, constants.X_OK);
+    Bun.spawnSync([hook], { stdin: "inherit", stdout: "inherit", stderr: "inherit", env: process.env });
+  } catch {}
+}
+
+// ac_wake_publish's twin, writing the fleet wire three bash producers still
+// write (ac-watch.sh queue_wake, ac-room.sh handback, ac-remote.sh ingest), so
+// the record `<ts10>\tkind\tid\tpayload\n` and the name `<ts_ns>.<pid>.<seq6>`
+// are byte-identical to the bash's: TAB and LF in the payload fold to spaces;
+// `date +%s%N` is ONE spawned capture, kept verbatim in the name (a date
+// without %N prints a literal N) and refused before any byte exists unless ten
+// digits lead it; the record is written whole on a private `.wake-tmp.` +
+// eight [A-Za-z0-9] inode created exclusively with mktemp's 0600, then
+// published by one link(2), stepping the sequence past a name already taken
+// (a dead predecessor's). mkdir -p is spawned so a spool path a file sits on
+// fails with mkdir's own line. False means NOT published; from the write
+// onward the bytes stay on disk as litter, and only the commit removes the
+// temp. id and payload are bytes (latin1), sd and scope paths.
+export function wakePublish(sd: string, scope: string, kind: string, id: string, payload: string): boolean {
+  payload = payload.replace(/[\t\n]/g, " ");
+  const spool = wakeSpoolPath(sd, scope);
+  let tsNs = "";
+  try {
+    tsNs = Bun.spawnSync(["date", "+%s%N"], { stdout: "pipe", stderr: "inherit", env: process.env }).stdout.toString("latin1").replace(/\n+$/, "");
+  } catch {}
+  if (!/^[0-9]{10}/.test(tsNs)) return false;
+  const record = Buffer.from(`${tsNs.slice(0, 10)}\t${kind}\t${id}\t${payload}\n`, "latin1");
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let tmp = "";
+  for (let tries = 0; tmp === ""; tries++) {
+    let suffix = "";
+    for (let i = 0; i < 8; i++) suffix += alphabet[Math.floor(Math.random() * alphabet.length)];
+    const candidate = `${sd}/.wake-tmp.${suffix}`;
+    try {
+      writeFileSync(candidate, record, { flag: "wx", mode: 0o600 });
+      tmp = candidate;
+    } catch (e) {
+      if ((e as { code?: string }).code !== "EEXIST" || tries >= 100) return false;
+    }
+  }
+  wakeSeam("after-write");
+  let isDir = false;
+  try {
+    isDir = statSync(spool).isDirectory();
+  } catch {}
+  if (!isDir) {
+    try {
+      if (Bun.spawnSync(["mkdir", "-p", spool], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }).exitCode !== 0) return false;
+    } catch {
+      return false;
+    }
+  }
+  for (;;) {
+    const dest = `${spool}/${tsNs}.${process.pid}.${String(wakeSeq).padStart(6, "0")}`;
+    try {
+      linkSync(tmp, dest);
+    } catch {
+      if (!existsSync(dest)) return false;
+      wakeSeq++;
+      continue;
+    }
+    try {
+      rmSync(tmp, { force: true });
+    } catch {}
+    wakeSeq++;
+    return true;
+  }
+}
+
+// ac_watcher_pid's twin: the pid of the LIVE watcher covering a scope (the
+// fleet lock, or the scoped lock a legal scope names), null when there is none
+// to nudge - a pid file that is not canonical digits, a dead pid, or a REUSED
+// pid whose `ps -o command=` no longer names ac-watch.
+export function watcherPid(sd: string, scope: string): string | null {
+  const lock = wakeScopeOk(scope) ? `${sd}/.watch-only-${scope}.lock.d` : `${sd}/.watch.lock.d`;
+  const pid = lockOwner(lock);
+  if (!pidAlive(pid)) return null;
+  let cmd = "";
+  try {
+    cmd = Bun.spawnSync(["ps", "-o", "command=", "-p", pid], { stdout: "pipe", stderr: "ignore" }).stdout.toString("latin1");
+  } catch {}
+  return cmd.includes("ac-watch") ? pid : null;
+}
+
+// ac_watcher_nudge's twin: end the covering watcher's poll wait by signalling
+// its `sleep` CHILD alone (one `ps -A` walk, the first child whose comm is
+// sleep), and say which of the four quiet outcomes happened - never a failure,
+// the record is the guarantee and the nudge only an accelerator.
+export function watcherNudge(sd: string, scope: string): string {
+  const wpid = watcherPid(sd, scope);
+  if (wpid === null) return "no armed watcher for this scope - the record waits in the spool";
+  let child = "";
+  try {
+    for (const line of Bun.spawnSync(["ps", "-o", "pid=,ppid=,comm=", "-A"], { stdout: "pipe", stderr: "ignore" }).stdout.toString("latin1").split("\n")) {
+      const f = line.replace(/^[ \t]+|[ \t]+$/g, "").split(/[ \t]+/);
+      if (f[1] === wpid && /(^|\/)sleep$/.test(f[2] ?? "")) {
+        child = f[0]!;
+        break;
+      }
+    }
+  } catch {}
+  if (child === "") return `watcher pid=${wpid} is mid-poll, nothing to nudge - the record waits in the spool`;
+  try {
+    process.kill(Number(child), "SIGTERM");
+  } catch {
+    return `watcher pid=${wpid} could not be nudged, nothing to nudge - the record waits in the spool`;
+  }
+  return `nudged watcher pid=${wpid} (poll sleep ${child} ended early)`;
 }
