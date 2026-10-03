@@ -377,6 +377,24 @@ cmp -s "$TMP/o.tree" "$TMP/n.tree" || fail "date failing: the homes differ: $(di
 meta_is "backend=tmux\nkind=ship\npr=$U\npr_head=deadbeefcafe\n"
 assert_no_file "$NH/state/t1.status" "date failing: no status line"
 assert_no_file "$NH/data/t1/timeline.log" "date failing: no timeline"
+# a date ended by a signal is 128+signal on both sides (the shell's reading)
+mkdir -p "$TMP/killdate"; printf '#!/bin/sh\ncase "$*" in "-u +%%Y-%%m-%%dT%%H:%%M:%%SZ") kill -TERM $$ ;; *) exec /bin/date "$@" ;; esac\n' >"$TMP/killdate/date"; chmod +x "$TMP/killdate/date"
+reset_homes; seed state/t1.meta 'backend=tmux\nkind=ship\n'
+o_rc=0; n_rc=0
+(cd "$TMP" && env AC_HOME="$OH" LC_ALL=C PATH="$TMP/killdate:$STUBS:$PATH" GH_LOG="$OH.gh" GH_HEAD='deadbeefcafe\n' GH_STATE='OPEN\n' GH_RC_HEAD=0 GH_RC_STATE=0 GH_ERR_HEAD= GH_ERR_STATE= "$obin/ac-pr-check.sh" t1 "$U") >"$TMP/o.raw" 2>"$TMP/o.rawerr" || o_rc=$?
+(cd "$TMP" && env AC_HOME="$NH" LC_ALL=C PATH="$TMP/killdate:$STUBS:$PATH" GH_LOG="$NH.gh" GH_HEAD='deadbeefcafe\n' GH_STATE='OPEN\n' GH_RC_HEAD=0 GH_RC_STATE=0 GH_ERR_HEAD= GH_ERR_STATE= "$BIN/ac-pr-check.sh" t1 "$U") >"$TMP/n.raw" 2>"$TMP/n.rawerr" || n_rc=$?
+assert_eq "$n_rc $o_rc" "143 143" "date killed: both end with 128+SIGTERM"
+assert_no_file "$NH/state/t1.status" "date killed: no status line"
+# a date whose stamp carries a NUL: `$(...)` dropped it, both logs agree
+mkdir -p "$TMP/nuldate"; printf '#!/bin/sh\ncase "$*" in "-u +%%Y-%%m-%%dT%%H:%%M:%%SZ") printf "2026-01-01T00:00:00Z\\000\\n" ;; *) exec /bin/date "$@" ;; esac\n' >"$TMP/nuldate/date"; chmod +x "$TMP/nuldate/date"
+reset_homes; seed state/t1.meta 'backend=tmux\nkind=ship\n'
+o_rc=0; n_rc=0
+(cd "$TMP" && env AC_HOME="$OH" LC_ALL=C PATH="$TMP/nuldate:$STUBS:$PATH" GH_LOG="$OH.gh" GH_HEAD='deadbeefcafe\n' GH_STATE='OPEN\n' GH_RC_HEAD=0 GH_RC_STATE=0 GH_ERR_HEAD= GH_ERR_STATE= "$obin/ac-pr-check.sh" t1 "$U") >"$TMP/o.raw" 2>"$TMP/o.rawerr" || o_rc=$?
+(cd "$TMP" && env AC_HOME="$NH" LC_ALL=C PATH="$TMP/nuldate:$STUBS:$PATH" GH_LOG="$NH.gh" GH_HEAD='deadbeefcafe\n' GH_STATE='OPEN\n' GH_RC_HEAD=0 GH_RC_STATE=0 GH_ERR_HEAD= GH_ERR_STATE= "$BIN/ac-pr-check.sh" t1 "$U") >"$TMP/n.raw" 2>"$TMP/n.rawerr" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "NUL stamp: both record"
+cmp -s "$OH/state/t1.status" "$NH/state/t1.status" || fail "NUL stamp: the status bytes differ: $(od -c "$NH/state/t1.status" | head -n 2)"
+cmp -s "$OH/data/t1/timeline.log" "$NH/data/t1/timeline.log" || fail "NUL stamp: the timeline bytes differ"
+assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (OPEN)" "NUL stamp: the NUL is gone from the line"
 
 # 22. the status file cannot be appended (mode 000): the bash's errexit on the
 #     `>>` ended the run with exit 1 and bash's own redirection line, before any

@@ -498,6 +498,7 @@ export function bunChild(module: string, args: string[]): { cmd: string[]; cwd: 
 
 // --- pr-check twins ---
 import { accessSync, appendFileSync, chmodSync, constants as fsConstants } from "node:fs";
+import { constants as osConstants } from "node:os";
 
 // ac_require's twin: the first command missing from the live PATH ends the run
 // with its name, as the bash did before reading a single argument.
@@ -734,8 +735,15 @@ export function statusAppend(id: string, line: string, unguarded = false): boole
     try {
       r = Bun.spawnSync(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdin: "ignore", stdout: "pipe", stderr: "inherit", env: process.env });
     } catch {}
-    if (r === null || r.exitCode !== 0) throw Object.assign(new Error("date failed"), { code: "EDATE", status: r?.exitCode ?? 127 });
-    stamp = r.stdout.toString("latin1").replace(/\n+$/, "");
+    // The shell's status for the child: its exit, 128+signal when a signal
+    // ended it, 127 when it could not start.
+    if (r === null) throw Object.assign(new Error("date failed"), { code: "EDATE", status: 127 });
+    if (r.exitCode !== 0) {
+      const sig = r.signalCode ? (osConstants.signals as Record<string, number>)[r.signalCode] ?? 0 : 0;
+      throw Object.assign(new Error("date failed"), { code: "EDATE", status: r.exitCode ?? 128 + sig });
+    }
+    // `$(...)`: NUL bytes dropped, trailing newlines stripped.
+    stamp = r.stdout.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
   } else stamp = iso();
   const rec = Buffer.from(`${stamp} ${line}\n`, "latin1");
   let ok = true;
