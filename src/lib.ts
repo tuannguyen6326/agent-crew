@@ -410,8 +410,10 @@ function lockStale(dir: string): boolean {
 }
 
 // ac_lock_acquire's twin, the same lock dir and pid file, so bash and
-// TypeScript writers exclude each other (tests/ts/lib.test.ts).
-export function lockAcquire(dir: string, timeout: number): boolean {
+// TypeScript writers exclude each other (tests/ts/lib.test.ts). A caller whose
+// contract test fast-forwards the bash `sleep 1` through a PATH stub passes a
+// wait that spawns the PATH's sleep (tests/ts/scene.test.ts).
+export function lockAcquire(dir: string, timeout: number, wait: () => void = () => Bun.sleepSync(1000)): boolean {
   let waited = 0;
   for (;;) {
     try {
@@ -427,7 +429,7 @@ export function lockAcquire(dir: string, timeout: number): boolean {
       if (!existsSync(dir)) continue;
     }
     if (waited >= timeout) return false;
-    Bun.sleepSync(1000);
+    wait();
     waited++;
   }
   writeFileSync(join(dir, "pid"), `${process.pid}\n`);

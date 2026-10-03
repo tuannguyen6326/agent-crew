@@ -212,7 +212,7 @@ by one actor:
    `update <slug>` when the grounding step already FOUND a scene on this topic
    (it read the store first, and a second scene on one subject is the rot the
    store exists to prevent), else `new <topic-slug> --summary '<line>'`.
-   `update` REPLACES the body wholesale (`bin/ac-scene.sh` header), so on an
+   `update` REPLACES the body wholesale (`src/scene.ts` header), so on an
    existing scene the draft must be the CONSOLIDATED body - the old scene,
    which grounding already read, folded together with what this brainstorm
    settled - never this brainstorm's notes alone, which would erase the very
