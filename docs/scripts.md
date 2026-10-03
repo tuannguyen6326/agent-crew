@@ -149,7 +149,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 |---|---|
 | `ac-domain.sh new \| assign \| unassign \| queue \| qa-repo \| list \| validate \| retire` | Crewdomain verbs: build the package under `crewdomains/<name>/`, stamp or strip `domain:<name>` on backlog rows in place, print a domain's slice, declare its e2e repository (`qa-repo`), list ORPHAN-TOKENs, retire fail-closed. Shares nothing with `ac-deputy.sh`. Spec: `bin/ac-domain.sh` header. |
 | `ac-deputy.sh list \| validate \| report '<text>' [--doc <abs>] \| handoff <deputy-id> <backlog-id>...` | Crewdeputy routing layer: renders the full routing table with one liveness state per entry, `validate` as its strict twin, `report` as the deputy-to-parent return channel, and `handoff` moving queued rows all-or-nothing. Spec: `bin/ac-deputy.sh` header. |
-| `ac-home-seed.sh <name> (--projects <p1,p2> \| --no-projects)` | Provisions a crewdeputy home (inherited knobs, runtime symlinks, clones from the parent's) registered with an EMPTY, never-routable scope. Refuses an existing home. Spec: `bin/ac-home-seed.sh` header. |
+| `ac-home-seed.sh <name> (--projects <p1,p2> \| --no-projects)` | Provisions a crewdeputy home (inherited knobs, runtime symlinks, clones from the parent's) registered with an EMPTY, never-routable scope. Refuses an existing home. Spec: `src/home-seed.ts` header (the entry execs it). |
 
 ## Setup and tooling
 

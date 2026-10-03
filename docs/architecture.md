@@ -57,7 +57,7 @@ A caller that legitimately runs homeless, as every crewmate pane does, uses the 
 
 `ac_seed_runtime_links` symlinks the executable core - `bin`, `CLAUDE.md`, `.claude`, `AGENTS.md` - into a home, so a chief session runs with cwd = home while the code stays in the checkout.
 A real (non-symlink) entry is a per-home override and is left alone, a stale symlink is repointed, and `docs/` and `tests/` are never linked.
-`bin/ac-fleet-new.sh` and `bin/ac-home-seed.sh` call it for a new fleet home or crewdeputy home.
+`bin/ac-fleet-new.sh` calls it for a new fleet home; `src/home-seed.ts` calls its `src/lib.ts` twin `seedRuntimeLinks` for a crewdeputy home.
 `state/.ac-root` (`ac_seed_root_pointer`) records the checkout, so a hook deployed under `config/` can find `bin/ac-lib.sh` from any cwd.
 
 `bin/ac-lib.sh` is the core library every script sources.
