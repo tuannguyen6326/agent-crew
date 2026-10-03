@@ -266,8 +266,9 @@
 # Fleet-wide crewmate instructions ($AC_HOME/CREWMATE.md) are copied into the
 # instruction file the RESOLVED harness actually loads - AGENTS.md for codex and
 # opencode, .claude/CLAUDE.md for everything else - and the fleet harness settings
-# into the worktree's .claude/settings.json. A copy the repo ships itself wins
-# for both; the instructions then land at .claude/CREWMATE.md, a path NO harness
+# into the worktree's .claude/settings.json and .claude/settings.local.json. A
+# copy the repo ships itself wins for all; the instructions then land at
+# .claude/CREWMATE.md, a path NO harness
 # loads, so ac_seed_crewmate_md prints it and the KICKOFF PROMPT below names it
 # as required reading - the only channel left to that crewmate. A copy the SEED
 # itself wrote is REFRESHED when the sources move on, so a long-lived pool

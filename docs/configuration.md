@@ -157,6 +157,7 @@ These files live under `$AC_HOME/records/` (resolved by `ac_records_dir`) and ar
 | `$AC_HOME/CREWMATE-learned.md` | Machine-owned learned layer, written only by `bin/ac-learn.sh`; never edit it by hand. |
 | `<container>/.claude/CLAUDE.md` | Baseline shared by every fleet under the homes container (e.g. `~/Work/ac-homes/.claude/CLAUDE.md`). |
 | `<container>/.claude/settings.json`, `$AC_HOME/.claude/settings.json` | Harness settings copied into each worktree's `.claude/settings.json`: repo-shipped > per-fleet > container. A copy, never a symlink. |
+| `<container>/.claude/settings.local.json`, `$AC_HOME/.claude/settings.local.json` | The enabled plugins, copied into each worktree's `.claude/settings.local.json` on the same ladder, resolved independently of `settings.json`. |
 | `<container>/.claude/skills/<name>` | Overrides the distro's built-in crewmate skill of the same name when seeding (`ac_seed_crew_skills`). |
 
 Seeding merges the available layers in the order container, learned, fleet, then the crewdomain's `CREWMATE.md` when the session is domain-bound; a single available layer is copied as is.

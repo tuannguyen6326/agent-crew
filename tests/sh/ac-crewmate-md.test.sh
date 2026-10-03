@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ac-crewmate-md.test.sh - fleet-wide crewmate instructions and harness
-# settings: copied into the worktree's .claude/ (CLAUDE.md, settings.json),
-# invisible to git status, and never clobbering a copy the repo ships itself.
+# settings: copied into the worktree's .claude/ (CLAUDE.md, settings.json,
+# settings.local.json), invisible to git status, and never clobbering a copy
+# the repo ships itself.
 # shellcheck disable=SC2016  # script bodies are deliberately unexpanded here
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
@@ -126,6 +127,31 @@ assert_eq "$(cat "$wt/.claude/settings.json")" '{"enabledPlugins":{"container":t
 rm -f "$wt/.claude/settings.json" "$AC_HOME/.claude"
 mkdir -p "$AC_HOME/.claude"
 rm -f "$AC_HOME/.claude/settings.json" "$(dirname "$AC_HOME")/.claude/settings.json"
+
+# settings.local.json rides the same seed: the plugin set lives there (a
+# tracked settings.json cannot carry a per-machine choice), so a worktree
+# without it runs its crewmate with no plugins. Same ladder, same copy rule,
+# same no-clobber - and the two files resolve independently, so a fleet that
+# overrides only one still inherits the container's other.
+printf '{"enabledPlugins":{"container":true}}\n' >"$(dirname "$AC_HOME")/.claude/settings.local.json"
+seed_settings "$wt"
+assert_eq "$(cat "$wt/.claude/settings.local.json")" '{"enabledPlugins":{"container":true}}' "container settings.local.json seeded"
+[ -L "$wt/.claude/settings.local.json" ] && fail "settings.local.json must be a copy, never a symlink"
+assert_eq "$(git -C "$wt" status --porcelain)" "" "settings.local.json copy invisible to git status"
+printf '{"permissions":{"fleet":true}}\n' >"$AC_HOME/.claude/settings.json"
+seed_settings "$wt"
+assert_eq "$(cat "$wt/.claude/settings.local.json")" '{"enabledPlugins":{"container":true}}' \
+  "a fleet settings.json alone leaves the container settings.local.json as the source"
+printf '{"enabledPlugins":{"fleet":true}}\n' >"$AC_HOME/.claude/settings.local.json"
+seed_settings "$wt"
+assert_eq "$(cat "$wt/.claude/settings.local.json")" '{"enabledPlugins":{"fleet":true}}' "per-fleet settings.local.json wins over container"
+printf '{"hooks":{"Stop":[]}}\n' >"$wt/.claude/settings.local.json"
+seed_settings "$wt"
+assert_eq "$(cat "$wt/.claude/settings.local.json")" '{"hooks":{"Stop":[]}}' \
+  "a settings.local.json the seed did not write (pane-agent hook, crewmate grant) is preserved"
+rm -f "$wt/.claude/settings.json" "$wt/.claude/settings.local.json" \
+  "$AC_HOME/.claude/settings.json" "$AC_HOME/.claude/settings.local.json" \
+  "$(dirname "$AC_HOME")/.claude/settings.local.json"
 
 # Crewmate-facing skills are symlinked into the worktree: container source
 # wins over the distro checkout, repo-shipped wins over both, links stay
@@ -542,8 +568,8 @@ assert_eq "$(cat "$st_wt/.claude/CLAUDE.md")" "CREWMATE AUTHORED" \
 assert_eq "$(git -C "$st_wt" status --porcelain)" "" "the stamp is invisible to git status"
 
 # The settings seed rides the SAME stamp - one mechanism, not two. A crewmate
-# answering "always allow" writes exactly this file, so that grant is what the
-# no-clobber half protects here.
+# answering "always allow" writes into the seeded settings.local.json, so that
+# grant is what the no-clobber half protects here.
 mkdir -p "$AC_HOME/.claude"
 printf '{"v":1}\n' >"$AC_HOME/.claude/settings.json"
 seed_settings "$st_wt"

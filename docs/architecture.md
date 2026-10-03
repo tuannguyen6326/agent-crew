@@ -121,7 +121,7 @@ A captain's custom template (`config/launch-<h>`) launches without joining the r
 The available layers are concatenated in read order - container baseline (`<container>/.claude/CLAUDE.md`), `$AC_HOME/CREWMATE-learned.md`, `$AC_HOME/CREWMATE.md`, then the crewdomain's `CREWMATE.md` when the spawner is domain-bound - so the most specific word reads last.
 A repo-shipped file wins outright and the layer lands at a fallback path that the kickoff names; a file the seed wrote is refreshed when its sources move, and seeded paths go to the repo's `info/exclude`.
 
-`ac_seed_crew_settings` copies, never symlinks, `$AC_HOME/.claude/settings.json` (else the container copy) to `<worktree>/.claude/settings.json`, so a crewmate's permission grants stay local.
+`ac_seed_crew_settings` copies, never symlinks, `$AC_HOME/.claude/settings.json` and `$AC_HOME/.claude/settings.local.json` (else the container copy of each) to the same paths under `<worktree>/.claude/`, so a crewmate's permission grants stay local and its plugin set follows the fleet.
 A home `.claude` that is the runtime symlink into the distro is skipped, because it holds the chief's hook wiring.
 
 `ac_seed_crew_skills` symlinks skills into the directory the harness scans (`.agents/skills` for codex, `.claude/skills` otherwise): first the built-ins in `AC_CREW_SKILLS` (default `crew-ship crew-verify crew-qa domain-e2e document`) from the container store or this checkout, then every fleet-learned package except `skills-archive`.

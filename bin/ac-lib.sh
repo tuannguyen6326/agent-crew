@@ -2155,34 +2155,43 @@ ac_seed_crewmate_md() {
 }
 
 ac_seed_crew_settings() {
-  # ac_seed_crew_settings <worktree> - copy the fleet harness settings
-  # (enabled plugins, permission allowlists) to <worktree>/.claude/
-  # settings.json, where the harness actually reads project settings - the
-  # container copy is never on a worktree's settings path by itself.
-  # Source resolution (first hit wins), mirroring ac_seed_crewmate_md:
-  # $AC_HOME/.claude/settings.json (per-fleet) > <container>/.claude/
-  # settings.json (shared by every fleet). A COPY, never a
+  # ac_seed_crew_settings <worktree> - copy the fleet harness settings to
+  # <worktree>/.claude/settings.json (permission allowlists, hooks) and
+  # <worktree>/.claude/settings.local.json (the enabled plugins - a
+  # per-machine choice that a tracked settings.json cannot carry, and the
+  # file the harness merges over settings.json), where the harness actually
+  # reads project settings - the container copy is never on a worktree's
+  # settings path by itself.
+  # Source resolution per file (first hit wins), mirroring ac_seed_crewmate_md:
+  # $AC_HOME/.claude/<file> (per-fleet) > <container>/.claude/<file> (shared
+  # by every fleet). The two files resolve INDEPENDENTLY, so a fleet that
+  # overrides only one still inherits the container's other. A COPY, never a
   # symlink: a crewmate answering "always allow" writes project settings,
   # and through a symlink that grant would contaminate the fleet-wide file.
   # Installed through the SAME ac_seed_install as the instructions, so it
   # inherits both halves at no extra mechanism: a settings file the seed did
-  # not write - repo-shipped, or carrying the grants a crewmate just made -
-  # wins outright, and one the seed did write is refreshed when the fleet
-  # source moves on. Kept out of git status via info/exclude.
-  local wt="$1" src
-  src="$(ac_home)/.claude/settings.json"
+  # not write - repo-shipped, carrying the grants a crewmate just made, or the
+  # Stop hook bin/ac-pane-agent.sh merges into settings.local.json for a
+  # review round - wins outright, and one the seed did write is refreshed
+  # when the fleet source moves on. Kept out of git status via info/exclude.
+  local wt="$1" home_dir rel src
+  home_dir="$(ac_home)/.claude"
   # A home .claude that is the core-4 runtime symlink into the distro
-  # checkout (seedRuntimeLinks, src/lib.ts) holds the distro's settings.json -
+  # checkout (seedRuntimeLinks, src/lib.ts) holds the distro's settings -
   # chief-session hook wiring, not fleet crew settings - so it is not a
   # fleet layer and the container copy stays the crew source.
-  if [ -f "$src" ]; then
-    case "$(cd -P "$(dirname "$src")" 2>/dev/null && pwd -P)" in
-      "$(ac_root)"|"$(ac_root)"/*) src="" ;;
+  if [ -d "$home_dir" ]; then
+    case "$(cd -P "$home_dir" 2>/dev/null && pwd -P)" in
+      "$(ac_root)"|"$(ac_root)"/*) home_dir="" ;;
     esac
   fi
-  [ -n "$src" ] && [ -f "$src" ] || src="$(dirname "$(ac_home)")/.claude/settings.json"
-  [ -f "$src" ] || return 0
-  ac_seed_install "$wt" '.claude/settings.json' "$src" || return 0
+  for rel in settings.json settings.local.json; do
+    src="$home_dir/$rel"
+    [ -n "$home_dir" ] && [ -f "$src" ] || src="$(dirname "$(ac_home)")/.claude/$rel"
+    [ -f "$src" ] || continue
+    ac_seed_install "$wt" ".claude/$rel" "$src" || true
+  done
+  return 0
 }
 
 # Crewmate-facing skills seeded into every crew worktree (ac_seed_crew_skills).
