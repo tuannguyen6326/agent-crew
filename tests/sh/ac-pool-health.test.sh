@@ -289,4 +289,33 @@ assert_eq "$n_rc $o_rc" "1 1" "a dangling --repo refuses on both sides"
 (cd "$dA" && same --repo .)
 assert_eq "$(sed -n 2p "$TMP/n.out" | cut -c1-3)" ".: " "--repo . is named '.'"
 
+# Environmental failures stay a report, exit 0, nothing printed - the original's
+# glob simply matched nothing (unprivileged only: root reads a mode-000 dir).
+if [ "$(id -u)" -ne 0 ]; then
+  hU="$TMP/home-unreadable"; mkdir -p "$hU/projects/p1/.crew/slots"; chmod 000 "$hU/projects"
+  AC_HOME="$hU" same
+  chmod 755 "$hU/projects"
+  assert_eq "$(cat "$TMP/n.out")" "" "an unreadable projects/ scans nothing"
+fi
+# projects/ occupied by a file: the original's `mkdir -p` printed its own
+# `mkdir: ...: File exists` and the glob matched nothing; stdout and exit
+# are compared, the tool-own stderr is named, not reproduced.
+hF="$TMP/home-filed"; mkdir -p "$hF"; : >"$hF/projects"
+o_rc=0; AC_HOME="$hF" "$obin/ac-pool-health.sh" >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; AC_HOME="$hF" "$BIN/ac-pool-health.sh" >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "projects/ occupied by a file: both report, exit 0"
+cmp -s "$TMP/o.out" "$TMP/n.out" || fail "projects/ occupied by a file: stdout differs"
+assert_eq "$(cat "$TMP/n.out")" "" "projects/ occupied by a file scans nothing"
+assert_contains "$(cat "$TMP/o.err")" "mkdir:" "...the original's stderr was mkdir's own"
+assert_eq "$(cat "$TMP/n.err")" "" "...the port prints no tool-own stderr"
+# No git on PATH: every candidate is skipped and every list is empty on both
+# sides - a PATH farm of the host's tools minus git (bun stays for the shim).
+farm="$TMP/nogit"; mkdir -p "$farm"
+for f in /bin/* /usr/bin/* "$(command -v bun)"; do [ -x "$f" ] && [ "$(basename "$f")" != git ] && ln -s "$f" "$farm/$(basename "$f")" 2>/dev/null; done
+PATH="$farm" same --repo "$dC"
+assert_eq "$(cat "$TMP/n.out")" "" "without git the unhealthy pool reads as empty on both sides"
+# Discovery names are native strings: APFS refuses a name that is not UTF-8
+# (mkdir: Illegal byte sequence), so on this platform none exists to be lost;
+# a filesystem that allows one is the unpinned case, named here.
+
 pass

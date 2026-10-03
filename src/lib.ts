@@ -168,7 +168,11 @@ export function projectsDir(): string {
 const DATE_SPAWN = { stdout: "pipe", stderr: "ignore", env: process.env } as const;
 
 export function now(): number {
-  return Number(Bun.spawnSync(["date", "+%s"], DATE_SPAWN).stdout.toString().trim());
+  try {
+    return Number(Bun.spawnSync(["date", "+%s"], DATE_SPAWN).stdout.toString().trim());
+  } catch {
+    return NaN;
+  }
 }
 
 // `IFS=$'\t' read -r <n names>`: tab is IFS whitespace, so a run of tabs is
@@ -198,11 +202,17 @@ export function tabFields(line: string, n: number): string[] {
 // leases read as aged.
 export function leaseAgeSecs(ts: string): number | null {
   if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/.test(ts)) return null;
-  let r = Bun.spawnSync(["date", "-u", "-j", "-f", "%Y-%m-%dT%H:%M:%SZ", ts, "+%s"], DATE_SPAWN);
-  if (r.exitCode !== 0) r = Bun.spawnSync(["date", "-u", "-d", ts, "+%s"], DATE_SPAWN);
-  const then = r.stdout.toString().trim();
-  if (r.exitCode !== 0 || then === "") return null;
-  return now() - Number(then);
+  // A date(1) that cannot run at all reads as no age, as `|| return 0` did.
+  let then = "";
+  try {
+    let r = Bun.spawnSync(["date", "-u", "-j", "-f", "%Y-%m-%dT%H:%M:%SZ", ts, "+%s"], DATE_SPAWN);
+    if (r.exitCode !== 0) r = Bun.spawnSync(["date", "-u", "-d", ts, "+%s"], DATE_SPAWN);
+    if (r.exitCode === 0) then = r.stdout.toString().trim();
+  } catch {}
+  if (then === "") return null;
+  const n = now();
+  if (!Number.isFinite(n)) return null;
+  return n - Number(then);
 }
 
 // ac_pid_alive's twin: an owner is a canonical positive pid, and a process this

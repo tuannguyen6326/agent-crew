@@ -77,11 +77,21 @@
 // back as those bytes, so a path prints as the shell printed it.
 import { readdirSync, statSync, writeSync } from "node:fs";
 import { basename, join } from "node:path";
-import { die, enterCaller, leaseAgeSecs, NO_HOME, projectsDir, tabFields } from "./lib.ts";
+import { die, enterCaller, envHome, leaseAgeSecs, NO_HOME, projectsDir, tabFields } from "./lib.ts";
 
 const bin = join(import.meta.dir, "..", "bin");
 const AGED_LEASE_THRESHOLD_SECS = 86400;
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
+// A tool that cannot be started (missing, not executable) answers as it did
+// under bash: a non-zero status, nothing on stdout.
+const spawn = (cmd: string[]): { rc: number; out: string } => {
+  try {
+    const r = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "ignore" });
+    return { rc: r.exitCode ?? 1, out: r.stdout.toString("latin1") };
+  } catch {
+    return { rc: 127, out: "" };
+  }
+};
 const isDir = (p: string): boolean => {
   try {
     return statSync(p).isDirectory();
@@ -103,12 +113,16 @@ if (repos.length === 0) {
     writeSync(2, `ERROR: ${NO_HOME}\n`);
     process.exit(0);
   }
-  const dir = projectsDir();
-  const names = readdirSync(dir).filter((n) => !n.startsWith(".")).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  // The glob `<projects>/*/` matched nothing when projects/ could not be
+  // minted (a file in its place) or read: an empty scan, exit 0.
+  let names: string[] = [];
+  try {
+    names = readdirSync(projectsDir()).filter((n) => !n.startsWith(".")).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  } catch {}
   for (const name of names) {
-    const p = `${join(dir, name)}/`;
+    const p = `${join(envHome(), "projects", name)}/`;
     if (!isDir(p)) continue;
-    if (Bun.spawnSync(["git", "-C", p, "rev-parse", "--git-dir"], { stdout: "ignore", stderr: "ignore" }).exitCode !== 0) continue;
+    if (spawn(["git", "-C", p, "rev-parse", "--git-dir"]).rc !== 0) continue;
     if (!isDir(join(p, ".crew", "slots"))) continue;
     repos.push(p);
   }
@@ -119,8 +133,7 @@ for (const repo of repos) {
   if (repo === "") continue;
   let leasable = 0, total = 0, stuck = 0, broken = 0, aged = 0;
   let slotLines = "", brokenLines = "", agedLines = "";
-  const list = Bun.spawnSync([join(bin, "ac-tree.sh"), "list", "--repo", repo], { stdout: "pipe", stderr: "ignore" });
-  const rows = list.stdout.toString("latin1").split("\n");
+  const rows = spawn([join(bin, "ac-tree.sh"), "list", "--repo", repo]).out.split("\n");
   rows.pop();
   for (const row of rows) {
     const [n, state, task, wt, leasedAt, owner] = tabFields(row, 6);
@@ -147,7 +160,8 @@ for (const repo of repos) {
   if (broken >= 1) hints += "  reclaim each broken slot: bin/ac-tree.sh remove --force <worktree-path>\n";
   if (aged >= 1)
     hints += "  reclaim each aged lease (the broken/dirty/unmerged gates stay armed - it refuses instead of discarding if the slot still holds real content): bin/ac-tree.sh remove --include-leased <worktree-path>\n";
-  block += `${bytes(basename(repo))}: ${leasable} leasable / ${total} total, ${stuck} stuck-dirty (unleasable), ${broken} broken (unleasable), ${aged} aged-leased (>=${AGED_LEASE_THRESHOLD_SECS / 3600}h, unconfirmed)\n${hints}${slotLines}${brokenLines}${agedLines}`;
+  // `$(basename "$repo")` dropped every trailing newline of the name.
+  block += `${bytes(basename(repo)).replace(/\n+$/, "")}: ${leasable} leasable / ${total} total, ${stuck} stuck-dirty (unleasable), ${broken} broken (unleasable), ${aged} aged-leased (>=${AGED_LEASE_THRESHOLD_SECS / 3600}h, unconfirmed)\n${hints}${slotLines}${brokenLines}${agedLines}`;
 }
 
 if (block !== "") writeSync(1, Buffer.from(`-- pool (worktree health) --\n${block}`, "latin1"));

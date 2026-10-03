@@ -54,6 +54,8 @@ test("projectsDir answers the physical home's projects/ as ac_projects_dir does,
 });
 
 test("projectsDir refuses a homeless caller with ac_projects_dir's line and status", () => {
+  // Both sides homeless, whatever home the suite's own session carries.
+  delete process.env.AC_HOME;
   const want = bash("ac_projects_dir");
   expect(want.rc).toBe(1);
   const t = Bun.spawnSync(
@@ -142,6 +144,18 @@ test("leaseAgeSecs answers exactly what lease_age_secs does over BSD strptime's 
     }
     expect(leaseAgeSecs("2024-02-30T00:00:00Z")).toBe(1800000000 - 1709251200);
     expect(leaseAgeSecs("2026-13-01T00:00:00Z")).toBeNull();
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
+// No `date` on PATH at all: the spawn cannot start, and that reads as no age too.
+test("leaseAgeSecs reads no age when date(1) is not on PATH", () => {
+  const d = mkdtempSync(join(tmpdir(), "ac-pool-health-nopath-"));
+  try {
+    process.env.PATH = d;
+    expect(leaseAgeSecs("2026-01-01T00:00:00Z")).toBeNull();
+    expect(now()).toBeNaN();
   } finally {
     rmSync(d, { recursive: true, force: true });
   }
