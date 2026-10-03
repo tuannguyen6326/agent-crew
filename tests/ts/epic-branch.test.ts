@@ -123,7 +123,7 @@ test("epicBranchEntry reads what ac_epic_branch_entry reads: first match, fields
   expect(epicBranchEntry("numeric", "7.5e-1")).toEqual({ rc: 0, entry: "epic/k" });
   expect(epicBranchEntry("numeric", "+inf")).toEqual({ rc: 0, entry: "epic/j" });
   expect(epicBranchEntry("missing", "proj")).toEqual({ rc: 1 });
-});
+}, 30_000); // ~5 s of bash probes under load - past bun's 5 s default
 
 test("defaultBranch and freshestRef answer every arm ac_default_branch and ac_freshest_ref answer", () => {
   const h = freshHome();
