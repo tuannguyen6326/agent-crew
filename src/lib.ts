@@ -1133,3 +1133,11 @@ export function projectDir(arg: string): string | null {
   } catch {}
   return common === null ? null : dirname(common);
 }
+
+// --- lock twins ---
+
+// AC_HARNESS_RE's copy (bin/ac-harness.sh), the ERE the session lock's
+// ancestry walk classifies a command line with, held to that file by
+// tests/ts/lock.test.ts. Not HARNESSES joined: the regex names the PROCESS
+// (`cursor-agent`) where the registry names the harness id (`cursor`).
+export const HARNESS_RE = "claude|codex|opencode|pi|cursor-agent";
