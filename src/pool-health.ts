@@ -75,9 +75,9 @@
 // repo order with no separator; the header once; every line LF-terminated.
 // The list rows and the repo name are handled as latin1 bytes and written
 // back as those bytes, so a path prints as the shell printed it.
-import { readdirSync, statSync, writeSync } from "node:fs";
+import { accessSync, constants, mkdirSync, readdirSync, realpathSync, statSync, writeSync } from "node:fs";
 import { basename, join } from "node:path";
-import { die, enterCaller, envHome, leaseAgeSecs, NO_HOME, projectsDir, tabFields } from "./lib.ts";
+import { die, enterCaller, leaseAgeSecs, NO_HOME, tabFields } from "./lib.ts";
 
 const bin = join(import.meta.dir, "..", "bin");
 const AGED_LEASE_THRESHOLD_SECS = 86400;
@@ -113,14 +113,28 @@ if (repos.length === 0) {
     writeSync(2, `ERROR: ${NO_HOME}\n`);
     process.exit(0);
   }
-  // The glob `<projects>/*/` matched nothing when projects/ could not be
-  // minted (a file in its place) or read: an empty scan, exit 0.
-  let names: string[] = [];
+  // ac_home (`cd "$AC_HOME" && pwd -P`) failing inside the original's
+  // for-list word did not stop the run, nor did a projects/ that could not be
+  // minted (a file in its place) or read: the glob `<projects>/*/` matched
+  // nothing - an empty scan, exit 0 (cd's or mkdir's own stderr line is not
+  // reproduced). Resolved here, not through a helper that refuses by dying.
+  let homeDir = "";
   try {
-    names = readdirSync(projectsDir()).filter((n) => !n.startsWith(".")).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-  } catch {}
+    homeDir = realpathSync(process.env.AC_HOME);
+    accessSync(homeDir, constants.X_OK);
+    if (!statSync(homeDir).isDirectory()) homeDir = "";
+  } catch {
+    homeDir = "";
+  }
+  let names: string[] = [];
+  if (homeDir !== "") {
+    try {
+      mkdirSync(`${homeDir}/projects`, { recursive: true });
+      names = readdirSync(`${homeDir}/projects`).filter((n) => !n.startsWith(".")).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+    } catch {}
+  }
   for (const name of names) {
-    const p = `${join(envHome(), "projects", name)}/`;
+    const p = `${homeDir}/projects/${name}/`;
     if (!isDir(p)) continue;
     if (spawn(["git", "-C", p, "rev-parse", "--git-dir"]).rc !== 0) continue;
     if (!isDir(join(p, ".crew", "slots"))) continue;

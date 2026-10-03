@@ -157,10 +157,6 @@ export function recordsDir(): string {
   return homeSubdir("records");
 }
 
-export function projectsDir(): string {
-  return homeSubdir("projects");
-}
-
 // ac_now's twin through date(1), the rung bash 3.2 (this host's /bin/bash)
 // takes, so a PATH `date` stub binds the bash and the port to one instant.
 // The live env, not Bun's startup snapshot, so a PATH set after start is the

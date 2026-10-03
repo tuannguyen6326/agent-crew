@@ -314,6 +314,25 @@ farm="$TMP/nogit"; mkdir -p "$farm"
 for f in /bin/* /usr/bin/* "$(command -v bun)"; do [ -x "$f" ] && [ "$(basename "$f")" != git ] && ln -s "$f" "$farm/$(basename "$f")" 2>/dev/null; done
 PATH="$farm" same --repo "$dC"
 assert_eq "$(cat "$TMP/n.out")" "" "without git the unhealthy pool reads as empty on both sides"
+# A home that cannot be resolved (missing, a file, no search permission): the
+# original's ac_home failed inside a for-list word and the run went on - empty
+# stdout, exit 0, cd's own line on stderr (named, not reproduced).
+: >"$TMP/home-file"; mkdir -p "$TMP/home-noexec"; chmod 000 "$TMP/home-noexec"
+for h in /nonexistent/home "$TMP/home-file" "$TMP/home-noexec"; do
+  [ "$h" = "$TMP/home-noexec" ] && [ "$(id -u)" -eq 0 ] && continue
+  o_rc=0; AC_HOME="$h" "$obin/ac-pool-health.sh" >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+  n_rc=0; AC_HOME="$h" "$BIN/ac-pool-health.sh" >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+  assert_eq "$n_rc $o_rc" "0 0" "unresolvable home $h: both report, exit 0"
+  assert_eq "$(cat "$TMP/o.out")$(cat "$TMP/n.out")" "" "unresolvable home $h: nothing scanned on either side"
+  assert_contains "$(cat "$TMP/o.err")" "cd:" "unresolvable home $h: the original's stderr was cd's own"
+  assert_eq "$(cat "$TMP/n.err")" "" "unresolvable home $h: the port prints no shell-own stderr"
+done
+chmod 755 "$TMP/home-noexec"
+# A repo alias whose name ends in newlines: `$(basename)` dropped them from the
+# block label, and so does the port - compared whole through the alias.
+ln -s "$dC" "$TMP/alias"$'\n\n'
+same --repo "$TMP/alias"$'\n\n'
+assert_contains "$(cat "$TMP/n.out")" "alias: " "the label is the alias name without its trailing newlines"
 # Discovery names are native strings: APFS refuses a name that is not UTF-8
 # (mkdir: Illegal byte sequence), so on this platform none exists to be lost;
 # a filesystem that allows one is the unpinned case, named here.

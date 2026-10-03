@@ -1,6 +1,5 @@
 // pool-health.test.ts - the lib.ts twins src/pool-health.ts introduced, held to
-// their bash originals differentially: projectsDir against ac_projects_dir, now
-// against ac_now, tabFields against `IFS=$'\t' read -r`, and leaseAgeSecs
+// their bash originals differentially: now against ac_now, tabFields against `IFS=$'\t' read -r`, and leaseAgeSecs
 // against lease_age_secs lifted from the frozen original, over the stamps BSD
 // strptime rolls or refuses - with date(1) stubbed on PATH so `date +%s`
 // answers one instant to both sides. The CLI contract itself is
@@ -10,7 +9,7 @@ import { afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { leaseAgeSecs, now, projectsDir, tabFields } from "../../src/lib.ts";
+import { leaseAgeSecs, now, tabFields } from "../../src/lib.ts";
 
 const root = join(import.meta.dir, "..", "..");
 const binDir = join(root, "bin");
@@ -35,37 +34,7 @@ function stubDate(): string {
   return d;
 }
 
-test("projectsDir answers the physical home's projects/ as ac_projects_dir does, and mints it", () => {
-  const d = mkdtempSync(join(tmpdir(), "ac-pool-health-home-"));
-  try {
-    const home = join(d, "home");
-    Bun.spawnSync(["mkdir", "-p", home]);
-    symlinkSync(home, join(d, "link"));
-    process.env.AC_HOME = join(d, "link");
-    const want = bash("ac_projects_dir");
-    expect(want.rc).toBe(0);
-    expect(existsSync(join(home, "projects"))).toBe(true);
-    rmSync(join(home, "projects"), { recursive: true });
-    expect(`${projectsDir()}\n`).toBe(want.out);
-    expect(existsSync(join(home, "projects"))).toBe(true);
-  } finally {
-    rmSync(d, { recursive: true, force: true });
-  }
-});
 
-test("projectsDir refuses a homeless caller with ac_projects_dir's line and status", () => {
-  // Both sides homeless, whatever home the suite's own session carries.
-  delete process.env.AC_HOME;
-  const want = bash("ac_projects_dir");
-  expect(want.rc).toBe(1);
-  const t = Bun.spawnSync(
-    [process.execPath, "-e", 'import { projectsDir } from "./src/lib.ts"; projectsDir();'],
-    { cwd: root, stdout: "pipe", stderr: "pipe", env: { PATH: process.env.PATH! } },
-  );
-  expect(t.exitCode).toBe(1);
-  expect(t.stdout.toString()).toBe(want.out);
-  expect(t.stderr.toString()).toBe(want.err);
-});
 
 test("now reads date(1) like ac_now's bash-3.2 rung, so one PATH stub binds both", () => {
   const d = stubDate();
