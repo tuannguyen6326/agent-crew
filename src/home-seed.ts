@@ -105,27 +105,10 @@ const isDir = (p: string): boolean => {
   }
 };
 
-// `IFS=',' read -ra` WITHOUT -r: a backslash escapes the next byte (an escaped
-// comma is no separator), a backslash-newline is a continuation, an unescaped
-// newline ends the line; then `tr -d ' '` per entry, empties skipped.
+// `IFS=',' read -ra`: -r is set, so a backslash is a byte like any other;
+// the first line only; then `tr -d ' '` per entry, empties skipped.
 export function splitProjects(projects: string): string[] {
-  const entries: string[] = [];
-  let cur = "";
-  for (let i = 0; i < projects.length; i++) {
-    const c = projects[i];
-    if (c === "\\") {
-      const n = projects[i + 1];
-      if (n === undefined) break;
-      i++;
-      if (n !== "\n") cur += n;
-    } else if (c === "\n") break;
-    else if (c === ",") {
-      entries.push(cur);
-      cur = "";
-    } else cur += c;
-  }
-  entries.push(cur);
-  return entries.map((p) => p.replace(/ /g, "")).filter((p) => p !== "");
+  return projects.split("\n")[0].split(",").map((p) => p.replace(/ /g, "")).filter((p) => p !== "");
 }
 
 // A project name arrives native from Bun's argv; its bytes are what the file

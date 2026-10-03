@@ -47,6 +47,10 @@ test("seedRuntimeLinks lays the same links ac_seed_runtime_links lays", () => {
         mkdirSync(join(home, "bin"));
         writeFileSync(join(home, "CLAUDE.md"), "per-home law\n");
       } else if (state === "link") {
+        // Resolving links: a directory for bin, files for the rest, so ln's
+        // no-dereference flag is what keeps the LINK the thing replaced.
+        mkdirSync(join(dir, "elsewhere", "bin"), { recursive: true });
+        for (const f of LINKS.filter((x) => x !== "bin")) writeFileSync(join(dir, "elsewhere", f), "x\n");
         for (const f of LINKS) symlinkSync(join(dir, "elsewhere", f), join(home, f));
       } else if (state === "dangling") {
         for (const f of LINKS) symlinkSync(join(dir, "gone", f), join(home, f));
@@ -95,7 +99,10 @@ test("iso prints what ac_iso prints, through the one date on PATH", () => {
 });
 
 test("splitProjects keeps the entries the read/tr pipeline kept", () => {
-  for (const projects of ["a, b ,,c", "x\ny,z", ",a,", "a,b,", " , ", "a\tb,c", "alpha,alpha", "alpha", "a b"]) {
+  // -r is set on the read, so a backslash before a byte, a comma, a newline
+  // or a backslash is literal; these inputs pin that against the same bash.
+  for (const projects of ["a, b ,,c", "x\ny,z", ",a,", "a,b,", " , ", "a\tb,c", "alpha,alpha", "alpha", "a b",
+    "\\alpha", "a\\,b,c", "a\\\nb,c", "a\\\\b", "x\\", "\\,", "p\\ q"]) {
     const r = Bun.spawnSync(
       [
         "bash", "-c",

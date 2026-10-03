@@ -273,6 +273,17 @@ same mate5 --projects wt
 assert_eq "$(cat "$TMP/n.err")" "ERROR: parent has no clone at projects/wt" "differential 6: the refusal"
 assert_no_file "$N/crewdeputies/mate5" "differential 6: nothing written"
 
+# 6b. `read -ra` has -r: a backslash is literal, so `\alpha` names no clone
+#     and both sides refuse it before any write.
+same mateesc --projects '\alpha'
+assert_eq "$(cat "$TMP/n.err")" 'ERROR: parent has no clone at projects/\alpha' "differential 6b: the backslash is literal, refused as spelled"
+assert_no_file "$N/crewdeputies/mateesc" "differential 6b: nothing written"
+# 6c. A path spelled with a missing component and `..` is refused by the OS
+#     before any write - never folded to the clone it names lexically.
+same matedots --projects missing/../alpha
+assert_eq "$(cat "$TMP/n.err")" "ERROR: parent has no clone at projects/missing/../alpha" "differential 6c: refused as spelled"
+assert_no_file "$N/crewdeputies/matedots" "differential 6c: nothing written"
+
 # 5. A parent clone with no origin: the deputy's clone keeps the parent path.
 add_clone delta none
 same mate4 --projects delta
