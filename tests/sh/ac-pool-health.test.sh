@@ -328,6 +328,16 @@ for h in /nonexistent/home "$TMP/home-file" "$TMP/home-noexec"; do
   assert_eq "$(cat "$TMP/n.err")" "" "unresolvable home $h: the port prints no shell-own stderr"
 done
 chmod 755 "$TMP/home-noexec"
+# A search-only home (mode 0100): the shell's `cd && pwd -P` needs no read
+# permission on the home itself, and its readable projects/ still lists the
+# unhealthy pool on both sides (unprivileged only).
+if [ "$(id -u)" -ne 0 ]; then
+  hS="$TMP/home-searchonly"; mkdir -p "$hS/projects"; ln -s "$dC" "$hS/projects/dC"
+  chmod 0100 "$hS"
+  AC_HOME="$hS" same
+  chmod 755 "$hS"
+  assert_contains "$(cat "$TMP/n.out")" "dC: " "a search-only home still reports its unhealthy pool"
+fi
 # A repo alias whose name ends in newlines: `$(basename)` dropped them from the
 # block label, and so does the port - compared whole through the alias.
 ln -s "$dC" "$TMP/alias"$'\n\n'

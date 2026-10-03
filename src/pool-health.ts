@@ -75,9 +75,9 @@
 // repo order with no separator; the header once; every line LF-terminated.
 // The list rows and the repo name are handled as latin1 bytes and written
 // back as those bytes, so a path prints as the shell printed it.
-import { accessSync, constants, mkdirSync, readdirSync, realpathSync, statSync, writeSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync, writeSync } from "node:fs";
 import { basename, join } from "node:path";
-import { die, enterCaller, leaseAgeSecs, NO_HOME, tabFields } from "./lib.ts";
+import { die, enterCaller, leaseAgeSecs, NO_HOME, physicalDir, tabFields } from "./lib.ts";
 
 const bin = join(import.meta.dir, "..", "bin");
 const AGED_LEASE_THRESHOLD_SECS = 86400;
@@ -118,14 +118,10 @@ if (repos.length === 0) {
   // minted (a file in its place) or read: the glob `<projects>/*/` matched
   // nothing - an empty scan, exit 0 (cd's or mkdir's own stderr line is not
   // reproduced). Resolved here, not through a helper that refuses by dying.
-  let homeDir = "";
-  try {
-    homeDir = realpathSync(process.env.AC_HOME);
-    accessSync(homeDir, constants.X_OK);
-    if (!statSync(homeDir).isDirectory()) homeDir = "";
-  } catch {
-    homeDir = "";
-  }
+  // physicalDir is ac_home's own `cd && pwd -P`: search permission is all it
+  // needs, as the shell needed - a home the operator may enter but not read
+  // still has its readable projects/ scanned.
+  const homeDir = physicalDir(process.env.AC_HOME) ?? "";
   let names: string[] = [];
   if (homeDir !== "") {
     try {
