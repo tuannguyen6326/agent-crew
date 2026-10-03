@@ -147,7 +147,7 @@ These files live under `$AC_HOME/records/` (resolved by `ac_records_dir`) and ar
 | `records/projects.md` | Project registry, one line per project: `- <name> [+yolo] - <description> (added <date>)`. Delivery mode is per task, not per project; a legacy `[<mode>]` is ignored. Grammar owner: the `bin/ac-project-mode.sh` header. |
 | `records/crewdeputies.md` | Crewdeputy routing table: one line per deputy home with charter, `home:`, `scope:` and clones. Grammar owner: the `crewdeputy routing table` block in `bin/ac-lib.sh`; strict check `bin/ac-deputy.sh validate`. |
 | `records/standing-jobs.md` | Declared standing jobs (id, cadence, on/off, re-create action) reported in the session-start digest. Grammar owner: the `src/standing-jobs.ts` header. |
-| `records/rig.json` | Rig manifest: the home's declared identity, distro checkout, config-knob inventory and standing-job ids. Read only by `bin/ac-rig.sh drift`, whose header owns the grammar. |
+| `records/rig.json` | Rig manifest: the home's declared identity, distro checkout, config-knob inventory and standing-job ids. Read only by `bin/ac-rig.sh drift`; the `src/rig.ts` header owns the grammar. |
 
 ## Crewmate instruction and settings layers
 

@@ -126,6 +126,7 @@ test("configRead keeps a present-but-empty file empty, never the default", () =>
 test("configRead trims Unicode whitespace, as [:space:] does under a UTF-8 locale", () => {
   const h = freshHome();
   process.env.AC_HOME = h;
+  process.env.LC_ALL = "en_US.UTF-8";
   writeFileSync(join(h, "config", "crew-harness"), "\u00a0codex\u00a0\n");
   expect(configRead("crew-harness")).toBe("codex");
 });
@@ -134,8 +135,25 @@ test("configRead trims Unicode whitespace, as [:space:] does under a UTF-8 local
 test("configRead keeps U+0085 and U+FEFF, which [:space:] does not trim", () => {
   const h = freshHome();
   process.env.AC_HOME = h;
+  process.env.LC_ALL = "en_US.UTF-8";
   writeFileSync(join(h, "config", "crew-harness"), "\u0085codex\ufeff\n");
   expect(configRead("crew-harness")).toBe("\u0085codex\ufeff");
+});
+
+// Under C, [:space:] is the ASCII six wherever bash runs: the non-breaking
+// space is a value byte. The locale is read as bash reads it - LC_ALL first,
+// then LC_CTYPE, then LANG, an empty one skipped.
+test("configRead keeps a non-breaking space under the C locale", () => {
+  const h = freshHome();
+  process.env.AC_HOME = h;
+  writeFileSync(join(h, "config", "crew-harness"), "\u00a0codex\u00a0\n");
+  for (const env of [{ LC_ALL: "C" }, { LC_ALL: "", LC_CTYPE: "POSIX", LANG: "en_US.UTF-8" }, { LC_ALL: "", LC_CTYPE: "", LANG: "" }]) {
+    for (const k of ["LC_ALL", "LC_CTYPE", "LANG"]) delete process.env[k];
+    Object.assign(process.env, env);
+    expect(configRead("crew-harness")).toBe("\u00a0codex\u00a0");
+  }
+  process.env.LC_ALL = "en_US.UTF-8";
+  expect(configRead("crew-harness")).toBe("codex");
 });
 
 test("stateDir mints state/ under the resolved home", () => {
@@ -163,19 +181,23 @@ test("envHome and configRead answer exactly what ac_home_resolve and ac_config_r
   // tables, which differ between macOS and Linux - the Unicode trim is pinned
   // by the port-only tests above instead.
   const bodies = ["codex\n", " \tcodex \r\n2nd\n", "\n\ncodex\n", "", "x y\tz\n", "# comment\ncodex\n", "codex"];
+  // Under C the trim is ASCII-only on every libc, so a non-breaking space
+  // body is pinned there too.
+  const cases: [string, string | null][] = [...bodies.map((b): [string, string | null] => ["en_US.UTF-8", b]), ["C", "\u00a0codex\u00a0\n"], ["C", " \tcodex \r\n"]];
   for (const home of [undefined, h, link]) {
-    for (const body of home ? [...bodies, null] : [null]) {
+    for (const [locale, body] of home ? [...cases, ["en_US.UTF-8", null] as [string, null]] : [["en_US.UTF-8", null] as [string, null]]) {
       if (home) {
         const f = join(h, "config", "crew-harness");
         if (body === null) Bun.spawnSync(["rm", "-f", f]); else writeFileSync(f, body);
       }
-      const env = { PATH: process.env.PATH!, LC_ALL: "en_US.UTF-8", ...(home ? { AC_HOME: home } : {}) };
+      const env = { PATH: process.env.PATH!, LC_ALL: locale, ...(home ? { AC_HOME: home } : {}) };
       const bash = Bun.spawnSync(
         ["bash", "-c", '. "$1/ac-lib.sh"; printf "%s|%s" "$(ac_home_resolve "" "")" "$(ac_config_read crew-harness claude)"', "--", binDir],
         { env },
       );
       expect(bash.exitCode).toBe(0);
       if (home) process.env.AC_HOME = home; else delete process.env.AC_HOME;
+      process.env.LC_ALL = locale;
       expect(`${envHome()}|${configRead("crew-harness", "claude")}`).toBe(bash.stdout.toString());
     }
   }
