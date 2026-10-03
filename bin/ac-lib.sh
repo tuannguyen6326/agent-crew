@@ -14,7 +14,7 @@
 # meta classes, the landing ledger (cross-family file interlock) + crewmate
 # seeding (ac_seed_*), git helpers (ac_repo_root/ac_default_branch/
 # ac_default_ref/ac_project_dir/ac_project_config_file/ac_knowledge_file/
-# ac_home_resolve), ac_project_mode, the orphaned shell-snapshot detector, and
+# ac_home_resolve), the orphaned shell-snapshot detector, and
 # small logging/error helpers.
 #
 # SPLIT (audit-f3, codebase-audit-2026-07-29 finding 3): the ac_qa_*
@@ -509,7 +509,7 @@ ac_config_converge_from_parent() {
 #            failure yields a reason a reader can act on.
 #
 # Non-entry lines (the heading, blanks, anything not starting with `- `) are
-# IGNORED - never parsed, never reported - the tolerance ac_project_mode has.
+# IGNORED - never parsed, never reported - the tolerance src/project-mode.ts has.
 
 ac_deputy_registry() {
   # ac_deputy_registry - path of the routing table (records/crewdeputies.md).
@@ -2767,20 +2767,6 @@ ac_home_resolve() {
   fi
   [ -n "${AC_HOME:-}" ] || return 0
   ( cd "$AC_HOME" && pwd -P )
-}
-
-ac_project_mode() {
-  # ac_project_mode <project-name> - the registry line's bracket content
-  # (`- <name> [+yolo] - <summary>`), empty when the project has no bracket
-  # or no line. Only `+yolo` means anything any more: DELIVERY MODE IS
-  # PER-TASK and a legacy `[<mode>]` here is
-  # tolerated, ignored content - ac-project-mode.sh owns the read.
-  local name="$1" reg line
-  reg="$(ac_records_dir)/projects.md"
-  [ -f "$reg" ] || { printf '\n'; return 0; }
-  line="$(grep -E "^- $name \[" "$reg" 2>/dev/null | head -n1 || true)"
-  if [ -z "$line" ]; then printf '\n'; return 0; fi
-  printf '%s\n' "$line" | sed -n 's/^- [^[]*\[\([^]]*\)\].*/\1/p'
 }
 
 # --- orphaned shell-snapshot detection: the busy-loop backstop ----------------
