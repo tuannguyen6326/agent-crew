@@ -55,9 +55,9 @@ A fleet home holds the fleet's state, not code; `AGENTS.md` section 2 lists its 
 Scripts run from the distro checkout that owns `bin/` and read and write fleet state under `$AC_HOME`, which is required: `ac_home` refuses rather than fall back to the checkout.
 A caller that legitimately runs homeless, as every crewmate pane does, uses the rungs built for it instead (`bin/ac-lib.sh` header).
 
-`ac_seed_runtime_links` symlinks the executable core - `bin`, `CLAUDE.md`, `.claude`, `AGENTS.md` - into a home, so a chief session runs with cwd = home while the code stays in the checkout.
+`seedRuntimeLinks` (`src/lib.ts`) symlinks the executable core - `bin`, `CLAUDE.md`, `.claude`, `AGENTS.md` - into a home, so a chief session runs with cwd = home while the code stays in the checkout.
 A real (non-symlink) entry is a per-home override and is left alone, a stale symlink is repointed, and `docs/` and `tests/` are never linked.
-`bin/ac-fleet-new.sh` calls it for a new fleet home; `src/home-seed.ts` calls its `src/lib.ts` twin `seedRuntimeLinks` for a crewdeputy home.
+`src/fleet-new.ts` calls it for a new fleet home and `src/home-seed.ts` for a crewdeputy home; its bash original `ac_seed_runtime_links` is retired, frozen at `tests/fixtures/ac-seed-runtime-links.sh` for the oracles.
 `state/.ac-root` (`ac_seed_root_pointer`) records the checkout, so a hook deployed under `config/` can find `bin/ac-lib.sh` from any cwd.
 
 `bin/ac-lib.sh` is the core library every script sources.

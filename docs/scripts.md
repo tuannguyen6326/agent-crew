@@ -156,7 +156,7 @@ Rows name fail-closed behavior, the callers that matter, and where a script refu
 | Script | What it does |
 |---|---|
 | `ac-setup.sh` | One-off machine setup, INTERACTIVE captain tool: toolchain doctor, optional captain tools, homes container, `ac` launcher; never edits dotfiles. Spec: `bin/ac-setup.sh` header. |
-| `ac-fleet-new.sh [<name>] [--container <dir>]` | Creates a top-level fleet home, INTERACTIVE captain tool: one prompt per knob, a knob file written only when a value was typed, `config/backend` seeded as `herdr`. Refuses an existing home. Spec: `bin/ac-fleet-new.sh` header. |
+| `ac-fleet-new.sh [<name>] [--container <dir>]` | Creates a top-level fleet home, INTERACTIVE captain tool: one prompt per knob, a knob file written only when a value was typed, `config/backend` seeded as `herdr`. Refuses an existing home. Spec: `src/fleet-new.ts` header (the entry execs it). |
 | `ac-bootstrap.sh [--quiet]` | Toolchain doctor with stable line prefixes (`OK:`, `MISSING:`, `BELOW-FLOOR:`, `NO-CAPABILITY:`, `OPTIONAL:`, ...); exit 1 only when a required tool is missing, below floor or lacking its capability, or the backend compat check fails. Spec: `bin/ac-bootstrap.sh` header. |
 | `ac-lint.sh [--all]` | The single lint definition (`bash -n` plus shellcheck) over its owned script set; by default only changed files, `--all` for the full set. Spec: `bin/ac-lint.sh` header. |
 
