@@ -71,7 +71,7 @@
 # fleet does not need that machinery today.
 #
 # HOSTING: this script has no daemon of its own - CronCreate is session-only
-# (records/standing-jobs.md and bin/ac-standing-jobs.sh's header own that
+# (records/standing-jobs.md and src/standing-jobs.ts's header own that
 # contract). A fleet that wants it polled regularly declares it there, in the
 # same grammar as every other standing job, and re-creates the CronCreate job
 # at session start like any other.

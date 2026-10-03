@@ -56,7 +56,7 @@
 # Reports land next to their brief: <dir>/report.md.
 # Every brief is CREATED at one of those live paths, always - archiving changes
 # nothing here. A family that is already CLOSED may since have been relocated
-# whole to data/archive/<year>/<family>/ by bin/ac-archive.sh, whose header owns
+# whole to data/archive/<year>/<family>/ by src/archive.ts, whose header owns
 # that layout; reads resolve across it through ac_room_file (bin/ac-lib.sh).
 #
 # Execution briefs (default, = --stage implement) tell one crewmate to own
