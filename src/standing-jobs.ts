@@ -69,9 +69,11 @@
 // way `while IFS= read -r line` read it - an unterminated last line is NOT a
 // line (a hand-edited file without a final newline loses its last job in both
 // modes), a CR before the LF stays inside the last field, and a NUL byte ends
-// the line. The ONE declared divergence from the original: a byte that is not
+// the line. Two declared divergences from the original: a byte that is not
 // valid UTF-8 is parsed as a byte whatever the caller's locale, where BSD sed
-// under a UTF-8 locale aborted the original mid-output (exit 1).
+// under a UTF-8 locale aborted the original mid-output (exit 1); and a digest
+// over a present file this process cannot read says nothing on stderr, where
+// the original's stderr was bash's own redirect error.
 import { accessSync, constants, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { die, enterCaller, recordsDir } from "./lib.ts";

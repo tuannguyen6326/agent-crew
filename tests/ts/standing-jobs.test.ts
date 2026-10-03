@@ -58,10 +58,19 @@ test("readLines reads what `while IFS= read -r` reads: an unterminated last line
     newlineOnly: "\n",
     empty: "",
   };
+  // bash 3.2 (this host's /bin/bash) ends a `read -r` line at a NUL; bash 4+
+  // drops the byte and keeps reading. The port keeps 3.2's reading, the one
+  // the frozen original had on this host, so a newer bash is not the oracle
+  // for that row - the declared result is pinned on its own there.
+  const major = Number(Bun.spawnSync(["bash", "-c", 'printf %s "${BASH_VERSINFO[0]}"']).stdout.toString());
   for (const [name, body] of Object.entries(cases)) {
+    const got = readLines(Buffer.from(body, "latin1"));
+    if (name === "nulInsideId" && major !== 3) {
+      expect(got).toEqual(["- a", "- c [on] cadence:2"]);
+      continue;
+    }
     const f = file(`${name}.md`, body);
     const want = bash(READ_LOOP, f);
-    const got = readLines(Buffer.from(body, "latin1"));
     expect(got.map((l) => `${l}\n`).join("")).toBe(want);
   }
 });

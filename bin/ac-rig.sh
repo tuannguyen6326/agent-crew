@@ -315,7 +315,7 @@ EOF
 
   # LIVENESS, the half no read-only command settles. CronCreate is
   # session-only: the job lives in harness session memory, is never written to
-  # disk, and dies with the session (bin/ac-standing-jobs.sh's header, which
+  # disk, and dies with the session (src/standing-jobs.ts's header, which
   # refuses to claim PRESENT/MISSING for the same reason). Every on-disk
   # footprint was checked and none attributes a run to a job - the github
   # store is a de-dup key that writes nothing when a poll finds nothing new,

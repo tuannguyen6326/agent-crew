@@ -147,9 +147,14 @@ SAME_ENV=LC_ALL=C both
 SAME_ENV=
 o_rc=0; LC_ALL=en_US.UTF-8 "$obin/ac-standing-jobs.sh" >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
 n_rc=0; LC_ALL=en_US.UTF-8 "$BIN/ac-standing-jobs.sh" >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$o_rc" "1" "invalid byte under UTF-8: the original aborted"
-assert_contains "$(cat "$TMP/o.err")" "illegal byte sequence" "invalid byte under UTF-8: the original's abort was sed's"
-assert_eq "$(wc -l <"$TMP/o.out" | tr -d ' ')" "2" "invalid byte under UTF-8: the original stopped after the first job"
+# The abort is BSD sed's; GNU sed (it answers --version) is not held to it.
+if sed --version >/dev/null 2>&1; then
+  printf 'SKIP: the BSD-sed abort arm (GNU sed here)\n'
+else
+  assert_eq "$o_rc" "1" "invalid byte under UTF-8: the original aborted"
+  assert_contains "$(cat "$TMP/o.err")" "illegal byte sequence" "invalid byte under UTF-8: the original's abort was sed's"
+  assert_eq "$(wc -l <"$TMP/o.out" | tr -d ' ')" "2" "invalid byte under UTF-8: the original stopped after the first job"
+fi
 assert_eq "$n_rc" "0" "invalid byte under UTF-8: the port parses the byte and exits 0"
 assert_eq "$(cat "$TMP/n.err")" "" "invalid byte under UTF-8: the port has nothing to say on stderr"
 LC_ALL=C "$BIN/ac-standing-jobs.sh" >"$TMP/c.out"
