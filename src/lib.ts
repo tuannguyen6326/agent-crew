@@ -739,19 +739,23 @@ function softHome(report: boolean): string {
   return home;
 }
 
+// The path helpers (ac_state_dir, ac_data_dir, ac_records_dir) as `$(...)`
+// read them: `<home>/<name>`, minted, or "" once the refusal is printed.
+function softSubdir(name: string, report: boolean): string {
+  const home = softHome(report);
+  if (home === "") return "";
+  const dir = `${home}/${name}`;
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch {}
+  return dir;
+}
+
 // ac_task_meta / ac_task_status twins: `<state dir>/<id>.<ext>`, state/ minted
 // on the way (ac_state_dir's mkdir -p), the id a path component as given - the
 // bash never validated it, so `../t1` names `<home>/t1.meta` on both sides.
 function stateFile(id: string, ext: string, report: boolean): string {
-  const home = softHome(report);
-  let dir = "";
-  if (home !== "") {
-    dir = `${home}/state`;
-    try {
-      mkdirSync(dir, { recursive: true });
-    } catch {}
-  }
-  return `${dir}/${id}.${ext}`;
+  return `${softSubdir("state", report)}/${id}.${ext}`;
 }
 
 export function taskMeta(id: string): string {
@@ -990,4 +994,103 @@ export function configDir(): string {
 
 export function projectsDir(): string {
   return homeSubdir("projects");
+}
+
+// --- review-diff twins ---
+import { acDoneline, records } from "./backlog.ts";
+
+// ac_family_of_id's twin: the family a task id belongs to. Suffix grammar is
+// stageDirForId's; a PLAIN stage suffix is trusted only when data/<family>/
+// <stage> exists (a flat id merely colliding with a stage name stays its own
+// family), a staged revision checks the BASE stage dir and falls back to the
+// un-revised id, a bare `<family>-rN` is unconditional. The dir test reads the
+// data dir as the bash's `[ -d "$(ac_data_dir)/..." ]` did: minted when there
+// is a home, and homeless the refusal is printed and the test runs on "/...".
+export function familyOfId(id: string): string {
+  const sub = stageDirForId(id);
+  if (sub === "") return id;
+  const fam = sub.slice(0, sub.indexOf("/"));
+  const stage = sub.slice(sub.indexOf("/") + 1);
+  if (/^implement-r[0-9]{1,2}$/.test(stage)) return fam;
+  const rev = /^(.*)-r[0-9]{1,2}$/.exec(stage);
+  if (rev) return isDir(`${softSubdir("data", true)}/${fam}/${rev[1]}`) ? fam : id.slice(0, id.lastIndexOf("-r"));
+  return isDir(`${softSubdir("data", true)}/${sub}`) ? fam : id;
+}
+
+// ac_crew_branch's twin: the ONE crew-branch derivation.
+export function crewBranch(id: string): string {
+  return `crew/${familyOfId(id)}`;
+}
+
+// What `awk -v name="$v"` makes of its value (onetrue awk, probed): the C
+// escapes, `\"` and `\/`, up to three DIGITS read as octal into one byte, any
+// other escaped character kept without its backslash, a lone final backslash
+// kept, and the string cut at a NUL as every C string is.
+function awkAssign(v: string): string {
+  let out = "";
+  for (let i = 0; i < v.length; i++) {
+    if (v[i] !== "\\") {
+      out += v[i];
+      continue;
+    }
+    const n = v[++i];
+    if (n === undefined) return out + "\\";
+    const simple: Record<string, string> = { n: "\n", t: "\t", b: "\b", f: "\f", r: "\r", v: "\v", a: "\x07", "\\": "\\", '"': '"', "/": "/" };
+    if (simple[n] !== undefined) out += simple[n];
+    else if (/[0-9]/.test(n)) {
+      let code = 0;
+      let k = 0;
+      while (k < 3 && /[0-9]/.test(v[i + k] ?? "")) code = code * 8 + Number(v[i + k++]);
+      i += k - 1;
+      out += String.fromCharCode(code & 0xff);
+    } else out += n;
+  }
+  return out.split("\0", 1)[0]!;
+}
+
+export type EpicBase = { rc: 0; entry: string } | { rc: 1 | 2 };
+
+// ac_epic_base_for's twin: the integration-branch entry a lease for <id> on
+// <repo> must honor. The ledger row is <id>'s by LONGEST id-prefix (the id,
+// then the id cut at its last `-`, and so on), the FIRST row per id winning;
+// its `epic:` token, then its `feature:` token, then the row id itself are
+// tried against the branch record (epicBranchEntry), a retired or missing
+// record falling to the next. rc 1 = no fence (no home, no ledger, no row, no
+// entry), rc 2 = the ledger is there but cannot be read. Rows are what the awk
+// read (records/acDoneline, src/backlog.ts: a record cut at a NUL, CR kept)
+// and the id is what `awk -v want=` made of it (awkAssign). A ledger that is a
+// directory is absent (`[ -f ]`), never rc 2. Homeless, the refusal the bash's
+// `$(ac_records_dir)` printed is not reproduced (named): the one live caller
+// drops that stderr. The bun-missing path that gave the awk rc 2 has no
+// in-process equivalent.
+export function epicBaseFor(id: string, repo: string): EpicBase {
+  const home = softHome(false);
+  if (home === "") return { rc: 1 };
+  const ledger = `${softSubdir("records", false)}/backlog.md`;
+  if (!isFile(ledger)) return { rc: 1 };
+  let text: string;
+  try {
+    text = readFileSync(ledger, "latin1");
+  } catch {
+    return { rc: 2 };
+  }
+  const rows = new Map<string, [string, string]>();
+  for (const line of records(text)) {
+    if (!line.startsWith("- [")) continue;
+    const f = acDoneline(line);
+    if (!rows.has(f.id)) rows.set(f.id, [f.epic, f.feature]);
+  }
+  let b = awkAssign(Buffer.from(id, "utf8").toString("latin1"));
+  let row = rows.get(b);
+  while (row === undefined) {
+    if (!b.includes("-")) return { rc: 1 };
+    b = b.replace(/-[^-]*$/, "");
+    row = rows.get(b);
+  }
+  for (const cand of [row[0], row[1], b]) {
+    if (cand === "") continue;
+    const e = epicBranchEntry(Buffer.from(cand, "latin1").toString("utf8"), repo);
+    if (e.rc === 0) return e;
+  }
+  return { rc: 1 };
 }
