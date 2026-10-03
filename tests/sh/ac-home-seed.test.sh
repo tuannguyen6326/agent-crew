@@ -122,6 +122,9 @@ assert_eq "$(cd "$AC_HOME/crewdeputies/mate-four/bin" && pwd -P)" "$(cd "$BIN" &
 # order - unobservable here, every copy landing under its own basename. Link TARGETS differ by construction (the
 # oracle's ac_root is its own copy of bin/, the port's is this checkout), so a link is compared by basename.
 obin="$(make_oracle_bin ac-home-seed)"
+# The frozen entry calls ac_seed_runtime_links, retired from bin/ac-lib.sh by
+# the fleet-new port; the oracle's own lib copy gets the frozen helper back.
+cat "$ROOT/tests/fixtures/ac-seed-runtime-links.sh" >>"$obin/ac-lib.sh"
 O="$TMP/dh-o"; N="$TMP/dh-n"
 mkdir -p "$TMP/stub"
 printf '#!/bin/sh\nprintf "2026-01-02T03:04:05Z\\n"\n' >"$TMP/stub/date"

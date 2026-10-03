@@ -223,8 +223,9 @@ export function leaseAgeSecs(ts: string): number | null {
   return n - Number(then);
 }
 
-// ac_seed_runtime_links's twin (the bash copy stays for bin/ac-fleet-new.sh;
-// tests/ts/home-seed.test.ts holds the two together): the executable core
+// ac_seed_runtime_links's twin, and since the fleet-new port its only form -
+// the bash helper is retired, frozen at tests/fixtures/ac-seed-runtime-links.sh
+// where tests/ts/home-seed.test.ts holds the two together: the executable core
 // linked into a home so a chief runs with cwd = home. A REAL entry is a
 // per-home override and is left alone; `ln -sfn` is spawned, not re-done, so
 // a stale or dangling link is repointed exactly as it is there, and its
@@ -234,7 +235,9 @@ export function seedRuntimeLinks(home: string): void {
     const p = join(home, f);
     if (existsSync(p) && !lstatSync(p).isSymbolicLink()) continue;
     const r = Bun.spawnSync(["ln", "-sfn", join(ROOT, f), p], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
-    if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);
+    if (r.exitCode === 0) continue;
+    const sig = r.signalCode ? (osConstants.signals as Record<string, number>)[r.signalCode] ?? 0 : 0;
+    process.exit(r.exitCode ?? 128 + sig);
   }
 }
 
@@ -954,11 +957,37 @@ export function statusAppend(id: string, line: string, unguarded = false): boole
   return ok;
 }
 
-// --- dash twins ---
+// --- promote twins ---
 
-// ac_projects_dir's twin: `<home>/projects`, minted on the way like state/ and
-// records/ (homeSubdir), so a view that walks the pools mints the dir as the
-// bash did; the many bash callers keep their copy.
+// ac_delivery_mode_block's twin (bin/ac-pipeline-lib.sh), whose bash copy stays
+// live for bin/ac-brief.sh: two renderers of the one per-mode delivery
+// contract, held together by tests/ts/promote.test.ts so a promoted scout and
+// a briefed worker can never read different rules. No trailing newline, ""
+// for a mode the bash case has no arm for.
+export function deliveryModeBlock(mode: string, branch: string, base: string, integ: string, loop: string): string {
+  switch (mode) {
+    case "crew-ship":
+      return "- Mode crew-ship: run the `crew-ship` skill. Its `ac-ship` engine owns the guarded 8-step delivery pipeline (intent, rebase, review, test, document, lint, push, pr). Hand over only after checks pass and include the PR URL.";
+    case "direct-pr":
+      return `- Mode direct-pr: after ${loop}, push \`${branch}\` and open a PR against ${base}. The PR body covers intent, changes, and verification evidence.`;
+    case "feature-pr":
+      return `- Mode feature-pr: after ${loop}, leave \`${branch}\` clean and fully committed - it lands onto the feature integration branch \`${integ}\` (the chief runs ac-merge-local). Never push or open a PR; publication happens ONCE at the feature ship.`;
+    case "local-only":
+      return `- Mode local-only: after ${loop}, leave \`${branch}\` clean and fully committed. Never push or open a PR.`;
+    default:
+      return "";
+  }
+}
+
+// --- fleet-new twins ---
+
+// ac_config_dir / ac_projects_dir twins: the dir minted under the home AC_HOME
+// names. With stateDir, dataDir and recordsDir these ARE the fleet-home layout
+// ac-lib.sh defines, which is why src/fleet-new.ts seeds through them.
+export function configDir(): string {
+  return homeSubdir("config");
+}
+
 export function projectsDir(): string {
   return homeSubdir("projects");
 }
