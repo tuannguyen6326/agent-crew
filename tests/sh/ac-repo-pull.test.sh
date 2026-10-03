@@ -284,4 +284,41 @@ assert_eq "$(norm "$TMP/n.err" "$NH")" "ERROR: not a git repo: HOME/caf"$'\357\2
 # (the merge just wrote HEAD); its `synced <branch> -> ` shape is documented in
 # the module header, not pinned here.
 
+# 18. no git on PATH: the first probe fails as exit 127 failed it - the entry's
+#     own refusal, never a runtime's stack
+both fresh
+farm="$TMP/nogit"; mkdir -p "$farm"
+IFS=: read -ra pathdirs <<<"$PATH"
+for d in "${pathdirs[@]}"; do
+  for x in "$d"/*; do [ -x "$x" ] && [ ! -e "$farm/$(basename "$x")" ] && ln -s "$x" "$farm/"; done
+done 2>/dev/null; rm -f "$farm/git"
+o_rc=0; (cd "$OH" && PATH="$farm" LC_ALL=C "$obin/ac-repo-pull.sh" clone) >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; (cd "$NH" && PATH="$farm" LC_ALL=C "$BIN/ac-repo-pull.sh" clone) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc $o_rc" "1 1" "no git: both exit 1"
+assert_eq "$(cat "$TMP/n.err")" "$(cat "$TMP/o.err")" "no git: the same refusal"
+assert_eq "$(cat "$TMP/n.err")" "ERROR: not a git repo: clone" "no git: the entry's own line, no stack"
+
+# 19. git's own diagnostics pass through where the original let them: under
+#     GIT_TRACE=1 show-ref, status and the final rev-parse each trace (the
+#     clock prefix stripped before comparing)
+both fresh
+o_rc=0; (cd "$OH" && GIT_TRACE=1 LC_ALL=C "$obin/ac-repo-pull.sh" clone) >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; (cd "$NH" && GIT_TRACE=1 LC_ALL=C "$BIN/ac-repo-pull.sh" clone) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "GIT_TRACE: both exit 0"
+untrace() { LC_ALL=C sed -e 's/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9]* //' -e "s#$2#HOME#g" "$1"; }
+assert_eq "$(untrace "$TMP/n.err" "$NH")" "$(untrace "$TMP/o.err" "$OH")" "GIT_TRACE: the same trace lines pass through"
+assert_eq "$(grep -c 'show-ref' "$TMP/n.err")" "1" "GIT_TRACE: show-ref's trace is among them"
+
+# 20. a caller cwd bun cannot enter (a name ending in a backslash): a relative
+#     root is still the caller's, never the distro checkout's
+both fresh
+oddcd() { mkdir -p "$H/odd\\"; }
+both oddcd
+o_rc=0; (cd "$OH/odd\\" && LC_ALL=C "$obin/ac-repo-pull.sh" ../clone) >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; (cd "$NH/odd\\" && LC_ALL=C "$BIN/ac-repo-pull.sh" ../clone) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc $o_rc" "0 0" "backslash cwd: both exit 0"
+assert_eq "$(cat "$TMP/n.raw")" "$(cat "$TMP/o.raw")" "backslash cwd: the same answer"
+assert_eq "$(cat "$TMP/n.raw")" "synced main -> $(short)" "backslash cwd: the relative root resolved against the caller"
+same_clone
+
 pass

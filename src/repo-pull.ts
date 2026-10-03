@@ -9,11 +9,18 @@
 //   ac-repo-pull.sh <repo-root>
 //
 // <repo-root> is any path git's -C accepts, exactly as given: absolute,
-// relative to the caller's cwd (enterCaller), a subdirectory of a work tree, a
-// trailing slash. Extra arguments are ignored; no -h; stdin is never read;
-// AC_HOME is never consulted (a homeless run is legal and identical). Every
-// result is git's: seven `git -C <root>` spawns at most, with the original's
-// arguments and the original's handling of each one's output.
+// relative to the caller's cwd, a subdirectory of a work tree, a trailing
+// slash. A relative root stays the CALLER's: enterCaller returns to that cwd,
+// and when bun cannot enter it (a directory name bun misreads, one ending in
+// a backslash) the caller's path bin/ac-bun.sh handed over is joined in front
+// of the root for git alone - the messages still echo the root as given.
+// Extra arguments are ignored; no -h; stdin is never read; AC_HOME is never
+// consulted (a homeless run is legal and identical). Every result is git's:
+// eight `git -C <root>` spawns at most, with the original's arguments and the
+// original's handling of each one's output (stderr passes through where the
+// bash let it: show-ref, status, the final rev-parse); a git that cannot be
+// launched at all is the failed probe, as `||` read exit 127 - `not a git
+// repo`, or an empty capture.
 //
 // ONE line on stdout, exit 0, unless marked; the probes run IN THIS ORDER:
 //   1. no or empty root     ERROR: usage: ac-repo-pull.sh <repo-root>   (stderr, exit 1)
@@ -61,14 +68,30 @@
 import { writeSync } from "node:fs";
 import { die, enterCaller } from "./lib.ts";
 
-const { args } = enterCaller(process.argv.slice(2));
+const callerCwd = process.argv[2] ?? "";
+const { args, atCaller } = enterCaller(process.argv.slice(2));
 const root = args[0] ?? "";
 if (root === "") die("usage: ac-repo-pull.sh <repo-root>");
+// Only git sees the joined path; every message echoes the root as given.
+const gitRoot = !atCaller && callerCwd !== "" && !root.startsWith("/") ? `${callerCwd}/${root}` : root;
 
-const quiet = (...a: string[]): number => Bun.spawnSync(["git", "-C", root, ...a], { stdout: "ignore", stderr: "ignore" }).exitCode ?? 1;
-// `$(git ...)`: the stdout bytes, trailing newlines dropped, the exit ignored.
+// A launch that fails (no git on PATH) is a failed probe, as exit 127 was.
+const quiet = (...a: string[]): number => {
+  try {
+    return Bun.spawnSync(["git", "-C", gitRoot, ...a], { stdout: "ignore", stderr: "ignore" }).exitCode ?? 1;
+  } catch {
+    return 127;
+  }
+};
+// `$(git ...)`: the stdout bytes, trailing newlines dropped, the exit ignored;
+// an unlaunchable git captured nothing.
 function captured(stderr: "ignore" | "inherit", ...a: string[]): Buffer {
-  const r = Bun.spawnSync(["git", "-C", root, ...a], { stdout: "pipe", stderr });
+  let r: { stdout: Uint8Array };
+  try {
+    r = Bun.spawnSync(["git", "-C", gitRoot, ...a], { stdout: "pipe", stderr });
+  } catch {
+    r = { stdout: new Uint8Array(0) };
+  }
   let out = Buffer.from(r.stdout);
   let end = out.length;
   while (end > 0 && out[end - 1] === 0x0a) end--;
@@ -87,7 +110,12 @@ if (def.length === 0) {
   process.exit(0);
 }
 const branch = def.toString();
-if (quiet("show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`) !== 0) {
+// show-ref's stderr passed through in the original (a GIT_TRACE line, say).
+let shown = 1;
+try {
+  shown = Bun.spawnSync(["git", "-C", gitRoot, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`], { stdout: "ignore", stderr: "inherit" }).exitCode ?? 1;
+} catch {}
+if (shown !== 0) {
   say("fetched only (origin has no ", def, ")");
   process.exit(0);
 }
