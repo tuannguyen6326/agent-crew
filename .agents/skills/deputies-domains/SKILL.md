@@ -5,7 +5,7 @@ description: Crewdeputies (persistent nested homes with their own clones and ses
 
 # deputies-domains
 
-Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points here; "section N" below means that section of `AGENTS.md`.
+"Section N" below means that section of `AGENTS.md`.
 
 ## Crewdeputies and crewdomains
 

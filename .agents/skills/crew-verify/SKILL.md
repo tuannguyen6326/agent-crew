@@ -50,11 +50,11 @@ its own command line; `AC_CREW_ID` is set in a crewmate's session, and a solo
 session passes its slice id as `--caller` instead.)
 
 FOREGROUND is not a style preference.
-A harness's `run_in_background` shell is the harness's to kill, and Claude Code
-kills one with the words "stopped because the system is running low on memory"
-when the host swaps; measured 2026-09-14, that killed the `ac-verify.sh` driver
-while its reviewer pane kept running, the reviewer wrote a four-finding verdict
-nobody harvested, sat idle for nineteen minutes, and left a lock and no receipt.
+A harness's `run_in_background` shell is the harness's to kill - Claude Code
+kills one under host memory pressure with the words "stopped because the
+system is running low on memory".
+A killed driver orphans its reviewer pane: the verdict is never harvested, and
+the round leaves a lock and no receipt.
 The round takes minutes; wait on it in the foreground, or on a pane the harness
 does not own.
 

@@ -482,11 +482,12 @@ assert_eq "$(ac_domain_parse "$dreg" | cut -f1)" "INVALID" "R2-CR-004: an unders
 "$dom" list >/dev/null || fail "R2-CR-004: list must still exit 0 on such an entry"
 printf -- '- payments - the payments domain - scope: money movement (added 2026-08-02T00:00:00Z)\n' >"$dreg"
 
-# R2-CR-005 - AC-1.6's warning: delivery mode lives ONLY in the fleet registry.
+# R2-CR-005 - AC-1.6's warning: delivery mode is per task, never a registry
+# property, so a domain file carrying any mode token is drift.
 # Both the spec's placeholder AND a real token: fleet rows carry [crew-ship],
 # never the literal [mode], so matching only the placeholder caught the spec's
 # own notation and nothing an operator would actually paste (round-6 CR-003).
-for tok in '[mode]' '[crew-ship]' '[local-only]'; do
+for tok in '[mode]' '[crew-ship]' '[local-only]' '[feature-pr]'; do
   printf '# Projects: payments\n\n## alpha\n\n## beta\n\nalpha %s\n' "$tok" \
     >"$(pkg payments)/records/projects.md"
   out="$("$dom" validate)" || fail "R2-CR-005: a $tok token warns, it does not refuse"

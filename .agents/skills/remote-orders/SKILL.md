@@ -18,7 +18,7 @@ Rooms stay the record; the remote thread is only another chat stream.
    - exactly ONE pending gate fleet-wide - bind to it;
    - the message answers the LAST question you asked and that gate is still pending - bind to it AND echo the receipt immediately;
    - otherwise DO NOT GUESS: reply the pending list into the thread (`ac-remote.sh reply <rid>` with the same list `ac-room.sh list` shows) and ask the captain to answer with a task name.
-3. Receipt EVERY decision twice, like any captain answer - this step is for an UNPROMOTED family only; a PROMOTED family with a live roomchief is forwarded per "What stays automatic" below instead, and `bin/ac-room.sh post` now REFUSES an unscoped `DECIDED` write into one:
+3. Receipt EVERY decision twice, like any captain answer - this step is for an UNPROMOTED family only; a PROMOTED family with a live roomchief is forwarded per "What stays automatic" below instead, and `bin/ac-room.sh post` refuses an unscoped `DECIDED` write into one:
    - post `DECIDED <family>: <answer>` to the family room (`bin/ac-room.sh post <family> captain-remote 'DECIDED <family>: <answer>'`); when `config/slack-captain-id` lists several co-captains, append `(by <author>)` from the stash so the record shows WHICH captain decided;
    - echo the same receipt back into the thread with `bin/ac-remote.sh reply <rid>` - a misread must be visible and correctable in one line, on the channel the captain is actually reading.
 4. DESTRUCTIVE or irreversible confirmations are NOT accepted remotely - `--force` discards, repo deletion, anything the escalation etiquette calls irreversible.

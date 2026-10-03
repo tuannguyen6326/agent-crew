@@ -11,7 +11,7 @@ flow is PINNED to `direct`. Do not re-triage the flow; everything else
 (mode, promote) you still triage yourself.
 
 1. The arguments may START with captain pins - strip them before reading
-   the order: `--mode <crew-ship|direct-pr|local-only>` pins the delivery
+   the order: `--mode <crew-ship|direct-pr|local-only|feature-pr>` pins the delivery
    mode (pass it through as `ac-brief.sh/ac-spawn.sh --mode <m>`),
    `--review <yes|no>` pins independent review for `direct-pr`/`local-only`
    (`crew-ship` is always `yes`; `--review no` there is invalid) - a pinned

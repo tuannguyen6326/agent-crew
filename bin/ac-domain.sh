@@ -335,7 +335,7 @@ cmd_new() {
   # set against the symlink set in BOTH directions. It stays ADVISORY - prose
   # may lag, the guard may not.
   {
-    printf '# Projects: %s\n\nThe domain'"'"'s view of each in-scope project - which part belongs to this domain, partner context, constraints, entry points. Delivery mode and the fleet description live in records/projects.md; verified code facts live in records/repo-knowledge/<project>.md.\n' "$name"
+    printf '# Projects: %s\n\nThe domain'"'"'s view of each in-scope project - which part belongs to this domain, partner context, constraints, entry points. The fleet description lives in records/projects.md, delivery mode on each backlog row; verified code facts live in records/repo-knowledge/<project>.md.\n' "$name"
     printf '\nOne `## <project-name>` heading per in-scope project - `validate` compares that set against the projects/ view.\n'
     local hp
     for hp in ${wanted+"${wanted[@]}"}; do printf '\n## %s\n' "$hp"; done
@@ -873,11 +873,11 @@ domain_validate_projects() {
         && printf 'WARN %s: records/projects.md repeats the FLEET description of %s verbatim - the description resolves from records/projects.md alone, and a copy here is the drift this file exists to avoid\n' "$name" "$fname"
     done <"$freg"
   fi
-  # A REAL token, not the placeholder. Fleet rows carry `[crew-ship]`,
-  # `[direct-pr]`, `[local-only]`; searching for the literal `[mode]` caught the
-  # spec's own notation and nothing an operator would ever actually paste.
-  grep -qE '\[(mode|crew-ship|direct-pr|local-only)\]' "$detail" \
-    && printf 'WARN %s: records/projects.md carries a delivery-mode token - delivery mode lives ONLY in the fleet records/projects.md, and a second copy is exactly the drift this file was designed not to have\n' "$name"
+  # Every REAL mode token, not only the placeholder: an operator pastes
+  # `[crew-ship]`, never the literal `[mode]`, so matching the placeholder alone
+  # caught the spec's own notation and nothing anyone would actually write.
+  grep -qE '\[(mode|crew-ship|direct-pr|local-only|feature-pr)\]' "$detail" \
+    && printf 'WARN %s: records/projects.md carries a delivery-mode token - delivery mode is chosen per task on the backlog row, never a registry property, and a copy here is exactly the drift this file was designed not to have\n' "$name"
   links="$(domain_view_names "$name" | LC_ALL=C sort)"
   headings="$(awk '/^## / { print substr($0, 4) }' "$detail" | LC_ALL=C sort)"
   for n in $links; do

@@ -118,8 +118,8 @@ is a ledger row + finding, never a reason to stop verifying the rest.
      persisted`. Needs no backend? Say that: `- (none) - <why>`.
    - `rw` marks state effects: `ro` (read-only/idempotent - safe to run
      CONCURRENTLY) vs `rw` (mutates DB/mocks/service state - sequential).
-   - PARALLELISM, resolve-then-record: `ac-qa.sh infra up` now boots the
-     block you declared, so it can no longer start before it. Resolve the
+   - PARALLELISM, resolve-then-record: `ac-qa.sh infra up` boots the
+     block you declared, so it cannot start before it. Resolve the
      services FIRST, write the small `## Infra` block, kick `infra up` off
      as a BACKGROUND task, THEN write the case rows while images pull -
      the rows are the slow half, so the overlap survives. Baseline is a
@@ -297,9 +297,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
    - VISUAL FLOOR - every run owes >=1 portable visual artifact, whatever
      its tiers. `web` is not the only tier that owes a picture: an
      all-api/db run SCREENSHOTS ITS TEST REPORT (the Playwright HTML
-     report, the suite summary) and registers that. On the run that made
-     this rule, the report screenshot was the single most convincing
-     artifact - and the captain had to ask for it.
+     report, the suite summary) and registers that.
      The floor is MECHANICAL, not etiquette: `ac-qa.sh visual <path>
      [--case <id>] [--note <text>]` admits an artifact only if its MAGIC
      BYTES say png/jpeg/gif/webp (a renamed text file is refused), and

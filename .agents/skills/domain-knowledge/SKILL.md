@@ -111,8 +111,9 @@ keeps them in sync, and `validate` is how it proves it did.
   project verbatim - the fleet description resolves from the FLEET
   `records/projects.md` alone;
 - a delivery-mode token (`[crew-ship]` / `[direct-pr]` / `[local-only]` /
-  `[mode]`) inside the domain `records/projects.md` - mode resolves from the
-  FLEET `records/projects.md` alone; verified code facts belong in
+  `[feature-pr]` / `[mode]`) inside the domain `records/projects.md` -
+  delivery mode is chosen per task and lives on the backlog row (`AGENTS.md`
+  section 4); verified code facts belong in
   `records/repo-knowledge/<project>.md`, never here.
 
 ## Boundary
@@ -120,9 +121,7 @@ keeps them in sync, and `validate` is how it proves it did.
 Do not modify `bin/ac-domain.sh` to add a verb that would close the
 add/remove-project gap in step 2(b). If an acceptance check genuinely cannot
 be satisfied without touching that script, that is a `needs-decision:` for
-the chief - never a silent scope expansion. (`bin/ac-domain.sh` was just
-repaired five times over one class of bug in the family that built this
-feature - reopening it here is exactly the risk this boundary avoids.)
+the chief - never a silent scope expansion.
 
 There is deliberately no `captain.md` inside a crewdomain package - see (d)
 above - and this skill never creates one.

@@ -263,9 +263,10 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    this pipeline did not publish.
 8. **pr** - Open the PR with `gh pr create --base <target>` (create is
    unaffected by the deprecation below); update an EXISTING PR's title/body
-   through the REST PATCH, never `gh pr edit` - `gh pr edit` now fails with a
+   through the REST PATCH, never `gh pr edit` - `gh pr edit` fails with a
    GraphQL deprecation error (`repository.pullRequest.projectCards`, the
-   Projects-classic sunset). `<target>` is the SAME branch review/rebase
+   Projects-classic sunset; observed 2026-08-12 - re-test before dropping
+   the workaround). `<target>` is the SAME branch review/rebase
    targeted: read the `target=` line from `bin/ac-ship.sh status` (strip a
    leading `origin/`), falling back to the repo default branch when that
    line is absent (no `--target` was pinned at start). Never omit

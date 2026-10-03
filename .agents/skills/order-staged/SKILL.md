@@ -12,7 +12,7 @@ flow is PINNED to `staged`. Do not re-triage the flow; everything else
 yourself.
 
 1. The arguments may START with captain pins - strip them before reading
-   the order: `--mode <crew-ship|direct-pr|local-only>` pins the delivery
+   the order: `--mode <crew-ship|direct-pr|local-only|feature-pr>` pins the delivery
    mode (pass it through as `ac-brief.sh/ac-spawn.sh --mode <m>`),
    `--promote <yes|no>` pins the promotion decision, and `--qa <yes|no>`
    pins whether the task carries a `<family>-qa` stage - an independent

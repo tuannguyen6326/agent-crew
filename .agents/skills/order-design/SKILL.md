@@ -9,7 +9,7 @@ The captain invoked this order with `/order-design` - that IS the captain's own 
 Design runs and gates now; implementation is a LATER captain order.
 Nothing here invents new machinery - every stage below is the staged flow's own design mechanics, verbatim; the only new behavior is where the flow stops.
 
-1. The arguments may START with captain pins - strip them before reading the order: `--mode <crew-ship|direct-pr|local-only>`, `--promote <yes|no>`, `--qa <yes|no>` - exactly as `/order-staged` takes them.
+1. The arguments may START with captain pins - strip them before reading the order: `--mode <crew-ship|direct-pr|local-only|feature-pr>`, `--promote <yes|no>`, `--qa <yes|no>` - exactly as `/order-staged` takes them.
    A pin is the captain's own words for THAT dimension; every unpinned dimension you still triage yourself with receipts.
    Staged review is always `yes`.
    The REST of the arguments is the captain's order, verbatim.

@@ -5,12 +5,11 @@ description: Crewchief and roomchief intake judgment for every captain order, be
 
 # intake-triage
 
-Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points here; "section N" below means that section of `AGENTS.md`.
+"Section N" below means that section of `AGENTS.md`.
 
 ## Delivery mode (section 4)
 
-MODE IS PER-TASK, never a registry property:
-the delivery mode is chosen at intake per task and RECORDED as the row's
+The delivery mode is chosen at intake per task and recorded as the row's
 contract token `mode:<m>` (section 9 owns the grammar); `ac-brief.sh`
 refuses an unspecified mode - row pin > `--mode` flag > refuse, never a
 default - so the choice is always explicit and on the record. A legacy
@@ -25,15 +24,15 @@ answers.
 
 ## Flow, escalation gate and requirements check
 
-Two flows exist; pick one for EVERY captain order, AT INTAKE, before any
+Two flows exist; pick one for every captain order, at intake, before any
 brief is written. Precedence: (1) the captain's own words in the order,
 (2) `config/flow` (`direct` / `staged` pin it for the whole home),
-(3) `auto` (default) - the triage below decides. In `auto` YOU triage -
-and the TIME-EXPENSIVE choices ask first:
-using ANY of `flow:staged`, `mode:crew-ship`, `qa:yes`, or a
-discretionary `rev:yes` requires the captain's confirmation BEFORE use,
-carried as ONE bundled ask (section 8 etiquette) whose question states
-the REASON each heavy value is warranted (the signal: financial surface,
+(3) `auto` (default) - the triage below decides. In `auto` you triage -
+and the time-expensive choices ask first:
+using any of `flow:staged`, `mode:crew-ship`, `qa:yes`, or a
+discretionary `rev:yes` requires the captain's confirmation before use,
+carried as one bundled ask (section 8 etiquette) whose question states
+the reason each heavy value is warranted (the signal: financial surface,
 behavioral surface, multi-file risk, ...), unless the row's contract
 group already pins that token - a pin is pre-consent and is never
 re-asked. The cheap path (`direct`, `direct-pr`/`local-only`, `rev:no`,
@@ -263,8 +262,8 @@ integrates each repo's stories on one recorded branch: `data/<epic>/branches`
 is the captain-worded record, `bin/ac-epic-branch.sh` owns
 create/verify/show/retire, the lease fence lives in `ac-tree.sh get` (herdr) and `orca_worktree_lease` (orca)
 (fail-closed on a missing branch), landings ride `ac-merge-local.sh`/`ac-ship
---target` into the branch, per-story review/QA derive per the section-5 epic
-exception, and `bin/ac-epic-ship.sh` is the gated 2-PR exit (stories
+--target` into the branch, per-story review/QA derive per the `delivery-review`
+skill's epic exception, and `bin/ac-epic-ship.sh` is the gated 2-PR exit (stories
 terminal, partial-epic captain receipts, one review round at the tip, qa
 attestation when pinned; the captain merges every PR). The
 `epic-intake` skill owns the mechanics and `bin/ac-ready.sh`'s header owns the

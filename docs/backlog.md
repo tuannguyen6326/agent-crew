@@ -1,6 +1,6 @@
 # Backlog grammar
 
-Moved verbatim from `AGENTS.md` section 9, which keeps the one-line summary and points here; "section N" below means that section of `AGENTS.md`.
+"Section N" below means that section of `AGENTS.md`.
 
 `records/backlog.md` is the single task ledger:
 

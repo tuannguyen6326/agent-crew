@@ -5,7 +5,7 @@ description: Staged-flow design gates: the design crewmate's spec/architecture/p
 
 # staged-gates
 
-Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points here; "section N" below means that section of `AGENTS.md`.
+"Section N" below means that section of `AGENTS.md`.
 
 ## Staged flow and stage gates
 

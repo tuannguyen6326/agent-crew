@@ -5,7 +5,7 @@ description: The full text of the four fleet-wide judgment rules: finding-author
 
 # judgment-rules
 
-Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points here; "section N" below means that section of `AGENTS.md`.
+"Section N" below means that section of `AGENTS.md`.
 
 ## Judgment rules
 
@@ -100,12 +100,7 @@ Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points her
   means it is not a decision, it is a guess: park it as
   `needs-decision:` and ASK. It is the twin of the finding-authority
   rule above: that one binds a FINDING at write-time, this one binds
-  a RESOLUTION. Implement, review
-  fixes, and delivery are ONE execution role: the same crewmate carries the
-  task from first commit through fix rounds to delivery (steer its live
-  session with ac-send; `--resume-from` it when already torn down - same
-  role, resume allowed). A fresh execution crewmate on the crew branch is
-  recovery only when that session is unrecoverable.
+  a RESOLUTION.
 - Verify-before-assert rule - FLEET-WIDE, and it binds the crewchief and
   every roomchief the instant they ASSERT a mechanism, a rule, or an
   authority in ordinary prose - the gap the three rules above leave:

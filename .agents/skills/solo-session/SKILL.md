@@ -5,7 +5,7 @@ description: The two sanctioned ways a chief-side or captain-driven session writ
 
 # solo-session
 
-Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points here; "section N" below means that section of `AGENTS.md`.
+"Section N" below means that section of `AGENTS.md`.
 
 ## What the tools enforce
 

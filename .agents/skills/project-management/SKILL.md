@@ -20,7 +20,7 @@ Out of scope - keep these with their owners:
 ## Prime directive still binds
 
 Loading this skill never widens your authority over `projects/`.
-You stay read-only over `projects/` except the sanctioned writes (`git fetch`, `bin/ac-tree.sh` pool operations, `bin/ac-merge-local.sh` fast-forwards, teardown branch deletion).
+You stay read-only over `projects/` except the sanctioned writes section 1 lists.
 You never edit project files, run project builds, or commit project work - that is delegated to a crewmate.
 
 ## Add and clone

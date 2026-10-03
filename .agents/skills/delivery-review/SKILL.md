@@ -5,7 +5,7 @@ description: The execution role and its review obligation: what an execution cre
 
 # delivery-review
 
-Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points here; "section N" below means that section of `AGENTS.md`.
+"Section N" below means that section of `AGENTS.md`.
 
 ## Flows and the execution role
 
@@ -24,9 +24,8 @@ Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points her
   DELIVERY order is prepare,
   independent review when required, test per policy, document, lint per policy,
   push, and PR/local handover. A ref-changing fix invalidates review and loops to
-  a fresh review round - in `crew-ship` the pipeline now HOLDS that rule for
-  the crewmate rather than asking it to remember: `push` and `finish
-  checks-passed|passed` re-check the receipt's `reviewed_ref` against HEAD
+  a fresh review round - in `crew-ship` the pipeline enforces that rule: `push`
+  and `finish checks-passed|passed` re-check the receipt's `reviewed_ref` against HEAD
   (`bin/ac-ship.sh` owns the contract). There is no docs-only exemption: the
   re-check is a bare SHA equality, so ANY commit after review - documentation
   included - invalidates the receipt and loops to a fresh round. Round 1
@@ -57,8 +56,11 @@ Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points her
   third attempt on one unchanged ref, and names the failed check on every
   rejected verdict.
 - There is no normal `code-review` production stage and no normal `ship`
-  production stage. Historical artifacts remain readable. A replacement
-  execution crewmate is recovery for an unrecoverable session, never a new role.
+  production stage. Historical artifacts remain readable. The same crewmate
+  carries a task from first commit through fix rounds to delivery: steer its
+  live session with `ac-send`, `--resume-from` it when already torn down. A
+  replacement execution crewmate is recovery for an unrecoverable session,
+  never a new role.
 - Review is a derived intake obligation recorded as `review=yes|no`, not a flow,
   stage, mode, or config profile:
   - staged, all modes: `yes`;
@@ -78,9 +80,8 @@ Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points her
   to `no` - the EPIC GATE owns one review round over the integrated diff
   before any production PR. Staged stories keep their design-stage gates and
   drop only the code-review round; `crew-ship` stories KEEP their pipeline
-  round for now (the `--target <epic-branch>` makes it story-sized; moving it
-  to the gate is the epic-gate slice). Raising a story back to `rev:yes` is
-  the captain's word exactly as above (second ruling, same date: the
+  round (the `--target <epic-branch>` makes it story-sized). Raising a story
+  back to `rev:yes` is the captain's word exactly as above (second ruling, same date: the
   ask-captain rules are unchanged inside an epic); `qa.require_for_ship`
   defers to the epic gate on an epic-branch landing.
 - `crew-ship` is an 8-step delivery engine inside the execution role. Its review
@@ -96,25 +97,19 @@ Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points her
   `fix` returns to execution; `ask-user` holds delivery while chief/roomchief
   relays its question, 2-4 options, per-option tradeoffs, and recommendation to
   the captain and records the decision receipt.
-- Verifier LIFECYCLE (ship-review, qa, learning-scout) and what task-flow-v2
-  SUPERSEDED from the earlier durable-verifier design
-  (`pane-agent-as-crewmate-redesign` map §2.5, captain-approved GOAL).
-  DELIVERED for all three callers: a durable brief on disk, a `verify-<pane-kind>`
-  meta (`ac_meta_is_verify` - excluded from crew accounting, never from
-  supervision), a status log, and a pane handle; supervision is ADDITIVE - the
-  caller waits on its own timeout while the watcher covers the pane.
-  SUPERSEDED by the fresh-exact-ref model above, recorded here so a reader of the
-  map does not re-litigate it against the code:
-  - ac-done as the PRIMARY completion channel (map property 4) - a verifier
-    completes SYNCHRONOUSLY, its verdict read from the transcript by the caller.
-  - same-pane reuse across rounds and an until-teardown pane lifetime
-    (property 5) - each round is a fresh pane, reaped when its verdict is captured.
-  - retirement routed through `ac-teardown`'s pane sweep (the one-path retirement)
-    - the caller reaps its own pane at harvest.
-  - AXIS 2's no-lease / no-repo - the codereview/qa verifiers DO hold a
-    short-lived isolated worktree lease and DO require a git repo (the exact-ref
-    isolation itself); no-lease/no-repo survives only for the learning scout,
-    which runs on the chief's own path. The lease follows the fleet backend the
+- Verifier lifecycle (ship-review, qa, learning-scout): every caller gets a
+  durable brief on disk, a `verify-<pane-kind>` meta (`ac_meta_is_verify` -
+  excluded from crew accounting, never from supervision), a status log, and a
+  pane handle; supervision is additive - the caller waits on its own timeout
+  while the watcher covers the pane. A verifier completes synchronously: the
+  caller reads its verdict from the transcript, each round is a fresh pane, and
+  the caller reaps that pane at harvest. The codereview/qa verifiers hold a
+  short-lived isolated worktree lease and require a git repo (the exact-ref
+  isolation itself); only the learning scout runs leaseless, on the chief's own
+  path. The older `pane-agent-as-crewmate-redesign` map (§2.5) describes ac-done
+  completion, same-pane reuse, teardown-swept retirement and leaseless
+  verifiers; the code follows the rules here, so a mismatch against that map is
+  the map's history, never a defect. The lease follows the fleet backend the
     same way the crew lease does: a herdr fleet leases from the crew-tree pool,
     an orca fleet leases an Orca-managed worktree released at harvest with no
     crew/<id> branch left behind (`bin/ac-verify.sh` verify_lease owns the

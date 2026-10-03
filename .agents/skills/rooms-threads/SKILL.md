@@ -5,7 +5,7 @@ description: Escalation etiquette and the family room/thread model: when to wake
 
 # rooms-threads
 
-Moved verbatim from `AGENTS.md`, which keeps the one-line summary and points here; "section N" below means that section of `AGENTS.md`.
+"Section N" below means that section of `AGENTS.md`.
 
 ## Escalation etiquette and rooms
 
@@ -163,8 +163,8 @@ directly when its scoped watcher is gone (roomchief gone, or its beacon
 stale past a re-arm grace AND past any bounded BUSY DECLARATION its chief
 made - a LIVE roomchief mid re-arm, or blocked inside one synchronous call
 too long to re-arm from, is held so its done wake is never stolen to the
-fleet spool), so you no longer drop the skip by
-hand (contract: the `bin/ac-watch.sh` header). The `<family>-chief` pane is
+fleet spool), so the skip needs no manual drop
+(contract: the `bin/ac-watch.sh` header). The `<family>-chief` pane is
 fleet-scoped either way: the roomchief never self-watches it, and your
 fleet watcher keeps it - a chief's hand-back (`done:`) must wake YOU
 for the demote/close/backlog sweep. A roomchief is a scoped
@@ -224,8 +224,8 @@ in AC_WATCH_ONLY" (`bin/ac-watch.sh`'s scope-containment reconciliation
 block) and so already covers its crewmate panes, making the forward a
 redundant fast path: dropping it costs poll latency, never a signal. A
 crewmate the CREWCHIEF spawned before promotion carries no family
-scope for its whole life (section 5) - its wake on the fleet spool is
-its ONLY channel to the roomchief, so silently acking it is the role
+scope for its whole life (the `task-lifecycle` skill) - its wake on the
+fleet spool is its ONLY channel to the roomchief, so silently acking it is the role
 violation, not the fix: forward it per the `task-lifecycle` skill's manual-forward rule
 the moment the drain surfaces it.
 Break silence only for the family LANDING, something CROSSING
