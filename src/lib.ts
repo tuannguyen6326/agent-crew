@@ -336,12 +336,12 @@ export function epicBranchEntry(epic: string, repo: string): EpicBranchEntry {
 }
 
 function gitOut(repo: string, args: string[]): string | null {
-  const r = Bun.spawnSync(["git", "-C", repo, ...args], { stdout: "pipe", stderr: "ignore" });
+  const r = Bun.spawnSync(["git", "-C", repo, ...args], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
   return r.exitCode === 0 ? r.stdout.toString().replace(/\n+$/, "") : null;
 }
 
 function gitRef(repo: string, ref: string): boolean {
-  return Bun.spawnSync(["git", "-C", repo, "show-ref", "--verify", "--quiet", ref], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  return Bun.spawnSync(["git", "-C", repo, "show-ref", "--verify", "--quiet", ref], { stdin: "inherit", stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 }
 
 // ac_default_branch's twin: origin/HEAD's target, else main, else master,
@@ -1096,4 +1096,40 @@ export function epicBaseFor(id: string, repo: string): EpicBase {
     if (e.rc === 0) return e;
   }
   return { rc: 1 };
+}
+
+// --- sync twins ---
+import { dirname } from "node:path";
+
+// ac_project_dir + ac_repo_root twins (the bash pair stays live for seven
+// callers): the MAIN repo root for a project argument - a directory (any path
+// in or inside a repo, as cd enters it: a symlink reports its physical root)
+// else projects/<arg> - null when neither is a directory or the directory is
+// no repo. The root is `dirname` of `rev-parse --git-common-dir`, so a linked
+// worktree answers its main repo and a bare x.git its PARENT (kept). The
+// projects/ rung runs inside a swallowed substitution in the original, so a
+// homeless or unenterable home prints its refusal (once per substitution) and
+// the lookup goes on with "" as the projects dir; a reachable home has
+// projects/ minted, as ac_projects_dir mints it.
+export function projectDir(arg: string): string | null {
+  let dir: string;
+  if (isDir(arg)) dir = physicalDir(arg) ?? "";
+  else {
+    const soft = (): string => {
+      const home = softHome(true);
+      if (home === "") return "";
+      try {
+        mkdirSync(`${home}/projects`, { recursive: true });
+      } catch {}
+      return `${home}/projects`;
+    };
+    if (!isDir(`${soft()}/${arg}`)) return null;
+    dir = `${soft()}/${arg}`;
+  }
+  let common: string | null = null;
+  try {
+    const r = Bun.spawnSync(["git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir"], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
+    if (r.exitCode === 0) common = r.stdout.toString().replace(/\n+$/, "");
+  } catch {}
+  return common === null ? null : dirname(common);
 }
