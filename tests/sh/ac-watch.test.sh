@@ -3939,4 +3939,33 @@ rc=0; out="$(AC_SOLO=1 bash "$BIN/ac-watch.sh" --once 2>&1)" || rc=$?
 [ "$rc" -ne 0 ] || fail "a solo session's watcher must refuse"
 assert_contains "$out" "solo" "the refusal names the solo session"
 
+# --- OWNER GATE FAIL-SOFT -----------------------------------------------------
+# bin/ac-lock.sh is a shim over src/lock.ts, so a bun that cannot start makes
+# `acquire` exit 1 - which is NOT a foreign owner. The gate must read only rc 2
+# as "another session owns this home"; any other failure arms the fleet
+# watcher with a WARN that names the entry, and records no owner (the remote
+# poller stays off without one). Before this, every non-zero rc printed the
+# foreign-owner refusal, so a missing bun grounded the watcher under a lie.
+reset_state
+failbun="$TMP/failbun"
+mkdir -p "$failbun"
+printf '#!/bin/sh\necho "bun stub: cannot start" >&2\nexit 1\n' >"$failbun/bun"
+chmod +x "$failbun/bun"
+printf 'stale-owner\n' >"$state/.watcher-owner"
+rc=0; out="$(PATH="$failbun:$PATH" AC_LOCK_PID=$$ AC_POLL=1 AC_HEARTBEAT=0 bash "$BIN/ac-watch.sh" 2>"$TMP/failbun.err")" || rc=$?
+assert_eq "$rc" "0" "a bun-less session lock does not ground the fleet watcher"
+assert_contains "$out" "heartbeat" "the watcher armed and ran"
+case "$out" in
+  *"another session owns this home"*) fail "a failing lock entry must not read as a foreign owner" ;;
+esac
+assert_contains "$(cat "$TMP/failbun.err")" "bun stub: cannot start" "the entry's own stderr is still relayed"
+assert_contains "$(cat "$TMP/failbun.err")" "WARN: session lock acquire failed (rc=1, ac-lock.sh) - arming without the owner gate" "the WARN names the entry and the rc"
+assert_eq "$(cat "$state/.watcher-owner")" "" "no owner on record: a stale beacon is emptied, never kept"
+# A foreign LIVE holder is still the refusal, rc 2 and the same line.
+printf 'pid=%s\nsince=2026-01-01T00:00:00Z\n' "$$" >"$state/.session-lock"
+rc=0; out="$(AC_LOCK_PID=99999999 AC_POLL=1 AC_HEARTBEAT=0 bash "$BIN/ac-watch.sh" 2>/dev/null)" || rc=$?
+assert_eq "$rc" "2" "a live foreign holder still refuses the arm"
+assert_eq "$out" "refused: fleet watcher not armed - another session owns this home" "with the unchanged refusal line"
+reset_state
+
 pass

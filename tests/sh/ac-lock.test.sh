@@ -644,4 +644,412 @@ assert_file "$lockf" "stale race: the winner's lock is on disk"
 reap_race
 assert_eq "$(race_survivors)" "0" "every race worker reaped - no orphaned session holders"
 
+# --- differential: src/lock.ts against the frozen bash original ---------------
+# DISPUTED: the implementation (tests/fixtures/ac-lock.sh under bash vs
+# src/lock.ts through bin/ac-lock.sh).
+# HELD-CONSTANT: two homes seeded alike ($OH oracle, $NH shim), argv, cwd ($TMP
+# unless a row names one), LC_ALL=C, AC_LOCK_PID / AC_SCOPE / AC_LOCK_HARNESS_RE
+# only as a row sets them, one PATH stub set first on both sides - `date`
+# answering ac_iso's argv with $STUB_ISO, and for the walk rows a `ps` whose
+# arms fake the ancestry ABOVE the real acquiring process (its own parent is
+# the chain's first fake pid; every other argv reaches /bin/ps) - then exit,
+# stdout and stderr compared whole (the home spelled HOME; a row whose answer
+# is this test's own parent pid spells pids P), and the state left behind:
+# the lock file's bytes, the reap dir, any `<lock>.tmp.*` litter (pid spelled
+# PID). The real pids the rows share - $$ pinned through AC_LOCK_PID, the live
+# $FOREIGN, the dead $DEAD - are the same number on both sides, so a walk row's
+# pid is compared exactly, never normalised: a port answering a different
+# ancestor cannot pass.
+obin="$(make_oracle_bin ac-lock)"
+OH="$TMP/oh"; NH="$TMP/nh"
+mkdir -p "$OH/state" "$NH/state" "$TMP/lstub"
+STUB_ISO=2026-01-02T03:04:05Z
+cat >"$TMP/lstub/date" <<'EOF'
+#!/bin/sh
+case "$*" in "-u +%Y-%m-%dT%H:%M:%SZ") printf '%s\n' "$STUB_ISO" ;; *) exec /bin/date "$@" ;; esac
+EOF
+chmod +x "$TMP/lstub/date"
+ps_stub() {
+  # ps_stub <top> [<pid> <cmd> <ppid>]... - the PATH ps for a walk row: each fake
+  # pid answers `-o command=` with <cmd> and `-o ppid=` with <ppid>; any OTHER
+  # pid's parent (the real acquiring process's) is <top>; everything else -
+  # `ps -p` for liveness, the real pids' command lines - is /bin/ps's answer.
+  local top="$1"; shift
+  { printf '#!/usr/bin/env bash\ncase "$*" in\n'
+    while [ $# -ge 3 ]; do
+      printf '  "-o command= -p %s") printf '"'"'%%s\\n'"'"' '"'"'%s'"'"' ;;\n' "$1" "$2"
+      printf '  "-o ppid= -p %s") printf '"'"' %%s\\n'"'"' %s ;;\n' "$1" "$3"
+      shift 3
+    done
+    printf '  "-o ppid= -p "*) printf '"'"' %%s\\n'"'"' %s ;;\n  *) exec /bin/ps "$@" ;;\nesac\n' "$top"
+  } >"$TMP/lstub/ps"
+  chmod +x "$TMP/lstub/ps"
+}
+ps_real() { rm -f "$TMP/lstub/ps"; }
+lrun() {  # lrun <bin> <home> <out> <err> <args...> - one side; L_HOMELESS unsets AC_HOME, L_HOME overrides it, L_CWD the cwd
+  local b="$1" h="$2" o="$3" e="$4"; shift 4
+  if [ -n "${L_HOMELESS-}" ]; then
+    (cd "${L_CWD:-$TMP}" && env -u AC_HOME LC_ALL=C PATH="$TMP/lstub:$PATH" STUB_ISO="$STUB_ISO" "$b/ac-lock.sh" "$@") >"$o" 2>"$e"
+  else
+    (cd "${L_CWD:-$TMP}" && env AC_HOME="${L_HOME:-$h}" LC_ALL=C PATH="$TMP/lstub:$PATH" STUB_ISO="$STUB_ISO" "$b/ac-lock.sh" "$@") >"$o" 2>"$e"
+  fi
+}
+lnorm() {  # lnorm <file> <home> - the home spelled HOME; with PIDS set, every pid spelled P
+  if [ -n "${PIDS-}" ]; then LC_ALL=C sed -E -e "s#$2#HOME#g" -e 's/pid([[:blank:]=])[0-9]+/pid\1P/g' "$1"
+  else LC_ALL=C sed -E -e "s#$2#HOME#g" "$1"; fi
+}
+lsnap() {  # lsnap <home> - the lock file (bytes), the reap dir, the temp litter
+  local s="$1/state" f
+  if [ -d "$s/.session-lock" ]; then printf '== lock: DIR\n'
+  elif [ ! -e "$s/.session-lock" ]; then printf '== lock: none\n'
+  elif [ ! -r "$s/.session-lock" ]; then printf '== lock: unreadable\n'
+  else printf '== lock\n'; cat "$s/.session-lock"; fi
+  [ ! -d "$s/.session-lock.reap" ] || printf '== reap dir\n'
+  for f in "$s"/.session-lock.tmp.*; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    printf '== litter %s\n' "$(basename "$f" | LC_ALL=C sed -E 's/\.tmp\.[0-9]+(\.[0-9]+)?$/.tmp.PID/')"
+  done
+}
+lsame() {  # lsame <args...> - oracle on $OH and shim on $NH answer and leave byte-identical state; $n_rc is the shim's exit
+  o_rc=0; n_rc=0
+  lrun "$obin" "$OH" "$TMP/lo.raw" "$TMP/lo.rawerr" "$@" || o_rc=$?
+  lrun "$BIN" "$NH" "$TMP/ln.raw" "$TMP/ln.rawerr" "$@" || n_rc=$?
+  lnorm "$TMP/lo.raw" "$OH" >"$TMP/lo.out"; lnorm "$TMP/lo.rawerr" "$OH" >"$TMP/lo.err"
+  lnorm "$TMP/ln.raw" "$NH" >"$TMP/ln.out"; lnorm "$TMP/ln.rawerr" "$NH" >"$TMP/ln.err"
+  assert_eq "$n_rc" "$o_rc" "lock differential exit for '$*'"
+  cmp -s "$TMP/lo.out" "$TMP/ln.out" || fail "lock differential stdout differs for '$*': $(diff "$TMP/lo.out" "$TMP/ln.out" | head -n 4)"
+  [ "${ERR-}" = own ] || cmp -s "$TMP/lo.err" "$TMP/ln.err" || fail "lock differential stderr differs for '$*': $(diff "$TMP/lo.err" "$TMP/ln.err" | head -n 4)"
+  lsnap "$OH" >"$TMP/lo.treeraw"; lnorm "$TMP/lo.treeraw" "$OH" >"$TMP/lo.tree"
+  lsnap "$NH" >"$TMP/ln.treeraw"; lnorm "$TMP/ln.treeraw" "$NH" >"$TMP/ln.tree"
+  cmp -s "$TMP/lo.tree" "$TMP/ln.tree" || fail "lock differential state differs for '$*': $(diff "$TMP/lo.tree" "$TMP/ln.tree" | head -n 6)"
+}
+lshim() {  # lshim <args...> - the shim alone (a row whose oracle run costs ~13 s of spinning, sampled once below)
+  n_rc=0; lrun "$BIN" "$NH" "$TMP/ln.raw" "$TMP/ln.rawerr" "$@" || n_rc=$?
+  lnorm "$TMP/ln.raw" "$NH" >"$TMP/ln.out"; lnorm "$TMP/ln.rawerr" "$NH" >"$TMP/ln.err"
+}
+shim_out() { cat "$TMP/ln.out"; }
+shim_err() { cat "$TMP/ln.err"; }
+oracle_err() { cat "$TMP/lo.err"; }
+shim_tree() { lsnap "$NH"; }
+lseed() {  # lseed <printf-format> [args] - the same lock file under both homes
+  local s; for s in "$OH" "$NH"; do printf -- "$@" >"$s/state/.session-lock"; done
+}
+lreset() { rm -rf "$OH/state" "$NH/state"; mkdir -p "$OH/state" "$NH/state"; }
+HOLD_CMD="$(ps -o command= -p "$FOREIGN")"
+[ -n "$HOLD_CMD" ] || fail "the live foreign holder must have a readable command line"
+
+# 1. usage and the home: every unknown argv is usage exit 1; extra words are
+#    ignored; homeless is the NO_HOME refusal BEFORE usage (the state dir is
+#    resolved first); an AC_HOME cd cannot enter is a named divergence (the
+#    bash's own `cd:` line vs the port naming the variable), same exit.
+lsame
+assert_eq "$(shim_err)" "ERROR: usage: ac-lock.sh acquire | status | release" "usage bytes"
+lsame -h
+lsame bogus
+lsame status extra
+assert_eq "$(shim_out)" "unlocked" "extra words are ignored"
+L_HOMELESS=1 lsame bogus
+assert_eq "$(shim_err)" "ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one" "homeless refuses before usage"
+L_HOMELESS=1 AC_SCOPE=fam AC_LOCK_PID=$$ lsame acquire
+assert_contains "$(shim_err)" "AC_HOME is not set" "homeless refuses before the AC_SCOPE skip"
+ERR=own L_HOME="$TMP/no-such-home" lsame status
+assert_contains "$(oracle_err)" "cd: $TMP/no-such-home: No such file or directory" "the original's cd noise"
+assert_eq "$(shim_err)" "ERROR: AC_HOME is not a readable directory: $TMP/no-such-home" "the port names the variable (HOME RESOLUTION)"
+
+# 2. the pinned-identity life cycle: acquire, status, re-acquire, release.
+AC_LOCK_PID=$$ lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $$)" "acquired line"
+assert_eq "$(shim_tree)" "== lock
+pid=$$
+since=$STUB_ISO
+cmd=$(ps -o command= -p $$)" "the lock file: pid, the stubbed clock, the fingerprint; no temp, no reap dir"
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "held pid=$$ since=$STUB_ISO" "held line"
+AC_LOCK_PID=$$ lsame acquire
+assert_eq "$(shim_out)" "lock: already held by this session (pid $$ since $STUB_ISO)" "re-acquire line"
+AC_LOCK_PID=$$ lsame release
+assert_eq "$(shim_out)" "lock: released" "released line"
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "unlocked" "unlocked after release"
+AC_LOCK_PID=$$ lsame release
+assert_eq "$(shim_out)" "lock: not held" "release with no lock"
+
+# 3. AC_SCOPE: set -> skipped, nothing written; empty -> unscoped.
+AC_SCOPE=fam AC_LOCK_PID=$$ lsame acquire
+assert_eq "$(shim_out)" "lock: skipped - scoped session (AC_SCOPE=fam) never owns the home" "scoped skip line"
+assert_eq "$(shim_tree)" "== lock: none" "a scoped session writes nothing"
+AC_SCOPE='' AC_LOCK_PID=$$ lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $$)" "an empty AC_SCOPE is unscoped"
+lreset
+
+# 4. a LIVE foreign holder, with and without its fingerprint: refused on
+#    acquire and release, held on status.
+for fp in "cmd=$HOLD_CMD"$'\n' ''; do
+  lseed 'pid=%s\nsince=2026-01-01T00:00:00Z\n%s' "$FOREIGN" "$fp"
+  AC_LOCK_PID=$$ lsame acquire
+  assert_eq "$n_rc" 2 "live foreign holder (fingerprint '${fp:+yes}'): acquire exit 2"
+  assert_eq "$(shim_err)" "ERROR: another chief session owns this home (pid $FOREIGN since 2026-01-01T00:00:00Z)" "refusal line"
+  AC_LOCK_PID=$$ lsame release
+  assert_eq "$(shim_err)" "ERROR: only the holder releases - held by live pid $FOREIGN, this session is pid $$" "release refusal line"
+  AC_LOCK_PID=$$ lsame status
+  assert_eq "$(shim_out)" "held pid=$FOREIGN since=2026-01-01T00:00:00Z" "held by the foreign pid"
+done
+
+# 5. a dead holder: stale on status, recovered on acquire, cleared by anyone.
+lseed 'pid=%s\nsince=2026-01-01T00:00:00Z\n' "$DEAD"
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "stale pid=$DEAD since=2026-01-01T00:00:00Z" "dead holder reads stale"
+AC_LOCK_PID=$$ lsame acquire
+assert_eq "$(shim_out)" "lock: recovering stale lock (pid $DEAD dead, held since 2026-01-01T00:00:00Z)
+lock: acquired (pid $$)" "recovery then acquire"
+assert_contains "$(shim_tree)" "pid=$$" "the corpse is replaced"
+lseed 'pid=%s\nsince=2026-01-01T00:00:00Z\n' "$DEAD"
+AC_LOCK_PID=$$ lsame release
+assert_eq "$(shim_out)" "lock: clearing stale lock (pid $DEAD dead)
+lock: released" "a non-holder clears a dead holder's lock"
+assert_eq "$(shim_tree)" "== lock: none" "cleared"
+
+# 6. a REUSED pid (alive, a different command now): stale, recovered with the
+#    pid-reuse wording, released with the `dead` wording (the bash's, kept).
+lseed 'pid=%s\nsince=2026-01-01T00:00:00Z\ncmd=a-process-that-is-no-longer-here\n' "$FOREIGN"
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "stale pid=$FOREIGN since=2026-01-01T00:00:00Z" "reused pid reads stale"
+AC_LOCK_PID=$$ lsame acquire
+assert_eq "$(shim_out)" "lock: recovering stale lock (pid $FOREIGN alive but a DIFFERENT process now - pid reuse, held since 2026-01-01T00:00:00Z)
+lock: acquired (pid $$)" "pid-reuse recovery wording"
+lseed 'pid=%s\nsince=2026-01-01T00:00:00Z\ncmd=a-process-that-is-no-longer-here\n' "$FOREIGN"
+AC_LOCK_PID=$$ lsame release
+assert_eq "$(shim_out)" "lock: clearing stale lock (pid $FOREIGN dead)
+lock: released" "release says dead for a reused pid too (W6, the bash's reading)"
+
+# 7. no `since=`: the already-held line prints it RAW (`since )`), status and
+#    the refusal print `?`.
+lseed 'pid=%s\n' "$$"
+AC_LOCK_PID=$$ lsame acquire
+assert_eq "$(shim_out)" "lock: already held by this session (pid $$ since )" "raw empty since (W5, the bash's reading)"
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "held pid=$$ since=?" "status spells a missing since as ?"
+lseed 'pid=%s\ncmd=%s\n' "$FOREIGN" "$HOLD_CMD"
+AC_LOCK_PID=$$ lsame acquire
+assert_eq "$(shim_err)" "ERROR: another chief session owns this home (pid $FOREIGN since ?)" "the refusal spells it ?"
+
+# 8. a pid-less lock (W1): status stale with `?`; acquire spins all 1000
+#    attempts to the did-not-settle line, exit 2, the corpse untouched, no reap
+#    dir and no temp left. The bash loop has no sleep to stub - each attempt is
+#    four awk and two mkdir/rmdir forks, ~13 s in all - so the oracle spins ONCE
+#    here; the empty-file, directory and leaked-reap-dir spins below are the
+#    same loop and are pinned on the shim alone, byte for byte.
+lseed 'since=x\n'
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "stale pid=? since=x" "pid-less lock reads stale"
+AC_LOCK_PID=$$ lsame acquire
+assert_eq "$n_rc" 2 "pid-less lock: acquire exit 2"
+assert_eq "$(shim_err)" "ERROR: session lock did not settle after 1000 attempts (last holder pid ?) - leaked reap dir? remove HOME/state/.session-lock.reap" "the did-not-settle line"
+assert_eq "$(shim_tree)" "== lock
+since=x" "the corpse untouched, no reap dir, no temp"
+lseed ''
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "stale pid=? since=?" "an empty lock reads stale"
+AC_LOCK_PID=$$ lshim acquire
+assert_eq "$n_rc" 2 "empty lock: acquire exit 2"
+assert_eq "$(shim_err)" "ERROR: session lock did not settle after 1000 attempts (last holder pid ?) - leaked reap dir? remove HOME/state/.session-lock.reap" "empty lock: the same spin"
+assert_eq "$(shim_tree)" "== lock" "empty lock: untouched"
+lreset
+mkdir "$OH/state/.session-lock" "$NH/state/.session-lock"
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "unlocked" "a directory at the lock path reads unlocked (W2, the bash's reading)"
+AC_LOCK_PID=$$ lshim acquire
+assert_eq "$n_rc" 2 "directory at the lock path: acquire exit 2"
+assert_eq "$(shim_err)" "ERROR: session lock did not settle after 1000 attempts (last holder pid ?) - leaked reap dir? remove HOME/state/.session-lock.reap" "directory: the same spin"
+assert_eq "$(shim_tree)" "== lock: DIR" "directory: untouched"
+lreset
+
+# 9. a leaked reap dir over a dead holder: refused, the corpse untouched.
+lseed 'pid=%s\nsince=2026-01-01T00:00:00Z\n' "$DEAD"
+mkdir "$NH/state/.session-lock.reap"
+AC_LOCK_PID=$$ lshim acquire
+assert_eq "$n_rc" 2 "leaked reap dir: exit 2"
+assert_eq "$(shim_err)" "ERROR: session lock did not settle after 1000 attempts (last holder pid $DEAD) - leaked reap dir? remove HOME/state/.session-lock.reap" "leaked reap dir: the holder is named"
+assert_eq "$(shim_tree)" "== lock
+pid=$DEAD
+since=2026-01-01T00:00:00Z
+== reap dir" "leaked reap dir: corpse and dir untouched"
+lreset
+
+# 10. an unreadable lock (W3): every verb is the WARN and exit 1, status's
+#     always-0 contract included; an acquire leaves its temp behind on both
+#     sides (the bash's RETURN trap never fires on an errexit exit).
+if [ "$(id -u)" != 0 ]; then
+  lseed 'pid=%s\nsince=2026-01-01T00:00:00Z\n' "$$"
+  chmod 000 "$OH/state/.session-lock" "$NH/state/.session-lock"
+  for v in status release acquire; do
+    AC_LOCK_PID=$$ lsame "$v"
+    assert_eq "$n_rc" 1 "unreadable lock: $v exits 1"
+    assert_eq "$(shim_err)" "WARN: cannot read meta file HOME/state/.session-lock" "unreadable lock: $v warns"
+    assert_eq "$(shim_out)" "" "unreadable lock: $v prints nothing"
+  done
+  assert_eq "$(shim_tree)" "== lock: unreadable
+== litter .session-lock.tmp.PID" "unreadable lock: acquire's temp is left behind"
+  chmod 644 "$OH/state/.session-lock" "$NH/state/.session-lock"
+fi
+lreset
+
+# 11. AC_LOCK_PID is recorded raw and unvalidated: acquire records it, status
+#     reads it stale (not a canonical pid), release clears it.
+for p in abc 0 +5 00012 ' 7'; do
+  AC_LOCK_PID="$p" lsame acquire
+  assert_eq "$(shim_out)" "lock: acquired (pid $p)" "AC_LOCK_PID='$p' acquired raw"
+  assert_eq "$(shim_tree)" "== lock
+pid=$p
+since=$STUB_ISO" "AC_LOCK_PID='$p' recorded raw, no fingerprint"
+  AC_LOCK_PID=$$ lsame status
+  assert_eq "$(shim_out)" "stale pid=$p since=$STUB_ISO" "AC_LOCK_PID='$p' reads stale"
+  AC_LOCK_PID=$$ lsame release
+  assert_eq "$(shim_out)" "lock: clearing stale lock (pid $p dead)
+lock: released" "AC_LOCK_PID='$p' cleared"
+done
+
+# 12. the walk (no AC_LOCK_PID): the real acquiring process under a faked
+#     ancestry, the same ps stub on both sides.
+spA=$(( $$ + 700001 )); spB=$(( $$ + 700002 )); stb=$(( $$ + 700099 ))
+ps_stub "$spA" "$spA" 'claude bg-spare --bg-spare /tmp/cc-daemon-501/a/spare/x.cl' "$stb" "$stb" 'faketrueharness --stable' 1
+lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $stb)" "spare worker skipped, the stable ancestor above it taken"
+assert_eq "$(shim_tree)" "== lock
+pid=$stb
+since=$STUB_ISO
+cmd=faketrueharness --stable" "the stable ancestor's fingerprint"
+ps_stub "$spB" "$spB" 'claude bg-spare --bg-spare /tmp/cc-daemon-501/b/spare/x.cl' "$stb" "$stb" 'faketrueharness --stable' 1
+lsame acquire
+assert_eq "$(shim_out)" "lock: already held by this session (pid $stb since $STUB_ISO)" "a rotated spare resolves the same identity"
+lreset
+fh=$(( $$ + 700201 ))
+ps_stub "$fh" "$fh" 'claude --permission-mode auto /Users/x/Work/bg-spare-notes/repo' 1
+lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $fh)" "false-skip guard: bg-spare elsewhere in argv is still a harness"
+lreset
+pty=$(( $$ + 700301 )); inner=$(( $$ + 700302 )); outer=$(( $$ + 700303 ))
+ps_stub "$pty" "$pty" 'claude bg-pty-host serve' "$inner" "$inner" 'claude' "$outer" "$outer" 'claude --permission-mode auto' 1
+lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $outer)" "the OUTERMOST harness match"
+lreset
+lsh=$(( $$ + 700401 )); gp=$(( $$ + 700402 ))
+ps_stub "$lsh" "$lsh" '-zsh' "$gp" "$gp" 'faketruestable --keep-alive' 1
+lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $gp)" "login shell skipped, the grandparent taken"
+assert_eq "$(shim_err)" "WARN: no harness ancestor matched (claude|codex|opencode|pi|cursor-agent) - locking with nearest stable ancestor pid $gp" "the WARN names the default regex and the stable pid"
+lreset
+# A chain with nothing above this process: the WARN and the PARENT pid - this
+# test's own, so pids are spelled P on both sides.
+ps_stub 1
+PIDS=1 lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid P)" "no ancestor: the parent pid"
+assert_eq "$(shim_err)" "WARN: no harness ancestor matched (claude|codex|opencode|pi|cursor-agent) - locking with nearest stable ancestor pid P" "no ancestor: the WARN"
+lreset
+hd=$(( $$ + 700501 ))
+ps_stub "$hd" "$hd" 'herdr server' 1
+lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $hd)" "a lone herdr server is the stable fallback"
+assert_contains "$(shim_err)" "WARN: no harness ancestor matched" "and warned about"
+lreset
+ov=$(( $$ + 700601 )); cl=$(( $$ + 700602 ))
+ps_stub "$ov" "$ov" 'y --flag' "$cl" "$cl" 'claude' 1
+AC_LOCK_HARNESS_RE='x|y' lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $ov)" "a plain override matches its own alternatives, not the default's"
+assert_eq "$(shim_err)" "" "a match: no WARN"
+lreset
+# A POSIX class in the override (W9): the ERE is grep's, so `[[:alpha:]]+`
+# matches `faketrue` and the ancestor is a harness MATCH, no WARN.
+ps_stub "$ov" "$ov" 'faketrue --x' 1
+AC_LOCK_HARNESS_RE='[[:alpha:]]+' lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $ov)" "a POSIX-class override is applied as grep -E applies it"
+assert_eq "$(shim_err)" "" "and matched, so no WARN"
+lreset
+
+# 13. the own-pid skip (W7): from a cwd ending in /pi the port's own command
+#     line (`bun ... src/lock.ts <cwd> acquire`) would match `(^|[ /])(pi)( |$)`
+#     where the bash's `bash <path> acquire` never did; both must WARN and
+#     take the stable ancestor.
+mkdir -p "$TMP/pi"
+ps_stub "$ov" "$ov" 'faketrue --x' 1
+L_CWD="$TMP/pi" lsame acquire
+assert_eq "$(shim_out)" "lock: acquired (pid $ov)" "own-cmd row: the stable ancestor, never this process"
+assert_contains "$(shim_err)" "WARN: no harness ancestor matched" "own-cmd row: warned, as the bash was"
+lreset
+ps_real
+
+# 14. a fingerprint holding `=` and a double space: `cmd=` is everything past
+#     the first `=`, compared byte for byte - held when the live command reads
+#     the same, stale when it does not.
+lseed 'pid=%s\nsince=2026-01-01T00:00:00Z\ncmd=faketrue --a=b  c\n' "$FOREIGN"
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "stale pid=$FOREIGN since=2026-01-01T00:00:00Z" "a fingerprint the live command does not match"
+ps_stub 1 "$FOREIGN" 'faketrue --a=b  c' 1
+AC_LOCK_PID=$$ lsame status
+assert_eq "$(shim_out)" "held pid=$FOREIGN since=2026-01-01T00:00:00Z" "a fingerprint with = and a double space, matched whole"
+ps_real
+lreset
+
+# 15. races on the oracle, the same counts the shim gave above: six fresh
+#     racers -> one acquired, five refused; two stale recoverers -> one
+#     acquired, one refused, exactly one reap.
+spawn_sessions 6
+# shellcheck disable=SC2086 # $SESSIONS is a pid list, word-split on purpose
+BIN="$obin" AC_HOME="$OH" race_acquire "$TMP/race-oracle-fresh" $SESSIONS
+assert_eq "$(count_results "$TMP/race-oracle-fresh" 'lock: acquired')" "1" "oracle fresh race: exactly one acquired"
+assert_eq "$(count_results "$TMP/race-oracle-fresh" 'another chief session owns this home')" "5" "oracle fresh race: five refused"
+assert_file "$OH/state/.session-lock" "oracle fresh race: the winner's lock is on disk"
+printf 'pid=%s\nsince=2026-01-01T00:00:00Z\n' "$DEAD" >"$OH/state/.session-lock"
+spawn_sessions 2
+# shellcheck disable=SC2086 # $SESSIONS is a pid list, word-split on purpose
+BIN="$obin" AC_HOME="$OH" race_acquire "$TMP/race-oracle-stale" $SESSIONS
+assert_eq "$(count_results "$TMP/race-oracle-stale" 'lock: acquired')" "1" "oracle stale race: one recoverer won"
+assert_eq "$(count_results "$TMP/race-oracle-stale" 'another chief session owns this home')" "1" "oracle stale race: the loser refused"
+assert_eq "$(count_results "$TMP/race-oracle-stale" 'recovering stale lock')" "1" "oracle stale race: exactly one reap"
+reap_race
+assert_eq "$(race_survivors)" "0" "every oracle race worker reaped"
+lreset
+
+# 16. the EXCLUSIVE TEMP row (a named divergence): a symlink planted at
+#     `<lock>.tmp.<pid>` - the bash wrote its temp THROUGH it (the target
+#     overwritten, the lock then a hard link to that target), the port creates
+#     its temp `wx`, takes the next name and leaves the target alone. The
+#     acquiring pid must be known before the entry runs, so each side starts
+#     behind a fifo gate and execs into its entry as that same pid.
+cat >"$TMP/lgate.sh" <<'EOF'
+#!/usr/bin/env bash
+( sleep 60; kill -9 $$ 2>/dev/null ) >/dev/null 2>&1 &
+_wd=$!
+read -r _ <"$1"
+kill "$_wd" 2>/dev/null || true
+exec "$2/ac-lock.sh" acquire
+EOF
+chmod +x "$TMP/lgate.sh"
+plant_and_acquire() {  # plant_and_acquire <bin> <home> <out> - the row on one side; prints nothing, leaves <home>/state/victim
+  local b="$1" h="$2" o="$3" gate pid
+  gate="$h/gate.fifo"
+  mkfifo "$gate"
+  printf 'victim bytes\n' >"$h/state/victim"
+  AC_HOME="$h" AC_LOCK_PID=$$ LC_ALL=C PATH="$TMP/lstub:$PATH" STUB_ISO="$STUB_ISO" "$TMP/lgate.sh" "$gate" "$b" >"$o" 2>&1 &
+  pid=$!
+  RACE_PIDS="$RACE_PIDS $pid"
+  ln -s "$h/state/victim" "$h/state/.session-lock.tmp.$pid"
+  printf x >"$gate"
+  wait "$pid" 2>/dev/null || fail "exclusive-temp row: acquire under $b failed: $(cat "$o")"
+  rm -f "$gate"
+}
+plant_and_acquire "$obin" "$OH" "$TMP/lo.raw"
+plant_and_acquire "$BIN" "$NH" "$TMP/ln.raw"
+assert_eq "$(cat "$TMP/lo.raw")" "lock: acquired (pid $$)" "exclusive-temp row: the oracle acquires"
+assert_eq "$(cat "$TMP/ln.raw")" "lock: acquired (pid $$)" "exclusive-temp row: the shim acquires"
+assert_contains "$(cat "$OH/state/victim")" "pid=$$" "the bash wrote through the planted symlink - the target holds the lock bytes (the divergence's bash side)"
+assert_eq "$(cat "$NH/state/victim")" "victim bytes" "the port never writes through a planted temp name"
+assert_eq "$(lsnap "$NH")" "== lock
+pid=$$
+since=$STUB_ISO
+cmd=$(ps -o command= -p $$)
+== litter .session-lock.tmp.PID" "the port's lock is its own bytes; the planted symlink is left where it was"
+reap_race
+assert_eq "$(race_survivors)" "0" "the gate wrappers exited with their entries"
+
 pass
