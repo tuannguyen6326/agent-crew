@@ -705,3 +705,251 @@ export function watcherNudge(sd: string, scope: string): string {
   }
   return `nudged watcher pid=${wpid} (poll sleep ${child} ended early)`;
 }
+
+// --- pr-check twins ---
+import { appendFileSync, chmodSync, constants as fsConstants } from "node:fs";
+import { constants as osConstants } from "node:os";
+
+// ac_require's twin: the first command missing from the live PATH ends the run
+// with its name, as the bash did before reading a single argument.
+export function require(...cmds: string[]): void {
+  for (const c of cmds) if (!Bun.which(c)) die(`required tool not found: ${c}`);
+}
+
+// ac_home as the path helpers read it inside `$(...)`: the physical home, or
+// "" once the refusal is printed (when `report`) - ac_task_meta's printf went
+// on with the empty capture and named `/<id>.meta`, so a homeless caller sees
+// the refusal AND its own "no crewmate meta" (a wart kept: the second line is
+// the entry's). An AC_HOME cd cannot enter was the shell's own `cd:` line
+// there; the port names the variable (the HOME RESOLUTION ruling).
+function softHome(report: boolean): string {
+  const h = process.env.AC_HOME;
+  if (!h) {
+    if (report) writeSync(2, `ERROR: ${NO_HOME}\n`);
+    return "";
+  }
+  const home = physicalDir(h);
+  if (home === null) {
+    if (report) writeSync(2, `ERROR: AC_HOME is not a readable directory: ${h}\n`);
+    return "";
+  }
+  return home;
+}
+
+// ac_task_meta / ac_task_status twins: `<state dir>/<id>.<ext>`, state/ minted
+// on the way (ac_state_dir's mkdir -p), the id a path component as given - the
+// bash never validated it, so `../t1` names `<home>/t1.meta` on both sides.
+function stateFile(id: string, ext: string, report: boolean): string {
+  const home = softHome(report);
+  let dir = "";
+  if (home !== "") {
+    dir = `${home}/state`;
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {}
+  }
+  return `${dir}/${id}.${ext}`;
+}
+
+export function taskMeta(id: string): string {
+  return stateFile(id, "meta", true);
+}
+
+export function taskStatus(id: string): string {
+  return stateFile(id, "status", true);
+}
+
+// ac_meta_set's twin: every line matching `^<key>=` dropped, every other line
+// kept byte for byte in order (CRLF and all), an unterminated tail
+// newline-terminated, `<key>=<value>\n` appended; an absent file is created
+// with the one line. key and value are bytes (latin1), file a path. The
+// rewrite goes through a sibling temp that a spawned `mv` renames over the
+// file, as the bash did (a symlinked meta becomes a regular file, its target
+// untouched); an mv that fails throws with mv's `status`, its own stderr
+// already written. Named divergences: the temp is created EXCLUSIVELY
+// (`<file>.tmp.<pid>`, the next name on EEXIST - the bash wrote through a
+// planted sibling); the file's mode is kept (the bash's fresh temp left every
+// meta umask-0644); the bytes are KEPT where the bash's `grep -v` destroyed
+// them - a meta holding a NUL came back as `Binary file <path> matches` plus
+// the new line, an unreadable one as the new line alone, both exit 0 - here a
+// NUL is one more byte and an unreadable file THROWS, the caller deciding its
+// exit; and the key is matched literally where the bash used it as a BRE
+// (`a.b` also dropped `aXb=`) - every live caller's key is an identifier, so
+// no reachable call differs.
+export function metaSet(file: string, key: string, value: string): void {
+  let data: Buffer | null = null;
+  let mode: number | null = null;
+  try {
+    const st = statSync(file);
+    if (st.isFile()) {
+      mode = st.mode & 0o7777;
+      data = readFileSync(file);
+    }
+  } catch (e) {
+    if ((e as { code?: string }).code !== "ENOENT") throw e;
+  }
+  const prefix = Buffer.from(`${key}=`, "latin1");
+  const lf = Buffer.from("\n");
+  const parts: Buffer[] = [];
+  if (data !== null) {
+    for (let start = 0; start < data.length; ) {
+      const nl = data.indexOf(10, start);
+      const end = nl === -1 ? data.length : nl;
+      const line = data.subarray(start, end);
+      if (!(line.length >= prefix.length && line.subarray(0, prefix.length).equals(prefix))) parts.push(line, lf);
+      start = end + 1;
+    }
+  }
+  parts.push(Buffer.from(`${key}=${value}\n`, "latin1"));
+  const out = Buffer.concat(parts);
+  let tmp = `${file}.tmp.${process.pid}`;
+  for (let i = 1; ; i++) {
+    try {
+      writeFileSync(tmp, out, { flag: "wx" });
+      break;
+    } catch (e) {
+      if ((e as { code?: string }).code !== "EEXIST") throw e;
+      tmp = `${file}.tmp.${process.pid}.${i}`;
+    }
+  }
+  if (mode !== null) chmodSync(tmp, mode);
+  let status = 127;
+  try {
+    status = Bun.spawnSync(["mv", tmp, file], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }).exitCode ?? 1;
+  } catch {}
+  if (status !== 0) throw Object.assign(new Error(`mv ${tmp} ${file} failed`), { code: "EMV", status });
+}
+
+// ac_stage_dir_for_id's twin: the `<family>/<stage>[-rN]` subpath a staged id
+// maps to, "" for an unsuffixed one; a bare `<family>-rN` is
+// `<family>/implement-rN`. Pure suffix grammar, no disk check - bin/ac-brief.sh
+// resolves where to CREATE a brief through it. `-rN` is one or two digits.
+const STAGE_SUFFIXES = ["spec", "arch", "plan", "review", "ship", "design", "qa", "chief"];
+
+export function stageDirForId(id: string): string {
+  let base = id;
+  let rev = "";
+  const m = /-r([0-9]{1,2})$/.exec(base);
+  if (m) {
+    rev = `-r${m[1]}`;
+    base = base.slice(0, -m[0].length);
+  }
+  for (const stage of STAGE_SUFFIXES) {
+    if (!base.endsWith(`-${stage}`)) continue;
+    const fam = base.slice(0, -(stage.length + 1));
+    return fam === "" ? "" : `${fam}/${stage}${rev}`;
+  }
+  return rev === "" ? "" : `${base}/implement${rev}`;
+}
+
+function isDir(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// ac_task_dir's twin, the brief-layout resolver of bin/ac-brief.sh resolved by
+// what EXISTS: the nested stage dir when its brief lives there (a chief's on
+// its FAMILY dir existing - the room is its brief), data/<id>/implement for an
+// unsuffixed id with a brief there, the fan-out data/<base>/tasks/<slug> by
+// longest prefix first, else the flat data/<id>. A brief in both places throws
+// with ac_die's text, the caller deciding what the refusal costs. data/ is
+// minted on the way (ac_data_dir).
+export function taskDir(id: string): string {
+  const d = dataDir();
+  const flat = `${d}/${id}`;
+  const sub = stageDirForId(id);
+  let nested = "";
+  let stage = "";
+  let fam = "";
+  if (sub !== "") {
+    nested = `${d}/${sub}`;
+    stage = sub.slice(sub.indexOf("/") + 1);
+    fam = sub.slice(0, sub.indexOf("/"));
+  } else if (isFile(`${flat}/implement/brief.md`)) {
+    nested = `${flat}/implement`;
+  }
+  if (nested !== "" && (isFile(`${nested}/brief.md`) || (stage === "chief" && isDir(`${d}/${fam}`)))) {
+    if (isFile(`${flat}/brief.md`)) throw new Error(`ambiguous task data for ${id}: briefs at both ${nested} and ${flat}`);
+    return nested;
+  }
+  if (sub === "") {
+    let base = id;
+    while (base.lastIndexOf("-") !== -1) {
+      base = base.slice(0, base.lastIndexOf("-"));
+      const slug = id.slice(base.length + 1);
+      if (!isFile(`${d}/${base}/tasks/${slug}/brief.md`)) continue;
+      if (isFile(`${flat}/brief.md`)) throw new Error(`ambiguous task data for ${id}: briefs at both ${d}/${base}/tasks/${slug} and ${flat}`);
+      return `${d}/${base}/tasks/${slug}`;
+    }
+  }
+  return flat;
+}
+
+// ac_status_timeline_mirror's twin, fail-soft like it: the same line appended
+// to `<taskDir>/timeline.log`, skipped for a verify-* meta, an id whose task
+// dir is ambiguous, a dir not there for a task with no meta on disk, or a dir
+// `mkdir -p` (spawned, its noise dropped as the bash dropped it) cannot make.
+// A homeless run skipped too: its `/<id>` is no task dir.
+function statusTimelineMirror(id: string, rec: Buffer): void {
+  if (softHome(false) === "") return;
+  const meta = stateFile(id, "meta", false);
+  if (metaIsVerify(meta)) return;
+  let dir: string;
+  try {
+    // `$(ac_task_dir ...)`: the capture lost every trailing LF of the path.
+    dir = taskDir(id).replace(/\n+$/, "");
+  } catch {
+    return;
+  }
+  if (!isDir(dir)) {
+    if (!isFile(meta)) return;
+    try {
+      if (Bun.spawnSync(["mkdir", "-p", dir], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exitCode !== 0) return;
+    } catch {
+      return;
+    }
+  }
+  try {
+    appendFileSync(`${dir}/timeline.log`, rec);
+  } catch {}
+}
+
+// ac_status_append's twin: `<iso> <line>\n` appended to the task's status log,
+// then mirrored to its durable timeline. The primary write's own failure is
+// the answer (false), the mirror never changes it. line is bytes (latin1), id
+// a path component. `unguarded` is the caller whose bash ran the helper under
+// errexit (ac-pr-check.sh's bare call): a date(1) that fails ends it with
+// date's status before any write (thrown here as code EDATE), and a failed
+// primary append ends it before the mirror - the guarded callers' bash (`||`)
+// slept through both and mirrored anyway.
+export function statusAppend(id: string, line: string, unguarded = false): boolean {
+  let stamp: string;
+  if (unguarded) {
+    let r: ReturnType<typeof Bun.spawnSync> | null = null;
+    try {
+      r = Bun.spawnSync(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdin: "ignore", stdout: "pipe", stderr: "inherit", env: process.env });
+    } catch {}
+    // The shell's status for the child: its exit, 128+signal when a signal
+    // ended it, 127 when it could not start.
+    if (r === null) throw Object.assign(new Error("date failed"), { code: "EDATE", status: 127 });
+    if (r.exitCode !== 0) {
+      const sig = r.signalCode ? (osConstants.signals as Record<string, number>)[r.signalCode] ?? 0 : 0;
+      throw Object.assign(new Error("date failed"), { code: "EDATE", status: r.exitCode ?? 128 + sig });
+    }
+    // `$(...)`: NUL bytes dropped, trailing newlines stripped.
+    stamp = r.stdout.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
+  } else stamp = iso();
+  const rec = Buffer.from(`${stamp} ${line}\n`, "latin1");
+  let ok = true;
+  try {
+    appendFileSync(taskStatus(id), rec);
+  } catch {
+    ok = false;
+  }
+  if (!ok && unguarded) return false;
+  statusTimelineMirror(id, rec);
+  return ok;
+}
