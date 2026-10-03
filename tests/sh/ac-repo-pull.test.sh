@@ -137,18 +137,22 @@ assert_eq "$(shim_out)" "fetched only (working tree dirty)" "an untracked file i
 [ "$(clone_head)" != "$(origin_sha)" ] || fail "a dirty clone must not move"
 assert_eq "$(git -C "$NH/clone" rev-parse refs/remotes/origin/main)" "$(origin_sha)" "the fetch still happened"
 same_clone
-# 4. behind, modified tracked; behind, staged -> dirty
-both fresh
+# 4. behind, modified tracked; behind, staged -> dirty: the fetch lands
+#    origin/main, the local branch stays where it was
+both fresh; both advance "behind-modified"
 modify() { printf 'edit\n' >>"$H/clone/file.txt"; }
 both modify
 same HOME/clone
 assert_eq "$(shim_out)" "fetched only (working tree dirty)" "a modified tracked file is dirty"
+assert_eq "$(git -C "$NH/clone" rev-parse refs/remotes/origin/main)" "$(origin_sha)" "behind+modified: the fetch landed origin/main"
+[ "$(clone_head)" != "$(origin_sha)" ] || fail "behind+modified: the local branch must stay behind"
 same_clone
-both fresh
+both fresh; both advance "behind-staged"
 stage() { printf 'edit\n' >>"$H/clone/file.txt"; git -C "$H/clone" add -A; }
 both stage
 same HOME/clone
 assert_eq "$(shim_out)" "fetched only (working tree dirty)" "a staged change is dirty"
+[ "$(clone_head)" != "$(origin_sha)" ] || fail "behind+staged: the local branch must stay behind"
 same_clone
 # 5. ahead; ahead + untracked says ahead (ancestry is probed before dirtiness)
 both fresh
