@@ -43,12 +43,16 @@
 # can act on faster - the auto-arm is what actually restores coverage.
 #
 # Inert (exit 0) when: stop_hook_active is set in the hook payload (loop
-# guard), this checkout is a linked worktree (crewmates do not guard), the
-# .ac-crewdeputy-home marker exists, an UNSCOPED session does not hold the
+# guard), this checkout is a linked worktree (crewmates do not guard), an
+# UNSCOPED session does not hold the
 # home lock (read-only - see the block below; a scoped roomchief is NOT
 # exempted, it owns its store), or nothing is in flight and nothing is
 # queued (except the standing-coverage rule above). Fails open on any
 # missing dependency: a broken guard must never wedge the harness.
+# A crewdeputy home is a fleet home like any other: the deputy is the chief
+# there, its session holds that home's lock and this guard covers its crew;
+# only the PARENT's tally skips the deputy's own meta (below), since the
+# deputy supervises what runs under it.
 #
 # Standing coverage is FLEET business: it can only fire for the unscoped
 # lock-holding session, because a roomchief never holds the home lock and
@@ -113,7 +117,7 @@
 # line (never stdout/stderr - see ac_hook_trace) naming what was OBSERVED and
 # the VERDICT, so an incident where the wake was published but nobody was
 # woken can tell whether this guard even ran. NOT traced: stop_hook_active,
-# a linked worktree, a crewdeputy home, and a failure to source any of
+# a linked worktree, and a failure to source any of
 # ac-lib.sh/ac-backend.sh/ac-wake-lib.sh (the floor - nothing here can even
 # resolve a home to write to, let alone judge one). The AC_SOLO branch is
 # also untraced: it owes no supervision (see its own comment below) and
@@ -152,7 +156,6 @@ payload="$(cat 2>/dev/null || true)"
 case "$payload" in *'"stop_hook_active":true'*) exit 0 ;; esac
 
 home="$(ac_home 2>/dev/null)" || exit 0
-[ -e "$home/.ac-crewdeputy-home" ] && exit 0
 
 gd="$(git -C "$home" rev-parse --git-dir 2>/dev/null || true)"
 gcd="$(git -C "$home" rev-parse --git-common-dir 2>/dev/null || true)"

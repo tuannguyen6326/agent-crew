@@ -437,11 +437,12 @@ if [ -d "$linked" ]; then
   assert_no_file "$linked/state/.stop-hooks.log" "R4: a linked worktree must never write a trace line"
 fi
 
-# --- a crewdeputy home is left to its own fleet -----------------------------
+# --- a crewdeputy home arms its own watcher, like any fleet home -----------
+# A crewdeputy is a chief running its own home; its crew is its own to cover.
 rm -f "$trace_log"
 touch "$AC_HOME/.ac-crewdeputy-home"
-assert_eq "$(run_hook)" "0" "a crewdeputy home is out of scope"
-assert_no_file "$trace_log" "R4: a crewdeputy home must never write a trace line"
+assert_eq "$(run_hook)" "2" "a crewdeputy home with crew in flight is supervision owed to its own session"
+assert_contains "$(last_trace)" "verdict=" "...and the verdict is traced"
 rm -f "$AC_HOME/.ac-crewdeputy-home"
 
 # --- fail open: a broken dependency must never wedge the harness ------------

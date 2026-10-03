@@ -13,7 +13,8 @@
 # - seed-copies the parent's records/captain.md when present (captain style, so
 #   the crewdeputy's captain-facing prose matches the fleet voice - one-time,
 #   deputy-owned afterward, unlike the converged config knobs);
-# - drops the .ac-crewdeputy-home marker (the turn-end guard skips crewdeputy homes);
+# - drops the .ac-crewdeputy-home marker (the deputy home's identity: ac-deputy.sh
+#   and ac-spawn.sh --crewdeputy --recover read it);
 # - symlinks the executable core into the home (ac_seed_runtime_links:
 #   bin/ CLAUDE.md .claude/ AGENTS.md) so the chief runs with
 #   cwd = home (workspace = home, repo = code);
