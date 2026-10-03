@@ -105,8 +105,27 @@ const isDir = (p: string): boolean => {
   }
 };
 
+// `IFS=',' read -ra` WITHOUT -r: a backslash escapes the next byte (an escaped
+// comma is no separator), a backslash-newline is a continuation, an unescaped
+// newline ends the line; then `tr -d ' '` per entry, empties skipped.
 export function splitProjects(projects: string): string[] {
-  return projects.split("\n")[0].split(",").map((p) => p.replace(/ /g, "")).filter((p) => p !== "");
+  const entries: string[] = [];
+  let cur = "";
+  for (let i = 0; i < projects.length; i++) {
+    const c = projects[i];
+    if (c === "\\") {
+      const n = projects[i + 1];
+      if (n === undefined) break;
+      i++;
+      if (n !== "\n") cur += n;
+    } else if (c === "\n") break;
+    else if (c === ",") {
+      entries.push(cur);
+      cur = "";
+    } else cur += c;
+  }
+  entries.push(cur);
+  return entries.map((p) => p.replace(/ /g, "")).filter((p) => p !== "");
 }
 
 // A project name arrives native from Bun's argv; its bytes are what the file
@@ -162,7 +181,9 @@ function main(args: string[]): void {
 
   const requested = noProjects ? [] : splitProjects(projects);
   for (const p of requested) {
-    if (!isDir(join(parent, "projects", p, ".git"))) die(`parent has no clone at projects/${p}`);
+    // The spelling is the caller's: `missing/../alpha` must fail at the OS, as
+    // `[ -d ]` had it, not be folded to `alpha` first.
+    if (!isDir(`${parent}/projects/${p}/.git`)) die(`parent has no clone at projects/${p}`);
   }
 
   for (const d of ["state", "data", "records", "config", "projects"]) mkdirSync(join(home, d), { recursive: true });
@@ -189,8 +210,8 @@ function main(args: string[]): void {
 
   const cloned: string[] = [];
   for (const p of requested) {
-    const src = join(parent, "projects", p);
-    const dst = join(home, "projects", p);
+    const src = `${parent}/projects/${p}`;
+    const dst = `${home}/projects/${p}`;
     run(["git", "clone", "--quiet", src, dst]);
     const origin = Bun.spawnSync(["git", "-C", src, "remote", "get-url", "origin"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" })
       .stdout.toString().replace(/\n+$/, "");
