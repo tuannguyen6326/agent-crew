@@ -16,9 +16,11 @@
 // - PRAGMA busy_timeout is set BEFORE journal_mode=WAL on every open: the
 //   journal_mode pragma is itself a write, and setting it first measurably
 //   fails under multi-process contention instead of waiting.
-// - ONE timestamp format everywhere (ISO 8601 UTC via iso()): the delta
-//   keyset compares timestamp strings, so a second format at any write site
-//   silently breaks at-least-once delivery.
+// - ONE timestamp format everywhere (ISO 8601 UTC via iso()): an explicit
+//   delta --since and the pre-sequence cursor backfill compare timestamp
+//   strings, so a second format at any write site silently misplaces them.
+// - Delta's cursor is at-least-once by INDEX order (pages.seq, facts.id),
+//   never by a file's mtime or a fact's stamp - see migrate().
 // - Exact-hash dedup is deterministic and complete: canonical = fewest path
 //   segments, then shortest slug, then lexicographic - a global fixpoint pass
 //   over the pages table, never dependent on walk order. Demoted duplicates
@@ -50,7 +52,9 @@
 // - Every result carries its home-relative path, an evidence stamp, and the
 //   response carries create_safety - recall must never lose to grep on
 //   citability.
-// - The pattern floor (push-gate patterns file) flags, never drops.
+// - The pattern floor (push-gate patterns file) flags, never drops, inside
+//   the home; synthesize redacts every match from the sources it hands a
+//   model, since that prompt leaves the home.
 // - LLM boundaries: sync/recall/entity/context_pack/delta/remember/forget are
 //   zero-LLM forever. The embedding lane (voyage|openai|stub) is an optional
 //   vectorizer - absent config or key degrades to keyword-only with a stamp,
@@ -239,9 +243,24 @@ const iso = (ms?: number) => new Date(ms ?? Date.now()).toISOString();
 function parseSince(v: string): string {
   const rel = /^(\d+)([smhdw])$/.exec(v);
   if (rel) return iso(Date.now() - Number(rel[1]) * { s: 1e3, m: 6e4, h: 3.6e6, d: 8.64e7, w: 6.048e8 }[rel[2] as "s"]);
-  const ms = Date.parse(v);
+  const ms = parseTime(v);
   if (Number.isNaN(ms)) die("invalid_params", `unreadable --since: ${v}`, "pass an ISO time (2026-09-26T08:00:00Z) or a duration (7d, 12h, 30m)");
   return iso(ms);
+}
+// Date.parse rolls an impossible day over (2024-02-30 reads as 2024-03-01), so
+// the calendar date a stamp names must survive a round trip of its own.
+function parseTime(v: string): number {
+  const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
+  if (d && new Date(Date.UTC(+d[1], +d[2] - 1, +d[3])).toISOString().slice(0, 10) !== d[0]) return NaN;
+  return Date.parse(v);
+}
+// Number() reads "abc" as NaN, which sliced every hit away, and a negative
+// limit sliced off only the tail - a count is a whole number or a refusal.
+function count(name: string, dflt?: string): number | undefined {
+  const v = opt(name, dflt);
+  if (v === undefined) return undefined;
+  if (!/^\d+$/.test(v)) die("invalid_params", `--${name} must be a whole number, got '${v}'`, `pass --${name} <n>`);
+  return Number(v);
 }
 
 function die(code: string, message: string, suggestion: string): never {
@@ -309,6 +328,29 @@ function migrate(db: Database) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_facts_since ON facts(created_at, id) WHERE expired_at IS NULL`);
   db.run(`CREATE TABLE IF NOT EXISTS cursors(agent TEXT, session TEXT, since_utc TEXT, since_slug TEXT,
     fact_since TEXT, fact_id INTEGER DEFAULT 0, updated_at TEXT, PRIMARY KEY(agent, session))`);
+  // Delta delivers in INDEX order: pages.seq comes from one counter inside
+  // sync's write transaction, because an mtime keyset left behind its cursor
+  // a file the walk reached after a later-written one, or one moved in with
+  // an old mtime. Facts already carry that order in their id (MAX+1 inside
+  // remember's transaction). A NULL seq - a brain from before the column, or
+  // a page an older engine wrote - is backfilled in the old keyset's order,
+  // and a cursor without one resumes where its (time, slug) keyset stood.
+  try { db.run("ALTER TABLE pages ADD COLUMN seq INTEGER"); } catch {}
+  try { db.run("ALTER TABLE cursors ADD COLUMN page_seq INTEGER"); } catch {}
+  try { db.run("ALTER TABLE cursors ADD COLUMN fact_seq INTEGER"); } catch {}
+  db.run(`CREATE INDEX IF NOT EXISTS idx_pages_seq ON pages(seq)`);
+  if (db.query("SELECT 1 FROM pages WHERE seq IS NULL LIMIT 1").get()) db.transaction(() => {
+    let n = (db.query("SELECT MAX(seq) m FROM pages").get() as any)?.m ?? 0;
+    for (const r of db.query("SELECT slug FROM pages WHERE seq IS NULL ORDER BY updated_at, slug").all() as any[])
+      db.run("UPDATE pages SET seq=? WHERE slug=? AND seq IS NULL", [++n, r.slug]);
+  }).immediate();
+  if (db.query("SELECT 1 FROM cursors WHERE page_seq IS NULL LIMIT 1").get())
+    db.run(`UPDATE cursors SET
+      page_seq=COALESCE((SELECT MAX(seq) FROM pages p WHERE p.updated_at < cursors.since_utc
+        OR (p.updated_at = cursors.since_utc AND p.slug <= cursors.since_slug)), 0),
+      fact_seq=COALESCE((SELECT MAX(id) FROM facts f WHERE f.created_at < cursors.fact_since
+        OR (f.created_at = cursors.fact_since AND f.id <= cursors.fact_id)), 0)
+      WHERE page_seq IS NULL`);
   db.run(`INSERT OR REPLACE INTO meta(k,v) VALUES('schema_version', ?)`, [String(SCHEMA_VERSION)]);
 }
 
@@ -687,12 +729,13 @@ function syncInner(db: Database, t0: number) {
   }
 
   const tx = db.transaction((items: Item[]) => {
+    let seq = (db.query("SELECT MAX(seq) m FROM pages").get() as any)?.m ?? 0;
     for (const it of items) {
       for (const [t, c] of [["pages", "slug"], ["chunks", "slug"], ["chunks_fts", "slug"], ["pages_fts", "slug"], ["links", "from_slug"], ["aliases", "slug"]])
         db.run(`DELETE FROM ${t} WHERE ${c}=?`, [it.slug]);
       db.run("DELETE FROM shadows WHERE path=?", [it.path]);
-      db.run(`INSERT OR REPLACE INTO pages(slug,title,type,family,path,mtime,hash,updated_at,backlinks,flags) VALUES(?,?,?,?,?,?,?,?,0,?)`,
-        [it.slug, it.title, it.type, it.family, it.path, it.mtime, it.hash, it.updated, it.flags]);
+      db.run(`INSERT OR REPLACE INTO pages(slug,title,type,family,path,mtime,hash,updated_at,backlinks,flags,seq) VALUES(?,?,?,?,?,?,?,?,0,?,?)`,
+        [it.slug, it.title, it.type, it.family, it.path, it.mtime, it.hash, it.updated, it.flags, ++seq]);
       it.chunks.forEach((c, i) => {
         db.run("INSERT INTO chunks(slug,ord,text,text_hash) VALUES(?,?,?,?)", [it.slug, i, c, new Bun.CryptoHasher("sha256").update(c).digest("hex")]);
         db.run("INSERT INTO chunks_fts(text,title,slug) VALUES(?,?,?)", [c, it.title, it.slug]);
@@ -702,7 +745,9 @@ function syncInner(db: Database, t0: number) {
       for (const lk of it.links) db.run("INSERT OR IGNORE INTO links(from_slug,to_slug,type,resolved) VALUES(?,?,?,0)", [it.slug, lk.to, lk.type]);
     }
   });
-  tx(batch);
+  // IMMEDIATE: the seq counter is read inside, so no other writer may commit
+  // between that read and these inserts.
+  tx.immediate(batch);
   let reattached = 0;
   if (ec && (rebuild || batch.length)) {
     reattached = db.run(`UPDATE chunks SET embedding=(SELECT embedding FROM kept_vectors k WHERE k.text_hash=chunks.text_hash LIMIT 1),
@@ -1066,8 +1111,8 @@ async function cmdRecall() {
   const t0 = performance.now();
   const q = opt("query"), entity = opt("entity"), agent = opt("agent");
   const since = opt("since") ? parseSince(opt("since")!) : undefined;
-  const limit = Math.min(Number(opt("limit", "8")), 50);
-  const budget = opt("budget-tokens") ? Number(opt("budget-tokens")) : undefined;
+  const limit = Math.min(count("limit", "8")!, 50);
+  const budget = count("budget-tokens");
   // facts arm
   let facts: any[] = [];
   if (entity || agent || since || !q) {
@@ -1184,7 +1229,7 @@ async function cmdRemember() {
   if (ttlRaw) {
     const m = ttlRaw.match(/^(\d+)([smhd])$/);
     if (m) ttl = iso(Date.now() + Number(m[1]) * { s: 1e3, m: 6e4, h: 36e5, d: 864e5 }[m[2] as "s"]!);
-    else if (!isNaN(Date.parse(ttlRaw))) ttl = iso(Date.parse(ttlRaw));
+    else if (!isNaN(parseTime(ttlRaw))) ttl = iso(parseTime(ttlRaw));
     else die("invalid_params", `unparseable ttl '${ttlRaw}'`, "use shorthand (30d, 12h, 45m) or an ISO 8601 timestamp");
   }
   const entity = opt("entity") ?? null, agent = opt("agent") ?? null, family = opt("family") ?? null;
@@ -1284,7 +1329,7 @@ function cmdContextPack() {
   const ents = (opt("entities") || "").split(",").map(s => s.trim()).filter(Boolean).slice(0, 8);
   if (!ents.length) die("invalid_params", "no entities", "ac-brain context_pack --entities fam-a,records/backlog [--budget-tokens n]");
   const db = openDb();
-  const budget = opt("budget-tokens") ? Number(opt("budget-tokens")) : undefined;
+  const budget = count("budget-tokens");
   let cards = ents.map(e => entityCard(db, e)).filter(Boolean) as any[];
   // Facts are ENTITY-SCOPED in three tiers - never the latest-N home-wide
   // (that dragged unrelated notes into every pack). Tier 1: facts on the
@@ -1348,43 +1393,41 @@ function cmdDelta() {
   const explicit = opt("since") ? parseSince(opt("since")!) : undefined;
   const cur = db.query("SELECT * FROM cursors WHERE agent=? AND session=?").get(agent, session) as any;
   if (!cur && !explicit) {
-    db.run("INSERT INTO cursors(agent,session,since_utc,since_slug,fact_since,fact_id,updated_at) VALUES(?,?,?,?,?,0,?)",
-      [agent, session, iso(), "", iso(), iso()]);
+    const ps = (db.query("SELECT MAX(seq) m FROM pages").get() as any)?.m ?? 0;
+    const fs = (db.query("SELECT MAX(id) m FROM facts").get() as any)?.m ?? 0;
+    db.run("INSERT INTO cursors(agent,session,since_utc,since_slug,fact_since,fact_id,updated_at,page_seq,fact_seq) VALUES(?,?,?,'',?,0,?,?,?)",
+      [agent, session, iso(), iso(), iso(), ps, fs]);
     out({ protocol_version: 1, first_wake: true, pages: [], facts: [], has_more: false }); return;
   }
-  const sinceUtc = explicit ?? cur.since_utc, sinceSlug = explicit ? "" : cur.since_slug;
-  const factSince = explicit ?? cur?.fact_since ?? sinceUtc;
-  const factId = explicit ? 0 : cur?.fact_id ?? 0;
+  const since = explicit ?? cur.since_utc;
   const lim = 50;
-  const pages = db.query(
-    `SELECT slug, title, family, type, path, updated_at FROM pages
-     WHERE deleted_at IS NULL AND ((updated_at > ?) OR (updated_at = ? AND slug > ?))
-     ORDER BY updated_at ASC, slug ASC LIMIT ?`).all(sinceUtc, sinceUtc, sinceSlug, lim + 1) as any[];
+  // A cursor reads by index order and never needs a clock; an explicit
+  // --since is a TIME, read by stamp, and moves no cursor.
+  const pages = (explicit
+    ? db.query(`SELECT slug, title, family, type, path, updated_at, seq FROM pages
+        WHERE deleted_at IS NULL AND updated_at >= ? ORDER BY updated_at ASC, slug ASC LIMIT ?`).all(explicit, lim + 1)
+    : db.query(`SELECT slug, title, family, type, path, updated_at, seq FROM pages
+        WHERE deleted_at IS NULL AND seq > ? ORDER BY seq ASC LIMIT ?`).all(cur.page_seq, lim + 1)) as any[];
   const hasMorePages = pages.length > lim;
   const delivered = pages.slice(0, lim);
-  const facts = db.query(
-    `SELECT id, entity, fact, kind, provenance, agent, created_at FROM facts
-     WHERE ${ACTIVE_FACT} AND ((created_at > ?) OR (created_at = ? AND id > ?))
-     ORDER BY created_at ASC, id ASC LIMIT ?`).all(iso(), factSince, factSince, factId, lim + 1) as any[];
+  const facts = (explicit
+    ? db.query(`SELECT id, entity, fact, kind, provenance, agent, created_at FROM facts
+        WHERE ${ACTIVE_FACT} AND created_at >= ? ORDER BY created_at ASC, id ASC LIMIT ?`).all(iso(), explicit, lim + 1)
+    : db.query(`SELECT id, entity, fact, kind, provenance, agent, created_at FROM facts
+        WHERE ${ACTIVE_FACT} AND id > ? ORDER BY id ASC LIMIT ?`).all(iso(), cur.fact_seq, lim + 1)) as any[];
   const hasMoreFacts = facts.length > lim;
   const fDelivered = facts.slice(0, lim);
+  const pageSeq = delivered.length ? delivered[delivered.length - 1].seq : cur?.page_seq ?? 0;
+  const factSeq = fDelivered.length ? fDelivered[fDelivered.length - 1].id : cur?.fact_seq ?? 0;
   if (!explicit) {
-    // deliver-before-advance, per stream
-    const np = delivered.length ? delivered[delivered.length - 1] : null;
-    const nf = fDelivered.length ? fDelivered[fDelivered.length - 1] : null;
-    db.run(`UPDATE cursors SET since_utc=?, since_slug=?, fact_since=?, fact_id=?, updated_at=? WHERE agent=? AND session=?`,
-      [np ? np.updated_at : (hasMorePages ? sinceUtc : iso(Date.now() - 2000)),
-       np ? np.slug : (hasMorePages ? sinceSlug : ""),
-       nf ? nf.created_at : (hasMoreFacts ? factSince : iso(Date.now() - 2000)),
-       nf ? nf.id : (hasMoreFacts ? factId : 0),
-       iso(), agent, session]);
+    // deliver-before-advance, per stream; since_utc only dates the last look
+    db.run(`UPDATE cursors SET since_utc=?, page_seq=?, fact_seq=?, updated_at=? WHERE agent=? AND session=?`,
+      [iso(), pageSeq, factSeq, iso(), agent, session]);
     db.run("DELETE FROM cursors WHERE updated_at < ?", [iso(Date.now() - 7 * 864e5)]);
   }
   usageLog({ verb: "delta", agent, pages: delivered.length, facts: fDelivered.length });
-  out({ protocol_version: 1, since: sinceUtc, pages: delivered, facts: fDelivered,
-    has_more: hasMorePages || hasMoreFacts,
-    next_cursor: { since: delivered.length ? delivered[delivered.length - 1].updated_at : sinceUtc,
-                   slug: delivered.length ? delivered[delivered.length - 1].slug : sinceSlug } });
+  out({ protocol_version: 1, since, pages: delivered, facts: fDelivered,
+    has_more: hasMorePages || hasMoreFacts, next_cursor: { page_seq: pageSeq, fact_seq: factSeq } });
 }
 
 // ---------- links-to / stats / doctor ----------
@@ -1534,12 +1577,16 @@ async function cmdSynthesize() {
   const sources = gathered.map(h => ({ slug: h.slug, path: h.path }));
   // Full best-matching chunks, not display snippets - a composer cannot cite
   // from 14-word fragments (its own first live answer said exactly that).
+  // Today's date and each source's own date let a "latest" or "still true"
+  // question tell a superseded page from a current one.
+  const redact = loadPatterns().map(re => new RegExp(re.source, "gi"));
   const ctx = gathered.map(h => {
     const rows = db.query("SELECT text FROM chunks WHERE slug=? ORDER BY ord LIMIT 3").all(h.slug) as any[];
     const body = rows.map(r => r.text).join("\n").slice(0, 4000);
-    return `### ${h.title} (${h.slug})\n${body || h.snippet || ""}`;
+    const at = String((db.query("SELECT updated_at FROM pages WHERE slug=?").get(h.slug) as any)?.updated_at ?? "").slice(0, 10) || "undated";
+    return redact.reduce((s, re) => s.replace(re, "[redacted]"), `### ${h.title} (${h.slug}, written ${at})\n${body || h.snippet || ""}`);
   }).join("\n\n");
-  const prompt = `Answer strictly from the sources below; cite slugs; state gaps honestly.\n\nQUESTION: ${q}\n\nSOURCES:\n${ctx}`;
+  const prompt = `Today is ${iso().slice(0, 10)}. Answer strictly from the sources below; cite slugs; state gaps honestly.\n\nQUESTION: ${q}\n\nSOURCES:\n${ctx}`;
   let answer: string | null = null, status = "ok";
   // Direct API branch: config/brain.json synthesize.api {base_url, model,
   // key_env|auth} calls an OpenAI-compatible chat endpoint - cheaper and

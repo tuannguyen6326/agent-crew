@@ -171,6 +171,38 @@ assert_contains "$d1" "records/backlog" "a changed page IS delivered on the next
 d2="$("$BRAIN" delta --agent chief --session t --home "$AC_HOME" --compact)"
 assert_eq "$(printf '%s' "$d2" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d['pages']), len(d['facts']))")" "0 0" "delivered pages/facts do not repeat (deliver-before-advance)"
 
+# --- delta delivers in INDEX order, never by a file's mtime or a fact's stamp --
+# A file the walk reaches after a later-written one, or one moved in with an
+# old mtime, sat behind an mtime cursor forever; so did a fact whose writer
+# stamped its time before waiting on the lock (simulated by an old created_at).
+"$BRAIN" delta --agent order --session t --home "$AC_HOME" --compact >/dev/null
+"$BRAIN" delta --agent order --session t --home "$AC_HOME" --compact >/dev/null
+mkdir -p "$AC_HOME/data/fam-old"
+printf '# Old mtime\nA page moved in with an old mtime.\n' >"$AC_HOME/data/fam-old/room.md"
+touch -t 202001010000 "$AC_HOME/data/fam-old/room.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+sqlite3 "$AC_HOME/state/brain.sqlite" "INSERT INTO facts(id,fact,kind,provenance,agent,created_at) VALUES((SELECT MAX(id)+1 FROM facts),'a fact stamped before its lock wait','fact','t','t1','2020-01-01T00:00:00.000Z')"
+do1="$("$BRAIN" delta --agent order --session t --home "$AC_HOME" --compact)"
+sqlite3 "$AC_HOME/state/brain.sqlite" "DELETE FROM facts WHERE fact='a fact stamped before its lock wait'"
+assert_contains "$do1" "data/fam-old/room" "a page indexed after the cursor is delivered whatever its mtime"
+assert_contains "$do1" "stamped before its lock wait" "a fact committed after the cursor is delivered whatever its stamp"
+rm -rf "$AC_HOME/data/fam-old"
+
+# A brain written before the index sequence existed: each cursor resumes at
+# the position its old (time, slug) keyset named - nothing re-delivered,
+# nothing skipped. The engine's own columns are stripped to rebuild that shape.
+MH="$TMP/migrate-home"
+mkdir -p "$MH/data/mig" "$MH/state"
+for p in a b c; do printf '# Page %s\nmigration page %s, long enough to be indexed.\n' "$p" "$p" >"$MH/data/mig/$p.md"; done
+touch -t 202101010000 "$MH/data/mig/a.md"; touch -t 202101020000 "$MH/data/mig/b.md"; touch -t 202101030000 "$MH/data/mig/c.md"
+"$BRAIN" sync --home "$MH" --compact >/dev/null
+bstamp="$(sqlite3 "$MH/state/brain.sqlite" "SELECT updated_at FROM pages WHERE slug='data/mig/b'")"
+sqlite3 "$MH/state/brain.sqlite" "DROP INDEX IF EXISTS idx_pages_seq; ALTER TABLE pages DROP COLUMN seq; ALTER TABLE cursors DROP COLUMN page_seq; ALTER TABLE cursors DROP COLUMN fact_seq;
+  INSERT INTO cursors(agent,session,since_utc,since_slug,fact_since,fact_id,updated_at) VALUES('mig','t','$bstamp','data/mig/b','$bstamp',0,'$bstamp')"
+dm="$("$BRAIN" delta --agent mig --session t --home "$MH" --compact)"
+assert_eq "$(printf '%s' "$dm" | python3 -c "import sys,json; print(' '.join(p['slug'] for p in json.load(sys.stdin)['pages']))")" "data/mig/c" \
+  "a pre-sequence cursor resumes exactly after the page its keyset named"
+
 # --- budget packing -----------------------------------------------------------
 rb="$("$BRAIN" recall --home "$AC_HOME" --query "widget" --limit 10 --budget-tokens 20 --compact)"
 [ "$(printf '%s' "$rb" | j "['dropped_count']")" -ge 1 ] || fail "a tiny budget drops results and says so"
@@ -663,6 +695,43 @@ assert_contains "$sa2" "stub-api-answer" "...with its own answer"
 case "$(cat "$TMP/sa2.err")" in *refus*|*"no ac-brain synthesize"*) fail "an answered synthesize must not report the unreached harness rung: $(cat "$TMP/sa2.err")" ;; esac
 rm -f "$AC_HOME/config/brain.json" "$AC_HOME/config/brain-agent"
 
+# The composer is told today's date and each source's own date - without them a
+# "latest" or "still true" question cannot tell a superseded page from a current
+# one. The stub answers with the prompt it was sent.
+cat >"$TMP/synth-echo.ts" <<'TS'
+const s = Bun.serve({ port: 0, fetch: async (r) => {
+  const b = await r.json();
+  return Response.json({ choices: [{ message: { content: b.messages[0].content } }] });
+} });
+console.log(s.port);
+await new Promise(() => {});
+TS
+rm -f "$TMP/synth-api.port"
+embed_stub_up "$TMP/synth-echo.ts" "$TMP/synth-api.port" || { embed_stub_down; fail "the synthesize echo stub never came up"; }
+printf '{"synthesize":{"api":{"provider":"ollama","model":"m","base_url":"http://127.0.0.1:%s/v1"}}}\n' \
+  "$EMBED_STUB_PORT" >"$AC_HOME/config/brain.json"
+se="$("$BRAIN" synthesize "widget product line" --home "$AC_HOME" --compact 2>/dev/null)"
+embed_stub_down
+assert_contains "$se" "Today is $(date -u +%Y-%m-%d)" "the synthesize prompt states today's date"
+assert_contains "$se" "written $(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT substr(updated_at,1,10) FROM pages WHERE slug LIKE '%widget%' LIMIT 1")" \
+  "...and each source's own date"
+# The index keeps a pattern-hit page whole (flags, never drops), but what
+# synthesize sends to a model is outside the home: every match is redacted.
+printf 'zzsecretmarker\n' >"$TMP/pat-redact"
+mkdir -p "$AC_HOME/data/fam-redact"
+printf '# Redaction probe\nThe redaction probe deploy token is zzsecretmarker for this page.\n' >"$AC_HOME/data/fam-redact/room.md"
+AC_BRAIN_PATTERN_FILE="$TMP/pat-redact" "$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+rm -f "$TMP/synth-api.port"
+embed_stub_up "$TMP/synth-echo.ts" "$TMP/synth-api.port" || { embed_stub_down; fail "the synthesize echo stub never came up"; }
+printf '{"synthesize":{"api":{"provider":"ollama","model":"m","base_url":"http://127.0.0.1:%s/v1"}}}\n' \
+  "$EMBED_STUB_PORT" >"$AC_HOME/config/brain.json"
+sr="$(AC_BRAIN_PATTERN_FILE="$TMP/pat-redact" "$BRAIN" synthesize "redaction probe deploy token" --home "$AC_HOME" --compact 2>/dev/null)"
+embed_stub_down
+assert_contains "$sr" "Redaction probe" "the pattern-hit page still reaches the composer"
+assert_contains "$sr" "deploy token is [redacted]" "...with the match redacted"
+case "$sr" in *zzsecretmarker*) fail "a pattern match left the home inside a synthesize prompt" ;; esac
+rm -f "$AC_HOME/config/brain.json"; rm -rf "$AC_HOME/data/fam-redact"
+
 # --- the keyless local rung asks AC_BRAIN_OLLAMA_URL, and the suite asks nobody --
 # With no synthesize api answering, a local ollama answers before the harness
 # rung - so a daemon on the operator's default port would answer every leg
@@ -704,6 +773,19 @@ assert_contains "$("$BRAIN" recall --agent since-probe --since "$sec" --home "$A
 assert_contains "$("$BRAIN" recall --agent since-probe --since 7d --home "$AC_HOME" --compact)" "since probe fact" \
   "a relative bound is a duration back from now"
 if bad="$("$BRAIN" recall --since junk --home "$AC_HOME" --compact 2>&1)"; then fail "an unreadable --since must refuse (got: $bad)"; fi
+
+# A malformed count or calendar date refuses: NaN sliced every hit away, a
+# negative limit kept all but the last few, and the date parser rolls an
+# impossible day over (2024-02-30 reads as 2024-03-01).
+for bad_args in "recall --query fact --limit abc" "recall --query fact --limit -3" \
+  "recall --query fact --budget-tokens abc" "context_pack --entities data/fam-one/room --budget-tokens -1" \
+  "recall --since 2024-02-30" "recall --since 2026-02-31T08:00:00Z" \
+  "remember x --provenance t --ttl 2024-02-30"; do
+  # shellcheck disable=SC2086  # each case is a word list on purpose
+  if bad="$("$BRAIN" $bad_args --home "$AC_HOME" --compact 2>&1)"; then fail "$bad_args must refuse (got: $bad)"; fi
+  assert_contains "$bad" '"invalid_params"' "$bad_args refuses as invalid_params"
+done
+assert_contains "$("$BRAIN" recall --since 2024-02-29 --home "$AC_HOME" --compact)" '"facts"' "a leap day is a real date"
 
 # --- the caller's cwd configures nothing -------------------------------------
 # The prompt-recall hook runs the engine from a solo session's cwd, often a
