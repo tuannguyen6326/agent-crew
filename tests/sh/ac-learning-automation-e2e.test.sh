@@ -45,6 +45,7 @@ RULECAND
 kind: skill
 name: auto-skill
 description: Apply the automatically distilled fleet procedure.
+trigger: applying the distilled fleet procedure
 ===sources===
 2026-07-26	auto	- LESSON: automate this recurring fleet procedure.
 ===skill===

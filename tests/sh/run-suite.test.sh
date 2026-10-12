@@ -812,4 +812,29 @@ set -e
 assert_eq "$rc" "0" "a bare run over the split layout must be green"
 assert_contains "$out" "1/1 passed" "a bare run must discover <repo>/tests/sh/*.test.sh"
 
+# --- a suite never reads the runner's terminal ------------------------------
+#
+# Each suite runs as its own job (set -m); one that reads stdin from a
+# terminal is stopped by SIGTTIN and the runner waits on it for ever - the
+# Learning gate runs the suite in a pane, so a pty stands in for it here.
+# script(1) takes the command as trailing argv on BSD/macOS but only as -c on
+# util-linux, and each form is refused by the other.
+ttydir="$TMP/fixture-tty"
+mkdir -p "$ttydir"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nread -r _ || true\npass\n' "$ROOT" >"$ttydir/reads.test.sh"
+if script -q /dev/null true </dev/null >/dev/null 2>&1; then
+  script -q "$TMP/tty.typescript" bash "$RUNNER" "$ttydir" </dev/null >/dev/null 2>&1 &
+else
+  script -q -c "bash $(printf '%q ' "$RUNNER" "$ttydir")" "$TMP/tty.typescript" </dev/null >/dev/null 2>&1 &
+fi
+ttyjob=$!
+for _ in $(seq 1 100); do kill -0 "$ttyjob" 2>/dev/null || break; sleep 0.2; done
+if kill -0 "$ttyjob" 2>/dev/null; then
+  pkill -KILL -f "$ttydir" 2>/dev/null || true
+  kill -KILL "$ttyjob" 2>/dev/null || true
+  fail "a suite reading stdin under a terminal must not stop the runner (SIGTTIN)"
+fi
+wait "$ttyjob" 2>/dev/null || true
+assert_contains "$(cat "$TMP/tty.typescript")" "1/1 passed" "the suite that read stdin ran to its verdict"
+
 pass

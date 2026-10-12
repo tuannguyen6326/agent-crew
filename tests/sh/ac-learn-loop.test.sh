@@ -56,6 +56,7 @@ printf '## 2026-07-18 - fam (chief)\n- LESSON: always foo before bar, every time
   printf 'kind: skill\n'
   printf 'name: foo-before-bar\n'
   printf 'description: Do foo before bar.\n'
+  printf 'trigger: the case this fixture lands\n'
   printf 'approved: 1700000000\n'
   printf '===sources===\n'
   printf '2026-07-18\tfoo-before-bar\t- LESSON: always foo before bar, every time.\n'
@@ -112,7 +113,7 @@ hold_lock() { mkdir -p "$1" && printf '%s\n' "$$" >"$1/pid"; }
 printf 'debriefs=3\n' >"$AC_HOME/state/.learn.meta"
 printf '## 2026-07-18 - fam (chief)\n- LESSON: land under a busy cadence lock.\n' >"$AC_HOME/records/learnings.md"
 {
-  printf 'kind: skill\nname: busy-lock-skill\ndescription: Land under a busy cadence lock.\napproved: 1700000000\n'
+  printf 'kind: skill\nname: busy-lock-skill\ndescription: Land under a busy cadence lock.\ntrigger: landing under a busy cadence lock\napproved: 1700000000\n'
   printf '===sources===\n2026-07-18\tbusy-lock-skill\t- LESSON: land under a busy cadence lock.\n'
   printf '===skill===\n# busy-lock-skill\n\nbody.\n'
 } >"$TMP/cand-busy.md"
@@ -146,6 +147,7 @@ EOF
   printf 'kind: skill\n'
   printf 'name: split-skill\n'
   printf 'description: pointer-by-position case.\n'
+  printf 'trigger: the case this fixture lands\n'
   printf 'approved: 1700000000\n'
   printf '===sources===\n'
   printf '2026-07-20\tfam\t- a real source bullet for the split case.\n'
@@ -290,21 +292,80 @@ printf '%s\n' "$cml_before" >"$cml"
 # now also appends one trigger line to CREWMATE-learned.md's pointer section,
 # so no learned skill exists without its always-loaded discovery line.
 printf '## 2026-07-22 - fam (chief)\n- LESSON: rebases need the pin dance.\n' >"$AC_HOME/records/learnings.md"
-{
-  printf 'kind: skill\n'
-  printf 'name: pin-dance\n'
-  printf 'description: recovering a rebase onto a moved pin.\n'
-  printf 'approved: 1700000000\n'
-  printf '===sources===\n'
-  printf '2026-07-22\tpin-dance\t- LESSON: rebases need the pin dance.\n'
-  printf '===skill===\n# pin-dance\n\nSteps.\n'
-} >"$TMP/cand-skill-pointer.md"
+# The pointer is the candidate's short `trigger:`, never its description: the
+# description is the SKILL.md's, and a full one in an always-loaded line spent
+# the 4096-byte budget (lab, 4092/4096) and read "when When ...".
+pin_cand() {  # pin_cand <trigger header line or empty>
+  {
+    printf 'kind: skill\n'
+    printf 'name: pin-dance\n'
+    printf 'description: When a rebase lands on a moved pin, redo the pin dance before trusting the tree.\n'
+    [ -z "$1" ] || printf '%s\n' "$1"
+    printf 'approved: 1700000000\n'
+    printf '===sources===\n'
+    printf '2026-07-22\tpin-dance\t- LESSON: rebases need the pin dance.\n'
+    printf '===skill===\n# pin-dance\n\nSteps.\n'
+  } >"$TMP/cand-skill-pointer.md"
+}
+cml_before="$(cat "$cml")"
+for bad in "" "trigger: " "trigger: When a rebase lands on a moved pin" \
+  "trigger: $(printf 'x%.0s' $(seq 101))"; do
+  pin_cand "$bad"
+  out="$("$BIN/ac-learn.sh" land "$TMP/cand-skill-pointer.md" 2>&1)" && fail "a skill candidate with '${bad:-no trigger}' must refuse"
+  assert_contains "$out" "skill candidate 'trigger:' must be non-empty, <=100 bytes and not start with 'when'" \
+    "the trigger refusal names the rule ('${bad:-no trigger}')"
+  assert_no_file "$AC_HOME/skills/pin-dance/SKILL.md" "a trigger refusal writes no skill ('${bad:-no trigger}')"
+  assert_eq "$(cat "$cml")" "$cml_before" "a trigger refusal leaves CREWMATE-learned.md untouched ('${bad:-no trigger}')"
+done
+pin_cand "trigger: $(printf 'x%.0s' $(seq 100))"
+"$BIN/ac-learn.sh" land "$TMP/cand-skill-pointer.md" >/dev/null || fail "a 100-byte trigger is within the cap"
+rm -rf "$AC_HOME/skills/pin-dance"
+printf '%s\n' "$cml_before" >"$cml"
+printf '## 2026-07-22 - fam (chief)\n- LESSON: rebases need the pin dance.\n' >"$AC_HOME/records/learnings.md"
+pin_cand "trigger: recovering a rebase onto a moved pin"
 "$BIN/ac-learn.sh" land "$TMP/cand-skill-pointer.md"
 assert_file "$AC_HOME/skills/pin-dance/SKILL.md" "skill still lands in the store"
+grep -qF 'description: When a rebase lands on a moved pin, redo the pin dance before trusting the tree.' "$AC_HOME/skills/pin-dance/SKILL.md" \
+  || fail "the SKILL.md keeps the full description"
 grep -qxF '## when to reach for a learned skill' "$cml" || fail "skill land creates the pointer section"
-grep -qF -- '- when recovering a rebase onto a moved pin -> use skill pin-dance' "$cml" \
-  || fail "skill land appends its discovery pointer line"
+grep -qxF -- '- when recovering a rebase onto a moved pin -> use skill pin-dance' "$cml" \
+  || fail "skill land appends its discovery pointer line, composed from the trigger"
 grep -qxF '## look-it-up' "$cml" || fail "pointer append preserves existing lesson entries"
+
+# Every rewrite of the file also shortens an EXISTING pointer whose trigger is
+# over the cap - the lines landed before the trigger field - so a fleet already
+# at its budget unblocks at its next land: a leading "When " (the stutter) is
+# dropped, the first clause (cut at ': ', ' - ' or '; ') kept, and a clause
+# still over 100 bytes cut at its last space within them.
+short_ok='- when crew-ship/UT in a leased worktree -> use skill ship-run'
+long1='- when crew-ship/UT in a leased worktree: stale install, format churn, flaky reds, attest first, 0-fix freeze, and one more clause -> use skill ship-run'
+long2='- when When a PR lives on a repo with an automated PR reviewer and you are about to call it delivered or merge-ready - fetch the verdict -> use skill pr-bot'
+long3="- when Before reading another repo's file, cutting a crew branch, opening a second PR for one change or rebasing across long-lived branches: take the ref -> use skill pin-ref"
+lead='- when a red needs attribution -> use skill characterise-the-failure'
+seed_pointers() {
+  printf '%s\n' "$cml_before" >"$cml"
+  printf '\n## when to reach for a learned skill\n%s\n%s\n%s\n%s\n' "$lead" "$long1" "$long2" "$long3" >>"$cml"
+}
+want_pointers="$(printf '%s\n' "$short_ok" \
+  '- when a PR lives on a repo with an automated PR reviewer and you are about to call it delivered or -> use skill pr-bot' \
+  "- when Before reading another repo's file, cutting a crew branch, opening a second PR for one change or -> use skill pin-ref")"
+rm -rf "$AC_HOME/skills/pin-dance"
+seed_pointers
+printf '## 2026-07-22 - fam (chief)\n- LESSON: rebases need the pin dance.\n' >"$AC_HOME/records/learnings.md"
+"$BIN/ac-learn.sh" land "$TMP/cand-skill-pointer.md"
+assert_eq "$(grep -F -e 'use skill ship-run' -e 'use skill pr-bot' -e 'use skill pin-ref' "$cml")" "$want_pointers" \
+  "a skill land shortens every over-cap pointer already in the file"
+grep -qxF -- "$lead" "$cml" || fail "a pointer within the cap is left byte-for-byte"
+grep -qxF -- '- when recovering a rebase onto a moved pin -> use skill pin-dance' "$cml" || fail "... beside the new pointer"
+seed_pointers
+{
+  printf 'kind: crewmate\nname: shortens-too\ndescription: x.\napproved: 1700000000\n'
+  printf '===sources===\n===crewmate===\nA lesson.\n'
+} >"$TMP/cand-crewmate-shortens.md"
+"$BIN/ac-learn.sh" land "$TMP/cand-crewmate-shortens.md"
+assert_eq "$(grep -F -e 'use skill ship-run' -e 'use skill pr-bot' -e 'use skill pin-ref' "$cml")" "$want_pointers" \
+  "a crewmate land shortens them in the same rewrite"
+grep -qxF '## shortens-too' "$cml" || fail "... and still lands its entry"
 
 # --- no-silent-loss guard: a rewrite dropping an entry is refused ------------
 # The guard (crewmateLearnedNoLoss, src/lib.ts) is the property every
@@ -334,6 +395,7 @@ before_cap="$(cat "$AC_HOME/records/captain.md")"
   printf 'kind: skill\n'
   printf 'name: nope-skill\n'
   printf 'description: should never land.\n'
+  printf 'trigger: the case this fixture lands\n'
   printf '===sources===\n'
   printf '2026-07-18\tnope\t- another lesson to keep.\n'
   printf '===skill===\n# nope-skill\n\nbody.\n'
@@ -351,6 +413,7 @@ printf '## 2026-07-18 - fam (chief)\n- a real bullet.\n' >"$AC_HOME/records/lear
   printf 'kind: skill\n'
   printf 'name: drift-skill\n'
   printf 'description: source drifted.\n'
+  printf 'trigger: the case this fixture lands\n'
   printf 'approved: 1700000000\n'
   printf '===sources===\n'
   printf '2026-07-18\tdrift\t- a bullet that does not match the ledger.\n'
@@ -373,6 +436,7 @@ printf '## 2026-07-18 - fam (chief)\n- an unrelated bullet, left alone.\n' >"$AC
   printf 'kind: skill\n'
   printf 'name: retro-only-skill\n'
   printf 'description: distilled from this run'"'"'s retro alone.\n'
+  printf 'trigger: the case this fixture lands\n'
   printf 'approved: 1700000000\n'
   printf '===sources===\n'
   printf '===skill===\n# retro-only-skill\n\nbody, from retro.md only.\n'
@@ -1148,6 +1212,7 @@ printf '## Retro\n\nsee ./retro.md.\n\none candidate proposed (smoke).\n' >"$cwd
 {
   printf 'kind: skill\nname: envfail-skill\n'
   printf 'description: Apply when the gate could not judge this candidate.\n'
+  printf 'trigger: the case this fixture lands\n'
   printf '===sources===\n'
   printf '2026-08-26\tauto\t- LESSON: the gate cannot read this source today.\n'
   printf '===skill===\n# envfail-skill\n\nDo the thing.\n'
@@ -1515,6 +1580,7 @@ mk_named_cand() {  # mk_named_cand <name> -> path to a minimal APPROVED skill ca
     printf 'kind: skill\n'
     printf 'name: %s\n' "$nm"
     printf 'description: a valid one-line description.\n'
+    printf 'trigger: the case this fixture lands\n'
     printf 'approved: 1700000000\n'
     printf '===sources===\n'
     printf '===skill===\n'
@@ -1549,6 +1615,7 @@ mk_desc_cand() {  # mk_desc_cand <name> <desc> -> path to a minimal APPROVED can
     printf 'kind: skill\n'
     printf 'name: %s\n' "$nm"
     printf 'description: %s\n' "$d"
+    printf 'trigger: the case this fixture lands\n'
     printf 'approved: 1700000000\n'
     printf '===sources===\n'
     printf '===skill===\n'
@@ -1730,6 +1797,7 @@ done
   printf 'kind: skill\n'
   printf 'name: promise-skill\n'
   printf 'description: Prove the index only promises evidence that exists.\n'
+  printf 'trigger: the case this fixture lands\n'
   printf 'approved: 1700000000\n'
   printf '===sources===\n'
   printf '2026-07-19\tpromise\t- LESSON: promise bullet, compact me.\n'
@@ -1844,6 +1912,7 @@ note_candidate() {
   printf 'kind: skill\n'
   printf 'name: note-target\n'
   printf 'description: Prove a landing lesson survives one transaction.\n'
+  printf 'trigger: the case this fixture lands\n'
   printf 'approved: 1700000000\n'
   printf '===sources===\n'
   printf '2026-07-19\tnote\t- LESSON: note-cited bullet, compact me.\n'
@@ -1990,6 +2059,7 @@ rm -f "$AC_HOME/records/learnings.md" "$AC_HOME/records/learnings-archive/firste
 {
   printf 'kind: skill\nname: firstever\n'
   printf 'description: the first skill a fleet ever lands.\n'
+  printf 'trigger: the case this fixture lands\n'
   printf 'approved: 1700000000\n===sources===\n'
   printf '===skill===\n# firstever\n\nbody.\n'
 } >"$TMP/cand-firstever.md"

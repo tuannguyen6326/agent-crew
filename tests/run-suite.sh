@@ -587,8 +587,13 @@ while [ "$i" -lt "$total" ]; do
     # same toggle for the same reason - this mirrors that precedent, not a
     # new technique. Toggled off again right after so it does not change how
     # the OUTER loop's own `wait`/pipeline behave.
+    #
+    # The same toggle makes each suite a BACKGROUND job of whatever terminal
+    # this runner sits in (the Learning gate runs it in a pane), so a suite
+    # that reads stdin from that terminal is stopped by SIGTTIN and the wait
+    # below never returns; no suite needs a terminal, so stdin is /dev/null.
     set -m
-    ( set +e; bash "$f" >"$scratch/$name.log" 2>&1; printf '%s\n' "$?" >"$scratch/$name.rc" ) &
+    ( set +e; bash "$f" </dev/null >"$scratch/$name.log" 2>&1; printf '%s\n' "$?" >"$scratch/$name.rc" ) &
     pids="$pids $!"
     set +m
     batch_names="$batch_names $name"

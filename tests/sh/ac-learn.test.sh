@@ -933,6 +933,25 @@ refuses_learn "no entry" "$BIN/ac-learn.sh" reinforce ghost --evidence x
 refuses_learn "no '(learned <date>)' line" "$BIN/ac-learn.sh" reinforce no-clock --evidence x
 refuses_learn "single line" "$BIN/ac-learn.sh" reinforce stale-one --evidence 'two
 lines'
+# The 4096-byte budget binds reinforce too (W4, fixed): a refresh that would
+# grow the file past it refuses with nothing written, while one that fits
+# exactly still lands.
+alw_fill() {  # alw_fill <final size of the reinforced file>
+  printf '# H\n\n## old-one\n\nb\n\n(learned 2026-01-01)\n\n## pad\n\n' >"$ALW"
+  local grow=$(( ${#date_today} + 13 ))
+  head -c $(( $1 - grow - $(wc -c <"$ALW") - 23 )) /dev/zero | tr '\0' 'x' >>"$ALW"
+  printf '\n\n(learned 2026-09-01)\n' >>"$ALW"
+}
+date_today="$(date -u +%F)"
+alw_fill 4097
+alw_before="$(cat "$ALW")"
+refuses_learn "reinforce would grow CREWMATE-learned.md to 4097 bytes, past its 4096-byte always-loaded budget (nothing written)" \
+  "$BIN/ac-learn.sh" reinforce old-one --evidence x
+assert_eq "$(cat "$ALW")" "$alw_before" "W4: an over-budget reinforce leaves the file untouched"
+assert_no_file "$ALW.lock" "W4: ... and releases its lock"
+alw_fill 4096
+"$BIN/ac-learn.sh" reinforce old-one --evidence x >/dev/null || fail "W4: a reinforce landing at exactly 4096 bytes fits"
+assert_eq "$(wc -c <"$ALW" | tr -d ' ')" "4096" "W4: ... at exactly the budget"
 
 # S6: the DISTILL run stages the layer + its grading for the scout (wiring, the
 # R5 idiom - one awk process, no early-closing pipe).
@@ -1376,9 +1395,19 @@ lworld() {  # lworld <side root> - every path under home/ tmp/ stub/ herdr/ orca
     esac
   done
 }
+# THE POINTER TRIGGER (named): the port's scout brief asks for a `trigger:`
+# header the frozen brief never had - these whole lines, and nothing else, are
+# dropped from the port's world before the comparison.
+cat >"$TMP/l-trigger-brief" <<'EOF'
+    trigger: <a few words - the situation, read after "when">
+- `trigger:` becomes the always-loaded pointer line
+  `- when <trigger> -> use skill <name>` every crewmate reads, so it is at most
+  100 bytes and does not itself start with "when"; the land refuses one that is
+  missing or over. The full `description:` stays in the SKILL.md.
+EOF
 lsame_world() {
   lworld "$LOH" >"$TMP/lo.world"; lworld "$LNH" >"$TMP/ln.world"
-  lnorm "$TMP/lo.world" "$LOH" >"$TMP/lo.world2"; lnorm "$TMP/ln.world" "$LNH" >"$TMP/ln.world2"
+  lnorm "$TMP/lo.world" "$LOH" >"$TMP/lo.world2"; lnorm "$TMP/ln.world" "$LNH" | grep -vxF -f "$TMP/l-trigger-brief" >"$TMP/ln.world2"
   cmp -s "$TMP/lo.world2" "$TMP/ln.world2" || fail "learn differential world differs after '$*' at line $(lrow): $(diff -a "$TMP/lo.world2" "$TMP/ln.world2" | head -n 12)"
 }
 lsame() { lpair "$@"; lsame_rc_out "$@"; lsame_err "$@"; lsame_world "$@"; }
@@ -1618,9 +1647,9 @@ lboth lcand unapproved $'kind: skill\nname: s\n'
 lrefuse "ERROR: refusing to land an UNAPPROVED candidate (@H/cand/unapproved.md): no 'approved:' header - the captain gate (Q6) must approve first" land @H/cand/unapproved.md
 lboth lcand badslug $'kind: skill\nname: Bad_Name\ndescription: x\napproved: yes\n'
 lrefuse "ERROR: skill candidate 'name:' must be an agentskills slug: lowercase [a-z0-9-], <=64 chars, no leading/trailing/consecutive hyphen (got: 'Bad_Name')" land @H/cand/badslug.md
-lboth lcand unverbatim $'kind: skill\nname: newskill\ndescription: Use when x.\napproved: yes\n===sources===\n2025-12-01\thook\t- not in the ledger\n===skill===\n# body\n'
+lboth lcand unverbatim $'kind: skill\nname: newskill\ndescription: Use when x.\ntrigger: Use when x\napproved: yes\n===sources===\n2025-12-01\thook\t- not in the ledger\n===skill===\n# body\n'
 lrefuse "ERROR: source bullet not found verbatim in learnings.md (compaction is coupled to landing; nothing written): - not in the ledger" land @H/cand/unverbatim.md
-lboth lcand skill $'kind: skill\nname: newskill\ndescription: Use when the thing happens.\napproved: yes\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n2025-12-02\thook\t- src two\n===skill===\n# newskill\nDo the thing.\n'
+lboth lcand skill $'kind: skill\nname: newskill\ndescription: Use when the thing happens.\ntrigger: Use when the thing happens\napproved: yes\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n2025-12-02\thook\t- src two\n===skill===\n# newskill\nDo the thing.\n'
 lok land @H/cand/skill.md
 lboth lcand crewmate $'kind: crewmate\nname: a-method\ndescription: A method lesson.\napproved: yes\n===sources===\n2025-12-03\thook\t- src two\n===crewmate===\nDo the method, briefly.\n'
 lok land @H/cand/crewmate.md
@@ -1634,7 +1663,7 @@ lboth lcand spoof $'kind: crewmate\nname: spoof\ndescription: x.\napproved: yes\
 lrefuse "ERROR: crewmate '===crewmate===' body must be lesson prose only - the transaction composes the '## spoof' heading itself (nothing written)" land @H/cand/spoof.md
 lboth lland
 lboth lput home/state/.learn.meta $'generation=08\ndebriefs=3\n'
-lboth lcand skill $'kind: skill\nname: newskill\ndescription: Use when the thing happens.\napproved: yes\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n2025-12-02\thook\t- src two\n===skill===\n# newskill\nDo the thing.\n'
+lboth lcand skill $'kind: skill\nname: newskill\ndescription: Use when the thing happens.\ntrigger: Use when the thing happens\napproved: yes\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n2025-12-02\thook\t- src two\n===skill===\n# newskill\nDo the thing.\n'
 l08 land @H/cand/skill.md
 assert_eq "$LN_RC:$(lerr)" "0:WARN: landed skill, but its cadence lock was busy; its cadence was preserved instead of reset" "a land whose reset the arithmetic refuses warns and still says it landed"
 assert_contains "$(lout)" "landed skill through maintenance transaction" "the landed line follows the reset's warning"
@@ -1667,7 +1696,7 @@ LENV=(LPANE_OPEN=pL LPANE_TRANSCRIPT=/t.jsonl); lsame run; LENV=()
 lboth lrunhome
 LENV=(LPANE_NOPANE=1); lsame run; LENV=()
 lcands() {  # lcands <dir> - candidates of every kind a run's scout may write
-  lput "$1/candidate-newskill.md" $'kind: skill\nname: newskill\ndescription: Use when the thing happens.\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n===skill===\n# newskill\nDo the thing.\n'
+  lput "$1/candidate-newskill.md" $'kind: skill\nname: newskill\ndescription: Use when the thing happens.\ntrigger: Use when the thing happens\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n===skill===\n# newskill\nDo the thing.\n'
   lput "$1/candidate-rule-a.md" $'kind: rule\nname: whatever\n===rule===\n- a captain rule\n'
   lput "$1/candidate-bad.md" $'kind: skill\nname: has space\ndescription: x\n'
   lput "$1/candidate-patchme.md" $'kind: patch\nname: patchme\n===sources===\n2025-12-02\thook\t- src two\n===patch===\n## Gotcha\nWatch.\n'

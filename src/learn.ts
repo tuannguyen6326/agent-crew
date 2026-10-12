@@ -169,7 +169,14 @@
 // reach is a crewmate lesson, and `kind: skill` is reserved for demonstrated
 // procedures - each skill land also stages one discovery-pointer line into the
 // layer's `## when to reach for a learned skill` section, so no learned skill
-// exists without its always-loaded trigger again. The transaction composes the
+// exists without its always-loaded trigger again. That line is the candidate's
+// own `trigger:` (at most 100 bytes, refused when missing, over, or starting
+// with "when"), never its description, which stays in SKILL.md: a full
+// description per pointer can spend a fleet's whole budget.
+// Every rewrite of the file also shortens an existing pointer whose trigger is
+// over the cap (shortTrigger: a leading "When " dropped, the first clause kept,
+// then a cut at a space), so a fleet already at its budget unblocks at its next
+// land. The transaction composes the
 // `## <name>` heading and `(learned <date>)` provenance itself and REFUSES: a
 // body over 12 lines, a body carrying a `## ` heading (entry spoofing), a
 // duplicate name, a staged file over the 4096-byte always-loaded budget (the
@@ -334,7 +341,6 @@
 //   never the transaction's .maintenance.lock, so a note landing between a
 //   plan's staging and its apply HOLDS the transaction or costs the
 //   candidate at the gate.
-// - W4: reinforce grows CREWMATE-learned.md with no 4096-byte budget check.
 // - The preparer inside `run` keeps the bash's errexit-asleep context: a
 //   failing step goes on and only a refusal rejects the candidate, while
 //   `land`'s preparer ends at its first failing step.
@@ -380,6 +386,12 @@
 //   written before any gate judges the plan) go through a temp created
 //   exclusively (<f>.tmp.<pid>, then .<n>), so a link planted there is never
 //   written through; the written file keeps the umask's mode, as the bash's did.
+// - W4 (fixed): reinforce refuses, nothing written, a refresh that would grow
+//   CREWMATE-learned.md past its 4096-byte budget; the bash grew it unchecked.
+// - THE POINTER TRIGGER: a skill candidate needs `trigger:` and its pointer
+//   is composed from it, and every CREWMATE-learned.md rewrite shortens an
+//   over-cap pointer already there; the bash composed the pointer from the
+//   description and ignored a trigger header.
 // - W13 ORDER: globs, the printed candidate list, the report walks, the
 //   archived room pick, the pointer sort and the maintenance status rows are
 //   in BYTE order, where the bash followed LC_COLLATE and `find` printed
@@ -972,6 +984,7 @@ Skill candidate:
     kind: skill
     name: <slug, lowercase [a-z0-9-]>
     description: <one line - when a crew should reach for this skill>
+    trigger: <a few words - the situation, read after "when">
     ===sources===
     <date><TAB><short hook><TAB><exact learnings.md bullet line, verbatim>
     ===skill===
@@ -979,6 +992,10 @@ Skill candidate:
 
     <the SKILL.md body: the distilled behaviour, in the fleet's own voice>
 
+- \`trigger:\` becomes the always-loaded pointer line
+  \`- when <trigger> -> use skill <name>\` every crewmate reads, so it is at most
+  100 bytes and does not itself start with "when"; the land refuses one that is
+  missing or over. The full \`description:\` stays in the SKILL.md.
 - \`<date>\` is the source lesson's date (its \`## YYYY-MM-DD\` section header).
 - \`<short hook>\` is a few words naming the lesson - it rides in the pointer that
   replaces the bullet, so keep it terse and specific.
@@ -1088,6 +1105,37 @@ const validSlug = (s: string): boolean => /^[a-z0-9-]+$/.test(s) && !s.startsWit
 // valid_description: non-empty and at most 1024 characters as `${#d}` counts
 // them under the caller's locale.
 const validDescription = (d: string): boolean => d !== "" && shellLength(d) <= 1024;
+
+// The pointer line is always loaded into every crew worktree and shares the
+// file's 4096 bytes, so its trigger is capped in BYTES (these strings are
+// latin1, one char per byte); a trigger reading "when ..." stutters after the
+// pointer's own "- when ".
+const TRIGGER_MAX = 100;
+const validTrigger = (t: string): boolean => t !== "" && t.length <= TRIGGER_MAX && !/^when\b/i.test(t);
+
+// A pointer landed before the trigger field carries the skill's whole
+// description; cutting at a space keeps a UTF-8 sequence whole.
+function shortTrigger(t: string): string {
+  if (t.length <= TRIGGER_MAX) return t;
+  let s = t.replace(/^when /i, "");
+  const clause = s.search(/: | - |; /);
+  if (clause > 0) s = s.slice(0, clause);
+  if (s.length <= TRIGGER_MAX) return s;
+  const cut = s.lastIndexOf(" ", TRIGGER_MAX);
+  return s.slice(0, cut > 0 ? cut : TRIGGER_MAX);
+}
+
+const POINTER_SEC = "## when to reach for a learned skill";
+
+function shortenPointers(staged: string): void {
+  let inSec = false;
+  const lines = (read(staged) ?? "").split("\n").map((l) => {
+    if (l.startsWith("## ")) inSec = l === POINTER_SEC;
+    const m = inSec ? /^- when (.*) -> use skill ([a-z0-9-]+)$/.exec(l) : null;
+    return m ? `- when ${shortTrigger(m[1]!)} -> use skill ${m[2]}` : l;
+  });
+  step(put(staged, lines.join("\n")) ? 0 : 1);
+}
 
 // --- run: the DISTILL run (backup + spawn scout + collect) --------------------
 
@@ -1787,6 +1835,12 @@ function cmdReinforce(args: string[]): void {
     unlock(lk);
     dieB(`reinforce composed no change for '## ${slug}' despite a clock at ${current} - report this (nothing written)`);
   }
+  const size = statOf(tmp)?.size ?? 0;
+  if (size > 4096) {
+    rmF(tmp);
+    unlock(lk);
+    dieB(`reinforce would grow CREWMATE-learned.md to ${size} bytes, past its 4096-byte always-loaded budget (nothing written)`);
+  }
   must(run(["mv", tmp, live]).status);
   unlock(lk);
   out(`reinforced ${slug} (clock -> ${today}) on evidence: ${evidence}\n`);
@@ -2333,13 +2387,16 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
   const kind = candidateHeader(cand, "kind");
   const name = candidateHeader(cand, "name");
   let desc = "";
+  let trigger = "";
   let subject = "";
   const slugRule = "lowercase [a-z0-9-], <=64 chars, no leading/trailing/consecutive hyphen";
   switch (kind) {
     case "skill":
       desc = candidateHeader(cand, "description");
+      trigger = candidateHeader(cand, "trigger");
       if (!validSlug(name)) dieB(`skill candidate 'name:' must be an agentskills slug: ${slugRule} (got: '${name}')`);
       if (!validDescription(desc)) dieB("skill candidate 'description:' must be non-empty and <=1024 chars (spec-required)");
+      if (!validTrigger(trigger)) dieB(`skill candidate 'trigger:' must be non-empty, <=${TRIGGER_MAX} bytes and not start with 'when' - it is the always-loaded pointer line (got: '${trigger}', nothing written)`);
       if (exists(`${skillsD()}/${name}`)) dieB(`refusing to clobber an existing skill store at ${skillsD()}/${name}`);
       subject = name;
       break;
@@ -2444,6 +2501,7 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
       if (body.split("\n").some((l) => l.startsWith("## "))) dieB(`crewmate '===crewmate===' body must be lesson prose only - the transaction composes the '## ${name}' heading itself (nothing written)`);
       if (body.split("\n").length > 12) dieB("crewmate '===crewmate===' body is over 12 lines - a lesson that long is a skill or a doc (nothing written)");
       step(put(stagedCml, `${crewmateBase()}\n## ${name}\n\n${body}\n\n(learned ${isoNow().slice(0, 10)})\n`) ? 0 : 1);
+      shortenPointers(stagedCml);
       crewmateGuard(stagedCml, rundir);
       step(planAction(actions, "rewrite-crewmate-learned", "CREWMATE-learned.md", `${stagedPrefix}/CREWMATE-learned.md`, rundir));
       break;
@@ -2461,12 +2519,12 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
   }
 
   if (kind === "skill") {
-    const cmlPtr = `- when ${desc.replace(/\.$/, "")} -> use skill ${name}`;
-    const cmlSec = "## when to reach for a learned skill";
+    const cmlPtr = `- when ${trigger} -> use skill ${name}`;
     const live = `${home()}/CREWMATE-learned.md`;
     if (!(isFile(live) && (read(live) ?? "").split("\n").some((l) => l.includes(`use skill ${name}`)))) {
-      if (isFile(live) && grepWhole(live, cmlSec)) step(runTo(stagedCml, awk([["sec", cmlSec], ["ptr", cmlPtr]], "{ print } $0 == sec { print ptr }", [live])) ?? 1);
-      else step(put(stagedCml, `${crewmateBase()}\n${cmlSec}\n${cmlPtr}\n`) ? 0 : 1);
+      if (isFile(live) && grepWhole(live, POINTER_SEC)) step(runTo(stagedCml, awk([["sec", POINTER_SEC], ["ptr", cmlPtr]], "{ print } $0 == sec { print ptr }", [live])) ?? 1);
+      else step(put(stagedCml, `${crewmateBase()}\n${POINTER_SEC}\n${cmlPtr}\n`) ? 0 : 1);
+      shortenPointers(stagedCml);
       crewmateGuard(stagedCml, rundir);
       step(planAction(actions, "rewrite-crewmate-learned", "CREWMATE-learned.md", `${stagedPrefix}/CREWMATE-learned.md`, rundir));
     }
