@@ -187,7 +187,9 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    a genuine rebase still opens one.
 4. **test** - `bin/ac-ship.sh cmd test` runs the configured baseline
    (exit 4 = not configured). Non-zero exit = `error` findings; fix (limit
-   `auto_fix.test`, default 3) and re-run.
+   `auto_fix.test`, default 3) and re-run. With `test.base_attribution: on`
+   a failing full run also prints a `base attribution:` line - quote it
+   rather than claiming a failure is pre-existing; it never passes the step.
    test SKIP when the implement used TDD (the lean-pipeline
    ruling) - the captain chose a DECLARATION: pass
    `ac-ship.sh start --tdd` and this step starts `skipped`, the implement's
@@ -213,7 +215,7 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    THIS STEP IS THE ONLY PLACE THE UNIT SUITE RUNS in the whole crew: QA is
    forbidden from running or re-running it and reads
    your result through the run-scoped receipt `cmd test` publishes at
-   `<repo>/.crew/ship/<run>/test/receipt.env` (`bin/ac-ship.sh`'s SHIP TEST
+   `<repo>/.crew/ship/<run>/test/receipt.env` (`src/ship.ts`'s SHIP TEST
    RECEIPT block is the spec). A declaration writes NO receipt: if this
    task also carries a `qa=yes` gate, run `ac-ship.sh cmd test` (or land an
    accepted `attest-test`) even when `--tdd` would otherwise skip the step,
@@ -263,9 +265,10 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    this pipeline did not publish.
 8. **pr** - Open the PR with `gh pr create --base <target>` (create is
    unaffected by the deprecation below); update an EXISTING PR's title/body
-   through the REST PATCH, never `gh pr edit` - `gh pr edit` now fails with a
+   through the REST PATCH, never `gh pr edit` - `gh pr edit` fails with a
    GraphQL deprecation error (`repository.pullRequest.projectCards`, the
-   Projects-classic sunset). `<target>` is the SAME branch review/rebase
+   Projects-classic sunset; observed 2026-08-12 - re-test before dropping
+   the workaround). `<target>` is the SAME branch review/rebase
    targeted: read the `target=` line from `bin/ac-ship.sh status` (strip a
    leading `origin/`), falling back to the repo default branch when that
    line is absent (no `--target` was pinned at start). Never omit
@@ -283,10 +286,22 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    user-facing impact (release automation keys off them). Body sections:
    `## Intent`, `## What Changed`, `## Risk Assessment` (from `meta
    review`), `## Testing` (from `meta test`), `## Pipeline` (issue -> fix
-   -> verification narrative per round). End with the signature line
-   `Validated by agent-crew crew-ship`.
+   -> verification narrative per round). When the brief names the GitHub
+   issue this task fixes, add `Closes #<n>` for that issue alone; never put
+   close, fix or resolve before any other `#<n>` - GitHub closes that issue
+   on merge. End with the signature line
+   `Validated by agent-crew crew-ship` - unless `bin/ac-ship.sh status`
+   prints an `override:` row (a `review-residual` acceptance or a `--tdd`
+   declaration; the `src/ship.ts` header's OVERRIDE MARKER block owns
+   it): then the signature is `Validated by agent-crew crew-ship -
+   passed-with-override: <kind> (<reason>; receipt <receipt_sha256>)`,
+   one per row, copied verbatim. An approved failure never signs as clean.
    Keep the body under ~63,000 bytes: drop the OLDEST `## Pipeline` rounds
-   first, then `## Testing`, and leave a `(truncated)` marker. Skip the
+   first, then `## Testing`, and leave a `(truncated)` marker.
+   The body PUBLISHES: it must carry no absolute home paths (quote run
+   paths as `~/...` or repo-relative) and no credential-bearing URLs -
+   an error message pasted verbatim often carries both, so re-read what
+   you quote. Skip the
    step when the host is not GitHub or the branch is the default.
    When the PR is up and the pipeline is green, finish `checks-passed`
    and STOP - merging and CI watching stay with the user (a red check
@@ -298,8 +313,9 @@ Finish: `bin/ac-ship.sh finish <checks-passed|passed|failed|cancelled>`
 `checks-passed`/`passed` are FAIL CLOSED: finish refuses unless every
 non-skipped step is `completed` and no `fix` finding (or undecided
 `ask-user`) remains, and `passed` additionally requires HEAD merged into
-the default branch - it names whatever is outstanding. `failed`/`cancelled`
-are always allowed. (Contract: the `bin/ac-ship.sh` header FINISH block.)
+the run's delivery target (the default branch when no `--target` was
+pinned) - it names whatever is outstanding. `failed`/`cancelled`
+are always allowed. (Contract: the `src/ship.ts` header FINISH block.)
 
 ## After ship: qa gate (only when a `<family>-qa` stage was triaged in)
 
@@ -337,7 +353,7 @@ exactly like you call the independent `review-agent`:
    the RELAY CONTRACT in from this run's own state - the envelope, the case
    table, the visual artifacts to EMBED in the PR comment, the room post,
    and the duty to CORRECT any PR-body claim the run supersedes ("not run",
-   "verified statically only", "tests pending"). `bin/ac-qa.sh`'s header
+   "verified statically only", "tests pending"). `src/qa.ts`'s header
    owns that contract; this step is a pointer to it, not a second copy.
 4. **Hand back:** `done: qa passed, PR #<n> ready for merge`. The merge
    gate stays with the captain - qa's verdict informs it, never bypasses it.

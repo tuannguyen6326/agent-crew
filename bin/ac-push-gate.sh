@@ -26,8 +26,12 @@
 #   ac-push-gate.sh check <range>  - manual scan of an explicit rev range
 #     (anything `git log` accepts), same verdict and exit codes.
 #
-# WHAT ONE SCAN COVERS: `git log -p` over the range with idents prepended -
-# every diff hunk, every commit message, every author AND committer ident.
+# WHAT ONE SCAN COVERS: `git log -p --cc` over the range with idents
+# prepended - every diff hunk, every commit message, every author AND
+# committer ident. --cc because plain -p prints no diff for a merge, and a
+# conflict resolution can write a line neither parent has; a merge's combined
+# diff is exactly those lines, and every line it takes from a parent is in
+# that parent's own commit.
 # A scan is a FLOOR, never proof of absence: the refusal and the pass both
 # say so, and the operator's read of the outgoing diff stays the real gate.
 #
@@ -60,7 +64,7 @@ fi
 # scan_range <range> - print offending lines (capped), return 1 on any hit.
 scan_range() {
   local range="$1" hits
-  hits="$(git log --format='commit %H%nAuthor: %an <%ae>%nCommit: %cn <%ce>%n%B' -p "$range" 2>/dev/null \
+  hits="$(git log --format='commit %H%nAuthor: %an <%ae>%nCommit: %cn <%ce>%n%B' -p --cc "$range" 2>/dev/null \
     | grep -inE -f <(printf '%s\n' "$patterns") | head -20)" || true
   [ -z "$hits" ] && return 0
   printf 'push-gate: REFUSED - private identifier in outgoing range %s:\n' "$range" >&2

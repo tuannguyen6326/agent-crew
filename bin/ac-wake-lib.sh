@@ -2,7 +2,7 @@
 # ac-wake-lib.sh - the wake/spool/room concern, split out of ac-lib.sh
 # (audit-f3, codebase-audit-2026-07-29 finding 3). Not an entrypoint; sourced
 # after ac-lib.sh by any script that needs it - ac-lib.sh does NOT source this
-# file (the ac-pipeline-lib.sh pattern: the CALLER sources both, and every
+# file (the CALLER sources both, and every
 # function here fails closed on a missing CORE sibling rather than assuming
 # one).
 #
@@ -17,8 +17,8 @@
 # makes it safe), the room grammar (ac_room_pending - the authoritative
 # MATCHER for counting a room's unanswered GATE:/ASK: items; ac_room_review_rulings
 # - the stable projection an independent code review reads;
-# ac_room_marker_malformed - the write-side twin ac-room.sh cmd_post calls to
-# REFUSE a malformed GATE/ASK/DECIDED-opening message; ac_room_handback_families
+# ac_room_marker_malformed - the write-side twin whose two EREs the room's post
+# runs to REFUSE a malformed GATE/ASK/DECIDED-opening message; ac_room_handback_families
 # - the authoritative matcher for the HANDBACK state, batched over N room files
 # in one pass), and the two CHIEF-QUIET predicates (ac_chief_gate_parked /
 # ac_chief_child_live - the authoritative answer to "is this <fam>-chief
@@ -32,7 +32,7 @@
 # --- wake scope + publication: the one routing/atomicity/ordering source ------
 #
 # AUTHORITATIVE for the wake store: its keying, its atomicity and its
-# ordering contract. The producers (ac-watch.sh queue_wake, ac-room.sh
+# ordering contract. The producers (src/watch.ts queueWake, ac-room.sh
 # handback, ac-remote.sh ingest_stream), the drains (ac-wake-drain.sh), the
 # gates (ac-turnend-guard.sh, ac-guard.sh) and the tally (ac-fleets.sh) all
 # bind here, so the scope key, the family filter and the record protocol can
@@ -65,7 +65,7 @@
 # ac_spool_has_record, the ONE spool-pending predicate) to remove a spool that
 # still holds an undrained record.
 #
-# ORDERING (DECIDED: captain, option A, 2026-07-17): the drain emits records
+# ORDERING: the drain emits records
 # in producer-stamp order - lexical filename order over
 # `<ts_ns>.<pid>.<seq6>`, where ts_ns is ONE fixed-width `date +%s%N` capture
 # per record. Two records bearing the SAME stamp sort by pid then seq
@@ -84,7 +84,7 @@
 
 ac_wake_scope_ok() {
   # ac_wake_scope_ok <scope> - 0 when <scope> is a legal family name, i.e. a
-  # bare single path segment [A-Za-z0-9_-]+ (ac-spawn.sh:491, ac-room.sh:106).
+  # bare single path segment [A-Za-z0-9_-]+ (ac-spawn.sh's --roomchief family check, ac-room.sh cmd_post).
   # Empty, dot-bearing, slash-bearing or otherwise odd scopes are refused, so
   # a malformed AC_SCOPE can neither leak a stray file nor escape state/.
   case "${1:-}" in
@@ -127,15 +127,17 @@ ac_watcher_beat_read() {
   # is EMPTY for a usable beat and otherwise says which no-beat state this is.
   # The three are decidable from the file alone and need OPPOSITE responses:
   #   ABSENT      - no beacon: nothing has ever armed here, you have been blind.
-  #   UNREADABLE  - present but empty or non-numeric. An empty read is what a
-  #                 reader sees when it catches a truncate-then-write mid-flight
-  #                 (ac-watch.sh publishes by rename now, so this is a real
-  #                 anomaly rather than the routine race it was until 2026-07-27).
-  #   STOOD DOWN  - the 0 stand_down_beacon writes on every watcher exit: the
+  #   UNREADABLE  - present but empty, non-numeric, or zero-padded. An empty read
+  #                 is what a reader sees when it catches a truncate-then-write
+  #                 mid-flight (ac-watch.sh publishes by rename now, so this is a
+  #                 real anomaly rather than the routine race it was until
+  #                 2026-07-27). No ac_now epoch starts with 0, and bash
+  #                 arithmetic reads a leading 0 as octal, so 0009 is an error.
+  #   STOOD DOWN  - the 0 a watcher's exit cleanup writes on every exit: the
   #                 COMMON state, "a watcher just heartbeat-exited, drain and
   #                 re-arm", not an emergency.
   # No caller may print an age here: `now - 0` is a 56-year figure that a chief
-  # reads as a live outage and reports to the captain (c8afc50, 2026-07-25), which
+  # reads as a live outage and reports to the captain, which
   # is why the wording "no beat on record" is fixed here rather than per renderer.
   #
   # SURVEY of the other beacon readers, checked against each file rather than by
@@ -143,13 +145,14 @@ ac_watcher_beat_read() {
   # and ruled out ac-guard.sh correctly, while bin/ac-turnend-guard.sh - a
   # DIFFERENT file with a near-identical name - repeated the bug untouched):
   #   ac-turnend-guard.sh, ac-wake-drain.sh - the two that RENDER a figure; both
-  #     read through this helper.
-  #   ac-fleets.sh - renders one too, and already branches absent ("no beacon")
-  #     from non-numeric/0 ("no beat on record") inline; converting it would
-  #     change no output, so it is left alone.
-  #   ac-guard.sh, ac-statusline.sh - age as a BOOLEAN ("WATCHER-DOWN", " WATCH!");
-  #     they print no number, so no figure can be nonsense.
-  #   ac-watch.sh skip_coverage_live - age as a boolean too, deciding whether a
+  #     read through this helper (the drain through its src/lib.ts twin,
+  #     watcherBeatRead).
+  #   ac-fleets.sh - renders one too, and reads through this helper: its own
+  #     digits-only test let a zero-padded beat reach arithmetic, which read it
+  #     as octal, failed, and dropped the home from the survey.
+  #   ac-guard.sh - age as a BOOLEAN ("WATCHER-DOWN");
+  #     it prints no number, so no figure can be nonsense.
+  #   src/watch.ts skipCoverageLive - age as a boolean too, deciding whether a
   #     family's scoped coverage is still live; reads through this helper since
   #     2026-08-05. It was left inline on the "prints no number" criterion above,
   #     and that criterion is not the whole test: a boolean caller renders no
@@ -174,7 +177,7 @@ ac_watcher_beat_read() {
     beat="$(cat "$f" 2>/dev/null || true)"
     case "$beat" in
       0) note='no beat on record (a watcher stood its beacon down on exit - drain and re-arm)' ;;
-      ''|*[!0-9]*) beat=0; note='no beat on record (the beacon is unreadable)' ;;
+      ''|0?*|*[!0-9]*) beat=0; note='no beat on record (the beacon is unreadable)' ;;
     esac
   fi
   printf '%s %s\n' "$beat" "$note"
@@ -197,6 +200,9 @@ ac_watcher_down() {
   #     lone 90 made the enforcing hook more trigger-happy than the Stop hook
   #     during the ordinary exit->re-arm gap, the exact false-alarm class the
   #     watcher exists to absorb.
+  # The TypeScript twin, src/lib.ts's watcherDown (the guard's WATCHER-DOWN),
+  # is pinned to this function by a differential test (tests/ts/guard.test.ts),
+  # so a change here that it misses reddens it.
   local sd="$1" scope="${2:-}" inflight=0 beat age m
   while IFS= read -r m; do inflight=$((inflight + 1)); done \
     < <(ac_crew_metas "$sd" verify self)
@@ -211,14 +217,16 @@ ac_chief_busy_path() {
   # ac_chief_busy_path <state_dir> <family> - the BUSY DECLARATION for <family>'s
   # roomchief: the epoch (one line) until which that chief is blocked inside ONE
   # bounded synchronous call and therefore CANNOT take a turn. Written by the
-  # blocking caller itself (ac-gate.sh), read by ac-watch.sh's AC_WATCH_SKIP
-  # revalidation, cleared by the writer on every trappable exit
+  # blocking caller itself (ac-gate.sh, ac-verify.sh), read by ac-watch.sh's
+  # AC_WATCH_SKIP revalidation, cleared on a writer's trappable exit only by
+  # the family's last live holder - gate runs and verifier calls of one family
+  # share this one file (ac_chief_busy_held below)
   # (behavior: skip-grace-too-short-for-a-chief-inside-a-long-synchronous-gate).
   #
   # DELIBERATELY NOT the beacon (ac_watcher_beat_path above): that file asserts "a
   # scoped WATCHER is covering this family" and is read by ac-guard.sh,
-  # ac-turnend-guard.sh, ac-wake-drain.sh, ac-statusline.sh and ac-fleets.sh -
-  # touching it here would lie to all five, including the turn-end guard that
+  # ac-turnend-guard.sh, ac-wake-drain.sh and ac-fleets.sh -
+  # touching it here would lie to all four, including the turn-end guard that
   # decides whether a chief may end a turn. This file says something different and
   # weaker: the chief is BUSY, not that anything is watching.
   #
@@ -228,6 +236,47 @@ ac_chief_busy_path() {
   # clean up (SIGKILL - the EXIT trap covers TERM/INT) holds the skip until the
   # bound passes and no longer.
   printf '%s/.chief-busy-until.%s\n' "$1" "$2"
+}
+
+ac_chief_busy_hold() {
+  # ac_chief_busy_hold <state_dir> <family> <until-epoch> - this process (a
+  # verifier call) joins <family>'s busy declaration: its holder mark first,
+  # then the bound, never shortened - a later bound covers another blocking
+  # call still inside its own window. Best-effort like every declaration write.
+  # src/lib.ts's chiefBusyHold and chiefBusyLeave are held to this function and
+  # to ac_chief_busy_leave (tests/ts/verify-twins.test.ts).
+  local decl prev
+  decl="$(ac_chief_busy_path "$1" "$2")"
+  printf 'pid=%s\n' "$$" >"$1/.chief-busy-holder.$2.$$" 2>/dev/null || true
+  prev="$(cat "$decl" 2>/dev/null || true)"
+  case "$prev" in '' | *[!0-9]*) prev=0 ;; esac
+  [ "$prev" -ge "$3" ] || printf '%s\n' "$3" >"$decl" 2>/dev/null || true
+}
+
+ac_chief_busy_held() {
+  # ac_chief_busy_held <state_dir> <family> <family-data-dir> - 0 while a live
+  # holder remains: a gate run's marker (<family-data-dir>/.gate-running.<pid>)
+  # or a verifier call's (<state_dir>/.chief-busy-holder.<family>.<pid>). A dead
+  # holder's mark is swept on the way. Called under the family lock
+  # (<family-data-dir>/.gate-lock), which orders a clear against a new hold.
+  local m held=1
+  for m in "$3"/.gate-running.* "$1"/.chief-busy-holder."$2".*; do
+    [ -f "$m" ] || continue
+    if ac_pid_alive "$(ac_meta_get "$m" pid)"; then held=0; else rm -f "$m"; fi
+  done
+  return "$held"
+}
+
+ac_chief_busy_leave() {
+  # ac_chief_busy_leave <state_dir> <family> <family-data-dir> - this process
+  # drops its hold, and the declaration goes only with the family's last live
+  # holder. The family lock is best-effort, as ac-gate.sh takes it at exit; a
+  # family with no data dir has no gate run to order against.
+  local locked=""
+  rm -f "$1/.chief-busy-holder.$2.$$"
+  [ ! -d "$3" ] || ! ac_lock_acquire "$3/.gate-lock" || locked=1
+  ac_chief_busy_held "$1" "$2" "$3" || rm -f "$(ac_chief_busy_path "$1" "$2")"
+  [ -z "$locked" ] || ac_lock_release "$3/.gate-lock"
 }
 
 ac_wake_family_spools() {
@@ -309,8 +358,9 @@ ac_wake_orphan_files() {
   # live family's spool is its own chief's and is never listed - that skip IS
   # the cross-drain fix. This is the ONE definition of "the fleet's orphans":
   # the drain acts on this list, the turn-end gate and the advisory ask about
-  # it (via ac_wake_orphan_pending), so the three can never disagree about
-  # which families the fleet owns.
+  # it (via ac_wake_orphan_pending - the advisory through its src/lib.ts twin
+  # wakeOrphanPending, pinned here by tests/ts/guard.test.ts), so the three
+  # can never disagree about which families the fleet owns.
   #
   # Needs ac-backend.sh sourced by the caller for the window probe; see
   # ac_roomchief_live for the fail-safe when it is absent.
@@ -345,9 +395,10 @@ ac_spool_has_record() {
   # the literal unexpanded pattern, which [ -e ] correctly reads as absent - so
   # an empty (or absent) spool reads "no record", never the [ -s ]-on-a-dir
   # trap ([ -s ] is true for any directory). This is the ONE spool-pending
-  # predicate: ac_wake_pending, ac_wake_orphan_pending and ac-wake-drain.sh's
-  # drain_spool all route through it so they can never disagree on what makes a
-  # spool non-empty.
+  # predicate: ac_wake_pending and ac_wake_orphan_pending route through it, and
+  # the drain (src/wake-drain.ts) and the advisory (src/lib.ts's
+  # spoolHasRecord) test the same `[ -e ]` per non-dot entry, so none can
+  # disagree on what makes a spool non-empty.
   local r
   for r in "$@"; do [ -e "$r" ] && return 0; done
   return 1
@@ -369,8 +420,9 @@ ac_wake_orphan_pending() {
 
 ac_wake_pending() {
   # ac_wake_pending <state_dir> [<scope>] - 0 when the scope's OWN spool holds
-  # at least one record. PURE (reads only) - the turn-end gate and the
-  # advisory call this, so the predicate must never block or create state. An
+  # at least one record. PURE (reads only) - the turn-end gate calls this and
+  # the advisory its src/lib.ts twin wakePending, so the predicate must never
+  # block or create state. An
   # empty-but-existing spool dir is litter, not pending.
   local s
   s="$(ac_wake_spool_path "$1" "${2:-}")"
@@ -469,29 +521,31 @@ ac_wake_publish() {
 #
 # AUTHORITATIVE for how a publisher ends the covering watcher's poll wait
 # early, and for the WRONG-KILL GUARD that makes it safe. Two callers share it:
-# ac-done.sh's agent-side push (whose header owns the PUSH contract) and
+# ac-done.sh's agent-side push (src/done.ts, whose header owns the PUSH
+# contract, and whose watcherNudge twin this block pins) and
 # ac-room.sh's hand-back. Both publish first and nudge second - the record is
 # the guarantee, the nudge is only an accelerator, so a nudge that finds
 # nothing to end is the correct QUIET outcome and never an error.
 #
-# The nudge KILLS THE POLL `sleep` CHILD ALONE - behavior ac-watch.sh's
-# poll_wait already documents and relies on ("A kill aimed at the sleep CHILD
-# alone just ends the wait early"). This USES that behavior, it does not build
-# it: the wait ends, the loop's top-of-cycle push check runs at once, and the
-# watcher exits so the harness wakes.
+# The nudge KILLS THE POLL `sleep` CHILD ALONE - behavior the watcher's poll
+# wait already documents and relies on (src/watch.ts pollWait: "a kill aimed
+# at it alone is absorbed"). This USES that behavior, it does not build it: the
+# wait ends, the loop's top-of-cycle push check runs at once, and the watcher
+# exits so the harness wakes.
 #
 # WRONG-KILL GUARD (the sharp edge of the whole story). Both ends of the target
 # are confirmed before any signal is sent: the pid recorded in the watcher's
-# lock dir must still be running an `ac-watch` command line (a REUSED pid is
-# running something else, and is refused), and the process actually signalled
+# lock dir must still be running a watcher's command line - `ac-watch`, or
+# `/src/watch.ts` for the ported watcher bin/ac-watch.sh execs (a REUSED pid is
+# running something else, and is refused) - and the process actually signalled
 # must be a `sleep` CHILD of exactly that pid. A watcher inside a poll pass has
 # no such child and is left alone.
 
 ac_watcher_pid() {
   # ac_watcher_pid <state-dir> <scope> - the pid of the LIVE watcher covering
-  # this scope, or 1 when there is none to nudge. The lock name is
-  # ac-watch.sh's: the fleet watcher holds .watch.lock.d, a scoped one the
-  # .watch-only-<scope>.lock.d suffix - which ac-watch.sh keys on AC_SCOPE (the
+  # this scope, or 1 when there is none to nudge. The lock name is the
+  # watcher's: the fleet watcher holds .watch.lock.d, a scoped one the
+  # .watch-only-<scope>.lock.d suffix - which the watcher keys on AC_SCOPE (the
   # ONE family a scoped watcher files for), NOT its full AC_WATCH_ONLY set, so a
   # valid scope maps to exactly one lock name even for an epic roomchief that
   # also watches its story panes.
@@ -505,7 +559,7 @@ ac_watcher_pid() {
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   ac_pid_alive "$pid" || return 1
   # PID REUSE (see the guard above): the recorded pid must still BE a watcher.
-  ps -o command= -p "$pid" 2>/dev/null | grep -q 'ac-watch' || return 1
+  grep -qE 'ac-watch|/src/watch\.ts' < <(ps -o command= -p "$pid" 2>/dev/null) || return 1
   printf '%s\n' "$pid"
 }
 
@@ -544,7 +598,7 @@ ac_watcher_nudge() {
 #
 # A decision settles one open item (oldest first) whether it is the bare
 # `DECIDED:` form, the captain-attribution `DECIDED <family>:` form (the
-# section-8 echo that disambiguates one chat stream across many tasks), or the
+# rooms-threads attribution echo that disambiguates one chat stream across many tasks), or the
 # paren-attribution `DECIDED (<attr>):` form a captain actually writes (e.g.
 # `DECIDED (captain):`, and the two may combine as `DECIDED <family> (<attr>):`).
 # The optional ` <family>` uses the same [A-Za-z0-9_-] charset the family
@@ -575,7 +629,7 @@ ac_watcher_nudge() {
 # There is deliberately no "delivered, awaiting the crewchief to land" verb:
 # `GATE:` covers waiting on the captain, `HANDBACK:` (ac_room_handback_families
 # below) already covers waiting on the crewchief, including the land-only
-# case. See AGENTS.md section 8, room lifecycle, near the HANDBACK sentences.
+# case. See the rooms-threads skill, room lifecycle, near the HANDBACK sentences.
 
 ac_room_review_rulings() {
   # ac_room_review_rulings <room-file> - stable, file-order projection for an
@@ -583,9 +637,11 @@ ac_room_review_rulings() {
   # accepted chief/gate receipts, and explicit corrections. Empty/missing room
   # yields nothing. Rejected GATE-LOOPED rounds and ordinary narration stay in
   # room-snapshot.md for targeted surrounding context, never default reading.
+  # src/lib.ts's roomReviewRulings spawns this awk verbatim
+  # (tests/ts/verify-twins.test.ts).
   local file="$1"
   [ -f "$file" ] || return 0
-  awk '
+  LC_ALL=C awk '
     /^- \[[^]]*\] [^>]*> (GATE|ASK):/ { print; next }
     /^- \[[^]]*\] [^>]*> DECIDED( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { print; next }
     /^- \[[^]]*\] [^>]*> (TRIAGE|SELF-APPROVED):/ { print; next }
@@ -594,13 +650,41 @@ ac_room_review_rulings() {
   ' "$file"
 }
 
+ac_room_scan() {
+  # ac_room_scan <ere> <awk-body> <room-file>... - run <awk-body> over just the
+  # lines of the given rooms that match <ere>, with `file` naming each line's
+  # room where FILENAME would. The room set only grows and the turn-end guard
+  # reads all of it on every fleet stop, so grep, several times faster than
+  # awk at a scan, drops first every line no rule can match: <ere> must match
+  # a superset of <awk-body>'s rules, which still judge each surviving line.
+  # Both run in the C locale - room prose is bytes, a byte that is not UTF-8
+  # aborts the host awk under a UTF-8 locale, and the grammar is ASCII. A room grep
+  # cannot read fails the scan with nothing printed, as awk's own open failure
+  # did, so a caller reads no answer as pending, never as the others' count.
+  local ere="$1" body="$2" out
+  shift 2
+  # set +e: both statuses are judged below, whatever errexit the caller armed.
+  out="$(set +e; LC_ALL=C grep -a -H -E -- "$ere" "$@" | LC_ALL=C awk '
+    BEGIN { for (i = 1; i < ARGC; i++) { files[i] = ARGV[i]; delete ARGV[i] }; nfiles = ARGC - 1; at = 1 }
+    {
+      while (at <= nfiles && substr($0, 1, length(files[at]) + 1) != files[at] ":") at++
+      file = files[at]
+      $0 = substr($0, length(file) + 2)
+    }
+  '"$body" "$@"
+    s=("${PIPESTATUS[@]}"); [ "${s[0]}" -le 1 ] || exit 2; exit "${s[1]}")" || return
+  [ -z "$out" ] || printf '%s\n' "$out"
+}
+
 ac_room_pending() {
   # ac_room_pending <file>... - gates/asks minus decisions, floored at 0 PER
   # FILE and summed over the files given. One file in, one count out - the
   # single-file answer is unchanged; N files are BATCHED into one awk pass for
-  # the same reason ac_room_handback_families is (below): ac-turnend-guard.sh
-  # reads the whole room set on a turn end, and rooms are never deleted, so a
-  # per-room fork would grow without bound on a hook that always runs. The
+  # the same reason ac_room_handback_families is (below): rooms are never
+  # deleted, so a per-room fork over the whole set would grow without bound.
+  # Its one bash caller, ac_chief_gate_parked, passes one file and is itself
+  # uncalled; the readers of the count (ac-room.sh, the turn-end guard) run
+  # src/room.ts's copy, which tests/sh/ac-room.test.sh holds to this one. The
   # per-file reset is load-bearing: a DECIDED: in one room settles nothing in
   # another.
   # The verb need not sit flush against the colon: a legitimately-authored
@@ -622,11 +706,11 @@ ac_room_pending() {
   # this function: ac_room_review_rulings and ac_room_handback_families read
   # the same room grammar and share the identical `[^]]*` / `[^>]*` shape, so
   # the whole file stays internally consistent. No actor name may contain `>` - ids
-  # are [a-z0-9-] (AGENTS.md section 5) and a family is [a-zA-Z0-9_-]
+  # are [a-z0-9-] (task-lifecycle skill) and a family is [a-zA-Z0-9_-]
   # (ac-room.sh cmd_post) - so pinning it excludes no legitimate entry.
-  [ "$#" -gt 0 ] || { printf '0\n'; return 0; }   # no files: never awk's stdin
-  awk '
-    FILENAME != cur { total += (open > 0 ? open : 0); cur = FILENAME; open = 0 }
+  [ "$#" -gt 0 ] || { printf '0\n'; return 0; }   # no files: never grep's stdin
+  ac_room_scan '^- \[[^]]*\] [^>]*> (GATE|ASK|DECIDED)' '
+    file != cur { total += (open > 0 ? open : 0); cur = file; open = 0 }
     /^- \[[^]]*\] [^>]*> (GATE|ASK)( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { open++ }
     /^- \[[^]]*\] [^>]*> DECIDED( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { if (open > 0) open-- }
     END { print total + (open > 0 ? open : 0) }
@@ -645,9 +729,12 @@ ac_room_marker_malformed() {
   # before a line counts as an answered/pending item. Anchored on the raw
   # MESSAGE (no `- [<iso>] <actor>> ` room-line prefix - the caller has not
   # written the line yet) and only its first line: a multi-line message's
-  # later lines never carry that prefix in the room file either, so
-  # ac_room_pending never reads them as a marker regardless of their content.
-  # ac-room.sh cmd_post is the ONE caller: it REFUSES a malformed marker at
+  # later lines never carry that prefix in the room file either - cmd_post
+  # refuses a continuation line of that shape - so ac_room_pending never
+  # reads them as a marker regardless of their content.
+  # The room's post (src/room.ts; the frozen original at
+  # tests/fixtures/ac-room.sh called this function) runs these two EREs
+  # through grep - change both together. It REFUSES a malformed marker at
   # authoring time, before the mis-shaped line can hang a room PENDING
   # forever - a DASH where the grammar needs a colon (`DECIDED (captain:
   # "merge") - landing approved...`) settles nothing and never counts, so a
@@ -656,7 +743,7 @@ ac_room_marker_malformed() {
   local first
   first="$(printf '%s\n' "$1" | head -n1)"
   grep -qE '^(GATE|ASK|DECIDED)([[:space:]]|:|$)' <<<"$first" || return 1
-  grep -qE '^(GATE|ASK|DECIDED)([[:space:]][A-Za-z0-9_-]+)?([[:space:]]\([^)]*\))?:' <<<"$first" && return 1
+  grep -qE '^(GATE|ASK|DECIDED)( [A-Za-z0-9_-]+)?( \([^)]*\))?:' <<<"$first" && return 1
   return 0
 }
 
@@ -670,21 +757,21 @@ ac_room_handback_families() {
   # same way DEMOTED:/CLOSED: do, without either of those acts; a later
   # HANDBACK: re-opens it, so a refusal never permanently retires the state.
   #
-  # BATCHED BY DESIGN - it takes N files and makes ONE awk pass, because its
-  # heaviest consumer is ac-turnend-guard.sh, which sweeps the WHOLE room set on
-  # every fleet turn end. Rooms are records and are never deleted (AGENTS.md
-  # section 8), so the set only grows: a per-room fork would put an unbounded,
-  # daily-growing cost on the one hook that always runs. ac-statusline.sh's
-  # no-fork budget is the same concern, stated for a far less frequent path.
+  # BATCHED BY DESIGN - it takes N files and makes ONE awk pass, because a
+  # reader of the HANDBACK state sweeps the WHOLE room set. Rooms are records
+  # and are never deleted (rooms-threads skill), so the set only grows: a
+  # per-room fork would put an unbounded, daily-growing cost on that sweep. No
+  # bash caller remains: ac-room.sh and the turn-end guard read src/room.ts's
+  # copy, which tests/sh/ac-room.test.sh holds to this one.
   #
   # The family is the room file's parent directory - data/<family>/room.md,
   # ac-room.sh's layout. Portable multi-file bookkeeping: gawk's ENDFILE is not
-  # everywhere, so a file is flushed when FILENAME changes and the last at END.
+  # everywhere, so a file is flushed when its name changes and the last at END.
   # An empty room yields no records and so is never in handback - correct.
   [ "$#" -gt 0 ] || return 0
-  awk '
+  ac_room_scan '^- \[[^]]*\] [^>]*> (HANDBACK|DEMOTED|CLOSED)' '
     function fam(p,   n, a) { n = split(p, a, "/"); return (n >= 2 ? a[n - 1] : p) }
-    FILENAME != cur { if (cur != "" && hb) print fam(cur); cur = FILENAME; hb = 0 }
+    file != cur { if (cur != "" && hb) print fam(cur); cur = file; hb = 0 }
     /^- \[[^]]*\] [^>]*> HANDBACK:/ { hb = 1 }
     /^- \[[^]]*\] [^>]*> HANDBACK-REFUSED:/ { hb = 0 }
     /^- \[[^]]*\] [^>]*> (DEMOTED|CLOSED):/ { hb = 0 }
@@ -694,56 +781,18 @@ ac_room_handback_families() {
 
 ac_room_list_rows() {
   # ac_room_list_rows <room-file>... - the PER-ROOM projection `ac-room.sh
-  # list` needs: one line "<pending>\037<hb>\037<family>\037<last>" per
-  # file, in argument order, from ONE awk pass over every file given. Fields
-  # are separated by ASCII Unit Separator 0x1f (awk octal \037 - this awk has
-  # no \x hex escape, verified empirically), never a tab: bash's `read`
-  # trims a TRAILING run of IFS whitespace (space/tab/newline) from the last
-  # assigned variable even when IFS is set to only one of them, so a `last`
-  # that genuinely ends in a literal tab would lose it with a tab delimiter
-  # (verified empirically) - 0x1f carries none of that special treatment.
-  # <pending> and <hb> are per-file (never a cross-file sum - a DECIDED: in
-  # one room still settles nothing in another); <last> is the FULL last line
-  # matching `^- \[` (untruncated - the caller truncates it with a
-  # character-aware bash substring, never awk's substr(), which is
-  # byte-aware in this awk and measurably diverges from the original `cut
-  # -c1-120` on this fleet's everyday multi-byte UTF-8 room text).
-  #
-  # ADDITIVE, not a re-derivation: the GATE/ASK/DECIDED and HANDBACK/DEMOTED/
-  # CLOSED/HANDBACK-REFUSED patterns are copied verbatim from ac_room_pending
-  # and ac_room_handback_families above - "ONE copy of the room grammar"
-  # (that function's own docstring) - so all three stay byte-identical in
-  # what they match. Neither helper's signature or behavior changes for its
-  # existing callers (ac-turnend-guard.sh, ac_chief_gate_parked,
-  # ac-statusline.sh); this is a third, independent reader of the same files.
-  #
-  # EVERY argument file emits exactly one row, in argument order, INCLUDING a
-  # completely empty room.md - awk never runs a single pattern-action rule
-  # for a zero-line file (no BEGINFILE/ENDFILE in this awk), so a design that
-  # only prints on a FILENAME-change trigger never sees that file at all and
-  # silently drops it from the inbox (a live-verified failure mode: an empty
-  # room.md with a blocked-chief stamp must still surface
-  # PENDING-CAPTAIN(1)+BLOCKED). Keying open/hb/last by FILENAME directly and
-  # emitting from an ARGV walk in END sidesteps that: an untouched array
-  # element reads as 0/"" - exactly an empty room's correct row - with no
-  # dependency on ever having read a line from it.
+  # list` needs: one line "<pending>\037<hb>\037<family>\037<last>" per file,
+  # in argument order, empty rooms included. src/room.ts computes it and its
+  # header is the spec; it carries a COPY of the GATE/ASK/DECIDED and
+  # HANDBACK/HANDBACK-REFUSED/DEMOTED/CLOSED patterns above, so a grammar
+  # change here changes it too - tests/sh/ac-room.test.sh compares its columns
+  # with ac_room_pending and ac_room_handback_families. It runs in bun because
+  # the whole room set is read on every call (the dashboard polls it), and the
+  # awk pass it replaced was most of `ac-room.sh list`'s time. src/room.ts's
+  # list now reads the same rows in-process; this door stays for the frozen
+  # original (tests/fixtures/ac-room.sh) and the tests that start it.
   [ "$#" -gt 0 ] || return 0
-  awk '
-    function fam(p,   n, a) { n = split(p, a, "/"); return (n >= 2 ? a[n - 1] : p) }
-    /^- \[[^]]*\] [^>]*> (GATE|ASK)( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { open[FILENAME]++ }
-    /^- \[[^]]*\] [^>]*> DECIDED( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { if (open[FILENAME] > 0) open[FILENAME]-- }
-    /^- \[[^]]*\] [^>]*> HANDBACK:/ { hb[FILENAME] = 1 }
-    /^- \[[^]]*\] [^>]*> HANDBACK-REFUSED:/ { hb[FILENAME] = 0 }
-    /^- \[[^]]*\] [^>]*> (DEMOTED|CLOSED):/ { hb[FILENAME] = 0 }
-    /^- \[/ { last[FILENAME] = $0 }
-    END {
-      for (i = 1; i < ARGC; i++) {
-        f = ARGV[i]
-        p = (open[f] > 0 ? open[f] : 0)
-        print p "\037" (hb[f] + 0) "\037" fam(f) "\037" last[f]
-      }
-    }
-  ' "$@"
+  ( . "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh" && ac_bun_exec src/room.ts rows "$@" )
 }
 
 # --- the two CHIEF-QUIET predicates -------------------------------------------
@@ -759,8 +808,10 @@ ac_room_list_rows() {
 # watcher that grew them:
 #   - ac-watch.sh's stale/ended arm, the wake it DECLINES to emit (its
 #     SUPERVISING-CHIEF QUIET header owns the reasoning for both).
-#   - ac-wake-drain.sh's IDLE-MAY-BE-WAITING-ON-YOU notice, which re-reads the
-#     watcher's OWN .change-<id> stamp: without the same two suppressions it
+#   - ac-wake-drain.sh's IDLE-MAY-BE-WAITING-ON-YOU notice (through the
+#     src/lib.ts twins chiefGateParked and chiefChildLive, pinned to these by
+#     tests/ts/wake-drain.test.ts), which re-reads the watcher's OWN
+#     .change-<id> stamp: without the same two suppressions it
 #     resurrects exactly the wake the watcher declined, once per drain forever,
 #     and acking it settles nothing (the chief's own ack output is the pane
 #     change that re-arms it). An ack treadmill trains a chief to ack
@@ -785,7 +836,7 @@ ac_chief_child_live() {
   # ac_chief_child_live <state_dir> <id> - 0 when <id> is a roomchief with at
   # least one LIVE family task: it is supervising, not stalled. MEMBERSHIP is
   # AUTHORITATIVE, never an id PREFIX - the same pair and the same rule as
-  # ac-teardown.sh's roomchief demote, whose header owns the incident:
+  # src/teardown.ts's roomchief demote, whose header owns the incident:
   # ac_family_of_id over the CLOSED stage/revision suffix set, OR the pane's own
   # fleet_scope recorded at spawn. Never the chief's own pane, which is
   # fleet-scoped by charter. Liveness is the pair ac_roomchief_live reads for

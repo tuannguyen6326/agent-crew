@@ -9,13 +9,12 @@ The fleet dashboard is the rich-review surface for HTML and markdown
 artifacts: the captain opens your artifact at its `/review` page, pins
 comments to elements, and the feedback reaches you over a blocking poll
 (`bin/ac-review.sh`, a thin shim on the dashboard review API -
-`bin/dashboard.ts`'s review block owns the contract). HTML is the new
+`dashboard/app.ts`'s review block owns the contract). HTML is the new
 markdown - and plain `.md` reviews too, no conversion needed.
 
 PRECONDITION: the dashboard must be RUNNING (`bin/ac-dashboard.sh`; port from
 `config/dash-port`, default 8787). The shim refuses loudly when it is down -
-starting the dashboard is the remedy; there is no external fallback loop
-(fully retired).
+starting the dashboard is the remedy; there is no fallback loop.
 
 ## Core loop
 
@@ -44,6 +43,11 @@ starting the dashboard is the remedy; there is no external fallback loop
    `--after <last n you handled>` - queued feedback is never lost.
 4. Apply the feedback, then reply and re-poll in one call:
    `bin/ac-review.sh poll <file>.html --after <n> --agent-reply "<what you changed>"`.
+   A reply longer than one line goes in as a FILE or over stdin -
+   `--agent-reply @<path>` or `--agent-reply -` (same for `reply`) - so every
+   paragraph and newline reaches the captain intact; a quoted argv is for the
+   one-liner only. The reply body is capped (the shim names the cap when it
+   refuses - shorten, never split into a burst of replies).
    GUEST FEEDBACK IS MODERATED AT THE WIRE: a share-link guest's pins and
    comments are born PENDING in the captain's approval queue on the review
    page, and the poll NEVER delivers a pending or dismissed record

@@ -8,7 +8,7 @@
 # INTERACTIVE by design - this is a CAPTAIN tool, not crew tooling: it asks one
 # line per decision and an empty answer takes the shown default. Answers are
 # read from plain stdin, so a heredoc drives it unattended (that is how
-# tests/ac-setup.test.sh drives it). stdin at EOF is an error, never a silent
+# tests/sh/ac-setup.test.sh drives it). stdin at EOF is an error, never a silent
 # run on defaults.
 #
 # Steps, in order:
@@ -127,8 +127,7 @@ else
 fi
 
 # wezterm renders the herdr UI. herdr draws in any terminal, so this is a
-# preference, not a requirement - but it is the terminal
-# docs/examples/wezterm-agent-crew.lua wires the fleet statusline into.
+# preference, not a requirement.
 if command -v wezterm >/dev/null 2>&1 || [ -d /Applications/WezTerm.app ]; then
   printf 'OK: wezterm\n'
 else

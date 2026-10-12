@@ -18,7 +18,7 @@ has none - say which source you used.
 </script>
 ```
 
-The dashboard whiteboard's own editor runtime pins live in `bin/dashboard.ts`
+The dashboard whiteboard's own editor runtime pins live in `dashboard/app.ts`
 (`WHITEBOARD_CDN`) - that block is authoritative for Excalidraw versions;
 never restate them here.
 

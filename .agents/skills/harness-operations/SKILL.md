@@ -19,7 +19,9 @@ Covers only the harnesses Agent Crew currently supports through `bin/ac-spawn.sh
 - `cursor` (registered 2026-08-14; the agent CLI is `cursor-agent`, never bare `cursor`; instruction file LIVE-PROBED: AGENTS.md + root CLAUDE.md, never .claude/CLAUDE.md - the references file owns the boundary);
 - a captain-provided custom launch command (`config/launch-<harness>`), which stays unverified unless separately validated.
 
-The herdr session backend remains the only supported backend.
+The herdr session backend is the DEFAULT backend, and every per-harness pane fact below was verified on it; a fleet pinned to a non-default `config/backend` keeps the same `backend_*` contract, but these harness facts have not been re-verified there.
+
+What DOES differ on the orca driver, measured rather than assumed, because it changes how a steer lands: a pane's agent starts WITH the pane (its launch command IS the pane's command), so nothing is typed into a booting surface; typed text is chunked, because one large write lost its head; the came-up probe reads the terminal TITLE, so a harness that sets no title stays UNOBSERVABLE and delivery proceeds fail-open; and a closed terminal still serves its retained scrollback, so a successful read is never proof of life. `bin/ac-backend-orca.sh` owns those mechanics - reach for them when a steer or probe behaves differently from the herdr fact below, and treat the difference as the driver's, not the harness's.
 
 ## When to load
 
@@ -27,7 +29,7 @@ Load before a harness-specific spawn, trust-dialog response, skill invocation, i
 
 ## Source-of-truth split - do not restate the mechanics
 
-- `bin/ac-spawn.sh` owns launch-command construction, model and effort flags, session metadata, kickoff delivery, and the supported harness names.
+- `src/spawn.ts` (started by `bin/ac-spawn.sh`) owns launch-command construction, model and effort flags, session metadata, kickoff delivery, and the supported harness names.
 - `bin/ac-backend.sh` owns the herdr composer, submit-verification, focus, blocked-pane detection, and backend lifecycle.
 - This skill owns only the verified crewchief-facing facts: busy vs idle evidence; trust and permission dialogs; safe interrupt behavior; exit behavior; resume support and limits; skill-invocation form; known popup or submit hazards; and the evidence required before claiming an operation landed.
 
@@ -53,4 +55,4 @@ Read it before acting on a specific harness; it is kept out of the main file so 
 
 - Every harness fact must be backed by current Agent Crew code, an existing regression test, or an empirical scratch validation recorded in task evidence. Facts for unsupported runtimes must not be imported.
 - Adding a harness requires an isolated verification task that checks launch, busy detection, trust dialog, literal send, submit confirmation, interrupt, exit, resume, and skill invocation before the adapter is declared supported.
-- Any new mechanic belongs in the owning script (`bin/ac-spawn.sh` or `bin/ac-backend.sh`) and its tests before the concise fact is added here.
+- Any new mechanic belongs in the owning source (`src/spawn.ts` or `bin/ac-backend.sh`) and its tests before the concise fact is added here.

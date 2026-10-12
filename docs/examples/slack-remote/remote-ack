@@ -11,8 +11,8 @@
 # edge with AC_REMOTE_RID, AC_REMOTE_THREAD and AC_REMOTE_ACK_STATE in env
 # (ingested|working|done; absent = ingested for older cores), stdin and
 # stdout /dev/null; a non-zero exit is warned by the core and never blocks.
-# Each edge ADDS its emoji and nothing is ever removed (captain rule
-# 2026-07-18): the three icons are the three milestones, so a fully handled
+# Each edge ADDS its emoji and nothing is ever removed:
+# the three icons are the three milestones, so a fully handled
 # message carries all three - :eyes: :gear: :white_check_mark:. An unknown
 # future state exits 0 untouched.
 #

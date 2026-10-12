@@ -19,7 +19,9 @@ Do NOT classify these as stuck - they are healthy states:
 - a declared pause (the crewmate stamped `paused:` itself);
 - a captain gate (the task is waiting on a decision you owe the captain);
 - a blocked interactive prompt (a real dialog - answer it deliberately, do not "recover" it);
-- a completed-but-awaiting-landing task (the work is done and waiting to merge).
+- a completed-but-awaiting-landing task (the work is done and waiting to merge);
+- a `limited:` pane (stopped on the provider usage limit - it can do nothing until the reset its wake names, so a steer only spends a refused turn).
+- a `needs-login:` pane (stopped on an expired provider login - no wait and no steer cures it; escalate to the captain to sign that harness in again).
 
 ## The evidence ladder - escalate in order
 
@@ -30,7 +32,7 @@ Every rung must verify the previous action landed before advancing. Never skip t
 3. Classify the condition: healthy work, declared wait, captain wait, delivery strand, stale agent, exited agent, or confirmed loop. Only the last three warrant an intervention.
 4. Send ONE concise corrective steer with `bin/ac-send.sh <id> '<text>'` when the pane can safely receive text.
 5. Use the target's verified harness operation (interrupt, resume) only when a steer cannot recover it - read `harness-operations` for the harness named in the task meta before sending any keystroke.
-6. Relaunch or resume while preserving the branch, worktree, reports, and recorded session where the harness supports it: `bin/ac-spawn.sh <new-id> <project> --resume-from <old-id>` reopens the recorded claude session in a fresh worktree with its context intact.
+6. Relaunch or resume while preserving the branch, worktree, reports, and recorded session where the harness supports it. A pane that is definitely GONE (`bin/ac-crew-state.sh` reads gone, never unobservable) while its meta and worktree still stand is recovered IN PLACE: `bin/ac-spawn.sh <id> <project> --recover` reopens one fresh pane on the recorded worktree and resumes the recorded claude session - no new lease, no reset, uncommitted work untouched; it refuses a live or unobservable pane. Only a task already torn down takes the fresh-worktree path: `bin/ac-spawn.sh <new-id> <project> --resume-from <old-id>` reopens the recorded claude session in a fresh worktree with its context intact.
 7. Mark failure only after repeated recovery evidence shows no safe continuation path.
 
 ## Invariants - never trade work for a clean pane

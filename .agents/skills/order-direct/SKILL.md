@@ -6,12 +6,12 @@ description: Captain starts a task with flow PINNED to direct (crewchief -> one 
 # order-direct
 
 The captain invoked this order with `/order-direct` - that IS the captain's
-own words at the top of the flow precedence ladder (AGENTS.md section 5):
+own words at the top of the flow precedence ladder (`intake-triage` skill):
 flow is PINNED to `direct`. Do not re-triage the flow; everything else
 (mode, promote) you still triage yourself.
 
 1. The arguments may START with captain pins - strip them before reading
-   the order: `--mode <crew-ship|direct-pr|local-only>` pins the delivery
+   the order: `--mode <crew-ship|direct-pr|local-only|feature-pr>` pins the delivery
    mode (pass it through as `ac-brief.sh/ac-spawn.sh --mode <m>`),
    `--review <yes|no>` pins independent review for `direct-pr`/`local-only`
    (`crew-ship` is always `yes`; `--review no` there is invalid) - a pinned
@@ -21,23 +21,23 @@ flow is PINNED to `direct`. Do not re-triage the flow; everything else
    `--promote <yes|no>` pins the promotion decision, and `--qa <yes|no>`
    pins whether the change gets a crew-qa gate - an independent behavioral
    proof the implementer runs AFTER ship (it gates the merge, never the
-   push; AGENTS.md section 5). A pin is the captain's own words for THAT
+   push; `intake-triage` skill). A pin is the captain's own words for THAT
    dimension; every unpinned dimension you still triage yourself with
    receipts (for qa, the triage signals are user-facing/DB/financial/
    captain-critical). The REST of the arguments is the captain's order,
    verbatim.
-2. Run the section-5 REQUIREMENTS CHECK first - it is FLOW-AGNOSTIC (the
+2. Run the `intake-triage` REQUIREMENTS CHECK first - it is FLOW-AGNOSTIC (the
    brief-without-guessing test; direct carries NO requirements.md - the
    guesses become the ONE bundled clarify ask, and >=5 guesses means this
    order wants `/brainstorm` or a staged flow, not a direct crewmate).
 
-3. Run the section-5 intake exactly as law: WRITE the pinned dimensions
-   onto the backlog row as its delivery-contract token group (section 9
+3. Run the `intake-triage` intake exactly as law: WRITE the pinned dimensions
+   onto the backlog row as its delivery-contract token group (`docs/backlog.md`
    grammar) - `src:cap flow:direct` plus a token per flag the captain gave
    (e.g. `[src:cap flow:direct mode:crew-ship rev:yes qa:no]`); the pin IS
    the record that skips the escalation ask, today and on every future
    touch of this row. Unpinned heavy dimensions your OWN triage wants
-   still go through the section-5 escalation ask before you mint them.
+   still go through the `intake-triage` escalation ask before you mint them.
    Then the TRIAGE receipt to the family room WITH your reasoning for
    mode/promote and qa when unpinned (flow needs none - the captain
    pinned it), then brief and
@@ -50,5 +50,5 @@ flow is PINNED to `direct`. Do not re-triage the flow; everything else
    requirement questions, STOP and upgrade to staged - but because the
    captain pinned direct, upgrading is an ASK (why + options + lean),
    not a self-decision.
-   That ASK follows the select rule - AGENTS.md section 8
+   That ASK follows the select rule - the `rooms-threads` skill
    (`AskUserQuestion`).

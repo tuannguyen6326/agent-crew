@@ -7,22 +7,22 @@
 # recovery, config reads, crewdeputy config convergence + the crewdeputy
 # routing table grammar, task data dir resolution (staged-flow nesting), the
 # captain-marker regexes (AC_CAPTAIN_RE/AC_DECISION_RE/AC_BUSY_RE) and their
-# write-side twin ac_bare_marker_verbs, the backlog Done-line grammar
-# (AC_DONELINE_AWK/ac_doneline - shared by ac-ready.sh/ac-curate.sh/ac-learn.sh,
-# none of which otherwise need a sub-lib, so it stays here rather than in
+# write-side twin ac_bare_marker_verbs, the awk binding to the backlog line
+# parser (AC_DONELINE_AWK/ac_doneline - every ledger-reading awk site sources
+# this file already, so it stays here rather than in
 # ac-wake-lib.sh), task state files + the VERIFICATION-agent and SELF-TASK
 # meta classes, the landing ledger (cross-family file interlock) + crewmate
 # seeding (ac_seed_*), git helpers (ac_repo_root/ac_default_branch/
 # ac_default_ref/ac_project_dir/ac_project_config_file/ac_knowledge_file/
-# ac_home_resolve), ac_project_mode, the orphaned shell-snapshot detector, and
+# ac_home_resolve), the orphaned shell-snapshot detector, and
 # small logging/error helpers.
 #
 # SPLIT (audit-f3, codebase-audit-2026-07-29 finding 3): the ac_qa_*
 # validation block, the wake/spool/room/chief-quiet block, and the
 # Learning/Curate cadence + maintenance-transaction block moved out to
-# bin/ac-qa-lib.sh, bin/ac-wake-lib.sh and bin/ac-maintenance-lib.sh
-# respectively - each sourced directly by the callers that need it (this file
-# does NOT source them, mirroring bin/ac-pipeline-lib.sh). The two
+# ac-qa-lib.sh (frozen in tests/fixtures/ since its last live caller was
+# ported), bin/ac-wake-lib.sh and bin/ac-maintenance-lib.sh respectively -
+# each sourced by the callers that need it, never by this file. The two
 # herdr-specific pane-agent workspace/tab helpers moved to bin/ac-backend.sh.
 #
 # The agent-crew home is the directory that holds state/, data/, config/ and
@@ -34,9 +34,12 @@
 # empty answer - never ac_home.
 
 ac_root() {
-  # Directory of the agent-crew checkout that owns this bin/.
+  # Directory of the agent-crew checkout that owns this bin/. cd -P, because
+  # a fleet home symlinks this bin/ (workspace = home, repo = code): a
+  # logical `..` walked from the symlink path would name the HOME as the
+  # checkout, and every "$(ac_root)/bin/..." reference would break.
   local src="${BASH_SOURCE[0]}"
-  cd "$(dirname "$src")/.." && pwd -P
+  cd -P "$(dirname "$src")/.." && pwd -P
 }
 
 ac_home() {
@@ -72,13 +75,13 @@ ac_skills_dir() { local h; h="$(ac_home)" || return 1; mkdir -p "$h/skills"; pri
 # fleet store: a MOVE target for retired prefix-cluster siblings, never a skill.
 # One source of truth for the name so the seed loop (ac_seed_crew_skills, class 2)
 # and the curator agree - a mismatch would re-seed archived skills. It rides
-# under skills/, so ac_records_backup already tars it (no extra backup wiring).
+# under skills/, so the records backup (src/lib.ts recordsBackup) already tars
+# it (no extra backup wiring).
 AC_SKILLS_ARCHIVE_BASENAME=skills-archive
-ac_skills_archive_dir() { printf '%s\n' "$(ac_skills_dir)/$AC_SKILLS_ARCHIVE_BASENAME"; }
 ac_records_dir() {
   # Fleet record files (backlog.md, projects.md, captain.md, learnings.md,
-  # crewdeputies.md) live in records/, a SIBLING of data/ (captain-pinned
-  # 2026-07-17) - ledgers separate from task dirs. The interim-layout
+  # crewdeputies.md) live in records/, a SIBLING of data/ -
+  # ledgers separate from task dirs. The interim-layout
   # migration (data/records/<f> or data/<f> moved in on first resolve) that
   # used to run here cost 10 stats + an rmdir on EVERY call across 47 call
   # sites; retired by audit-f7 after every fleet home was verified clean of
@@ -102,16 +105,10 @@ ac_projects_dir() { local h; h="$(ac_home)" || return 1; mkdir -p "$h/projects";
 # $AC_HOME/config/<hook> has no fixed relative path back to the distro and
 # cannot rely on the caller's cwd, so it cannot find bin/ac-lib.sh on its
 # own; this pointer lets it, from any cwd, with only AC_HOME set. Written by
-# ac_seed_root_pointer, called by bin/ac-remote.sh on every invocation (poll
-# cadence, reply, thread-post, ack all run through it) so an existing home
-# self-heals the pointer with no manual bootstrap step.
+# bin/ac-remote.sh on every invocation (poll cadence, reply, thread-post, ack
+# all run through it; src/remote.ts's PREAMBLE) so an existing home self-heals
+# the pointer with no manual bootstrap step.
 ac_root_pointer_path() { printf '%s/.ac-root\n' "$(ac_state_dir)"; }
-ac_seed_root_pointer() {
-  [ -n "${AC_HOME:-}" ] || return 0
-  local ptr root
-  ptr="$(ac_root_pointer_path)"; root="$(ac_root)"
-  [ "$(cat "$ptr" 2>/dev/null || true)" = "$root" ] || printf '%s\n' "$root" >"$ptr"
-}
 
 ac_die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 ac_warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -120,6 +117,42 @@ ac_warn() { printf 'WARN: %s\n' "$*" >&2; }
 # equivalent to a live clock read. Falls back to `date +%s` when unset
 # (bash < 5 - this host's own /bin/bash is 3.2.57 and hits this path).
 ac_now() { printf '%s\n' "${EPOCHSECONDS:-$(date +%s)}"; }
+
+ac_brain_marker_age() {
+  # ac_brain_marker_age -> seconds since the last brain sync (state/.brain-last-sync,
+  # touched by the engine on every sync), or -1 when no sync ever ran. One stat.
+  local home marker last
+  home="$(ac_home)" || return 1
+  marker="$home/state/.brain-last-sync"
+  [ -f "$marker" ] || { printf -- '-1\n'; return 0; }
+  last="$(ac_file_mtime "$marker" || echo 0)"
+  printf '%s\n' "$(( $(ac_now) - last ))"
+}
+
+ac_brain_freshen() {
+  # ac_brain_freshen - fire ONE fire-and-forget catch-up sync when the brain's
+  # freshness marker is older than AC_BRAIN_SYNC_IV (default 1800s). Shared by
+  # every checkpoint that can notice staleness - the fleet watcher's cycle and
+  # the prompt-time recall hook - so a home's freshness has one throttle: the
+  # attempt stamp (state/.brain-freshen-attempt) refires a sync that cannot
+  # move the marker (bad key, locked db) once per interval, never per caller.
+  # DB existence is the opt-in - a home that never built a brain never fires -
+  # and config/brain-auto-sync=off is the valve. Zero cost on the fresh path:
+  # two stats, no subprocess. Returns 0 always; prints "fired" when it did.
+  local home iv age attempt la=0
+  home="$(ac_home)" || return 0
+  [ -f "$home/state/brain.sqlite" ] || return 0
+  [ "$(ac_config_read brain-auto-sync on)" = on ] || return 0
+  iv="${AC_BRAIN_SYNC_IV:-1800}"
+  age="$(ac_brain_marker_age)"
+  [ "$age" -lt 0 ] || [ "$age" -ge "$iv" ] || return 0
+  attempt="$home/state/.brain-freshen-attempt"
+  [ -f "$attempt" ] && la="$(ac_file_mtime "$attempt" || echo 0)"
+  [ $(( $(ac_now) - la )) -ge "$iv" ] || return 0
+  : >"$attempt"
+  ("$(ac_root)/bin/ac-brain.sh" sync --home "$home" --compact >/dev/null 2>&1 &)
+  printf 'fired\n'
+}
 ac_vn_ts() {
   # Captain-display timestamp: UTC+7, YYYY-MM-DD
   # HH:mm - for Slack-facing renderings only; records keep ac_iso (UTC).
@@ -138,6 +171,7 @@ ac_verb_emoji() {
     ASK*) printf '❓' ;;
     DECIDED*) printf '✅' ;;
     LANDED*|DONE*) printf '🎉' ;;
+    UNLANDABLE*) printf '🧱' ;;
     HANDBACK*) printf '🤝' ;;
     PROMOTED*) printf '🧵' ;;
     DEMOTED*) printf '🔻' ;;
@@ -171,14 +205,31 @@ ac_meta_get() {
 ac_meta_set() {
   # ac_meta_set <file> <key> <value> - atomic rewrite (replace the key,
   # keep the rest); readers still take the last value for a key.
-  local file="$1" key="$2" value="$3" tmp="$1.tmp.$$"
-  if [ -f "$file" ]; then
-    grep -v "^$key=" "$file" >"$tmp" || true
-  else
-    : >"$tmp"
+  # ONE WRITER AT A TIME per meta: the read-modify-rename runs under the lock
+  # <dir>/.<file>.lock (ac_lock_acquire, 10 waits), because two unlocked
+  # rewrites of one meta each carry the file as THEY read it and the later
+  # rename drops the other's key. src/lib.ts metaSet takes the same lock, so
+  # bash and TypeScript writers exclude each other, as far as ac_lock_acquire
+  # excludes at all (its two-reclaimer residual, below). A directory the lock
+  # cannot be made in, or a lock still held after the waits, is refused with
+  # nothing written and status 1.
+  local file="$1" key="$2" value="$3" tmp="$1.tmp.$$" dir=. lock rc=0
+  case "$file" in */*) dir="${file%/*}" ;; esac
+  lock="$dir/.${file##*/}.lock"
+  if ! [ -w "$dir" ] || ! [ -x "$dir" ] || ! ac_lock_acquire "$lock" 10; then
+    ac_warn "cannot lock meta file $file - nothing written"
+    return 1
   fi
-  printf '%s=%s\n' "$key" "$value" >>"$tmp"
-  mv "$tmp" "$file"
+  {
+    if [ -f "$file" ]; then
+      grep -v "^$key=" "$file" >"$tmp" || true
+    else
+      : >"$tmp"
+    fi
+    printf '%s=%s\n' "$key" "$value" >>"$tmp" && mv "$tmp" "$file"
+  } || rc=$?
+  ac_lock_release "$lock"
+  return "$rc"
 }
 
 ac_skill_usage_bump() {
@@ -189,11 +240,13 @@ ac_skill_usage_bump() {
   # only for fleet-learned skills (ac_seed_crew_skills class 2), on each new
   # symlink - never for class-1 built-ins.
   #
-  # BEST-EFFORT and race-tolerant, never failing or blocking the seed: many
-  # crewmates seed the same skill at once, so ac_meta_set's atomic rename is what
-  # matters - it can never CORRUPT the file, only lose an increment when two
-  # seeders read the same count. seeded_count is therefore a lower bound, which
-  # is fine for a cheap v1 signal; a lock would be bigger than the value it buys.
+  # BEST-EFFORT and race-tolerant, never failing the seed: many crewmates seed
+  # the same skill at once. ac_meta_set's lock serializes the rewrites, so
+  # they do not drop each other's keys, but the count is read outside it -
+  # two seeders that read the same count still lose an increment.
+  # seeded_count is therefore a lower bound, which is fine for a cheap v1
+  # signal; a lock around the read too would be bigger than the value it
+  # buys. A contended rewrite waits on the lock, and one it refuses is skipped.
   local dir="${1:-}" meta cur
   [ -n "$dir" ] && [ -d "$dir" ] || return 0
   meta="$dir/.usage.meta"
@@ -340,8 +393,10 @@ ac_config_read() {
   # model/effort knobs from one on every invocation. No home means no knob file,
   # so the default answers, which is the same value a homeless read already got:
   # the only knob the phantom checkout ever grew is config/herdr-workspace, and
-  # that knob is retired and read by nothing (ac-backend.sh:266).
-  # ac_home_resolve is THE homeless ladder - one copy on purpose.
+  # that knob is retired and read by nothing (ac-backend.sh FAMILY WORKSPACE GROUPING).
+  # ac_home_resolve is THE homeless ladder - one copy on purpose. The
+  # TypeScript twin, src/lib.ts's configRead, is pinned to this function by
+  # a differential test (tests/ts/lib.test.ts).
   local name="$1" default="${2:-}" h f line
   h="$(ac_home_resolve '' '')"
   [ -n "$h" ] || { printf '%s\n' "$default"; return 0; }
@@ -351,6 +406,24 @@ ac_config_read() {
   line="${line#"${line%%[![:space:]]*}"}"   # strip leading whitespace
   line="${line%"${line##*[![:space:]]}"}"   # strip trailing whitespace/CR
   printf '%s\n' "$line"
+}
+
+ac_compact_pct_env() {
+  # ac_compact_pct_env - the CLAUDE_AUTOCOMPACT_PCT_OVERRIDE= prefix for a
+  # CHIEF launch line (crewchief, roomchief) when config/compact-pct is 1-100.
+  # Claude's own auto-compact then fires at that percent of the window instead
+  # of just under its end (claude 2.1.284: min(window*pct/100, window-13000)).
+  # Out-of-range values are dropped with one reason line on stderr, because
+  # claude ignores them silently. Twinned in src/lib.ts (compactPctEnv,
+  # tests/ts/spawn-twins.test.ts).
+  local p
+  p="$(ac_config_read compact-pct '')"
+  [ -n "$p" ] || return 0
+  case "$p" in
+    *[!0-9]*) ;;
+    *) [ "$p" -ge 1 ] && [ "$p" -le 100 ] && { printf 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=%s ' "$p"; return 0; } ;;
+  esac
+  printf 'config/compact-pct: %s is not 1-100 - claude keeps its default threshold\n' "$p" >&2
 }
 
 # --- crewdeputy config convergence ---------------------------------------------
@@ -434,7 +507,7 @@ ac_config_converge_from_parent() {
 #            failure yields a reason a reader can act on.
 #
 # Non-entry lines (the heading, blanks, anything not starting with `- `) are
-# IGNORED - never parsed, never reported - the tolerance ac_project_mode has.
+# IGNORED - never parsed, never reported - the tolerance src/project-mode.ts has.
 
 ac_deputy_registry() {
   # ac_deputy_registry - path of the routing table (records/crewdeputies.md).
@@ -596,6 +669,27 @@ ac_domain_parse() {
   ' "$file"
 }
 
+ac_domain_qa_repo() {
+  # ac_domain_qa_repo <domain> - absolute path of the domain's E2E REPOSITORY,
+  # or return 1 when the domain declares none. The declaration is the package
+  # member `qa-repo`, holding the PROJECT NAME; the path is derived through the
+  # domain's own projects/ view, so the repo a QA run works is the same clone
+  # the crewchief reads and nothing can drift.
+  #
+  # WHY A DOMAIN AND NOT A PROJECT owns this: one
+  # maintained e2e suite proves a whole product line across the four to six
+  # repos it spans, so the only level where "which suite proves this" has ONE
+  # answer is the domain. A project-level key would have to be repeated in
+  # every repo and would disagree the first time one of them was edited alone.
+  local dom="$1" pkg name
+  ac_domain_name_ok "$dom" || return 1
+  pkg="$(ac_home)/crewdomains/$dom" || return 1
+  name="$(head -n1 "$pkg/qa-repo" 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$name" ] || return 1
+  [ -e "$pkg/projects/$name" ] || return 1
+  ac_project_dir "$pkg/projects/$name" 2>/dev/null || return 1
+}
+
 ac_domain_name_ok() {
   # ac_domain_name_ok <name> - 0 when <name> is a legal crewdomain id.
   # EVERY name-taking verb calls this BEFORE building a path from it: the
@@ -608,13 +702,13 @@ ac_domain_name_ok() {
   # C collation, in a SUBSHELL so the caller's locale is untouched: under a
   # collation that interleaves case (en_US.UTF-8 orders a,A,b,B,...) a plain
   # a-z range admits most uppercase letters, so this glob would pass `UPPER`.
-  # Same trap bin/ac-home-seed.sh:42-46 already documents for its own name check.
+  # Same trap bin/ac-home-seed.sh already documents for its own name check.
   (LC_ALL=C; case "$1" in *[!a-z0-9-]*) exit 1 ;; esac)
 }
 
 ac_backlog_id_ok() {
-  # ac_backlog_id_ok <id> - 0 when <id> is a legal backlog row id (AGENTS.md
-  # section 9: [a-z0-9-]). Callers interpolate ids into awk REGEXES, where an
+  # ac_backlog_id_ok <id> - 0 when <id> is a legal backlog row id (task-lifecycle
+  # skill step 1: [a-z0-9-]). Callers interpolate ids into awk REGEXES, where an
   # unvalidated `.` or `*` stops being a literal and starts matching other
   # rows - so the charset check is what makes the id a literal again.
   case "$1" in ''|*/*|.|..) return 1 ;; esac
@@ -627,7 +721,9 @@ ac_domain_view_entry() {
   # The MEMBERSHIP invariant is link RESOLUTION, not the link text - which is
   # what makes an absolute link as valid as a relative one and what survives a
   # rename. ONE predicate with TWO consumers: `ac-domain.sh validate` explains
-  # each class, and ac-spawn.sh's pre-lease guard accepts only `ok` - a guard
+  # each class (through domainViewEntry, the src/lib.ts twin
+  # tests/ts/domain.test.ts holds to this function), and ac-spawn.sh's
+  # pre-lease guard accepts only `ok` - a guard
   # that merely tested existence would pass a plain directory or a link
   # resolving outside the fleet clones, leaving the domain scope fail-open.
   # Pure shell (no realpath(1), no python): resolve the link's TARGET against
@@ -638,8 +734,8 @@ ac_domain_view_entry() {
   [ -L "$link" ] || { printf 'not-symlink\n'; return 1; }
   [ -e "$link" ] || { printf 'dangling\n'; return 1; }
   clones="$(cd -P "$home/projects" 2>/dev/null && pwd -P)" || clones="$home/projects"
-  # ONE-HOP CONTAINMENT (captain ruling 2026-08-03, select at the lab session,
-  # recorded in ac-homes/drydock/data/domain-view-symlinked-clones/room.md):
+  # ONE-HOP CONTAINMENT, the rule for a domain view onto a symlinked
+  # clone:
   # stop resolving the moment the chain LANDS at $AC_HOME/projects/<name> -
   # never follow further, even when that fleet clone is itself a symlink to a
   # captain checkout. That is exactly the trust level ac-spawn.sh, ac-tree.sh
@@ -687,6 +783,34 @@ ac_domain_view_entry() {
   printf 'ok\n'
 }
 
+ac_domain_binding() {
+  # ac_domain_binding - the domain bound to THIS session: AC_DOMAIN itself
+  # when the spawning process set it, else - when AC_SCOPE names a live
+  # roomchief whose OWN meta carries a domain= field (a domainchief) - that
+  # field. Empty when neither answers.
+  #
+  # THE SECOND SOURCE OF TRUTH (R12): AC_DOMAIN is exactly the binding that
+  # can go missing on the way to a spawn (a resume line, a relaunch that
+  # forgets it), while AC_SCOPE is the roomchief's own load-bearing identity
+  # (the ledger guard, the wake spool and the watcher skip set all key on it
+  # already) and the meta it names is durable. Reading the two TOGETHER
+  # recovers the binding from a dropped AC_DOMAIN without ever inventing one:
+  # a crewchief's own spawn carries no AC_SCOPE at all, and an ordinary
+  # roomchief's own meta carries no domain= field, so both stay exactly as
+  # unguarded as before - only a domainchief's spawn, which alone can name a
+  # domain=<x> meta, ever resolves one here.
+  [ -n "${AC_DOMAIN:-}" ] && { printf '%s\n' "$AC_DOMAIN"; return 0; }
+  # AC_SCOPE's grammar mirrors ac_wake_scope_ok (bin/ac-wake-lib.sh), inlined
+  # rather than sourced: this file deliberately never sources ac-wake-lib.sh
+  # (the SPLIT note above).
+  case "${AC_SCOPE:-}" in '' | *[!A-Za-z0-9_-]*) return 0 ;; esac
+  # `|| true`: an unreadable-but-present meta is a real error ac_meta_get
+  # propagates (fail-closed, right for a lock file) - here it must not abort
+  # the caller's `set -e` spawn over a best-effort SECOND source, so it
+  # resolves to "no binding found" exactly like the meta being absent.
+  ac_meta_get "$(ac_state_dir)/$AC_SCOPE-chief.meta" domain || true
+}
+
 ac_domain_tally() {
   # ac_domain_tally [<name>] - "<queued> <inflight> <done>" row counts for one
   # crewdomain, or summed over every domain token when no name is given -
@@ -704,8 +828,11 @@ ac_domain_tally() {
   local name="${1:-}" f
   f="$(ac_records_dir)/backlog.md"
   [ -f "$f" ] || { printf '0 0 0\n'; return 0; }
-  awk "$AC_DONELINE_AWK"'
+  # `in`, never ==: awk compares numeric-looking names as numbers (07 == 7).
+  LC_ALL=C awk -v want="$name" "$AC_DONELINE_AWK"'
+    BEGIN { w[want] }
     NR == FNR { if (/^- \[/) { ac_doneline($0, o); if (o["domain"] != "") dom[o["id"]] = o["domain"] } next }
+    /^## /          { sec = "" }
     /^## In flight/ { sec = "i"; next }
     /^## Queued/    { sec = "q"; next }
     /^## Done/      { sec = "d"; next }
@@ -714,12 +841,12 @@ ac_domain_tally() {
       d = o["domain"]
       if (d == "" && o["epic"] != "") d = dom[o["epic"]]
       if (d == "") next
-      if (want != "" && d != want) next
+      if (want != "" && !(d in w)) next
       if (sec == "d" && (o["terminal"] == "failed" || o["terminal"] == "abandoned")) next
       n[sec]++
     }
     END { printf "%d %d %d\n", n["q"] + 0, n["i"] + 0, n["d"] + 0 }
-  ' want="$name" "$f" "$f"
+  ' "$f" "$f"
 }
 
 ac_require() {
@@ -731,6 +858,37 @@ ac_require() {
 }
 
 ac_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+ac_hook_trace() {
+  # ac_hook_trace <hook> <detail> - append ONE durable line to the shared
+  # Stop-hook trace log (state/.stop-hooks.log): timestamp, which hook, and
+  # whatever the caller already computed - a field the caller never computed
+  # is its own "field=n/a", never an omission and never "field=" (the
+  # kickoff-ack-verifies-submission-not-arrival lesson: "not observed" must
+  # never look like "observed negative").
+  #
+  # FILE ONLY, NEVER stdout/stderr - the sharpest regression risk this
+  # function exists to avoid: ac-turnend-guard.sh's stdout is parsed as JSON
+  # by the harness (parked_reminder's systemMessage, the AC_SOLO branch's
+  # jq-built notice) and its stderr is the block-reason channel the model
+  # reads verbatim on every block; ac-watch-autoarm.sh's stderr is likewise
+  # its own wake payload on exit 2. One stray line on either channel would
+  # break the JSON parse or change the message a chief reads.
+  #
+  # Fail-open, unconditionally: both hooks run on EVERY turn end, so this is
+  # the most unconditionally-executed new code path in the distro - a
+  # missing state dir, a permissions error, or a read-only filesystem writes
+  # nothing and never surfaces to the caller. Trimmed in place like
+  # src/watch.ts's watchLog, so the trail stays bounded.
+  local sd f keep="${AC_STOPHOOK_LOG_KEEP:-200}"
+  sd="$(ac_state_dir 2>/dev/null)" || return 0
+  f="$sd/.stop-hooks.log"
+  printf '%s hook=%s %s\n' "$(ac_iso)" "$1" "$2" >>"$f" 2>/dev/null || true
+  if [ "$(wc -l <"$f" 2>/dev/null || printf 0)" -gt "$(( keep * 2 ))" ]; then
+    tail -n "$keep" "$f" >"$f.tmp.$$" 2>/dev/null && mv "$f.tmp.$$" "$f" 2>/dev/null
+  fi
+  return 0
+}
 
 # Crewmate status lines the captain must hear about (watcher wake filter).
 # Status markers (done/needs-decision/blocked/failed/paused/merged) are anchored
@@ -758,8 +916,9 @@ ac_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # indistinguishable from a real marker at the regex layer and can still wake -
 # accepted, backstopped by the .seen-<id> dedup, the stale-wake detector, and
 # on the ONE producer a chief controls directly, the write-side guard below
-# (ac_bare_marker_verbs, wired into bin/ac-send.sh); a full fix needs
-# capture-level line-rejoin (out of scope).
+# (ac_bare_marker_verbs, twinned for ac-send in src/lib.ts); a full fix needs
+# capture-level line-rejoin (out of scope). src/lib.ts's CAPTAIN_RE copies this
+# default, held to it by tests/ts/wake-drain.test.ts.
 _ac_captain_re_default='^[^[:alpha:][:digit:]"'\''`=+#/*-]*(done|needs-decision|blocked|failed|paused|merged|checks-passed):([[:space:]]|$)'
 AC_CAPTAIN_RE="${AC_CAPTAIN_RE:-$_ac_captain_re_default}"
 # The CAPTAIN-WAIT subset of the captain markers: lines that park a pane on a
@@ -780,8 +939,8 @@ ac_bare_marker_verbs() {
   # ac_bare_marker_verbs <text> - the WRITE-SIDE twin of AC_CAPTAIN_RE: print
   # every BARE marker verb the text carries, one per line, deduped in
   # first-seen order; return 1 when there is none. Any writer that puts text
-  # into a pane can call it (bin/ac-send.sh does) to warn its author before
-  # the watcher greps those same words back out of the pane tail.
+  # into a pane can call it (src/send.ts runs its twin) to warn its author
+  # before the watcher greps those same words back out of the pane tail.
   # Deliberately BROADER than AC_CAPTAIN_RE, which anchors at a LINE START:
   # text typed into a pane re-wraps, so a mid-sentence marker phrase lands at
   # visual column 0 and matches there - the Residual above, and the lived case.
@@ -807,7 +966,15 @@ ac_bare_marker_verbs() {
 # Family-level files (room.md, gate artifacts) live at data/<family>/ root.
 # A roomchief's own data dir nests the same way, at data/<family>/chief, but
 # `chief` is NOT a staged-flow production stage: it carries no brief (the room
-# IS the roomchief's brief) and ac-brief.sh's stage whitelist refuses it.
+# IS the roomchief's brief) and src/brief.ts's stage whitelist refuses it.
+# FAN-OUT NESTING (tasks/): a section-8 fan-out sub-task - free slug, no stage
+# or -rN suffix - that a SCOPED chief scaffolds lives at
+# data/<family>/tasks/<slug>/ (create rule: src/brief.ts, keyed on AC_SCOPE so
+# an unrelated top-level id that merely EXTENDS another family's name never
+# nests). The read side recovers the family by what EXISTS - longest prefix
+# whose tasks/<slug>/brief.md is on disk - so no environment is needed to
+# resolve. Pre-existing flat fan-out dirs stay readable forever (flat is the
+# fallback, exactly like direct -rN ids).
 
 ac_stage_dir_for_id() {
   # ac_stage_dir_for_id <id> - the "<family>/<stage>[-rN]" subpath a staged id
@@ -817,12 +984,12 @@ ac_stage_dir_for_id() {
   # -chief is an ordinary arm too (a roomchief's own data dir nests under its
   # family instead of a phantom data/<family>-chief/ sibling):
   #   sample-task-chief -> sample-task/chief
-  # Pure suffix grammar, with NO disk check - it doubles as the "where do I
-  # CREATE this brief" resolver (ac-brief.sh), which cannot require a dir it
-  # is about to create. Family MEMBERSHIP (does this suffix actually name an
-  # existing family) is ac_family_of_id's own, stricter concern. ac-brief.sh's
-  # own stage whitelist still refuses `--stage chief`, so this never becomes a
-  # briefable production stage.
+  # Pure suffix grammar, with NO disk check - its twin stageDirForId is the
+  # "where do I CREATE this brief" resolver of src/brief.ts, which cannot
+  # require a dir it is about to create. Family MEMBERSHIP (does this suffix
+  # actually name an existing family) is ac_family_of_id's own, stricter
+  # concern. src/brief.ts's own stage whitelist still refuses `--stage chief`,
+  # so this never becomes a briefable production stage.
   local id="$1" base rev="" fam stage
   base="$id"
   case "$base" in
@@ -839,7 +1006,7 @@ ac_stage_dir_for_id() {
     *-chief)  fam="${base%-chief}";  stage=chief ;;
     *)
       # A bare revision id (<family>-rN, no stage suffix) is a same-stage
-      # implement revision per section 5 - it nests as <family>/implement-rN.
+      # implement revision per the src/brief.ts layout - it nests as <family>/implement-rN.
       # Direct -rN ids stay usable: ac_task_dir falls back to the flat dir
       # when no such nested brief exists.
       [ -n "$rev" ] && printf '%s/implement%s\n' "$base" "$rev"
@@ -857,14 +1024,14 @@ ac_task_dir() {
   # flat dir - callers that need the brief check for it themselves.
   #
   # A roomchief (<family>-chief) never has a brief - the room IS its brief
-  # (AGENTS.md section 8) - so the nested chief dir is accepted on its
+  # (rooms-threads skill) - so the nested chief dir is accepted on its
   # FAMILY existing on disk instead (a promoted family always has
   # data/<family>/room.md before its roomchief is ever spawned), never on the
   # chief dir itself existing: ac_status_timeline_mirror's own mkdir is what
   # creates that dir, so this resolver cannot require it first
   # (chicken-and-egg). A family whose OWN name merely ends in -chief (no
   # parent data/<base>/ dir) never satisfies this and keeps resolving flat.
-  local id="$1" d sub nested="" flat stage fam
+  local id="$1" d sub nested="" flat stage fam base slug
   d="$(ac_data_dir)"
   flat="$d/$id"
   sub="$(ac_stage_dir_for_id "$id")"
@@ -882,15 +1049,30 @@ ac_task_dir() {
     printf '%s\n' "$nested"
     return 0
   fi
+  # Fan-out nesting (tasks/, block comment above): recover the family of a
+  # free-slug sub-task by what EXISTS, longest prefix first.
+  if [ -z "$sub" ]; then
+    base="$id"
+    while [ "${base%-*}" != "$base" ]; do
+      base="${base%-*}"
+      slug="${id#"$base"-}"
+      if [ -f "$d/$base/tasks/$slug/brief.md" ]; then
+        [ -f "$flat/brief.md" ] \
+          && ac_die "ambiguous task data for $id: briefs at both $d/$base/tasks/$slug and $flat"
+        printf '%s\n' "$d/$base/tasks/$slug"
+        return 0
+      fi
+    done
+  fi
   printf '%s\n' "$flat"
 }
 
 ac_room_file() {
-  # ac_room_file <family> - the room path a HISTORY read must use: the live
-  # data/<family>/room.md when it exists, else the archived copy that
-  # bin/ac-archive.sh (that script's header owns the archive layout) moved to
-  # data/archive/<year>/<family>/room.md. Neither existing prints the LIVE
-  # path, so a caller that CREATES a room still writes it live.
+  # ac_room_file <family|fan-out-sub-task-id> - the room path a HISTORY read
+  # must use: the live data/<family>/room.md when it exists, else the archived
+  # copy that src/archive.ts (that script's header owns the archive layout)
+  # moved to data/archive/<year>/<family>/room.md. Neither existing prints the
+  # LIVE path, so a caller that CREATES a room still writes it live.
   #
   # READ side only, deliberately. ac-room.sh's own room_file() stays the live
   # path for `post`/`close`: appending into an archived room would hide a
@@ -903,7 +1085,16 @@ ac_room_file() {
   # The charset guard is ac-room.sh cmd_post's, verbatim: an unsafe family name
   # would otherwise reach the archive GLOB below, where a `*` matches some other
   # family's archived room and answers confidently with the wrong file.
-  local fam="$1" live archived
+  #
+  # A caller may pass a fan-out sub-task id (data/<family>/tasks/<slug>/,
+  # ac_task_dir's layout above) instead of the family id - that dir holds only
+  # brief.md/report.md, never its own room.md, because rooms live at the family
+  # ROOT. When $1 resolves to neither a live nor an archived room directly, the
+  # same longest-prefix walk ac_task_dir uses recovers the real family from
+  # what EXISTS, and resolution restarts on that family - never on the sub-task
+  # id itself, which would otherwise answer with a room path that can never
+  # exist.
+  local fam="$1" live archived base slug
   live="$(ac_data_dir)/$fam/room.md"
   [ -f "$live" ] && { printf '%s\n' "$live"; return 0; }
   case "$fam" in *[!a-zA-Z0-9_-]*) printf '%s\n' "$live"; return 0 ;; esac
@@ -912,321 +1103,80 @@ ac_room_file() {
     printf '%s\n' "$archived"
     return 0
   done
+  base="$fam"
+  while [ "${base%-*}" != "$base" ]; do
+    base="${base%-*}"
+    slug="${fam#"$base"-}"
+    if [ -f "$(ac_data_dir)/$base/tasks/$slug/brief.md" ]; then
+      ac_room_file "$base"
+      return 0
+    fi
+  done
   printf '%s\n' "$live"
 }
 
-# --- backlog Done-line grammar: the ONE parser three sites share --------------
+# --- backlog line parser: the awk binding --------------------------------------
 #
-# AUTHORITATIVE for how a `records/backlog.md` line (AGENTS.md section 9) is
-# decomposed into fields. THREE awk sites parse this line - ac-ready.sh's
-# snapshot(), ac-curate.sh's _backlog_plan(), ac-learn.sh's
-# learn_retro_snapshot() - and their private copies DRIFTED (the learn parser
-# landed inert against the real ledger's date/verb shapes). This is their single
-# source: an awk function block each site prepends to its own program with
-# `awk "$AC_DONELINE_AWK"'<program>'`, so every site keeps its own surrounding
-# walk (section tracking, line numbers, windowing) and only the field extraction
-# is shared.
-#
-# ac_doneline(line, f) ALSO fills f["contract"] - the DELIVERY-CONTRACT token
-# group (delivery-contract-on-the-row): the FIRST leading-run, unquoted `[...]`
-# group whose EVERY whitespace-separated token is `key:value` with a key from
-# the closed set src|flow|mode|rev|qa|promote - e.g.
-# `[src:cap flow:direct mode:local-only rev:no qa:no]` - returned as the bare
-# content, else "". The all-tokens-keyed test is the discriminator that keeps
-# every EXISTING group class untouched: a provenance tag (`[CAPTAIN-ORDERED
-# 2026-08-10 ...]`) carries non-kv words, `[EPIC]`/`[failed]`/`[@held]` carry
-# none, and a backtick-quoted group is a mention exactly as it is for hold.
-# VALUE validity is deliberately NOT judged here - the parser extracts,
-# `ac_contract_lint` (after this block) judges - so a typo'd value surfaces at
-# lint instead of silently vanishing the whole group.
-#
-# ac_doneline(line, f) fills the `f` array (passed by reference; named `f` so it
-# never shadows a caller's own global `out` array - ac-curate has one) with:
-#   f["id"]       - first whitespace token after the `- [ ]`/`- [x]` checkbox.
-#   f["terminal"] - "epic"|"failed"|"abandoned" when that bracket token sits at
-#                   the FIXED grammar position (rp[2], immediately after the id),
-#                   else "". A token check, NEVER a substring match against the
-#                   whole line: a prose mention of [failed] is not a terminal
-#                   state (the ready-marker-matches-prose-not-position incident).
-#   f["hold"]     - "1" when the row carries the captain-hold token `[@held]`
-#                   as one of the line's top-level `[...]` groups AND that
-#                   group sits in the LEADING RUN - the contiguous run of
-#                   `[...]` groups starting immediately after the id, nothing
-#                   but whitespace between them - else "". A hold is not a
-#                   terminal state (nothing lands to clear it) and not the
-#                   dependency token (no blocker id, no STUCK semantics) - its
-#                   own field. NOT pinned to rp[2] the way `terminal` is: a
-#                   live ledger row's rp[2] is usually ALREADY another bracket
-#                   tag (`[CAPTAIN-ORDERED ...]`, `[MONITOR ...]`, `[EPIC]`),
-#                   so `[@held]` has no legal rp[2] slot to occupy on most rows
-#                   (measured: 3 of 4 open rows on the drydock ledger) - the
-#                   WHOLE leading run is checked, not just its first group.
-#                   THE TOKEN CARRIES A SENTINEL (`@`) FOR A MEASURED REASON:
-#                   an earlier `[held]` (bare word, no sentinel) design was
-#                   still structural - bracket syntax required - and STILL
-#                   false-positived on a real ledger row, because this
-#                   grammar's OTHER bracket tags (`[SLICE ...]`, `[CAPTAIN
-#                   ORDER LANDED ...]`) carry free-text PROSE, and that prose
-#                   uses "held"/"hold" as ordinary English verbs ("the
-#                   guardrail held", "Held until now on a verified
-#                   collision"). Bracket syntax alone cannot tell a token from
-#                   a sentence inside a free-text tag. `@` immediately before
-#                   the word is the part ordinary prose never writes -
-#                   nobody types "the guardrail @held" - so matching on the
-#                   SENTINEL rather than the bare word keeps both properties:
-#                   structural (still requires `[...]`) AND immune to a
-#                   free-text tag's ordinary prose.
-#                   LEADING-RUN POSITION IS ALSO MEASURED, not assumed: bracket
-#                   syntax and a sentinel still cannot tell a real token from a
-#                   QUOTATION of one - a row, a receipt, or AGENTS.md itself
-#                   documenting the grammar has to WRITE `[@held]` to describe
-#                   it, and a whole-line scan would silently hold that row too
-#                   (the exact bug this field exists to kill, reproduced on
-#                   itself). Restricting authority to the leading run does not
-#                   by itself fix that - a quotation sitting right after some
-#                   OTHER id would still be positional - so position combines
-#                   with the CODE-SPAN rule below; between them, a `[@held]`
-#                   outside the leading run is never authoritative, and one
-#                   wrapped in backticks is never authoritative even inside it.
-#   f["hold_malformed"] - "1" when a `[...]` group is a mis-typed hold
-#                   attempt and is NOT wrapped in a code span (see QUOTATION
-#                   below), by EITHER of two rules, each catching a different
-#                   slip:
-#                   (1) the group case-insensitively contains "@held" or
-#                       "@hold" but is not an AUTHORITATIVE `[@held]` (see
-#                       f["hold"] above: exact text AND leading-run position) -
-#                       `[@hold]`, `[@HELD]`, `[@Held]`, `[@helds]`, ... AND a
-#                       well-formed `[@held]` sitting OUTSIDE the leading run,
-#                       unquoted. That last case is deliberate: position
-#                       decides AUTHORITY, so a token typed in the WRONG PLACE
-#                       never earns hold=1, but it must not silently fall
-#                       through to READY either - a real hold mis-placed by a
-#                       keystroke is exactly the failure this field exists to
-#                       catch, so it fails the SAME closed direction as any
-#                       other mis-type instead of opening a second escape.
-#                   (2) the group's content (bracket-stripped) is a SINGLE
-#                       WORD - no whitespace - and case-insensitively
-#                       contains "held" or "hold": `[held]`, `[hold]`,
-#                       `[HELD]`, `[on-hold]`, ... (the sentinel itself
-#                       forgotten - the single most likely slip on a
-#                       sentinel-bearing token, and the one this field could
-#                       not yet catch). A ONE-WORD group can never be prose -
-#                       it is exactly one token, not a sentence - so it needs
-#                       no sentinel to be recognized as a hold ATTEMPT; a
-#                       free-text tag's prose (`[SLICE ...]`, `[CAPTAIN ORDER
-#                       LANDED ...]`) is always multi-word and never matches
-#                       rule (2) (measured against the live ledger's actual
-#                       one-word bracket groups - `[x]`, `[abandoned]`,
-#                       `[failed]`, `[project]`, `[needs-decision]`, `[0]` -
-#                       zero false positives today). Position never gates this
-#                       rule: a mis-typed shape is never authoritative to
-#                       begin with, so there is no "wrong place" for it to be
-#                       demoted from - only QUOTATION exempts it.
-#                   Either rule failing CLOSED (HELD, not READY) is the same
-#                   direction blockers_malformed already picked for a
-#                   mis-typed `blocked-by` (below); "hold" is caught
-#                   alongside "held" in both rules because it is the nearest
-#                   possible miss: the feature's own name, present-tense.
-#                   QUOTATION: a `[...]` group immediately wrapped in a code
-#                   span - a backtick directly before `[` and directly after
-#                   `]`, the same backtick-wrap convention `bin/ac-spawn.sh`
-#                   already uses so a narrative marker verb never trips its
-#                   own detector - is a documentation mention, exempt from
-#                   BOTH f["hold"] and f["hold_malformed"] regardless of its
-#                   content or position: a row explaining the grammar can
-#                   write `` `[@held]` `` or `` `[held]` `` without holding or
-#                   flagging itself.
-#   f["epic"]     - the id in an `epic:<id>` token anywhere on the line, else "".
-#   f["domain"]   - the name in a `domain:<name>` CREWDOMAIN assignment token
-#                   (crewdomain-token) - authoritative ONLY at the two grammar
-#                   positions the old `assigned:crewchief` slot defined:
-#                   `; domain:<name>` immediately before a trailing
-#                   `(repo: ...)` group, or `; domain:<name>` at end of line
-#                   (the arm a Done row and a blocked Queued row take). NOT
-#                   anywhere-matched like `epic:` - epic is a membership
-#                   token, domain is an AUTHORIZATION token (the assignment
-#                   itself), so a prose quotation must be inert; the measured
-#                   `[@held]` and domain_row_tokened lessons both bind here.
-#                   Name charset [a-z0-9-] = ac_domain_name_ok's.
-#   f["domain_malformed"] - "1" when a `domain:[a-z0-9-]+`-shaped run sits
-#                   ANYWHERE ELSE on the line un-backticked (a mis-placed or
-#                   mis-typed stamp, or an unquoted prose mention). Fails
-#                   VISIBLE like hold_malformed/blockers_malformed: the row
-#                   never silently drops out of its domain's slice. A
-#                   backtick-wrapped run is a documentation mention, exempt.
-#   f["blockers"] - the comma-joined ids in a `blocked-by: <ids>` token, else "".
-#   f["date"]     - the first YYYY-MM-DD inside the LAST top-level (non-nested)
-#                   parenthetical group; fallback to the LAST YYYY-MM-DD anywhere
-#                   on the line when that group carries none (a nested-paren tail,
-#                   or a verb+date sitting outside any group). No date -> "".
-#                   The real ledger annotates the date group with trailing prose
-#                   (`(merged <date>; <note>)`) and trails more prose after it, so
-#                   the group is not anchored to end-of-line.
-#   f["verb"]     - the word immediately before that date; "unknown" when the
-#                   group is a bare `(date)` or the word is not verb-shaped. The
-#                   ledger uses done/closed/ended/delivered/merged/reported and
-#                   more; this never invents a verb the ledger did not write.
-# A site needing the failed/abandoned-OR-verb "marker" (ac-learn) composes it:
-# terminal in {failed,abandoned} ? terminal : verb.
+# An awk site reads a `records/backlog.md` line's fields by prepending
+# AC_DONELINE_AWK - `LC_ALL=C awk "$AC_DONELINE_AWK"'<program>' <ledger>` -
+# and calling ac_doneline($0, f), which fills f["id"] ... f["domain_malformed"].
+# The grammar and its 14 fields are specified in the header of src/backlog.ts,
+# the one parser; this binding runs it (bin/ac-backlog.sh) once per ledger file
+# and looks each line up in the result.
+# - Pass the ledger as a FILE operand. The parser reads the file on its own,
+#   so stdin, `-`, /dev/stdin and /dev/fd/N are refused: the parser and awk
+#   would race for the bytes behind one descriptor.
+# - A failure exits awk 2 with one ERROR: line, before the site's own END runs
+#   (the binding's END comes first in the program): the parser did not finish
+#   (awk cannot see its exit status, so its count trailer is the proof), a
+#   refused operand, or a line the parse never saw (the file was rewritten
+#   mid-read).
+# - Run the awk under LC_ALL=C: the grammar is ASCII and prose is bytes, and
+#   under a UTF-8 locale the host awk aborts the whole walk on the first byte
+#   that is not UTF-8 (tests/sh/ac-doneline.test.sh holds every site to it).
+# - Never run it once per line: every file costs one parser start. A caller
+#   holding a single line runs `ac-backlog.sh fields --get <f1,...> -`.
 read -r -d '' AC_DONELINE_AWK <<'ACAWK' || true
-function ac_doneline(line, f,    rest, rp, seg, grp, searchpos, pre, pp, i, n, fpos, fseg, flast, flaststart, cand, bafter, hpos, hseg, hgrp, hcontent, idend, runpos, inrun, gstart, gend, positional, between, leftch, rightch, quoted, ctok, cn, ci, callkv, dauth) {
-  f["id"] = ""; f["terminal"] = ""; f["hold"] = ""; f["hold_malformed"] = ""; f["epic"] = ""
-  f["blockers"] = ""; f["blockers_malformed"] = ""; f["date"] = ""; f["verb"] = ""; f["contract"] = ""
-  f["domain"] = ""; f["domain_malformed"] = ""
-  rest = line
-  sub(/^- \[[ x]\] /, "", rest)
-  split(rest, rp, " ")
-  f["id"] = rp[1]
-  if (rp[2] == "[EPIC]")           f["terminal"] = "epic"
-  else if (rp[2] == "[failed]")    f["terminal"] = "failed"
-  else if (rp[2] == "[abandoned]") f["terminal"] = "abandoned"
-  # Every top-level `[...]` group on the line, not just rp[2]; matched on the
-  # `@` SENTINEL, not the bare word - see f["hold"] above for why. Structural
-  # (requires the literal bracket syntax) AND immune to a free-text tag's
-  # ordinary prose use of "held"/"hold" as a verb. hold_malformed's rule (2)
-  # (see f["hold_malformed"] above) needs no sentinel: a ONE-WORD group is
-  # never prose, so "held"/"hold" alone in one is still a hold attempt.
-  # POSITION decides AUTHORITY: only a group in the LEADING RUN - the id's own
-  # `[...]` groups, contiguous, nothing but whitespace between them - can set
-  # hold=1. A CODE SPAN decides QUOTATION: a group wrapped in backticks is a
-  # documentation mention, never a token and never an attempt, wherever it
-  # sits. A bare (unquoted) token-shaped group OUTSIDE the leading run still
-  # falls to hold_malformed instead of "no match" - never silently READY.
-  match(line, /^- \[[ x]\] [^ \t]+/)
-  idend = RLENGTH
-  hpos = idend + 1
-  runpos = hpos
-  inrun = 1
-  while (1) {
-    hseg = substr(line, hpos)
-    if (hseg == "" || !match(hseg, /\[[^][]*\]/)) break
-    gstart = hpos + RSTART - 1
-    hgrp = substr(line, gstart, RLENGTH)
-    gend = gstart + RLENGTH - 1
-    positional = 0
-    if (inrun) {
-      between = substr(line, runpos, gstart - runpos)
-      if (between ~ /^[ \t]*$/) { positional = 1; runpos = gend + 1 }
-      else inrun = 0
-    }
-    leftch = ""
-    if (gstart > 1) leftch = substr(line, gstart - 1, 1)
-    rightch = substr(line, gend + 1, 1)
-    quoted = (leftch == "`" && rightch == "`")
-    # The delivery-contract group (header note above): leading-run, unquoted,
-    # EVERY token key:value from the closed key set, first one wins. No
-    # contract-shaped content can also be a hold (the key set spells neither
-    # "held" nor "hold"), so claiming the group here steals nothing.
-    hcontent = substr(hgrp, 2, length(hgrp) - 2)
-    callkv = 0
-    if (!quoted && positional && f["contract"] == "" && hcontent != "") {
-      cn = split(hcontent, ctok, /[ \t]+/)
-      callkv = (cn > 0)
-      for (ci = 1; ci <= cn; ci++)
-        if (ctok[ci] !~ /^(src|flow|mode|rev|qa|promote):[a-z][a-z-]*$/) { callkv = 0; break }
-    }
-    if (callkv) {
-      f["contract"] = hcontent
-    } else if (quoted) {
-      # a documentation mention - never a token, never an attempt
-    } else if (positional && hgrp == "[@held]") {
-      f["hold"] = "1"
-    } else if (tolower(hgrp) ~ /@held|@hold/) {
-      f["hold_malformed"] = "1"
-    } else {
-      hcontent = substr(hgrp, 2, length(hgrp) - 2)
-      if (hcontent !~ /[ \t]/ && tolower(hcontent) ~ /held|hold/) f["hold_malformed"] = "1"
-    }
-    hpos = gend + 1
+function _dl_q(s) { gsub(/'/, "'\\''", s); return "'" s "'" }
+function _dl_die(msg) { printf "ERROR: %s\n", msg > "/dev/stderr"; _dl_fail = 1; exit 2 }
+function _dl_load(file,    cmd, r, i, p, n, ok) {
+  cmd = _dl_q("@SHIM@") " fields " _dl_q(file)
+  while ((cmd | getline r) > 0) {
+    if (substr(r, 1, 2) == "r\t") {
+      p = 2
+      for (i = 0; i < 14; i++) p += index(substr(r, p + 1), "\t")
+      _dl_rec[substr(r, p + 1)] = substr(r, 3, p - 3)
+      n++
+    } else if (substr(r, 1, 2) == "e\t") ok = (substr(r, 3) + 0 == n)
   }
-  if (match(line, /epic:[a-zA-Z0-9_-]+/))
-    f["epic"] = substr(line, RSTART + 5, RLENGTH - 5)
-  # domain:<name> (crewdomain-token) - see the field notes above. Two-arm
-  # position rule inherited from the retired domain_row_tokened; every other
-  # occurrence is malformed unless backtick-quoted.
-  dauth = 0
-  if (match(line, /; domain:[a-z0-9-]+ \(repo: [^()]*\)$/)) {
-    seg = substr(line, RSTART, RLENGTH); dauth = RSTART
-    match(seg, /domain:[a-z0-9-]+/)
-    dauth = dauth + RSTART - 1
-    f["domain"] = substr(seg, RSTART + 7, RLENGTH - 7)
-  } else if (match(line, /; domain:[a-z0-9-]+$/)) {
-    dauth = RSTART + 2
-    f["domain"] = substr(line, RSTART + 9, RLENGTH - 9)
-  }
-  hpos = 1
-  while (1) {
-    hseg = substr(line, hpos)
-    if (hseg == "" || !match(hseg, /domain:[a-z0-9-]+/)) break
-    gstart = hpos + RSTART - 1
-    gend = gstart + RLENGTH - 1
-    leftch = (gstart > 1) ? substr(line, gstart - 1, 1) : ""
-    rightch = substr(line, gend + 1, 1)
-    quoted = (leftch == "`" && rightch == "`")
-    if (gstart != dauth && !quoted) f["domain_malformed"] = "1"
-    hpos = gend + 1
-  }
-  # blocked-by is read STRICTLY and its slips are detected LENIENTLY. The
-  # strict shape is the pinned one (AGENTS.md section 9, `blocked-by: id1,id2 -
-  # reason`): one space, lowercase, comma-joined with no empty component, and
-  # ended by whitespace or end-of-line. Anything else leaves blockers EMPTY -
-  # which ac-ready.sh reads as READY - so a one-character slip would authorize
-  # starting a story whose dependency is still flying. A line that carries a
-  # blocked-by token the strict parse did not consume is therefore MALFORMED,
-  # a state its consumers must refuse to schedule. A prose mention of the token
-  # trips this too; that is the fail-VISIBLE direction, and the line is one
-  # keystroke from legal.
-  if (match(line, /blocked-by: [a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*/)) {
-    bafter = substr(line, RSTART + RLENGTH, 1)
-    if (bafter == "" || bafter == " " || bafter == "\t")
-      f["blockers"] = substr(line, RSTART + 12, RLENGTH - 12)
-  }
-  if (f["blockers"] == "" && tolower(line) ~ /(^|[^a-z0-9_-])blocked-by/)
-    f["blockers_malformed"] = "1"
-  # Date in the LAST non-nested parenthetical group; verb = the word before it.
-  searchpos = 1; grp = ""
-  while (1) {
-    seg = substr(line, searchpos)
-    if (seg == "" || !match(seg, /\([^()]*\)/)) break
-    grp = substr(seg, RSTART + 1, RLENGTH - 2)
-    searchpos = searchpos + RSTART + RLENGTH - 1
-  }
-  if (grp != "" && match(grp, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
-    f["date"] = substr(grp, RSTART, RLENGTH)
-    pre = substr(grp, 1, RSTART - 1)
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "", pre)
-    if (pre == "") f["verb"] = "unknown"
-    else { split(pre, pp, /[[:space:]]+/); f["verb"] = (pp[1] ~ /^[A-Za-z][A-Za-z_-]*$/) ? pp[1] : "unknown" }
-  }
-  # Fallback: last YYYY-MM-DD anywhere; verb = the word immediately before it.
-  if (f["date"] == "") {
-    fpos = 1; flast = ""; flaststart = 0
-    while (1) {
-      fseg = substr(line, fpos)
-      if (fseg == "" || !match(fseg, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) break
-      flaststart = fpos + RSTART - 1
-      flast = substr(fseg, RSTART, RLENGTH)
-      fpos = flaststart + RLENGTH
-    }
-    if (flast != "") {
-      f["date"] = flast
-      pre = substr(line, 1, flaststart - 1)
-      sub(/[[:space:]]+$/, "", pre)
-      n = split(pre, pp, /[^A-Za-z_-]+/)
-      cand = (n > 0) ? pp[n] : ""
-      f["verb"] = (cand ~ /^[A-Za-z][A-Za-z_-]*$/) ? cand : "unknown"
-    }
-  }
+  close(cmd)
+  if (!ok) _dl_die("the backlog parser failed on " file)
 }
+function ac_doneline(line, f,    v) {
+  if (FILENAME == "" || FILENAME == "-" || FILENAME ~ /^\/dev\/(stdin|fd\/[0-9]+)$/) _dl_die("ac_doneline reads its ledger as a file operand, never stdin")
+  if (!(FILENAME in _dl_loaded)) { _dl_loaded[FILENAME] = 1; _dl_load(FILENAME) }
+  if (!(line in _dl_rec)) _dl_die(FILENAME " changed between the parse and this read")
+  split(_dl_rec[line], v, "\t")
+  gsub(/\\t/, "\t", v[12])
+  f["id"] = v[1]; f["terminal"] = v[2]; f["hold"] = v[3]; f["hold_until"] = v[4]; f["hold_malformed"] = v[5]
+  f["epic"] = v[6]; f["feature"] = v[7]; f["blockers"] = v[8]; f["blockers_malformed"] = v[9]
+  f["date"] = v[10]; f["verb"] = v[11]; f["contract"] = v[12]; f["domain"] = v[13]; f["domain_malformed"] = v[14]
+}
+END { if (_dl_fail) exit 2 }
 ACAWK
+# The parser's path is fixed when this file is sourced, since a site may run
+# after its caller has cd'd, and without a subshell, since every script sources
+# this file.
+_ac_dl="${BASH_SOURCE[0]%/*}"
+case "$_ac_dl" in /*) ;; *) _ac_dl="$PWD/$_ac_dl" ;; esac
+_ac_dl="${_ac_dl//\\/\\\\}"
+_ac_dl="${_ac_dl//\"/\\\"}"
+_ac_dl="${_ac_dl//$'\n'/\\n}"
+_ac_dl="${_ac_dl//$'\r'/\\r}"
+AC_DONELINE_AWK="${AC_DONELINE_AWK%%@SHIM@*}$_ac_dl/ac-backlog.sh${AC_DONELINE_AWK#*@SHIM@}"
+unset _ac_dl
 
-# --- delivery-contract lint ----------------------------------------------------
-# ac_contract_lint <contract-content> - one violation per line, empty output
-# when clean, exit 0 always (a judge, not a gate). The VALUE vocabulary lives
-# HERE, the one judge - the parser above extracts shape only. Also flags the
-# two combinations AGENTS.md section 5 already outlaws (flow:staged with
-# rev:no; mode:crew-ship with rev:no) so a contract contradicting the law is
-# loud at the scheduler instead of surprising the pipeline.
+# --- delivery contract --------------------------------------------------------
 ac_row_contract_for_id() {
   # ac_row_contract_for_id <id> <backlog-file> - the delivery-contract group
   # governing <id>: the exact row when one exists, else the FAMILY row (a
@@ -1236,49 +1186,24 @@ ac_row_contract_for_id() {
   # contract wins over the family's (more specific consent beats broader);
   # a contractless exact row falls through - the grammar has no "empty
   # group revokes the family pin" concept. Prints "" when neither row
-  # carries a contract.
+  # carries a contract; rc 2 = the ledger exists but could not be read, which
+  # a caller must never read as unpinned.
   local id="$1" f="$2" fam sub out
   [ -f "$f" ] || { printf '\n'; return 0; }
-  out="$(awk -v want="$id" "$AC_DONELINE_AWK"'
-    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
-  ' "$f")"
+  # `in`, never ==: awk compares two numeric-looking strings as numbers, so
+  # == would give id 1 the row of id 01.
+  out="$(LC_ALL=C awk -v want="$id" "$AC_DONELINE_AWK"'
+    BEGIN { w[want] }
+    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] in w) { print o["contract"]; exit } }
+  ' "$f")" || return 2
   if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
   sub="$(ac_stage_dir_for_id "$id")"
   [ -n "$sub" ] || { printf '\n'; return 0; }
   fam="${sub%%/*}"
-  awk -v want="$fam" "$AC_DONELINE_AWK"'
-    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] == want) { print o["contract"]; exit } }
+  LC_ALL=C awk -v want="$fam" "$AC_DONELINE_AWK"'
+    BEGIN { w[want] }
+    /^- \[[ x]\] / { ac_doneline($0, o); if (o["id"] in w) { print o["contract"]; exit } }
   ' "$f"
-}
-
-ac_contract_lint() {
-  local c="$1" tok key val flow="" mode="" rev=""
-  [ -n "$c" ] || return 0
-  for tok in $c; do
-    key="${tok%%:*}"; val="${tok#*:}"
-    case "$key" in
-      src)
-        case "$val" in cap|chief|mon|gh|crew|learn) ;; *) printf 'src:%s invalid - want cap|chief|mon|gh|crew|learn\n' "$val" ;; esac ;;
-      flow)
-        flow="$val"
-        case "$val" in direct|staged) ;; *) printf 'flow:%s invalid - want direct|staged\n' "$val" ;; esac ;;
-      mode)
-        mode="$val"
-        case "$val" in crew-ship|direct-pr|local-only) ;; *) printf 'mode:%s invalid - want crew-ship|direct-pr|local-only\n' "$val" ;; esac ;;
-      rev)
-        rev="$val"
-        case "$val" in yes|no) ;; *) printf 'rev:%s invalid - want yes|no\n' "$val" ;; esac ;;
-      qa)
-        case "$val" in yes|no) ;; *) printf 'qa:%s invalid - want yes|no\n' "$val" ;; esac ;;
-      promote)
-        case "$val" in no) ;; *) printf 'promote:%s invalid - want no (always is the default and is never written)\n' "$val" ;; esac ;;
-    esac
-  done
-  [ "$flow" = staged ] && [ "$rev" = no ] \
-    && printf 'flow:staged with rev:no - staged review is mandatory (AGENTS.md section 5)\n'
-  [ "$mode" = crew-ship ] && [ "$rev" = no ] \
-    && printf 'mode:crew-ship with rev:no - crew-ship review is mandatory (AGENTS.md section 5)\n'
-  return 0
 }
 
 # --- task state files ---------------------------------------------------------
@@ -1323,12 +1248,124 @@ ac_status_timeline_mirror() {
   printf '%s %s\n' "$ts" "$line" >>"$dir/timeline.log"
 }
 
+# --- claude transcript arrival check (kickoff-prompt delivery: ac-spawn.sh;
+# delivery verification: ac-send, through its twin in src/lib.ts) ----------
+#
+# backend_send_line/backend_submit_verified prove a SUBMIT - the pane's
+# composer reacted to Enter - never that the text which ARRIVED equals the
+# text SENT (the measured incident this closes: a kickoff prompt whose head
+# was cut in transit still spawned SUCCESS). Arrival is a PER-HARNESS
+# CAPABILITY, never a universal law: only claude writes a readable
+# per-session transcript this fleet can compare against. This is a
+# DIFFERENT sense from every backend probe above it and never re-reads
+# through the backend, on purpose - four guards sharing one sense is the
+# defect class this closes.
+
+ac_arrival_capable() {
+  # ac_arrival_capable <harness> - true when arrival can be checked against
+  # that harness's own on-disk transcript. Only claude today; adding one
+  # here without VERIFYING it writes a comparable transcript is exactly the
+  # "distro rule that silently assumes claude" this guards against.
+  [ "$1" = claude ]
+}
+
+ac_claude_transcript_root() {
+  # The claude session-transcript root. AC_CLAUDE_TRANSCRIPT_ROOT is the ONE
+  # injectable seam this probe needs: hard-wired to $HOME/.claude/projects it
+  # could never be driven from the fake-backend test suite. Under a
+  # CLAUDE_CONFIG_DIR (which ac_claude_config_env hands every pane) claude
+  # keeps its transcripts there instead of ~/.claude. Twin: src/lib.ts
+  # claudeTranscriptRoot (tests/ts/pane-agent-twins.test.ts).
+  printf '%s\n' "${AC_CLAUDE_TRANSCRIPT_ROOT:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects}"
+}
+
+ac_claude_transcript_path() {
+  # ac_claude_transcript_path <session-id> - the transcript file for that
+  # session, found by GLOBBING THE SESSION ID (a UUID) rather than deriving a
+  # cwd slug - the id is unique, so this is strictly more robust (verified
+  # against a live transcript, 2026-09-11). Empty and rc 1 unless EXACTLY one
+  # file matches.
+  local sid="$1" root f hit="" hits=0
+  [ -n "$sid" ] || return 1
+  root="$(ac_claude_transcript_root)"
+  for f in "$root"/*/"$sid".jsonl; do
+    [ -e "$f" ] || continue
+    hit="$f"; hits=$((hits + 1))
+  done
+  [ "$hits" = 1 ] || return 1
+  printf '%s\n' "$hit"
+}
+
+ac_claude_last_typed_turn() {
+  # ac_claude_last_typed_turn <transcript-file> - the LAST typed human turn's
+  # literal text (shape verified against a live transcript, 2026-09-11):
+  # type=user, promptSource=typed, origin.kind=human, and message.content a
+  # STRING - a tool-result turn's content is an ARRAY and must never
+  # false-match. A --resume session's prior turns are why this is the LAST
+  # one, never the first. Empty and rc 1 when the file holds no such turn.
+  # Reads only the TAIL (last 200 JSONL lines, not bytes - one line is one
+  # whole turn regardless of its own length): the caller polls this right
+  # after ITS OWN submit, so the turn being sought is always near the file's
+  # end - re-slurping and re-parsing an ever-growing session transcript on
+  # every poll tick would cost more as a session ages for no better answer.
+  local out
+  out="$(tail -n 200 "$1" 2>/dev/null | jq -rs '
+    [.[] | select(.type == "user" and .promptSource == "typed"
+                  and .origin.kind == "human"
+                  and (.message.content | type) == "string")]
+    | last | .message.content // empty
+  ' 2>/dev/null)" || return 1
+  [ -n "$out" ] || return 1
+  printf '%s' "$out"
+}
+
+ac_arrival_wait() {
+  # ac_arrival_wait <session-id> <expected-text> - did <expected-text>
+  # ARRIVE as the last typed human turn of that claude session? THREE-STATE,
+  # the same contract as ac-backend.sh WINDOW LIVENESS (2 never collapsed
+  # into 1):
+  #   0 CONFIRMED    - the transcript's last typed turn equals expected-text.
+  #   1 REFUTED      - the transcript stayed readable and kept producing a
+  #                    typed turn through the WHOLE budget, and it never
+  #                    matched.
+  #   2 UNOBSERVABLE - no session id, no resolvable transcript file, or the
+  #                    transcript never produced a typed turn to compare -
+  #                    "wrong" and "not written yet" are different facts,
+  #                    and only the former may become REFUTED.
+  # ADAPTIVE, same shape as herdr_submit_verified_pane (ac-backend.sh): reads
+  # AC_SEND_SETTLE-spaced ticks (~2-3s budget at its default) and returns the
+  # INSTANT the evidence appears, never burning the whole budget on the
+  # healthy path.
+  # AC_ARRIVAL_LAST carries the arriving text back to the caller: a REFUTED
+  # verdict that cannot say WHAT landed sends its reader to peek the pane, and
+  # the pane is exactly where a truncated steer looks like a delivered one.
+  local sid="$1" expected="$2" tries=7 i=0 path cur last=""
+  # The reader hands the arrived turn back through $(...), which drops its
+  # trailing newlines; the sent side is compared the same way.
+  expected="$(printf '%s' "$expected")"
+  AC_ARRIVAL_LAST=""
+  [ -n "$sid" ] || return 2
+  path="$(ac_claude_transcript_path "$sid")" || return 2
+  while :; do
+    if cur="$(ac_claude_last_typed_turn "$path")"; then
+      last="$cur"
+      [ "$last" = "$expected" ] && return 0
+    fi
+    i=$((i + 1))
+    [ "$i" -ge "$tries" ] && break
+    sleep "${AC_SEND_SETTLE:-0.4}"
+  done
+  AC_ARRIVAL_LAST="$last"
+  [ -n "$last" ] && return 1
+  return 2
+}
+
 # --- the VERIFICATION-agent class ---------------------------------------------
 #
 # AUTHORITATIVE for what makes a `state/<id>.meta` a verification agent rather
 # than a crewmate. `state/<id>.meta` is not storage, it is a NAMESPACE meaning
-# "a crewmate in flight" (that is why the learn/curate counters at :332 and :454
-# are dot-prefixed - a bare .meta there reads as a phantom crewmate). A
+# "a crewmate in flight" (that is why the learn/curate counters in
+# bin/ac-maintenance-lib.sh are dot-prefixed - a bare .meta there reads as a phantom crewmate). A
 # verification pane agent - a ship reviewer, a gate judge, a qa run - lives in
 # that namespace so the watcher can supervise it, but it is NOT crew: it holds
 # no backlog row and no crew branch. Exact-ref codereview/qa verifiers do hold a
@@ -1342,12 +1379,12 @@ ac_status_timeline_mirror() {
 # actually writes one.
 #
 # EXCLUDED FROM ACCOUNTING, NEVER FROM SUPERVISION. Its six consumers:
-#   - ac-watch.sh check_fleet     - does NOT branch: the watcher polls a verifier
+#   - src/watch.ts checkFleet     - does NOT branch: the watcher polls a verifier
 #                                   exactly like a crewmate (gone:/ask:/ended:)
 #   - ac_chief_child_live (ac-wake-lib.sh) - not a live family child
 #   - ac-room.sh close            - never blocks a family room from closing
-#   - ac-teardown.sh landed_proof - never blocks a roomchief demote
-#   - ac-wake-drain.sh            - out of report_completions and the
+#   - src/teardown.ts landedProof - never blocks a roomchief demote
+#   - ac-wake-drain.sh            - out of the completion report and the
 #                                   WATCHER-DOWN inflight tally
 #   - ac-fleets.sh                - reported in its own `verify[]` array, never
 #                                   in crew.tasks[] or crew.count
@@ -1376,12 +1413,12 @@ ac_meta_is_verify() {
 # a pane that can never emit a captain marker, and polling it would wake the
 # chief about its own typing - a self-loop, and a turn end the chief could never
 # reach while editing. So the four SUPERVISION-DEMAND surfaces skip it:
-#   - ac-watch.sh check_fleet     - not polled (no markers, no stale/ended wakes)
+#   - src/watch.ts checkFleet     - not polled (no markers, no stale/ended wakes)
 #   - ac-guard.sh                 - out of the WATCHER-DOWN inflight tally
 #   - ac-wake-drain.sh            - out of that same tally
 #   - ac-watch-autoarm.sh / ac-turnend-guard.sh - owes no Stop-hook coverage
 # ACCOUNTING is deliberately untouched: ac-dash.sh, ac-fleets.sh,
-# ac-fleet-view.sh and ac-statusline.sh all render it as the crewmate row it is,
+# and ac-fleet-view.sh all render it as the crewmate row it is,
 # which is the entire point of the mechanism. Landing is untouched too - teardown
 # reads it as an ordinary committing task and ac-merge-local.sh needs no kind.
 # Every other kind fails CLOSED to "not a self task", so nothing on disk today
@@ -1406,13 +1443,16 @@ ac_crew_metas() {
   # loop over <state_dir>/*.meta that filters by crew-ness; each one calls
   # this and NAMES its policy as skip-classes. The policies stay deliberately
   # different per consumer - the watcher skips only self (verifier panes are
-  # supervised; ac-watch.sh:1067's contract), supervision tallies skip
+  # supervised; src/watch.ts checkFleet's contract), supervision tallies skip
   # verify+self (a self task owes no watcher - the SELF-TASK block above),
   # accounting skips only verify (a self task is still listed) - but the
   # class DEFINITIONS live here once, in ONE awk pass for N metas instead of
   # one ac_meta_get fork per meta. kind reads last-write-wins, ac_meta_get's
   # rule; a meta that is empty or vanishes mid-read has no kind and is
   # COUNTED, fail-safe, exactly as the open-coded loops counted it.
+  # The TypeScript twin, src/lib.ts's crewMetas, runs this awk program
+  # verbatim and is pinned to this function by a differential test
+  # (tests/ts/fleet-view.test.ts), so a change here that it misses reddens it.
   local sd="$1" c sv=0 ss=0 sc=0
   shift
   for c in "$@"; do
@@ -1444,15 +1484,17 @@ ac_crew_metas() {
 ac_task_stamps() {
   # ac_task_stamps <state_dir> <id> - print every per-id watcher stamp path,
   # one per line: the AUTHORITATIVE reap list (audit-f4). The writers stay in
-  # bin/ac-watch.sh and bin/ac-done.sh; the reapers (ac-teardown.sh's
-  # reap_watcher_stamps) iterate THIS list instead of a hand copy - the hand
-  # list had already leaked once (11 orphan .change-* stamps observed live,
-  # ac-teardown.sh's own comment), then leaked again by omission when
+  # bin/ac-watch.sh and bin/ac-done.sh; the reaper (src/teardown.ts) iterates
+  # this list's twin, taskStamps in src/lib.ts, which tests/ts/teardown.test.ts
+  # holds to THIS one, instead of a hand copy - the hand list had already
+  # leaked once (11 orphan .change-* stamps observed live, ac-teardown.sh's
+  # own comment), then leaked again by omission when
   # .seen-hash-/.report-hash-/.superseded- were added with no reaper at all.
-  # A new stamp kind is added HERE, beside the ones it rides with.
+  # A new stamp kind is added HERE and to the twin, beside the ones it rides
+  # with.
   local sd="$1" tid="$2" b
   for b in hash change seen seen-hash stale gone ask unobservable \
-    report-hash superseded; do
+    report-hash superseded busy busy-stalled; do
     printf '%s/.%s-%s\n' "$sd" "$b" "$tid"
   done
 }
@@ -1491,7 +1533,7 @@ ac_captain() {
 #     the chief judges. (The incident: two families landed OPPOSITE
 #     conclusions on one file within hours because the second lander never
 #     saw the first family's room evidence.)
-#   - the INTAKE CHECK - `ac-ready.sh overlap` (that header owns the verb):
+#   - the INTAKE CHECK - `ac-ready.sh overlap` (src/ready.ts's header owns the verb):
 #     read-only ledger + in-flight lookups on an order's expected files.
 # The family of a landing id is the id with its stage/revision suffix
 # stripped (ac_family_of_id), so <task>-ship landing after <task>'s own
@@ -1515,7 +1557,7 @@ ac_family_of_id() {
   # data/<family>/<stage>-rN: a genuine revision's base stage was already
   # briefed (its first round exists before any revision is ever asked for),
   # while the -rN dir itself may not exist yet at THIS call - the same
-  # chicken-and-egg ac-brief.sh's own crew_branch reorder works around. When
+  # chicken-and-egg src/brief.ts's own crew-branch ordering works around. When
   # the base dir is absent, a stage-suffixed revision of a flat id must land
   # on the SAME family as the un-revised flat id, never on a family the
   # un-revised id itself does not have (dash-review-r2 with no data/dash/
@@ -1524,7 +1566,7 @@ ac_family_of_id() {
   #
   # A BARE revision (foo-r2, no stage suffix at all) stays unconditional: no
   # stage suffix means nothing to doubt, and a direct task's own
-  # data/<id>/implement never exists to check against (tests/ac-lib.test.sh's
+  # data/<id>/implement never exists to check against (tests/sh/ac-lib.test.sh's
   # ac_crew_branch 'foo-r2' case is exercised standalone, no dir ever
   # scaffolded).
   local sub stage base_stage
@@ -1562,19 +1604,22 @@ ac_family_owned() {
   # ac_family_owned <id> <state_dir> - 0 when a task is in flight that already
   # owns crew/<family> for <id>'s family, 1 when none is. Shared by every entry
   # point that commits on crew/<id> and lands via ac-merge-local.sh
-  # (ac-spawn.sh, ac-self-task.sh) as the second half of THE BRANCH COLLISION
-  # REFUSAL (ac-spawn.sh header owns the contract): membership is
+  # (src/spawn.ts, and src/self-task.ts through its twin src/lib.ts familyOwned)
+  # as the second half of THE BRANCH COLLISION REFUSAL (src/spawn.ts header
+  # owns the contract): membership is
   # ac_family_of_id, the SAME derivation ac_crew_branch builds the branch name
   # from, so owner and branch can never disagree. A VERIFICATION agent is not
-  # a family child and holds no crew branch (ac_meta_is_verify owns the class).
+  # a family child and holds no crew branch, and neither does a roomchief or
+  # crewdeputy - yet a <fam>-chief id reads as <fam> once the chief's own
+  # status mirror creates data/<fam>/chief, so the chief classes are skipped
+  # (ac_crew_metas owns both classes).
   local id="$1" state_dir="$2" m other fam
   fam="$(ac_family_of_id "$id")"
-  for m in "$state_dir"/*.meta; do
-    [ -e "$m" ] || continue
-    ac_meta_is_verify "$m" && continue
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
     other="$(basename "$m" .meta)"
     [ "$(ac_family_of_id "$other")" = "$fam" ] && return 0
-  done
+  done < <(ac_crew_metas "$state_dir" verify chiefs)
   return 1
 }
 
@@ -1701,6 +1746,208 @@ or dismiss if it learned nothing about the codebase. Record: $rec"
   return 0
 }
 
+# --- port slots ------------------------------------------------------------------
+# Two crewmates on one host both running `npm run dev` collide on the same
+# default port, and each then improvises. The registry hands every leased
+# worktree a SLOT - a fleet-wide unique integer - and derives a port range
+# from it (AC_PORT_BASE + slot*100, 100 ports), written to
+# <worktree>/.crew/ports.env where the crewmate law tells the crewmate to
+# read it. Fleet-wide (state/port-slots.tsv), not per repo: ports are host
+# resources, and two repos' worktrees share the host. A slot is reused for
+# the same worktree path (re-seeding is idempotent), released at teardown,
+# and reclaimed when its worktree directory is gone. What this does NOT do:
+# rewrite compose files or check the host for a foreign listener - the range
+# is a contract between crewmates, and a repo that needs more takes it from
+# its own .crew/ports.env conventions. The allocation, the release and the
+# seed have twins in src/lib.ts, held to them by tests/ts/spawn-twins.test.ts
+# (the release by tests/ts/teardown.test.ts).
+AC_PORT_STRIDE=100
+
+ac_port_registry() { printf '%s/port-slots.tsv\n' "$(ac_state_dir)"; }
+
+ac_port_slot_allocate() {
+  # ac_port_slot_allocate <worktree> <project> -> prints the slot. The lowest
+  # integer >= 1 no LIVE entry holds; an entry whose worktree no longer exists
+  # is dropped first, so a crashed teardown never pins a slot forever.
+  local wt="$1" proj="${2:-}" reg lock tmp slot=1 taken
+  reg="$(ac_port_registry)" || return 1
+  lock="$reg.lock"
+  ac_lock_acquire "$lock" 10 || return 1
+  [ -f "$reg" ] || : >"$reg"
+  tmp="$reg.tmp.$$"
+  awk -F'\t' '{ if ($2 != "" && system("test -d \"" $2 "\"") == 0) print }' "$reg" >"$tmp" 2>/dev/null || : >"$tmp"
+  mv "$tmp" "$reg"
+  taken="$(awk -F'\t' -v w="$wt" '$2 == w { print $1; exit }' "$reg")"
+  if [ -z "$taken" ]; then
+    while awk -F'\t' -v s="$slot" '$1 == s { found = 1 } END { exit(found ? 0 : 1) }' "$reg"; do
+      slot=$((slot + 1))
+    done
+    printf '%s\t%s\t%s\t%s\n' "$slot" "$wt" "$proj" "$(ac_iso)" >>"$reg"
+    taken="$slot"
+  fi
+  ac_lock_release "$lock"
+  printf '%s\n' "$taken"
+}
+
+ac_port_slot_release() {
+  # ac_port_slot_release <worktree> - drop the worktree's entry; no-op when
+  # there is none. Never fails a teardown.
+  local wt="$1" reg lock tmp
+  reg="$(ac_port_registry 2>/dev/null)" || return 0
+  [ -f "$reg" ] || return 0
+  lock="$reg.lock"
+  ac_lock_acquire "$lock" 10 || return 0
+  tmp="$reg.tmp.$$"
+  awk -F'\t' -v w="$wt" '$2 != w' "$reg" >"$tmp" && mv "$tmp" "$reg"
+  ac_lock_release "$lock"
+  return 0
+}
+
+ac_seed_ports_env() {
+  # ac_seed_ports_env <worktree> [project] - allocate the slot and write
+  # <worktree>/.crew/ports.env (the .crew/ dir is already excluded from git
+  # in every pooled worktree; an orca worktree gets the exclude here). Prints
+  # the range. Best-effort for the caller: a registry failure seeds nothing
+  # and returns 1, the lease itself is unaffected.
+  local wt="$1" proj="${2:-}" slot base lo hi f
+  [ -d "$wt" ] || return 1
+  slot="$(ac_port_slot_allocate "$wt" "$proj")" || return 1
+  base="${AC_PORT_BASE:-20000}"
+  lo=$(( base + slot * AC_PORT_STRIDE )); hi=$(( lo + AC_PORT_STRIDE - 1 ))
+  mkdir -p "$wt/.crew"
+  f="$wt/.crew/ports.env"
+  {
+    printf '# agent-crew port slot - one fleet-wide slot per leased worktree; every listener this worktree starts binds inside this range.\n'
+    printf 'AC_PORT_SLOT=%s\n' "$slot"
+    printf 'AC_PORT_RANGE=%s-%s\n' "$lo" "$hi"
+    printf 'PORT=%s\n' "$lo"
+  } >"$f"
+  ac_seed_exclude "$wt" ".crew/" 2>/dev/null || true
+  printf '%s-%s\n' "$lo" "$hi"
+}
+
+ac_self_tasks_in_flight() {
+  # ac_self_tasks_in_flight - one line per kind=self task still in flight,
+  # with its age and the two ways out. A self task outlives the session that
+  # opened it (its pane is a tail, its meta and lease are not), and the only
+  # thing that ends it is a landing or a --force; a slice nobody remembers
+  # holds a pool slot forever, so every session start names it. Prints
+  # nothing when there is none; never fails.
+  local sd m id proj age now
+  sd="$(ac_state_dir 2>/dev/null)" || return 0
+  now="$(ac_now)"
+  while IFS= read -r m; do
+    ac_meta_is_self "$m" || continue
+    id="$(basename "$m" .meta)"
+    proj="$(ac_meta_get "$m" project)"
+    age=$(( now - $(ac_file_mtime "$m" || echo "$now") ))
+    if [ "$age" -ge 86400 ]; then age="$(( age / 86400 ))d"; else age="$(( age / 3600 ))h"; fi
+    printf 'self task %s (%s, opened %s ago) is in flight: land it with bin/ac-teardown.sh %s, or discard it with bin/ac-teardown.sh %s --force - its lease holds a pool slot until then\n' \
+      "$id" "$proj" "$age" "$id" "$id"
+  done < <(ac_crew_metas "$sd" verify chiefs 2>/dev/null)
+  return 0
+}
+
+ac_solo_landing_check() {
+  # ac_solo_landing_check <id> <project-repo> [<lesson-waiver>] [<fact-waiver>]
+  # - the SOLO slice's knowledge-loop GATE at landing. The solo contract owes
+  # three writes per slice (a lesson via ac-learn.sh note, a verified repo
+  # fact via ac-know.sh add, the ## Done row) and no chief is there to ask
+  # whether they happened; a law with no machine behind it measurably went
+  # unwritten, and a warn-only line behind it measurably went unread. This
+  # is the machine: ONE line naming which of the three exist for this slice,
+  # on the status record (mirrored to the durable timeline) and on stdout,
+  # with the exact command for each that is missing - and exit 1 while any
+  # is missing, so the teardown refuses and the slice stays in flight. It
+  # still cannot tell "learned nothing" from "did not write it down", so
+  # "nothing new" is SAID, never inferred: a non-empty waiver for the lesson
+  # or the fact reads as `waived` (the crewmate report's `none` is the same
+  # contract), while the Done row has no waiver - the solo can always write
+  # it. Attribution grammars are the writers' own: a Pending heading carrying
+  # "(solo <id>)", a repo-knowledge line ending "| by: <id>", a "- [x] <id> "
+  # row under ## Done.
+  # A SCOPED slice (<scope> non-empty: a solo chief's, AC_SCOPE at its start)
+  # may not write the Done row - the ledger guard fences every scoped session
+  # from records/backlog.md - so its third write is a room receipt naming the
+  # slice, the one record a roomchief owns; the crewchief moves the row at
+  # hand-back. Reported as landed-receipt, never as done-row, so the line says
+  # which record was read.
+  # TWO RECEIPTS, because the slice has TWO honest exits. `LANDED: <id>` is the
+  # slice that landed. `UNLANDABLE: <id>` is the slice that CANNOT: when main
+  # moves under it a scoped actor is withheld --no-ff by ac-merge-local.sh -
+  # the fence captain.md relies on - so it can never truthfully post LANDED.
+  # It is its OWN verb, never `HANDBACK:`, because HANDBACK is the FAMILY's
+  # tenure-ending receipt (ac_room_handback_families): a slice posting it
+  # flipped the whole family into HANDBACK and wedged the crewchief's turn end
+  # with a remedy that said "demote the roomchief" while the roomchief was
+  # alive and mid-family. And the receipt is a RECORD, not a key: the branch
+  # fence (src/teardown.ts landedProof) runs before this gate and keeps
+  # refusing until the crewchief has landed the branch --no-ff; only then does
+  # UNLANDABLE stand where LANDED would.
+  # Both receipts are matched by SHAPE - `> <VERB>: <id> ` - never by the id
+  # appearing somewhere on a line: a LANDED: about another slice, or a family
+  # HANDBACK: that mentions this one in prose, is not this slice's receipt.
+  # The LESSON is read by its ATTRIBUTION, not by a heading's spelling. The
+  # crewmate contract mandates `(by: <id>, first-hand)` per line, and a solo
+  # chief legitimately files its slices under `### <date> (family <fam>)` - a
+  # gate grepping the heading for `(solo <id>)` reported lessons=none against
+  # five correct first-hand lessons and cost a hand-retagged heading to unblock
+  # a land. Read whole, `(by: <id>,` - so `sch-fix-2`'s lesson is not
+  # `sch-fix`'s.
+  local id="${1:-}" repo="${2:-}" no_lesson="${3:-}" no_fact="${4:-}" scope="${5:-}" led rec bl room lessons=none facts=none done=none hint="" line
+  [ -n "$id" ] || return 0
+  led="$(ac_records_dir)/learnings.md"
+  if [ -n "$no_lesson" ]; then lessons=waived
+  elif [ -f "$led" ] && awk -v tag="(solo $id)" -v by="(by: $id," '
+      /^## Distilled/ { exit }
+      /^### / && index($0, tag) { found = 1; exit }
+      index($0, by) { found = 1; exit }
+      END { exit(found ? 0 : 1) }' "$led"; then lessons=yes; fi
+  if [ -n "$no_fact" ]; then facts=waived
+  elif [ -n "$repo" ] && [ -d "$repo" ] && rec="$(ac_knowledge_file "$repo" 2>/dev/null)" \
+     && [ -f "$rec" ] && awk -v suffix="| by: $id" '
+      /^## Superseded/ { exit }
+      /^- / && substr($0, length($0) - length(suffix) + 1) == suffix { found = 1; exit }
+      END { exit(found ? 0 : 1) }' "$rec"; then facts=yes; fi
+  if [ -n "$scope" ]; then
+    room="$(ac_room_file "$scope" 2>/dev/null || true)"
+    if [ -n "$room" ] && [ -f "$room" ] && LC_ALL=C awk -v landed="> LANDED: $id " -v unland="> UNLANDABLE: $id " '
+        /^- \[/ && (index($0, landed) || index($0, unland)) { found = 1; exit }
+        END { exit(found ? 0 : 1) }' "$room"; then done=yes; fi
+    line="knowledge loop: lessons=$lessons repo-knowledge=$facts landed-receipt=$done"
+  else
+    bl="$(ac_records_dir)/backlog.md"
+    if [ -f "$bl" ] && LC_ALL=C awk -v row="- [x] $id " '
+        /^## Done/ { in_done = 1; next }
+        /^## / { in_done = 0 }
+        in_done && index($0, row) == 1 { found = 1; exit }
+        END { exit(found ? 0 : 1) }' "$bl"; then done=yes; fi
+    line="knowledge loop: lessons=$lessons repo-knowledge=$facts done-row=$done"
+  fi
+  [ "$lessons" != none ] || hint="$hint
+  lesson: $(ac_root)/bin/ac-learn.sh note '### $(date -u +%Y-%m-%d) (solo $id)' '- <one method lesson>'   (or --no-lesson '<why nothing new>')"
+  [ "$facts" != none ] || hint="$hint
+  repo fact: $(ac_root)/bin/ac-know.sh add --home $(ac_home) --repo ${repo:-<repo>} --family $id --src-file <path>:<line> --fact '<verified fact>'   (or --no-fact '<why none verified>')"
+  if [ "$done" != yes ]; then
+    if [ -n "$scope" ]; then hint="$hint
+  landed receipt: $(ac_root)/bin/ac-room.sh post $scope $scope-chief 'LANDED: $id - <outcome>'   (the crewchief moves the backlog row at your hand-back)
+  ...or, when the slice CANNOT land: $(ac_root)/bin/ac-room.sh post $scope $scope-chief 'UNLANDABLE: $id - <why>; crewchief to land'   (NEVER rebase to force it: a scoped actor is withheld --no-ff on purpose, and a rebase changes the sha a review receipt binds by. The slice STAYS IN FLIGHT until the crewchief lands crew/$id --no-ff; this teardown keeps refusing 'unlanded work' until then, and passes on this receipt afterwards)"
+    else hint="$hint
+  done row: append '- [x] $id - <outcome>' under ## Done in $bl"
+    fi
+  fi
+  ac_status_append "$id" "$line" 2>/dev/null || true
+  printf '%s\n' "$line"
+  [ -z "$hint" ] || printf 'missing - the solo contract owes these at landing:%s\n' "$hint"
+  [ -z "$hint" ]
+}
+
+# The seed below - ac_seed_crewmate_md with the install, exclude and
+# disposable helpers under it, ac_seed_crew_settings, ac_seed_crew_skills with
+# ac_skill_usage_bump, and ac_domain_binding - has TypeScript twins in
+# src/lib.ts that tests/ts/spawn-twins.test.ts holds to these functions, so a
+# change here that a twin misses reddens it.
+
 # Where the fleet layer lands when the harness's own instruction file is
 # already taken (ac_seed_crewmate_md). NOT a file any harness loads - no such
 # sidecar exists for codex, which reads <worktree>/AGENTS.md and nothing else -
@@ -1721,6 +1968,12 @@ AC_SEED_STAMP_DIR_REL='.claude/.ac-seed'
 # `.claude%settings.json`-named file with this content). The suffix makes
 # the stamp inert to every such tool regardless of which path gets seeded.
 AC_SEED_STAMP_SUFFIX='.sha256'
+
+# First line of the stub bin/ac-verify.sh writes over every instruction file
+# in a verifier lease for the length of a round. The ONE in-file marker the
+# seed reads (ac_seed_disposable): it claims the opposite of ownership -
+# nobody's file - so the seed overwrites it instead of stepping aside.
+AC_VERIFY_NEUTRALIZED_MARK='# Neutralized by ac-verify:'
 
 ac_sha256_file() {
   # ac_sha256_file <file> - portable SHA-256 used by maintenance plans.
@@ -1757,7 +2010,11 @@ ac_seed_install() {
   # file seeded before stamps existed are all left untouched - the seed never
   # overwrites what it cannot PROVE it wrote. The stamp authorizes a refresh
   # of the seed's own copy and nothing beyond it; it is not a claim on the
-  # path, and an unstamped file is never adopted.
+  # path, and an unstamped file is never adopted. "Repo-shipped" is therefore
+  # not detected, it is the DEFAULT for any file the stamp does not vouch
+  # for - the seeded copy carries no in-file marker of its own. The one
+  # in-file marker consulted is ac-verify's neutralized header
+  # (ac_seed_disposable), which makes the opposite claim and is overwritten.
   #
   # STAMP NAME carries $AC_SEED_STAMP_SUFFIX; `legacy` is the pre-suffix name
   # this function used to write. A `legacy` stamp is ALWAYS retired here - it
@@ -1787,7 +2044,7 @@ ac_seed_install() {
   legacy="$wt/$AC_SEED_STAMP_DIR_REL/${rel//\//%}"
   stamp="$legacy$AC_SEED_STAMP_SUFFIX"
   want="$(ac_sha256_file "$staged")" || return 1
-  if [ -e "$dst" ]; then
+  if [ -e "$dst" ] && ! ac_seed_disposable "$dst"; then
     if [ -f "$stamp" ]; then
       have="$(ac_sha256_file "$dst" 2>/dev/null)" || return 1
       [ "$have" = "$(cat "$stamp")" ] || return 1
@@ -1811,6 +2068,19 @@ ac_seed_install() {
   rm -f "$legacy"
   ac_seed_exclude "$wt" "$rel"
   ac_seed_exclude "$wt" "$AC_SEED_STAMP_DIR_REL/"
+}
+
+ac_seed_disposable() {
+  # ac_seed_disposable <file> - true for the stub bin/ac-verify.sh writes over
+  # an instruction file for the length of a review round. The round restores
+  # the true bytes at harvest; a stub that outlived it (a round killed
+  # untrappably) is nobody's file - never repo-shipped, never a human's - and
+  # a slot carrying one would otherwise send its next crewmate's harness a
+  # pointer to a commit path that no longer exists.
+  case "$(head -n 1 "$1" 2>/dev/null)" in
+    "$AC_VERIFY_NEUTRALIZED_MARK"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 ac_seed_crewmate_md() {
@@ -1862,7 +2132,7 @@ ac_seed_crewmate_md() {
   # purpose: a repo shipping .claude/CLAUDE.md hits the identical gap.
   # A repo that ships NO instruction file is untouched by all of this - the
   # layer reaches the harness's own file and nothing is printed.
-  local wt="$1" harness="${2:-}" fleet cont dom rel staged learned
+  local wt="$1" harness="${2:-}" fleet cont dom dom_bound rel staged learned
   fleet="$(ac_home)/CREWMATE.md"
   cont="$(dirname "$(ac_home)")/.claude/CLAUDE.md"
   # MACHINE-OWNED learned layer, written only by ac-learn.sh transactions
@@ -1872,12 +2142,15 @@ ac_seed_crewmate_md() {
   # override a fleet rule.
   learned="$(ac_home)/CREWMATE-learned.md"
   # THIRD LAYER, appended LAST because the most specific word reads last: the
-  # crewdomain instruction layer, when the SPAWNING session carries AC_DOMAIN.
-  # Every other rule is untouched - a repo-shipped file still wins outright,
-  # the fallback path and its notice still apply, and a single available layer
-  # is still copied byte-identical with no markers.
+  # crewdomain instruction layer, when the SPAWNING session's domain binding
+  # resolves (ac_domain_binding - AC_DOMAIN itself, or AC_SCOPE naming a
+  # domainchief's own meta when AC_DOMAIN went missing en route). Every other
+  # rule is untouched - a repo-shipped file still wins outright, the fallback
+  # path and its notice still apply, and a single available layer is still
+  # copied byte-identical with no markers.
   dom=""
-  [ -z "${AC_DOMAIN:-}" ] || dom="$(ac_home)/crewdomains/$AC_DOMAIN/CREWMATE.md"
+  dom_bound="$(ac_domain_binding)"
+  [ -z "$dom_bound" ] || dom="$(ac_home)/crewdomains/$dom_bound/CREWMATE.md"
   # The registry owns the mapping AND fails closed on a harness it cannot
   # answer for (audit-f5: the old `*)` arm here handed .claude/CLAUDE.md to
   # anything unknown, seeding a file the harness never reads).
@@ -1913,33 +2186,55 @@ ac_seed_crewmate_md() {
 }
 
 ac_seed_crew_settings() {
-  # ac_seed_crew_settings <worktree> - copy the fleet harness settings
-  # (enabled plugins, permission allowlists) to <worktree>/.claude/
-  # settings.json, where the harness actually reads project settings - the
-  # container copy is never on a worktree's settings path by itself.
-  # Source resolution (first hit wins), mirroring ac_seed_crewmate_md:
-  # $AC_HOME/.claude/settings.json (per-fleet) > <container>/.claude/
-  # settings.json (shared by every fleet). A COPY, never a
+  # ac_seed_crew_settings <worktree> - copy the fleet harness settings to
+  # <worktree>/.claude/settings.json (permission allowlists, hooks) and
+  # <worktree>/.claude/settings.local.json (the enabled plugins - a
+  # per-machine choice that a tracked settings.json cannot carry, and the
+  # file the harness merges over settings.json), where the harness actually
+  # reads project settings - the container copy is never on a worktree's
+  # settings path by itself.
+  # Source resolution per file (first hit wins), mirroring ac_seed_crewmate_md:
+  # $AC_HOME/.claude/<file> (per-fleet) > <container>/.claude/<file> (shared
+  # by every fleet). The two files resolve INDEPENDENTLY, so a fleet that
+  # overrides only one still inherits the container's other. A COPY, never a
   # symlink: a crewmate answering "always allow" writes project settings,
   # and through a symlink that grant would contaminate the fleet-wide file.
   # Installed through the SAME ac_seed_install as the instructions, so it
   # inherits both halves at no extra mechanism: a settings file the seed did
-  # not write - repo-shipped, or carrying the grants a crewmate just made -
-  # wins outright, and one the seed did write is refreshed when the fleet
-  # source moves on. Kept out of git status via info/exclude.
-  local wt="$1" src
-  src="$(ac_home)/.claude/settings.json"
-  [ -f "$src" ] || src="$(dirname "$(ac_home)")/.claude/settings.json"
-  [ -f "$src" ] || return 0
-  ac_seed_install "$wt" '.claude/settings.json' "$src" || return 0
+  # not write - repo-shipped, carrying the grants a crewmate just made, or the
+  # Stop hook bin/ac-pane-agent.sh merges into settings.local.json for a
+  # review round - wins outright, and one the seed did write is refreshed
+  # when the fleet source moves on. Kept out of git status via info/exclude.
+  local wt="$1" home_dir rel src
+  home_dir="$(ac_home)/.claude"
+  # A home .claude that is the core-4 runtime symlink into the distro
+  # checkout (seedRuntimeLinks, src/lib.ts) holds the distro's settings -
+  # chief-session hook wiring, not fleet crew settings - so it is not a
+  # fleet layer and the container copy stays the crew source.
+  if [ -d "$home_dir" ]; then
+    case "$(cd -P "$home_dir" 2>/dev/null && pwd -P)" in
+      "$(ac_root)"|"$(ac_root)"/*) home_dir="" ;;
+    esac
+  fi
+  for rel in settings.json settings.local.json; do
+    src="$home_dir/$rel"
+    [ -n "$home_dir" ] && [ -f "$src" ] || src="$(dirname "$(ac_home)")/.claude/$rel"
+    [ -f "$src" ] || continue
+    ac_seed_install "$wt" ".claude/$rel" "$src" || true
+  done
+  return 0
 }
 
 # Crewmate-facing skills seeded into every crew worktree (ac_seed_crew_skills).
-# ONLY crew-ship, qa, and document: the delivery pipeline, behavioral
-# verification, and the doc-authoring pass are what a crewmate runs itself;
-# everything else (rich-review, bearings, debrief) is captain/crewchief-facing and
-# stays out of crew worktrees.
-AC_CREW_SKILLS="${AC_CREW_SKILLS:-crew-ship crew-qa document}"
+# ONLY crew-ship, the direct review round, the two behavioural-verification
+# routes, and document: the delivery pipeline, the independent review a
+# direct-pr/local-only task owes outside the engine, behavioral verification,
+# and the doc-authoring pass are what a crewmate runs itself; everything else
+# (rich-review, bearings, debrief) is captain/crewchief-facing and stays out
+# of crew worktrees. crew-qa and domain-e2e are seeded together because which
+# one a crewmate needs is decided by the DOMAIN of the task it was spawned for
+# (intake-triage skill), not by anything the seed can see at lease time.
+AC_CREW_SKILLS="${AC_CREW_SKILLS:-crew-ship crew-verify crew-qa domain-e2e document}"
 
 ac_seed_crew_skills() {
   # ac_seed_crew_skills <worktree> [harness] - symlink the crewmate-facing
@@ -1948,7 +2243,8 @@ ac_seed_crew_skills() {
   # source classes, seeded in precedence order (first symlink to claim a
   # <name> wins; the dst-exists guard skips any name already linked, so an
   # earlier class always beats a later one):
-  #   1. built-in (AC_CREW_SKILLS: crew-ship, crew-qa, document) - resolved
+  #   1. built-in (AC_CREW_SKILLS: crew-ship, crew-verify, crew-qa,
+  #      domain-e2e, document) - resolved
   #      <container>/.claude/skills/<name> > this checkout's .agents/skills
   #      (distro default), mirroring ac_seed_crewmate_md.
   #   2. fleet-learned - the per-fleet store $AC_HOME/skills/* (ac_skills_dir).
@@ -2066,7 +2362,7 @@ ac_fleet_name() {
   # Why not basename "$(ac_home)" for the homeless rungs: ac_home() REFUSES
   # with no AC_HOME, and before it did it answered ac_root, the checkout that
   # owns bin/ - which is where the damage below came from. A crewmate pane
-  # carries no AC_HOME by design (ac-qa.sh header), so every pane agent it
+  # carries no AC_HOME by design (src/qa.ts header), so every pane agent it
   # launches resolved the
   # label against its POOL WORKTREE ("1") or, when it ran the
   # distro's bin/ by absolute path, against the distro repo ("agent-crew")
@@ -2104,6 +2400,71 @@ ac_window_family() {
 
 # --- git helpers ----------------------------------------------------------------
 
+ac_sparse_excluded() {
+  # ac_sparse_excluded <wt> <path> - 0 when the tree's sparse rules exclude
+  # <path>, so its absence is by design. `sparse-checkout check-rules` needs
+  # git 2.41: an older git answers 129 (no such subcommand), and then the
+  # sparse flag alone decides, as it did before the rules could be asked. Any
+  # other failure is no exclusion. The answer is COUNTED, never captured: a
+  # command substitution would shave a newline-only name down to nothing.
+  local n rc=0
+  n="$(printf '%s\0' "$2" | git -C "$1" sparse-checkout check-rules -z 2>/dev/null | wc -c; exit "${PIPESTATUS[1]}")" || rc=$?
+  [ "$rc" = 129 ] && return 0
+  [ "$rc" = 0 ] && [ "$(( n ))" -eq 0 ]
+}
+
+ac_worktree_status() {
+  # ac_worktree_status <wt> - everything a destructive gate must count as work
+  # in a tree: the porcelain with any submodule ignore setting overridden, plus
+  # an edit, deletion or mode/type change to a file whose assume-unchanged or
+  # skip-worktree bit hides it from `git status` (git-update-index). The exit
+  # status is git status's own; the hidden-bit scan only adds `H  <path>`.
+  # Paths are read NUL-delimited and matched literally: `ls-files -v` C-quotes
+  # a non-ASCII name, and a quoted name is no path on disk. An operation git
+  # left in progress adds `O  <state>`: a stopped rebase or bisect can leave a
+  # clean tree, and no reset clears its state, so the next lessee's git trips
+  # on it. The status never rewrites the index: a leased tree is read while
+  # its crewmate's own git may need index.lock.
+  local rc=0 rec tag path mode blob f filemode sparse gd op
+  git --no-optional-locks -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
+  filemode="$(git -C "$1" config --get core.fileMode 2>/dev/null || printf 'true')"
+  sparse="$(git -C "$1" config --get core.sparseCheckout 2>/dev/null || printf 'false')"
+  while IFS= read -r -d '' rec; do
+    tag="${rec%% *}"; path="${rec#? }"
+    # [[:lower:]], never [a-z]: in a UTF-8 locale bash 3.2's range also matches
+    # `H`, the tag of every ordinary tracked file.
+    case "$tag" in [[:lower:]]|S) ;; *) continue ;; esac
+    f="$1/$path"
+    read -r mode blob _ <<<"$(git -C "$1" --literal-pathspecs ls-files -s -z -- "$path" 2>/dev/null | tr '\0' '\n' | head -n 1)"
+    [ "$mode" != 160000 ] || continue
+    if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+      # Absent under skip-worktree is a sparse checkout doing its job only for
+      # a path its rules exclude; any other absence - or rules that cannot be
+      # read - is a deletion git status does not show.
+      if [ "$tag" = S ] && [ "$sparse" = true ] && ac_sparse_excluded "$1" "$path"; then
+        continue
+      fi
+      printf 'H  %s\n' "$path"
+      continue
+    fi
+    case "$mode" in
+      120000) [ -L "$f" ] && [ "$(printf '%s' "$(readlink "$f")" | git -C "$1" hash-object --stdin)" = "$blob" ] \
+                || printf 'H  %s\n' "$path" ;;
+      *) if [ -L "$f" ] || [ ! -f "$f" ] \
+              || [ "$(git -C "$1" hash-object -- "$path" 2>/dev/null)" != "$blob" ] \
+              || { [ "$filemode" = true ] && { [ "$mode" = 100755 ] && [ ! -x "$f" ] || { [ "$mode" != 100755 ] && [ -x "$f" ]; }; }; }; then
+           printf 'H  %s\n' "$path"
+         fi ;;
+    esac
+  done < <(git -C "$1" ls-files -v -z 2>/dev/null)
+  if gd="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)"; then
+    for op in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG sequencer; do
+      [ ! -e "$gd/$op" ] || printf 'O  %s\n' "$op"
+    done
+  fi
+  return "$rc"
+}
+
 ac_repo_root() {
   # ac_repo_root <dir> - MAIN worktree root, even when <dir> is a linked worktree.
   local common
@@ -2131,6 +2492,137 @@ ac_default_ref() {
   else
     printf '%s\n' "$branch"
   fi
+}
+
+ac_freshest_ref() {
+  # ac_freshest_ref <repo> [<branch>] - the freshest ref of the default branch
+  # (no second argument) or of the NAMED branch (feature-branch-mech: a
+  # feature branch cuts at its TARGET's tip, not the default's): whichever of
+  # local vs origin is AHEAD (origin wins on true divergence). THE one
+  # freshest-tip resolver: ac-tree.sh's pool reset and the epic/feature create
+  # verbs all cut here, so they can never disagree about "the tip"
+  # (ac_default_ref above is the cruder origin-if-it-exists rule and stays
+  # for callers that want exactly that).
+  local repo="$1" branch="${2:-}" have_l=0 have_o=0
+  [ -n "$branch" ] || branch="$(ac_default_branch "$repo")"
+  git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" && have_l=1
+  git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch" && have_o=1
+  if [ "$have_l" = 1 ] && [ "$have_o" = 1 ]; then
+    if git -C "$repo" merge-base --is-ancestor "refs/remotes/origin/$branch" "refs/heads/$branch" 2>/dev/null; then
+      printf '%s\n' "$branch"
+    else
+      printf 'origin/%s\n' "$branch"
+    fi
+  elif [ "$have_o" = 1 ]; then
+    printf 'origin/%s\n' "$branch"
+  else
+    printf '%s\n' "$branch"
+  fi
+}
+
+ac_git_push_control_plane() {
+  # ac_git_push_control_plane <repo> <git push args...> - a CONTROL-PLANE push
+  # with the repository's pre-push hook skipped. Control-plane only: cutting an
+  # integration branch at a tip that already exists, following a local landing
+  # onto a recorded epic/feature branch - bookkeeping that publishes nothing new
+  # for review, so a project hook that runs a full suite, or aborts on a sha
+  # that is no deliverable, would only wedge the fleet. DELIVERY NEVER: the
+  # crew-ship push (bin/ac-ship.sh cmd_push) and the feature/epic ship pushes
+  # that open a PR keep the hook - that push IS the publication the hook
+  # exists to gate.
+  local repo="$1"; shift
+  git -C "$repo" push --no-verify "$@"
+}
+
+# --- epic integration-branch record (epic-branch-mech) -------------------------
+# data/<epic>/branches: `<repo> <branch> [key=value ...]`, one line per repo a
+# branch-recorded epic integrates. Chief-written on the captain's word and
+# receipted DECIDED: to the epic room; bin/ac-epic-branch.sh owns the verbs.
+# Resolution is ARCHIVE-AWARE like ac_room_file: live data/<epic>/ first, then
+# data/archive/<year>/<epic>/ - a family move must never silently disengage a
+# fence keyed on this file, so the resolver distinguishes MOVED from NEVER WAS.
+# A record whose first line is `# retired <iso>` is deliberately ended:
+# readers treat it as no-fence, and verify explains the retirement.
+
+ac_fence_dir() {
+  # ac_fence_dir <records|data> - where the epic fence reads <sub>: the home's
+  # (minted) under AC_HOME, else the home a crewmate pane's AC_FLEET_STATE
+  # sits in. A pane carries no AC_HOME by design (ac_backend reads its config
+  # the same way), and its own second lease must ride the fence. The `..` is
+  # left to the kernel, so a symlinked state dir names its target's home.
+  if [ -z "${AC_HOME:-}" ] && [ -n "${AC_FLEET_STATE:-}" ]; then
+    printf '%s/../%s\n' "${AC_FLEET_STATE%/}" "$1"
+    return 0
+  fi
+  case "$1" in
+    records) ac_records_dir ;;
+    *) ac_data_dir ;;
+  esac
+}
+
+ac_epic_branches_file() {
+  # ac_epic_branches_file <epic> - resolved record path, live else archived;
+  # rc 1 when the record never existed. Charset-guarded like ac_room_file:
+  # an unsafe name must never reach the archive glob.
+  local epic="$1" live y
+  live="$(ac_fence_dir data)/$epic/branches"
+  [ -f "$live" ] && { printf '%s\n' "$live"; return 0; }
+  case "$epic" in '' | *[!a-zA-Z0-9_-]*) return 1 ;; esac
+  for y in "$(ac_fence_dir data)"/archive/*/"$epic"/branches; do
+    [ -f "$y" ] && { printf '%s\n' "$y"; return 0; }
+  done
+  return 1
+}
+
+ac_epic_base_for() {
+  # ac_epic_base_for <id> <repo-name> - the integration-branch entry a lease
+  # for <id> on <repo-name> must honor. Resolves <id>'s ledger row by LONGEST
+  # id-prefix (an intra-family fan-out sub-task carries no row of its own),
+  # then tries the row's `epic:<e>` token, its `feature:<f>` token
+  # (feature-branch-mech - epic FIRST when a defective row carries both, so
+  # the answer is deterministic; ac-feature.sh ship refuses such a member)
+  # AND the row id itself (an epic's/feature's own scouts integrate on its
+  # branch too) against the branch record.
+  # Prints `<branch> [key=value ...]`; rc 1 = no fence (no row, no record, or
+  # a retired record - retirement is the DELIBERATE end of the fence); rc 2 =
+  # the ledger exists but could not be read, which proves nothing either way.
+  local id="$1" repo="$2" ledger row rc=0 row_id row_epic row_feature cand entry
+  ledger="$(ac_fence_dir records)/backlog.md"
+  [ -f "$ledger" ] || return 1
+  row="$(LC_ALL=C awk -v want="$id" "$AC_DONELINE_AWK"'
+    /^- \[/ { ac_doneline($0, f); if (!(f["id"] in row)) row[f["id"]] = f["epic"] "\t" f["feature"] }
+    END {
+      b = want
+      while (1) {
+        if (b in row) { print b "\t" row[b]; exit 0 }
+        if (b !~ /-/) exit 1
+        sub(/-[^-]*$/, "", b)
+      }
+    }' "$ledger")" || rc=$?
+  case "$rc" in 0) ;; 1) return 1 ;; *) return 2 ;; esac
+  row_id="${row%%$'\t'*}"; row="${row#*$'\t'}"
+  row_epic="${row%%$'\t'*}"
+  row_feature="${row#*$'\t'}"
+  for cand in "$row_epic" "$row_feature" "$row_id"; do
+    [ -n "$cand" ] || continue
+    if entry="$(ac_epic_branch_entry "$cand" "$repo")"; then
+      printf '%s\n' "$entry"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ac_epic_branch_entry() {
+  # ac_epic_branch_entry <epic> <repo> - prints `<branch> [key=value ...]`.
+  # rc 0 found; 1 no record or no entry for this repo (no fence);
+  # 2 record retired (no fence either, but a caller that wants to SAY why can).
+  local epic="$1" repo="$2" f line
+  f="$(ac_epic_branches_file "$epic")" || return 1
+  grep -q '^# retired' < <(head -1 "$f") && return 2
+  line="$(awk -v r="$repo" '$1==r { $1=""; sub(/^ /, ""); print; exit }' "$f")"
+  [ -n "$line" ] || return 1
+  printf '%s\n' "$line"
 }
 
 ac_project_dir() {
@@ -2205,7 +2697,8 @@ ac_knowledge_file() {
   # (ac_project_config_file states it). ALWAYS prints, unlike its twin: callers
   # test -f. An exists-only shape forces every WRITER to re-derive the path
   # inline, and a second deriver is exactly what this key argument rules out.
-  # Grammar of the file itself: bin/ac-know.sh, its only sanctioned writer.
+  # Grammar of the file itself: the src/know.ts header (bin/ac-know.sh is its
+  # only sanctioned writer).
   local repo="$1" name
   name="$(ac_project_config_name "$repo")" || return 1
   printf '%s/repo-knowledge/%s.md\n' "$(ac_records_dir)" "$name"
@@ -2273,7 +2766,10 @@ ac_home_resolve() {
   # ac_home_resolve <--home value|''> <repo> - THE fleet-home ladder for the
   # tools a HOMELESS pane runs (ac-know.sh, ac-qa.sh). ONE copy on purpose:
   # the same ladder written twice is how one site gets fixed and the other
-  # stays broken.
+  # stays broken. Its twins in src/lib.ts - homeResolve (the whole ladder,
+  # src/know.ts's) and envHome (rungs 2-3, for the other TypeScript ports) -
+  # are pinned to this function by differential tests (tests/ts/know.test.ts,
+  # tests/ts/lib.test.ts), so a fix here that one misses reddens its test.
   #   1. --home <abs>, guarded below;
   #   2. $AC_HOME tested DIRECTLY - never through ac_home(), which REFUSES
   #      when the variable is unset (and, before it refused, handed back a
@@ -2281,7 +2777,7 @@ ac_home_resolve() {
   #      tests the variable itself;
   #   3. neither - prints NOTHING and returns 0. What "no home" means is the
   #      caller's to decide: ac-know.sh REFUSES outright, every verb alike
-  #      (settle_home, ac-know.sh:339-347 - cmd_verify was the last holdout
+  #      (settleHome, src/know.ts - verify was the last holdout
   #      and lost its own rung 3 too); ac-qa.sh's two verbs answer a homeless
   #      run DIFFERENTLY ON PURPOSE - `start` KEEPS RUNNING, freezing an empty
   #      config (or refusing when a selector was given), while `agent`
@@ -2316,25 +2812,11 @@ ac_home_resolve() {
   ( cd "$AC_HOME" && pwd -P )
 }
 
-ac_project_mode() {
-  # ac_project_mode <project-name> - the registry line's bracket content
-  # (`- <name> [+yolo] - <summary>`), empty when the project has no bracket
-  # or no line. Only `+yolo` means anything any more: DELIVERY MODE IS
-  # PER-TASK and a legacy `[<mode>]` here is
-  # tolerated, ignored content - ac-project-mode.sh owns the read.
-  local name="$1" reg line
-  reg="$(ac_records_dir)/projects.md"
-  [ -f "$reg" ] || { printf '\n'; return 0; }
-  line="$(grep -E "^- $name \[" "$reg" 2>/dev/null | head -n1 || true)"
-  if [ -z "$line" ]; then printf '\n'; return 0; fi
-  printf '%s\n' "$line" | sed -n 's/^- [^[]*\[\([^]]*\)\].*/\1/p'
-}
-
 # --- orphaned shell-snapshot detection: the busy-loop backstop ----------------
 #
 # The incident: a `jobs -p` cleanup that returned EMPTY in the non-interactive
 # `zsh -c` tool shell reaped nothing, orphaning 77 busy loops (ppid=1, ~760%
-# CPU, ~48 min). Layer 0 (tests/helpers.sh) and layer 1 (docs/examples/
+# CPU, ~48 min). Layer 0 (tests/sh/helpers.sh) and layer 1 (docs/examples/
 # CREWMATE.md) prevent it; this is the layer-2 DETECTION backstop, so an
 # accumulation is visible within ONE session-start digest instead of an hour
 # of burned cores. READ-ONLY: it counts and hints, never kills - killing is a
@@ -2415,3 +2897,21 @@ ac_orphan_snapshot_scan() {
   # shellcheck disable=SC2016  # the backticked ps command is hint text, not shell expansion
   printf '  inspect: `ps -A -o pid,ppid,pcpu,command | grep shell-snapshots/snapshot` - kill only orphans you confirm (never auto-killed)\n'
 }
+
+# ac_transcript_final_epoch <transcript.jsonl> - the epoch second of the LAST
+# assistant message's own timestamp, or nothing. Two readers need to ask "was
+# the final message written AFTER <moment>": the pane agent, holding a turn
+# whose fan-out ledger appeared later than the verdict on disk, and ac-verify,
+# refusing a verdict older than the last scout lane. Both must agree on the
+# clock, so both read the message's ISO stamp here rather than a file mtime.
+# src/lib.ts's transcriptFinalEpoch is held to this function
+# (tests/ts/verify-twins.test.ts).
+ac_transcript_final_epoch() {
+  local ts
+  ts="$(jq -rs '[.[] | select(.type == "assistant")] | last | .timestamp // ""' "$1" 2>/dev/null || true)"
+  [ -n "$ts" ] || return 1
+  # A subshell, because ac_bun_exec execs; the stamp's grammar is the
+  # iso-epoch spec in src/pane-agent.ts.
+  ( . "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh" && ac_bun_exec src/pane-agent.ts iso-epoch "$ts" ) 2>/dev/null
+}
+

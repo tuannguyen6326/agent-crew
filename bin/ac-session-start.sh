@@ -12,6 +12,9 @@
 # homes), toolchain doctor, orphaned-shell-snapshot sweep, queued-wake drain
 # + watcher health, clone staleness hints, worktree-pool health hints, fleet
 # view, backlog head, project registry, and the supervision instruction block.
+# The backlog head carries the scheduler report, or its own
+# `WARN   scheduler unavailable` line when ac-ready.sh fails - the same text
+# the wake drain prints, but a read-only digest skips the drain.
 #
 # The orphaned-shell-snapshot sweep (ac_orphan_snapshot_scan) is a read-only
 # host check: it surfaces ppid==1 Claude shell-snapshot processes burning CPU
@@ -31,8 +34,8 @@
 #
 # The per-project qa-infra reap sweep is BOUNDED (default 10s per project;
 # AC_SESSION_QA_TIMEOUT overrides, non-numeric falls back - the same shape as
-# ac-teardown.sh's AC_TEARDOWN_QA_TIMEOUT/qa_infra_timeout, itself the
-# fetch_bounded watchdog at bin/ac-sync.sh:55-75): a wedged docker daemon
+# src/teardown.ts's AC_TEARDOWN_QA_TIMEOUT bound, itself the
+# fetch_bounded watchdog at bin/ac-sync.sh): a wedged docker daemon
 # (`docker ps -a` hangs) is killed on timeout, warned once by project, and
 # the digest continues - session start sweeps EVERY registered project
 # serially, so one wedged daemon must never block the whole fleet digest.
@@ -91,9 +94,42 @@ fi
 
 printf -- '-- session lock --\n'
 read_only=0
+# A SOLO session (AC_SOLO=1) is a second session beside the chief: it rides
+# the read-only rail WITHOUT touching the lock - acquiring would contend the
+# chief's seat, and the drain below would CONSUME the chief's wake records.
+# The digest still runs in full, so the session starts oriented.
+if [ "${AC_SOLO:-}" = 1 ]; then
+  read_only=1
+  cat <<'EOF'
+=================================================================
+== SOLO SESSION (AC_SOLO=1) - not the chief of this fleet.     ==
+== Skipped: session lock, wake-drain, qa reap, config converge.==
+== You code directly, one slice at a time, through             ==
+==   bin/ac-self-task.sh start <id> <project>                  ==
+== Never: spawn crew, steer panes, drain wakes, arm watchers,  ==
+== answer gates - those belong to the chief session.           ==
+=================================================================
+EOF
+fi
+# A SOLO CHIEF (AC_CHIEF_SOLO=1 beside AC_SCOPE) is a roomchief that works its
+# family's slices itself (solo-session skill).
+# Nothing else it loads at start says so, so the digest does; the scoped
+# rail below (no fleet lock, its own spool) is unchanged.
+if [ "${AC_CHIEF_SOLO:-}" = 1 ] && [ -n "${AC_SCOPE:-}" ]; then
+  cat <<EOF
+=================================================================
+== SOLO CHIEF of family ${AC_SCOPE} (AC_CHIEF_SOLO=1).
+== You work this family's slices YOURSELF:
+==   bin/ac-self-task.sh start ${AC_SCOPE}-<slug> <project>
+== then the crew-verify review round (mandatory), land, post
+== LANDED: <slice> to the room, bin/ac-teardown.sh <slice>.
+== Every other roomchief duty binds unchanged; never a subagent.
+=================================================================
+EOF
+fi
 lock_rc=0
-lock_out="$("$bin_dir/ac-lock.sh" acquire 2>&1)" || lock_rc=$?
-[ -n "$lock_out" ] && printf '%s\n' "$lock_out"
+[ "$read_only" -eq 1 ] || lock_out="$("$bin_dir/ac-lock.sh" acquire 2>&1)" || lock_rc=$?
+[ -n "${lock_out:-}" ] && printf '%s\n' "$lock_out"
 if [ "$lock_rc" -eq 2 ]; then
   read_only=1
   cat <<'EOF'
@@ -121,7 +157,17 @@ if ac_is_crewdeputy_home; then
 fi
 
 printf -- '-- toolchain --\n'
-if "$bin_dir/ac-bootstrap.sh" --quiet; then
+# Captured, not just gated on exit code: an INERT:/CHECK-FAILED: line is
+# diagnostic-only (bin/ac-bootstrap.sh never fails rc for one), so on exit
+# 0 the doctor can still have printed a real warning. Streaming its stdout
+# through unconditionally while ALSO printing the all-clear reassurance
+# read as a contradiction - the reassurance now fires only when the doctor
+# said nothing at all.
+tc_rc=0
+tc_out="$("$bin_dir/ac-bootstrap.sh" --quiet)" || tc_rc=$?
+if [ -n "$tc_out" ]; then
+  printf '%s\n' "$tc_out"
+elif [ "$tc_rc" -eq 0 ]; then
   printf '(all required tools present)\n'
 fi
 
@@ -140,7 +186,8 @@ printf -- '-- wakes --\n'
 if [ "$read_only" -eq 1 ]; then
   printf '(read-only: wake-drain skipped - the owning session drains wakes)\n'
 else
-  "$bin_dir/ac-wake-drain.sh"
+  "$bin_dir/ac-wake-drain.sh" \
+    || printf 'WARN: wake drain unavailable (bin/ac-wake-drain.sh failed) - queued wakes are UNKNOWN, not empty; run bin/ac-wake-drain.sh by hand\n'
 fi
 
 # Orphaned qa infra sweep: reap crew-qa docker stacks whose run state is
@@ -160,12 +207,12 @@ session_qa_timeout() {
 
 infra_reap_bounded() {
   # infra_reap_bounded <dir> <secs> <outfile> - one project's `ac-qa.sh infra
-  # reap` under a watchdog (the fetch_bounded shape, bin/ac-sync.sh:55-75):
+  # reap` under a watchdog (the fetch_bounded shape, bin/ac-sync.sh):
   # the child is killed once <secs> elapse (TERM, short grace, KILL).
   # Returns the reap's own status, or 124 on timeout. The docker grandchild
-  # several levels down (ac-qa.sh -> docker ps -a) is orphaned, not reaped -
-  # same as ac-teardown.sh's qa_infra_down_bounded - bounding THIS sweep is
-  # the point, and the orphan is harmless bookkeeping noise on a wedged
+  # several levels down (ac-qa.sh -> docker ps -a) is orphaned, not reaped
+  # (src/teardown.ts's bound ends its child's whole group) - bounding THIS
+  # sweep is the point, and the orphan is harmless bookkeeping noise on a wedged
   # daemon EXCEPT for one thing it must never hold onto: the caller's own
   # fds. The reap pipeline's tail (`grep '^reaped'`) is redirected to
   # <outfile> on fd 1 AND fd 2 goes to /dev/null - NEVER left to inherit
@@ -200,8 +247,8 @@ infra_reap_bounded() {
 if [ "$read_only" -eq 0 ] && command -v docker >/dev/null 2>&1; then
   qa_secs="$(session_qa_timeout)"
   for p in "$(ac_projects_dir)"/*/; do
-    # qa run state lives in the main repo's .crew/qa OR inside pool
-    # worktrees; reap resolves both - gate only on .crew existing.
+    # qa run state lives in the .crew/qa of any worktree of the repo; reap
+    # resolves them all - gate only on .crew existing.
     [ -d "$p/.crew" ] || continue
     # mktemp failing (an unwritable TMPDIR) must degrade this ONE project's
     # reaped-line output, never abort the whole digest under set -e: an
@@ -214,7 +261,7 @@ if [ "$read_only" -eq 0 ] && command -v docker >/dev/null 2>&1; then
       rm -f "$reap_out"
     fi
     if [ "$reap_rc" -eq 124 ]; then
-      ac_warn "infra-reap sweep for $(basename "$p") did not complete (bound ${qa_secs}s) - docker is unusable or hung; reap by hand once fixed: (cd $p && $bin_dir/ac-qa.sh infra reap)"
+      ac_warn "infra-reap sweep for $(basename "$p") did not complete (bound ${qa_secs}s) - docker is unusable or hung; reap by hand once fixed: $(printf '(cd %q && %q infra reap)' "$p" "$bin_dir/ac-qa.sh")"
     fi
   done
 fi
@@ -238,22 +285,31 @@ if [ -n "$stale_lines" ]; then
 fi
 
 # Pool-health ride-along: surface stuck available-dirty worktree-pool slots
-# (AGENTS.md section 6) with the exact reclaim command. Silent when every
+# (task-lifecycle skill) with the exact reclaim command. Silent when every
 # scanned pool is healthy; the script owns the whole block (ac-pool-health.sh).
-"$bin_dir/ac-pool-health.sh"
+# It runs on bun now: a bun that cannot start must not take the digest down,
+# so the block degrades to a line that says the pools are UNKNOWN - never
+# silence, which reads as healthy.
+"$bin_dir/ac-pool-health.sh" \
+  || printf 'WARN: pool health unavailable (bin/ac-pool-health.sh failed) - the worktree pools are UNKNOWN, not healthy; run bin/ac-pool-health.sh by hand\n'
 
 printf -- '-- fleet --\n'
-"$bin_dir/ac-fleet-view.sh"
+# On bun as well; a view that failed must not read as an empty fleet.
+"$bin_dir/ac-fleet-view.sh" \
+  || printf 'WARN: fleet view unavailable (bin/ac-fleet-view.sh failed) - the crew list is UNKNOWN, not empty; run bin/ac-fleet-view.sh by hand\n'
+ac_self_tasks_in_flight
 
 printf -- '-- rooms (captain inbox) --\n'
-"$bin_dir/ac-room.sh" list
+"$bin_dir/ac-room.sh" list \
+  || printf 'WARN rooms: the room set could not be read - the inbox is UNKNOWN, not empty (bin/ac-room.sh list)\n'
 
 records_dir="$(ac_records_dir)"
 printf -- '-- backlog (head) --\n'
 if [ -s "$records_dir/backlog.md" ]; then
   head -n 20 "$records_dir/backlog.md"
   # Scheduler: every READY item to start now, STUCK dependents to escalate.
-  sched="$("$(dirname "$0")/ac-ready.sh" 2>/dev/null || true)"
+  sched="$("$(dirname "$0")/ac-ready.sh" 2>/dev/null \
+    || printf 'WARN   scheduler unavailable: ac-ready.sh exited %s - run it to see why\n' "$?")"
   [ -n "$sched" ] && { printf -- '-- scheduler --\n'; printf '%s\n' "$sched"; }
 else
   printf '(no backlog yet - records/backlog.md)\n'
@@ -271,18 +327,22 @@ fi
 # the signal-only blocks below, this one ALWAYS prints - ABSENT and
 # present-but-empty are different facts and only distinguishable if it does.
 # Read-only (parses the ledger, probes windows), so it is safe in every mode.
+# It runs on bun: a list that failed must not take the digest down, nor read
+# as no deputies.
 printf -- '-- crewdeputies (routing table) --\n'
-"$bin_dir/ac-deputy.sh" list
+"$bin_dir/ac-deputy.sh" list \
+  || printf 'WARN: crewdeputy routing table unavailable (bin/ac-deputy.sh list failed) - the deputies are UNKNOWN, not absent; run bin/ac-deputy.sh list by hand\n'
 
 # The crewdomain routing table, printed UNCONDITIONALLY beside its neighbour and
 # for the same reason - but it carries one duty the deputy block does not: `list`
-# calls the provenance audit, so an UNAUTHORIZED domain-backlog row (one no
-# `assign` stamped) is surfaced at EVERY crewchief session start with no new
-# discipline. Chief-only-add is only as strong as its detection. Read-only, and
-# `ac-domain.sh list` always exits 0 - a digest block may never take session
-# start down.
+# runs the token census, so an ORPHAN-TOKEN (a fleet row naming a domain with no
+# VALID registry line) or an UNREGISTERED package is surfaced at EVERY crewchief
+# session start with no new discipline. Read-only. It runs on bun, and a parse
+# that fails ends it non-zero: a list that failed must not take the digest down,
+# nor read as no domains.
 printf -- '-- crewdomains (routing table) --\n'
-"$bin_dir/ac-domain.sh" list
+"$bin_dir/ac-domain.sh" list \
+  || printf 'WARN: crewdomain routing table unavailable (bin/ac-domain.sh list failed) - the domains are UNKNOWN, not absent; run bin/ac-domain.sh list by hand\n'
 
 # Knowledge layers (L1 repo-knowledge + L2 scenes): the two durable stores a
 # chief reads at intake, reported as COUNTS only. Both are O(1) in entries, and
@@ -298,7 +358,7 @@ if [ -d "$know_dir" ]; then
   for kf in "$know_dir"/*.md; do
     [ -f "$kf" ] || continue
     kname="$(basename "$kf" .md)"
-    kn="$(grep -c '^- fact\|^- scope' "$kf" 2>/dev/null || true)"
+    kn="$(awk '/^## Superseded/ { exit } /^- fact|^- scope/ { n++ } END { print n + 0 }' "$kf" 2>/dev/null || true)"
     kstamp="$AC_HOME/state/.know-verify-$kname.meta"
     if [ ! -f "$kstamp" ]; then
       know_lines="$know_lines
@@ -321,13 +381,16 @@ if [ -f "$alw_file" ]; then
   # computed ONCE by date(1) - deliberately no awk mktime, which BSD awk (this
   # host's) does not have. The full grading with remedies is `ac-learn.sh
   # stale`; the digest's job is to make the rot visible, not to relist it.
+  # The date is spelled digit by digit, never [0-9]{4}: mawk 1.3.4 before its
+  # 20200724 snapshot (the Debian-based node:22.12.0 image ships 1.3.4-20200120)
+  # has no interval expressions.
   alw_cutoff="$(date -u -v-"${alw_days}"d +%F 2>/dev/null || date -u -d "-${alw_days} days" +%F 2>/dev/null)"
   read -r alw_n alw_stale < <(awk -v cutoff="$alw_cutoff" '
-    /^## /       { n++ }
+    /^## / && $0 != "## when to reach for a learned skill" { n++ }
     /^\(learned / {
       line = $0; d = ""
-      if (match(line, /reinforced [0-9]{4}-[0-9]{2}-[0-9]{2}/)) d = substr(line, RSTART + 11, 10)
-      else if (match(line, /learned [0-9]{4}-[0-9]{2}-[0-9]{2}/)) d = substr(line, RSTART + 8, 10)
+      if (match(line, /reinforced [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) d = substr(line, RSTART + 11, 10)
+      else if (match(line, /learned [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) d = substr(line, RSTART + 8, 10)
       if (d != "" && cutoff != "" && d <= cutoff) stale++
     }
     END { print n + 0, stale + 0 }
@@ -393,12 +456,12 @@ if [ "$curate_n" -ge "$curate_x" ]; then
 fi
 
 # An UNSETTLED maintenance transaction refuses every OTHER Learning/Curate
-# transaction (ac_maintenance_incomplete_other), so one crash between the claim
-# and the final `complete` - or one plan whose second action failed - stops the
-# whole knowledge-maintenance loop. It used to do that INVISIBLY: the next
-# learning run warned about a stale receipt and Curate died, neither naming the
-# transaction holding the claim. Silent when the loop is clear, same shape as
-# the two blocks above; READ-ONLY.
+# transaction (maintenanceApply's claim, src/lib.ts), so one crash between the
+# claim and the final `complete` - or one plan whose second action failed -
+# stops the whole knowledge-maintenance loop. It used to do that INVISIBLY: the
+# next learning run warned about a stale receipt and Curate died, neither
+# naming the transaction holding the claim. Silent when the loop is clear, same
+# shape as the two blocks above; READ-ONLY.
 maint_rows="$(ac_maintenance_incomplete "$(ac_state_dir)/.maintenance-transactions" 2>/dev/null || true)"
 if [ -n "$maint_rows" ]; then
   printf -- '-- maintenance --\n'
@@ -416,14 +479,18 @@ fi
 # told. Placed last, right before supervision: this is the block a chief
 # reads on the way OUT of the digest and into work, the exact point the
 # measured failure (straight into the backlog, monitor never re-created)
-# skipped past.
-"$bin_dir/ac-standing-jobs.sh"
+# skipped past. The entry runs on bun now: a bun that cannot start must not
+# take the digest down, so the block degrades to a line that says the jobs
+# are UNKNOWN - never silence, which reads as "nothing declared".
+"$bin_dir/ac-standing-jobs.sh" \
+  || printf 'WARN: standing jobs digest unavailable (bin/ac-standing-jobs.sh failed) - the declared jobs are UNKNOWN, not none; read records/standing-jobs.md by hand\n'
 
 printf -- '-- supervision --\n'
 cat <<'EOF'
 While ANY crewmate is in flight, keep exactly one watcher armed as a
 background task: run `bin/ac-watch.sh` in the background; when it exits it
-prints one reason line (report:<id> | gone:<id> | stale:<id> | heartbeat).
+prints one reason line (the full set is owned by the header of
+src/watch.ts, which bin/ac-watch.sh starts).
 On wake: run bin/ac-wake-drain.sh, handle each wake (peek, steer, teardown,
 escalate to the captain), then re-arm the watcher. Never end a turn with
 crew in flight and no armed watcher - the Stop hook enforces this.

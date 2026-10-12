@@ -1,52 +1,11 @@
 #!/usr/bin/env bash
-# ac-notify.sh - best-effort captain notification (the wedge-alarm surface).
-#
-# Usage: ac-notify.sh <title> <message...>
-#
-# Channel comes from config/wedge-alarm:
-#   off            no notification
-#   auto (default) herdr when it is the configured backend and installed,
-#                  else macOS osascript, else a terminal bell
-#   herdr          herdr notification show <title> --body <message>
-#                  (silent; position applies only to in-herdr toasts)
-#   osascript      macOS notification center
-#   bell           terminal bell on stderr
-#   command:<cmd>  run <cmd> via sh -c with AC_NOTIFY_TITLE/AC_NOTIFY_MESSAGE
-#
-# Notifications are advisory: this script never fails (exit 0 always) and
-# never blocks the watcher on a broken channel.
+# ac-notify.sh - best-effort captain notification over config/wedge-alarm
+# (off, herdr, osascript, bell, command:<cmd>, auto); never fails. The
+# authoritative spec is the header of src/notify.ts, whose notify() the room's
+# post calls in-process; this entry only starts it through bin/ac-bun.sh, so
+# every caller keeps this path. The module is found at <this bin/>/../src
+# physically, so a per-home override bin/ needs a sibling src/.
+set -euo pipefail
 
-set -uo pipefail
-. "$(dirname "$0")/ac-lib.sh"
-
-title="${1:-agent-crew}"
-shift || true
-message="${*:-}"
-
-channel="$(ac_config_read wedge-alarm auto)"
-
-deliver_herdr() { herdr notification show "$title" --body "$message" --sound none --position top-right >/dev/null 2>&1; }
-deliver_osascript() {
-  osascript -e "display notification \"${message//\"/\\\"}\" with title \"${title//\"/\\\"}\"" >/dev/null 2>&1
-}
-deliver_bell() { printf '\a%s: %s\n' "$title" "$message" >&2; }
-
-case "$channel" in
-  off) : ;;
-  herdr) deliver_herdr || deliver_bell ;;
-  osascript) deliver_osascript || deliver_bell ;;
-  bell) deliver_bell ;;
-  command:*)
-    AC_NOTIFY_TITLE="$title" AC_NOTIFY_MESSAGE="$message" \
-      sh -c "${channel#command:}" >/dev/null 2>&1 || deliver_bell ;;
-  *) # auto (and any unknown value degrades to auto)
-    if [ "$(ac_config_read backend herdr)" = "herdr" ] && command -v herdr >/dev/null 2>&1; then
-      deliver_herdr || deliver_bell
-    elif command -v osascript >/dev/null 2>&1; then
-      deliver_osascript || deliver_bell
-    else
-      deliver_bell
-    fi
-    ;;
-esac
-exit 0
+. "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh"
+ac_bun_exec src/notify.ts "$@"

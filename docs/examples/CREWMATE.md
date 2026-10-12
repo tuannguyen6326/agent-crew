@@ -15,6 +15,8 @@ strict test-driven development. Do NOT write implementation before its test.
 
 1. **Red** - write a test that captures the expected behavior (for a bug: a
    test that reproduces it) and run it; confirm it FAILS for the right reason.
+   Take each expected value from the spec or a worked example, never from the
+   code under test - a value it computes itself passes by construction.
 2. **Green** - write the minimal code to make that test pass; run and confirm.
 3. **Refactor** - clean up with the test staying green.
 
@@ -22,6 +24,31 @@ Use the project's own test framework and conventions (read a neighboring
 test first). If the change genuinely has no runtime surface to test, say so
 explicitly instead of skipping silently. The validation pipeline's test step
 is a gate, not a substitute for writing tests as you go.
+
+## A bug fix starts from its root cause, never from its symptom
+
+No fix before you can state the root cause in ONE sentence that cites a
+real artifact - a `file:line`, a stack frame, a log line, a test output.
+"Probably X" is not a root cause, it is a stop sign. A TypeError at line 50
+is a symptom; the null that left line 12 is the cause. Before touching code,
+capture the baseline verbatim (the exact error, test output or
+expected-vs-actual) and reproduce it - the Red step above IS that
+reproduction, and the test must fail without the fix and pass with it.
+When no harness can hold the test, say so with a label the report carries
+(`NO_TEST_HARNESS` plus the manual verification you ran, or
+`LIVE_SYSTEM_REQUIRED` plus the code-path trace with concrete values).
+
+Two failed hypotheses end guessing: instrument the suspected call chain
+(every entry, branch and error catch; log decision VALUES - ids, flags,
+lengths - never "got here"), run it, read the run in order, and form the
+next hypothesis from what you observed. Instrumentation lands in the same
+diff, downgraded to debug level, never stripped. Three iterations with no
+progress signal (no test flipping, no new distinct error) is a hard stop:
+hand the trail back with `needs-decision:` instead of a fourth guess.
+
+A fix closes the CLASS, not the instance: the report names the class, the
+regression test that pins it, and any guard at the boundary the bad value
+crossed. A fix that reaches past five files asks the chief first.
 
 ## Do not over-engineer
 
@@ -134,9 +161,20 @@ HARD RULE - host-impact preflight (any load-generating run):
   a trap cannot reap what SIGKILL removed).
 - Run the load under `nice` so real work outruns the load you manufacture.
 
-Do not re-derive any of this: `tests/helpers.sh` (the `load_hogs`/`reap_hogs`
+Do not re-derive any of this: `tests/sh/helpers.sh` (the `load_hogs`/`reap_hogs`
 harness) is the landed, sanctioned implementation - copy it, and read its
 header for the measurements behind each layer.
+
+## Listeners bind inside your port slot
+
+Your worktree carries `.crew/ports.env`: a fleet-wide slot and the port
+range it owns (`AC_PORT_RANGE`, `PORT` is its first port). Every server,
+mock or tunnel you start binds inside that range - a sibling crewmate on
+this host owns the default ports as much as you do, and two dev servers on
+one port fail in ways that look like your bug. Load the file before you
+serve anything (`. .crew/ports.env`); a project whose config cannot take a
+port from the environment is a `needs-decision:`, not a reason to bind the
+default.
 
 ## Use what the project provides
 
@@ -171,6 +209,10 @@ entry without provenance is refused, and the refusal names what is missing.
 
 ## Lessons - end every report with them
 
+Every crewmate owes this report, ship/execution included: it lands at
+`<task_dir>/report.md` next to your brief, and for an execution crewmate
+`## Lessons` is its only required section.
+
 End every task report with a `## Lessons` section: one line per durable
 lesson, in YOUR OWN words, first-hand - what you would tell the next crewmate
 before it repeats your path. No lessons => the section says `none`, so the
@@ -199,6 +241,8 @@ moment you print a `done:`, `blocked:`, `needs-decision:` or `failed:` line
 (`bin/ac-done.sh <id> '<the exact line you printed>'`) - it wakes your chief in
 milliseconds. Both channels carry the same completion and it still wakes the
 chief exactly once, so never drop the printed line either.
+
+Before ending a turn to wait on your own background work (a shell, monitor, pipeline or long command you started), print and push a `paused:` line naming the job and what ends it.
 
 Keep marker verbs out of prose. Never write a bare AC_CAPTAIN_RE marker verb
 immediately followed by a colon inside narrative text: drop the colon (e.g.

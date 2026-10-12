@@ -266,7 +266,7 @@ terminal_ids="$(
   } | awk '/^- \[x\] /{print $3}'
 )"
 # OPEN backlog ids (In flight / Queued), read from backlog.md ONLY - this is
-# what a real reopen produces (AGENTS.md section 9: spawn moves an item to In
+# what a real reopen produces (docs/backlog.md: spawn moves an item to In
 # flight) and it must win over a stale Done line: a family closed, landed,
 # and later reopened still has its old Done line, possibly already migrated
 # to backlog-archive.md, which a chief can never move back out of. Without

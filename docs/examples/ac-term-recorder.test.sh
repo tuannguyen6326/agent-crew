@@ -19,9 +19,9 @@
 # Fail-closed sourcing: unsourced, errexit is never armed and $AC_HOME is the
 # operator's REAL fleet home - abort instead. This file moved out of tests/
 # (repo-deep-review F37, the incident it existed for is closed) so
-# helpers.sh is a sibling of its OLD location, not this one.
-. "$(dirname "$0")/../../tests/helpers.sh" \
-  || { printf 'run this from docs/examples/ (tests/helpers.sh not found)\n' >&2; exit 1; }
+# helpers.sh is no longer its sibling.
+. "$(dirname "$0")/../../tests/sh/helpers.sh" \
+  || { printf 'run this from docs/examples/ (tests/sh/helpers.sh not found)\n' >&2; exit 1; }
 
 make_home
 

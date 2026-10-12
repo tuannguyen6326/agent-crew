@@ -31,7 +31,7 @@ Mark each step `running` -> `completed|skipped|failed` as you go
 transitions: `baseline` and `serve` are recorded by their own commands,
 which publish the proof the pass gate reads, and a direct completion of
 either refuses.
-THE POLICY THIS RUN OBEYS (`bin/ac-qa.sh`'s BOUNDARY
+THE POLICY THIS RUN OBEYS (`src/qa.ts`'s BOUNDARY
 POLICY block is the spec): QA evidence comes only from the client-facing,
 API, integration, E2E, and database boundaries of the BOOTED deliverable;
 QA never executes, re-runs, or counts unit tests for this round; a passing
@@ -49,7 +49,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
    the handoff into `<run>/profile/`. Verify from a clean context: a fresh pool
    worktree detached at the target commit, never the implementer's tree;
    `git status` stays clean the whole way.
-   `start` ENFORCES this (TARGET-CHECKOUT BINDING, `bin/ac-qa.sh` header):
+   `start` ENFORCES this (TARGET-CHECKOUT BINDING, `src/qa.ts` header):
    it refuses unless the worktree's HEAD IS `--target` with a clean tracked
    tree, and `finish passed` re-proves it before minting the pass - so the
    attestation can never key a commit the run did not exercise.
@@ -64,7 +64,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
    refuses by name if you omit either, or name one that does not exist, and
    it never falls back to a repo-level value - so a refusal here is the
    mechanism working, not a workaround to route around. The contract and the
-   full refusal chain live in `bin/ac-qa.sh`'s SCOPED CONFIG header block.
+   full refusal chain live in `src/qa.ts`'s SCOPED CONFIG header block.
    RESOLVED PROFILE (normal execution): a fresh verifier never discovers or
    drafts config itself. `ac-qa.sh agent`'s PROFILE RESOLVE preflight
    compiles, validates, and freezes the profile from the two durable
@@ -118,8 +118,8 @@ is a ledger row + finding, never a reason to stop verifying the rest.
      persisted`. Needs no backend? Say that: `- (none) - <why>`.
    - `rw` marks state effects: `ro` (read-only/idempotent - safe to run
      CONCURRENTLY) vs `rw` (mutates DB/mocks/service state - sequential).
-   - PARALLELISM, resolve-then-record: `ac-qa.sh infra up` now boots the
-     block you declared, so it can no longer start before it. Resolve the
+   - PARALLELISM, resolve-then-record: `ac-qa.sh infra up` boots the
+     block you declared, so it cannot start before it. Resolve the
      services FIRST, write the small `## Infra` block, kick `infra up` off
      as a BACKGROUND task, THEN write the case rows while images pull -
      the rows are the slow half, so the overlap survives. Baseline is a
@@ -152,7 +152,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
      noisier failures. Declaring it because the stack usually has one is
      the evasion this gate exists to kill; if you cannot name the case
      that needs it, it is not needed. The declaration is what `infra up`
-     boots, and `bin/ac-qa.sh`'s header owns the containment rule that
+     boots, and `src/qa.ts`'s header owns the containment rule that
      makes it stick.
    - The plan is the record: any case you execute is in the plan first.
    - Case ids are greppable test titles (`TC-<n>-<slug>`) so api/db cases
@@ -297,16 +297,14 @@ is a ledger row + finding, never a reason to stop verifying the rest.
    - VISUAL FLOOR - every run owes >=1 portable visual artifact, whatever
      its tiers. `web` is not the only tier that owes a picture: an
      all-api/db run SCREENSHOTS ITS TEST REPORT (the Playwright HTML
-     report, the suite summary) and registers that. On the run that made
-     this rule, the report screenshot was the single most convincing
-     artifact - and the captain had to ask for it.
+     report, the suite summary) and registers that.
      The floor is MECHANICAL, not etiquette: `ac-qa.sh visual <path>
      [--case <id>] [--note <text>]` admits an artifact only if its MAGIC
      BYTES say png/jpeg/gif/webp (a renamed text file is refused), and
      `finish passed` REFUSES with none on record - it re-reads every
      registered file, so an artifact you deleted stops counting. Register
      as you capture: `step evidence completed` refuses without one too,
-     while the live stack can still produce it. `bin/ac-qa.sh`'s header
+     while the live stack can still produce it. `src/qa.ts`'s header
      owns this contract. The per-web-case screenshot rule of step 6 still
      stands on top of it - one picture per run is the FLOOR, not the goal.
    - SECRET SCRUB - scrub before anything enters evidence (raw serve/infra
@@ -343,7 +341,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
    the disputed variable and DECLARES it in two header lines,
    `# DISPUTED: <the one variable>` and `# HELD-CONSTANT: <everything the
    two legs share, named>`; pass it as `--repro <path>` - `case` refuses a
-   missing, non-executable, or header-less one. `bin/ac-qa.sh`'s
+   missing, non-executable, or header-less one. `src/qa.ts`'s
    FINDING AUTHORITY header owns the contract; comparing the headers
    against the script body is a reader's job (adversarial checklist).
    Re-post a decided `ask-user` finding through the same findings command with
@@ -369,7 +367,13 @@ is a ledger row + finding, never a reason to stop verifying the rest.
     `harness-classify`: `repo-regression`, `e2e-regression`, `fixture-pack`,
     `evidence-only`, or `retire`. Reusable common setup belongs in one fixture
     pack with reviewed selectors; a read-write selector must declare and
-    implement idempotent retry behavior. Record the result with
+    implement idempotent retry behavior. Then run
+    `ac-qa.sh store-curate --candidate <candidate-dir>`: it appends this
+    run's case rows to the candidate store's `history.tsv` and PROMOTES by
+    machine every case that passed three consecutive runs with the same
+    body into `cases/` (re-stamping `verified:` on store cases that passed
+    again) - your own judgment still owns retirement and guide corrections.
+    Record the result with
     `ac-qa.sh curation completed`, or `skipped|failed --note '<reason>'`.
     Curation is non-gating. The chief may later install a reviewed candidate
     with `store-install`, whose base-manifest check refuses concurrent
@@ -413,5 +417,5 @@ is a ledger row + finding, never a reason to stop verifying the rest.
   NOT post to the PR, the room, or the captain, and you do NOT merge -
   staying off those surfaces is part of your independence. The caller that
   invoked you carries your report outward under the RELAY CONTRACT, which
-  `bin/ac-qa.sh`'s header owns and `ac-qa.sh relay-report` renders.
+  `src/qa.ts`'s header owns and `ac-qa.sh relay-report` renders.
 - Read `references/gotchas.md` before the infra/serve phases.

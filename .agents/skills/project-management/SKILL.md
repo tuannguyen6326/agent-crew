@@ -1,12 +1,12 @@
 ---
 name: project-management
-description: Crewchief fleet-level project lifecycle judgment - add, clone, create, initialize, change the +yolo posture of, retire, or remove a project registered in records/projects.md. Load before any such lifecycle action. Removal is destructive and always requires explicit captain confirmation after the exact target and its unlanded-work preflight are resolved. Does not own per-task delivery-mode triage (AGENTS.md section 4) or CrewDeputy home clones (CrewDeputy provisioning and convergence own them).
+description: Crewchief fleet-level project lifecycle judgment - add, clone, create, initialize, change the +yolo posture of, retire, or remove a project registered in records/projects.md. Load before any such lifecycle action. Removal is destructive and always requires explicit captain confirmation after the exact target and its unlanded-work preflight are resolved. Does not own per-task delivery-mode triage (the intake-triage skill) or CrewDeputy home clones (CrewDeputy provisioning and convergence own them).
 ---
 
 # project-management
 
 Judgment for the fleet-level lifecycle of a registered project: add, clone, create, initialize, change the `+yolo` posture of, retire, or remove it.
-The registry format, the parser, and every command belong to `records/projects.md` and the `bin/ac-project-mode.sh` header; this skill owns only the lifecycle judgment and its consent and destructive-action boundaries.
+The registry format, the parser, and every command belong to `records/projects.md` and the `src/project-mode.ts` header (the `bin/ac-project-mode.sh` entry execs it); this skill owns only the lifecycle judgment and its consent and destructive-action boundaries.
 
 ## When to load - and what this skill does NOT own
 
@@ -14,18 +14,18 @@ Load before adding, cloning, creating, initializing, changing the `+yolo` postur
 
 Out of scope - keep these with their owners:
 
-- delivery-mode choice entirely: mode is PER-TASK - the row's contract pin / `--mode` at intake, `AGENTS.md` sections 4-5; the registry answers `+yolo` only;
+- delivery-mode choice entirely: mode is PER-TASK - the row's contract pin / `--mode` at intake, the `intake-triage` skill; the registry answers `+yolo` only;
 - CrewDeputy home clones stay part of CrewDeputy provisioning and convergence (`bin/ac-home-seed.sh`, `bin/ac-spawn.sh --crewdeputy`), not this skill's lifecycle judgment.
 
 ## Prime directive still binds
 
 Loading this skill never widens your authority over `projects/`.
-You stay read-only over `projects/` except the sanctioned writes (`git fetch`, `bin/ac-tree.sh` pool operations, `bin/ac-merge-local.sh` fast-forwards, teardown branch deletion).
+You stay read-only over `projects/` except the sanctioned writes section 1 lists.
 You never edit project files, run project builds, or commit project work - that is delegated to a crewmate.
 
 ## Add and clone
 
-`records/projects.md` and the `bin/ac-project-mode.sh` header remain the authoritative registry format and parser contract.
+`records/projects.md` and the `src/project-mode.ts` header (behind the `bin/ac-project-mode.sh` entry) remain the authoritative registry format and parser contract.
 Before adding a project, resolve: the source or creation intent; the unused local name and destination; the `+yolo` posture only when explicitly requested; and whether the repo carries an origin remote (a remoteless repo can only ever take `local-only` tasks).
 
 - Clone existing projects into `projects/<name>` only after confirming the destination is unused.

@@ -1,22 +1,23 @@
 ---
 name: ac-brain
-description: Query and maintain the per-home memory engine - recall (hybrid search over the home's records with citations and trust labels), remember/forget working-memory facts with provenance, entity cards, context_pack for session rehydrate, delta for cheap wakes, links-to reverse lookups, sync, doctor, and the one expensive synthesize verb. Use when hunting fleet context the tier reads did not answer, before minting a family (create_safety), on wakes, after compaction, or to record a durable session fact. Additive tool - the section-5 knowledge law is unchanged.
+description: Query and maintain the per-home memory engine - recall (hybrid search over the home's records with citations and trust labels), remember/forget working-memory facts with provenance, entity cards, context_pack for session rehydrate, delta for cheap wakes, links-to reverse lookups, sync, doctor, and the one expensive synthesize verb. Use when hunting fleet context the tier reads did not answer, before minting a family (create_safety), on wakes, after compaction, or to record a durable session fact. Additive tool - the intake-triage knowledge-read law is unchanged.
 ---
 
 # ac-brain
 
 The per-home memory engine: an index over what this home has already written, plus a small working-memory facts store.
-`bin/ac-brain-engine.ts`'s header is the authoritative spec; `bin/ac-brain.sh` is the CLI; every verb prints one JSON value.
-POSTURE: this is an AVAILABLE TOOL - the section-5 intake law (tier-ranked `ac-know recall` reads, cites, heat) is unchanged and stays first; reach here when those reads return empty or the question spans history they do not cover.
+`src/brain.ts`'s header is the authoritative spec; `bin/ac-brain.sh` is the CLI; every verb prints one JSON value.
+POSTURE: this is an AVAILABLE TOOL - the `intake-triage` skill's intake law (tier-ranked `ac-know recall` reads, cites, heat) is unchanged and stays first; reach here when those reads return empty or the question spans history they do not cover.
 
 ## When to reach for it
 
 - Intake, after the law's tier reads: `ac-brain.sh recall --query '<the order's question>'` - a hit is CITED into the brief under `## Inputs` (path + quote) exactly like a knowledge hit; state its absence otherwise.
 - Before minting a family or backlog row: read `create_safety` on the recall response - `exists`/`probable` means fold into the prior family instead of opening a twin.
-- On a wake: `ac-brain.sh delta --agent <your-id> --session <room-or-session>` returns only what changed since your last wake (at-least-once, never repeats a delivered item).
+- On a wake: your wake-drain already prints `brain-delta:` - the pages and facts that changed since your last look, on your own cursor (`crewchief`/`chief` for the fleet chief, `<fam>-chief`/`<fam>` for a roomchief); `ac-brain.sh delta --agent <your-id> --session <room-or-session>` replays that cursor by hand (at-least-once, never repeats a delivered item).
 - After compaction or a fresh session: `ac-brain.sh context_pack --entities <family,...> --budget-tokens <n>`.
 - A durable session fact worth keeping but below the ledger bar: `ac-brain.sh remember '<fact>' --provenance '<source>' --agent <pane-id> [--entity <slug>] [--kind commitment|belief|preference|event|fact] [--ttl 30d]`.
 - Reverse lookup: `ac-brain.sh links-to <repo path or slug fragment>` - "which families touched this file".
+- Already done for you on every prompt: a human-driven session (solo, or a chief at the fleet home) gets `bin/ac-prompt-recall.sh`'s block before the model reads the prompt - top hits with path, trust label and snippet, plus the brain's freshness (STALE fires the catch-up sync). It is a pointer, not a read: open the path before citing it, and reach for `recall` yourself when the prompt was too short or too vague to have matched (valve: `config/brain-prompt-recall=off`).
 
 ## Boundaries that bind every caller
 
@@ -30,4 +31,4 @@ POSTURE: this is an AVAILABLE TOOL - the section-5 intake law (tier-ranked `ac-k
 ## Health
 
 `ac-brain.sh doctor` (exit 1 only on fail) and `ac-brain.sh stats`; `sync --break-lease` clears a dead holder only.
-The usage log (`state/brain-usage.jsonl`) is home-local evidence for later demand-signal work - never uploaded, never trimmed by hand. Every line carries `by` (who asked): an explicit `--by` wins, else `AC_SCOPE` attributes to `<fam>-chief`, else the unscoped default `crewchief`.
+The usage log (`state/brain-usage.jsonl`) is home-local evidence for later demand-signal work - never uploaded, never trimmed by hand. Every line carries `by` (who asked): an explicit `--by` wins, else `AC_SOLO=1` attributes to `solo`, else `AC_SCOPE` attributes to `<fam>-chief`, else the unscoped default `crewchief`.
