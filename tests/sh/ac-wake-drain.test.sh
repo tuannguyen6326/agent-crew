@@ -1545,4 +1545,27 @@ assert_contains "$(cat "$TMP/h2.raw")" "no queued wakes" "row 13: the second shi
 wd_held "$WD_OBIN"
 assert_eq "$(cat "$TMP/h1.raw" "$TMP/h2.raw" | grep -c '^report h')" "4" "row 13: W8 - the original steals the live TS claim and re-emits"
 
+# 14. THE CLOSED READER (named): stdout a pipe whose reader is gone. The
+#     original lost only its rendering subshell, removed the claim and exited
+#     0 - the record consumed unseen; the port ends at the write, 141, the
+#     record kept in its claim, and the next drain's sweep emits it.
+both fresh
+both rec fam 1.1.000001 '1\treport\tfam-r1\tdone: unread\n'
+WD_ENV=(AC_SCOPE=fam)
+WD_WRAP='exec python3 -c "import os, signal, sys
+r, w = os.pipe(); os.close(r); os.dup2(w, 1); os.close(w)
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+os.execv(sys.argv[1], sys.argv[1:])" "$2"'
+wd_pair; WD_WRAP=""
+assert_eq "$O_RC $N_RC" "0 141" "row 14: the original exits 0, the port 141"
+assert_eq "$(cat "$TMP/o.err2" "$TMP/n.err2")" "" "row 14: neither side says anything"
+wd_snap "$OH" | wd_norm "$OH" >"$TMP/o.snap"; wd_snap "$NH" | wd_norm "$NH" >"$TMP/n.snap"
+case "$(cat "$TMP/o.snap")" in *draining*|*unread*) fail "row 14: the original consumed the record" ;; esac
+assert_contains "$(cat "$TMP/n.snap")" "== .wake-spool-draining.PID/1.1.000001
+1	report	fam-r1	done: unread" "row 14: the port keeps the record in its claim"
+wd_pair
+assert_eq "$(cat "$TMP/o.raw")" "no queued wakes" "row 14: the original's next drain has nothing"
+assert_eq "$(nout)" "report fam-r1 done: unread" "row 14: the port's next drain emits the kept record"
+WD_ENV=()
+
 pass

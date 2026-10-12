@@ -274,7 +274,7 @@ run_side() {  # run_side <bin> <side root> <prefix> <args...> - HOME in an arg o
   [ "$NOHOMEVAR" = 1 ] || e+=(HOME="$h/u")
   for x in ${GH_ENV[@]+"${GH_ENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//HOME/$h}"); done
   for x in "$@"; do a+=("${x//HOME/$h}"); done
-  (cd "$h/${GH_CWD:-}" && env -u AC_HOME -u HOME -u CDPATH "${e[@]}" "$bin/ac-github.sh" ${a[@]+"${a[@]}"}) <"${GH_STDIN:-/dev/null}" >"$TMP/$p.raw" 2>"$TMP/$p.err"
+  (cd "$h/${GH_CWD:-}" && { [ -z "${GH_GONE:-}" ] || { mkdir gone && cd gone && rmdir "$PWD"; }; } && env -u AC_HOME -u HOME -u CDPATH "${e[@]}" "$bin/ac-github.sh" ${a[@]+"${a[@]}"}) <"${GH_STDIN:-/dev/null}" >"$TMP/$p.raw" 2>"$TMP/$p.err"
 }
 norm() { LC_ALL=C sed -e "s#$2#HOME#g" "$1"; }
 snap() {  # snap <side root> - every store and spool entry under its state/, byte order: name, mode, bytes
@@ -686,6 +686,22 @@ bsdir() { mkdir -p "$H/cw\\"; }
 both bsdir
 GH_CWD='cw\' same poll --repo ../repo
 assert_contains "$(cat "$TMP/n.log")" "cwd=HOME/repo" "row 17: gh ran in the caller's ../repo"
+#     A caller cwd that has no name (removed under it) holds nothing: a
+#     relative --repo is no git repo, even when the shim's root is one whose
+#     origin gh would answer for (the shim's own cd adds a getcwd line, so
+#     stderr is asserted by hand)
+lab="$TMP/lab17"
+mkdir -p "$lab/bin"; cp "$BIN"/*.sh "$lab/bin/"; ln -s "$ROOT/src" "$lab/src"
+git init -q -b main "$lab"; git -C "$lab" remote add origin https://github.com/distro/self.git
+both resync
+ERR=own GH_GONE=1 BIN="$lab/bin" same poll --repo .
+assert_eq "$SAME_RC" 1 "row 17: poll from a nameless cwd"
+assert_contains "$(shim_err)" "ERROR: not a git repo: ." "row 17: poll refuses"
+assert_contains "$(oracle_err)" "ERROR: not a git repo: ." "row 17: as the original did"
+ERR=own GH_GONE=1 BIN="$lab/bin" same comment --repo . --pr 5 --body verdict
+assert_eq "$SAME_RC" 1 "row 17: comment from a nameless cwd"
+assert_contains "$(shim_err)" "ERROR: not a git repo: ." "row 17: comment refuses"
+assert_eq "$(cat "$NH/gh/log")" "" "row 17: gh never ran"
 
 # 18. named divergences of cd's grammar, the origin's bytes, the PATH search
 #     and the capture: each side asserted by hand

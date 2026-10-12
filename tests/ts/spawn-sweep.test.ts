@@ -6,7 +6,7 @@
 // bash ran it. Each case runs in a bun child whose environment /bin/sh built,
 // so X holds the raw byte 0xE9.
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, symlinkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, linkSync, symlinkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
@@ -17,9 +17,18 @@ afterAll(() => rmSync(W, { recursive: true, force: true }));
 
 const BIN = join(W, "bin");
 mkdirSync(BIN);
-writeFileSync(join(BIN, "noshe"), 'echo "$0|$*|${BASH_VERSION:+bash}"; exit 3\n');
+writeFileSync(join(BIN, "noshe"), 'echo "$0|$*|$BASH"; exit 3\n');
 chmodSync(join(BIN, "noshe"), 0o755);
-const RAN = `3 ${BIN}/noshe|a 1 b2|bash`;
+const RAN = `3 ${BIN}/noshe|a 1 b2|/bin/bash`;
+
+// env(1) reads an operand holding `=` as an assignment, wherever it stands.
+const EQ = join(W, "a=b");
+mkdirSync(EQ);
+writeFileSync(join(EQ, "tool"), '#!/bin/sh\necho "ran $0 $*"\n');
+chmodSync(join(EQ, "tool"), 0o755);
+copyFileSync(join(BIN, "noshe"), join(EQ, "noshe"));
+chmodSync(join(EQ, "noshe"), 0o755);
+writeFileSync(join(W, "noexec"), "#!/bin/sh\necho ran\n");
 
 // Off the child's starting PATH, so reaching them takes a process.env change.
 const BAD = join(W, "bad");
@@ -46,11 +55,11 @@ const E9 = "61 e9 62";
 const squeeze = (s: string): string[] => s.split("\n").map((l) => l.trim().replace(/[ \t]+/g, " ")).filter((l) => l !== "");
 
 let n = 0;
-function child(body: string): string[] {
+function child(body: string, bun = process.execPath): string[] {
   const script = join(W, `c${n++}.ts`);
   writeFileSync(script, `import * as L from ${JSON.stringify(LIB)};\nconst say = (s: string): void => void process.stdout.write(s + "\\n");\n${body}\n`);
   const r = Bun.spawnSync(
-    ["/bin/sh", "-c", `X="$(printf 'a\\351b')" BUN_SWEEP_PIN=1 PATH="$1:$PATH" exec "$2" --no-env-file "$3"`, "sh", BIN, process.execPath, script],
+    ["/bin/sh", "-c", `X="$(printf 'a\\351b')" BUN_SWEEP_PIN=1 PATH="$1:$PATH" exec "$2" --no-env-file "$3"`, "sh", BIN, bun, script],
     { cwd: W, stdout: "pipe", stderr: "pipe" },
   );
   expect(r.stderr.toString()).toBe("");
@@ -72,6 +81,49 @@ const p = L.spawnShell(["noshe", "a 1", "b2"], { stdout: "pipe" });
 const text = await new Response(p.stdout).text();
 say(\`\${await p.exited} \${text.trim()}\`);`);
   expect(out).toEqual([RAN]);
+}, 20000);
+
+test("with a name changed, a shebang-less executable still runs under /bin/bash", () => {
+  const out = child(`
+process.env.SWEEP_SET = "on";
+for (const a0 of ["noshe", ${JSON.stringify(join(BIN, "noshe"))}]) {
+  const r = L.spawnShellSync([a0, "a 1", "b2"], { stdout: "pipe" });
+  say(\`\${r.exitCode} \${r.stdout.toString().trim()}\`);
+  const p = L.spawnShell([a0, "a 1", "b2"], { stdout: "pipe" });
+  const text = await new Response(p.stdout).text();
+  say(\`\${await p.exited} \${text.trim()}\`);
+}`);
+  expect(out).toEqual([RAN, RAN, RAN, RAN]);
+}, 20000);
+
+test("with a name changed, a command whose path holds = is still the command", () => {
+  const out = child(`
+process.env.SWEEP_SET = "on";
+for (const a0 of [${JSON.stringify(join(EQ, "tool"))}, ${JSON.stringify(join(EQ, "noshe"))}]) {
+  const r = L.spawnShellSync([a0, "a 1"], { stdout: "pipe" });
+  say(\`\${r.exitCode} \${r.stdout.toString().trim()}\`);
+  const p = L.spawnShell([a0, "a 1"], { stdout: "pipe" });
+  const text = await new Response(p.stdout).text();
+  say(\`\${await p.exited} \${text.trim()}\`);
+}`);
+  const tool = `0 ran ${EQ}/tool a 1`;
+  const noshe = `3 ${EQ}/noshe|a 1|/bin/bash`;
+  expect(out).toEqual([tool, tool, noshe, noshe]);
+}, 20000);
+
+// The shell's 126, which a caller reads off EACCES, never hangs on whether an
+// unrelated name changed.
+test("an existing command that cannot be executed throws EACCES, with or without a name changed", () => {
+  const out = child(`
+const code = (f: () => unknown): string => { try { f(); return "ran"; } catch (e) { return (e as { code?: string }).code ?? "?"; } };
+for (const set of [false, true]) {
+  if (set) process.env.SWEEP_SET = "on";
+  for (const [a0, cwd] of [[${JSON.stringify(join(W, "noexec"))}, undefined], ["../noexec", ${JSON.stringify(BIN)}], [${JSON.stringify(BIN)}, undefined]] as const) {
+    say(code(() => L.spawnShellSync([a0], { cwd, stdout: "pipe" })));
+    say(code(() => L.spawnShell([a0], { cwd, stdout: "pipe" })));
+  }
+}`);
+  expect(out).toEqual(Array(12).fill("EACCES"));
 }, 20000);
 
 test("a byte-valued variable reaches the child unchanged through both helpers", () => {
@@ -141,6 +193,23 @@ const c = L.bunChild(${JSON.stringify(relative(ROOT, fixture))}, []);
 say(Object.keys(c).join(","));
 say(Bun.spawnSync(c.cmd, { cwd: c.cwd, stdout: "pipe" }).stdout.toString());`);
   expect(out).toEqual(["cmd,cwd", "unset", E9]);
+}, 20000);
+
+test("bunChild's command runs a bun whose path holds =", () => {
+  const bun = join(EQ, "bun");
+  try {
+    linkSync(process.execPath, bun);
+  } catch {
+    copyFileSync(process.execPath, bun);
+    chmodSync(bun, 0o755);
+  }
+  const fixture = join(W, "fixture-eq.ts");
+  writeFileSync(fixture, `console.log(process.argv.slice(2).join("|"));\n`);
+  const out = child(`
+const c = L.bunChild(${JSON.stringify(relative(ROOT, fixture))}, ["a 1"]);
+const r = Bun.spawnSync(c.cmd, { cwd: c.cwd, stdout: "pipe", stderr: "pipe" });
+say(\`\${r.exitCode} \${r.stdout.toString().trim()}\`);`, bun);
+  expect(out).toEqual(["0 |a 1"]);
 }, 20000);
 
 test("every src/ spawn goes through lib.ts's helpers, none passes an env object", () => {

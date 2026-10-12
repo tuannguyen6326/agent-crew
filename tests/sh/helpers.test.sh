@@ -639,6 +639,15 @@ out="$(cd "$host3" && PATH=":$TMP/no-host-backend::$PATH" bash -c '. "$1/tests/s
   echo ran' _ "$ROOT" 2>/dev/null)" || true
 assert_eq "$out" "ran" "an empty PATH entry finds no gh in the cwd"
 assert_eq "$(cat "$host3/calls" 2>/dev/null || true)" "" "the cwd's gh answers no test"
+# A relative entry is the cwd's too, at each lookup: a suite that cd's into
+# the dir holding gh would reach it through `.`.
+out="$(cd "$TMP" && PATH=".:$TMP/no-host-backend:$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
+  cd "$2"
+  command -v gh >/dev/null 2>&1 && echo gh-found
+  gh auth token >/dev/null 2>&1
+  echo ran' _ "$ROOT" "$host3" 2>/dev/null)" || true
+assert_eq "$out" "ran" "a relative PATH entry finds no gh in a dir the suite cd's into"
+assert_eq "$(cat "$host3/calls" 2>/dev/null || true)" "" "that dir's gh answers no test"
 
 # --- 19. a value the code sets for its children is never inherited -----------
 

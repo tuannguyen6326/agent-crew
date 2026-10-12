@@ -299,6 +299,12 @@ xsame t
 XENV=()
 assert_eq "$(tail -n 1 "$XNH/home/records/task-tokens.tsv")" "$(printf '2026-01-01T00:00:00Z\tt\tship\tclaude\tunknown: no transcript for session %s\t\t\t\t' "$XSID")" "2 (TOKEN LEDGER, named): a session whose transcript is gone is unknown"
 assert_eq "$(git -C "$XNH/r" branch --list crew/t)" "" "2: ...and the merged branch is dropped"
+x2tdot() { x2tk; mkdir -p "$H/tx/.trash"; cp "$H/tx/-w/$XSID.jsonl" "$H/tx/.trash/"; }
+XENV=("AC_CLAUDE_TRANSCRIPT_ROOT=@H/tx")
+xboth x2tdot
+xsame t
+XENV=()
+assert_eq "$(tail -n 2 "$XNH/home/records/task-tokens.tsv")" "$(printf '2026-01-01T00:00:00Z\tt\tship\tclaude\tclaude-haiku-5-5\t1\t2\t3\t4\n2026-01-01T00:00:00Z\tt\tship\tclaude\tclaude-opus-5-5\t3\t20\t100\t9')" "2 (TOKEN LEDGER): a copy under a dot dir is no second transcript, as <root>/*/<sid>.jsonl reads it"
 x2c() { x2; xorigin r; x2br; git -C "$H/r" push -q origin crew/t:main 2>/dev/null; git -C "$H/r" fetch -q origin; }
 xboth x2c
 xsame t

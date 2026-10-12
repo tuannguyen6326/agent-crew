@@ -206,6 +206,12 @@ for want in "$(printf '   ? %-22s %-4s %-13s %s' c3 web unverifiable 'grade ')" 
 done
 assert_contains "$(xout)" "   ✓ cé$(printf '%19s' '') api  pass          " "row 2: QW8 - a multibyte id is padded by bytes"
 case "$(xout)" in *" c1 "*|*" c2 "*) fail "row 2: only the last 8 rows show" ;; esac
+# A NUL ends its row where awk's record ended, the later fields with it.
+w_nulcases() { w_qa passed; printf 'c1\tapi\tpass\0x\tx\tA\nc2\tdb\tfail\tx\tx\t-\n' >"$XRD/cases.tsv"; }
+xsame w_nulcases ac-qa-watch.sh --once
+assert_contains "$(xout)" " 1 pass  1 fail  0 unverifiable
+$(printf '   ✓ %-22s %-4s %-13s %s' c1 api pass 'grade ')
+" "row 2: a NUL cuts its case row"
 # TOOL-OWN, named: a non-empty ledger that cannot be read - the original's
 # three awks and its tail said so on stderr; both count 0 and list no row.
 if [ "$(id -u)" != 0 ]; then

@@ -205,7 +205,12 @@
 // reached - the qa error report, the temps, the busy hold, the pane-phase reap
 // when a meta exists, the lease return in the lease phases, the lock - and end
 // the run 128+<signal>. The pane agent, the correction pane, the harvester and
-// the lock wait are awaited, so a signal acts at once there; elsewhere it is
+// the lock wait are awaited, so a signal acts at once there - but an INT in
+// the lock wait's or the start window's foreground sleep is held as bash's
+// wait-and-cooperative-exit held it: dropped once the sleep ends, the round
+// running on, unless a child died of it too - a ^C, which ends the round 130,
+// the EXIT trap reading 130 in the lock wait and 0 in the start window, where
+// the pane agent runs as a background job. Elsewhere a signal is
 // acted on at the next checkpoint between steps. A signal held through the
 // lease is acted on before the lease is recorded, and one in the start window
 // (the pane launched, its handle not yet read) finds no meta - both leave the
@@ -252,7 +257,8 @@
 // - W12: STALE RECEIPT is printed on any codereview refusal once --output
 //   is read (inside the argument loop too), and on an INT, whose interrupted
 //   wait the EXIT trap read as 129; not on a TERM or HUP, read as 0. The qa
-//   error report says `exit 129` and `exit 0` alike.
+//   error report says `exit 129` and `exit 0` alike, and `exit 130` for a ^C
+//   that ended a foreground child with no background job running.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
 // - W8 GRAMMARS AND ORDER: --family, --caller and --owner are read per their
@@ -272,8 +278,20 @@
 //   background subshell polled on to its budget; so no `ac-verify.sh codereview`
 //   process outlives a refusal for a process listing to find.
 // - SIGNAL TIMING: outside the awaited waits a signal is acted on at the next
-//   checkpoint, after the child in flight (a git, cp, find or tree call)
-//   returns, where bash ran its exit at once and left that child running.
+//   checkpoint, after the synchronous child in flight (a git, cp, find or tree
+//   call) returns. Bash ran its exit at once on a TERM or HUP and left that
+//   child running; on an INT it waited for the child and ran on unless the
+//   child died of it too, so an INT sent to this process alone there ends the
+//   round 130 where bash completed it - only the two foreground sleeps hold it
+//   as bash did. An INT bash took between two statements or inside a `$(...)`
+//   ended its run 130 with the EXIT trap reading the last status (0); the port
+//   cannot tell those instants from a child's, so its trap reads 130 there and
+//   the start window's `date` read is treated like that window's sleep. A ^C
+//   in a synchronous child while the harvester still runs read 0 in bash's
+//   trap (a background job of its own running); the port's reads 130.
+// - A ^C TO THE GROUP ends the pane agent, the correction pane and the scout
+//   lanes with the round, where bash's background jobs ignored the INT and ran
+//   on - the pane publishing its handle and finishing its turn unharvested.
 // - HOME RESOLUTION: --repo, AC_FLEET_STATE and --output's directory resolve
 //   without CDPATH, and a --repo cd cannot enter refuses without the shell's
 //   own cd line.
@@ -297,10 +315,10 @@
 //
 // CALLERS: the solo session and crewmates by hand (crew-verify, crew-qa,
 // delivery-review skills; the brief's printed direct-review line); src/ship.ts
-// review-agent and bin/ac-qa.sh cmd_agent through ${AC_VERIFY_BIN:-<bin>/
+// review-agent and src/qa.ts cmdAgent through ${AC_VERIFY_BIN:-<bin>/
 // ac-verify.sh}, each reading the exit status and then --output. What it
 // WRITES is read by src/ship.ts (the verdict object and its history ledger),
-// bin/ac-qa.sh (the result, the report's first line, <evidence>/verdict.json,
+// src/qa.ts (the result, the report's first line, <evidence>/verdict.json,
 // relay-report.md), src/teardown.ts (the verifier meta, .pane-<id>, the lock
 // dir, the evidence of an incomplete qa export), bin/ac-watch.sh (the rounds'
 // findings.json mtimes and the busy declaration), the fleet views' kind=verify-*
@@ -525,6 +543,22 @@ function fileMtime(p: string): string | null {
 const sleepAsync = async (secs: string): Promise<void> => {
   await spawnShell(["sleep", u8(secs)], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited;
 };
+// A `sleep` the shell ran in the foreground, where an INT is held as SIGNALS
+// says: `died` is a child of the group the INT ended too (a ^C), and
+// <trapRead> what the EXIT trap then read.
+const fg = { child: false, held: false, died: false };
+async function fgSleep(secs: string, trapRead: number): Promise<void> {
+  fg.child = true;
+  const c = spawnShell(["sleep", u8(secs)], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  await c.exited;
+  fg.child = false;
+  const died = c.signalCode === "SIGINT" || (fg.held && fg.died);
+  fg.held = fg.died = false;
+  if (died) {
+    exitTrap(trapRead);
+    process.exit(130);
+  }
+}
 // A point where a pending signal is acted on, as the shell acted on one
 // between statements.
 const checkpoint = (): Promise<void> => Bun.sleep(0);
@@ -560,6 +594,7 @@ const S = {
   roundDir: "",
   scoutDir: "",
   scout: null as null | { stop: () => void; done: Promise<void> },
+  inWait: false,
   trapRan: false,
 };
 
@@ -792,7 +827,9 @@ function scoutAwaitThenHarvest(dir: string, count: number, budget: bigint): { st
       if (stopped) return;
       waited += tick;
     }
-    if (exists(`${dir}/launch.request`)) spawnShell(["bash", u8(`${dir}/run-lanes.sh`)], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    // Unref'd: the bash ran it as a background job its script never waited
+    // for, so a lane that outlives the harvest never holds this process.
+    if (exists(`${dir}/launch.request`)) spawnShell(["bash", u8(`${dir}/run-lanes.sh`)], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
     waited = 0n;
     while (exists(`${dir}/launch.request`) && waited < budget) {
       let ready = true;
@@ -880,15 +917,21 @@ function paneAgent(argv: string[], result: string): Child {
     closeSync(fd);
   }
 }
+// The shell's `wait`, whose interruption by an INT its EXIT trap read as 129.
 const childStatus = async (c: Child): Promise<number> => {
   if (typeof c === "number") return c;
+  S.inWait = true;
   await c.exited;
+  S.inWait = false;
   return shellStatus(c);
 };
 
-// `date +%s` as a deadline's clock read it.
+// `date +%s` as a deadline's clock read it; one a ^C ended counts as the poll
+// sleep's death (SIGNAL TIMING).
 const epochNow = (): bigint => {
-  const t = subst(run(["date", "+%s"], { stdout: "pipe" }).out);
+  const r = run(["date", "+%s"], { stdout: "pipe" });
+  if (r.status === 130) fg.died = true;
+  const t = subst(r.out);
   try {
     return arithValue(t);
   } catch {
@@ -897,10 +940,11 @@ const epochNow = (): bigint => {
 };
 
 // The start window: the handle file polled every 0.05s until it holds bytes,
-// the child exits or the deadline passes.
+// the child exits or the deadline passes. A ^C here read 0 in bash 3.2's EXIT
+// trap, as one does while a background job (the pane agent) still runs.
 async function awaitHandle(early: string, child: Child): Promise<void> {
   const deadline = epochNow() + arithValue(b8(process.env.AC_VERIFY_START_TIMEOUT || "30"));
-  while (!nonEmpty(early) && typeof child !== "number" && child.exitCode === null && child.signalCode === null && epochNow() < deadline) await sleepAsync("0.05");
+  while (!nonEmpty(early) && typeof child !== "number" && child.exitCode === null && child.signalCode === null && epochNow() < deadline) await fgSleep("0.05", 0);
 }
 
 // ONE CORRECTION TURN (codereview only): the rejected payload and the failed
@@ -1602,11 +1646,16 @@ async function main(argv: string[]): Promise<void> {
   backendName();
   process.on("exit", (code) => exitTrap(code));
   // The status the original's EXIT trap read: an INT's interrupted wait gave
-  // it 129, a TERM or HUP the 0 before it - the STALE RECEIPT line and the qa
-  // error report's `exit <n>` follow it, whatever the run then exits.
-  for (const [sig, n, trapRead] of [["SIGHUP", 1, 0], ["SIGINT", 2, 129], ["SIGTERM", 15, 0]] as const)
+  // it 129, an INT that ended a foreground child 130, a TERM or HUP the 0
+  // before it - the STALE RECEIPT line and the qa error report's `exit <n>`
+  // follow it, whatever the run then exits.
+  for (const [sig, n] of [["SIGHUP", 1], ["SIGINT", 2], ["SIGTERM", 15]] as const)
     process.on(sig, () => {
-      exitTrap(trapRead);
+      if (sig === "SIGINT" && fg.child) {
+        fg.held = true;
+        return;
+      }
+      exitTrap(sig !== "SIGINT" ? 0 : S.inWait ? 129 : 130);
       process.exit(128 + n);
     });
   const usage = (): never => fail("usage: ac-verify.sh codereview|qa --repo DIR --ref REF --family ID --caller ID --output FILE [kind options]");
@@ -1729,13 +1778,13 @@ async function main(argv: string[]): Promise<void> {
   S.statusFile = `${stateDirP}/${id}.status`;
   S.paneHandle = `${stateDirP}/.pane-${id}`;
   S.lock = `${stateDirP}/.verify-${caller}-${kind}.lock.d`;
-  // ac_lock_acquire's loop, its `sleep 1` awaited so a signal is acted on
-  // inside the wait; a timeout `[` cannot read never times out (W9).
+  // ac_lock_acquire's loop, its foreground `sleep 1` awaited so a signal is
+  // acted on inside the wait; a timeout `[` cannot read never times out (W9).
   const lt = testInt(b8(process.env.AC_VERIFY_LOCK_TIMEOUT || "10"));
   let waited = 0n;
   let got = lockAcquire(u8(S.lock), 0);
   while (!got && (lt === null || waited < lt)) {
-    await sleepAsync("1");
+    await fgSleep("1", 130);
     waited++;
     got = lockAcquire(u8(S.lock), 0);
   }
@@ -2093,7 +2142,7 @@ fix delta touches.`;
     paneArgs.push(...paneTuning);
   }
   // The reviewer's turn cannot end for good until the harvester has written
-  // the fan-out ledger (AWAIT in bin/ac-pane-agent.sh).
+  // the fan-out ledger (AWAIT in the src/pane-agent.ts header).
   if (scoutCount > 0) paneArgs.push("--await-file", `${scoutDir}/lanes.tsv`);
   // BUSY DECLARATION: the wait below blocks this process - a roomchief among
   // its callers - for up to AC_VERIFY_TIMEOUT, so the window is declared for
@@ -2272,7 +2321,11 @@ fix delta touches.`;
     let lanesRan = "0";
     let obsTotal = "0";
     if (scoutCount > 0 && isDir(scoutDir)) {
-      if (S.scout !== null) await S.scout.done;
+      if (S.scout !== null) {
+        S.inWait = true;
+        await S.scout.done;
+        S.inWait = false;
+      }
       scoutHarvest(scoutDir, scoutCount);
       const counted = pipeline([["find", scoutDir, "-maxdepth", "1", "-name", "*.json"], ["wc", "-l"], ["tr", "-d", " "]], null, ["ignore", "inherit", "inherit"]);
       if (counted.status !== 0) process.exit(counted.status);

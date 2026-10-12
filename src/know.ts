@@ -309,7 +309,8 @@
 // `== facts (L1 - repo-knowledge) ==`, and before each the cut when --max are
 // printed or the budget is spent, `  (hits <h>, heat <heat>) <line>` and
 // `    cite: <root>/bin/ac-know.sh cite --home <home> --repo <repo> --quote
-// '<the subject's first 60 characters, each ' as '\''>'`, then a blank.
+// '<the subject's first 60 characters, short of a UTF-8 sequence they would
+// cut, each ' as '\''>'`, then a blank.
 // <root> is this entry's own root, <home> the home this recall resolved and
 // <repo> the --repo as given; these and the slug are single-quoted unless
 // made only of [A-Za-z0-9_./:@%+,-], so a hand-over runs verbatim from a
@@ -403,6 +404,10 @@
 // - W4: recall's hand-overs name the bin, the home and the repo, where the
 //   original printed `ac-know.sh cite --repo <clone>` and a bare `ac-scene.sh
 //   show`, neither of which runs from a crewmate's pane.
+// - QUOTE CUT: a cite hand-over's quote whose 60th character (a byte, under a
+//   locale that is no UTF-8) falls inside a UTF-8 sequence ends before that
+//   sequence, where the original printed the partial sequence - which argv
+//   decodes to U+FFFD (BYTES), so this cite would match nothing.
 // - W1 (FAIL-PATH): the record and the scenes are read as bytes, so a byte
 //   that is no UTF-8 under a UTF-8 locale is processed like any other, where
 //   the original's awk aborted (add/retire/cite exit 2 with the lock held,
@@ -693,6 +698,19 @@ function lock(rec: string, timeout: string): string {
 }
 
 const unlock = (l: string): void => lockRelease(u8(l));
+
+// The quote's 60 characters, never ending inside a UTF-8 sequence: argv
+// arrives decoded (BYTES), so a cut sequence would reach cite as U+FFFD and
+// match nothing.
+function quoteCut(subject: string): string {
+  const q = shellPrefix(subject, 60);
+  for (let k = 1; k <= 3 && k <= q.length; k++) {
+    const c = q.charCodeAt(q.length - k);
+    if (c < 0x80) break;
+    if (c >= 0xc0) return (c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : 2) > k ? q.slice(0, -k) : q;
+  }
+  return q;
+}
 
 // --- provenance ---
 
@@ -1134,7 +1152,7 @@ function cmdRecall(args: string[]): void {
       out(`  (hits ${hits}, heat ${heat}) ${line}\n`);
       // The hand-over quotes the entry's own text - how this record addresses
       // an entry - with each ' escaped, or the phrase ends at an apostrophe.
-      out(`    cite: ${citeCmd} --quote '${shellPrefix(subjectOf(line!, "- fact ", " | src:"), 60).replace(/'/g, "'\\''")}'\n`);
+      out(`    cite: ${citeCmd} --quote '${quoteCut(subjectOf(line!, "- fact ", " | src:")).replace(/'/g, "'\\''")}'\n`);
       printed++;
       nFact++;
       shown += shellLength(line!);

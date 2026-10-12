@@ -33,7 +33,8 @@
 // other word is `ERROR: unknown flag: <w> (ac-github.sh poll takes --repo
 // <path>)` - for comment `... (ac-github.sh comment takes --repo <path> --pr
 // <n> --body <text>)`. Every refusal below is `ERROR: <msg>` on stderr, exit 1.
-// A relative <path> is the caller's.
+// A relative <path> is the caller's; from a caller cwd that has no name it
+// names nothing, so it is `not a git repo: <path>`.
 //
 // poll --repo <path>, in this order:
 //   1. empty <path>: `usage: ac-github.sh poll --repo <path>`
@@ -222,13 +223,18 @@ function flags(args: string[], known: string[], verb: string, takes: string): Ma
 const callerCwd = process.argv[2] ?? "";
 const { args, atCaller } = enterCaller(process.argv.slice(2));
 // A caller cwd bun could not enter leaves this process in the distro root; a
-// relative <path> is still the caller's.
-const at = (p: string): string => (!atCaller && callerCwd !== "" && !p.startsWith("/") ? `${callerCwd}/${p}` : p);
+// relative <path> is still the caller's, and a cwd with no name holds nothing.
+const at = (p: string): string | null => (atCaller || p.startsWith("/") ? p : callerCwd === "" ? null : `${callerCwd}/${p}`);
+
+function isRepo(repo: string): boolean {
+  const dir = at(repo);
+  return dir !== null && isDir(`${dir}/.git`);
+}
 
 function slugOf(repo: string): string {
   let r: ReturnType<typeof Bun.spawnSync> | null = null;
   try {
-    r = spawnShellSync(["git", "-C", at(repo), "remote", "get-url", "origin"], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
+    r = spawnShellSync(["git", "-C", at(repo)!, "remote", "get-url", "origin"], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
   } catch {}
   let url = shellStatus(r) === 0 ? captured(r!.stdout.toString("latin1")) : "";
   if (url.endsWith(".git")) url = url.slice(0, -4);
@@ -276,7 +282,7 @@ function gh(repo: string, argv: string[]): { status: number; out: string } {
   try {
     let r: ReturnType<typeof Bun.spawnSync> | null = null;
     try {
-      r = spawnShellSync(["gh", ...argv], { cwd: at(repo), stdin: "inherit", stdout: fd, stderr: fd });
+      r = spawnShellSync(["gh", ...argv], { cwd: at(repo)!, stdin: "inherit", stdout: fd, stderr: fd });
     } catch {}
     const buf = Buffer.alloc(fstatSync(fd).size);
     readSync(fd, buf, 0, buf.length, 0);
@@ -363,7 +369,7 @@ function pollItems(store: string, kind: string, list: string): void {
 function poll(argv: string[]): void {
   const repo = flags(argv, ["--repo"], "poll", "--repo <path>").get("--repo") ?? "";
   if (repo === "") die("usage: ac-github.sh poll --repo <path>");
-  if (!isDir(`${at(repo)}/.git`)) die(`not a git repo: ${repo}`);
+  if (!isRepo(repo)) die(`not a git repo: ${repo}`);
   if (!Bun.which("gh")) die("gh not found on PATH - cannot poll GitHub");
   if (!Bun.which("jq")) die("jq not found on PATH - cannot poll GitHub");
   const slug = slugOf(repo);
@@ -383,7 +389,7 @@ function comment(argv: string[]): void {
   const text = f.get("--body") ?? "";
   if (repo === "" || pr === "" || text === "") die("usage: ac-github.sh comment --repo <path> --pr <n> --body <text>");
   if (/[^0-9]/.test(pr)) die(`refusing an unattributable PR number: ${pr}`);
-  if (!isDir(`${at(repo)}/.git`)) die(`not a git repo: ${repo}`);
+  if (!isRepo(repo)) die(`not a git repo: ${repo}`);
   if (!Bun.which("gh")) die("gh not found on PATH - cannot comment");
   let body: string;
   try {

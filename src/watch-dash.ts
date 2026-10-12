@@ -38,8 +38,9 @@
 //   dropped), `200` when tput fails - piped, 80 for TERM=xterm, 200 with TERM
 //   unset or empty.
 // - Steps: <rd>/steps.tsv read as `IFS=$'\t' read -r step status rounds` read
-//   it (tabFields: TAB runs collapse, a 4th field folds into rounds, a last
-//   line with no LF is never read); a file that cannot be read draws no row.
+//   it (tabFields: TAB runs collapse, a 4th field folds into rounds, a NUL
+//   ends its line, a last line with no LF is never read); a file that cannot
+//   be read draws no row.
 //   Glyph and color by status: completed `✓` green, running `▶` cyan, fixing
 //   `▶` yellow, awaiting_approval `⏸` magenta, failed `✗` red, skipped `-`
 //   dim, anything else `○` dim. `round <rounds as typed>` (dim) when rounds is
@@ -295,7 +296,7 @@ export function renderSteps(rd: string, width: number): string {
   lines.pop();
   let s = "";
   for (const line of lines) {
-    const [step = "", status = "", rounds = ""] = tabFields(line, 3);
+    const [step = "", status = "", rounds = ""] = tabFields(line.replace(/\0[\s\S]*$/, ""), 3);
     const [glyph, k] = Object.hasOwn(GLYPHS, status) ? GLYPHS[status]! : OTHER;
     const color = C[k];
     const extra = (testInt(rounds || "0") ?? 0n) > 0n ? `${C.dim}round ${rounds}${C.r}` : "";

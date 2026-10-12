@@ -1342,7 +1342,7 @@ lrun_side() {  # lrun_side <bin> <side root> <prefix> <args...> - LPLANT=<path u
   { cat "$TMP/$p.pid"; printf '\n'; } >>"$h/.pids"
   return "$rc"
 }
-lnorm() {  # lnorm <file> <side root> - the side root @H, bin roots ROOT, digests SHA, the k-th run's pid PID<k> where it names a temp, a run or a snapshot, mktemp and spool names
+lnorm() {  # lnorm <file> <side root> - the side root @H, bin roots (and a suite meta's project=, their basename) ROOT, digests SHA, the k-th run's pid PID<k> where it names a temp, a run or a snapshot, mktemp and spool names
   local e=() k=0 p
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -1350,7 +1350,7 @@ lnorm() {  # lnorm <file> <side root> - the side root @H, bin roots ROOT, digest
     e+=(-e "s/(maintenance-learning-manual-[0-9]+-)$p([^0-9]|\$)/\1PID$k\2/g" -e "s/adhoc-$p([^0-9]|\$)/adhoc-PID$k\1/g"
       -e "s/\.tmp\.$p(\.[0-9]+)?([^0-9]|\$)/.tmp.PID$k\2/g" -e "s/\.actions\.$p([^0-9]|\$)/.actions.PID$k\1/g")
   done 2>/dev/null <"$2/.pids" || true
-  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-learn#ROOT#g" -e "s#$TMP/learn-shim#ROOT#g" -e "s#$ROOT#ROOT#g" \
+  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-learn#ROOT#g" -e "s#$TMP/learn-shim#ROOT#g" -e "s#$ROOT#ROOT#g" -e 's#^project=(oracle-ac-learn|learn-shim)$#project=ROOT#' \
     -e 's/[0-9a-f]{64}/SHA/g' ${e[@]+"${e[@]}"} \
     -e 's/(ac-learn-route|tmp)\.[A-Za-z0-9]{6,10}/\1.XXXXXX/g' -e 's#\.wake-spool/[0-9]+\.[0-9]+\.[0-9]+#.wake-spool/WAKE#g' "$1"
 }
@@ -1609,6 +1609,7 @@ assert_contains "$(lerr)" "CREWMATE-learned lock" "reinforce under a held lock r
 #    and abandon's refusals and settles.
 lboth lstd
 lok maintenance status
+lok maintenance ''
 lmj() { lput "home/state/.maintenance-transactions/$1/journal" "$2"; }
 lboth lmj learning-b-x $'status=applying\nplan=/nowhere/plan.json\nrun=/nowhere\naction_0=complete\nheld_committed=1\nbackup=/b.tar.gz\n'
 lboth lmj Learning-a-y $'status=applying\n'
@@ -1797,6 +1798,25 @@ lboth lput home/state/.pane-verify-suite-1 $'p9 t9\n'
 lboth lput herdr/panes/p9.buf ''
 lboth lput home/state/.learn-suite.meta $'generation=3\nhead=x\nstatus=green\nexit=0\nat=1\n'
 lsame autoroom
+# An in-flight epoch of 08 ends only the gate's capture: the autoroom lock is
+# released and the verb exits 0. SHELL-OWN STDERR (named): the oracle's own
+# diagnostic is dropped before the comparison.
+lboth lput home/state/verify-suite-1.meta $'kind=verify-suite\nbackend=herdr\nspawned_epoch=08\n'
+lpair autoroom
+assert_contains "$(loerr)" "08: value too great for base" "the oracle's gate capture ended on the arithmetic error"
+LC_ALL=C sed -E '/^ROOT\/bin\/ac-learn\.sh: line [0-9]+: 08: value too great for base /d' "$TMP/lo.err2" >"$TMP/lo.err3"
+mv "$TMP/lo.err3" "$TMP/lo.err2"
+lsame_rc_out autoroom; lsame_err autoroom; lsame_world autoroom
+assert_eq "$LN_RC" "0" "an arithmetic error in the suite gate still ends autoroom 0"
+# The launch's window opens inside the gate's capture, errexit asleep: a failing
+# `workspace list` is walked past and the run still starts.
+lboth rm -f @H/home/state/verify-suite-1.meta @H/home/state/.pane-verify-suite-1
+mkdir -p "$TMP/lwsfail"
+printf '#!/bin/sh\n[ "$1 $2" != "workspace list" ] || exit 1\nexec "%s/stubbin/herdr" "$@"\n' "$TMP" >"$TMP/lwsfail/herdr"
+chmod +x "$TMP/lwsfail/herdr"
+LPATH="$TMP/lwsfail:$LGITSTUBS:$LSTUBS:$PATH"
+lsame autoroom
+assert_contains "$(lout)" "HELD: started the full-suite run verify-suite-" "a failing workspace list still starts the suite run"
 LPATH=""
 
 # 10. suite: the id grammar, green and red verdicts recorded for the pinned

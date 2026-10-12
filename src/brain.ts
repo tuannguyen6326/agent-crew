@@ -54,7 +54,9 @@
 //   citability.
 // - The pattern floor (push-gate patterns file) flags, never drops, inside
 //   the home; synthesize redacts every match from the sources it hands a
-//   model, since that prompt leaves the home.
+//   model, since that prompt leaves the home. Its matches are grep -iE's,
+//   line by line as the push gate reads the file, found before any cut; a
+//   pattern file grep refuses fails synthesize closed (`unavailable`).
 // - LLM boundaries: sync/recall/entity/context_pack/delta/remember/forget are
 //   zero-LLM forever. The embedding lane (voyage|openai|stub) is an optional
 //   vectorizer - absent config or key degrades to keyword-only with a stamp,
@@ -426,14 +428,34 @@ function extractLinks(body: string, relPath: string, family: string, fmEdges: Ar
 }
 
 // ---------- pattern floor ----------
+const PATTERN_FILE = process.env.AC_BRAIN_PATTERN_FILE || join(process.env.HOME || "", ".config/agent-crew/push-gate.patterns");
+function patternLines(): string[] {
+  try { return readFileSync(PATTERN_FILE, "utf8").split("\n").filter(l => !/^\s*(#|$)/.test(l)); } catch { return []; }
+}
 function loadPatterns(): RegExp[] {
-  const p = process.env.AC_BRAIN_PATTERN_FILE || join(process.env.HOME || "", ".config/agent-crew/push-gate.patterns");
-  try {
-    return readFileSync(p, "utf8").split("\n")
-      .map(l => l.trim()).filter(l => l && !l.startsWith("#"))
-      .map(l => { try { return new RegExp(l, "i"); } catch { return null; } })
-      .filter((r): r is RegExp => r !== null);
-  } catch { return []; }
+  return patternLines()
+    .map(l => { try { return new RegExp(l.trim(), "i"); } catch { return null; } })
+    .filter((r): r is RegExp => r !== null);
+}
+// The lines are POSIX EREs the push gate matches per line with `grep -iE`;
+// grep itself finds the matches here, because a JS RegExp reads bracket
+// classes and ^/$ differently and would let a flagged line through.
+function redactMatches(text: string, lines: string[]): string {
+  if (!lines.length || !text) return text;
+  const r = spawnShellSync(["grep", "-aobiE", ...lines.flatMap(l => ["-e", l])], { stdin: Buffer.from(text), stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode === 1) return text;
+  if (r.exitCode !== 0)
+    die("unavailable", `grep -E refused the pattern file ${PATTERN_FILE}: ${r.stderr.toString().trim()}`, "fix the pattern file - synthesize sends nothing it cannot redact");
+  const src = Buffer.from(text), parts: Buffer[] = [];
+  let at = 0;
+  // latin1 keeps one char per byte, so a match's length is its byte count
+  for (const hit of r.stdout.toString("latin1").split("\n").filter(Boolean)) {
+    const c = hit.indexOf(":"), start = Number(hit.slice(0, c));
+    parts.push(src.subarray(at, start), Buffer.from("[redacted]"));
+    at = start + hit.length - c - 1;
+  }
+  parts.push(src.subarray(at));
+  return Buffer.concat(parts).toString("utf8");
 }
 
 // ---------- embedding lane ----------
@@ -1579,13 +1601,16 @@ async function cmdSynthesize() {
   // from 14-word fragments (its own first live answer said exactly that).
   // Today's date and each source's own date let a "latest" or "still true"
   // question tell a superseded page from a current one.
-  const redact = loadPatterns().map(re => new RegExp(re.source, "gi"));
-  const ctx = gathered.map(h => {
-    const rows = db.query("SELECT text FROM chunks WHERE slug=? ORDER BY ord LIMIT 3").all(h.slug) as any[];
-    const body = rows.map(r => r.text).join("\n").slice(0, 4000);
+  // The chunks are re-cut from the page redacted whole: a match the index's
+  // chunk split or this 4000-character cut halves would no longer match.
+  const pats = patternLines();
+  const ctx = redactMatches(gathered.map(h => {
+    let raw: string | null = null;
+    try { raw = readFileSync(join(HOME, h.path), "utf8"); } catch {}
+    const body = raw === null ? "" : chunkBody(redactMatches(parsePage(raw, h.path).body, pats)).slice(0, 3).join("\n").slice(0, 4000);
     const at = String((db.query("SELECT updated_at FROM pages WHERE slug=?").get(h.slug) as any)?.updated_at ?? "").slice(0, 10) || "undated";
-    return redact.reduce((s, re) => s.replace(re, "[redacted]"), `### ${h.title} (${h.slug}, written ${at})\n${body || h.snippet || ""}`);
-  }).join("\n\n");
+    return `### ${h.title} (${h.slug}, written ${at})\n${body || h.snippet || ""}`;
+  }).join("\n\n"), pats);
   const prompt = `Today is ${iso().slice(0, 10)}. Answer strictly from the sources below; cite slugs; state gaps honestly.\n\nQUESTION: ${q}\n\nSOURCES:\n${ctx}`;
   let answer: string | null = null, status = "ok";
   // Direct API branch: config/brain.json synthesize.api {base_url, model,

@@ -529,6 +529,9 @@
 //   logs/review-invocations.tsv.tmp.<pid> (then .<n>) created exclusively, where
 //   the original wrote through whatever sat at the predictable `.tmp` - a link
 //   planted there had its target overwritten and the ledger became the link.
+// - TRUSTED RE-POST: only review-agent's own call skips the F9 drop guard, where
+//   the original's guard also read `_ac_findings_trusted=1` from the caller's
+//   environment - so an exported one let a plain re-post drop a fix finding.
 // - W14: a push refused over unincorporated commits prints the header, the
 //   first ten shas and the refusal, exit 1, where the original's
 //   `printf | head -10` died of SIGPIPE past the pipe buffer (141, no refusal).

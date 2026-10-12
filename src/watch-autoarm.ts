@@ -236,6 +236,9 @@
 // - SCOPE GRAMMAR: the spool the heartbeat check reads is chosen by
 //   AC_SCOPE's grammar per its text (wakePending), where bash 3.2's range
 //   under a UTF-8 locale let an accented letter through.
+// - HOME RESOLUTION: an AC_HOME whose name ends in LF is the directory it
+//   names, and a relative one is entered without CDPATH; a caller whose cwd
+//   Bun cannot enter resolves no relative AC_HOME (silent).
 // - EXCLUSIVE TEMP: the trace trim's temp is created exclusively
 //   (`<log>.tmp.<pid>[.<n>]`), where the original's `$f.tmp.$$` wrote
 //   through whatever sat there.
@@ -269,7 +272,7 @@ import {
   wakePending,
 } from "./lib.ts";
 
-const { args } = enterCaller(process.argv.slice(2));
+const { args, atCaller } = enterCaller(process.argv.slice(2));
 const arg = args[0] ?? "";
 if (arg === "-h" || arg === "--help") {
   const head: string[] = [];
@@ -301,7 +304,8 @@ const latin1 = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 const captured = (b: Uint8Array): string => Buffer.from(b).toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
 const cutNul = (s: string): string => s.replace(/\0[\s\S]*$/, "");
 
-const home = process.env.AC_HOME ? physicalDir(process.env.AC_HOME) : null;
+const homeVar = process.env.AC_HOME ?? "";
+const home = homeVar !== "" && (atCaller || homeVar.startsWith("/")) ? physicalDir(homeVar) : null;
 if (home === null) process.exit(0);
 const gd = hookCapture(["git", "-C", home, "rev-parse", "--git-dir"]);
 const gcd = hookCapture(["git", "-C", home, "rev-parse", "--git-common-dir"]);

@@ -105,11 +105,12 @@
 #                     bin/*.sh nor a tests/sh/*.test.sh, so the mapping this
 #                     rule reuses has no arm for it at all - still widens,
 #                     legitimately near-full either way; do not special-case
-#                     it). Two DO narrow cleanly, proving the
-#                     mechanism: bin/ac-pipeline-lib.sh (7 sourcers, all
-#                     mapped -> selects exactly 8 tests, not 88) and
-#                     bin/ac-qa-lib.sh (5 sourcers, all mapped -> selects
-#                     exactly 4 tests, not 88);
+#                     it). The two that narrowed cleanly, proving the
+#                     mechanism - bin/ac-pipeline-lib.sh (7 sourcers, all
+#                     mapped -> selected exactly 8 tests, not 88) and
+#                     bin/ac-qa-lib.sh (5 sourcers, all mapped -> selected
+#                     exactly 4 tests, not 88) - have since retired to
+#                     tests/fixtures/;
 #                  2. a changed owned file (bin/*.sh or tests/sh/*.test.sh) with
 #                     no exact colocated test, or a src/*.ts with a starter
 #                     that has none - unmapped code is unknown blast radius,
@@ -356,10 +357,12 @@ split_map() {
     # Eight suites run its report, queued or watch-set besides its own leg,
     # directly or through the turn-end guard, session start and autoarm.
     ac-ready) printf '%s' "ac-ready.test.sh ac-backlog.test.sh ac-backlog-sections.test.sh ac-contract.test.sh ac-task.test.sh ac-watch.test.sh ac-watch-autoarm.test.sh ac-turnend-guard.test.sh ac-session-start.test.sh" ;;
-    # Five suites execute ac-learn besides its own (the loop's runs and lands,
+    # Eight suites execute ac-learn besides its own (the loop's runs and lands,
     # the room's autoroom and suite, the quote lands, the end-to-end runs, the
-    # maintenance verbs), and ac-config-surface.test.sh greps src/learn.ts.
-    ac-learn) printf '%s' "ac-learn.test.sh ac-learn-loop.test.sh ac-learn-autoroom.test.sh ac-learn-quote.test.sh ac-learning-automation-e2e.test.sh ac-maintenance-core.test.sh ac-config-surface.test.sh" ;;
+    # maintenance verbs, curate's counted run, the solo landing's note and
+    # keyed tick, teardown's tick), and ac-config-surface.test.sh greps
+    # src/learn.ts.
+    ac-learn) printf '%s' "ac-learn.test.sh ac-learn-loop.test.sh ac-learn-autoroom.test.sh ac-learn-quote.test.sh ac-learning-automation-e2e.test.sh ac-maintenance-core.test.sh ac-curate.test.sh ac-self-task.test.sh ac-teardown.test.sh ac-config-surface.test.sh" ;;
     # Four suites execute the pane agent besides its own: the teardown legs'
     # reap-pane rows (src/teardown.ts and the frozen teardown), ac-lib's
     # ac_transcript_final_epoch (its iso-epoch verb), and ac-brain's one-shot
@@ -376,9 +379,7 @@ split_map() {
     # ac-guard.test.sh, and ac-harness-hooks.test.sh runs it through the
     # cursor adapter.
     ac-watch-policy-hook) printf '%s' "ac-guard.test.sh ac-harness-hooks.test.sh" ;;
-    # A sourced lib whose pins live in its one real consumer's test; without
-    # this arm every src/ module it starts widened --changed to the full set.
-    ac-qa-lib) printf '%s' "ac-qa.test.sh" ;;
+    # A sourced lib whose pins live in its one real consumer's test.
     ac-maintenance-lib) printf '%s' "ac-maintenance-core.test.sh" ;;
   esac
 }

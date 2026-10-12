@@ -128,7 +128,7 @@ A repo-shipped skill of the same name wins, and dangling links from retired skil
 ## Task state on disk
 
 `state/<id>.meta` is the key=value task record (window, worktree, leases, project, kind, mode, session id, backend, PR), last write wins.
-Each rewrite (`ac_meta_set` in `bin/ac-lib.sh`, `metaSet`/`metaUpdate` in `src/lib.ts`) holds that meta's own lock, `<dir>/.<file>.lock`, so concurrent writers of different keys do not drop each other's - short of the race between two reclaimers of a dead holder's lock that `ac_lock_acquire` documents as its residual.
+Each rewrite (`ac_meta_set` in `bin/ac-lib.sh`, `metaSet`/`metaUpdate`/`metaLocked` in `src/lib.ts`) holds that meta's own lock, `<dir>/.<file>.lock`, so concurrent writers of different keys do not drop each other's - short of the race between two reclaimers of a dead holder's lock that `ac_lock_acquire` documents as its residual.
 The path is a namespace - every enumerator reads a file there as an agent in flight - which is why counters in `state/` are dot-prefixed.
 Two meta classes are defined once in `bin/ac-lib.sh`:
 - `ac_meta_is_verify` - `kind=verify-*` (`verify-codereview`, `verify-qa`, `verify-learning`, `verify-suite`) is excluded from crew accounting, never from supervision.
@@ -198,7 +198,7 @@ The non-claude wirings ship with live probes pending, and `tests/sh/ac-harness-h
 
 `bin/ac-room.sh` owns rooms: `post`, `show`, `list`, `close`, `open`, `pending`, `handback`, and the gate-receipt verbs `gate-route`, `gate-verify`, `disposition`.
 `post` refuses a malformed `GATE:`/`ASK:`/`DECIDED:` opening (the grammar of `ac_room_marker_malformed`).
-The captain's inbox count is one matcher, `ac_room_pending`, and the HANDBACK state another, `ac_room_handback_families`, both in `bin/ac-wake-lib.sh`; the digest, the dashboard and the guards all call them.
+The captain's inbox count is one matcher, `ac_room_pending`, and the HANDBACK state another, `ac_room_handback_families`, both in `bin/ac-wake-lib.sh`; their readers run `src/room.ts`'s copy, which `tests/sh/ac-room.test.sh` holds to them - the digest and the dashboard through `ac-room.sh list`, the turn-end guard in-process.
 
 The backlog grammar is [`backlog.md`](backlog.md), parsed by one module, `src/backlog.ts`; every awk site that reads a line's fields prepends the `AC_DONELINE_AWK` binding in `bin/ac-lib.sh` to its own program.
 `contractLint` (`src/lib.ts`) judges contract-token values; the parser only extracts them.

@@ -195,7 +195,8 @@ assert_eq "$rc" "2" "G6b: ac_row_contract_for_id on a ledger it could not read"
 rm -f "$TMP/parses"
 # src/brief.ts reads the ledger once, in-process, so no parser child can fail
 # under it: a mode-000 ledger is the ledger it could not read (skipped under
-# root, which reads it).
+# root, which reads it). That one read is the mode read, so the escalation
+# gate's later read of the same ledger cannot fail on its own.
 if [ "$(id -u)" != 0 ]; then
   chmod 000 "$backlog"
   out="$("$BIN/ac-brief.sh" g-pinned-mode gproj --mode crew-ship --review yes \
@@ -204,10 +205,10 @@ if [ "$(id -u)" != 0 ]; then
     "G6b: the mode-pin read names the ledger it could not read"
   assert_no_file "$AC_HOME/data/g-pinned-mode/brief.md" "G6b: nothing scaffolded"
   out="$("$BIN/ac-brief.sh" g-norow gproj --mode local-only 2>&1)" \
-    && fail "G6b: a contract the escalation gate could not read must refuse, never scaffold"
+    && fail "G6b: an id with no row on a ledger it could not read must refuse, never scaffold as unpinned"
   assert_contains "$out" "cannot read the ledger $backlog for the delivery contract of g-norow" \
-    "G6b: the escalation gate's contract read names the ledger it could not read"
-  assert_no_file "$AC_HOME/data/g-norow/brief.md" "G6b: nothing scaffolded by the gate"
+    "G6b: the no-row id's refusal names the ledger it could not read"
+  assert_no_file "$AC_HOME/data/g-norow/brief.md" "G6b: nothing scaffolded for the no-row id"
   chmod 644 "$backlog"
 fi
 

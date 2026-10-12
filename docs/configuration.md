@@ -65,7 +65,7 @@ The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspa
 
 | File | Controls |
 | --- | --- |
-| `config/learn-every` | Learning DISTILL cadence: once the counter advanced by `bin/ac-learn.sh tick` reaches this value, the session-start digest flags `LEARNING DUE` and the automatic `learning` room opens; default 8. Owner: the `bin/ac-learn.sh` and `bin/ac-maintenance-lib.sh` headers. |
+| `config/learn-every` | Learning DISTILL cadence: once the counter advanced by `bin/ac-learn.sh tick` reaches this value, the session-start digest flags `LEARNING DUE` and the automatic `learning` room opens; default 8. Owner: the `src/learn.ts` header (`bin/ac-learn.sh` starts it) and the `bin/ac-maintenance-lib.sh` header. |
 | `config/curate-every` | Curate cadence in settled Learning runs; default 5. At the threshold Learning runs `bin/ac-curate.sh run`; the header of `src/curate.ts`, which it starts, owns the policies. |
 | `config/learn-suite-gate` | `on` makes the DISTILL trigger wait for a green `tests/run-suite.sh` verdict for the current generation and tree; anything else (default) = off. |
 | `config/learn-pending-budget` | Byte budget for the learnings ledger's `## Pending` body at DISTILL staging; default 131072. Older bullets past it are archived verbatim to `records/learnings-archive/` (`ac-learn.sh rotate-pending`), except the sources of the last examined run's candidates, which stay until the next run has reconsidered them. |
@@ -227,7 +227,7 @@ QA pane routing belongs to `config/crew-dispatch.json`, not to this yaml.
 
 | Key | Controls |
 | --- | --- |
-| `qa.require_for_ship` | Any value but an explicit false spelling (`false`, `no` or `off` in lower, Title or UPPER case; quotes, a `# comment` and surrounding space ignored) makes both merge helpers require a parser-valid atomic v2 attestation for the exact head; file existence or a legacy marker is not enough. Every `require_for_ship` key in the `qa:` block counts - at any depth, quoted or bare, with or without space before its colon, and inside a flow mapping such as `qa: {require_for_ship: true}`, where a value ends at its `,` or `}` - and ANY of them that is not false enforces, so a false key never switches another off. An empty or unrecognised value enforces, no such key does not, and a yaml the helpers cannot read, a host where git cannot run, or a project directory holding a `.git` that git refuses to read (a corrupt repo, a `safe.directory` refusal) refuses the merge. Owner: `ac_qa_required` in `bin/ac-qa-lib.sh` and its twin `qaRequired` in `src/lib.ts`. |
+| `qa.require_for_ship` | Any value but an explicit false spelling (`false`, `no` or `off` in lower, Title or UPPER case; quotes, a `# comment` and surrounding space ignored) makes both merge helpers require a parser-valid atomic v2 attestation for the exact head; file existence or a legacy marker is not enough. Every `require_for_ship` key in the `qa:` block counts - at any depth, quoted or bare, with or without space before its colon, and inside a flow mapping such as `qa: {require_for_ship: true}`, where a value ends at its `,` or `}` - and ANY of them that is not false enforces, so a false key never switches another off. An empty or unrecognised value enforces, no such key does not, and a yaml the helpers cannot read, a host where git cannot run, or a project directory holding a `.git` that git refuses to read (a corrupt repo, a `safe.directory` refusal) refuses the merge. Owner: `qaRequired` in `src/lib.ts`, held to `ac_qa_required` in the frozen `tests/fixtures/ac-qa-lib.sh`. |
 | `qa.serve` | Command that boots the service; it must honor `$QA_PORT`. App-level in a scoped project. |
 | `qa.health` | Readiness probe; app-level in a scoped project. |
 | `qa.health_timeout` | Seconds the bounded health poll waits; default 60. |
@@ -344,7 +344,7 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_BRAIN_RERANK_TIMEOUT` | 10 | Seconds the rerank call inside `ac-brain.sh recall` may take; past it the fused order is returned unreranked. |
 | `AC_BRAIN_SYNTH_CMD` | unset | Overrides the one-shot command `ac-brain synthesize` runs, ahead of `panes.brain` and `config/brain-*`. |
 | `AC_BRAIN_OLLAMA_URL` | `http://127.0.0.1:11434/v1` | The local ollama `ac-brain synthesize` asks before the harness one-shot when no synthesize api answered (the test suite points it at a closed port). |
-| `AC_BRAIN_PATTERN_FILE` | `~/.config/agent-crew/push-gate.patterns` | Pattern file the brain's pattern floor reads (`src/brain.ts`): sync flags a matching page, synthesize redacts every match from what it sends a model. |
+| `AC_BRAIN_PATTERN_FILE` | `~/.config/agent-crew/push-gate.patterns` | Pattern file the brain's pattern floor reads (`src/brain.ts`): sync flags a matching page, synthesize redacts every match from what it sends a model, matched with `grep -iE` as the push gate matches. |
 | `AC_PROMPT_RECALL_LIMIT` | 3 | Max hits in the prompt-time recall block. |
 | `AC_JEV` | `config/jev`, else `off` | Per-session override of the System One adapter (`off`, `shadow`, `on`). |
 | `AC_JEV_ENDPOINT` | the provider's endpoint | Overrides only the URL `ac-jev.sh` posts to (tests, a local relay). |

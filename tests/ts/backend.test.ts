@@ -507,6 +507,8 @@ test("2. window_alive herdr: the ceiling's grammar - a pane get that answers in 
     ["' 2' is the default", { AC_HERDR_RPC_TIMEOUT: " 2" }, slow, 0],
     ["007 is seven", { AC_HERDR_RPC_TIMEOUT: "007" }, slow, 0],
     ["2147483647 sleeps", { AC_HERDR_RPC_TIMEOUT: "2147483647" }, slow, 0],
+    ["2147484 sleeps, past Bun's 2^31 ms timeout", { AC_HERDR_RPC_TIMEOUT: "2147484" }, slow, 0],
+    ["4294968 sleeps", { AC_HERDR_RPC_TIMEOUT: "4294968" }, slow, 0],
   ] as const) {
     const p = same(label, { fn: "window_alive", args: ["x"], env: { ...HERDR_, ...env }, seed });
     expect({ label, out: p.t.out }).toEqual({ label, out: `|rc=${rc}` });

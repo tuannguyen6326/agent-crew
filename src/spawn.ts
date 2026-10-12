@@ -580,7 +580,11 @@
 // loop's ticks, the ultracode pause) are awaited, so a signal acts at once
 // there; inside a child the original ran in `$(...)` (the herdr lease, the
 // orca lease) the signal waits for the child to return, as the original's
-// deferral did (W2).
+// deferral did (W2). Every other child is synchronous, so the run also turns
+// the loop once at each phase's edge - before the lease, before the crew
+// path's status line, before each path's disarm, and before a recovery
+// records its window - and a signal held through such a child acts there,
+// under the cleanup the original would have run.
 //
 // ESCAPE HATCH. A broken port stops every crewmate spawn and roomchief promote
 // on both fleets, crewdeputy spawns and every --recover, and the Learning
@@ -609,7 +613,8 @@
 //   removed, the lease returned, the live tab closed), and a closed stdout ends
 //   it 1 after the meta is durable; the crewdeputy outcome line the same.
 // - W2: the herdr lease is taken before its cleanup is armed - a signal inside
-//   the lease leaves the slot leased with no meta, the claim released.
+//   the lease leaves the slot leased with no meta, the claim released (one
+//   before the lease ends the run with nothing leased, as the original did).
 // - W3: an untrappable death strands the claim, the lease, the tab and the
 //   handle; a re-spawn of the id leases another slot and refuses on the window.
 // - W5: window_new ends the run with jq's status after the tab exists and
@@ -643,9 +648,14 @@
 //   original swallowed it while a foreground child ran and completed (W4); a
 //   TERM or HUP during a synchronous child other than the leases (a herdr RPC,
 //   a room post, a dispatch-select) acts at the run's next wait - a settle, a
-//   tick - so the run may go on past that child into a later phase and run that
-//   phase's cleanup, where the original acted at once (inside `$(...)`, as the
-//   child returned).
+//   tick, a phase-edge turn (SIGNALS above) - so the run may go on past that
+//   child to the end of its phase (a whole recovery notice where the original
+//   left it unsubmitted, the kickoff file and pointer, the crew status line and
+//   START post) and run that phase's cleanup, where the original acted at once
+//   (inside `$(...)`, as the child returned). One after the disarm (the
+//   bookkeeping tail and the outcome line) is not acted on: the run completes
+//   with its own status, where the original ended 128+n there, the task whole
+//   either way.
 // - W10: AC_SCOPE's grammar (the fleet_scope, AC_FLEET_SCOPE, the domain
 //   binding, the window family) is read per its text, [A-Za-z0-9_-] under any
 //   locale, where bash 3.2's ranges admitted an accented letter under UTF-8.
@@ -1253,13 +1263,14 @@ async function deliverKickoff(id: string, h: string, prompt: string): Promise<vo
   }
 }
 
+// A signal held through a synchronous child is delivered only when the loop
+// turns: turning it at a phase's edge acts on it while that phase's cleanup is
+// still the armed one, where the original acted as the child returned (W2 for
+// the lease itself).
+const turn = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 // Reap a window an earlier spawn of this id left before writing any meta
 // (ORPHAN-WINDOW SAFETY above), the probe's three states read.
-// A signal that landed inside the lease is delivered on the loop: turning it
-// once acts on it where the original acted on its deferred signal - the lease
-// returned, its cleanup not yet armed (W2).
-const leaseTurn = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
-
 function reapOrphanWindow(): void {
   const rc = alive(S.id);
   if (rc === 1) return;
@@ -1599,6 +1610,7 @@ async function main(argv: string[]): Promise<void> {
       die(`--recover: claude did NOT come up in ${S.window} on --resume ${recSid} (its last lines above) - the fresh pane was closed again and ${id} is as it was; a session claude no longer knows cannot be recovered, tear down and spawn fresh`);
     } else if (up === 2) warn(`could not read ${S.window} to verify claude came up - the recovery stands (peek it: bin/ac-peek.sh ${id})`);
     if (sendLine(id, notice) !== 0) warn(`recovery notice NOT delivered to ${id} (see stderr above) - the session IS resumed, so re-send it only if the agent looks confused: bin/ac-send.sh ${id} '${notice}'`);
+    await turn();
     metaSetHard(S.meta, "window", S.window);
     claimRelease();
     statusHard(id, `recovered: pane reopened at ${S.window}, session ${recSid} resumed`);
@@ -1803,6 +1815,7 @@ HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from t
     metaSetHard(S.meta, "yolo", "off");
     recordSid();
     metaSetHard(S.meta, "spawned_at", iso());
+    await turn();
     claimRelease();
     S.trap = null;
     // PAST THIS LINE THE PROMOTE HAS HAPPENED and is not retryable: every
@@ -1894,6 +1907,7 @@ HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from t
     metaSetHard(S.meta, "yolo", "off");
     recordSid();
     metaSetHard(S.meta, "spawned_at", iso());
+    await turn();
     claimRelease();
     S.trap = null;
     if (!statusSoft(id, "working: crewdeputy spawned")) warn(`crewdeputy ${id} is spawned, but its status line could not be appended`);
@@ -1960,16 +1974,17 @@ then spawn again`);
   // The lease: an Orca-managed worktree on an orca fleet, the in-repo pool
   // otherwise (a resume asks for its old slot back).
   let worktree: string;
+  await turn();
   if (backend === "orca") {
     const ls = orcaWorktreeLease(id, projectDirC, baseBranch);
-    await leaseTurn();
+    await turn();
     if (ls.status === 2) die(`the epic-branch fence refused the orca lease for ${id} (reason above)`);
     if (ls.status !== 0) die(`orca worktree create failed for ${id} (is the Orca runtime running, and the repo registered? orca repo add --path ${projectDirC})`);
     worktree = ls.out;
     if (resumeWt !== "" && worktree !== resumeWt) warn(`resume may not find the old session (cwd changed: ${resumeWt} -> ${worktree})`);
   } else {
     const get = run([`${binDir}/ac-tree.sh`, "get", "--repo", projectDirC, "--id", id, "--holder", `crew:${id}`, ...(resumeWt !== "" ? ["--prefer", resumeWt] : [])]);
-    await leaseTurn();
+    await turn();
     ee(get.status);
     worktree = cap(get.out);
     if (resumeWt !== "" && worktree !== resumeWt) warn(`resume may not find the old session (cwd changed: ${resumeWt} -> ${worktree})`);
@@ -2025,6 +2040,7 @@ then spawn again`);
   metaSetHard(S.meta, "yolo", yolo);
   recordSid();
   metaSetHard(S.meta, "spawned_at", iso());
+  await turn();
   statusHard(id, "working: spawned");
   // The Slack task thread under remote-mirror=on: the scoped session's family
   // thread, else the id's own family. Best-effort.
@@ -2033,6 +2049,7 @@ then spawn again`);
     const body = `🚀 *[${u8(vnTs().stamp)}] [START] [${fam}]*\n• bắt đầu task ${id} (${kind}) trên repo ${projectName} - mode=${mode}\n`;
     run([`${binDir}/ac-remote.sh`, "thread-post", fam], { stdin: Buffer.from(body, "utf8"), stdout: "ignore", stderr: "ignore" });
   }
+  await turn();
   claimRelease();
   S.trap = null;
   if (!put(1, `spawned ${id} harness=${harness} kind=${kind} mode=${mode} yolo=${yolo} backend=${backend} window=${S.window} worktree=${worktree}\n`)) fatal(1);

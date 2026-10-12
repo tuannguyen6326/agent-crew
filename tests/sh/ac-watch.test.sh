@@ -3762,7 +3762,7 @@ rm -rf "$state"/.wake-spool*
 # gated off - the pane wakes nobody for as long as it hangs, which is how a
 # delegated reviewer that returned neither findings nor an error sat unnoticed
 # for over an hour. The VERIFIER arm already bounds this class
-# (AC_PANE_STALL_MAX, ac-pane-agent.sh); the CREWMATE arm had nothing.
+# (AC_PANE_STALL_MAX, src/pane-agent.ts); the CREWMATE arm had nothing.
 reset_state
 rm -f "$state"/*.status
 rm -rf "$state"/.wake-spool*
@@ -4840,6 +4840,23 @@ for wa_s in o n; do
 done
 wa_outs; wa_compare "INT ignored at entry"
 assert_contains "$(nout)" "signal:TERM" "row 8: INT ignored at entry is never handled"
+# HUP and TERM ignored at entry (a nohup'd or supervised arm) stay ignored too;
+# a TERM-ignoring side is ended with its group KILLed, its lock left behind.
+for wa_sg in HUP TERM; do
+  WA_WRAP=(/bin/sh -c "trap '' $wa_sg; exec \"\$0\" \"\$@\"")
+  for wa_s in o n; do
+    if [ "$wa_s" = o ]; then wa_b="$WA_OBIN"; wa_h="$WA_OH"; else wa_b="$WA_NBIN"; wa_h="$WA_NH"; fi
+    wa_armed "$wa_b" "$wa_h" "$wa_s"
+    kill -s "$wa_sg" "$WA_PID"; /bin/sleep 0.5
+    kill -0 "$WA_PID" 2>/dev/null || fail "row 8: the $wa_s side died of a $wa_sg it started with ignored"
+    if [ "$wa_sg" = TERM ]; then kill -KILL -"$WA_PID"; else kill -TERM "$WA_PID"; fi
+    if [ "$wa_s" = o ]; then wa_end WA_ORC; else wa_end WA_NRC; fi
+  done
+  [ "$wa_sg" = HUP ] || WA_NOISE=0
+  wa_outs; wa_compare "$wa_sg ignored at entry"
+done
+assert_eq "$WA_NRC" "137" "row 8: TERM ignored at entry is never handled"
+wa_both rm -rf '$H/home/state/.watch.lock.d'
 wa_both unsent block
 reset_wa
 

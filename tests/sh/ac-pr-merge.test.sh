@@ -882,9 +882,9 @@ assert_eq "$(tail -n 1 "$DNH/home/state/.landings")" "$(printf '%s\tgam-ship\tt.
 #     links src/ starts the module from this checkout, and the remedy's
 #     ac-know.sh is the LAB's - as the original's ac_root named its own bin/
 #     (STARTED_BIN, never import.meta.dir). The gate is not the lab's: a
-#     lab ac-qa-lib.sh override of ac_qa_required is never read, the twin in
-#     src/lib.ts answers
-DLAB="$TMP/plab"; mkdir -p "$DLAB/bin"; cp "$BIN"/*.sh "$DLAB/bin/"; ln -s "$ROOT/src" "$DLAB/src"
+#     lab ac-qa-lib.sh override of ac_qa_required (the frozen lib planted in
+#     the lab bin/) is never read, the twin in src/lib.ts answers
+DLAB="$TMP/plab"; mkdir -p "$DLAB/bin"; cp "$BIN"/*.sh "$ROOT/tests/fixtures/ac-qa-lib.sh" "$DLAB/bin/"; ln -s "$ROOT/src" "$DLAB/src"
 printf '\nac_qa_required() { printf '"'"'lab qa %%s\\n'"'"' "$1"; return 1; }\n' >>"$DLAB/bin/ac-qa-lib.sh"
 out="$(cd "$DNH" && env -u AC_HOME LC_ALL=C PATH="$DSTUBS:$PATH" D_LOG="$DNH/calls.log" AC_HOME="$DNH/home" "$DLAB/bin/ac-pr-merge.sh" k1 "$DU" 2>"$TMP/plab.err")" || fail "12: the lab merge"
 assert_eq "$out" "merged $DU" "12: no lab qa line - the lab's ac-qa-lib.sh is not consulted"

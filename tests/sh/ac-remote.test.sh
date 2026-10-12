@@ -1940,4 +1940,45 @@ assert_eq "$(shim_out)" "remote-order bv2" "row 25: poll and ack under an export
 assert_contains "$(shim_tree)" "remote-ack so=braceexpand:errexit:hashall:interactive-comments:monitor:nounset:pipefail pid-leads=y" "row 25: the ack's SHELLOPTS and group, unchanged"
 R_ENV=()
 
+# 26. META SET runs under ac_meta_set's lock <dir>/.<file>.lock (10 PATH
+#     `sleep 1` waits, counted by a stub): against a live holder, link,
+#     done-stamp and push-pending's stamp warn `cannot lock meta file <f> -
+#     nothing written` and end the run, exit 1; the family send's
+#     registration warns once per key and still posts, exit 0; followup's
+#     unset took no lock in the original and writes through a held one
+both seed_side
+mkdir -p "$TMP/rsleep"
+printf '#!/bin/sh\necho x >>"$R_SIDE/log/sleeps"\n' >"$TMP/rsleep/sleep"
+chmod +x "$TMP/rsleep/sleep"
+R_ENV=("PATH=$TMP/rsleep:$RSTUB:$PATH")
+held() { mkdir -p "$H/home/state/$1"; printf '%s\n' "$$" >"$H/home/state/$1/pid"; }
+sleeps() { assert_eq "$(cat "$OH/log/sleeps" 2>/dev/null | wc -l | tr -d ' ') $(cat "$NH/log/sleeps" 2>/dev/null | wc -l | tr -d ' ')" "$1 $1" "$2"; each 'rm -f "$H/log/sleeps"'; }
+both stash r1 '"1.2"'
+both put home/state/t1.meta 'pr=x\n'
+each 'held .t1.meta.lock'
+same link t1 r1
+assert_eq "$SAME_RC|$(shim_out)|$(shim_err)" "1||WARN: cannot lock meta file HOME/home/state/t1.meta - nothing written" "row 26: link refuses a held meta lock"
+assert_eq "$(cat "$NH/home/state/t1.meta")" "pr=x" "row 26: ...with nothing written"
+sleeps 10 "row 26: ...after ten waits"
+both put home/state/t1.meta 'remote_request=r1\nremote_request_ts=5\npr=x\n'
+both hook remote-reply 'hlog fs $#; [ -n "$AC_REMOTE_THREAD" ] || printf "1700.42\n"'
+same followup t1
+assert_eq "$SAME_RC|$(cat "$NH/home/state/t1.meta")" "0|pr=x" "row 26: followup's unset writes through the held lock"
+sleeps 0 "row 26: ...without waiting"
+each 'held ..landing-receipt-stamp.lock'
+same done-stamp famz
+assert_eq "$SAME_RC|$(shim_out)|$(shim_err)" "1||WARN: cannot lock meta file HOME/home/state/.landing-receipt-stamp - nothing written" "row 26: done-stamp refuses a held stamp lock"
+sleeps 10 "row 26: ...after ten waits"
+each 'held remote-threads/.f1.thread.lock'
+same thread-post f1
+assert_eq "$SAME_RC|$(shim_out)|$(shim_err)" "0|posted f1 (1700.42)|WARN: cannot lock meta file HOME/home/state/remote-threads/f1.thread - nothing written
+WARN: cannot lock meta file HOME/home/state/remote-threads/f1.thread - nothing written" "row 26: the registration warns per key and the post stands"
+sleeps 20 "row 26: ...ten waits per key"
+both room fam1 '- [t] c> GATE: one\n'
+each 'held ..remote-push-stamp.lock'
+same push-pending
+assert_eq "$SAME_RC|$(shim_out)|$(shim_err)" "1||WARN: cannot lock meta file HOME/home/state/.remote-push-stamp - nothing written" "row 26: push-pending's stamp refuses a held lock after the send"
+sleeps 10 "row 26: ...after ten waits"
+R_ENV=()
+
 pass

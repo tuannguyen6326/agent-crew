@@ -127,8 +127,11 @@ skill_verb_refs() {
 # `"" | verb | alias)` whose empty alternative names no verb) and `cmd_<verb>()`
 # functions, the shapes the bin/ scripts use. A ported entry is a shim over
 # src/<x>.ts (`ac_bun_exec src/<x>.ts`), whose dispatch is read instead: the
-# `case "verb":` arms, the `cmd === "verb"` / `verb === "verb"` tests and the
-# `"verb"` members of an `[...].includes(cmd)` list. Empty for a single-purpose script, which then has
+# `case "verb":` arms, the `cmd === "verb"` / `verb === "verb"` / `args[0]
+# === "verb"` (or `!==`) tests, the `"verb"` members of an
+# `[...].includes(cmd | verb | args[0])` list, and the keys of an object
+# literal the module indexes as `<table>[cmd | verb]` or `hasOwn(<table>,
+# cmd | verb)`. Empty for a single-purpose script, which then has
 # nothing to check a verb against.
 script_verbs() {
   local cache="$TMP/verbs/$1" module
@@ -137,10 +140,20 @@ script_verbs() {
     module="$(sed -n 's/^ac_bun_exec \(src\/[a-z0-9-]*\.ts\).*/\1/p' "$ROOT/bin/$1" | head -n 1)"
     if [ -n "$module" ] && [ -f "$ROOT/$module" ]; then
       awk '
+        NR == FNR {
+          s = $0; while (match(s, /[A-Za-z_][A-Za-z0-9_]*\[(cmd|verb)\]/)) { t = substr(s, RSTART, RLENGTH); sub(/\[.*/, "", t); table[t] = 1; s = substr(s, RSTART + RLENGTH) }
+          s = $0; while (match(s, /hasOwn\([A-Za-z_][A-Za-z0-9_]*, (cmd|verb)\)/)) { t = substr(s, RSTART + 7, RLENGTH - 7); sub(/,.*/, "", t); table[t] = 1; s = substr(s, RSTART + RLENGTH) }
+          next
+        }
         /^[ \t]*case "[a-z][a-z0-9-]*":/ { s = $0; sub(/^[ \t]*case "/, "", s); sub(/".*/, "", s); print s }
-        /(cmd|verb) === "[a-z][a-z0-9-]*"/ { s = $0; while (match(s, /(cmd|verb) === "[a-z][a-z0-9-]*"/)) { t = substr(s, RSTART, RLENGTH); sub(/^[a-z]* === "/, "", t); sub(/"$/, "", t); print t; s = substr(s, RSTART + RLENGTH) } }
-        /\]\.includes\((cmd|verb)\)/ { s = $0; sub(/\]\.includes\(.*/, "", s); while (match(s, /"[a-z][a-z0-9-]*"/)) { print substr(s, RSTART + 1, RLENGTH - 2); s = substr(s, RSTART + RLENGTH) } }
-      ' "$ROOT/$module" | sort -u >"$cache"
+        /(cmd|verb|args\[0\]) [!=]== "[a-z][a-z0-9-]*"/ { s = $0; while (match(s, /(cmd|verb|args\[0\]) [!=]== "[a-z][a-z0-9-]*"/)) { t = substr(s, RSTART, RLENGTH); sub(/^[^"]*"/, "", t); sub(/"$/, "", t); print t; s = substr(s, RSTART + RLENGTH) } }
+        /\]\.includes\((cmd|verb|args\[0\])/ { s = $0; sub(/\]\.includes\(.*/, "", s); while (match(s, /"[a-z][a-z0-9-]*"/)) { print substr(s, RSTART + 1, RLENGTH - 2); s = substr(s, RSTART + RLENGTH) } }
+        /^const [A-Za-z_][A-Za-z0-9_]*.*= \{/ { t = $0; sub(/^const /, "", t); sub(/[^A-Za-z0-9_].*/, "", t); if (t in table) { lit = 1; sub(/^[^{]*\{/, "") } }
+        lit {
+          s = $0; if (sub(/\}.*/, "", s)) lit = 0
+          n = split(s, a, ","); for (i = 1; i <= n; i++) { k = a[i]; sub(/:.*/, "", k); gsub(/[ \t"]/, "", k); if (k ~ /^[a-z][a-z0-9_-]*$/) print k }
+        }
+      ' "$ROOT/$module" "$ROOT/$module" | sort -u >"$cache"
       printf '%s\n' "$cache"
       return 0
     fi
@@ -274,6 +287,7 @@ p_verbs="$(mk_pkg p-verbs 'name: p-verbs' 'description: quotes live commands.')"
   printf 'Peek with `bin/ac-peek.sh <id>`; the base is `$(bin/ac-ship.sh base)`; also `bin/ac-merge-local.sh myid`.\n'
   printf 'Adjacent spans: `bin/ac-ship.sh` `nosuchverb`.\n'
   printf '```bash\n<distro>/bin/ac-verify.sh codereview --repo "$PWD"\n```\n'
+  printf 'Ported dispatch shapes: `bin/ac-wake-drain.sh ack <id>`, `bin/ac-backlog.sh fields -`, `bin/ac-dashboard.sh restart`, `bin/ac-task.sh update-note <id>`, `bin/ac-brain.sh links-to`.\n'
 } >>"$p_verbs"
 check_skill_verbs "$p_verbs" || fail "live script+verb mentions must pass the verb lint"
 
@@ -281,9 +295,13 @@ check_skill_verbs "$p_verbs" || fail "live script+verb mentions must pass the ve
 # each reported as one `skill <pkg>: bin/ac-x.sh <verb> - <why>` line.
 n_verbs="$(mk_pkg n-verbs 'name: n-verbs' 'description: quotes dead commands.')"
 printf 'Run `bin/ac-nope.sh foo` and `bin/ac-room.sh nosuchverb <family>`.\n' >>"$n_verbs"
+printf 'Ported dispatch shapes: `bin/ac-wake-drain.sh akc <id>`, `bin/ac-task.sh strat <id>`, `bin/ac-brain.sh recal`.\n' >>"$n_verbs"
 n_out="$(check_skill_verbs "$n_verbs" || true)"
 assert_fails check_skill_verbs "$n_verbs"
 assert_contains "$n_out" 'skill n-verbs: bin/ac-nope.sh foo - script missing' "missing script is one miss line"
 assert_contains "$n_out" 'skill n-verbs: bin/ac-room.sh nosuchverb - verb not dispatched' "undispatched verb is one miss line"
+assert_contains "$n_out" 'skill n-verbs: bin/ac-wake-drain.sh akc - verb not dispatched' "an args[0] test is read as dispatch"
+assert_contains "$n_out" 'skill n-verbs: bin/ac-task.sh strat - verb not dispatched' "a verb table's shorthand keys are read as dispatch"
+assert_contains "$n_out" 'skill n-verbs: bin/ac-brain.sh recal - verb not dispatched' "a multi-line verb table's keys are read as dispatch"
 
 pass

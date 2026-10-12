@@ -305,9 +305,11 @@ if [ "$(id -u)" != 0 ]; then
   assert_contains "$out" "INVALID ledger: cannot read $fleet_backlog" "validate names the ledger it could not read"
 fi
 
-# --- AC-2.3: list renders and ALWAYS exits 0 ---------------------------------
-# A digest block may never take session start down - the rule src/deputy.ts
-# states for its own list, adopted here for the same reason.
+# --- AC-2.3: list renders and exits 0 but for a failed registry parse -------
+# A digest block may never take session start down: an unread ledger costs the
+# tallies, never the exit (src/domain.ts list; a failed registry parse is W2),
+# and bin/ac-session-start.sh degrades a failed list to a WARN, as it does
+# src/deputy.ts's (W4).
 # AC-12.3 second half - the deputy's local-only guard has exactly the sites the
 # spec inventories, all inside the crewdeputy feature. A copy of it landing here
 # later would be a mode branch on a verb that cannot need one, so the token is

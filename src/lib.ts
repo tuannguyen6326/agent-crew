@@ -520,7 +520,7 @@ export function enterCaller(argv: string[]): { args: string[]; atCaller: boolean
 // the distro root, so it hands the child "" rather than the root.
 export function bunChild(module: string, args: string[]): { cmd: string[]; cwd: string } {
   const unset = Object.keys(process.env).filter((k) => /^(BUN_|JSC_)/.test(k)).flatMap((k) => ["-u", k]);
-  return { cmd: ["/usr/bin/env", ...unset, process.execPath, "--no-env-file", join(ROOT, module), atCallerCwd ? process.cwd() : "", ...args], cwd: ROOT };
+  return { cmd: ["/usr/bin/env", ...unset, ...envCommand([process.execPath]), "--no-env-file", join(ROOT, module), atCallerCwd ? process.cwd() : "", ...args], cwd: ROOT };
 }
 
 // --- fleets twins ---
@@ -824,9 +824,10 @@ export function taskStatus(id: string): string {
 // no reachable call differs. The rewrite runs under ac_meta_set's lock
 // (<dir>/.<file>.lock, the same protocol, 10 PATH `sleep 1` waits); one that
 // cannot be taken is the WARN the bash prints and a throw (code ELOCK,
-// status 1) with nothing written.
-export function metaSet(file: string, key: string, value: string): void {
-  metaUpdate(file, () => [[key, value]]);
+// status 1) with nothing written. `quiet` (a caller's `2>/dev/null`) drops
+// that WARN and mv's own line.
+export function metaSet(file: string, key: string, value: string, quiet = false): void {
+  metaUpdate(file, () => [[key, value]], quiet);
 }
 
 // Several keys rewritten in ONE rename, each value computed by `pairs` from
@@ -835,7 +836,14 @@ export function metaSet(file: string, key: string, value: string): void {
 // residual, bin/ac-lib.sh) and a reader never sees half of a set. Every
 // line of a named key is dropped and the pairs are appended in order - the
 // bytes successive metaSet calls would leave.
-export function metaUpdate(file: string, pairs: (get: (key: string) => string) => [string, string][]): void {
+export function metaUpdate(file: string, pairs: (get: (key: string) => string) => [string, string][], quiet = false): void {
+  metaLocked(file, () => metaRewrite(file, pairs, quiet), quiet);
+}
+
+// ac_meta_set's lock around a rewrite of <file> that is not metaUpdate's own
+// (a twin keeping grep's BRE key match), so every writer of one meta still
+// excludes every other; refused exactly as metaUpdate is.
+export function metaLocked(file: string, rewrite: () => void, quiet = false): void {
   const cut = file.lastIndexOf("/");
   const dir = cut < 0 ? "." : file.slice(0, cut);
   const lock = `${dir}/.${file.slice(cut + 1)}.lock`;
@@ -845,17 +853,17 @@ export function metaUpdate(file: string, pairs: (get: (key: string) => string) =
     held = lockAcquire(lock, 10, sleepOne);
   } catch {}
   if (!held) {
-    warn(`cannot lock meta file ${file} - nothing written`);
+    if (!quiet) warn(`cannot lock meta file ${file} - nothing written`);
     throw Object.assign(new Error(`cannot lock meta file ${file}`), { code: "ELOCK", status: 1 });
   }
   try {
-    metaRewrite(file, pairs);
+    rewrite();
   } finally {
     lockRelease(lock);
   }
 }
 
-function metaRewrite(file: string, pairs: (get: (key: string) => string) => [string, string][]): void {
+function metaRewrite(file: string, pairs: (get: (key: string) => string) => [string, string][], quiet = false): void {
   let data: Buffer | null = null;
   let mode: number | null = null;
   try {
@@ -896,7 +904,7 @@ function metaRewrite(file: string, pairs: (get: (key: string) => string) => [str
   if (mode !== null) chmodSync(tmp, mode);
   let status = 127;
   try {
-    status = shellStatus(spawnShellSync(["mv", tmp, file], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }));
+    status = shellStatus(spawnShellSync(["mv", tmp, file], { stdin: "ignore", stdout: "inherit", stderr: quiet ? "ignore" : "inherit" }));
   } catch {}
   if (status !== 0) throw Object.assign(new Error(`mv ${tmp} ${file} failed`), { code: "EMV", status });
 }
@@ -1395,15 +1403,33 @@ import { closeSync, openSync, readSync } from "node:fs";
 // spawn passes one: a name set or deleted since start reaches the child
 // through env(1), every other name keeps its bytes. env(1) answers a command
 // it cannot launch with 127 (or execvp's next PATH match) where Bun throws,
-// and every caller reads that throw as the shell's "could not start", so the
-// command and the absolute #! interpreter it names are looked up first. An
-// interpreter that starts (`#!/usr/bin/env NAME` with NAME missing) is the
-// child's own 127 either way.
+// and every caller reads that throw as the shell's "could not start" (EACCES
+// its 126), so the command and the absolute #! interpreter it names are
+// looked up first and throw what Bun throws. An interpreter that starts
+// (`#!/usr/bin/env NAME` with NAME missing) is the child's own 127 either way.
+// env's execvp hands a file the kernel refuses to /bin/sh, so one without a
+// #! that bash would not call binary goes to enoexecArgv's /bin/bash first.
 const STARTED_ENV = { ...process.env };
 
-function launchable(argv0: string, cwd: string | undefined): boolean {
-  const file = Bun.which(argv0, { PATH: process.env.PATH ?? "", cwd });
-  if (!file) return false;
+function launchError(code: string, argv0: string): Error {
+  return Object.assign(new Error(`${code}: ${argv0}`), { code, path: argv0 });
+}
+
+function envRun(argv: string[], cwd: string | undefined): string[] {
+  const argv0 = argv[0]!;
+  let file: string | null;
+  if (argv0.includes("/")) {
+    file = resolve(cwd ?? ".", argv0);
+    try {
+      accessSync(file, constants.X_OK);
+    } catch (e) {
+      throw launchError((e as { code?: string }).code ?? "ENOENT", argv0);
+    }
+    if (statSync(file).isDirectory()) throw launchError("EACCES", argv0);
+  } else {
+    file = Bun.which(argv0, { PATH: process.env.PATH ?? "", cwd });
+    if (!file) throw launchError("ENOENT", argv0);
+  }
   const head = Buffer.alloc(512);
   let n = 0;
   try {
@@ -1414,11 +1440,11 @@ function launchable(argv0: string, cwd: string | undefined): boolean {
       closeSync(fd);
     }
   } catch {
-    return true;
+    return argv;
   }
   const lf = head.indexOf(10);
   const line = head.subarray(0, lf < 0 || lf > n ? n : lf);
-  if (line[0] !== 0x23 || line[1] !== 0x21) return true;
+  if (line[0] !== 0x23 || line[1] !== 0x21) return line.includes(0) ? argv : ["/bin/bash", argv0.includes("/") ? argv0 : file, ...argv.slice(1)];
   let s = 2;
   while (s < line.length && (line[s] === 0x20 || line[s] === 0x09)) s++;
   let e = s;
@@ -1428,23 +1454,37 @@ function launchable(argv0: string, cwd: string | undefined): boolean {
   // The path is filesystem bytes; only one that is UTF-8 has a spelling the
   // fs calls take, so any other is left to the launch itself.
   const interp = raw.toString("utf8");
-  if (!interp.startsWith("/") || !Buffer.from(interp, "utf8").equals(raw)) return true;
+  if (!interp.startsWith("/") || !Buffer.from(interp, "utf8").equals(raw)) return argv;
   // X_OK passes a directory, which the kernel never runs as an interpreter.
   try {
     accessSync(interp, constants.X_OK);
-    return !statSync(interp).isDirectory();
+    if (!statSync(interp).isDirectory()) return argv;
+  } catch {}
+  throw launchError("ENOENT", argv0);
+}
+
+function launchable(argv0: string, cwd: string | undefined): boolean {
+  try {
+    envRun([argv0], cwd);
+    return true;
   } catch {
     return false;
   }
 }
 
-function envDelta(argv0: string, cwd: string | undefined): string[] {
+// env(1) reads every leading operand holding `=` as one more assignment, so
+// such a command is exec'd by a shell instead.
+function envCommand(argv: string[]): string[] {
+  return argv[0]!.includes("=") ? ["/bin/sh", "-c", 'exec "$0" "$@"', ...argv] : argv;
+}
+
+function launchArgv(argv: string[], cwd: string | undefined): string[] {
   const d: string[] = [];
   for (const k of Object.keys(STARTED_ENV)) if (process.env[k] === undefined) d.push("-u", k);
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && v !== STARTED_ENV[k]) d.push(`${k}=${v}`);
-  if (d.length === 0) return [];
-  if (!launchable(argv0, cwd)) throw Object.assign(new Error(`ENOENT: ${argv0}`), { code: "ENOENT", path: argv0 });
-  return ["/usr/bin/env", ...d];
+  if (d.length === 0) return [...intIgnorePrefix(), ...argv];
+  const run = envRun(argv, cwd);
+  return ["/usr/bin/env", ...d, ...(intIgnored ? [...intIgnorePrefix(), ...run] : envCommand(run))];
 }
 
 // bash runs an executable the kernel refuses (no shebang, ENOEXEC) as a
@@ -1458,20 +1498,18 @@ function enoexecArgv(argv: string[], e: unknown): string[] {
 }
 
 export const spawnShellSync = ((argv: string[], opts?: Parameters<typeof Bun.spawnSync>[1]) => {
-  const env = [...envDelta(argv[0]!, opts?.cwd), ...intIgnorePrefix()];
   try {
-    return Bun.spawnSync([...env, ...argv], opts);
+    return Bun.spawnSync(launchArgv(argv, opts?.cwd), opts);
   } catch (e) {
-    return Bun.spawnSync([...env, ...enoexecArgv(argv, e)], opts);
+    return Bun.spawnSync([...intIgnorePrefix(), ...enoexecArgv(argv, e)], opts);
   }
 }) as typeof Bun.spawnSync;
 
 export const spawnShell = ((argv: string[], opts?: Parameters<typeof Bun.spawn>[1]) => {
-  const env = [...envDelta(argv[0]!, opts?.cwd), ...intIgnorePrefix()];
   try {
-    return Bun.spawn([...env, ...argv], opts);
+    return Bun.spawn(launchArgv(argv, opts?.cwd), opts);
   } catch (e) {
-    return Bun.spawn([...env, ...enoexecArgv(argv, e)], opts);
+    return Bun.spawn([...intIgnorePrefix(), ...enoexecArgv(argv, e)], opts);
   }
 }) as typeof Bun.spawn;
 
@@ -1810,7 +1848,7 @@ function strlong(num: string): bigint {
       found = true;
       continue;
     }
-    const d = c <= 0x39 ? c - 0x30 : c >= 0x61 ? c - 0x61 + 10 : c <= 0x5a ? c - 0x41 + (base <= 36n ? 10 : 36) : c === 0x40 ? 62 : 63;
+    const d = c <= 0x39 ? c - 0x30 : c >= 0x61 ? c - 0x61 + 10 : c === 0x40 ? 62 : c <= 0x5a ? c - 0x41 + (base <= 36n ? 10 : 36) : 63;
     if (BigInt(d) >= base) throw arithError("value too great for base");
     val = BigInt.asIntN(64, val * base + BigInt(d));
   }
@@ -2823,7 +2861,9 @@ function herdrRpcTimeout(): string {
 // holding stdout cannot hold the caller - and bytes it writes after the
 // leader's exit are not read, where a `$( )` read to EOF (named). sleep(1)
 // refuses past 2147483647 s, so the original's watchdog fires at once there,
-// as at 0.
+// as at 0. Bun's timeout wraps past 2^31-1 ms (measured, bun 1.3.13), so a
+// ceiling longer than that, which the original slept in full, is no ceiling
+// here (named).
 function herdrCli(args: string[], stdin: "inherit" | "ignore", stdout: "ignore" | "pipe", stderr: Stdio = "ignore"): { status: number; out: Buffer; err: Buffer } {
   const s = process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "", "ignore");
   const secs = Number(herdrRpcTimeout());
@@ -2836,7 +2876,7 @@ function herdrCli(args: string[], stdin: "inherit" | "ignore", stdout: "ignore" 
       stdout,
       stderr,
       detached: true,
-      timeout: secs >= 1 && secs <= 2147483647 ? secs * 1000 : 1,
+      timeout: secs < 1 || secs > 2147483647 ? 1 : secs * 1000 <= 2 ** 31 - 1 ? secs * 1000 : undefined,
     });
   } catch {
   } finally {
@@ -4965,12 +5005,12 @@ export function projectConfigFile(repo: string, quiet = false): string | null {
 }
 
 // --- spawn twins ---
-// The bash helpers ac-spawn.sh leans on that ac-learn, ac-pane-agent and
-// ac-verify keep calling in bash (src/self-task.ts calls the twins): each
-// twin is pinned to the live helper by tests/ts/spawn-twins.test.ts, in the
-// call context ac-spawn.sh gave it (a `$(...)` capture, a `||` guard, or bare
-// under errexit - named per twin, since one helper behaves differently in
-// each).
+// The bash helpers the frozen tests/fixtures/ac-spawn.sh leans on, which the
+// frozen oracles of ac-learn, ac-pane-agent and ac-verify keep calling
+// (src/self-task.ts calls the twins): each twin is pinned to the live helper
+// by tests/ts/spawn-twins.test.ts, in the call context that oracle gave it (a
+// `$(...)` capture, a `||` guard, or bare under errexit - named per twin,
+// since one helper behaves differently in each).
 import { ftruncateSync, rmdirSync } from "node:fs";
 
 type SpawnIo = { stdin?: "inherit" | "ignore"; stderr: "inherit" | "ignore" };
@@ -5597,8 +5637,8 @@ function sweepLegacyGroups(fleet: string): number {
   return ids.status !== 0 ? ids.status : list.status;
 }
 
-// backend_window_new's twin as ac-spawn.sh and ac-learn.sh ran it - bare,
-// under errexit - routed per call: the pane handle `<pane> <tab>` (herdr) or
+// backend_window_new's twin as ac-spawn.sh ran it - bare, under errexit -
+// routed per call: the pane handle `<pane> <tab>` (herdr) or
 // `<handle> <tab>` (orca) written LAST to state/.pane-<id>. herdr: the
 // family's workspace (AC_WINDOW_FAMILY when set, empty the fleet root, else
 // windowFamily) resolved after the legacy-group sweep, a `crew:<id>` tab
@@ -5609,7 +5649,8 @@ function sweepLegacyGroups(fleet: string): number {
 // (jq's own line) or holding no ids, a placement that failed, a handle the
 // shell could not write (its own line not reproduced). With `errexit` false it
 // is the self-task start's `( ... ) || ac_die` subshell (the frozen
-// tests/fixtures/ac-self-task.sh), errexit asleep: the
+// tests/fixtures/ac-self-task.sh) or ac-learn.sh's suite launch inside its
+// gate's `if ! ...="$(...)"` (tests/fixtures/ac-learn.sh), errexit asleep: the
 // sweep's, both ids' jq and herdrCloseDefaultTabs' statuses go unread (an
 // empty id is the parse ERROR), and a workspace that did not resolve is
 // `could not resolve herdr workspace '<label>'`.

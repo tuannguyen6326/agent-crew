@@ -78,6 +78,9 @@
 //      resolved it in the deleted directory (`rel`: exit 1 alike; `.`: the
 //      shell's getcwd lines and an empty view, exit 0). A relative W6 half is
 //      read from the distro root there, where the original's open failed.
+//   A W6 half led by `-` is a row of its own, exit 0, where the original's
+//      basename read it as an option: basename's own lines on stderr, exit
+//      1, every later row lost.
 //   A meta name that is not UTF-8 reaches readdir as U+FFFD: its path does not
 //      exist, so it is a kind-less `unknown` row (as the FIRST entry: no rows,
 //      the W1 arm) where the original read the file.

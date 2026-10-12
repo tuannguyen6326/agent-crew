@@ -209,6 +209,11 @@
 // - bash's own stderr is not reproduced: the job line of a child a signal
 //   ended (`Terminated: 15`), `gh: command not found`, a failed append's
 //   redirection line.
+// - W5: the ships.env key folds per byte under any locale, where the
+//   original folded in the caller's: under a UTF-8 locale bash 3.2's range
+//   kept `é` (`pr_url_é`), so a url the original recorded under such a key
+//   is not seen here and the exit runs again, and the shared-key refusal
+//   fires for other pairs of repos.
 // - argv and env arrive decoded: a byte that is not UTF-8 in an argument
 //   reaches this module as U+FFFD, and a branch, target or member id that is
 //   not UTF-8 is spawned decoded; a url gh printed that is not UTF-8 is

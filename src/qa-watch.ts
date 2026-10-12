@@ -36,8 +36,9 @@
 // CASE LEDGER, after the step table, only when <run>/cases.tsv is non-empty:
 // `\n<dim>── cases ─<r> <green><p> pass<r>  <red><f> fail<r>  <yellow><u>
 // unverifiable<r>`, each count the lines (LF-split, a last line with no LF
-// counted) whose third single-TAB field is exactly that status; then the last
-// 8 lines: `   <col><glyph><r> <$1 %-22s> <dim><$2 %-4s><r> <$3 %-13s>
+// counted, a NUL ending its line as awk's record ended) whose third single-TAB
+// field is exactly that status; then the last 8 lines: `   <col><glyph><r>
+// <$1 %-22s> <dim><$2 %-4s><r> <$3 %-13s>
 // <dim><grade><r>`, green `✓` for pass, red `✗` for fail, else yellow `?` (an
 // unknown status is in no count - QW4), grade empty for a sixth field `-`, else
 // `grade <$6>` - `grade ` with a trailing space on a row with fewer than six
@@ -92,7 +93,7 @@ function ledger(rd: string): string {
   if (!nonEmpty(f)) return "";
   const lines = (readBytes(f) ?? "").split("\n");
   if (lines[lines.length - 1] === "") lines.pop();
-  const rows = lines.map((l) => l.split("\t"));
+  const rows = lines.map((l) => l.replace(/\0[\s\S]*$/, "").split("\t"));
   const count = (st: string): number => rows.filter((r) => (r[2] ?? "") === st).length;
   let s = `\n${C.dim}${b8("── cases ─")}${C.r} ${C.grn}${count("pass")} pass${C.r}  ${C.red}${count("fail")} fail${C.r}  ${C.yel}${count("unverifiable")} unverifiable${C.r}\n`;
   for (const r of rows.slice(-8)) {

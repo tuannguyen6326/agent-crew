@@ -86,7 +86,8 @@
 //    empty: 60) exits 0 printing nothing and leaving the stamp alone - the
 //    window runs from the FIRST print. Else the warnings, LF-terminated in
 //    the order 2, 3, 5, 6, 7, go to stderr in one write, then the stamp gets
-//    `sig=<sig>` and `at=<now>` through metaSet (each failure silent):
+//    `sig=<sig>` and `at=<now>` through metaSet, quiet as the original's
+//    `2>/dev/null` (each failure silent - no lock refusal, no mv line):
 //    `sig= watcher-down\nat=<epoch>\n`. A reader that has closed stderr ends
 //    the run at the write, 141, no stamp - SIGPIPE ended the shell there.
 // EXIT: 0, but 1 at step 0 and 141 at a closed reader.
@@ -113,8 +114,8 @@
 // stdin the caller's, stderr dropped); awk once (crewMetas' program, stderr
 // passed through); `date +%s`, unless EPOCHSECONDS is the clock, in step 2
 // when crew is in flight and again in step 8 when a print may follow (stdin
-// and stderr the caller's); `rm -f`;
-// metaSet's `mv`. Per orphan candidate WITH a chief meta, roomchiefLive
+// and stderr the caller's); `rm -f`; metaSet's `mv` (stderr dropped).
+// Per orphan candidate WITH a chief meta, roomchiefLive
 // probes backend_window_alive <fam>-chief through backendCall (src/lib.ts,
 // the twin of bin/ac-backend.sh's drivers) with AC_BACKEND set to the meta's
 // backend= (herdr when none) for that call alone, stdin, stdout and stderr
@@ -144,10 +145,8 @@
 //   fresh 0644 file; the port prints and leaves it (metaSet refuses to
 //   rewrite what it cannot read), so it prints on every run.
 // - Shell-own stderr is not reproduced: `[: integer expression expected`,
-//   the arithmetic error and `unbound variable` lines (W2-W4, W12), a
-//   missing tool's `command not found`, and mv's own line in the one case
-//   metaSet's mv fails (a directory planted at the temp's name inside a
-//   stamp directory) - the original's `2>/dev/null` dropped it.
+//   the arithmetic error and `unbound variable` lines (W2-W4, W12) and a
+//   missing tool's `command not found`.
 // - A clock text that is an EXPRESSION (`1+1`, `12 abc`) reads as the
 //   evaluation error where bash evaluated it (arithValue's model is one
 //   operand).
@@ -323,9 +322,9 @@ try {
   if ((e as { code?: string }).code === "EPIPE") process.exit(141);
 }
 try {
-  metaSet(stamp, "sig", sig);
+  metaSet(stamp, "sig", sig, true);
 } catch {}
 try {
-  metaSet(stamp, "at", now);
+  metaSet(stamp, "at", now, true);
 } catch {}
 process.exit(0);

@@ -9,7 +9,7 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 # DISPUTED: the implementation (tests/fixtures/ac-spawn.sh under bash vs src/spawn.ts through bin/ac-spawn.sh)
-# HELD-CONSTANT: ONE world path ($XW) rebuilt by the row's own setup before each pass - a home (config/, records/, data/, state/, projects/proj linking the repo), the repo $XW/proj made under one git identity and one commit date, the container's .claude/CLAUDE.md, the fake herdr's and fake orca's dirs ($XW/herdr, $XW/orca), HOME=$XW/hh (bun's cache, never compared), TMPDIR=$XW/tmp, AC_CLAUDE_TRANSCRIPT_ROOT=$XW/cp, AC_GUARD_ROOT=$XW/cwd (no repo: the guard's distro checks stay silent on both sides); argv, env (AC_SPAWN_SETTLE=0, AC_KICKOFF_READY_BUDGET=5, AC_SEND_SETTLE=0, AC_STARTUP_DIALOG_BUDGET=2, AC_HERDR_RPC_TIMEOUT=10 unless a row names others), cwd $XW/cwd, stdin /dev/null, LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - date answering one instant for every format, sleep logging each call and returning at once (holding where a row says), uuidgen answering one uuid, od answering /dev/urandom from a per-world counter, and every harness CLI a never-run stand-in - ahead of the fake herdr and orca; the live bin/ siblings beside each entry, the oracle's root also linking .agents. Every call's exit, stdout and stderr compared whole once normalised (either root ROOT, a mktemp suffix XXXXXX, a temp or wake-record pid), then the world: every path under $XW but hh/ and the repo's .git with mode and bytes (a link: its target; a claim's pid: <pid>; a git index, whose stat cache differs per pass: its name), and the repo's refs, worktrees and info/exclude.
+# HELD-CONSTANT: ONE world path ($XW) rebuilt by the row's own setup before each pass - a home (config/, records/, data/, state/, projects/proj linking the repo), the repo $XW/proj made under one git identity and one commit date, the container's .claude/CLAUDE.md, the fake herdr's and fake orca's dirs ($XW/herdr, $XW/orca), HOME=$XW/hh (bun's cache, never compared), TMPDIR=$XW/tmp, AC_CLAUDE_TRANSCRIPT_ROOT=$XW/cp, AC_GUARD_ROOT=$XW/cwd (no repo: the guard's distro checks stay silent on both sides); argv, env (AC_SPAWN_SETTLE=0, AC_KICKOFF_READY_BUDGET=5, AC_SEND_SETTLE=0, AC_STARTUP_DIALOG_BUDGET=2, AC_HERDR_RPC_TIMEOUT=10 unless a row names others), cwd $XW/cwd, stdin /dev/null, LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - date answering one instant for every format, sleep logging each call and returning at once (holding where a row says), uuidgen answering one uuid, od answering /dev/urandom from a per-world counter, every harness CLI a never-run stand-in, and a row's own holding stubs (stub/hold) - ahead of the fake herdr and orca; the live bin/ siblings beside each entry, the oracle's root also linking .agents. Every call's exit, stdout and stderr compared whole once normalised (either root ROOT, a mktemp suffix XXXXXX, a temp or wake-record pid), then the world: every path under $XW but hh/ and the repo's .git with mode and bytes (a link: its target; a claim's pid: <pid>; a git index, whose stat cache differs per pass: its name), and the repo's refs, worktrees and info/exclude.
 make_fake_herdr
 make_fake_orca
 cd "$TMP" || fail "cd TMP"
@@ -669,6 +669,69 @@ x9g() {
 xsame xt1 x9g
 xhas 'rc=137'
 xhas 'already exists'
+xholder() {  # xholder <tool> <exec> <sh condition> - stub/hold/<tool>: the first call meeting <condition> holds like sleep's hold-sleep, then every call execs <exec>
+  mkdir -p "$XW/stub/hold"
+  printf '#!/bin/sh\nif [ ! -e "$XSTUB/hold-once" ] && { %s; }; then\n  : >"$XSTUB/hold-once"; : >"$XSTUB/held"\n  i=0; while [ ! -e "$XSTUB/release" ] && [ "$i" -lt 300 ]; do /bin/sleep 0.1; i=$((i + 1)); done\nfi\nexec %s "$@"\n' "$3" "$2" >"$XW/stub/hold/$1"
+  chmod +x "$XW/stub/hold/$1"
+}
+# The tail hold: spawned_at's date, the meta otherwise complete.
+xtailhold() { xholder date "$XSTUBS/date" "grep -q '^yolo=' \"\$XSTUB/../home/state/$1.meta\" 2>/dev/null && ! grep -q '^spawned_at=' \"\$XSTUB/../home/state/$1.meta\""; }
+xheld() { XPATH="$XW/stub/hold:$XSTUBS:$PATH"; xsig "$@"; XPATH=""; }   # xheld <signal> <args...> - xsig with the world's hold stubs first on PATH
+# SIGNALS: TERM before the lease (inside the brief's Mode read) ends the run
+# 143 with the claim released and no slot or orca worktree leased.
+xmodehold() { xholder sed /usr/bin/sed 'case "$*" in *"s/^Mode: //p"*) true ;; *) false ;; esac'; }
+x9h() { xmodehold; xheld TERM t1 proj --harness fake; }
+xsame xt1 x9h
+xhas 'rc=143'
+xwlacks 'leased=1'
+xwlacks '== home/state/t1.meta '
+xwlacks '.meta-claims/t1'
+x9i() { xmodehold; xheld TERM t1 proj --harness fake; }
+xsame xorca x9i
+xhas 'rc=143'
+xwlacks 'refs/heads/crew/t1'
+# SIGNALS: TERM after the run's last wait, in the meta tail, still runs the
+# armed cleanup - 143, the lease returned, the tab closed, no meta - on the
+# crew, roomchief and crewdeputy paths.
+x9j() { xtailhold t1; xheld TERM t1 proj --harness fake; }
+xsame xt1 x9j
+xhas 'rc=143'
+xwlacks 'leased=1'
+xwlacks '== home/state/t1.meta '
+xwlacks 'working: spawned'
+# SIGNALS (named): TERM in the status line's date, the meta complete, still
+# runs the crew cleanup - the original before the line, the port after it.
+x9n() { xholder date "$XSTUBS/date" "grep -q '^spawned_at=' \"\$XSTUB/../home/state/t1.meta\" 2>/dev/null"; xheld TERM t1 proj --harness fake; }
+xboth xt1 x9n
+for p in o n; do
+  xhas 'rc=143' "$p"
+  xwlacks 'leased=1' "$p"
+  xwlacks '== home/state/t1.meta ' "$p"
+done
+xwlacks 'working: spawned' o
+xwhas 'working: spawned' n
+x9k() { xtailhold fa-chief; xheld TERM --roomchief fa --harness fake; }
+xsame xrooms x9k
+xhas 'rc=143'
+xwlacks '== home/state/fa-chief.meta '
+x9l() { xtailhold dep1; xheld TERM dep1 --crewdeputy --harness fake; }
+xsame xdeputy x9l
+xhas 'rc=143'
+xwlacks '== home/state/dep1.meta '
+# SIGNALS (named): TERM in a recovery's notice send ends it 143 before its
+# window is recorded, the claim released - the original inside the send (the
+# notice left unsubmitted), the port once the send is whole.
+x9m() {
+  xc t1 proj --harness claude; xdeadpane t1
+  xholder herdr "$TMP/stubbin/herdr" 'case "$*" in *"has been RECOVERED"*) true ;; *) false ;; esac'; xheld TERM t1 proj --recover
+}
+xboth xt1 x9m
+for p in o n; do
+  xhas $'== TERM t1 proj --recover\nrc=143' "$p"
+  xwlacks 'recovered: pane reopened' "$p"
+  xwlacks 'window=herdr:pane-p2' "$p"
+  xwlacks '.meta-claims/t1' "$p"
+done
 
 # -- leg 10: continuation -----------------------------------------------------------------
 # A task spawned by one side is recovered by the other, and a promote by one

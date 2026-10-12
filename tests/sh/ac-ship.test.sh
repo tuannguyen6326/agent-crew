@@ -3142,6 +3142,17 @@ for xp in o n; do
 done
 grep -q '^mktemp .*/findings/\.review\.XXXXXX\.XXXXXX$' "$TMP/xw2.n" || fail "the leak check watched the normalizer's own temp name"
 
+# TRUSTED RE-POST (named): the original's drop guard read _ac_findings_trusted
+# from the caller's environment too; the port trusts only review-agent's call.
+x4b() {
+  xc start --intent trusted
+  xin '[{"id":"F1","severity":"error","action":"fix","authority_class":"internal","authority":"f.txt:1","description":"real"}]'; xc findings review
+  xin '[]'; XENV=(_ac_findings_trusted=1); xc findings review; XENV=(); XIN=/dev/null
+}
+xpass o xworld x4b o; xpass n xworld x4b n
+xlacks 're-post drops fix finding' o
+xhas 'ERROR: findings review refused (fail-closed): re-post drops fix finding(s) [F1] with no resolution'
+
 # -- leg 5: config / base / evidence-dir ---------------------------------------------
 x5a() {
   xc config review.max_rounds

@@ -643,8 +643,8 @@
 // boundary-run (the driver) and infra down (docker); a failing tool's own
 // status where the original's errexit ended on it (jq 5, awk 2, git 128);
 // 128+n when a signal ends the process - no handler is registered but
-// store-install's, so TERM (143) and HUP (129) end it at once while a child
-// runs, the child orphaned and finishing on its own.
+// store-install's, so TERM (143) and HUP (129) end every other verb at once
+// while a child runs, the child orphaned and finishing on its own.
 //
 // ESCAPE HATCH. A broken port stops every QA round at its first `agent` or
 // `start`, every relay ac-verify asks for, and chiefs' config-install and
@@ -733,7 +733,12 @@
 //   original waited its foreground child out.
 // - SIGNALS: store-install alone registers a handler - on its exit, and on
 //   TERM, HUP and INT (128+n), it removes its manifest temp and releases
-//   `<store>.lock`, as the original's EXIT trap did on bash 3.2.
+//   `<store>.lock`, as the original's EXIT trap did on bash 3.2. The original
+//   ended at once while a child ran, the child orphaned and finishing on its
+//   own; here the signal acts at the turn after that child, which completes
+//   first, and before the store's next move - the original's world once its
+//   orphan finished (the leg's store-install signal row). INT there ends it
+//   130 after the child, where the original waited the child out and went on.
 // - HOME RESOLUTION: an AC_HOME store-install cannot enter is
 //   `ERROR: AC_HOME is not a readable directory: <h>`, a candidate or E2E dir
 //   cd cannot enter is exit 1 with no cd line.
@@ -764,7 +769,7 @@
 // runtime, gate, boundary and e2e receipts, the manifest, the ship receipt
 // and the passed marker), src/lib.ts's qa gate, src/merge-local.ts,
 // src/pr-merge.ts, src/feature.ts and src/epic-ship.ts (the passed markers),
-// bin/ac-qa-watch.sh and bin/ac-watch-dash.sh (run.meta, cases.tsv, steps.tsv,
+// bin/ac-qa-watch.sh and src/watch-dash.ts (run.meta, cases.tsv, steps.tsv,
 // findings, logs, current), src/teardown.ts (the agent pane file, run.meta's
 // task, watch.pane, serve.pid, current) and src/tree.ts (which removes
 // <wt>/.crew/qa on a slot reset).
@@ -2257,12 +2262,15 @@ function cmdTestplanAmend(a: string[]): void {
   const entry = jq(["-cn", "--arg", "old", oldSha, "--arg", "new", newSha, "--arg", "authority", authority, "--arg", "reason", reason, "--arg", "at", iso(), "--argjson", "cases", caseJson, AMEND_ENTRY_JQ]);
   ee(entry.status);
   ee(append(t.path, `${cap(entry.out)}\n`));
-  const mtmp = exclusiveTemp(u8(`${rd}/run.meta.amend`));
-  const metaTmp = b8(mtmp.path);
-  if (runToFd(["awk", "-F=", '$1!="testplan_sha256" && $1!="testplan_manifest_sha256" && $1!="testplan_path"', `${rd}/run.meta`], mtmp.fd) !== 0) {
+  let mtmp: { path: string; fd: number } | undefined;
+  try {
+    mtmp = exclusiveTemp(u8(`${rd}/run.meta.amend`));
+  } catch {}
+  const metaTmp = mtmp === undefined ? "" : b8(mtmp.path);
+  if (mtmp === undefined || runToFd(["awk", "-F=", '$1!="testplan_sha256" && $1!="testplan_manifest_sha256" && $1!="testplan_path"', `${rd}/run.meta`], mtmp.fd) !== 0) {
     rm(t.path);
     rm(mt.path);
-    rm(metaTmp);
+    if (metaTmp !== "") rm(metaTmp);
     lockRelease(u8(lock));
     fail("testplan-amend refused: could not rewrite run.meta (the run is unchanged)");
   }
@@ -2482,7 +2490,12 @@ function cmdStoreCalibration(): void {
   say(`${r.out}\n`);
 }
 
-function cmdStoreInstall(a: string[]): void {
+// A signal held through a synchronous child acts only when the event loop
+// turns; store-install turns it after each child from the manifest build on,
+// so a signal never lets a later move of the store run.
+const turn = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+async function cmdStoreInstall(a: string[]): Promise<void> {
   let candidate = a[0] ?? "";
   if (a.length !== 1 || !isDir(`${candidate}/store`)) fail("usage: ac-qa.sh store-install <candidate-dir-with-store-and-base-manifest.sha256>");
   if (!process.env.AC_HOME) fail("store-install is chief-only and requires the canonical fleet AC_HOME");
@@ -2512,18 +2525,23 @@ function cmdStoreInstall(a: string[]): void {
   ee(m.status);
   manifest = m.path;
   qaStoreManifestBuild(dest, manifest);
+  await turn();
   const currentSha = shaFileA(manifest);
   if (currentSha !== baseSha) fail(`store-install conflict: candidate base=${baseSha} current=${currentSha}; review against the newer store`);
   const st = mktemp(["-d", `${dirname(dest)}/.${basename(dest)}.curation.XXXXXX`]);
   ee(st.status);
   ee(run(["cp", "-R", `${source}/.`, `${st.path}/`], { stdout: "inherit" }).status);
+  await turn();
   let previous = "";
   if (isDir(dest)) {
     previous = `${dest}.prev`;
     ee(run(["rm", "-rf", previous], { stdout: "inherit" }).status);
+    await turn();
     ee(mv(dest, previous));
+    await turn();
   }
   ee(mv(st.path, dest));
+  await turn();
   rm(manifest);
   lockRelease(u8(lock));
   process.removeListener("exit", cleanup);
@@ -2767,7 +2785,8 @@ function cmdBoundaryRun(a: string[]): number {
       `boundary-run refused: ${rerr}. Boot the deliverable with 'ac-qa.sh serve' and publish its runtime receipt with 'ac-qa.sh health' first - a case that never reached a booted system is not behavioral evidence.`,
     );
   if (!exists(evidence)) fail(`boundary-run --evidence ${evidence}: no such file or directory`);
-  const stimulus = rest.join("\n");
+  // `${s:+$'\n'}`: a leading empty argument adds no separator.
+  const stimulus = rest.reduce((s, arg) => (s === "" ? arg : `${s}\n${arg}`), "");
   const benv = qaBoundaryEnv(rd);
   const started = iso();
   const rc = teeRun(["/usr/bin/env", "-i", ...benv, ...rest], repo, `${rd}/logs/boundary-${caseId}.log`, true);
@@ -3215,7 +3234,12 @@ function cmdConfigProposal(a: string[]): void {
   if (run(["mkdir", out], { stderr: "ignore" }).status !== 0) fail(`config-proposal: id already exists: ${id}`);
   const prop = `${out}/proposed.yaml`;
   const patch = `${out}/proposal.patch`;
-  const t = exclusiveTemp(u8(`${prop}.tmp`));
+  let t: { path: string; fd: number };
+  try {
+    t = exclusiveTemp(u8(`${prop}.tmp`));
+  } catch {
+    return fatal(1);
+  }
   try {
     writeAll(t.fd, readStdin());
   } finally {
@@ -3900,7 +3924,7 @@ function cmdFinish(a: string[]): void {
 const USAGE =
   "usage: ac-qa.sh <start|step|case|visual|findings|testplan-amend|fixture|harness-classify|regression-proposal|curation|store-install|infra|baseline|serve|health|boundary-run|boundary-register|seed|cmd|config|config-proposal|config-install|evidence-dir|store-dir|fix-report|relay-report|fetch-check|agent|status|finish>";
 
-function main(argv: string[]): number {
+async function main(argv: string[]): Promise<number> {
   backendName();
   require("git", "jq");
   binDir = b8(STARTED_BIN);
@@ -3943,7 +3967,7 @@ function main(argv: string[]): number {
       cmdCuration(a);
       return 0;
     case "store-install":
-      cmdStoreInstall(a);
+      await cmdStoreInstall(a);
       return 0;
     case "store-curate":
       cmdStoreCurate(a);
@@ -4016,7 +4040,7 @@ if (import.meta.main) {
   const { args } = enterCaller(process.argv.slice(2));
   let rc = 0;
   try {
-    rc = main(args.map(b8));
+    rc = await main(args.map(b8));
   } catch (e) {
     if (typeof (e as Exit).exit !== "number") throw e;
     rc = (e as Exit).exit;

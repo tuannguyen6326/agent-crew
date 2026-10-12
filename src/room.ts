@@ -42,9 +42,9 @@
 // and one (parenthetical) before its colon (`ASK (1 of 2):`, `DECIDED
 // <family>:`, `DECIDED (captain):`); a verb continued by `-` (GATE-LOOPED:,
 // GATE-PASSED (auto):, GATE-ROUTING:, GATE-VERIFY:) is no counted item. The
-// MATCHER is ac_room_pending in bin/ac-wake-lib.sh, shared with the turn-end
-// guard; this module's OPEN/DECIDED patterns are its copy
-// (roomPending, exported), held to it by tests/sh/ac-room.test.sh. A room is in HANDBACK while its last `HANDBACK:`
+// MATCHER is ac_room_pending in bin/ac-wake-lib.sh; this module's OPEN/DECIDED
+// patterns are its copy (roomPending, and rowsOf, which the turn-end guard
+// reads), held to it by tests/sh/ac-room.test.sh. A room is in HANDBACK while its last `HANDBACK:`
 // is not followed by `HANDBACK-REFUSED:`, `DEMOTED:` or `CLOSED:`
 // (ac_room_handback_families). TRIAGE:, SELF-APPROVED:, GATE-PASSED (auto):,
 // GATE-LOOPED:, GATE-ROUTING:, GATE-VERIFY:, R1-DISPOSITION: and

@@ -852,8 +852,8 @@ both led '- [ ] fa - container\n- [x] fa-s0 - landed; feature:fa\n'
 #     CR is kept, a NUL in a key line cuts it to the bare key - W17, awk's
 #     record); a record whose two repos fold to one key (an indented line
 #     counts, a comment does not, an unterminated last line does - grep
-#     terminated it); a repo name of bytes folded per BYTE (W5: the oracle
-#     runs under C - `\303\251` keys pr_url___)
+#     terminated it); a repo name of bytes folded per BYTE (W5: under C the
+#     oracle agrees - `\303\251` keys pr_url___)
 seed13() {
   rec lo 'loc feat/lo push=deferred\n'; cut_at loc feat/lo main; review lo loc
   origin_repo my-app; cut_at my-app feat/mx origin/main; review mx my-app
@@ -897,6 +897,19 @@ same ship mx my-app --dry-run
 assert_eq "$(shim_err)" "${COLL//my_app of/my.app of}" "13: an indented, unterminated last line collides"
 same ship fe "$(printf '\303\251')" --dry-run
 assert_eq "$(shim_out)" "PR already recorded: https://example.test/pr/e" "13: W5 - the name folds per byte under C"
+#     W5 NAMED under a UTF-8 locale: the original folded in the caller's
+#     locale (bash 3.2's range kept `é`, a bash with ASCII ranges folds it as
+#     ONE character), the port still per byte - the oracle's arm is whatever
+#     key its own bash computes
+w5_key="$(env LC_ALL=en_US.UTF-8 PATH="$FSTUBS:$PATH" bash -c 'r="$1"; printf %s "pr_url_${r//[^a-zA-Z0-9]/_}"' _ "$(printf '\303\251')")"
+FT_ENV=(LC_ALL=en_US.UTF-8); pair ship fe "$(printf '\303\251')" --dry-run; FT_ENV=()
+assert_eq "$O_RC $N_RC" "0 0" "13: W5 under UTF-8 - both pass"
+assert_eq "$(shim_out)" "PR already recorded: https://example.test/pr/e" "13: W5 named - the port folds per byte under UTF-8"
+if [ "$w5_key" = pr_url___ ]; then
+  assert_eq "$(cat "$TMP/o.out")" "PR already recorded: https://example.test/pr/e" "13: W5 - this bash folds per byte under UTF-8"
+else
+  assert_contains "$(cat "$TMP/o.out")" "DRY-RUN: gh pr create --base main --head feat/fe" "13: W5 - the original's $w5_key misses the recorded url"
+fi
 
 # 15. jq is required on ship only, after the fence and before the home
 NOJQ="$TMP/nojq"; mkdir -p "$NOJQ"

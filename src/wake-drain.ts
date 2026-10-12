@@ -175,11 +175,12 @@
 //    string `.pages` counts its LENGTH - W23).
 // EXIT: 0; 1 for every refusal above; the first failing touch's status
 // (ack); mkdir's status (step 1, W12); the sed/tail status (step 7, W13); 1
-// at set -u's abort (below); 141 when stdout's reader has gone.
+// at set -u's abort (below); 141 when stdout's reader has gone (THE CLOSED
+// READER, below).
 //
-// THE CLOCK: <clock> is nowRaw's text (a non-empty EPOCHSECONDS as given -
-// bash 3.2 has no such builtin, so the variable was the clock - else `date
-// +%s`), spliced into `$(( <clock> - stamp ))` / `$(( <clock> - beat ))` and
+// THE CLOCK: <clock> is nowRaw's text (a non-empty EPOCHSECONDS less trailing
+// LFs - bash 3.2 has no such builtin, so the variable was the clock - else
+// `date +%s`), spliced into `$(( <clock> - stamp ))` / `$(( <clock> - beat ))` and
 // evaluated by a spawned `/bin/bash -c 'set -u; <name>=$1; printf %s "$((
 // $0 - <name> ))"' <clock> <value>`: the text is an EXPRESSION there
 // (`1700000000+1`, `(2*850000000)`, `0x6553F100`, `x=1700000000`, a comma).
@@ -228,6 +229,13 @@
 //   U+FFFD in AC_BACKEND, so in every later child's environment (W19).
 // - `command -v jq` is Bun.which, which skips a jq on PATH that is not
 //   executable where bash's lookup returned it (the epic-ship precedent).
+// - THE CLOSED READER: with stdout's reader gone the port ends at its first
+//   failing write, 141; one inside a spool's rendering leaves that spool's
+//   records in the claim for the next drain's sweep to emit - toward
+//   duplication, as the sweep fails. The original lost only the rendering
+//   subshell of its `awk | annotate_wakes` pipeline to SIGPIPE, removed the
+//   claim and went on: those records consumed unseen, exit 0 when nothing its
+//   main shell printed later hit the pipe.
 //
 // CALLERS: bin/ac-session-start.sh runs it under `set -euo pipefail` and
 // degrades a failure to `WARN: wake drain unavailable (bin/ac-wake-drain.sh

@@ -697,7 +697,7 @@ function recordTokens(sd: string, id: string, kind: string, harness: string, sid
     const root = process.env.AC_CLAUDE_TRANSCRIPT_ROOT || `${process.env.CLAUDE_CONFIG_DIR || `${process.env.HOME}/.claude`}/projects`;
     let dirs: string[] = [];
     try {
-      dirs = readdirSync(root).filter((d) => existsSync(`${root}/${d}/${sid}.jsonl`));
+      dirs = readdirSync(root).filter((d) => !d.startsWith(".") && existsSync(`${root}/${d}/${sid}.jsonl`));
     } catch {}
     if (dirs.length !== 1) rows = unknown(`${dirs.length ? `${dirs.length} transcripts` : "no transcript"} for session ${sid}`);
     else {

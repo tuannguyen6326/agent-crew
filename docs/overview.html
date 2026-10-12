@@ -496,7 +496,7 @@
     <div class="card"><span class="tag">roomchief --solo</span><h4>solo chief</h4><p>A family too small to cost a crewmate: its roomchief works each slice through a self-task, independent review is mandatory (<code>rev:yes</code>), and each landing posts <code>LANDED:</code> — or <code>UNLANDABLE:</code> — to the room.</p></div>
     <div class="card"><span class="tag">AC_SOLO=1</span><h4>solo session</h4><p>The captain pair-coding beside the chief, one slice at a time. It hands crew work to the chief with <code>ac-remote.sh order</code>, and a slice's teardown refuses until its knowledge loop (lesson, repo fact, Done row) is recorded or explicitly waived.</p></div>
   </div>
-  <p>Law: the <code>solo-session</code> skill, <code>bin/ac-self-task.sh</code> header.</p>
+  <p>Law: the <code>solo-session</code> skill, <code>src/self-task.ts</code> header (<code>bin/ac-self-task.sh</code> is its entry).</p>
 </section>
 
 <section id="backends">
@@ -537,7 +537,7 @@
   <p>Returning <strong>never deletes</strong> — ignored caches survive between crewmates. An
   available-but-dirty slot is never silently reset, and crewmates work on
   <code>crew/&lt;id&gt;</code>, the one branch they may create. Details:
-  <a href="worktrees.md">docs/worktrees.md</a>, <code>bin/ac-tree.sh</code> header.</p>
+  <a href="worktrees.md">docs/worktrees.md</a>, <code>src/tree.ts</code> header (<code>bin/ac-tree.sh</code> is its entry).</p>
 </section>
 
 <section id="modes">
@@ -576,7 +576,7 @@
   <code>push</code> refuses a stale <code>reviewed_ref</code>. A failing step
   <strong>holds</strong> the run — it never restarts from intent. <code>lint</code> is opt-in,
   and <code>test</code> skips on a declared <code>--tdd</code> run. Law: the
-  <code>delivery-review</code> skill; mechanics: <code>bin/ac-ship.sh</code> header and
+  <code>delivery-review</code> skill; mechanics: <code>src/ship.ts</code> header (<code>bin/ac-ship.sh</code> is its entry) and
   <a href="validate-pipeline.md">docs/validate-pipeline.md</a>.</p>
 </section>
 

@@ -680,9 +680,11 @@ ac_room_pending() {
   # ac_room_pending <file>... - gates/asks minus decisions, floored at 0 PER
   # FILE and summed over the files given. One file in, one count out - the
   # single-file answer is unchanged; N files are BATCHED into one awk pass for
-  # the same reason ac_room_handback_families is (below): ac-turnend-guard.sh
-  # reads the whole room set on a turn end, and rooms are never deleted, so a
-  # per-room fork would grow without bound on a hook that always runs. The
+  # the same reason ac_room_handback_families is (below): rooms are never
+  # deleted, so a per-room fork over the whole set would grow without bound.
+  # Its one bash caller, ac_chief_gate_parked, passes one file and is itself
+  # uncalled; the readers of the count (ac-room.sh, the turn-end guard) run
+  # src/room.ts's copy, which tests/sh/ac-room.test.sh holds to this one. The
   # per-file reset is load-bearing: a DECIDED: in one room settles nothing in
   # another.
   # The verb need not sit flush against the colon: a legitimately-authored
@@ -755,11 +757,12 @@ ac_room_handback_families() {
   # same way DEMOTED:/CLOSED: do, without either of those acts; a later
   # HANDBACK: re-opens it, so a refusal never permanently retires the state.
   #
-  # BATCHED BY DESIGN - it takes N files and makes ONE awk pass, because its
-  # heaviest consumer is ac-turnend-guard.sh, which sweeps the WHOLE room set on
-  # every fleet turn end. Rooms are records and are never deleted (rooms-threads
-  # skill), so the set only grows: a per-room fork would put an unbounded,
-  # daily-growing cost on the one hook that always runs.
+  # BATCHED BY DESIGN - it takes N files and makes ONE awk pass, because a
+  # reader of the HANDBACK state sweeps the WHOLE room set. Rooms are records
+  # and are never deleted (rooms-threads skill), so the set only grows: a
+  # per-room fork would put an unbounded, daily-growing cost on that sweep. No
+  # bash caller remains: ac-room.sh and the turn-end guard read src/room.ts's
+  # copy, which tests/sh/ac-room.test.sh holds to this one.
   #
   # The family is the room file's parent directory - data/<family>/room.md,
   # ac-room.sh's layout. Portable multi-file bookkeeping: gawk's ENDFILE is not

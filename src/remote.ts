@@ -291,7 +291,12 @@
 // is a no-op). Through a sibling temp `<file>.tmp.<pid>` created exclusively
 // and a spawned `mv` over the file (a symlinked meta becomes a regular file);
 // an mv that fails ends the run with its status, any other failure is `cannot
-// rewrite <file>: <errno>`, exit 1.
+// rewrite <file>: <errno>`, exit 1. Setting runs under ac_meta_set's lock
+// <dir>/.<file>.lock (metaLocked, src/lib.ts: 10 PATH `sleep 1` waits), so it
+// excludes every bash and TypeScript writer of that file; a lock it cannot
+// take is `WARN: cannot lock meta file <file> - nothing written` and exit 1
+// (inside the family send, the next key). Unsetting takes no lock, as the
+// original's meta_unset took none.
 //
 // HOOKS (config/, executable, transport-owned), each started as bash started
 // `"$hook"`: `/bin/sh -c 'if (set +o posix) 2>/dev/null; then set +o posix;
@@ -410,6 +415,7 @@ import {
   iso,
   launchable,
   metaGet,
+  metaLocked,
   nowRaw,
   physicalDir,
   require,
@@ -683,13 +689,19 @@ function metaRewrite(file: string, key: string, add: string | null): void {
   if (status !== 0) throw Object.assign(new Error(`mv ${tmp} ${file} failed`), { code: "EMV", status });
 }
 
+// ac_meta_set's lock around the rewrite; meta_unset never took one.
+function metaWrite(file: string, key: string, add: string | null): void {
+  if (add === null) metaRewrite(file, key, null);
+  else metaLocked(file, () => metaRewrite(file, key, add));
+}
+
 // A bare `ac_meta_set` / meta_unset: errexit ended the run where it failed.
 function metaRewriteOrExit(file: string, key: string, add: string | null): void {
   try {
-    metaRewrite(file, key, add);
+    metaWrite(file, key, add);
   } catch (e) {
     const err = e as { code?: string; status?: number };
-    if (err.code === "EMV") process.exit(err.status ?? 1);
+    if (err.code === "EMV" || err.code === "ELOCK") process.exit(err.status ?? 1);
     dieB(`cannot rewrite ${b8(file)}: ${err.code ?? "error"}`);
   }
 }
@@ -1143,7 +1155,7 @@ async function familySend(family: string, mention: string, stdin: "inherit" | nu
       if (!isDir(tdir)) run(["mkdir", "-p", tdir], "inherit", "inherit", "inherit");
       for (const key of ["thread_ts", "cursor"]) {
         try {
-          metaRewrite(tfile, key, ts);
+          metaWrite(tfile, key, ts);
         } catch {}
       }
     } else warn(`family thread: ${family} posted top-level but the hook printed no ts - thread mapping not recorded`);

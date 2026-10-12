@@ -2739,7 +2739,7 @@ function metaSetStrict(file: string, key: string, value: string): void {
 }
 
 function cmdMaintenance(args: string[]): void {
-  const verb = b8(args[0] ?? "status");
+  const verb = b8(args[0] || "status");
   const txid = b8(args[1] ?? "");
   const root = `${stateD()}/.maintenance-transactions`;
   if (verb === "status") {
@@ -2983,7 +2983,7 @@ function suiteLaunch(): string | null {
   const root = suiteRoot();
   const id = `verify-suite-${now()}`;
   const meta = b8(taskMeta(u8(id)));
-  const made = backendWindowNew(u8(id), u8(root));
+  const made = backendWindowNew(u8(id), u8(root), false);
   if (made.exited) return null;
   const window = subst(backendCall("target", [u8(id)], { stdin: "inherit", stdout: "pipe", stderr: "inherit" }).out.toString("latin1"));
   const t = tempFile(meta);
@@ -3144,13 +3144,14 @@ function cmdAutoroom(): void {
   let outcome = "";
   if (BigInt(n) >= BigInt(every) && !exists(meta)) {
     // Each gate's line is captured, as the bash's `$(...)` did, so it prints
-    // only after the lock is released - and a die inside the suite launch
-    // ends that capture, never this verb with the lock held.
+    // only after the lock is released - and a die inside the suite launch, or
+    // an error that ended the shell (an in-flight epoch of 08), ends that
+    // capture, never this verb with the lock held.
     const gate = (fn: () => { ok: boolean; out: string }): { ok: boolean; out: string } => {
       try {
         return fn();
       } catch (e) {
-        exitOf(e);
+        if (!SHELL_ENDS.has((e as { code?: string })?.code ?? "")) exitOf(e);
         return { ok: false, out: "" };
       }
     };

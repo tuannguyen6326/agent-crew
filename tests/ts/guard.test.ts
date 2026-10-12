@@ -66,7 +66,7 @@ test("testInt reads `[ a -gt b ]`'s operand as bash 3.2 does: isspace before, on
 }, 60000);
 
 test("arithValue evaluates one operand as `$(( ))` does: octal, hex, base#, the 64-bit wrap, an error, set -u's abort", () => {
-  const vals = ["", " 77 ", "0012", "01000", "0099", "08", "0x1F", "0X1f", "0x", "2#101", "64#z", "37#1", "1#1", "0#1", "010#7", "1_0", "12abc",
+  const vals = ["", " 77 ", "0012", "01000", "0099", "08", "0x1F", "0X1f", "0x", "2#101", "64#z", "1@", "64#@", "63#@", "64#_", "37#Z", "37#1", "1#1", "0#1", "010#7", "1_0", "12abc",
     "99999999999999999999", "18446744073709551616", "9223372036854775808", "-5", "- 5", "+5", "\t5\n", "5\r", "garbage", "_x", "-garbage", "1+1"];
   const got = twin(
     `say(${JSON.stringify(vals)}.map((v) => { try { return "v=" + L.arithValue(v); } catch (e) { return e.code; } }).join("|"))`,

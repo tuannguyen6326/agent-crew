@@ -276,6 +276,11 @@ XTTY=1 xsame w_full ac-ship-watch.sh --once
 assert_contains "$(xout)" $'\033[1mac-ship\033[0m \033[36mcrew/x\033[0m  \033[2mrun r1\033[0m  [\033[32mchecks-passed\033[0m]' "row 2: the header's colors on a tty"
 assert_contains "$(xout)" $' \033[35m\xe2\x8f\xb8\033[0m d          \033[35mawaiting_approval ' "row 2: an awaiting step is magenta"
 assert_contains "$(xout)" $' findings review    \033[35mask-user=1  fix=2\033[0m' "row 2: ask-user findings are magenta"
+# A NUL ends its line where `read -r` cut it, the later fields with it.
+w_nulsteps() { xseed; xrd ship r1; printf 'outcome=failed\n' >"$XRD/run.meta"; printf 'a\tcomp\0leted\t2\nb\tfailed\t0\n' >"$XRD/steps.tsv"; }
+xsame w_nulsteps ac-ship-watch.sh --once
+assert_contains "$(xout)" "$(printf ' %s %-10s %-18s %s' ○ a comp '')
+" "row 2: a NUL cuts its step line"
 
 # 3. finished detection, --once: running with nothing active (no line); no
 #    outcome (`run finished: `); no steps.tsv - SHELL-OWN, named: the original's

@@ -190,8 +190,7 @@
 // - BUN: with no bun on PATH the shim allows at once, saying nothing; a
 //   module that cannot load or crashes allows too - never a held stop.
 // - STATUS FOLD: wherever the original died with a status of its own (set -u
-//   on an age a broken date(1) left unset, an AC_STOPHOOK_LOG_KEEP naming a
-//   variable), the shim answers 0.
+//   on an age a broken date(1) left unset), the shim answers 0.
 // - KEEP ARITHMETIC: an AC_STOPHOOK_LOG_KEEP `$(( ))` cannot read (`2x`) made
 //   the original abandon each whole top-level statement around a trace, so a
 //   queued-wake or HANDBACK block lost its exit 2 and an idle fleet fell
@@ -274,14 +273,15 @@ const run = (argv: string[], stderr: "inherit" | "ignore", stdin: "inherit" | Bu
   }
 };
 
-// A trace whose keep knob names a variable ended the original under set -u;
-// one `$(( ))` cannot read only skips the trim here (KEEP ARITHMETIC).
+// A trace whose keep knob names a variable ended the original 0 under set -u
+// (the line count's status); one `$(( ))` cannot read only skips the trim here
+// (KEEP ARITHMETIC).
 function traceLine(detail: string): void {
   try {
     hookTrace("turnend-guard", Buffer.from(detail, "utf8").toString("latin1"));
   } catch (e) {
     const code = (e as { code?: string }).code;
-    if (code === "EUNBOUND") process.exit(1);
+    if (code === "EUNBOUND") process.exit(0);
     if (code !== "EARITH") throw e;
   }
 }
@@ -301,7 +301,7 @@ if (process.env.AC_SOLO === "1") {
   const sd = softSubdir("state", false);
   if (sd === "") process.exit(0);
   let dirty = "";
-  for await (const m of crewMetas(sd, "verify", "chiefs")) {
+  for await (const m of crewMetas(sd, "verify", "chiefs", "quiet")) {
     if (!metaIsSelf(m)) continue;
     let wt = "";
     try {

@@ -1836,7 +1836,9 @@ xsame_world scope-install
 #     decoded); --family Bad and café, --scope, --apps and --id outside
 #     ASCII (W11, named: refused per the text under any locale), the other
 #     brackets; W3 reproduced - the byte budget and
-#     the 60-character quote count characters under UTF-8, bytes under C; W2
+#     the 60-character quote count characters under UTF-8, bytes under C
+#     (QUOTE CUT, named: the port's quote stops short of a UTF-8 sequence
+#     the cut would split, so its hand-over cites); W2
 #     (named: ties in BYTE order, where the original's sort collated); the
 #     dash word with a no-break space; awk's tolower over U+212A (named).
 xboth xstd
@@ -1935,9 +1937,12 @@ xok recall --home @H/home --repo @H/$XP 'unicode budget probe' --bytes 200
 assert_contains "$(xout)" "-- 0 scene(s), 2 fact(s) shown (all hits) --" "10 (W3, reproduced): under UTF-8 the budget counts characters"
 assert_contains "$(xout)" "--quote 'unicode budget probe a é é é é é é é é é é é é é é é é é é é'" "10 (W3): ...and the quote cuts at 60 characters"
 XLC=C
-xok recall --home @H/home --repo @H/$XP 'unicode budget probe' --bytes 200
+xpair recall --home @H/home --repo @H/$XP 'unicode budget probe' --bytes 200
+assert_eq "$XO_RC:$XN_RC:$(xoerr)$(xerr)" "0:0:" "10 (W3): recall under C succeeds on both sides"
 assert_contains "$(xout)" "-- 0 scene(s), 1 fact(s) shown; TRUNCATED at --max 8 / --bytes 200 (2 fact hits total) --" "10 (W3): under C it counts bytes"
-assert_contains "$(xout)" "--quote 'unicode budget probe a é é é é é é é é é é é é "$'\xc3'"'" "10 (W3): ...and the quote ends mid-sequence"
+assert_contains "$(xoout)" "--quote 'unicode budget probe a é é é é é é é é é é é é "$'\xc3'"'" "10 (W3): ...and the original's quote ends mid-sequence"
+assert_contains "$(xout)" "--quote 'unicode budget probe a é é é é é é é é é é é é '" "10 (QUOTE CUT, named): the port's quote backs off to the split sequence's start"
+xok cite --home @H/home --repo @H/$XP --quote 'unicode budget probe a é é é é é é é é é é é é '
 xpair add --home @H/home --repo @H/$XP --family u1 --src-file file.txt:1 --new --fact "caf"$'\xe9'" from argv"
 xsame_rc_out add; xsame_err add
 assert_contains "$(xfile "$XREC")" "- fact caf"$'\xef\xbf\xbd'" from argv | src:" "10 (BYTES, named): argv arrives decoded"

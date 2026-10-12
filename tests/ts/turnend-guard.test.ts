@@ -32,11 +32,16 @@ try {
   hookTrace(process.argv[2]!, Buffer.from(process.argv[3]!, "utf8").toString("latin1"));
 } catch (e) {
   const code = (e as { code?: string }).code;
-  if (code === "EUNBOUND") process.exit(1);
+  if (code === "EUNBOUND") process.exit(0);
   if (code !== "EARITH") throw e;
 }
 `,
 );
+
+// The bash side is a script FILE, as the guard is: under `bash -c` bash 3.2
+// dies 127 on a keep naming a variable, where a script dies 0.
+const BASH_SIDE = join(W, "trace.sh");
+writeFileSync(BASH_SIDE, 'set -uo pipefail\n. "$1/ac-lib.sh" 2>/dev/null || exit 9\nac_hook_trace "$2" "$3"\n');
 
 type Ran = { status: number; out: string; err: string; log: string | null };
 function side(kind: "bash" | "twin", home: string | null, keep: string | undefined, detail: string, path = `${STUB}:${process.env.PATH ?? ""}`): Ran {
@@ -45,7 +50,7 @@ function side(kind: "bash" | "twin", home: string | null, keep: string | undefin
   if (keep !== undefined) env.AC_STOPHOOK_LOG_KEEP = keep;
   const argv =
     kind === "bash"
-      ? ["/bin/bash", "-c", 'set -uo pipefail; . "$0/ac-lib.sh" 2>/dev/null || exit 9; ac_hook_trace "$1" "$2"', join(ROOT, "bin"), "turnend-guard", detail]
+      ? ["/bin/bash", BASH_SIDE, join(ROOT, "bin"), "turnend-guard", detail]
       : [process.execPath, "--no-env-file", TWIN, "turnend-guard", detail];
   const r = Bun.spawnSync(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe", cwd: W, env });
   const log = home !== null && existsSync(join(home, "state", ".stop-hooks.log")) ? readFileSync(join(home, "state", ".stop-hooks.log"), "latin1") : null;
@@ -85,8 +90,8 @@ test("a keep `$(( ))` cannot read skips the trim; one naming a variable ends the
   expect(odd.twin.log).toBe(odd.bash.log);
   const named = both(seed, "nokeep");
   expect(named.twin.log).toBe(named.bash.log);
-  expect(named.bash.status).not.toBe(0);
-  expect(named.twin.status).not.toBe(0);
+  expect(named.bash.status).toBe(0);
+  expect(named.twin.status).toBe(named.bash.status);
 });
 
 test("homeless, or a state dir that refuses the append, writes and prints nothing", () => {

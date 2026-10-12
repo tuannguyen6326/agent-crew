@@ -609,6 +609,21 @@ aa_same 0 AC_SOLO=1
 aa_same 2 AC_SOLO=0
 aa_same 0 AC_HOME=
 aa_same 0 AC_HOME=SIDE/nowhere
+# A relative AC_HOME from a caller cwd with no name: the original's cd from
+# there reached nothing; bun sits in the distro root then, and must not resolve
+# the name against it (a home owing an arm is planted where it would land).
+for s in "$AO" "$AN"; do
+  mkdir -p "$s/root/rel/state" "$s/gone"
+  printf 'kind=ship\n' >"$s/root/rel/state/t1.meta"
+  rm -f "$s/calls"
+  rc=0
+  (cd "$s/gone" && rmdir "$s/gone" && printf '{}' | env -u AC_SOLO -u AC_SCOPE LC_ALL=C "PATH=$s/stub:$PATH" AC_HOME=rel \
+    "$s/root/bin/ac-watch-autoarm.sh") >/dev/null 2>&1 || rc=$?
+  assert_eq "$rc" "0" "a relative home from a nameless cwd stands aside ($s)"
+  assert_no_file "$s/root/rel/state/.stop-hooks.log" "a relative home from a nameless cwd is never traced ($s)"
+  assert_no_file "$s/calls" "a relative home from a nameless cwd arms nothing ($s)"
+  rm -rf "$s/root/rel"
+done
 aa_each 'rm -rf SIDE/home/state'
 aa_same 0
 aa_each 'mkdir SIDE/home/state; printf "kind=ship\n" >SIDE/home/state/t1.meta'

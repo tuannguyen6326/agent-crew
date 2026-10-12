@@ -92,16 +92,16 @@ done
 _ac_path="$TMP/no-host-backend" _ac_n=0
 IFS=: read -ra _ac_dirs <<<"$PATH"
 for _ac_dir in "${_ac_dirs[@]}"; do
-  # Dropped, never mirrored: an empty entry is whatever dir the shell is in
-  # at each lookup, so a host gh there would answer.
+  # An empty entry is dropped and a relative one pinned to the dir it names
+  # now: either is resolved against whatever dir the shell is in at each
+  # lookup, so a host gh in a dir a suite cd's into would answer. CDPATH=
+  # keeps an exported CDPATH from swapping in a namesake dir.
   [ -n "$_ac_dir" ] || continue
+  case "$_ac_dir" in /*) ;; *) _ac_dir="$(CDPATH= cd -- "$_ac_dir" 2>/dev/null && pwd)" || continue ;; esac
   if [ -e "$_ac_dir/herdr" ] || [ -e "$_ac_dir/orca" ] || [ -e "$_ac_dir/docker" ] || [ -e "$_ac_dir/codegraph" ] || [ -e "$_ac_dir/gh" ]; then
     _ac_n=$((_ac_n + 1))
     mkdir -p "$TMP/host-path/$_ac_n"
-    # Linked by the dir's absolute name: a relative PATH entry's link would
-    # resolve beneath the mirror and dangle. CDPATH= keeps an exported CDPATH
-    # from swapping in a namesake dir.
-    ln -s "$(CDPATH= cd -- "$_ac_dir" && pwd)"/* "$TMP/host-path/$_ac_n/"
+    ln -s "$_ac_dir"/* "$TMP/host-path/$_ac_n/"
     rm -f "$TMP/host-path/$_ac_n/herdr" "$TMP/host-path/$_ac_n/orca" "$TMP/host-path/$_ac_n/docker" "$TMP/host-path/$_ac_n/codegraph" "$TMP/host-path/$_ac_n/gh"
     _ac_dir="$TMP/host-path/$_ac_n"
   fi

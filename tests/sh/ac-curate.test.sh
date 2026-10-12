@@ -1571,7 +1571,8 @@ done
 #     lines; settled by the archive on the next run; acknowledged, its
 #     material changed, an empty material; absent projects incl. a
 #     TAB-ended line (W11, at parity) and an invalid byte; skill moves with
-#     nested files and .usage.meta, a missing pointer or evidence,
+#     nested files and .usage.meta, a CR-ended pointer line, a missing
+#     pointer or evidence,
 #     an active worktree link, a symlink inside, an LF-named file (W10, at
 #     parity); the gate answering continue, revise, ask-captain, 3 with a
 #     diagnostic, 4, 1, a receipt bound to no plan, a manifest input moved
@@ -1623,6 +1624,10 @@ for xd in continue revise ask-captain; do
   xok run
 done
 XENV=()
+xboth xsemantic
+xboth xput home/records/learnings.md "- [distilled -> ship-rebase] sources=3 updated=2026-07-20 ([skill](../skills/ship-rebase/SKILL.md); [evidence](learnings-archive/ship-rebase.md))"$'\r\n'
+xok run
+assert_contains "$(xout)" "auto-applied semantic subject: skill-ship-rebase" "10: a CR-ended pointer line still yields its sources= and updated="
 xboth xsemantic
 XENV=(CURATE_GATE_RC=3 'CURATE_GATE_DIAG=maintenance-gate[stub]: engine did not produce a valid decision')
 xok run

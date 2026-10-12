@@ -210,6 +210,18 @@ l1.meta"; printf 'kind=ship\n' >"$H/home/state/y
 both seed8b
 same
 assert_eq "$(shim_out)" $'state\t\t\t\tunknown\t\nl1\t\t\t\tunknown\t\ny\t\t\t\tunknown\t\n.meta\t\t\t\tunknown\t' "row 8 (W6): the halves' ids are basename's"
+# NAMED: a half led by `-` is a row of its own here, where the original's
+# basename read it as an option and errexit ended the run before c3.
+seed8c() { fresh; m a1 'kind=ship\n'; printf 'kind=ship\n' >"$H/home/state/b7
+-x.meta"; m c3 'kind=ship\n'; }
+both seed8c
+o_rc=0; n_rc=0
+run_side "$obin" "$OH" o || o_rc=$?
+run_side "$NBIN" "$NH" n || n_rc=$?
+assert_eq "$o_rc $n_rc" "1 0" "row 8 (W6): a dash-led half - the original's exit, the port's"
+assert_eq "$(cat "$TMP/o.raw")" $'a1\tship\t\t\tgone\t\nb7\t\t\t\tunknown\t' "row 8 (W6): the original stopped at the dash-led half"
+assert_contains "$(cat "$TMP/o.err")" "basename" "row 8 (W6): basename's own lines on the original"
+assert_eq "$(cat "$TMP/n.raw")" $'a1\tship\t\t\tgone\t\nb7\t\t\t\tunknown\t\n-x\t\t\t\tunknown\t\nc3\tship\t\t\tgone\t' "row 8 (W6): the port renders it and goes on"
 
 # 9. the state column is the live ac-crew-state.sh's: a crew-ship step
 #    (validate:), a busy pane, an idle pane with a status line, a paneless

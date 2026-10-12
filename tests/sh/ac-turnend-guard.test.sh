@@ -517,6 +517,12 @@ te_verdict 0 "$h" '{}' AC_SOLO=1
 assert_contains "$(cat "$TMP/n.out")" "slice sl1 - the session" "the dirty slice is named"
 printf 'kind=self\nworktree=/nonexistent-te\n' >"$h/state/sl2.meta"
 te_verdict 0 "$h" '{}' AC_SOLO=1
+# the enumerator's abort on a directory named like a meta stays off the hook's
+# stderr, as the original's `2>/dev/null` kept it.
+mkdir "$h/state/a.meta"
+te_verdict 0 "$h" '{}' AC_SOLO=1
+assert_eq "$(cat "$TMP/o.err" "$TMP/n.err")" "" "the enumerator's abort reaches neither side's stderr (SOLO)"
+rmdir "$h/state/a.meta"
 
 # --- named divergences: each row asserts both sides ---------------------------
 h="$(te_world named)"
@@ -540,12 +546,13 @@ n_rc=0; (printf '{}' | AC_HOME="$h" LC_ALL=C "$te_lf/bin/ac-turnend-guard.sh") >
 assert_eq "$n_rc" "0" "BUN: a module that cannot load never holds the stop"
 assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
 assert_contains "$(cat "$TMP/n.err")" "turn-end guard cannot load" "BUN: the load failure is bun's own diagnosis"
-# STATUS FOLD: a keep knob naming a variable ended the original under set -u
-# with a status of its own after its reason line; neither side holds the stop.
+# AT PARITY: a keep knob naming a variable ended the original 0 under set -u
+# after its reason line, the line count's status; the module ends 0 there too,
+# so neither the shim's fold nor the stop is involved.
 o_rc=0; (printf '{}' | AC_HOME="$h" AC_STOPHOOK_LOG_KEEP=nokeep PATH="$TMP/te-date:$PATH" LC_ALL=C "$obin/ac-turnend-guard.sh") >/dev/null 2>&1 || o_rc=$?
 n_rc=0; (printf '{}' | AC_HOME="$h" AC_STOPHOOK_LOG_KEEP=nokeep PATH="$TMP/te-date:$PATH" LC_ALL=C "$BIN/ac-turnend-guard.sh") >/dev/null 2>&1 || n_rc=$?
-[ "$o_rc" != 2 ] || fail "AT PARITY: the original never held the stop with an identifier keep"
-assert_eq "$n_rc" "0" "STATUS FOLD: the shim answers 0"
+m_rc=0; (cd "$ROOT" && printf '{}' | AC_HOME="$h" AC_STOPHOOK_LOG_KEEP=nokeep PATH="$TMP/te-date:$PATH" LC_ALL=C bun --no-env-file "$ROOT/src/turnend-guard.ts" "$TMP") >/dev/null 2>&1 || m_rc=$?
+assert_eq "$o_rc $m_rc $n_rc" "0 0 0" "AT PARITY: an identifier keep ends the original, the module and the shim 0"
 rm -rf "$h/state/.wake-spool"
 # KEEP ARITHMETIC: a keep knob `$(( ))` cannot read made the original abandon
 # each whole top-level statement around a trace, so an idle fleet fell through

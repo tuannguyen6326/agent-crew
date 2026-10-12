@@ -280,6 +280,8 @@ if [ "$kind" = codereview-scout ]; then
     partial:3) : ;;
     *) printf '{"event":"done","status":"timeout"}\n' ;;
   esac
+  # A lane whose agent outlives its own done line, as one its reap did not close.
+  [ -z "${VERIFY_LANE_LINGER:-}" ] || { /bin/sleep "$VERIFY_LANE_LINGER"; : >"$XW/log/lane-$n.lingered"; }
   exit 0
 fi
 # The handle as the caller reads it: `none` publishes nothing, a delay lands
@@ -3297,6 +3299,19 @@ assert_contains "$(xerr)" "WARN: scout lanes did not resolve - reviewing with th
 XW="$TMP/xw sp" XLANES="$XLANES" xcr_args
 XW="$TMP/xw sp" XPLUS="$XLANES" xsame "${XCR[@]}"
 xcr_args
+# A lane still running when the round ends is left running, as bash left its
+# background run-lanes.sh: the round's exit, lock release and busy leave do not
+# wait for it.
+xlinger_side() {
+  xplus
+  XE="VERIFY_LANE_LINGER=4" xrun_side "$1" "$2" "${XCR[@]}" || return
+  [ -z "$(ls "$XW/log/"lane-*.lingered 2>/dev/null)" ] || fail "the round ($2) waited for a lane that outlived it"
+}
+XO_RC=0; XN_RC=0
+XPLUS="$XLANES" xlinger_side "$xobin" xo || XO_RC=$?; xwait_turns; xsnap xo
+XPLUS="$XLANES" xlinger_side "$BIN" xn || XN_RC=$?; xwait_turns; xsnap xn
+xsame_rc_out lingering-lane; xsame_err lingering-lane; xsame_world lingering-lane
+assert_eq "$XN_RC" "0" "a round whose lane outlives it publishes"
 
 # --- 10. qa -----------------------------------------------------------------
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1" xok "${XQA[@]}" "${XQAP[@]}"
@@ -3351,6 +3366,56 @@ XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_PANE_HANG=2" xsig INT "$XMI
 assert_eq "$XO_RC:$XN_RC" "129:130" "W14: INT mid-turn of a qa round"
 xsame_err qa-INT; xsame_world qa-INT
 assert_contains "$(xfile out/report.md)" "QA facade failed during" "W12: the qa round's INT publishes the error report"
+# Outside the waits an INT meets a foreground child: one that reaches this
+# process alone is held until the child ends and dropped, so the round runs
+# on; one that ends the child too (a group ^C) ends the round 130, the EXIT
+# trap reading 130 - 0 in the start window, as bash 3.2's trap reads a ^C while
+# a background job (the pane agent) runs. The slow sleep keeps the signal
+# inside the child.
+mkdir -p "$TMP/slowsleep"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"$XW/log/sleep.log"\nexec /bin/sleep 0.5\n' >"$TMP/slowsleep/sleep"
+chmod +x "$TMP/slowsleep/sleep"
+xint_side() {  # xint_side <bin> <prefix> <pid|group> <ready test> <args...> - one INT once <ready test> holds, then XTHEN
+  local bin="$1" p="$2" to="$3" ready="$4" pid i=0 rc=0; shift 4
+  set -m
+  xrun_side "$bin" "$p" "$@" &
+  pid=$!
+  set +m
+  until eval "$ready" || [ "$i" -ge 200 ]; do /bin/sleep 0.05; i=$((i + 1)); done
+  if [ "$to" = group ]; then kill -INT -- "-$pid" 2>/dev/null || true; else kill -INT "$(cat "$TMP/$p.pid")" 2>/dev/null || true; fi
+  [ -z "${XTHEN:-}" ] || eval "$XTHEN"
+  wait "$pid" || rc=$?
+  return "$rc"
+}
+xint() {  # xint <pid|group> <ready test> <args...>
+  local to="$1" ready="$2"; shift 2
+  XO_RC=0; XN_RC=0
+  xplus; xint_side "$xobin" xo "$to" "$ready" "$@" || XO_RC=$?; xwait_turns; xsnap xo
+  xplus; xint_side "$BIN" xn "$to" "$ready" "$@" || XN_RC=$?; xwait_turns; xsnap xn
+}
+XPLUS='mkdir -p "$XLOCK" && printf "%s\n" "$$" >"$XLOCK/pid"' XTHEN='rm -rf "$XLOCK"' XPRE="$TMP/slowsleep" XE="AC_VERIFY_LOCK_TIMEOUT=30" \
+  xint pid 'grep -q "^1$" "$XW/log/sleep.log" 2>/dev/null' "${XCR[@]}"
+xsame_rc_out INT-lock; xsame_err INT-lock; xsame_world INT-lock
+assert_eq "$XN_RC" "0" "an INT to the process alone in the lock wait lets the round run on"
+XPLUS="$XSTALE"' && mkdir -p "$XLOCK" && printf "%s\n" "$$" >"$XLOCK/pid"' XPRE="$TMP/slowsleep" XE="AC_VERIFY_LOCK_TIMEOUT=30" \
+  xint group 'grep -q "^1$" "$XW/log/sleep.log" 2>/dev/null' "${XCR[@]}"
+xsame_rc_out INT-lock-group; xsame_err INT-lock-group; xsame_world INT-lock-group
+assert_eq "$XN_RC" "130" "a ^C that ends the lock wait's sleep ends the round 130"
+assert_contains "$(xerr)" "STALE RECEIPT" "the EXIT trap read the ^C in the lock wait as 130"
+XPRE="$TMP/slowsleep" XE="VERIFY_HANDLE_DELAY=2" xint pid 'grep -q "^0.05$" "$XW/log/sleep.log" 2>/dev/null' "${XCR[@]}"
+xsame_rc_out INT-start; xsame_err INT-start; xsame_world INT-start
+assert_eq "$XN_RC" "0" "an INT to the process alone in the start window lets the round run on"
+XBASE=xqa_std XID="$XQID" XPRE="$TMP/slowsleep" XE="VERIFY_QA_RUN=1 VERIFY_HANDLE_DELAY=2" \
+  xint group 'grep -q "^0.05$" "$XW/log/sleep.log" 2>/dev/null' "${XQA[@]}" "${XQAP[@]}"
+xsame_rc_out qa-INT-group; xsame_err qa-INT-group
+assert_eq "$XN_RC" "130" "a ^C that ends the start window's sleep ends the round 130"
+assert_contains "$(xfile out/report.md)" "(exit 0)" "the EXIT trap read the ^C in the start window as 0"
+# A ^C TO THE GROUP named: bash's pane agent, a background job, ignored it and
+# published its handle; the port's ends with the group. Nothing else differs.
+assert_eq "$(diff -a "$TMP/xo.world2" "$TMP/xn.world2" | grep '^[<>]' | grep -v -e 'pane\.handle' -e '^< pVerify tVerify$' -e '^< $')" "" \
+  "a ^C in the start window: the worlds differ by the pane handle alone"
+grep -q '^\./home/.*/pane\.handle$' "$TMP/xo.world2" && ! grep -q '^\./home/.*/pane\.handle$' "$TMP/xn.world2" \
+  || fail "a ^C in the start window: bash's pane agent outlives it, the port's does not"
 # W2 at parity: the start window keeps the lease, its stubs and their backup.
 XE="VERIFY_HANDLE_DELAY=2" xsig TERM '[ -n "$(grep "^run " "$XW/log/pane.log" 2>/dev/null)" ]' "${XCR[@]}"
 xsame_rc_out W2; xsame_err W2; xsame_world W2

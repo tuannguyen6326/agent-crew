@@ -521,7 +521,7 @@
 // stopped only when a human noticed. So a busy RUN past AC_BUSY_MAX seconds
 // (default 2700, 0 disables) wakes on the existing `stale` reason with its own
 // message. The SAME bound the verifier arm already has (AC_PANE_STALL_MAX,
-// ac-pane-agent.sh), reached with the data this watcher already holds, because
+// src/pane-agent.ts), reached with the data this watcher already holds, because
 // this watcher reads no transcript and a transcript-shaped bound would cover only
 // the harnesses that write one.
 //
@@ -863,16 +863,17 @@
 // (its capture read first for the last rid it ingested, then dropped), the
 // owner-release marker consumed, ONE `signal:<NAME> ...` reason line, exit 0
 // with an armed run's exit cleanup (beacon stood down to 0, the watch-config
-// removed, the lock released). An armed watcher is a background task that
-// starts with INT ignored, so that disposition is read through sigaction(2)
-// before any listener exists - Bun takes SIGINT back the moment one is added,
-// even one inherited as ignored - and then no INT handler is registered and
-// every child is started with INT ignored, as the original's children
-// inherited it. HUP, USR1, USR2, ALRM, PIPE, XCPU and VTALRM run the same exit
-// cleanup and then die of the signal re-raised (128+n), with NO reason line
-// (W6) - exit 128+n should the default disposition not end the process;
-// QUIT, PROF, KILL and STOP keep their default - no cleanup, the lock left to
-// the dead-pid reclaim.
+// removed, the lock released). HUP, USR1, USR2, ALRM, PIPE, XCPU and VTALRM
+// run the same exit cleanup and then die of the signal re-raised (128+n), with
+// NO reason line (W6) - exit 128+n should the default disposition not end the
+// process; QUIT, PROF, KILL and STOP keep their default - no cleanup, the lock
+// left to the dead-pid reclaim. A signal of the first two groups the process
+// started with ignored stays ignored, as the original could not trap it: each
+// disposition is read through sigaction(2) before any listener exists - Bun
+// takes a signal back the moment one is added, even one inherited as ignored -
+// and no handler is registered for an ignored one. An armed watcher is a
+// background task that starts with INT ignored, so every child is then
+// started with INT ignored too, as the original's children inherited it.
 //
 // LOOP SHAPE. One bun process per arm, looping in-process. The poll wait is
 // the one DIRECT `sleep` child - spawned from PATH, so a stub fast-forwards it,
@@ -964,7 +965,12 @@
 //   fire, where the original's errexit ended the run; a reason line stdout
 //   cannot take leaves the exit's beacon its 0 alone, where the original's
 //   printf kept the line buffered and the beacon write flushed it in first.
-// - SIGPIPE: a closed stdout ends the run 141 with the exit cleanup.
+// - SIGPIPE: a closed stdout ends the run 141 with the exit cleanup, even
+//   with PIPE ignored at entry - Bun ignores it itself before any code runs,
+//   so an inherited SIG_IGN cannot be told apart.
+// - INHERITED SIG_IGN reaches no child but INT's: Bun starts every child at
+//   default dispositions, so a poll `sleep` or a backend call ends on a HUP or
+//   TERM the original's children would have ignored.
 // - The coverage revoke's typed line runs in this process (the original's ran
 //   in a subshell), so its verified-send settle `sleep`s are direct children
 //   for that call: a push nudge landing then ends one ("nudged") instead of
@@ -1053,24 +1059,27 @@ import {
   writeAll,
 } from "./lib.ts";
 
-// Read before any listener exists: Bun installs a SIGINT handler with the
-// first one, even over a disposition the process started with as ignored.
-function intIgnoredAtStart(): boolean {
+// Read before any listener exists: Bun installs a handler with the first
+// one, even over a disposition the process started with as ignored.
+function ignoredAtStart(sigs: readonly NodeJS.Signals[]): Set<NodeJS.Signals> {
+  const ignored = new Set<NodeJS.Signals>();
   try {
     const lib = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
       sigaction: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
     });
-    // Room for any platform's struct sigaction; the handler leads all of them.
-    const old = new BigUint64Array(32);
-    const rc = lib.symbols.sigaction(osConstants.signals.SIGINT, null, ptr(old));
+    for (const sig of sigs) {
+      // Room for any platform's struct sigaction; the handler leads all of them.
+      const old = new BigUint64Array(32);
+      if (lib.symbols.sigaction(osConstants.signals[sig], null, ptr(old)) === 0 && old[0] === 1n) ignored.add(sig);
+    }
     lib.close();
-    return rc === 0 && old[0] === 1n;
-  } catch {
-    return false;
-  }
+  } catch {}
+  return ignored;
 }
-const INT_IGNORED = intIgnoredAtStart();
-if (INT_IGNORED) childrenIgnoreInt(true);
+const RERAISED = ["SIGHUP", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGPIPE", "SIGXCPU", "SIGVTALRM"] as const;
+// Bun ignores SIGPIPE itself before any of this runs, so PIPE is never probed.
+const IGNORED = ignoredAtStart(["SIGINT", "SIGTERM", ...RERAISED.filter((s) => s !== "SIGPIPE")]);
+if (IGNORED.has("SIGINT")) childrenIgnoreInt(true);
 
 const { args } = enterCaller(process.argv.slice(2));
 
@@ -1568,12 +1577,13 @@ function onSignal(sig: "TERM" | "INT"): void {
   }
   process.exit(0);
 }
-process.on("SIGTERM", () => onSignal("TERM"));
-if (!INT_IGNORED) process.on("SIGINT", () => onSignal("INT"));
+if (!IGNORED.has("SIGTERM")) process.on("SIGTERM", () => onSignal("TERM"));
+if (!IGNORED.has("SIGINT")) process.on("SIGINT", () => onSignal("INT"));
 // The original died of these with its exit cleanup run first, then the signal
 // re-raised - a parent reads a signal death, so the cleanup runs here and the
 // signal is raised again under its default disposition.
-for (const sig of ["SIGHUP", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGPIPE", "SIGXCPU", "SIGVTALRM"] as const) {
+for (const sig of RERAISED) {
+  if (IGNORED.has(sig)) continue;
   process.on(sig, () => {
     exitCleanup();
     process.removeAllListeners(sig);

@@ -249,7 +249,6 @@ printf '#!/usr/bin/env bash\n# fixture ac-pane-agent\n' >"$splitrepo/bin/ac-pane
 printf '#!/usr/bin/env bash\n# fixture ac-watch\n' >"$splitrepo/bin/ac-watch.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-watch-policy-hook\n' >"$splitrepo/bin/ac-watch-policy-hook.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-other, unrelated - proves the map NARROWS instead of widening\n' >"$splitrepo/bin/ac-other.sh"
-printf '#!/usr/bin/env bash\n# fixture ac-qa-lib, pinned inside ac-qa.test.sh\n' >"$splitrepo/bin/ac-qa-lib.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-maintenance-lib, pinned inside ac-maintenance-core.test.sh\n' >"$splitrepo/bin/ac-maintenance-lib.sh"
 printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/sh/ac-other.test.sh"
 for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-teardown ac-qa ac-maintenance-core ac-brief ac-contract ac-know flag-values ac-gate ac-learn-loop ac-curate ac-backlog-sections ac-learning-automation-e2e ac-config-surface ac-gate-watch ac-watch-dash ac-ship-watch ac-qa-watch ac-ship ac-roomchief ac-room-parallel-cap ac-learn ac-learn-autoroom ac-learn-quote ac-pane-agent ac-brain ac-lib ac-watch ac-watch-jev ac-brain-freshen ac-lock ac-remote-wire ac-self-task ac-guard ac-harness-hooks; do
@@ -285,18 +284,9 @@ case "$out" in
 esac
 git -C "$splitrepo" checkout -q -- bin/ac-spawn.sh
 
-# ac-qa-lib.sh keeps its pins inside ac-qa.test.sh: touching it selects that
-# test, never a widen for want of an ac-qa-lib.test.sh.
-printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-qa-lib.sh"
-res="$(run_runner --changed "$splitrepo/tests/sh")"
-rc="${res%%|*}"; out="${res#*|}"
-assert_eq "$rc" "0" "--changed narrowed to ac-qa-lib.sh's test must still be green"
-assert_contains "$out" "RUNNING ac-qa.test.sh" "ac-qa-lib.sh maps to ac-qa.test.sh"
-assert_contains "$out" "1/1 passed" "ac-qa-lib.sh selects exactly ac-qa.test.sh"
-git -C "$splitrepo" checkout -q -- bin/ac-qa-lib.sh
-
-# ac-maintenance-lib.sh keeps its pins inside ac-maintenance-core.test.sh, the
-# same shape as ac-qa-lib.sh.
+# ac-maintenance-lib.sh keeps its pins inside ac-maintenance-core.test.sh:
+# touching it selects that test, never a widen for want of an
+# ac-maintenance-lib.test.sh.
 printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-maintenance-lib.sh"
 res="$(run_runner --changed "$splitrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
@@ -450,17 +440,17 @@ case "$out" in
 esac
 git -C "$splitrepo" checkout -q -- bin/ac-ready.sh
 
-# touching bin/ac-learn.sh alone selects its colocated leg, the five suites
+# touching bin/ac-learn.sh alone selects its colocated leg, the eight suites
 # that execute the entry, AND ac-config-surface.test.sh, which greps
 # src/learn.ts for the knobs it reads.
 printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-learn.sh"
 res="$(run_runner --changed "$splitrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-learn.sh's split tests must still be green"
-for t in ac-learn ac-learn-loop ac-learn-autoroom ac-learn-quote ac-learning-automation-e2e ac-maintenance-core ac-config-surface; do
+for t in ac-learn ac-learn-loop ac-learn-autoroom ac-learn-quote ac-learning-automation-e2e ac-maintenance-core ac-curate ac-self-task ac-teardown ac-config-surface; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-learn.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "7/7 passed" "must select exactly the seven mapped tests, not widen"
+assert_contains "$out" "10/10 passed" "must select exactly the ten mapped tests, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-learn.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-learn.sh must not print the false widen reason once its split-name map exists" ;;
@@ -555,8 +545,7 @@ printf '#!/usr/bin/env bash\n# fixture bash lib; its TypeScript twin is src/util
 printf 'import { u } from "./util.ts";\n' >"$tsrepo/src/qux.ts"
 printf 'export const u = 1;\n' >"$tsrepo/src/util.ts"
 printf 'import { u } from "../../src/util.ts";\n' >"$tsrepo/tests/ts/util.test.ts"
-# src/pth.ts has no entry of its own: two scripts run modes of it, the shape
-# of src/paths.ts under bin/ac-qa-lib.sh and bin/ac-verify.sh.
+# src/pth.ts has no entry of its own: two scripts run modes of it.
 printf 'export const p = 1;\n' >"$tsrepo/src/pth.ts"
 # The long tail after the starting line is the bash ac-qa.sh's shape: a pipe that
 # stops reading at the first match SIGPIPEs its writer there.

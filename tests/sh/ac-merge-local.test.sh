@@ -1192,9 +1192,10 @@ ERROR: no crewmate meta for nosuch" "13: the guard first"
 #     the distro checkout, yet its guard and the remedy's ac-know.sh are the
 #     LAB's - as the original's $(dirname "$0") and ac_root named its own bin/
 #     (STARTED_BIN, never import.meta.dir). The gate is not the lab's: its
-#     ac-qa-lib.sh override of ac_qa_gate_ok would open the gate on a head
-#     with no marker, and the twin in src/lib.ts refuses that head flat
-LAB="$TMP/mlab"; mkdir -p "$LAB/bin"; cp "$BIN"/*.sh "$LAB/bin/"; ln -s "$ROOT/src" "$LAB/src"
+#     ac-qa-lib.sh override of ac_qa_gate_ok (the frozen lib planted in the
+#     lab bin/) would open the gate on a head with no marker, and the twin in
+#     src/lib.ts refuses that head flat
+LAB="$TMP/mlab"; mkdir -p "$LAB/bin"; cp "$BIN"/*.sh "$ROOT/tests/fixtures/ac-qa-lib.sh" "$LAB/bin/"; ln -s "$ROOT/src" "$LAB/src"
 rm -f "$LAB/bin/ac-guard.sh"
 printf '\nac_qa_gate_ok() { printf '"'"'lab gate %%s\\n'"'"' "$3"; }\n' >>"$LAB/bin/ac-qa-lib.sh"
 H="$NH"; gate_repo lab "$REQ"; rm -f "$NH/home/state/.guard-stamp"

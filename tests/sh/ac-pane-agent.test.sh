@@ -593,7 +593,7 @@ assert_contains "$(bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; ac
 # every other round, passing and failing alike, ended here. Its own comment
 # already declares the contract ("FAIL CLOSED: the turn ended, so a payload is
 # owed"), but the code guarded an empty transcript PATH while the caller asks a
-# different question six lines later: ac_transcript_final (bin/ac-pipeline-lib.sh)
+# different question six lines later: ac_transcript_final (tests/fixtures/ac-pipeline-lib.sh)
 # takes the LAST assistant message, and a session that stopped after a completed
 # tool call has one carrying only tool_use. The pane reported ok, the caller then
 # died on "transcript has no final message", and the previous round's receipt sat
@@ -2029,7 +2029,7 @@ assert_contains "$out" '"event":"done","status":"ok"' \
 # A TURN THAT DIED MID-PASS IS NOT AN OK TURN, even with no deliverable
 # declared. The pane agent and its caller read the same transcript with two
 # DIFFERENT questions: this file asked whether any assistant text exists
-# anywhere, while ac_transcript_final (bin/ac-pipeline-lib.sh) takes the LAST
+# anywhere, while ac_transcript_final (tests/fixtures/ac-pipeline-lib.sh) takes the LAST
 # assistant message. A session killed after a tool call satisfies the first and
 # returns empty from the second - so the pane reported ok and the caller then
 # died on "transcript has no final message", leaving the previous round's

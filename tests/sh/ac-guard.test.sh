@@ -830,6 +830,25 @@ assert_eq "$(ls -A "$OH/home/state") | $(ls -A "$NH/home/state")" ".guard-stamp
 t1.meta | .guard-stamp
 t1.meta" "row 16: no meta lock left on either side"
 
+# 17. the stamp's writes are silent as the original's `2>/dev/null` made them:
+#     a state/ the meta lock cannot be taken in prints the warnings alone and
+#     stamps nothing; an mv that fails after moving prints nothing of its own.
+if [ "$(id -u)" != 0 ]; then
+  rostate() { fresh; crew; chmod 555 "$H/home/state"; }
+  both rostate
+  same
+  assert_eq "$(shim_err)" "WATCHER-DOWN: crew in flight with no live watcher - arm bin/ac-watch.sh" "row 17: no lock refusal line"
+  rwstate() { chmod 755 "$H/home/state"; }
+  both rwstate
+fi
+failmv() { fresh; crew; printf '#!/bin/sh\n/bin/mv "$@"\necho "mv: refused" >&2\nexit 1\n' >"$H/stub/mv"; chmod +x "$H/stub/mv"; }
+both failmv
+same
+assert_eq "$(shim_err)" "WATCHER-DOWN: crew in flight with no live watcher - arm bin/ac-watch.sh" "row 17: no line from a failing mv"
+assert_contains "$(shim_snap)" "== .guard-stamp
+sig= watcher-down
+at=$T" "row 17: the stamp mv moved is kept"
+
 # --- differential: src/watch-policy-hook.ts against the frozen bash original -
 # DISPUTED: the implementation (tests/fixtures/ac-watch-policy-hook.sh under bash vs src/watch-policy-hook.ts through bin/ac-watch-policy-hook.sh)
 # HELD-CONSTANT: the payload bytes on stdin, the environment (PATH; LC_ALL=C unless a row says otherwise), the cwd ($TMP); stdout, stderr and exit status compared whole

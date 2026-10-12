@@ -215,7 +215,7 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    THIS STEP IS THE ONLY PLACE THE UNIT SUITE RUNS in the whole crew: QA is
    forbidden from running or re-running it and reads
    your result through the run-scoped receipt `cmd test` publishes at
-   `<repo>/.crew/ship/<run>/test/receipt.env` (`bin/ac-ship.sh`'s SHIP TEST
+   `<repo>/.crew/ship/<run>/test/receipt.env` (`src/ship.ts`'s SHIP TEST
    RECEIPT block is the spec). A declaration writes NO receipt: if this
    task also carries a `qa=yes` gate, run `ac-ship.sh cmd test` (or land an
    accepted `attest-test`) even when `--tdd` would otherwise skip the step,

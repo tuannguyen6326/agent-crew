@@ -1683,8 +1683,8 @@ function prepareSkill(run: string, umbrella: string, name: string): string | nul
   if (isFile(index)) spawn(["cp", index, `${staged}/records/learnings-archive/index.md`]);
   if (!isFile(index)) put(`${staged}/records/learnings-archive/index.md`, "# Archived Learning Pointers\n\n");
   const field = (re: RegExp): string => subst(pointer.split("\n").map((l) => { const m = re.exec(l); return m ? `${m[1]}\n` : ""; }).join(""));
-  const sources = field(/^.*sources=([0-9][0-9]*).*$/);
-  const updated = field(/^.*updated=([0-9][0-9-]*).*$/);
+  const sources = field(/^.*sources=([0-9][0-9]*).*$/s);
+  const updated = field(/^.*updated=([0-9][0-9-]*).*$/s);
   if (!/^[0-9]+$/.test(sources)) return null;
   if (updated.length !== 10 || !/^.{4}-.{2}-.{2}$/s.test(updated)) return null;
   put(`${staged}/records/learnings-archive/index.md`, `- [distilled -> ${name}] sources=${sources} updated=${updated} ([skill](../../skills/${SKILLS_ARCHIVE}/${name}/SKILL.md); [evidence](${name}.md))\n`, true);

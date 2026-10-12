@@ -717,9 +717,17 @@ assert_contains "$se" "written $(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT s
   "...and each source's own date"
 # The index keeps a pattern-hit page whole (flags, never drops), but what
 # synthesize sends to a model is outside the home: every match is redacted.
-printf 'zzsecretmarker\n' >"$TMP/pat-redact"
+# The patterns are the push gate's EREs, matched line by line as `grep -E`
+# reads them, and a match is redacted before any chunk or prompt cut can split
+# it.
+printf '%s\n' zzsecretmarker 'api_key[[:space:]]*=' '^token:' 'zzcut[0-9a-f]{16}' >"$TMP/pat-redact"
 mkdir -p "$AC_HOME/data/fam-redact"
-printf '# Redaction probe\nThe redaction probe deploy token is zzsecretmarker for this page.\n' >"$AC_HOME/data/fam-redact/room.md"
+printf '# Redaction probe\nThe redaction probe deploy token is zzsecretmarker for this page.\napi_key = hunter2\ntoken: abc123\n' >"$AC_HOME/data/fam-redact/room.md"
+{ printf '# Redaction probe cut\nThe redaction probe deploy token cut page.'
+  for _ in $(seq 150); do printf ' filler'; done
+  printf '\n\n'
+  for _ in $(seq 600); do printf 'zzcut0123456789abcdef '; done
+  printf '\n'; } >"$AC_HOME/data/fam-redact/cut.md"
 AC_BRAIN_PATTERN_FILE="$TMP/pat-redact" "$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
 rm -f "$TMP/synth-api.port"
 embed_stub_up "$TMP/synth-echo.ts" "$TMP/synth-api.port" || { embed_stub_down; fail "the synthesize echo stub never came up"; }
@@ -730,6 +738,16 @@ embed_stub_down
 assert_contains "$sr" "Redaction probe" "the pattern-hit page still reaches the composer"
 assert_contains "$sr" "deploy token is [redacted]" "...with the match redacted"
 case "$sr" in *zzsecretmarker*) fail "a pattern match left the home inside a synthesize prompt" ;; esac
+assert_contains "$sr" "[redacted] hunter2" "a POSIX bracket class matches as the push gate's grep -E reads it"
+assert_contains "$sr" "[redacted] abc123" "...and ^ anchors at every line, not only the text's start"
+case "$sr" in *"api_key ="*|*"token: abc"*) fail "a line the push gate flags left the home unredacted" ;; esac
+assert_contains "$sr" "[redacted] [redacted]" "the cut page still reaches the composer, redacted"
+case "$sr" in *zzcut*) fail "a match split by a chunk or prompt cut left the home in part" ;; esac
+printf '%s\n' zzsecretmarker '[' >"$TMP/pat-broken"
+sb="$(AC_BRAIN_PATTERN_FILE="$TMP/pat-broken" AC_BRAIN_SYNTH_CMD="printf '%s'" "$BRAIN" synthesize "redaction probe deploy token" --home "$AC_HOME" --compact 2>/dev/null)" \
+  && fail "a pattern file grep -E refuses must fail synthesize, not send unredacted"
+assert_contains "$sb" '"error":"unavailable"' "...as a typed unavailable error"
+case "$sb" in *zzsecretmarker*) fail "a pattern file grep -E refuses let a match leave the home" ;; esac
 rm -f "$AC_HOME/config/brain.json"; rm -rf "$AC_HOME/data/fam-redact"
 
 # --- the keyless local rung asks AC_BRAIN_OLLAMA_URL, and the suite asks nobody --

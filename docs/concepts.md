@@ -196,7 +196,7 @@ All persistent truth lives on disk and in the backend session; conversation memo
 `bin/ac-session-start.sh` rebuilds the chief's picture at every session start and drains queued wakes.
 After a compaction, the SessionStart hook tells a chief to rebuild footing from disk with `bin/ac-brain.sh context_pack` and reload the skill for the work in flight, and tells a crewmate to re-read its brief and status log.
 
-Owners: [`AGENTS.md`](../AGENTS.md) section 2, `src/brief.ts` header, [`docs/backlog.md`](backlog.md), `bin/ac-sessionstart-nudge.sh` header.
+Owners: [`AGENTS.md`](../AGENTS.md) section 2, `src/brief.ts` header, [`docs/backlog.md`](backlog.md), the `src/sessionstart-nudge.ts` header (`bin/ac-sessionstart-nudge.sh` starts it).
 
 ## The knowledge loop
 

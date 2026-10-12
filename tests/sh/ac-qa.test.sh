@@ -3202,7 +3202,7 @@ esac
 cd "$repo" || fail "cd back from bpolicy"
 
 # --- differential: src/qa.ts against the frozen bash original -----------------
-# DISPUTED: the implementation (tests/fixtures/ac-qa.sh under bash, sourcing the LIVE ac-qa-lib.sh and ac-pipeline-lib.sh, vs src/qa.ts through bin/ac-qa.sh)
+# DISPUTED: the implementation (tests/fixtures/ac-qa.sh under bash, sourcing the frozen tests/fixtures/ac-qa-lib.sh and ac-pipeline-lib.sh, vs src/qa.ts through bin/ac-qa.sh)
 # HELD-CONSTANT: ONE world path ($XW) rebuilt by the row's own setup before each pass - a home (projects/repo.yaml, config/, data/, records/repo-knowledge/), a repo at $XW/repo made under one git identity and one commit date so every sha matches, a task data dir at $XW/data/fam-qa holding the test plan; argv, env (AC_HOME=$XW/home, AC_QA_WATCH=off, AC_VERIFY_BIN the leg's verifier, TMPDIR=$XW/tmp, XSTUB=$XW/stub, unless a row names others); cwd ($XW/repo unless a row names another); stdin (/dev/null unless a call names a file); LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - date answering one instant per format and an advancing epoch, sleep logging each call and returning at once, docker logging every call and answering `ps` and `compose port` from the world, curl logging every call and answering the world's status, gh answering only `auth token`, a logging herdr, a scripted verifier writing the round the world names - plus a row's own; the live bin/ beside each entry (the oracle bin also links .agents for the compose template). Every call's exit, stdout and stderr compared whole once normalised (STAMP for the date-pid names, ROOT for either bin root, N for pids, process groups, the free QA_PORT, the health duration and the runtime receipt's hash, X for a mktemp suffix), then the world: every path under the repo's .crew/, home/, data/, tmp/ and stub/ with mode and bytes (a link: its target), and the repo's info/exclude. A row naming a shell-own line compares the exit and stdout only (XNOERR).
 cd "$TMP" || fail "cd TMP"
 xobin="$(make_oracle_bin ac-qa)"
@@ -3357,7 +3357,7 @@ xnorm() {  # xnorm <file> - STAMP, ROOT, N and X for what differs by pid, port, 
     -e 's/20260101-000000-[0-9]+/STAMP/g' -e 's/\.![0-9]+!/.!N!/g' \
     -e 's/(QA_PORT=|127\.0\.0\.1:|pid=|pid |process_group=|process group |\(process group |healthy after |pgid )[0-9]+/\1N/g' \
     -e 's/runtime_receipt_sha256=[0-9a-f]{64}/runtime_receipt_sha256=H/g' \
-    -e 's#(/\.[a-z-]+(\.tsv|\.receipt|-current|-curation|-manifest|-amend|-amendments|-candidates)?)\.[A-Za-z0-9]{6}#\1.X#g' \
+    -e 's#(/\.[a-z-]+(\.tsv|\.receipt|-current|-curation|-manifest|-amend|-amendments|-candidates|\.curation)?)\.[A-Za-z0-9]{6}#\1.X#g' \
     -e 's#(\.tmp)\.[0-9]+#\1.PID#g' -e 's#/tmp\.[A-Za-z0-9]{8,}#/tmp.X#g' -e 's#(profile\.tmp)\.[A-Za-z0-9]{6}#\1.X#g' "$1"
 }
 xsnap() {  # xsnap <pass> - the world as one listing
@@ -3470,6 +3470,23 @@ x_roplan() {
   XPATH="$XW/stub/ro:$XSTUBS:$PATH"; XNOERR=1; xc testplan-amend --case C-1 --authority "spec.md:3" --reason fix; XPATH=""; XNOERR=""; xc status
 }
 xsame xroplan x_roplan
+# SHELL-OWN (named): a run.meta temp the run dir refuses to create (an ACL denying add_file once the ledger entry is built) refuses with every temp removed and the lock released - the exit, stdout and world; the port's stderr is the refusal alone.
+xdenyplan() {
+  xworld; mkdir -p "$XW/stub/deny"
+  printf '#!/bin/sh\ncase "$*" in *qa-oracle-amendment/v1*) /bin/chmod +a "user:$(id -un) deny add_file" "$XDENY" ;; esac\nexec %s "$@"\n' "$(command -v jq)" >"$XW/stub/deny/jq"
+  chmod +x "$XW/stub/deny/jq"
+}
+x_denyplan() {
+  xready; printf '\n' >>"$XW/data/fam-qa/testplan.md"
+  XPATH="$XW/stub/deny:$XSTUBS:$PATH"; XENV=("XDENY=$(xrd)"); XNOERR=1; xc testplan-amend --case C-1 --authority "spec.md:3" --reason fix
+  XPATH=""; XENV=(); XNOERR=""; cp "$TMP/x.err" "$TMP/xerr.$XPASS"
+  /bin/chmod -a "user:$(id -un) deny add_file" "$(xrd)" || fail "the deny stub never ran"; xc status
+}
+xsame xdenyplan x_denyplan
+xhas "--reason fix
+rc=1"
+case "$(cat "$TMP/xw2.n")" in *testplan-amend.lock*|*oracle-amendments*|*manifest-amend*|*run.meta.amend*) fail "a refused amend leaves its lock or a temp: $(cat "$TMP/xw2.n")" ;; esac
+assert_eq "$(cat "$TMP/xerr.n")" "ERROR: testplan-amend refused: could not rewrite run.meta (the run is unchanged)" "the refused amend prints its refusal alone"
 
 # -- leg 4: cases, visuals, findings, harnesses ---------------------------------------
 x_case_refuse() {
@@ -3556,6 +3573,20 @@ x_reap() {
   xc infra reap; : >"$XW/stub/ps.list"; xc infra reap; XPATH="$PATH"; xc infra reap; XPATH=""
 }
 xsame xworld x_reap
+# A worktree list git cannot give is a failed read, never "no worktrees": the reap refuses before any stack goes down.
+xblindworld() {
+  xworld; mkdir -p "$XW/stub/blind"
+  printf '#!/bin/sh\ncase "$*" in *"worktree list"*) exit 128 ;; esac\nexec %s "$@"\n' "$(command -v git)" >"$XW/stub/blind/git"
+  chmod +x "$XW/stub/blind/git"
+}
+x_reapblind() { xstart; printf 'crew-qa-repo-dead-1\n' >"$XW/stub/ps.list"; XPATH="$XW/stub/blind:$XSTUBS:$PATH"; xc infra reap; XPATH=""; }
+xsame xblindworld x_reapblind
+xhas "rc=1
+-- out
+-- err
+ERROR: reap: cannot list the worktrees of "
+xhas "/xw/repo - nothing reaped"
+case "$(cat "$TMP/xw2.n")" in *" down "*) fail "a blind reap must take no stack down: $(cat "$TMP/xw2.n")" ;; esac
 
 # -- leg 6: serve, health, seed, baseline ---------------------------------------------
 x_live() {
@@ -3565,6 +3596,10 @@ x_live() {
   xc baseline; xc step baseline completed; xc status; xc finish cancelled; xc serve
 }
 xsame xworld x_live
+# Leading empty driver arguments add no stimulus separator (the receipt's stimulus_sha256).
+x_stimulus() { xbooted; xc boundary-run --case C-1 --boundary http --evidence "$XW/data/fam-qa/evidence/c1.txt" -- "" "" printf a; xc finish cancelled; }
+xsame xworld x_stimulus
+xwhas "stimulus_sha256="
 xnoconf() { xworld; xcfg 'qa:\n  other: x\n'; }
 # SHELL-OWN (named): `config` with no key - the exit and stdout, not the shell's own line.
 x_noconf() { xstart; xc serve; xc health; xc seed; xc config qa.serve; XNOERR=1; xc config; XNOERR=""; xc cmd e2e --cases C-1; }
@@ -3667,6 +3702,21 @@ x_proposal() {
   XHOME=""; xc config-proposal --id p4; XHOME=1
 }
 xsame xworld x_proposal
+# SHELL-OWN (named): a staged draft the proposal dir refuses to create (an ACL denying add_file once mkdir made it) exits 1 with the dir left - the exit, stdout and world; the port prints nothing.
+xdenyprop() {
+  xworld; mkdir -p "$XW/stub/deny"
+  printf '#!/bin/sh\n/bin/mkdir "$@" || exit\ncase "$1" in */config-proposals/*) /bin/chmod +a "user:$(id -un) deny add_file" "$1" ;; esac\n' >"$XW/stub/deny/mkdir"
+  chmod +x "$XW/stub/deny/mkdir"
+}
+x_denyprop() {
+  xin 'qa:\n  serve: "y"\n'; XPATH="$XW/stub/deny:$XSTUBS:$PATH"; XNOERR=1; xc config-proposal --id p1
+  XIN=/dev/null; XPATH=""; XNOERR=""; cp "$TMP/x.err" "$TMP/xerr.$XPASS"
+  /bin/chmod -a "user:$(id -un) deny add_file" "$XW/repo/.crew/config-proposals/p1" || fail "the deny stub never ran"
+}
+xsame xdenyprop x_denyprop
+xhas "--id p1
+rc=1"
+assert_eq "$(cat "$TMP/xerr.n")" "" "the refused draft prints no stack trace"
 x_store() {
   xstart; xc store-dir; xc store-label C-1 --run abc confirmed; xc store-label C-1 --run abc not-a-defect --by cap; xc store-label C-1
   xc store-label C-1 --run; xc store-calibration
@@ -3705,5 +3755,31 @@ xsame xe2eworld x_e2e
 xsigworld() { xworld; xcfg "qa:\n  serve: \"/bin/sleep 30\"\n  health: \"touch $XW/stub/started; /bin/sleep 1; touch $XW/stub/done; false\"\n"; }
 x_sig() { xready; xc serve; xsig TERM health; xsig HUP health; xc status; xc finish cancelled; }
 xsame xsigworld x_sig
+# TERM and HUP to store-install's pid alone while its cp copies the candidate:
+# 143 and 129, the stage copied but the store never replaced, the lock
+# released - the next install finds no store to keep as previous.
+mkdir -p "$TMP/xcpstubs"
+cat >"$TMP/xcpstubs/cp" <<'STUB'
+#!/bin/sh
+[ "$1" != -R ] || { touch "$XSTUB/started"; /bin/sleep 1; }
+/bin/cp "$@"; rc=$?
+[ "$1" != -R ] || touch "$XSTUB/done"
+exit "$rc"
+STUB
+chmod +x "$TMP/xcpstubs/cp"
+xstoreworld() {
+  xworld; mkdir -p "$XW/data/cand/store"; printf 'case\n' >"$XW/data/cand/store/c.md"
+  jq -n '{schema:"agentcrew.qa-store-snapshot/v1",entries:[]}' | shasum -a 256 | awk '{print $1}' >"$XW/data/cand/base-manifest.sha256"
+}
+x_storesig() {
+  XPATH="$TMP/xcpstubs:$XSTUBS:$PATH"; xsig TERM store-install "$XW/data/cand"; xsig HUP store-install "$XW/data/cand"; XPATH=""
+  xc store-install "$XW/data/cand"
+}
+xsame xstoreworld x_storesig
+xhas "/xw/data/cand
+rc=143"
+xhas "/xw/data/cand
+rc=129"
+case "$(xt)" in *previous=*) fail "a signalled store-install must not replace the store: $(xt)" ;; esac
 
 pass
