@@ -928,7 +928,10 @@ msame c8b; assert_eq "$(m_err)" "" "8: the family's own entry"
 #    `true` do, a quoted `No` with a comment and a CR does not), an unreadable
 #    yaml (its refusal is the run's exit, as the RETIRED one), W8 a CRLF scope
 #    line, W10 a string manifest entry, W11 a shifted pin, `00` counts (an
-#    invalid marker), and a project_dir that is a linked worktree
+#    invalid marker), every key counting (a flow header, a nested false
+#    before a quoted top-level true), and a project_dir that is a linked
+#    worktree. A repo git refuses never reaches the gate here: the checkout's
+#    own `symbolic-ref` reads it DETACHED first
 gate_repo() {  # gate_repo <name> <yaml> - a clone with crew/<name>, its yaml, the markers dir ignored
   mrepo "$1"; mcrew "$1" "$1"; mmeta "$1" "$1"
   [ -z "$2" ] || printf -- "$2" >"$H/home/projects/$1.yaml"
@@ -1020,6 +1023,14 @@ msame qw13
 assert_eq "$(m_err)" "WARN: qa.require_for_ship: ignored invalid flat QA attestation for $(sha12 qw13): invalid case counts
 WARN: qa.require_for_ship: no passing crew-qa run recorded for $(sha12 qw13) - run crew-qa on this head before merging
 $MBLOCKED" "9: 00 case counts are an invalid marker"
+both gate_repo qk1 'qa: {serve: x, require_for_ship: true}\n'
+msame qk1
+assert_eq "$(m_err)" "WARN: qa.require_for_ship: no passing crew-qa run recorded for $(sha12 qk1) - run crew-qa on this head before merging
+$MBLOCKED" "9: a flow mapping on the qa: header enforces"
+both gate_repo qk2 'qa:\n  app:\n    require_for_ship: false\n  "require_for_ship" : true\n'
+msame qk2
+assert_eq "$(m_err)" "WARN: qa.require_for_ship: no passing crew-qa run recorded for $(sha12 qk2) - run crew-qa on this head before merging
+$MBLOCKED" "9: a nested false before a quoted top-level true enforces"
 wtland() {  # the primary checkout moved off main, main checked out in the linked worktree <side>/wt-qwt, the meta's project_dir
   gate_repo qwt "$REQ"; marker qwt ''
   git -C "$H/home/projects/qwt" checkout -q -b side; git -C "$H/home/projects/qwt" worktree add -q "$H/wt-qwt" main

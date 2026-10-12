@@ -98,7 +98,8 @@
 // by tests/ts/qa-gate.test.ts, its named divergences at that block: its
 // `qa: ...` lines on stdout, its WARNs on stderr. The ERROR it throws for a
 // policy it cannot read (the RETIRED legacy config, a yaml it cannot read,
-// a git that cannot run) is the run's exit 1 (no further line); a refusal is
+// a git that cannot run; a .git git refuses fails an earlier step first -
+// step 7 reads it DETACHED) is the run's exit 1 (no further line); a refusal is
 // `local merge blocked by qa.require_for_ship (see message above)`. A lab
 // bin/ (the ROOT seam) supplies its guard and the remedy's ac-know.sh, never
 // the gate.

@@ -1208,7 +1208,7 @@ grep -q "leased.*duale2e" <<<"$("$BIN/ac-tree.sh" list --repo "$dual_e2e_repo")"
 
 # Story 4: an ORDINARY crew/local-only task (kind=ship) with a SECOND lease
 # goes through teardown's CREW return loop - a separate code path from
-# Story 3's verifier loop (archive_and_reap_verifier). Before ac-tree.sh get appended a second
+# Story 3's verifier loop (src/teardown.ts archiveAndReapVerifier). Before ac-tree.sh get appended a second
 # lease into a live crew meta, a spawn's single lease meant leases= could
 # never carry more than one entry here, so this loop never actually ran on a
 # multi-entry list. Take the second lease the same way a crewmate would: a
@@ -1379,8 +1379,9 @@ git -C "$repo" worktree remove --force "$stray19" >/dev/null 2>&1 || true
 git -C "$repo" branch -D crew/t19 >/dev/null 2>&1 || true
 
 # --- the same silence one loop away: a verifier's own vanished lease ----------
-# bin/ac-teardown.sh (archive_and_reap_verifier) carries the IDENTICAL
-# predicate @9b39f00 fixed one statement above it in the sibling loop - a
+# The bash teardown's archive_and_reap_verifier (frozen in
+# tests/fixtures/ac-teardown.sh) carried the IDENTICAL predicate @9b39f00
+# fixed one statement above it in the sibling loop - a
 # verifier lease whose directory has vanished was skipped in total silence.
 # Torn down directly (the dualqa idiom above): a verifier meta IS the id.
 vlease20="$TMP/vanished-verifier-lease-t20"
@@ -1421,11 +1422,11 @@ grep -q "leased.*t15" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
   && fail "the trap must still give the lease back"
 
 # --- roomchief DEMOTE vs the verification-agent class -------------------------
-# landed_proof refuses a demote while any member of the family stands (member =
+# landedProof (src/teardown.ts) refuses a demote while any member of the family stands (member =
 # ac_family_of_id, or the meta's fleet_scope). A VERIFICATION agent carries a
 # family id but is NOT crew, and nobody tears it down - counting it would strand
 # the roomchief undemotable. No member of dem is archived with a project_dir,
-# so the qa-infra sweep has nowhere to run (this case is about landed_proof,
+# so the qa-infra sweep has nowhere to run (this case is about landedProof,
 # not docker).
 "$BIN/ac-room.sh" post dem crewchief "spawned dem-review" >/dev/null
 printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/dem-chief.meta"
@@ -1459,10 +1460,11 @@ assert_contains "$err23" "family must be" "ac-room.sh's own refusal text travels
 assert_contains "$err23" "post it by hand:" "the warning names the exact command to post the entry by hand"
 assert_contains "$err23" "ac-room.sh post dem bad crewchief" "the hand command names the family and actor"
 
-# --- reap_pane_file: a read failure keeps the record instead of deleting it ---
-# bin/ac-teardown.sh (reap_pane_file) collapsed "could not read the file"
-# into the same silent rm -f as "no first field" - the function's own header
-# promises a read failure is warned by pane id/path AND the record
+# --- reapPaneFile: a read failure keeps the record instead of deleting it ---
+# The bash teardown's reap_pane_file (frozen in tests/fixtures/ac-teardown.sh)
+# collapsed "could not read the file" into the same silent rm -f as "no first
+# field" - the spec (src/teardown.ts's header, REAP) promises a read failure
+# is warned by pane id/path AND the record
 # KEPT so a later attempt still has it. Verified empirically on this host
 # (awk, under this script's `set -euo pipefail`):
 # DISPUTED: whether `awk 'NR==1{print $1}' "$f" 2>/dev/null` exits non-zero on
@@ -1475,7 +1477,7 @@ assert_contains "$err23" "ac-room.sh post dem bad crewchief" "the hand command n
 #   f=/tmp/awktest_empty; : > "$f"
 #   if p="$(awk 'NR==1{print $1}' "$f" 2>/dev/null)"; then echo "ok=[$p]"
 #   else echo "failed"; fi          # -> "ok=[]"
-# archive_and_reap_verifier's own pane record (state/.pane-<id>) is the clean
+# archiveAndReapVerifier's own pane record (state/.pane-<id>) is the clean
 # target: it lives in fleet state, not a leased worktree, so nothing downstream
 # resets or deletes it out from under this test the way a worktree return does.
 vunread=t22-verify
@@ -1493,18 +1495,18 @@ assert_contains "$err22" "could not read" "the warning says the file could not b
 assert_contains "$err22" "$AC_HOME/state/.pane-$vunread" "the warning names the unreadable pane path"
 assert_file "$AC_HOME/state/.pane-$vunread" "an unreadable pane file record is KEPT, not deleted"
 
-# --- kill_serve_pid: a read failure keeps the record instead of deleting it ---
-# bin/ac-teardown.sh kill_serve_pid is symmetric with reap_pane_file above: unreadable and
+# --- killServePid: a read failure keeps the record instead of deleting it ---
+# The bash kill_serve_pid was symmetric with reap_pane_file above: unreadable and
 # empty collapsed into the same silent no-op-then-delete, so a genuinely
 # running qa serve process behind an unreadable pid file was abandoned with its
 # record erased and no signal - the next qa run then hits a port collision with
 # no clue why. Same disputed variable, same construct, verified the same way
 # (`cat` in place of `awk`; DISPUTED/HELD-CONSTANT declared above covers it).
 # leases= is pointed at a REAL, existing directory that is NOT a registered
-# pool slot: sweep_pane_agents runs on it (and must see the unreadable
+# pool slot: sweepPaneAgents runs on it (and must see the unreadable
 # serve.pid) before the unconditional `ac-tree.sh return` that follows - that
-# return refuses ("not an agent-crew pool worktree"), caught by the existing
-# `|| ac_warn`, so this directory is never reset and the kept-vs-deleted file
+# return refuses ("not an agent-crew pool worktree"), which teardown only
+# warns, so this directory is never reset and the kept-vs-deleted file
 # is directly observable after teardown completes (unlike a real leased
 # worktree, whose pool reset would erase the evidence either way).
 fake_lease24="$TMP/fake-lease-t24"
@@ -1524,7 +1526,7 @@ assert_contains "$err24" "could not read" "the warning says the file could not b
 assert_contains "$err24" "$fake_lease24/.crew/qa/qrun24/serve.pid" "the warning names the unreadable serve.pid path"
 assert_file "$fake_lease24/.crew/qa/qrun24/serve.pid" "an unreadable serve.pid record is KEPT, not deleted"
 
-# --- kill_serve_pid: a recorded pid is a positive decimal, or nothing is signalled ---
+# --- killServePid: a recorded pid is a positive decimal, or nothing is signalled ---
 # `kill -0` accepts 0 and 00 (the caller's own process group) and -1 (every
 # process of the user), and the group signal that followed reached whatever
 # that named. The values here cannot reach past the teardown under test: -5

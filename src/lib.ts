@@ -2410,15 +2410,19 @@ function qaConfigFile(repo: string, loud: boolean): string | null {
 // ac_qa_required's twin: is the gate ENFORCED for <repo>? A policy that
 // cannot be read writes its refusal and throws status 1, as the RETIRED copy
 // does: a `git --version` that does not start or fails (no repo resolves to a
-// policy), then a canonical yaml that is a regular file and cannot be read.
+// policy), then a <repo>/.git that exists (`[ -e ]`) where git cannot name
+// the repo, then a canonical yaml that is a regular file and cannot be read.
 // The config is resolved loud, then quiet, and read as `$(cat)` read it. Then
 // the grammar over that text and one LF, in the C locale: a column-0 `qa:`
-// with optional space and an optional `#` comment opens the block, a column-0
-// line that is no comment closes it; the first `<space>require_for_ship:` in
-// it enforces unless its value - past that key's own colon, a comment (`#`
-// after a space) cut, `"` and `'` deleted, its ends trimmed - is a false
-// spelling; one that starts with `#` is none, cut or not. No such key is not
-// enforced.
+// with optional space and an optional `#` comment or a flow mapping's `{`
+// opens the block, a later column-0 line that is no comment closes it. A key
+// is `require_for_ship`, bare or quoted with `"` or `'`, optional space, a
+// colon, looked for in each block line's whole text (the flow header's too,
+// a comment's too): at the line's start past its indent (the value runs to
+// the line's end), or past a `{` or `,` and optional space (the value ends at
+// the next `,` or `}`). ANY key whose value - a comment (`#` after a space)
+// cut, `"` and `'` deleted, its ends trimmed - is no false spelling enforces;
+// no key is not enforced.
 export function qaRequired(repo: string): boolean {
   let gitRuns = false;
   try {
@@ -2427,6 +2431,13 @@ export function qaRequired(repo: string): boolean {
   if (!gitRuns) {
     writeSync(2, `ERROR: qa.require_for_ship: git did not run (is it on PATH?), so the project policy for '${repo}' cannot be resolved - refusing the merge rather than reading it as not enforced\n`);
     throw Object.assign(new Error("git did not run"), { status: 1 });
+  }
+  if (existsSync(`${repo}/.git`) && projectConfigName(repo) === null) {
+    writeSync(
+      2,
+      `ERROR: qa.require_for_ship: git could not read the repo at '${repo}' (it holds .git, but git rev-parse failed there - a corrupt repo, or one safe.directory refuses), so its project policy cannot be resolved - refusing the merge rather than reading it as not enforced\n`,
+    );
+    throw Object.assign(new Error("git could not read the repo"), { status: 1 });
   }
   qaConfigFile(repo, true);
   const cfg = qaConfigFile(repo, false);
@@ -2439,21 +2450,27 @@ export function qaRequired(repo: string): boolean {
       throw Object.assign(new Error(`unreadable project policy ${cfg}`), { status: 1 });
     }
   }
+  const on = (v: string): boolean =>
+    !/^(false|False|FALSE|no|No|NO|off|Off|OFF)$/.test(
+      v
+        .replace(/[ \t\n\v\f\r]#[\s\S]*/, "")
+        .replace(/["']/g, "")
+        .replace(/^[ \t\n\v\f\r]+/, "")
+        .replace(/[ \t\n\v\f\r]+$/, ""),
+    );
   let inq = false;
-  for (const l of records(`${text}\n`)) {
+  for (let l of records(`${text}\n`)) {
     if (/^qa:[ \t\n\v\f\r]*(#[\s\S]*)?$/.test(l)) {
       inq = true;
       continue;
     }
-    if (inq && /^[^ \t\n\v\f\r#]/.test(l)) inq = false;
-    if (inq && /^[ \t\n\v\f\r]+require_for_ship:/.test(l)) {
-      const v = l
-        .replace(/^[ \t\n\v\f\r]+require_for_ship:/, "")
-        .replace(/[ \t\n\v\f\r]#[\s\S]*/, "")
-        .replace(/["']/g, "")
-        .replace(/^[ \t\n\v\f\r]+/, "")
-        .replace(/[ \t\n\v\f\r]+$/, "");
-      return !/^(false|False|FALSE|no|No|NO|off|Off|OFF)$/.test(v);
+    if (/^[^ \t\n\v\f\r#]/.test(l)) inq = /^qa:[ \t\n\v\f\r]*\{/.test(l);
+    if (!inq) continue;
+    const block = /^[ \t\n\v\f\r]+(?:require_for_ship|"require_for_ship"|'require_for_ship')[ \t\n\v\f\r]*:/.exec(l);
+    if (block && on(l.slice(block[0].length))) return true;
+    for (let m; (m = /[{,][ \t\n\v\f\r]*(?:require_for_ship|"require_for_ship"|'require_for_ship')[ \t\n\v\f\r]*:/.exec(l)); ) {
+      l = l.slice(m.index + m[0].length);
+      if (on(l.replace(/[,}][\s\S]*/, ""))) return true;
     }
   }
   return false;

@@ -1192,7 +1192,8 @@ xboth rm -rf @H/r @H/managed @H/stubs
 
 
 # 5. selection: reuse in byte order (10-r before 2-r), a dirty slot, a
-#    half-written meta, a dead owner reclaimed, a live one kept, the cap from
+#    half-written meta, a dead owner reclaimed, a live one kept, an owner
+#    past pid_t reclaimed as no process (the builtin refuses it), the cap from
 #    env/config and its bogus spellings, an orphan dir, a failed worktree add,
 #    a legacy slot's migration, and every --prefer why.
 xboth xrepo r
@@ -1212,6 +1213,15 @@ xboth x5half
 xsame get --repo @H/r --id f
 assert_eq "$(xout)" "@H/r/.crew/worktrees/11-r" "5: a half-written meta fails closed, the pool grows past the highest number"
 assert_contains "$(xerr)" "WARN: skip slot 3-r: lease state unknown (half-written meta?)" "5: the unknown state is named"
+for xowner in 2147483648 4294967295 4294967296; do
+  xboth rm -rf @H/r; xboth xrepo r
+  xsetup get --repo @H/r --id w1 --owner "$xowner"
+  XENV=(AC_MAX_TREES=1)
+  xsame get --repo @H/r --id w2
+  XENV=()
+  assert_eq "$(xout):$(xerr)" "@H/r/.crew/worktrees/1-r:WARN: reclaiming slot 1-r from dead owner $xowner
+WARN: reusing worktree slot 1-r" "5: an owner past pid_t is no process: '$xowner'"
+done
 xboth rm -rf @H/r; xboth xrepo r
 xsetup get --repo @H/r --id o2 --owner "$$"
 xsetup get --repo @H/r --id o1 --owner "$xdead"

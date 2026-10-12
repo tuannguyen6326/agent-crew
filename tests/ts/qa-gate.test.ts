@@ -243,8 +243,6 @@ test("Q: qaRequired reads the policy as ac_qa_required: the spellings that enfor
     ["no qa block", "require_for_ship: true\n"],
     ["qa: <value> is no header", "qa: x\n  require_for_ship: true\n"],
     ["column-0 key closes", "qa:\nother: 1\n  require_for_ship: true\n"],
-    ["first wins", "qa:\n  require_for_ship: false\n  require_for_ship: true\n"],
-    ["no colon right past the key", "qa:\n  require_for_ship :true\n"],
     ["nbsp indent under C", "qa:\n\u00a0 require_for_ship: true\n"],
   ] as const) {
     yaml(body);
@@ -325,6 +323,96 @@ test("Q, under a UTF-8 locale: the policy's awk reads in the C locale, so a byte
     expect(w.pair(`UTF-8 ${name}`, { fn: "ac_qa_required", args: ["HOME/home/projects/q"], env: { LC_ALL: "en_US.UTF-8" } })).toEqual({ out: want, err: "", rc: 0, tree: ["state"] });
   }
 }, 60000);
+
+test("Q: every require_for_ship key in the qa block counts - bare or quoted, a space before its colon, at any depth, in a flow mapping on the qa: header or nested in one anywhere in the block - and ANY of them that is no false spelling enforces", () => {
+  const w = new World();
+  w.both((r) => gitRepo(join(r, "home", "projects", "q")));
+  for (const [name, body, want] of [
+    ["a space before the colon", "qa:\n  require_for_ship :true\n", "#0"],
+    ["a TAB before the colon", "qa:\n  require_for_ship\t: true\n", "#0"],
+    ["a space before the colon, false", "qa:\n  require_for_ship  : false\n", "#1"],
+    ["a double-quoted key", 'qa:\n  "require_for_ship": true\n', "#0"],
+    ["a single-quoted key, a space before the colon", "qa:\n  'require_for_ship' : yes\n", "#0"],
+    ["a quoted key, false", 'qa:\n  "require_for_ship": "off"\n', "#1"],
+    ["a longer key is another key", "qa:\n  require_for_shipping: true\n", "#1"],
+    ["false, then true", "qa:\n  require_for_ship: false\n  require_for_ship: true\n", "#0"],
+    ["a nested false before a top-level true", "qa:\n  scopes:\n    x:\n      require_for_ship: false\n  require_for_ship: true\n", "#0"],
+    ["a top-level false, then a nested true", "qa:\n  require_for_ship: false\n  scopes:\n    x:\n      require_for_ship: true\n", "#0"],
+    ["every key false", "qa:\n  require_for_ship: false\n  scopes:\n    x:\n      'require_for_ship' : No\n    y:\n      require_for_ship: OFF # c\n", "#1"],
+    ["a commented-out line is no key", "qa:\n  # require_for_ship: true\n  #require_for_ship: true\n", "#1"],
+    ["a key in a comment's text counts", "qa:\n#{require_for_ship: true}\n  require_for_ship: no\n", "#0"],
+    ["a block value runs to the line's end", "qa:\n  require_for_ship: false, x\n", "#0"],
+    ["a flow header", "qa: {require_for_ship: true}\n", "#0"],
+    ["a flow header, no space", "qa:{require_for_ship:true}\n", "#0"],
+    ["a flow header, false", "qa: {require_for_ship: false}\n", "#1"],
+    ["a flow value ends at a comma", "qa: {require_for_ship: off, serve: x}\n", "#1"],
+    ["a flow value ends at a brace", "qa: {serve: x, require_for_ship: false }\n", "#1"],
+    ["a later flow key", "qa: {serve: x, require_for_ship: on}\n", "#0"],
+    ["flow, quoted keys and a comment", "qa: { \"require_for_ship\" : \"No\", 'require_for_ship':false } # c\n", "#1"],
+    ["flow, CRLF", "qa: {require_for_ship: false}\r\n", "#1"],
+    ["flow, an empty value", "qa: {require_for_ship: }\n", "#0"],
+    ["flow, no such key", "qa: {serve: x}\n", "#1"],
+    ["flow, a longer key", "qa: {xrequire_for_ship: true, require_for_shipping: true}\n", "#1"],
+    ["flow, a key in the header's comment counts", "qa: {serve: x} # {require_for_ship: true}\n", "#0"],
+    ["flow, a quoted # hides no key", 'qa: {serve: "make dev # x", require_for_ship: true}\n', "#0"],
+    ["flow, a value's comment is cut", "qa: {\n  serve: x, require_for_ship: false # c\n}\n", "#1"],
+    ["nested flow", "qa: {scopes: {x: {require_for_ship: true}}}\n", "#0"],
+    ["a nested flow false, then a top-level true", "qa: {scopes: {x: {require_for_ship: false}}, require_for_ship: true}\n", "#0"],
+    ["nested flow, every key false", "qa: {scopes: {x: {require_for_ship: false}}, require_for_ship: no}\n", "#1"],
+    ["a flow mapping on a block line", "qa:\n  scopes: {x: {require_for_ship: true}}\n", "#0"],
+    ["a multi-line flow header", "qa: {\n  require_for_ship: true\n}\n", "#0"],
+    ["a column-0 line after a flow header closes the block", "qa: {serve: x}\nother: 1\n  require_for_ship: true\n", "#1"],
+    ["a flow mapping under another key", "other: {require_for_ship: true}\n", "#1"],
+  ] as const) {
+    w.both((r) => put(r, "home/projects/q.yaml", body));
+    expect(w.pair(`second pass: ${name}`, { fn: "ac_qa_required", args: ["HOME/home/projects/q"] })).toEqual({ out: want, err: "", rc: 0, tree: ["state"] });
+  }
+  w.both((r) => put(r, "home/projects/q.yaml", Buffer.from("qa: {name: caf\xe9, require_for_ship: true}\n", "latin1")));
+  expect(w.pair("second pass: UTF-8, a flow header past a byte that is no UTF-8", { fn: "ac_qa_required", args: ["HOME/home/projects/q"], env: { LC_ALL: "en_US.UTF-8" } }).out).toBe("#0");
+}, 120000);
+
+// git's own test switch fails its ownership check as safe.directory does for
+// another owner's repo, without root; a git before 2.35.2 checks no owner.
+const OWNER_CHECKED = (() => {
+  const d = realpathSync(mkdtempSync(join(tmpdir(), "ac-qa-gate-owner-")));
+  made.push(d);
+  gitRepo(d);
+  return Bun.spawnSync(["git", "-C", d, "rev-parse", "--git-dir"], { env: { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" }, stdout: "ignore", stderr: "ignore" }).exitCode !== 0;
+})();
+
+test("Q: a project_dir holding .git that git refuses ends the run with the named ERROR; one without .git stays not enforced and silent", () => {
+  const w = new World();
+  w.both((r) => {
+    gitRepo(join(r, "home", "projects", "q"));
+    put(r, "home/projects/q.yaml", "qa:\n  require_for_ship: false\n");
+    put(r, "gone/.git", `gitdir: ${r}/nowhere\n`);
+    put(r, "junk/.git", "xyz\n");
+    gitRepo(join(r, "head"));
+    writeFileSync(join(r, "head", ".git", "HEAD"), "garbage\n");
+    expect(Bun.spawnSync(["git", "-C", join(r, "home/projects/q"), "worktree", "add", "-q", "--detach", join(r, "wt")]).exitCode).toBe(0);
+    rm(r, "home/projects/q/.git/worktrees");
+    mkdirSync(join(r, "dangling"));
+    symlinkSync(join(r, "nowhere"), join(r, "dangling", ".git"));
+    mkdirSync(join(r, "plain"));
+  });
+  const Q = (dir: string, env: Record<string, string> = {}): Row => ({ fn: "ac_qa_required", args: [dir], env });
+  const refused = (dir: string): Run => ({
+    out: "",
+    err: `ERROR: qa.require_for_ship: git could not read the repo at '${dir}' (it holds .git, but git rev-parse failed there - a corrupt repo, or one safe.directory refuses), so its project policy cannot be resolved - refusing the merge rather than reading it as not enforced\n`,
+    rc: 1,
+    tree: ["state"],
+  });
+  if (OWNER_CHECKED) expect(w.pair("dubious ownership", Q("HOME/home/projects/q", { GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" }))).toEqual(refused("HOME/home/projects/q"));
+  expect(w.pair("a .git file whose gitdir is gone", Q("HOME/gone"))).toEqual(refused("HOME/gone"));
+  expect(w.pair("a .git file that is no gitfile", Q("HOME/junk"))).toEqual(refused("HOME/junk"));
+  // git looks for a repo above a .git it rejects; the ceiling keeps that walk inside the side root
+  expect(w.pair("a corrupt HEAD", Q("HOME/head", { GIT_CEILING_DIRECTORIES: "HOME" }))).toEqual(refused("HOME/head"));
+  expect(w.pair("a linked worktree its main repo forgot", Q("HOME/wt"))).toEqual(refused("HOME/wt"));
+  const silent: Run = { out: "#1", err: "", rc: 0, tree: ["state"] };
+  expect(w.pair("no .git", Q("HOME/plain"))).toEqual(silent);
+  expect(w.pair("no .git, the ownership check failing", Q("HOME/plain", { GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" }))).toEqual(silent);
+  expect(w.pair("a dangling .git symlink is no .git", Q("HOME/dangling"))).toEqual(silent);
+}, 120000);
 
 test("P: qaAttestationParse answers ac_qa_attestation_parse's error text in its order over every arm, and null where it returns 0", () => {
   const w = new World();

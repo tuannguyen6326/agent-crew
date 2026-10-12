@@ -61,36 +61,59 @@ ac_qa_required() {
   # so the gate stays correct on an un-migrated (legacy) home too.
   # A policy that cannot be READ refuses (ac_die, as the RETIRED copy does)
   # rather than reading "not enforced": a git that cannot run resolves no repo
-  # to its policy, and a regular file at the canonical path that cannot be
-  # read hides it. A dir git says is no repo has no policy keyed to it, so it
-  # stays not enforced.
+  # to its policy, a dir holding .git (a linked worktree's .git file too) that
+  # git refuses (safe.directory, a corrupt repo) hides the repo's, and a
+  # regular file at the canonical path that cannot be read hides it. Whether
+  # the dir holds a repo is the filesystem's answer, never a parse of git's
+  # message. A dir with no .git that git says is no repo has no policy keyed
+  # to it, so it stays not enforced.
   # Grammar, read in the C locale (under UTF-8 macOS awk aborts on a byte that
   # is no UTF-8, which read as "not enforced"): a column-0 `qa:`, then
-  # optional space and an optional `#` comment, opens the block; a column-0
-  # line that is no comment closes it. The FIRST `<space>require_for_ship:`
-  # inside it (any depth) is ENFORCED unless its value - the text past that
-  # key's own colon, a comment (a `#` after a space) cut with the rest of the
-  # line, `"` and `'` deleted, its ends trimmed of [:space:] (a TAB or a
-  # CRLF's CR too) - is an explicit false spelling: false, False, FALSE, no,
-  # No, NO, off, Off, OFF. A value that starts with `#` is none, cut or not;
-  # an empty or odd value enforces; no such key in the block, or no block, is
-  # not enforced.
+  # optional space and either an optional `#` comment or a flow mapping's
+  # `{`, opens the block; a later column-0 line that is no comment closes it.
+  # A KEY is `require_for_ship`, bare or wrapped in `"` or `'`, then optional
+  # [:space:] and a colon, that starts a line of the block past its indent
+  # (any depth; its value runs to the line's end) or comes right past a `{`
+  # or `,` and optional [:space:] anywhere on a line of the block, the flow
+  # header's own included (a flow mapping on the header or nested anywhere;
+  # its value ends at the next `,` or `}`). A value is false when - a comment
+  # (a `#` after a [:space:]) cut with the rest of it, `"` and `'` deleted,
+  # its ends trimmed of [:space:] (a TAB or a CRLF's CR too) - it is false,
+  # False, FALSE, no, No, NO, off, Off or OFF; one that starts with `#` is
+  # not, cut or not. The gate is ENFORCED when ANY key's value is not false,
+  # an empty or odd one included; no key in the block, or no block, is not
+  # enforced. Keys are looked for in a line's whole text, a comment's and a
+  # quoted string's too: reading more text as keys can only enforce, where
+  # cutting comments first would let a quoted ` #` hide the keys past it. A
+  # value holding a nested `{` or `[` is never false, so ending a flow value
+  # at the first `,` or `}` reads as ending it at its own level would.
   local repo="$1" cfg required hc
   git --version >/dev/null 2>&1 \
     || ac_die "qa.require_for_ship: git did not run (is it on PATH?), so the project policy for '$repo' cannot be resolved - refusing the merge rather than reading it as not enforced"
+  if [ -e "$repo/.git" ] && ! ac_project_config_name "$repo" >/dev/null; then
+    ac_die "qa.require_for_ship: git could not read the repo at '$repo' (it holds .git, but git rev-parse failed there - a corrupt repo, or one safe.directory refuses), so its project policy cannot be resolved - refusing the merge rather than reading it as not enforced"
+  fi
   ac_project_config_file "$repo" >/dev/null || true
   if hc="$(ac_project_config_file "$repo" 2>/dev/null)"; then
     cfg="$(cat "$hc" 2>/dev/null)" \
       || ac_die "qa.require_for_ship: the project policy $hc cannot be read - refusing the merge rather than reading it as not enforced"
   else cfg=""; fi
   required="$(printf '%s\n' "$cfg" | LC_ALL=C awk '
-    /^qa:[[:space:]]*(#.*)?$/ { inq = 1; next }
-    inq && /^[^[:space:]#]/ { inq = 0 }
-    inq && /^[[:space:]]+require_for_ship:/ {
-      v = $0; sub(/^[[:space:]]+require_for_ship:/, "", v)
+    function on(v) {
       sub(/[[:space:]]#.*/, "", v); gsub(/["'\'']/, "", v)
       sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v)
-      print (v ~ /^(false|False|FALSE|no|No|NO|off|Off|OFF)$/) ? "off" : "on"; exit
+      return v !~ /^(false|False|FALSE|no|No|NO|off|Off|OFF)$/
+    }
+    /^qa:[[:space:]]*(#.*)?$/ { inq = 1; next }
+    /^[^[:space:]#]/ { inq = /^qa:[[:space:]]*\{/ }
+    !inq { next }
+    {
+      l = $0
+      if (match(l, /^[[:space:]]+(require_for_ship|"require_for_ship"|'\''require_for_ship'\'')[[:space:]]*:/) && on(substr(l, RLENGTH + 1))) { print "on"; exit }
+      while (match(l, /[{,][[:space:]]*(require_for_ship|"require_for_ship"|'\''require_for_ship'\'')[[:space:]]*:/)) {
+        l = substr(l, RSTART + RLENGTH); v = l; sub(/[,}].*/, "", v)
+        if (on(v)) { print "on"; exit }
+      }
     }')"
   [ "$required" = on ]
 }

@@ -437,9 +437,12 @@ if [ "$(id -u)" -ne 0 ]; then
   chmod 755 "$OH/data/archive/2026" "$NH/data/archive/2026"
   assert_contains "$(cat "$TMP/n.err")" "mv:" "mv's own refusal reaches stderr"
 fi
-# The MANUAL-ONLY scan extends to src/: no module imports archive.ts or starts
-# it; the entry's own module and its test are the only mentions.
-callers="$(grep -rlE 'archive\.ts|ac-archive\.sh' "$ROOT/src" "$ROOT/tests/ts" 2>/dev/null | grep -v -e '/src/archive\.ts$' -e '/tests/ts/archive\.test\.ts$' || true)"
+# The MANUAL-ONLY scan extends to src/ with the same predicate: no module
+# imports archive.ts or starts it. Comment lines are stripped first, so a
+# header naming the module stays the cross-reference it is.
+callers="$(grep -rnE 'archive\.ts|ac-archive\.sh' "$ROOT/src" "$ROOT/tests/ts" 2>/dev/null \
+  | grep -v -e '^[^:]*/src/archive\.ts:' -e '^[^:]*/tests/ts/archive\.test\.ts:' \
+  | grep -vE '^[^:]*:[0-9]+:[[:space:]]*(\*|//)' || true)"
 [ -z "$callers" ] || fail "a TypeScript caller of the archive module appeared: $callers"
 
 pass

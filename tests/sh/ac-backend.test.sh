@@ -942,4 +942,19 @@ answers="$(wc -l <"$seqlog" | tr -d ' ')"
 [ "$answers" -le 4 ] \
   || fail "answers must be bounded by AC_STARTUP_DIALOG_BUDGET (2 here); got $answers"
 
+# herdr_composer_shows is the proof Enter waits on, so it must answer the same
+# under the operator's locale as under C: a UTF-8 BSD sed that aborts on an
+# invalid byte prints nothing, and an empty remainder reads as "only
+# placeholders" - Enter on a composer that holds something else.
+composer_shows() {  # composer_shows <locale> <composer> - its status
+  COMPOSER="$2" run_backend herdr "LC_ALL='$1' herdr_composer_shows hello \"\$COMPOSER\" && printf 0 || printf %s \$?" 2>/dev/null
+}
+for loc in en_US.UTF-8 C; do
+  assert_eq "$(composer_shows "$loc" $'garbage \351 text')" 1 "composer with an invalid byte is not the message ($loc)"
+  assert_eq "$(composer_shows "$loc" $'[Pasted text #1]\351')" 1 "a placeholder plus an invalid byte is not the message ($loc)"
+  assert_eq "$(composer_shows "$loc" '[Pasted text #1]')" 0 "a placeholder alone is the message ($loc)"
+  assert_eq "$(composer_shows "$loc" '[Pasted text #2 +3 lines]')" 0 "a multi-line placeholder alone is the message ($loc)"
+  assert_eq "$(composer_shows "$loc" '[Pasted text #1] tail')" 1 "a placeholder plus a remainder is not the message ($loc)"
+done
+
 pass

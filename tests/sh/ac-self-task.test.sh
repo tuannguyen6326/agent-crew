@@ -479,7 +479,7 @@ assert_no_file "$state/scf-fix.meta" "the scoped slice is torn down"
 # The first fix taught it to post HANDBACK, which is the FAMILY's tenure-ending
 # verb (ac_room_handback_families): it flipped the whole family into HANDBACK
 # and wedged the crewchief's turn end. And its test tore down a slice with NO
-# commits, so it never crossed landed_proof - the fence that actually holds an
+# commits, so it never crossed landedProof - the fence that actually holds an
 # unlanded branch - and proved nothing about the scenario in its own comment.
 # This one drives the real thing: a commit on the slice, main moved, the scoped
 # land refused, the receipt posted, and the teardown still refusing until the

@@ -692,10 +692,12 @@ dsame k1 "$DU"; assert_eq "$(derr)" "$(dkgap k1 HOME/home/projects/krepo krepo)"
 #    needs one; MODE MISMATCH, the bare marker on a scoped head, the scoped
 #    pass; the matrix one and both; a linked worktree (the main repo's
 #    markers, yaml and record name); the require_for_ship spellings (a comment
-#    after `true` enforces, a quoted `No` with a comment and a CR does not); a
-#    policy that cannot be read - an unreadable yaml, no git on PATH - whose
-#    refusal is the run's exit before any gh call; W8 a CRLF scope line, W10 a
-#    string manifest entry, W11 a shifted pin, `00` counts (an invalid marker)
+#    after `true` enforces, a quoted `No` with a comment and a CR does not,
+#    and every key counts - a nested flow false before a top-level true
+#    enforces); a policy that cannot be read - an unreadable yaml, no git on
+#    PATH, a .git git refuses - whose refusal is the run's exit before any gh
+#    call; W8 a CRLF scope line, W10 a string manifest entry, W11 a shifted
+#    pin, `00` counts (an invalid marker)
 dboth dput home/plain/x 'x\n'
 dboth dmeta q0 "project_dir=HOME/home/plain\npr=$DU\npr_head=abc111\n"
 dsame q0 "$DU"; assert_eq "$(dout)" "merged $DU" "9: a project_dir that is no repo"
@@ -826,6 +828,16 @@ D_ENV=("D_VIEW=$(dsha qx13)"); dsame x13 "$DU"; D_ENV=()
 assert_eq "$(derr)" "WARN: qa.require_for_ship: ignored invalid flat QA attestation for $(dsha qx13 | cut -c1-12): invalid case counts
 WARN: qa.require_for_ship: no passing crew-qa run recorded for $(dsha qx13 | cut -c1-12) - run crew-qa on this head before merging
 $DBLOCKED" "9: 00 case counts are an invalid marker"
+dboth dqgate x14 qx14 'qa: {app: {require_for_ship: false}, require_for_ship: true}\n'
+D_ENV=("D_VIEW=$(dsha qx14)"); dsame x14 "$DU"; D_ENV=()
+assert_eq "$(derr)" "WARN: qa.require_for_ship: no passing crew-qa run recorded for $(dsha qx14 | cut -c1-12) - run crew-qa on this head before merging
+$DBLOCKED" "9: a nested flow false before a top-level true enforces"
+dboth dput home/projects/qx15/.git 'gitdir: HOME/nowhere\n'
+dboth dmeta x15 "project_dir=HOME/home/projects/qx15\npr=$DU\npr_head=abc111\n"
+dsame x15 "$DU"
+assert_eq "$D_NRC" 1 "9: a .git git refuses ends the run with 1"
+assert_eq "$(derr)" "ERROR: qa.require_for_ship: git could not read the repo at 'HOME/home/projects/qx15' (it holds .git, but git rev-parse failed there - a corrupt repo, or one safe.directory refuses), so its project policy cannot be resolved - refusing the merge rather than reading it as not enforced" "9: ...its refusal alone"
+assert_eq "$(dcalls)" "" "9: ...before any gh call"
 
 # 10. writes that fail: W8 - an unreadable meta is metaGet's WARN alone, exit
 #     1; a state/ that takes no temp refuses the attempt before any merge (exit

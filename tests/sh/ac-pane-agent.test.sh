@@ -677,7 +677,7 @@ assert_contains "$(cat "$HDLOG")" "workspace create --label home · fam7 --no-fo
 fake="$TMP/fakecheckout"
 mkdir -p "$fake/bin" "$fake/src"
 cp "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$BIN/ac-pane-agent.sh" "$BIN/ac-dispatch-select.sh" "$BIN/ac-bun.sh" "$fake/bin/"
-cp "$ROOT/src/dispatch-select.ts" "$ROOT/src/lib.ts" "$ROOT/src/pane-agent.ts" "$fake/src/"
+cp "$ROOT/src/dispatch-select.ts" "$ROOT/src/lib.ts" "$ROOT/src/backlog.ts" "$ROOT/src/pane-agent.ts" "$fake/src/"
 echo '{"result":{"workspaces":[]}}' >"$WSLIST"
 : >"$HDLOG"
 env -u AC_HOME PATH="$stub:$PATH" HOME="$FAKEHOME" \

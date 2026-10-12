@@ -37,8 +37,9 @@
 //    twins of ac_qa_required and ac_qa_gate_ok, held to the bash functions by
 //    tests/ts/qa-gate.test.ts, their named divergences at that block; the
 //    ERROR they throw for a policy they cannot read (a legacy config's
-//    RETIRED copy, a yaml they cannot read, a git that cannot run) is the
-//    run's exit 1, before any gh call. Enforced, the head is `gh pr view
+//    RETIRED copy, a yaml they cannot read, a git that cannot run, a .git in
+//    project_dir that git refuses) is the run's exit 1, before any gh call.
+//    Enforced, the head is `gh pr view
 //    <url> --json headRefOid -q .headRefOid` (stderr dropped, its status
 //    unseen, read as `$(...)` read it: NULs dropped, trailing newlines cut);
 //    empty is `merge blocked:

@@ -756,13 +756,14 @@ function unlinkQuiet(p: string): void {
 }
 
 // The shell's `kill -0 <word>`: the word read as a number the way the builtin
-// reads one (else no such process), narrowed to a pid_t; a process this user
-// may not signal reads as gone.
+// reads one (else no such process); a value past pid_t, which the builtin
+// refuses and process.kill throws on, and a process this user may not signal
+// read as gone.
 function kill0(word: string): boolean {
   const v = testInt(word);
   if (v === null) return false;
   try {
-    process.kill(Number(BigInt.asIntN(32, v)), 0);
+    process.kill(Number(v), 0);
     return true;
   } catch {
     return false;

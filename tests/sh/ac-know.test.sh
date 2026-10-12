@@ -886,7 +886,8 @@ case "$out" in
   *"worktree pool lease"*) fail "R1: an off-topic fact must not clear the term floor" ;;
   *"lease grace window"*) fail "R1: one shared term (grace) is below the floor of 3" ;;
 esac
-assert_contains "$out" "cite: ac-know.sh cite" "R1: each hit hands over its cite command"
+assert_contains "$out" "    cite: $BIN/ac-know.sh cite --home $AC_HOME --repo $rrepo2 --quote 'the watcher beacon goes stale" \
+  "R1: each hit hands over its cite command, the bin, the fleet home and the repo filled in"
 assert_contains "$out" "recall PRINTS; it never cites" \
   "R1: and the tail states why recall does not bump heat itself"
 
@@ -910,7 +911,13 @@ assert_contains "$out3" "== scenes (L2" "R3: the scene tier is present"
 [ "$(printf '%s\n' "$out3" | grep -n '== scenes' | cut -d: -f1)" \
   -lt "$(printf '%s\n' "$out3" | grep -n '== facts' | cut -d: -f1)" ] \
   || fail "R3: scenes must be walked BEFORE facts"
-assert_contains "$out3" "open: ac-scene.sh show watcher-beacon --cite" "R3: the scene hands over its own open command"
+assert_contains "$out3" "    open: AC_HOME=$AC_HOME $BIN/ac-scene.sh show watcher-beacon --cite" "R3: the scene hands over its own open command"
+# A crewmate pane carries no AC_HOME and its cwd is the worktree: the open line
+# runs there verbatim or the scene's heat never moves.
+open="$(printf '%s\n' "$out3" | awk '/^    open: / { l = $0 } END { print l }')"
+out3o="$(cd "$rrepo2" && env -u AC_HOME bash -c "${open#    open: }" 2>&1)" \
+  || fail "R3: the printed open hand-over must run from a homeless shell: $open -> $out3o"
+assert_contains "$(sed -n 2p "$AC_HOME/records/scenes/watcher-beacon.md")" "heat=2" "R3: ...and touch the scene it was printed for"
 
 # R4: the BUDGET truncates loudly - a silent cut reads as "that is all there is".
 out4="$(recall 'watcher beacon stale grace' --max 1)"
@@ -941,9 +948,9 @@ assert_contains "$out7" "no hit in any layer" "R6: a real miss under a zero budg
 # subject closed the single-quoted phrase early and the line did not parse -
 # 87 of drydock's 681 live entries on 2026-09-28.
 radd2 "the chief's watcher beacon grace is three hundred seconds"
-hand="$(recall "chief's watcher beacon grace" | awk '/cite: ac-know.sh cite/ && /chief/ { l = $0 } END { print l }')"
-out8="$(eval "\"\$KNOW\" cite --home \"\$AC_HOME\" --repo \"\$rrepo2\" --quote ${hand##*--quote }" 2>&1)" \
-  || fail "R7: the printed cite hand-over must parse and address its entry: $hand -> $out8"
+hand="$(recall "chief's watcher beacon grace" | awk '/^    cite: / && /chief/ { l = $0 } END { print l }')"
+out8="$(cd "$rrepo2" && env -u AC_HOME bash -c "${hand#    cite: }" 2>&1)" \
+  || fail "R7: the printed cite hand-over must run verbatim from a homeless shell and address its entry: $hand -> $out8"
 assert_contains "$out8" "the chief's watcher beacon grace is three hundred seconds | src:" "R7: it cites the entry it was printed for"
 
 # R8: a question ABOUT a flag is still a question. The usage is
@@ -1043,10 +1050,31 @@ xnorm() {  # xnorm <file> <side root> <pid> - the pid only where the entry write
   LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-know#ROOT#g" -e "s#$ROOT#ROOT#g" \
     -e "s/^$3\$/PID/" -e "s/-000000-$3([^0-9a-f]|\$)/-000000-PID\\1/g" "$1"
 }
+# W4, named: the port's recall hand-overs carry the bin, the fleet home and the
+# repo, where the original printed `ac-know.sh cite --repo <clone>` and a bare
+# `ac-scene.sh show`. Each original hand-over is rewritten to the line the
+# port prints for it, so the rest of the output still compares whole; the
+# original's own text stays in xo.hand.
+xsq() {  # xsq <word> - a hand-over token as the port quotes it: bare when plainly inert in bash and zsh, else single-quoted
+  if [ -n "$1" ] && LC_ALL=C grep -q '^[A-Za-z0-9_./:@%+,-]*$' <<<"$1"; then printf '%s' "$1"; else printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; fi
+}
+xhandover() {  # xhandover <recall args...> - the oracle side's stdout, its hand-overs as the port prints them
+  local x prev="" h="" r="" s cite="    cite: ac-know.sh cite --repo <clone> --quote " open="    open: ac-scene.sh show "
+  for x in "$@"; do case "$prev" in --home) h="${x//@H/$XOH}" ;; --repo) r="${x//@H/$XOH}" ;; esac; prev="$x"; done
+  cp "$TMP/xo.raw" "$TMP/xo.hand"
+  while IFS= read -r x; do
+    case "$x" in
+      "$cite"*) x="    cite: $(xsq "$xobin/ac-know.sh") cite --home $(xsq "$h") --repo $(xsq "$r") --quote ${x#"$cite"}" ;;
+      "$open"*" --cite") s="${x#"$open"}"; x="    open: AC_HOME=$(xsq "$h") $(xsq "$xobin/ac-scene.sh") show $(xsq "${s%" --cite"}") --cite" ;;
+    esac
+    printf '%s\n' "$x"
+  done <"$TMP/xo.hand" >"$TMP/xo.raw"
+}
 XO_RC=0; XN_RC=0
 xpair() {  # xpair <args...> - both sides run, outputs normalised, nothing compared yet
   XO_RC=0; XN_RC=0
   xrun_side "$xobin" "$XOH" xo "$@" || XO_RC=$?
+  [ "${1:-}" != recall ] || xhandover "$@"
   xrun_side "$XNBIN" "$XNH" xn "$@" || XN_RC=$?
   xnorm "$TMP/xo.raw" "$XOH" "$(cat "$TMP/xo.pid")" >"$TMP/xo.out"; xnorm "$TMP/xo.err" "$XOH" "$(cat "$TMP/xo.pid")" >"$TMP/xo.err2"
   xnorm "$TMP/xn.raw" "$XNH" "$(cat "$TMP/xn.pid")" >"$TMP/xn.out"; xnorm "$TMP/xn.err" "$XNH" "$(cat "$TMP/xn.pid")" >"$TMP/xn.err2"
@@ -1523,7 +1551,12 @@ xboth mkdir @H/$XREC.lock
 xboth touch -t 202001010000 @H/$XREC.lock
 xok cite --home @H/home --repo @H/$XP --quote 'lock guards'
 xboth mkdir @H/$XREC.lock
+# The port ages a pid-less lock by the clock, the original by the stubbed
+# date: under the default 5 s grace the oracle side's own run could age it
+# past young before the port side looked.
+XENV=("AC_LOCK_STALE_GRACE=3600")
 xrefuse "ERROR: ac-know: lock timeout for proj" cite --home @H/home --repo @H/$XP --quote 'lock guards'
+XENV=()
 assert_eq "$(wc -l <"$XNH/stub/sleep.log" | tr -d ' ')" "30" "6: a young pid-less lock is waited out"
 xboth rm -rf @H/$XREC.lock @H/stub/sleep.log
 
@@ -1533,9 +1566,10 @@ xboth rm -rf @H/$XREC.lock @H/stub/sleep.log
 #    --max and --bytes cutting hits and a miss, past int64 (W14, at parity -
 #    bash's own `[:` lines not reproduced); heat parsed as the header says;
 #    a scope line never offered; the cite hand-over's quote (apostrophes
-#    escaped); scenes with no summary, a multi-heat line 2, no heat, a
-#    directory named *.md; and an unreadable scene (sed's line not
-#    reproduced, exit 1 kept).
+#    escaped); the hand-overs' bin, fleet home and repo (W4, named - the
+#    original printed a <clone> placeholder and neither of the others);
+#    scenes with no summary, a multi-heat line 2, no heat, a directory named
+#    *.md; and an unreadable scene (sed's line not reproduced, exit 1 kept).
 xboth xstd
 xboth xrecord "- fact the watcher beacon goes stale past the re-arm grace and the fleet watcher covers the panes | src: file:file.txt:1 | at: $XS 2026-01-01 | by: r1
 - fact the worktree pool lease is recorded in a slot meta that survives a restart | src: file:file.txt:1 | at: $XS 2026-01-01 | by: r2
@@ -1574,10 +1608,10 @@ xok "${XQ[@]}" 'watcher beacon stale grace'
 assert_contains "$(xout)" "== scenes (L2 - a topic restored in one read) ==
     (hits 5, heat aaa-nosummary)
 "'    '"
-    open: ac-scene.sh show  --cite
+    open: AC_HOME=@H/home ROOT/bin/ac-scene.sh show '' --cite
   watcher-beacon  (hits 4, heat 3)
     watcher beacon, skip and grace in one read
-    open: ac-scene.sh show watcher-beacon --cite" "7: the scene tier first - a multi-heat line 2 split its row in two, at parity"
+    open: AC_HOME=@H/home ROOT/bin/ac-scene.sh show watcher-beacon --cite" "7: the scene tier first - a multi-heat line 2 split its row in two, at parity"
 assert_contains "$(xout)" "  (hits 4, heat 2) - fact the watcher skip self-revokes" "7: facts ranked by hits then heat"
 xok "${XQ[@]}" watcher beacon
 xok "${XQ[@]}" beacon
@@ -1596,7 +1630,8 @@ xok "${XQ[@]}" 'watcher beacon stale grace' --bytes 0
 xok "${XQ[@]}" 'watcher beacon stale grace' --bytes 1 --max 2
 xok "${XQ[@]}" 'kubernetes ingress certificate' --max 0 --bytes 0
 xok "${XQ[@]}" "chief's watcher beacon grace"
-assert_contains "$(xout)" "    cite: ac-know.sh cite --repo <clone> --quote 'the chief'\\''s watcher beacon grace is three hundred seconds, i'" "7: the quote's apostrophes are escaped, cut at 60 characters"
+assert_contains "$(xout)" "    cite: ROOT/bin/ac-know.sh cite --home @H/home --repo @H/$XP --quote 'the chief'\\''s watcher beacon grace is three hundred seconds, i'" "7: the quote's apostrophes are escaped, cut at 60 characters"
+assert_contains "$(cat "$TMP/xo.hand")" "    cite: ac-know.sh cite --repo <clone> --quote 'the chief'\\''s watcher beacon grace is three hundred seconds, i'" "7 (W4, named): the original's hand-over named no bin, no home and a <clone> placeholder"
 xok "${XQ[@]}" 'heat parsing two beacon watcher'
 xok "${XQ[@]}" 'superseded-looking line marker'
 xok "${XQ[@]}" 'gateway beacon-app watcher'
@@ -1798,8 +1833,9 @@ xsame_world scope-install
 #     superseded section and a scene (W1, named: the port reads bytes where
 #     the original's awk aborted under en_US.UTF-8 - identical under C); a
 #     non-ASCII --fact; a latin1 --fact (BYTES, named: argv arrives
-#     decoded); --family Bad and café (W11, named: refused per the text under
-#     any locale), the other brackets; W3 reproduced - the byte budget and
+#     decoded); --family Bad and café, --scope, --apps and --id outside
+#     ASCII (W11, named: refused per the text under any locale), the other
+#     brackets; W3 reproduced - the byte budget and
 #     the 60-character quote count characters under UTF-8, bytes under C; W2
 #     (named: ties in BYTE order, where the original's sort collated); the
 #     dash word with a no-break space; awk's tolower over U+212A (named).
@@ -1831,6 +1867,52 @@ xpair verify --home @H/home --repo @H/$XP
 assert_eq "$XN_RC:$(xerr)" "0:" "10 (W1, named): verify grades every entry"
 assert_contains "$(xfile home/state/.know-verify-proj.meta)" "fresh=5" "10: ...all five"
 assert_contains "$(xnorm "$XOH/home/state/.know-verify-proj.meta" "$XOH" 0)" "fresh=1" "10: the original stamped only the entries before the byte"
+for xv in cite retire; do
+  xa=(cite --home @H/home --repo @H/$XP --quote 'plain entry after the byte')
+  [ "$xv" = cite ] || xa=(retire --home @H/home --repo @H/$XP --family b2 --src-file file.txt:1 --quote 'plain entry before the byte' --why 'retired past the byte')
+  xpair "${xa[@]}"
+  assert_eq "$XN_RC:$(xerr)" "0:" "10 (W1, named): $xv writes past the byte"
+  assert_eq "$XO_RC:$(xoout)" "2:" "10: the original's $xv aborted..."
+  assert_contains "$(xoerr)" "towc: multibyte conversion failure" "10: ...in towc"
+  [ -d "$XOH/$XREC.lock" ] || fail "10 (W1): ...leaving its lock"
+  xboth rm -rf @H/$XREC.lock
+  xboth sh -c 'rm -f "$0"/tmp/*' @H
+done
+assert_contains "$(xfile "$XREC")" "- fact a plain entry after the byte | src: file:file.txt:1 | at: $XS 2026-01-01 | heat: 1 | by: b1" "10: the port's cite bumped its entry"
+assert_contains "$(xfile "$XREC")" "- fact retired: retired past the byte | src: file:file.txt:1" "10: ...and its retire wrote the tombstone"
+XLC=C
+# A byte confined to the superseded section: the original's recall and verify
+# stop at the marker and were untouched, its writers aborted all the same.
+xboth xstd
+XL2="- fact caf"$'\xe9'" latin1 superseded entry | src: file:file.txt:1 | at: $XS 2026-01-01 | by: b1"
+xboth xrecord "- fact a plain live entry one | src: file:file.txt:1 | at: $XS 2026-01-01 | by: b1
+- fact a plain live entry two | src: file:file.txt:1 | at: $XS 2026-01-01 | by: b1
+" "$XL2
+"
+XLC=en_US.UTF-8
+xok recall --home @H/home --repo @H/$XP 'plain live entry'
+xok verify --home @H/home --repo @H/$XP
+xpair cite --home @H/home --repo @H/$XP --quote 'latin1 superseded'
+assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: cite: 'latin1 superseded' matches no LIVE fact, but matches a SUPERSEDED entry - find the live entry that replaced it and quote that instead:
+$XL2" "10 (W1, named): the port reads the superseded byte and names the entry"
+assert_eq "$XO_RC:$(xoout)" "2:" "10: the original's cite aborted on it"
+xboth rm -rf @H/$XREC.lock
+for xv in add cite retire supersede; do
+  case "$xv" in
+    add) xa=(add --home @H/home --repo @H/$XP --family b3 --src-file file.txt:1 --fact 'a live entry past a superseded byte') ;;
+    cite) xa=(cite --home @H/home --repo @H/$XP --quote 'plain live entry one') ;;
+    retire) xa=(retire --home @H/home --repo @H/$XP --family b3 --src-file file.txt:1 --quote 'plain live entry two' --why 'retired past a superseded byte') ;;
+    supersede) xa=(add --home @H/home --repo @H/$XP --family b3 --src-file file.txt:1 --supersede 'plain live entry one' --fact 'the plain live entry one replaced') ;;
+  esac
+  xpair "${xa[@]}"
+  assert_eq "$XN_RC:$(xerr)" "0:" "10 (W1, named): $xv writes past a superseded byte"
+  assert_eq "$XO_RC:$(xoout)" "2:" "10: the original's $xv aborted on it..."
+  [ -d "$XOH/$XREC.lock" ] || fail "10 (W1): ...leaving its lock"
+  xboth rm -rf @H/$XREC.lock
+  xboth sh -c 'rm -f "$0"/tmp/*' @H
+done
+assert_contains "$(xfile "$XREC")" "$XL2" "10: the superseded byte stays byte for byte through every write"
+cmp -s "$XOH/$XREC" "$XNH/$XREC" && fail "10 (W1): the port's record moved on"
 XLC=C
 xboth xstd
 xboth xput home/records/scenes/latin.md "# Scene: latin
@@ -1872,6 +1954,13 @@ done
 xpair scope-proposal --home @H/home --repo @H/$XP --family s1 --src-file file.txt:1 --scope 'Écl' --apps a --id w11
 assert_eq "$XN_RC:$(xerr)" "1:ERROR: entry rejected: Écl is not addressable as a yaml path segment (--scope must match [A-Za-z0-9_-])" "10 (W11, named): --scope per the text"
 assert_eq "$XO_RC" 0 "10: the original's bracket took it under UTF-8"
+xpair scope-proposal --home @H/home --repo @H/$XP --family s1 --src-file file.txt:1 --scope gw --apps 'café,b' --id w11a
+assert_eq "$XN_RC:$(xerr)" "1:ERROR: entry rejected: café is not addressable as a yaml path segment (--apps must match [A-Za-z0-9_-])" "10 (W11, named): --apps per the text"
+assert_eq "$XO_RC" 0 "10: the original's bracket took it under UTF-8"
+xpair scope-proposal --home @H/home --repo @H/$XP --family s1 --src-file file.txt:1 --scope gw --apps a --id 'idé'
+assert_eq "$XN_RC:$(xerr)" "1:ERROR: invalid proposal id: idé" "10 (W11, named): --id per the text"
+assert_eq "$XO_RC" 0 "10: the original's bracket took it under UTF-8..."
+[ -d "$XOH/$XP/.crew/knowledge-proposals/idé" ] || fail "10 (W11): ...and wrote a proposal dir by that name"
 xboth xstd
 xpair recall --home @H/home --repo @H/$XP $'-x\xc2\xa0y'
 xsame_rc_out recall; xsame_err recall
@@ -1897,7 +1986,9 @@ XLC=C
 # 11. the brief's contract: the baked lines run from a pool worktree and a
 #     subdirectory of it, --repo its toplevel; the KNOWLEDGE-GAP and repo
 #     fact hints' add line filled in; a home path with a space, which the
-#     brief bakes unquoted - the split argv.
+#     brief bakes unquoted - the split argv; and recall's hand-overs, which
+#     the brief tells the crewmate to run, run verbatim from that
+#     subdirectory with no AC_HOME (W4, named).
 xboth xstd
 xboth git -C @H/$XP worktree add -q --detach @H/$XP/.crew/worktrees/1
 XCWD=$XP/.crew/worktrees/1/sub
@@ -1913,6 +2004,57 @@ xrefuse "ERROR: unknown flag: home (ac-know.sh add writes facts; the scope map i
 xrefuse "ERROR: unknown flag: home" verify --home @H/my home --repo @H/$XP
 xrefuse "ERROR: --home is not a readable directory: @H/my" recall 'a question' --home @H/my home --repo @H/$XP
 xok recall 'a question' --home '@H/my home' --repo @H/$XP
+xboth xput home/records/scenes/pane-scene.md '# Scene: pane-scene
+META: created=2026-01-01T00:00:00Z updated=2026-01-01T00:00:00Z heat=1
+summary: the pane hand-over scene
+
+a hand-over run verbatim from a pane.
+'
+xok add --home @H/home --repo @H/$XP --family wt2 --src-file file.txt:1 --new --fact 'a hand-over printed by recall runs verbatim from a pane'
+XCWD=$XP/.crew/worktrees/1/sub
+xok recall 'hand-over printed verbatim pane' --home @H/home --repo @H/$XP/.crew/worktrees/1
+XCWD=cwd
+xhand_run() {  # xhand_run <side root> <raw stdout> <cite|open> [<cwd under the side>] - that side's printed hand-over, run verbatim by ${XSH:-bash} with no AC_HOME (HOME=$XHHOME when set), by default from the worktree's subdirectory
+  local l; l="$(awk -v k="    $3: " 'index($0, k) == 1 { l = substr($0, length(k) + 1) } END { print l }' "$2")"
+  (cd "$1/${4:-$XP/.crew/worktrees/1/sub}" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO ${XHHOME:+HOME=$XHHOME} "${XSH:-bash}" -c "$l") </dev/null >"$TMP/xh.out" 2>&1
+}
+xhand_run "$XNH" "$TMP/xn.raw" cite || fail "11 (W4, named): the port's cite hand-over runs verbatim from a pane: $(cat "$TMP/xh.out")"
+assert_contains "$(xfile "$XREC")" "runs verbatim from a pane | src: file:file.txt:1 | at: $XS 2026-01-01 | heat: 1 | by: wt2" "11: ...and bumps the heat of the entry it was printed for"
+xhand_run "$XNH" "$TMP/xn.raw" open || fail "11 (W4, named): the port's open hand-over runs verbatim from a pane: $(cat "$TMP/xh.out")"
+assert_contains "$(sed -n 2p "$XNH/home/records/scenes/pane-scene.md")" "heat=2" "11: ...and touches the scene it was printed for"
+xhand_run "$XOH" "$TMP/xo.hand" cite && fail "11 (W4): the original's cite hand-over cannot run from a pane"
+assert_contains "$(cat "$TMP/xh.out")" "clone: No such file or directory" "11: ...its <clone> placeholder is a redirect"
+xhand_run "$XOH" "$TMP/xo.hand" open && fail "11 (W4): nor can its open hand-over"
+assert_contains "$(sed -n 2p "$XOH/home/records/scenes/pane-scene.md")" "heat=1" "11: ...and the scene is untouched"
+xboth xstd
+xboth xrepo 'my home/projects/proj'
+xok add --home '@H/my home' --repo '@H/my home/projects/proj' --family sp1 --src-file file.txt:1 --new --fact 'a hand-over through a home path with a space'
+xok recall 'hand-over through home path space' --home '@H/my home' --repo '@H/my home/projects/proj'
+assert_contains "$(xout)" "    cite: ROOT/bin/ac-know.sh cite --home '@H/my home' --repo '@H/my home/projects/proj' --quote 'a hand-over through a home path with a space'" "11 (W4, named): a path with a space is quoted in the hand-over"
+xhand_run "$XNH" "$TMP/xn.raw" cite cwd || fail "11 (W4, named): ...and still runs verbatim: $(cat "$TMP/xh.out")"
+assert_contains "$(xnorm "$XNH/my home/records/repo-knowledge/proj.md" "$XNH" 0)" "with a space | src: file:file.txt:1 | at: $XS 2026-01-01 | heat: 1 | by: sp1" "11: ...bumping the heat in the home it names"
+# A relative --repo is printed as given, so a leading ~ (expanded by bash and
+# zsh alike), a leading = (zsh's command lookup) and an apostrophe stay
+# literal: each runs verbatim from bash, and from zsh where one is installed,
+# under a HOME that names none of the repos.
+for xr in '~/tproj' '=w/eproj' "q'w/qproj"; do
+  xboth xstd
+  xboth mkdir -p @H/xhome
+  xboth xrepo "out/t/$xr"
+  XCWD=out/t
+  xok add --home @H/home --repo "$xr" --family tl1 --src-file file.txt:1 --new --fact 'a hand-over keeps the relative repo it was given'
+  xok recall 'hand-over relative repo given' --home @H/home --repo "$xr"
+  assert_contains "$(xout)" "--repo $(xsq "$xr") --quote 'a hand-over keeps the relative repo it was given'" "11 (W4, named): the relative $xr is single-quoted"
+  XCWD=cwd
+  xn=0
+  for XSH in bash zsh; do
+    command -v "$XSH" >/dev/null || continue
+    XHHOME="$XNH/xhome" xhand_run "$XNH" "$TMP/xn.raw" cite out/t || fail "11 (W4, named): the $xr hand-over runs verbatim under $XSH: $(cat "$TMP/xh.out")"
+    xn=$((xn + 1))
+  done
+  assert_contains "$(xnorm "$XNH/home/records/repo-knowledge/${xr##*/}.md" "$XNH" 0)" "it was given | src: file:file.txt:1 | at: $XS 2026-01-01 | heat: $xn | by: tl1" "11: ...each run bumping the entry the recall printed it for"
+done
+XSH=bash
 
 # 12. the record is fleet memory: every write verb on a large real-shaped
 #     record (synthetic - 848 live and 76 superseded entries, heat on some,

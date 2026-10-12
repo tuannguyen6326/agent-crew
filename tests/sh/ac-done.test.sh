@@ -199,14 +199,35 @@ run_side() {  # run_side <bin> <state> <home> <cwd> <out> <err> <args...> - one 
 norm() {  # norm <file> <state> <home> - the paths spelled STATE/HOME, a nudge's numbers P and C
   LC_ALL=C sed -E -e "s#$2#STATE#g" -e "s#$3#HOME#g" -e 's/pid=[0-9]+/pid=P/' -e 's/sleep [0-9]+/sleep C/' "$1"
 }
-snap() {  # snap <state> <out> - every stamp and spool entry under <state>, byte order, name then bytes
+snap() {  # snap <state> <out> - every stamp and spool entry under <state>, name then bytes
   : >"$2"
   [ -d "$1" ] || return 0
-  (cd "$1" && find . -mindepth 1 \( -name '.seen-*' -o -path './.wake-*' \) | LC_ALL=C sort | while IFS= read -r f; do
-    printf '== %s\n' "$f" | LC_ALL=C sed -E -e 's/\.[0-9]+\.([0-9]{6})$/.PID.\1/' -e 's/\.wake-tmp\.[A-Za-z0-9]{8}$/.wake-tmp.RANDOM/'
-    [ ! -f "$f" ] || cat "$f"
-  done) >"$2"
+  # Each entry is one block - its name with the pid and mktemp suffix spelled
+  # out, then its bytes - and the blocks go in byte order: a sort of the raw
+  # names put two same-stamp records in the order of their pids, which the two
+  # sides never share.
+  local blocks="$TMP/snap.blocks" f b i=0
+  rm -rf "$blocks"; mkdir -p "$blocks"
+  while IFS= read -r f; do
+    i=$((i + 1))
+    { printf '== %s\n' "$f" | LC_ALL=C sed -E -e 's/\.[0-9]+\.([0-9]{6})$/.PID.\1/' -e 's/\.wake-tmp\.[A-Za-z0-9]{8}$/.wake-tmp.RANDOM/'
+      [ ! -f "$1/$f" ] || cat "$1/$f"; } >"$blocks/$i"
+  done < <(cd "$1" && find . -mindepth 1 \( -name '.seen-*' -o -path './.wake-*' \))
+  for b in "$blocks"/*; do
+    [ -e "$b" ] || continue
+    printf '%s\t%s\n' "$(od -An -tx1 -v "$b" | tr -d ' \n')" "$b"
+  done | LC_ALL=C sort | cut -f2 | while IFS= read -r b; do cat "$b"; done >"$2"
 }
+# snap's order cannot hang on a pid: two same-stamp records whose pids sort
+# the other way round must snap alike.
+for d in A:100:200 B:200:100; do
+  IFS=: read -r side p1 p2 <<<"$d"
+  mkdir -p "$TMP/snap$side/.wake-spool"
+  printf 'first\n' >"$TMP/snap$side/.wake-spool/1700000000123456789.$p1.000000"
+  printf 'second\n' >"$TMP/snap$side/.wake-spool/1700000000123456789.$p2.000000"
+done
+snap "$TMP/snapA" "$TMP/snapA.out"; snap "$TMP/snapB" "$TMP/snapB.out"
+cmp -s "$TMP/snapA.out" "$TMP/snapB.out" || fail "snap orders same-stamp records by their pids: $(diff "$TMP/snapA.out" "$TMP/snapB.out" | head -n 6)"
 tree_of() {  # tree_of <state-arg> <home> <cwd> - where that side's state dir really is
   local t="$1"
   [ -n "$t" ] || t="${2:-/nonexistent}/state"

@@ -323,7 +323,7 @@ cmp -s "$TMP/po.err" "$TMP/pn.err" || fail "row 7: stderr differs: $(diff "$TMP/
 [ "$o_n" -lt 50 ] && [ "$n_n" -lt 50 ] || fail "row 7: a dead dashboard stops the polls ($o_n/$n_n sleeps)"
 assert_eq "$(perr | head -n 1)" "ac-page-lint.sh: dashboard did not come up on port N" "row 7: the refusal"
 assert_contains "$(perr)" "  error: fixture: dashboard intentionally broken" "row 7: the indented log"
-perr | grep -qx '  ' || fail "row 7: a blank log line indents to two spaces"
+grep -qx '  ' <<<"$(perr)" || fail "row 7: a blank log line indents to two spaces"
 assert_eq "$(pout)" "" "row 7: nothing on stdout"
 
 # 8. a dashboard that never answers `/` well: 50 polls, each followed by a

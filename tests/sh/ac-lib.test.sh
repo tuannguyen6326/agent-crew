@@ -718,6 +718,18 @@ done
 assert_eq "$(qreq_on 'qa:\r\n  require_for_ship: true\r\n')" on "a CRLF yaml enforces"
 assert_eq "$(qreq_on 'qa: # c\n  require_for_ship: true\n')" on "a commented qa: header opens the block"
 assert_eq "$(qreq_on 'qa:\n  other: 1\n')" off "a key absent from the qa block is not enforced"
+# EVERY key in the block counts - quoted, a space before its colon, in a flow
+# mapping on the header or nested in one - and ANY value that is no false
+# spelling enforces; a quoted ` #` hides no key past it.
+assert_eq "$(qreq_on 'qa:\n  require_for_ship :true\n')" on "a space before the key's colon enforces"
+assert_eq "$(qreq_on "qa:\n  'require_for_ship': true\n")" on "a single-quoted key enforces"
+assert_eq "$(qreq_on 'qa:\n  "require_for_ship" : yes\n')" on "a double-quoted key enforces"
+assert_eq "$(qreq_on 'qa:\n  scopes:\n    x:\n      require_for_ship: false\n  require_for_ship: true\n')" on "a nested false before a top-level true enforces"
+assert_eq "$(qreq_on 'qa:\n  require_for_ship: false\n  scopes:\n    x:\n      require_for_ship: off\n')" off "every key false is not enforced"
+assert_eq "$(qreq_on 'qa: {require_for_ship: true}\n')" on "a flow mapping on the qa: header enforces"
+assert_eq "$(qreq_on 'qa: {scopes: {x: {require_for_ship: false}}, require_for_ship: on}\n')" on "a nested flow false before a true enforces"
+assert_eq "$(qreq_on 'qa: {require_for_ship: off, serve: x}\n')" off "a flow value ends at its comma"
+assert_eq "$(qreq_on 'qa: {serve: "make dev # x", require_for_ship: true}\n')" on "a quoted # hides no flow key"
 # The awk reads in the C locale: a byte that is no UTF-8 before the policy
 # line no longer aborts it into "not enforced" under the operator's locale.
 printf 'name: caf\351\nqa:\n  require_for_ship: true\n' >"$pc_new"
@@ -741,7 +753,13 @@ done
 rc=0; out="$(PATH="$nogit" qreq "$pcrepo" 2>&1)" || rc=$?
 assert_eq "$rc" 1 "no git: the run ends with 1"
 assert_eq "$out" "ERROR: qa.require_for_ship: git did not run (is it on PATH?), so the project policy for '$pcrepo' cannot be resolved - refusing the merge rather than reading it as not enforced" "no git: the named refusal alone"
-# ...while a dir git answers is no repo stays NOT enforced, silently.
+# A dir holding .git that git refuses (here a .git file whose gitdir is gone)
+# refuses too, while a dir with no .git that git says is no repo stays NOT
+# enforced, silently.
+mkdir -p "$TMP/qreq-gone"; printf 'gitdir: %s/qreq-nowhere\n' "$TMP" >"$TMP/qreq-gone/.git"
+rc=0; out="$(qreq "$TMP/qreq-gone" 2>&1)" || rc=$?
+assert_eq "$rc" 1 "a .git git refuses: the run ends with 1"
+assert_eq "$out" "ERROR: qa.require_for_ship: git could not read the repo at '$TMP/qreq-gone' (it holds .git, but git rev-parse failed there - a corrupt repo, or one safe.directory refuses), so its project policy cannot be resolved - refusing the merge rather than reading it as not enforced" "a .git git refuses: the named refusal alone"
 mkdir -p "$TMP/qreq-plain"
 rc=0; out="$(qreq "$TMP/qreq-plain" 2>&1)" || rc=$?
 assert_eq "$rc:$out" "1:" "a dir that is no repo: not enforced, silent"

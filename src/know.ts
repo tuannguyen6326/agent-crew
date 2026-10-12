@@ -148,7 +148,7 @@
 // verify and scope-proposal take no lock (the install's base hash closes the
 // draft race). The lock's own non-atomic stale reclaim is inherited.
 //
-// ESCAPE HATCH (captain 2026-10-09). This writer is fleet memory: every add,
+// ESCAPE HATCH. This writer is fleet memory: every add,
 // retire and cite rewrites the whole record, so a WRONG write loses verified
 // knowledge (the slice still lands without it: teardown only READS the
 // record, and `--no-fact '<why>'` waives the loop). If a landed change breaks
@@ -302,17 +302,21 @@
 // the original's did), its summary line 3 past `summary: `, hits over the
 // whole file; `== scenes (L2 - a topic restored in one read) ==`, per scene
 // `  <slug>  (hits <h>, heat <heat or 0>)`, `    <summary>`, `    open:
-// ac-scene.sh show <slug> --cite` while fewer than --max were printed, then a
-// blank. An unreadable scene ends the run 1. TIER 2 - FACTS (L1): the live
-// `- fact ` lines (never scope), hits over the whole line, heat parsed as THE
-// RECORD says (anything but digits reads 0); `== facts (L1 -
-// repo-knowledge) ==`, and before each the cut when --max are printed or the
-// budget is spent, `  (hits <h>, heat <heat>) <line>` and `    cite:
-// ac-know.sh cite --repo <clone> --quote '<the subject's first 60 characters,
-// each ' as '\''>'` (W4: no bin path, no --home), then a blank. The --bytes
-// budget counts each offered entry line's own characters under a UTF-8 locale
-// and its bytes under any other, and so does the quote's 60 (LC_ALL, else
-// LC_CTYPE, else LANG - W3, reproduced). Headers print even when --max 0 lets
+// AC_HOME=<home> <root>/bin/ac-scene.sh show <slug> --cite` while fewer than
+// --max were printed, then a blank. An unreadable scene ends the run 1.
+// TIER 2 - FACTS (L1): the live `- fact ` lines (never scope), hits over the
+// whole line, heat parsed as THE RECORD says (anything but digits reads 0);
+// `== facts (L1 - repo-knowledge) ==`, and before each the cut when --max are
+// printed or the budget is spent, `  (hits <h>, heat <heat>) <line>` and
+// `    cite: <root>/bin/ac-know.sh cite --home <home> --repo <repo> --quote
+// '<the subject's first 60 characters, each ' as '\''>'`, then a blank.
+// <root> is this entry's own root, <home> the home this recall resolved and
+// <repo> the --repo as given; these and the slug are single-quoted unless
+// made only of [A-Za-z0-9_./:@%+,-], so a hand-over runs verbatim from a
+// bash or zsh pane with no AC_HOME. The --bytes budget counts each offered
+// entry line's own characters under a UTF-8 locale and its bytes under any
+// other, and so does the quote's 60 (LC_ALL, else LC_CTYPE, else LANG - W3,
+// reproduced). Headers print even when --max 0 lets
 // nothing through. Tail: nothing printed and nothing cut is `no hit in any
 // layer for: <query> (needed <floor> of its distinctive terms)` and `(state
 // the absence explicitly in the brief - intake-triage skill)`; else `-- <s>
@@ -384,8 +388,7 @@
 // agent, reviewed + installed by the chief; captain veto: restore <prev |
 // (no previous record)>`.
 //
-// AT PARITY, BY RULING (captain 2026-10-09, each pinned in the leg): W4 (the
-// hand-overs name no bin, a `<clone>` placeholder, no --home), W5 (a
+// AT PARITY (each pinned in the leg until its own fix lands): W5 (a
 // subdirectory --repo binds and grades relative to itself), W6 (a trailing
 // comma in --apps is written, and the bash map reader then refuses the whole
 // map), W9 (an unreadable record verifies nothing and stamps zeros; an unborn
@@ -397,20 +400,23 @@
 // line is written as a second physical line.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
+// - W4: recall's hand-overs name the bin, the home and the repo, where the
+//   original printed `ac-know.sh cite --repo <clone>` and a bare `ac-scene.sh
+//   show`, neither of which runs from a crewmate's pane.
 // - W1 (FAIL-PATH): the record and the scenes are read as bytes, so a byte
 //   that is no UTF-8 under a UTF-8 locale is processed like any other, where
 //   the original's awk aborted (add/retire/cite exit 2 with the lock held,
 //   recall exit 2 printing nothing, verify grading only what came before it).
-// - W2 (captain 2026-10-09): every tie - recall's tiers, the near-duplicate
-//   list, the families of a --by mismatch - is broken in BYTE order, where the
-//   original's sort collated under the caller's locale (a different shown set
-//   at the --max cut under en_US.UTF-8).
+// - W2: every tie - recall's tiers, the near-duplicate list, the families of
+//   a --by mismatch - is broken in BYTE order, where the original's sort
+//   collated under the caller's locale (a different shown set at the --max
+//   cut under en_US.UTF-8).
 // - TOLOWER: terms and tokens fold ASCII only; under a UTF-8 locale the
 //   original's awk also folded the few capitals whose lowercase is ASCII
 //   (U+212A KELVIN SIGN, U+0130).
-// - W11 (captain 2026-10-09): --family, --scope, --apps and --id are read per
-//   their text under any locale, where bash's brackets under a UTF-8 locale
-//   also took `Bad` or `café`; a dash-led family still passes.
+// - W11: --family, --scope, --apps and --id are read per their text under
+//   any locale, where bash's brackets under a UTF-8 locale also took `Bad` or
+//   `café`; a dash-led family still passes.
 // - BYTES: argv arrives decoded, so a --fact byte that is no UTF-8 is written
 //   as U+FFFD; a name or path git or the filesystem hands back is decoded
 //   alike.
@@ -1010,6 +1016,11 @@ const hitsIn = (q: Set<string>, text: string): number => {
   return h;
 };
 
+// The pane's shell may be bash or zsh, so a token stays bare only when it is
+// inert in both: printf %q leaves a leading ~ (expanded by either) and a
+// leading = (zsh's command lookup) bare.
+const handArg = (s: string): string => (/^[A-Za-z0-9_./:@%+,-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
+
 function cmdRecall(args: string[]): void {
   const v: Record<string, string> = {};
   let query = "";
@@ -1045,6 +1056,12 @@ function cmdRecall(args: string[]): void {
   const { repo, home } = settle(v);
   const q = terms(query, 4);
   const floor = q.size <= 1 ? 1 : Math.max(2, Math.trunc(q.size * 0.6 + 0.999));
+  // A crewmate runs a hand-over verbatim from its pane, which carries no
+  // AC_HOME and no bin/ on PATH: each names the bin, the home and the repo
+  // this recall resolved.
+  const root = b8(STARTED_BIN.slice(0, -"/bin".length));
+  const openCmd = `AC_HOME=${handArg(home)} ${handArg(`${root}/bin/ac-scene.sh`)} show`;
+  const citeCmd = `${handArg(`${root}/bin/ac-know.sh`)} cite --home ${handArg(home)} --repo ${handArg(repo)}`;
 
   const recordsDir = `${home}/records`;
   try {
@@ -1084,7 +1101,7 @@ function cmdRecall(args: string[]): void {
         break;
       }
       const [hits, heat, slug, summary] = tabFields(row, 4);
-      out(`  ${slug}  (hits ${hits}, heat ${heat})\n    ${summary}\n    open: ac-scene.sh show ${slug} --cite\n`);
+      out(`  ${slug}  (hits ${hits}, heat ${heat})\n    ${summary}\n    open: ${openCmd} ${handArg(slug!)} --cite\n`);
       printed++;
       nScene++;
     }
@@ -1117,7 +1134,7 @@ function cmdRecall(args: string[]): void {
       out(`  (hits ${hits}, heat ${heat}) ${line}\n`);
       // The hand-over quotes the entry's own text - how this record addresses
       // an entry - with each ' escaped, or the phrase ends at an apostrophe.
-      out(`    cite: ac-know.sh cite --repo <clone> --quote '${shellPrefix(subjectOf(line!, "- fact ", " | src:"), 60).replace(/'/g, "'\\''")}'\n`);
+      out(`    cite: ${citeCmd} --quote '${shellPrefix(subjectOf(line!, "- fact ", " | src:"), 60).replace(/'/g, "'\\''")}'\n`);
       printed++;
       nFact++;
       shown += shellLength(line!);

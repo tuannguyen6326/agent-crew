@@ -1111,13 +1111,14 @@ herdr_composer_shows() {
   # <text> (whitespace ignored: it soft-wraps) or only the `[Pasted text #N]` /
   # `[Pasted text #N +M lines]` placeholders claude expands on submit. A
   # shorter tail - what a long send leaves - or a placeholder plus a remainder
-  # is not the message.
+  # is not the message. Every reading runs under C: a UTF-8 sed aborts on an
+  # invalid byte and its empty output would read as placeholders only.
   local want got
   want="$(printf '%s' "$1" | LC_ALL=C tr -d '[:space:]')"
   got="$(printf '%s' "$2" | LC_ALL=C tr -d '[:space:]')"
   [ -n "$want" ] && [ -n "$got" ] || return 1
   [ "$got" = "$want" ] && return 0
-  [ -z "$(printf '%s' "$got" | sed -E 's/\[Pastedtext#[0-9]+(\+[0-9]+lines?)?\]//g')" ]
+  [ -z "$(printf '%s' "$got" | LC_ALL=C sed -E 's/\[Pastedtext#[0-9]+(\+[0-9]+lines?)?\]//g')" ]
 }
 
 herdr_composer_clear_pane() {
