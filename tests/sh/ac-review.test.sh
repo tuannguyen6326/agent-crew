@@ -767,5 +767,11 @@ assert_eq "$(stored "$RN")" "$(stored "$RO")" "real: --reopen forces it"
 real end report.html
 real poll report.html --after 0
 assert_contains "$(shim_out)" '"state":"ended"' "real: an ended session answers at once"
+#    a file the review page does not render never gets a session: a share of
+#    one would hand a guest its raw bytes
+for h in "$RO" "$RN"; do printf 'k=v\n' >"$h/data/notes.txt"; done
+real open notes.txt
+assert_eq "$(shim_err)" "ERROR: open refused: forbidden " "real: a non-html, non-md artifact is refused"
+assert_eq "$(ls "$RN/data" | /usr/bin/grep -c 'notes.txt.session')" 0 "real: no session file for it"
 
 pass

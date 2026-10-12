@@ -5007,7 +5007,8 @@ export function pollSlice(
  * to the artifact, valid for data/ artifacts and pooled .lavish/ pages alike.
  * reviewTarget is the one gate: same realpath + artifact-root validation the
  * render route uses, so a session can never be written outside a home's
- * artifact roots. */
+ * artifact roots - and only for a page the review viewer renders, since a
+ * share serves its session's file to a guest through the same render route. */
 function reviewTarget(homePath: string, file: string): string | null {
   let real: string;
   try {
@@ -5015,7 +5016,7 @@ function reviewTarget(homePath: string, file: string): string | null {
   } catch {
     return null;
   }
-  return underArtifactRoot(homePath, real) ? real : null;
+  return underArtifactRoot(homePath, real) && reviewableArtifact(real) ? real : null;
 }
 
 /** The ONE load boundary: every reader gets the full current shape (a file
@@ -5632,6 +5633,30 @@ export function unreachableNotice(consecutiveFailures: number, since: string): s
   return "dashboard unreachable since " + since + " - annotations will not be saved";
 }
 
+/** A click on a control or an interactive widget role works natively in
+ * annotate mode instead of pinning a note, so a reviewer can open a
+ * <details>, switch a tab or pick from a <select> while annotating. A link
+ * stays annotatable, as before, even with a widget role or inside a widget.
+ * Pure; inlined into the frame's overlay. */
+export function annotatePassThrough(el: Element | null): boolean {
+  if (!el || !el.closest) return false;
+  if (el.closest("a[href]")) return false;
+  return !!el.closest(
+    "input,textarea,select,option,button,label,summary,[contenteditable]:not([contenteditable='false'])," +
+      "[role='button'],[role='checkbox'],[role='combobox'],[role='menuitem'],[role='menuitemcheckbox']," +
+      "[role='menuitemradio'],[role='option'],[role='radio'],[role='switch'],[role='tab'],[role='treeitem']",
+  );
+}
+
+/** The receipt under a note the crew can see: the agent's poll cursor
+ * (acked) settles every n at or under it, so the captain can tell a note the
+ * crew took from one still waiting. A guest record awaiting the captain is
+ * not the crew's yet - null. Pure. */
+export function noteReceipt(n: number, acked: number, pending: boolean): string | null {
+  if (pending) return null;
+  return n <= acked ? "handled" : "waiting for the agent";
+}
+
 /** The review page: artifact in a sandboxed srcdoc iframe (content via the
  * existing path-safe /api/artifact route) with an injected overlay - hover
  * highlight, click-to-pin - and a side panel fed from the session file.
@@ -5696,6 +5721,8 @@ ${UX_BASE}
   .nsel{font:11px var(--mono);color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
   .nbadge{font-size:10px;border-radius:4px;padding:0 6px;border:1px solid var(--border)}
   .nbadge.moved,.nbadge.missing{color:var(--stale);border-color:var(--stale)}
+  .rcpt{display:block;font-size:10px;color:var(--fg2);margin-top:2px}
+  .nbadge.rcpt{display:inline;margin-top:0}
   #chat{flex:1;display:flex;flex-direction:column;min-height:0;border-top:1px solid var(--border)}
   .chathead{display:flex;align-items:center;justify-content:space-between;padding-right:10px}
   .chathead button{font:12px var(--ui);color:var(--fg2);background:var(--elev);border:1px solid var(--border);border-radius:5px;padding:2px 10px;cursor:pointer}
@@ -5825,6 +5852,7 @@ ${buildReviewSrcdoc.toString()}
 ${pastedPngFile.toString()}
 ${composerEscapeCloses.toString()}
 ${unreachableNotice.toString()}
+${noteReceipt.toString()}
 // The iframe's own reader stylesheet, baked once server-side (review-page-missing-markdown-table-css):
 // THEME_VARS for the color tokens, a base body reset mirroring PAGE's own
 // plain body rule (the iframe has no ancestor document to inherit one from),
@@ -5879,10 +5907,11 @@ function maybeEmbedRound(){
 const OVERLAY = \`<script data-acrv>
 (function(){
   let hl = null;
-  // Annotate toggle: ON = every click pins a note (links and
-  // buttons in the artifact are deliberately inert); OFF = the page behaves
+  // Annotate toggle: ON = every click pins a note (links are inert; controls
+  // and widget roles still work - annotatePassThrough); OFF = the page behaves
   // like a normal document - links navigate the frame, text selects, nothing
   // pins. The review chrome owns the state and pushes it down.
+${annotatePassThrough.toString()}
   let annotateOn = true;
   // Queue-feedback snapshot (dash-review-polish slice 3): keyed by scene
   // name, one outstanding snapshot request per card. Populated by
@@ -5926,6 +5955,7 @@ const OVERLAY = \`<script data-acrv>
   addEventListener("mouseover", (e) => {
     if (!annotateOn) return;
     if (e.target.closest && e.target.closest(".__wbui")) return;
+    if (annotatePassThrough(e.target)) return;
     if (hl) hl.style.outline = "";
     hl = e.target; hl.style.outline = "2px solid #2dd4bf";
   }, true);
@@ -5933,6 +5963,7 @@ const OVERLAY = \`<script data-acrv>
   addEventListener("click", (e) => {
     if (!annotateOn) return;
     if (e.target.closest && e.target.closest(".__wbui")) return;
+    if (annotatePassThrough(e.target)) return;
     // Two-mode commenting: a live text selection owns this gesture - the
     // mouseup handler below already posted the range pin.
     const sel0 = window.getSelection();
@@ -6648,11 +6679,12 @@ async function refresh(force){
   const chat = (s.queue ?? []).filter((a) => !a.anchor && (GUEST || !a.dismissed)).map((a) => {
     const mine = GUEST ? a.by === (WHO || "guest") : !a.by;
     const pending = !!a.by && !a.approved && !a.dismissed;
-    return { n: a.n, at: a.at, who: mine ? "you" : "peer", label: mine ? "you" : (a.by ?? "captain"), text: a.text, image: a.image, pending, approved: !!a.approved };
+    const receipt = a.dismissed ? null : noteReceipt(a.n, s.acked ?? 0, pending);
+    return { n: a.n, at: a.at, who: mine ? "you" : "peer", label: mine ? "you" : (a.by ?? "captain"), text: a.text, image: a.image, pending, approved: !!a.approved, receipt };
   })
     .concat((s.replies ?? []).map((r) => ({ at: r.at, who: "agent", label: "agent", text: r.text })))
     .sort((a, b) => a.at < b.at ? -1 : 1);
-  const sig = JSON.stringify([s.state, pins, chat, anchorState]);
+  const sig = JSON.stringify([s.state, s.acked, pins, chat, anchorState]);
   const ended = s.state === "ended";
   document.getElementById("dot").className = ended ? "ended" : "";
   document.getElementById("stxt").textContent = ended ? "ended (" + (s.endedBy ?? "?") + ")" : "open";
@@ -6669,6 +6701,7 @@ async function refresh(force){
   for (const a of pins) {
     const st = anchorState[a.n] ?? "ok";
     const pending = !!a.by && !a.approved && !a.dismissed;
+    const receipt = a.dismissed ? null : noteReceipt(a.n, s.acked ?? 0, pending);
     const d = document.createElement("div");
     d.className = "note";
     // The anchor's HUMAN face: the element's own text
@@ -6678,7 +6711,8 @@ async function refresh(force){
     const loc = a.anchor.line ? ("line " + a.anchor.line) : (fp ? "\u201c" + fp.slice(0, 64) + (fp.length > 64 ? "\u2026" : "") + "\u201d" : "");
     d.innerHTML = '<div class="head"><span class="nnum">#' + a.n + '</span><span class="nsel" title="' + esc(a.anchor.selector) + '">' + esc(loc) + '</span>'
       + (a.by ? '<span class="nbadge">' + esc(a.by) + (a.approved ? " \\u2713" : "") + '</span>' : "")
-      + (st !== "ok" ? '<span class="nbadge ' + st + '">' + st + "</span>" : "") + '</div>' + esc(a.text);
+      + (st !== "ok" ? '<span class="nbadge ' + st + '">' + st + "</span>" : "")
+      + (receipt ? '<span class="nbadge rcpt">' + receipt + "</span>" : "") + '</div>' + esc(a.text);
     if (!GUEST && pending) {
       const row = document.createElement("div");
       row.className = "modrow";
@@ -6699,7 +6733,8 @@ async function refresh(force){
     const d = document.createElement("div");
     d.className = "msg " + m.who;
     d.innerHTML = '<span class="who">' + esc(m.label) + (m.approved ? " \\u2713" : "") + '</span>' + esc(m.text)
-      + (m.image ? '<div class="muted">snapshot attached</div>' : "");
+      + (m.image ? '<div class="muted">snapshot attached</div>' : "")
+      + (m.receipt ? '<span class="rcpt">' + m.receipt + "</span>" : "");
     if (!GUEST && m.pending) {
       const row = document.createElement("div");
       row.className = "modrow";

@@ -197,6 +197,26 @@ case "$unt" in *committed.txt*|*"uncommitted edit"*)
   fail "--untracked leaked tracked content" ;;
 esac
 
+# ---- Case 6b: the working-tree modes read a LIVE crewmate tree, so they never
+#      rewrite its index (porcelain `git diff` refreshes a stat-stale index and
+#      takes index.lock, --no-optional-locks or not); and --uncommitted is
+#      HEAD -> worktree, so a STAGED edit shows too. A fresh repo per mode: one
+#      mode's refresh would leave the next one nothing to rewrite.
+for mode in --live --uncommitted; do
+  r6="$TMP/stale-index${mode}"
+  git init -q -b main "$r6"; git_id "$r6"
+  commit "$r6" clean.txt untouched >/dev/null
+  git -C "$r6" checkout -q -b crew/c6
+  commit "$r6" file.txt genesis >/dev/null
+  printf 'staged edit\n' >>"$r6/file.txt"; git -C "$r6" add file.txt
+  mk_meta c6 "$r6"
+  touch -t 202001010000 "$r6/clean.txt" "$r6/.git/index"
+  touch -t 202101010000 "$TMP/index-marker"
+  assert_contains "$("$BIN/ac-review-diff.sh" c6 "$mode" --no-guard)" "staged edit" "$mode shows a staged edit"
+  assert_eq "$(find "$r6/.git/index" -newer "$TMP/index-marker")" "" "$mode left the live tree's index unwritten"
+done
+rm -f "$AC_HOME/state/c6.meta"
+
 # ---- Case 7: a worktree pinned to REWRITTEN history has no merge-base with
 #      the default branch (measured live: a pool tree leased before a
 #      commit-tree history scrub). No base -> the committed view is empty and
@@ -501,7 +521,12 @@ assert_eq "$LAST_RC" 128 "an empty repo: git's own 128"
 assert_contains "$(shim_err)" "fatal:" "an empty repo: git's own line"
 same ce --stat --no-guard
 same ce --live --no-guard
-same ce --uncommitted --no-guard
+# Named divergence (live-tree index): --uncommitted reads HEAD -> worktree
+# through plumbing, so an unborn HEAD is git's own 128 like the default mode
+# above, where the original's index-relative `git diff` printed nothing.
+rc=0; run_side "$TMP/n.out" "$TMP/n.err" "$BIN/ac-review-diff.sh" ce --uncommitted --no-guard || rc=$?
+assert_eq "$rc" 128 "an empty repo --uncommitted: git's own 128"
+assert_contains "$(shim_err)" "fatal:" "an empty repo --uncommitted: git's own line"
 same ce --untracked --no-guard
 same ce --graph --no-guard
 same ce --graph-data --no-guard

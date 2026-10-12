@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -3617,7 +3617,61 @@ test("review page inline scripts parse, captain and guest variants", async () =>
     // counting failures into it
     expect(html).toContain('id="unreach"');
     expect(html).toContain("unreachableNotice(");
+    expect(html).toContain("noteReceipt(");
   }
+});
+
+// A sent note gave no sign whether the crew took it. The agent's own ack
+// (`poll --after <n>`) settles every n <= acked, so each note the crew can
+// see says which side of that cursor it sits on; a guest record still awaiting
+// the captain is not the crew's yet.
+test("noteReceipt: handled at or under the acked cursor, waiting above it, nothing for a pending guest record", () => {
+  expect(noteReceipt(3, 5, false)).toBe("handled");
+  expect(noteReceipt(5, 5, false)).toBe("handled");
+  expect(noteReceipt(6, 5, false)).toBe("waiting for the agent");
+  expect(noteReceipt(2, 5, true)).toBeNull();
+});
+
+// A stand-in for the DOM the overlay runs in: closest() over the selector
+// forms the predicate uses (tag, [attr], [attr='v'], :not([attr='v'])).
+type FakeEl = { tag: string; attrs: Record<string, string>; parent: FakeEl | null; closest(sel: string): FakeEl | null };
+function fakeEl(tag: string, attrs: Record<string, string> = {}, parent: FakeEl | null = null): FakeEl {
+  const one = (n: FakeEl, sel: string): boolean => {
+    const m = /^([a-z]*)((?:\[[a-z-]+(?:='[^']*')?\])*)(?::not\((\[[a-z-]+='[^']*'\])\))?$/.exec(sel.trim());
+    if (!m) throw new Error(`fake matcher cannot read ${sel}`);
+    if (m[1] && m[1] !== n.tag) return false;
+    const attrOk = (a: string): boolean => {
+      const [, k, v] = /^\[([a-z-]+)(?:='([^']*)')?\]$/.exec(a)!;
+      return k! in n.attrs && (v === undefined || n.attrs[k!] === v);
+    };
+    for (const a of m[2]!.match(/\[[^\]]+\]/g) ?? []) if (!attrOk(a)) return false;
+    return !(m[3] && attrOk(m[3]));
+  };
+  const el: FakeEl = { tag, attrs, parent, closest(sel) {
+    for (let n: FakeEl | null = el; n; n = n.parent) if (sel.split(",").some((x) => one(n!, x))) return n;
+    return null;
+  } };
+  return el;
+}
+
+test("annotatePassThrough lets controls and interactive widget roles work in annotate mode", () => {
+  for (const tag of ["select", "button", "input", "textarea", "label", "summary"])
+    expect(annotatePassThrough(fakeEl(tag) as unknown as Element)).toBe(true);
+  expect(annotatePassThrough(fakeEl("option", {}, fakeEl("select")) as unknown as Element)).toBe(true);
+  expect(annotatePassThrough(fakeEl("div", { contenteditable: "" }) as unknown as Element)).toBe(true);
+  for (const role of ["tab", "button", "combobox", "menuitem", "option", "switch", "treeitem"])
+    expect(annotatePassThrough(fakeEl("span", {}, fakeEl("div", { role })) as unknown as Element)).toBe(true);
+});
+
+test("annotatePassThrough keeps prose, links and links inside widgets annotatable", () => {
+  expect(annotatePassThrough(null)).toBe(false);
+  expect(annotatePassThrough(fakeEl("p") as unknown as Element)).toBe(false);
+  expect(annotatePassThrough(fakeEl("div", { contenteditable: "false" }) as unknown as Element)).toBe(false);
+  expect(annotatePassThrough(fakeEl("div", { role: "tabpanel" }) as unknown as Element)).toBe(false);
+  expect(annotatePassThrough(fakeEl("a", { href: "x" }) as unknown as Element)).toBe(false);
+  expect(annotatePassThrough(fakeEl("span", {}, fakeEl("a", { href: "x" })) as unknown as Element)).toBe(false);
+  expect(annotatePassThrough(fakeEl("a", { href: "x", role: "tab" }) as unknown as Element)).toBe(false);
+  expect(annotatePassThrough(fakeEl("a", { href: "x" }, fakeEl("div", { role: "tab" })) as unknown as Element)).toBe(false);
 });
 
 test("reviewApply attaches an image field to the queued record only when the action carries one", () => {

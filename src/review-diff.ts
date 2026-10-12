@@ -14,10 +14,15 @@
 // Modes (default = committed-only, base -> branch tip: the chief/roomchief
 // delivered-change review):
 // - --stat: `git diff --stat <base> <head>`.
-// - --live: base -> WORKING TREE (`git diff <base>`, then every untracked file
-//   as a new-file diff) - the mid-task view, where most of a crewmate's change
-//   has not been committed yet.
-// - --uncommitted: HEAD -> working tree, tracked files only (`git diff`).
+// - --live: base -> WORKING TREE (`git diff-index -p -M <base>`, then every
+//   untracked file as a new-file diff) - the mid-task view, where most of a
+//   crewmate's change has not been committed yet.
+// - --uncommitted: HEAD -> working tree, tracked files only (`git diff-index
+//   -p -M HEAD`, so a staged edit shows; an unborn HEAD is git's own 128).
+//   Both working-tree modes read a LIVE crewmate tree through plumbing: a
+//   porcelain `git diff` refreshes a stat-stale index and rewrites it under
+//   index.lock - --no-optional-locks does not stop it - racing the crewmate's
+//   own git; -M keeps the rename detection the porcelain defaults to.
 // - --untracked: untracked files only, each `git diff --no-index -- /dev/null
 //   <name>` over `git ls-files --others --exclude-standard -z`: RELATIVE names,
 //   so the header reads `b/<name>` (from a worktree that is a subdirectory the
@@ -346,11 +351,11 @@ switch (mode) {
     streamed(["diff", "--stat", base, head]);
     break;
   case "live":
-    streamed(["diff", base]);
+    streamed(["diff-index", "-p", "-M", base]);
     untrackedDiffs();
     break;
   case "uncommitted":
-    streamed(["diff"]);
+    streamed(["diff-index", "-p", "-M", "HEAD"]);
     break;
   case "untracked":
     untrackedDiffs();
