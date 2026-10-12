@@ -6,7 +6,7 @@
 //
 // AUTHORITATIVE for the archive layout and for which families are eligible.
 // Where NEW artifacts are created is unchanged and stays owned by
-// bin/ac-brief.sh's header: every brief/report/room is still born at
+// src/brief.ts's header: every brief/report/room is still born at
 // data/<id>/ or data/<family>/<stage>/. This module only relocates families
 // whose story is already over.
 //
@@ -79,12 +79,12 @@
 // family's room live-first then archived, which is what keeps
 // `ac-room.sh show <family>` and the Learning retro snapshot working on an
 // archived family. The live-only data/*/room.md globs (the captain inbox, the
-// turn-end guard, the statusline, the remote push) deliberately do NOT follow:
+// turn-end guard, the remote push) deliberately do NOT follow:
 // every archived family is CLOSED, so it contributes no pending item and no
 // hand-back to any of them.
 import { existsSync, readdirSync, readFileSync, rmdirSync, statSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { dataDir, die, enterCaller } from "./lib.ts";
+import { dataDir, die, enterCaller, spawnShellSync } from "./lib.ts";
 
 const CLOSED = /^- \[[^\]]*\] [^>]*> CLOSED:/;
 const YEAR = /^- \[[0-9]{4}-/;
@@ -95,7 +95,7 @@ const out = (s: string): void => {
 // The tool itself, so its semantics and its failure (status, stderr) are the
 // original's: mv across devices copies, mkdir -p on a read-only parent refuses.
 const tool = (cmd: string[]): void => {
-  const r = Bun.spawnSync(cmd, { stdout: "ignore", stderr: "inherit" });
+  const r = spawnShellSync(cmd, { stdout: "ignore", stderr: "inherit" });
   if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);
 };
 const isDir = (p: string): boolean => {

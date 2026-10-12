@@ -6,7 +6,7 @@ How that checkout is leased depends on the fleet's session backend (`config/back
 - **herdr fleets** lease from the in-repo worktree POOL: reusable detached-HEAD worktrees inside the project repo, returned rather than deleted, so dependency and build caches survive between tasks.
 - **orca fleets** lease one Orca-managed worktree per task, created and removed through the Orca CLI, so each task tree is its own node in the Orca sidebar.
 
-This page is a map; the specs are the header of `bin/ac-tree.sh` (the pool) and `orca_worktree_lease` / `orca_worktree_release` in `bin/ac-backend-orca.sh`.
+This page is a map; the specs are the header of `src/tree.ts` (the pool, started by `bin/ac-tree.sh`) and `orca_worktree_lease` / `orca_worktree_release` in `bin/ac-backend-orca.sh`.
 See also [concepts.md](concepts.md), [architecture.md](architecture.md) and [scripts.md](scripts.md).
 
 ## The pool (herdr fleets)
@@ -107,4 +107,4 @@ The lease is returned (herdr, `return --force`) or released (orca) when the roun
 ## For contributors
 
 Never create worktrees by hand in a project repo.
-Pool behavior changes go in `bin/ac-tree.sh`, with its header updated in the same diff and a colocated test under `tests/`.
+Pool behavior changes go in `src/tree.ts`, with its header updated in the same diff and a colocated test under `tests/`.

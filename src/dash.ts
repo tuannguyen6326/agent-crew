@@ -154,9 +154,10 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { isatty } from "node:tty";
-import { bunChild, configReadDir, die, enterCaller, metaGet, metaIsVerify, NO_HOME, physicalDir } from "./lib.ts";
+import { bunChild, configReadDir, crewState, die, enterCaller, metaGet, metaIsVerify, NO_HOME, physicalDir, spawnShell, spawnShellSync } from "./lib.ts";
 
-const bin = `${process.cwd()}/bin`;
+const root = process.cwd();
+const bin = `${root}/bin`;
 const { args } = enterCaller(process.argv.slice(2));
 
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
@@ -212,22 +213,6 @@ function status(r: { exitCode: number | null; signalCode: NodeJS.Signals | null 
   return 128 + ((osConstants.signals as Record<string, number>)[r.signalCode ?? ""] ?? 0);
 }
 
-// `$(cmd 2>/dev/null || printf unknown)`: the child's stdout, `unknown`
-// appended when it failed, NULs dropped, trailing LFs stripped.
-function crewState(id: string): string {
-  let text = "";
-  let failed = false;
-  try {
-    const r = Bun.spawnSync([`${bin}/ac-crew-state.sh`, id], { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: process.env });
-    text = r.stdout.toString("latin1");
-    failed = r.exitCode !== 0;
-  } catch {
-    failed = true;
-  }
-  if (failed) text += "unknown";
-  return text.replace(/\0/g, "").replace(/\n+$/, "");
-}
-
 function renderCrew(sd: string): void {
   out(`\n${C_H}CREW${C_0}\n`);
   let found = false;
@@ -244,7 +229,7 @@ function renderCrew(sd: string): void {
       // The bare assignment under errexit: metaGet has warned, the run ends.
       process.exit(1);
     }
-    const state = crewState(id);
+    const state = crewState(root, id, "ignore");
     const row = `  ${C_0}${padBytes(bytes(id), 16)}${C_0} ${padBytes(kind, 10)} ${padBytes(project, 14)} ${stateColor(state)}${state}${C_0}`;
     if (metaIsVerify(m)) verify += `${row}\n`;
     else {
@@ -275,7 +260,7 @@ async function renderRooms(): Promise<void> {
     for (const l of lines) roomLine(l);
   };
   try {
-    const proc = Bun.spawn([`${bin}/ac-room.sh`, "list"], { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: process.env });
+    const proc = spawnShell([`${bin}/ac-room.sh`, "list"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
     for await (const chunk of proc.stdout) {
       buf += Buffer.from(chunk).toString("latin1");
       flush();
@@ -311,7 +296,7 @@ function loadTerminals(file: string): Map<string, string> {
   let r: ReturnType<typeof Bun.spawnSync>;
   const child = bunChild("src/backlog.ts", ["fields", file]);
   try {
-    r = Bun.spawnSync(child.cmd, { cwd: child.cwd, env: child.env, stdin: "ignore", stdout: "pipe", stderr: "inherit" });
+    r = spawnShellSync(child.cmd, { cwd: child.cwd, stdin: "ignore", stdout: "pipe", stderr: "inherit" });
   } catch {
     write(2, `ERROR: the backlog parser failed on ${file}\n`);
     throw new ParserFailed(2);
@@ -408,7 +393,7 @@ function renderPools(pd: string): void {
 function mintDir(home: string, name: string): string {
   const dir = `${home}/${name}`;
   try {
-    Bun.spawnSync(["mkdir", "-p", dir], { stdin: "ignore", stdout: "ignore", stderr: "inherit" });
+    spawnShellSync(["mkdir", "-p", dir], { stdin: "ignore", stdout: "ignore", stderr: "inherit" });
   } catch {}
   return dir;
 }
@@ -438,7 +423,7 @@ async function render(): Promise<void> {
 async function runOrExit(cmd: string[]): Promise<void> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn(cmd, { stdin: "inherit", stdout: "inherit", stderr: "inherit", env: process.env });
+    proc = spawnShell(cmd, { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   } catch {
     process.exit(127);
   }

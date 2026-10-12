@@ -388,8 +388,6 @@ assert_contains "$out" "HELD   heldcampaign" "(a) blocker landed, hold still ref
 case "$out" in *"READY  heldcampaign"*) fail "(a) a landed blocker must never override a captain hold" ;; esac
 case "$("$BIN/ac-ready.sh" queued)" in *heldcampaign*) fail "(a) queued must still never offer the held row once its blocker lands" ;; esac
 
-pass
-
 # ---- crewdomain-token: domain rows are promote-only ------------------------
 # The auto-fly rule is defined over the report, and `queued` feeds auto-fly
 # and teardown's next-promote - so a domain row (own token, or inherited via
@@ -500,3 +498,331 @@ case "$out" in *q2*) fail "semantic: an unrelated row is not printed" ;; esac
 assert_contains "$(printf '%s\n' "$out" | tail -n1)" "state_sha=" "semantic: the label key closes the output"
 assert_fails "$BIN/ac-ready.sh" overlap --semantic
 assert_fails "$BIN/ac-ready.sh" overlap --semantic ""
+
+# --- differential leg: src/ready.ts against the frozen bash original ---------
+# The frozen original (tests/fixtures/ac-ready.sh, run from an oracle bin
+# beside the live scripts) and the shim answer each row in a world rebuilt from
+# nothing before each side. The report, queued, watch-set and validate start
+# src/ready.ts on both sides, so their rows pin the dispatch; overlap is the
+# ported verb. Both sides run the real bin/ac-jev.sh (the oracle bin's copy
+# beside the original) with the leg's curl stub answering, and the request
+# body, the hit count and the shadow log are compared too. A divergence the
+# port keeps on purpose is asserted on both sides, where it is.
+# DISPUTED: the implementation (tests/fixtures/ac-ready.sh under bash vs src/ready.ts through bin/ac-ready.sh)
+# HELD-CONSTANT: one world path ($XW: home/, cwd/, tmp/ the TMPDIR, hh/ the HOME, log/ the stub's) rebuilt by the row's world function before each side, git repos copied from one template; argv; env (AC_HOME=$XW/home unless the row is homeless or names another, LC_ALL=C unless the row names en_US.UTF-8, EPOCHSECONDS fixed, TMPDIR=$XW/tmp, HOME=$XW/hh, PATH the leg's curl stub before the suite's unless the row names one, FAKE_BODY/FAKE_HITS/FAKE_RESP the stub's; AC_JEV, AC_JEV_ENDPOINT, CDPATH, LANG, LC_CTYPE, AC_FLEET_STATE and AC_SCOPE unset); cwd ($XW/cwd, deleted first where the row says); stdin (/dev/null); exit status, stdout and stderr compared whole, then the home's tree (paths), TMPDIR's listing, the request body, the hit count and the shadow log less its instants.
+xobin="$(make_oracle_bin ac-ready)"
+cmp -s "$xobin/ac-ready.sh" "$ROOT/tests/fixtures/ac-ready.sh" || fail "the oracle bin holds the frozen original"
+XW="$TMP/xw"; XS="$TMP/xstubs"; XT0="$TMP/xtemplate"
+mkdir -p "$XS" "$XT0"
+cat >"$XS/curl" <<'STUB'
+#!/usr/bin/env bash
+out=""; data=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; -d) data="$2"; shift ;; esac; shift; done
+cat "${data#@}" >"$FAKE_BODY"
+n="$(cat "$FAKE_HITS" 2>/dev/null || printf 0)"; printf '%s\n' "$((n + 1))" >"$FAKE_HITS"
+cat "$FAKE_RESP" >"$out"
+printf '200'
+STUB
+chmod +x "$XS/curl"
+XNOW=1790000000
+# The template repos: shop (default main) with crew/wip touching src/a.js and
+# src/é.js and crew/two touching base.txt, crew/same with no change; old
+# (default master) with crew/x touching src/a.js; and three repos named for
+# the ORDER row, each with crew/o touching ord.txt.
+xmkrepo() {  # xmkrepo <dir> <default branch>
+  git init -q -b "$2" "$1"
+  git -C "$1" config user.email test@test
+  git -C "$1" config user.name test
+  printf 'base\n' >"$1/base.txt"
+  git -C "$1" add -A && git -C "$1" commit -qm init
+}
+xmkrepo "$XT0/shop" main
+git -C "$XT0/shop" checkout -q -b crew/wip
+mkdir -p "$XT0/shop/src"; printf 'w\n' >"$XT0/shop/src/a.js"; printf 'e\n' >"$XT0/shop/src/é.js"
+git -C "$XT0/shop" add -A && git -C "$XT0/shop" commit -qm wip
+git -C "$XT0/shop" checkout -q main
+git -C "$XT0/shop" checkout -q -b crew/two
+printf 'x\n' >"$XT0/shop/base.txt"; git -C "$XT0/shop" commit -qam two
+git -C "$XT0/shop" checkout -q main
+git -C "$XT0/shop" branch crew/same
+xmkrepo "$XT0/old" master
+git -C "$XT0/old" checkout -q -b crew/x
+mkdir -p "$XT0/old/src"; printf 'o\n' >"$XT0/old/src/a.js"
+git -C "$XT0/old" add -A && git -C "$XT0/old" commit -qm x
+git -C "$XT0/old" checkout -q master
+for xr in _u A2 b1; do
+  xmkrepo "$XT0/$xr" main
+  git -C "$XT0/$xr" checkout -q -b crew/o
+  printf 'o\n' >"$XT0/$xr/ord.txt"
+  git -C "$XT0/$xr" add -A && git -C "$XT0/$xr" commit -qm o
+  git -C "$XT0/$xr" checkout -q main
+done
+
+XLC=C; XHOMELESS=0; XE=""; XPATH=""; XGONE=0; XRC=0
+xside() {  # xside <bin> <prefix> <args...> - one side in the current world
+  local bin="$1" p="$2" rc=0 x path="$XS:$PATH"
+  shift 2
+  [ -z "$XPATH" ] || path="$XPATH"
+  local e=("PATH=$path" "LC_ALL=$XLC" "EPOCHSECONDS=$XNOW" "TMPDIR=$XW/tmp" "HOME=$XW/hh"
+    "FAKE_BODY=$XW/log/body" "FAKE_HITS=$XW/log/hits" "FAKE_RESP=$XW/resp")
+  [ "$XHOMELESS" = 1 ] || e+=("AC_HOME=$XW/home")
+  for x in $XE; do e+=("$x"); done
+  ( cd "$XW/cwd" || exit 97
+    [ "$XGONE" = 0 ] || rm -rf "$XW/cwd"
+    exec env -u AC_HOME -u AC_JEV -u AC_JEV_ENDPOINT -u CDPATH -u LANG -u LC_CTYPE -u AC_FLEET_STATE -u AC_SCOPE "${e[@]}" "$bin/ac-ready.sh" ${@+"$@"}
+  ) </dev/null >"$TMP/$p.out" 2>"$TMP/$p.err" || rc=$?
+  # From a deleted cwd every bash prints its own getcwd lines, the original
+  # one per cd it ran and the shim fewer (SHELL-OWN): both sides drop them.
+  if [ "$XGONE" = 1 ]; then
+    grep -av -e '^shell-init: error retrieving current directory' -e '^chdir: error retrieving current directory' "$TMP/$p.err" >"$TMP/$p.err.kept" || true
+    mv "$TMP/$p.err.kept" "$TMP/$p.err"
+  fi
+  {
+    printf -- '-- tree\n'
+    (cd "$XW/home" 2>/dev/null && find . -path './projects/*' -prune -o -print | LC_ALL=C sort) || true
+    printf -- '-- tmp\n'
+    ls -A "$XW/tmp" 2>/dev/null || true
+    printf -- '-- body\n'
+    cat "$XW/log/body" 2>/dev/null || true
+    printf -- '-- hits\n'
+    cat "$XW/log/hits" 2>/dev/null || true
+    printf -- '-- shadow\n'
+    [ ! -f "$XW/home/state/jev-shadow.jsonl" ] || jq -c 'del(.ts, .latency_ms)' "$XW/home/state/jev-shadow.jsonl"
+  } >"$TMP/$p.world"
+  XRC=$rc
+}
+XO_RC=0; XN_RC=0
+xpair() {  # xpair <world fn> <args...> - each side in its own fresh world, nothing compared yet
+  local wf="$1"
+  shift
+  "$wf"; xside "$xobin" xo ${@+"$@"}; XO_RC=$XRC
+  "$wf"; xside "$BIN" xn ${@+"$@"}; XN_RC=$XRC
+}
+xline() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }
+xsame() {  # xsame <world fn> <args...> - exit, stdout, stderr and the world alike
+  xpair "$@"
+  local at; at="$(xline)"
+  assert_eq "$XN_RC" "$XO_RC" "ready differential exit for '$*' at line $at"
+  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "ready differential stdout differs for '$*' at line $at: $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 8)"
+  cmp -s "$TMP/xo.err" "$TMP/xn.err" || fail "ready differential stderr differs for '$*' at line $at: $(diff "$TMP/xo.err" "$TMP/xn.err" | head -n 6)"
+  cmp -s "$TMP/xo.world" "$TMP/xn.world" || fail "ready differential world differs for '$*' at line $at: $(diff "$TMP/xo.world" "$TMP/xn.world" | head -n 8)"
+}
+xrefuse() {  # xrefuse <stderr> <world fn> <args...> - both sides refuse alike: exit 1, no stdout, exactly <stderr>
+  local want="$1"
+  shift
+  xsame "$@"
+  assert_eq "$XN_RC:$(cat "$TMP/xn.out"):$(cat "$TMP/xn.err")" "1::$want" "ready refusal for '$*' at line $(xline)"
+}
+xout() { cat "$TMP/xn.out"; }
+xerr() { cat "$TMP/xn.err"; }
+xseed() { rm -rf "$XW"; mkdir -p "$XW/home" "$XW/cwd" "$XW/tmp" "$XW/hh" "$XW/log"; }
+XNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
+
+# 1. the dispatch: the ledger verbs reach the module on both sides; any other
+#    word binds the home first (homeless: the refusal, exit 1); `overlap`
+#    alone is its usage.
+w_ledger() {
+  xseed; mkdir -p "$XW/home/records"
+  printf '## In flight\n- [ ] e1 [EPIC] - stories: s1,s2 (repo: r)\n\n## Queued\n- [ ] s1 - a; epic:e1 (repo: r)\n- [ ] s2 - b; epic:e1 blocked-by: s1 - after (repo: r)\n- [ ] q1 - plain (repo: r)\n\n## Done\n' >"$XW/home/records/backlog.md"
+}
+xsame w_ledger
+assert_eq "$(xout)" "READY  s1 (epic:e1)
+READY  q1" "row 1: the report"
+xsame w_ledger queued
+xsame w_ledger queued extra
+xsame w_ledger watch-set e1
+xsame w_ledger validate e1
+xsame w_ledger validate
+xsame w_ledger ''
+XHOMELESS=1 xrefuse "$XNOHOME" w_ledger overlap a
+XHOMELESS=1 xrefuse "$XNOHOME" w_ledger bogus
+XHOMELESS=1 xrefuse "$XNOHOME" w_ledger -h
+XE="AC_HOME=" xrefuse "$XNOHOME" w_ledger overlap a
+xrefuse "ERROR: usage: ac-ready.sh overlap <path>..." w_ledger overlap
+xrefuse "ERROR: usage: ac-ready.sh overlap --semantic '<order text>'" w_ledger overlap --semantic
+xrefuse "ERROR: usage: ac-ready.sh overlap --semantic '<order text>'" w_ledger overlap --semantic '' more
+# USAGE HEADER, named: each side prints its own header on stdout, exit 2.
+for xa in bogus -h --help; do
+  xpair w_ledger "$xa"
+  assert_eq "$XO_RC:$XN_RC:$(cat "$TMP/xo.err")$(xerr)" "2:2:" "USAGE HEADER: '$xa' is the usage on both sides"
+  assert_eq "$(cat "$TMP/xo.out")" "$(awk 'NR>1{if(!/^#/)exit; print}' "$ROOT/tests/fixtures/ac-ready.sh" | sed 's/^# \{0,1\}//')" "USAGE HEADER: the original printed its own header"
+  assert_eq "$(xout)" "$(awk '!/^\/\//{exit} {sub(/^\/\/ ?/, ""); print}' "$ROOT/src/ready.ts")" "USAGE HEADER: the port prints src/ready.ts's header"
+done
+# HOME RESOLUTION, named: an AC_HOME cd cannot enter is the shell's cd line
+# there and the named ERROR here; a relative one is read from a named cwd and
+# refused from a cwd that has no name.
+XE="AC_HOME=$XW/nope" xpair w_ledger overlap a
+assert_eq "$XO_RC:$XN_RC:$(cat "$TMP/xo.out")$(xout)" "1:1:" "HOME RESOLUTION: an unenterable home fails both sides"
+assert_contains "$(cat "$TMP/xo.err")" "cd: $XW/nope: No such file or directory" "HOME RESOLUTION: the original printed cd's line"
+assert_eq "$(xerr)" "ERROR: AC_HOME is not a readable directory: $XW/nope" "HOME RESOLUTION: the port names the variable"
+w_relhome() { w_ledger; mv "$XW/home" "$XW/cwd/h"; }
+XE="AC_HOME=h" xsame w_relhome overlap a
+XGONE=1 XE="AC_HOME=h" xpair w_relhome overlap a
+assert_eq "$XO_RC:$XN_RC" "1:1" "HOME RESOLUTION: a relative home from a nameless cwd fails both sides"
+assert_eq "$(xerr)" "ERROR: the current directory cannot be resolved, so a relative AC_HOME cannot be either" "HOME RESOLUTION: the port refuses it"
+
+# 2. overlap <path>... on an empty home: nothing printed, state/ projects/ and
+#    data/ minted (records/ not).
+xsame xseed overlap src/a.js
+assert_contains "$(cat "$TMP/xn.world")" "./data
+./projects
+./state" "row 2: the dirs the lookups mint"
+
+# 3. LANDED: a record younger than 7 days by the pinned clock, an older one,
+#    one with an EMPTY family (never reported), a numeric family, a family
+#    with a space, a future record, a path not asked, an archived room; then
+#    an unreadable ledger (exit 2; SHELL-OWN, named: awk's own lines).
+w_landed() {
+  xseed; mkdir -p "$XW/home/state" "$XW/home/data/archive/2026/arch"
+  printf '# Room: arch\n' >"$XW/home/data/archive/2026/arch/room.md"
+  {
+    printf '%s\tfamA\tsrc/a.js\n' "$((XNOW - 7200))"
+    printf '%s\told\tsrc/a.js\n' "$((XNOW - 8 * 86400))"
+    printf '%s\t\tsrc/a.js\n' "$((XNOW - 60))"
+    printf '%s\t07\tsrc/b.js\n' "$((XNOW - 100))"
+    printf '%s\tfam B\tsrc/a.js\n' "$((XNOW - 50))"
+    printf '%s\tfuture\tsrc/a.js\n' "$((XNOW + 7300))"
+    printf '%s\tother\tsrc/c.js\n' "$((XNOW - 10))"
+    printf '%s\tarch\tsrc/b.js\n' "$((XNOW - 3 * 3600))"
+  } >"$XW/home/state/.landings"
+}
+xsame w_landed overlap src/a.js src/b.js
+assert_eq "$(xout)" "LANDED  src/a.js by famA 2h ago - read $XW/home/data/famA/room.md
+LANDED  src/b.js by 07 0h ago - read $XW/home/data/07/room.md
+LANDED  src/a.js by fam B 0h ago - read $XW/home/data/fam B/room.md
+LANDED  src/a.js by future -2h ago - read $XW/home/data/future/room.md
+LANDED  src/b.js by arch 3h ago - read $XW/home/data/archive/2026/arch/room.md" "row 3: the LANDED lines, byte for byte"
+xsame w_landed overlap src/a.js src/a.js
+if [ "$(id -u)" != 0 ]; then
+  w_landed_locked() { w_landed; chmod 000 "$XW/home/state/.landings"; }
+  xpair w_landed_locked overlap src/a.js
+  assert_eq "$XO_RC:$XN_RC:$(cat "$TMP/xo.out")$(xout)" "2:2:" "SHELL-OWN: an unreadable landing ledger ends both 2, before any line"
+  assert_contains "$(cat "$TMP/xo.err")" "awk: can't open file" "SHELL-OWN: the original's line is awk's"
+  assert_eq "$(xerr)" "" "SHELL-OWN: the port prints none"
+fi
+
+# 4. INFLIGHT and BRIEF: two repos and a non-repo dir, a file and a dot entry
+#    in projects/; briefs live and dead, a brief.md that is a directory, a
+#    dot dir, `a` and `a-b` (ordered by the whole path's bytes); an empty
+#    path, a path holding a LF, a quoted non-ASCII name.
+w_inflight() {
+  xseed; mkdir -p "$XW/home/projects" "$XW/home/state" "$XW/home/data"
+  cp -R "$XT0/shop" "$XT0/old" "$XW/home/projects/"
+  mkdir -p "$XW/home/projects/notrepo" "$XW/home/projects/.hidden"
+  printf 'f\n' >"$XW/home/projects/afile"
+  for b in live a a-b .dot; do mkdir -p "$XW/home/data/$b"; printf 'touch src/a.js and base.txt\n' >"$XW/home/data/$b/brief.md"; : >"$XW/home/state/$b.meta"; done
+  mkdir -p "$XW/home/data/dead" "$XW/home/data/dirbrief/brief.md"
+  printf 'src/a.js\n' >"$XW/home/data/dead/brief.md"
+  : >"$XW/home/state/dirbrief.meta"
+  printf 'empty-line-free\n' >"$XW/home/data/live/notes.md"
+}
+xsame w_inflight overlap src/a.js base.txt "src/é.js"
+assert_eq "$(xout)" "INFLIGHT  src/a.js on crew/x (repo: old)
+INFLIGHT  base.txt on crew/two (repo: shop)
+INFLIGHT  src/a.js on crew/wip (repo: shop)
+BRIEF  src/a.js named in in-flight data/a-b/brief.md
+BRIEF  base.txt named in in-flight data/a-b/brief.md
+BRIEF  src/a.js named in in-flight data/a/brief.md
+BRIEF  base.txt named in in-flight data/a/brief.md
+BRIEF  src/a.js named in in-flight data/live/brief.md
+BRIEF  base.txt named in in-flight data/live/brief.md" "row 4: INFLIGHT and BRIEF, in order"
+xsame w_inflight overlap ''
+assert_eq "$(xout)" "BRIEF   named in in-flight data/a-b/brief.md
+BRIEF   named in in-flight data/a/brief.md
+BRIEF   named in in-flight data/live/brief.md" "row 4: an empty path is grep's empty pattern"
+xsame w_inflight overlap "$(printf 'zz\nsrc/a.js')"
+assert_contains "$(xout)" "INFLIGHT  zz
+src/a.js on crew/x (repo: old)" "row 4: a path holding a LF is several patterns"
+# grep under a UTF-8 locale finds no path on a line holding a byte that is no
+# UTF-8: a spawned grep, so both sides alike.
+w_latin() { w_inflight; printf 'caf\351 src/a.js\n' >"$XW/home/data/live/brief.md"; }
+XLC=en_US.UTF-8 xsame w_latin overlap src/a.js
+case "$(xout)" in *"data/live/brief.md"*) fail "row 4: the latin1 brief line matched under UTF-8" ;; esac
+xsame w_latin overlap src/a.js
+assert_contains "$(xout)" "BRIEF  src/a.js named in in-flight data/live/brief.md" "row 4: ... and matches under C"
+# ORDER, named: under UTF-8 the original's glob collated the repos; the port
+# keeps byte order.
+w_order() { xseed; mkdir -p "$XW/home/projects"; cp -R "$XT0/_u" "$XT0/A2" "$XT0/b1" "$XW/home/projects/"; }
+xsame w_order overlap ord.txt
+assert_eq "$(xout)" "INFLIGHT  ord.txt on crew/o (repo: A2)
+INFLIGHT  ord.txt on crew/o (repo: _u)
+INFLIGHT  ord.txt on crew/o (repo: b1)" "ORDER: byte order under C, both sides"
+XLC=en_US.UTF-8 xpair w_order overlap ord.txt
+assert_eq "$XO_RC:$XN_RC" "0:0" "ORDER: both run under UTF-8"
+assert_eq "$(awk '{print $NF}' "$TMP/xo.out" | tr -d ')' | tr '\n' ' ')" "_u A2 b1 " "ORDER: the original collated the repos under UTF-8"
+assert_eq "$(awk '{print $NF}' "$TMP/xn.out" | tr -d ')' | tr '\n' ' ')" "A2 _u b1 " "ORDER: the port keeps byte order"
+
+# 5. overlap --semantic: no ledger, an unreadable ledger, no open row; the
+#    knob absent, shadow and on, against one answer; a mktemp that fails.
+XRESP_ON='{"model":"m","answers":{"wf1":{"type":"choice","choice":"related","probabilities":{"related":0.9,"unrelated":0.05,"unclear":0.05},"confidence":0.8},"[bad":{"type":"choice","choice":"related","probabilities":{"related":0.99999,"unrelated":0.00001,"unclear":0},"confidence":0.6},"q1":{"type":"choice","choice":"related","probabilities":{"related":1,"unrelated":0,"unclear":0},"confidence":0.6},"q2":{"type":"choice","choice":"unrelated","probabilities":{"related":0.1,"unrelated":0.8,"unclear":0.1},"confidence":0.7}},"usage":{"input_tokens":1,"output_tokens":0}}'
+w_sem() {  # w_sem <knob or empty> [<extra Queued row>] - a ledger with rows, bodies and a section change
+  xseed; mkdir -p "$XW/home/records" "$XW/home/config" "$XW/home/state"
+  [ -z "${1:-}" ] || printf '%s\n' "$1" >"$XW/home/config/jev"
+  printf '{"openrouter":{"api_key":"sk-or-TEST"}}\n' >"$XW/home/config/providers.json"
+  printf '%s\n' "$XRESP_ON" >"$XW/resp"
+  {
+    printf '# Backlog\n\n## In flight\n'
+    printf -- '- [ ] wf1 - watcher stale arm (repo: agent-crew, since 2026-09-01)\n'
+    printf '  the discriminator\twith a tab\t\n'
+    printf -- '- [ ] [bad row\t\n'
+    printf '\t body after bad row\n'
+    printf '## Queued\n'
+    printf '  orphan body under queued\n'
+    printf -- '- [ ] q1 - learned dup (repo: agent-crew)\n'
+    printf -- '- [ ] q2 - font colour (repo: agent-crew)\n'
+    [ -z "${2:-}" ] || printf '%s\n' "$2"
+    printf '\n'
+    printf '## Done\n- [x] d1 - old (repo: agent-crew) - local main (merged 2026-08-01)\n  done body\n'
+  } >"$XW/home/records/backlog.md"
+}
+w_sem_on() { w_sem on; }
+w_sem_shadow() { w_sem shadow; }
+w_sem_off() { w_sem ""; }
+xsame xseed overlap --semantic 'an order'
+assert_contains "$(cat "$TMP/xn.world")" "./records" "row 5: records/ is minted"
+w_sem_none() { w_sem on; printf '## Queued\n\n## Done\n- [x] d1 - old\n' >"$XW/home/records/backlog.md"; }
+xsame w_sem_none overlap --semantic 'an order'
+assert_eq "$(xout)$(cat "$XW/log/hits" 2>/dev/null || true)" "" "row 5: no open row asks nothing"
+xsame w_sem_off overlap --semantic 'an order'
+assert_eq "$(xout)" "" "row 5: the knob absent prints nothing"
+xsame w_sem_shadow overlap --semantic 'an order'
+assert_eq "$(xout)" "" "row 5: shadow prints nothing"
+xsame w_sem_on overlap --semantic "$(printf 'an order\nover two lines')" ignored
+assert_eq "$(xout | sed '$d')" "overlap-flying  wf1  p=0.9
+overlap-flying  [bad  p=0.99999
+fold-candidate  q1  p=1" "row 5: on prints the related rows, ledger order"
+assert_contains "$(xout | tail -n 1)" "state_sha=" "row 5: the label key closes it"
+assert_eq "$(jq -r .state "$XW/log/body")" "ORDER:
+an order
+over two lines
+
+OPEN ROWS:
+[wf1] (in flight) - [ ] wf1 - watcher stale arm (repo: agent-crew, since 2026-09-01)
+  the discriminator	with a tab
+[[bad] (in flight) - [ ] [bad row
+  body after bad row
+  orphan body under queued
+[q1] (queued) - [ ] q1 - learned dup (repo: agent-crew)
+[q2] (queued) - [ ] q2 - font colour (repo: agent-crew)" "row 5: the state, a body after the section change the last row's"
+XE="TMPDIR=$XW/nonexist" xpair w_sem_on overlap --semantic 'an order'
+assert_eq "$XO_RC:$XN_RC:$(cat "$TMP/xo.out")$(xout)" "1:1:" "row 5: a mktemp that fails ends both runs with its status"
+assert_eq "$(sed 's/semantic\.[A-Za-z0-9]*:/semantic.R:/' "$TMP/xn.err")" "$(sed 's/semantic\.[A-Za-z0-9]*:/semantic.R:/' "$TMP/xo.err")" "row 5: ... and mktemp's own line, its random name aside"
+w_sem_dup() { w_sem on '- [ ] q1 - again (repo: agent-crew)'; }
+xsame w_sem_dup overlap --semantic 'an order'
+assert_eq "$(grep -c '^fold-candidate  q1  ' "$TMP/xn.out")" "2" "row 5: a repeated id is printed twice"
+if [ "$(id -u)" != 0 ]; then
+  w_sem_locked() { w_sem_on; chmod 000 "$XW/home/records/backlog.md"; }
+  xpair w_sem_locked overlap --semantic 'an order'
+  assert_eq "$XO_RC:$XN_RC:$(cat "$TMP/xo.out")$(xout)" "2:2:" "SHELL-OWN: an unreadable ledger ends both 2"
+  assert_eq "$(xerr)" "" "SHELL-OWN: the port prints none of awk's lines"
+fi
+
+# 6. BUN, named: the original's path overlap needed no bun; the shim does.
+xnobun="$TMP/xnobun"
+mkdir -p "$xnobun"
+for x in bash env dirname git grep awk sed mkdir cat rm basename date; do ln -sf "$(command -v "$x")" "$xnobun/$x"; done
+XPATH="$xnobun" xpair w_landed overlap src/a.js
+assert_eq "$XO_RC:$(head -n 1 "$TMP/xo.out")" "0:LANDED  src/a.js by famA 2h ago - read $XW/home/data/famA/room.md" "BUN: the original answered without bun"
+assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: required tool not found: bun" "BUN: the shim refuses"
+
+pass

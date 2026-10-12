@@ -124,4 +124,148 @@ jq -e '[.hooks.PreToolUse[].hooks[].command] | any(contains("ac-primary-guard.sh
 jq -e '[.hooks.PreToolUse[].hooks[].command] | any(contains("ac-ledger-guard.sh"))' \
   "$settings" >/dev/null || fail "the sibling ledger guard must stay registered"
 
+# --- differential: src/primary-guard.ts against the frozen bash original -----
+# DISPUTED: the implementation (tests/fixtures/ac-primary-guard.sh under bash vs src/primary-guard.ts through bin/ac-primary-guard.sh)
+# HELD-CONSTANT: the payload bytes on stdin, the cwd and its git geometry, the target's directories, the environment (AC_CREW_ID/AC_SCOPE or neither, PATH, CDPATH unset unless a row sets it; LC_ALL=C unless a row says otherwise); stdout, stderr and exit status compared whole
+obin="$(make_oracle_bin ac-primary-guard)"
+cmp -s "$obin/ac-primary-guard.sh" "$ROOT/tests/fixtures/ac-primary-guard.sh" \
+  || fail "the oracle bin must hold the frozen original"
+pl() { printf "$1" >"$TMP/pg.pl"; }  # pl <printf format> - the payload bytes of the rows after it
+same() {  # same <cwd> [env words...] - both sides judge alike; the port's status lands in p_rc
+  local cwd="$1" o_rc=0
+  shift
+  p_rc=0
+  (cd "$cwd" && env -u CDPATH -u AC_CREW_ID -u AC_SCOPE "$@" LC_ALL="${DIFF_LC:-C}" "$obin/ac-primary-guard.sh" <"$TMP/pg.pl") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+  (cd "$cwd" && env -u CDPATH -u AC_CREW_ID -u AC_SCOPE "$@" LC_ALL="${DIFF_LC:-C}" "$BIN/ac-primary-guard.sh" <"$TMP/pg.pl") >"$TMP/n.out" 2>"$TMP/n.err" || p_rc=$?
+  assert_eq "$p_rc" "$o_rc" "differential exit in $cwd ($*): $(cat "$TMP/pg.pl")"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs in $cwd ($*): $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
+  cmp -s "$TMP/o.err" "$TMP/n.err" || fail "differential stderr differs in $cwd ($*): $(diff "$TMP/o.err" "$TMP/n.err" | head -n 4)"
+}
+verdict() {  # verdict <0|2> <cwd> [env words...] - same, and the verdict itself pinned
+  local want="$1"
+  shift
+  same "$@"
+  assert_eq "$p_rc" "$want" "verdict in $* : $(cat "$TMP/pg.pl")"
+}
+edit() {  # edit <0|2> <cwd> <tool> <field> <path> [env words...] - one path, judged as crewmate pg1
+  local want="$1" cwd="$2" tool="$3" field="$4" path="$5"
+  shift 5
+  printf '{"tool_name":"%s","tool_input":{"%s":"%s"}}' "$tool" "$field" "$path" >"$TMP/pg.pl"
+  verdict "$want" "$cwd" AC_CREW_ID=pg1 "$@"
+}
+pgpath() {  # pgpath <dir> <tool...> - a PATH dir holding exactly these host tools
+  local d="$1" t
+  shift
+  mkdir -p "$d"
+  for t in "$@"; do ln -sf "$(command -v "$t")" "$d/$t"; done
+}
+both_rc() {  # both_rc <cwd> [env words...] - each side's status, "<oracle> <port>"
+  local cwd="$1" o_rc=0 n_rc=0
+  shift
+  (cd "$cwd" && env -u CDPATH -u AC_SCOPE "$@" LC_ALL=C "$obin/ac-primary-guard.sh" <"$TMP/pg.pl") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+  (cd "$cwd" && env -u CDPATH -u AC_SCOPE "$@" LC_ALL=C "$BIN/ac-primary-guard.sh" <"$TMP/pg.pl") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+  printf '%s %s\n' "$o_rc" "$n_rc"
+}
+
+# 1. who is fenced, and which tool shapes carry a path.
+pl "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.md\"}}"
+verdict 0 "$wt"
+verdict 2 "$wt" AC_CREW_ID=pg1
+verdict 2 "$wt" AC_SCOPE=fam1
+verdict 0 "$wt" AC_CREW_ID= AC_SCOPE=
+edit 2 "$wt" Write file_path "$repo/AGENTS.md"
+edit 2 "$wt" NotebookEdit notebook_path "$repo/nb.ipynb"
+edit 0 "$wt" NotebookEdit file_path "$repo/nb.ipynb"
+edit 0 "$wt" Edit notebook_path "$repo/AGENTS.md"
+for t in Read Bash MultiEdit edit mcp__thing__Edit; do
+  edit 0 "$wt" "$t" file_path "$repo/AGENTS.md"
+done
+
+# 2. the geometry: own tree first, then the primary, every target physical.
+mkdir -p "$repo/sub" "$AC_HOME/data/pg1"
+ln -s "$repo" "$TMP/pg-link"
+for p in "$repo/AGENTS.md" "$repo/sub/new.md" "$repo/sub/" "$repo/" "$repo/.crew/x.md" "$TMP/pg-link/AGENTS.md" \
+         "$wt/../../AGENTS.md" ../../../AGENTS.md ../../../sub/x "$repo//sub///x" "$repo/./sub/./x"; do
+  edit 2 "$wt" Edit file_path "$p"
+done
+for p in "$wt/AGENTS.md" "$wt/new-thing.sh" AGENTS.md ./x.md "$AC_HOME/data/pg1/report.md" "$repo" / \
+         "$repo/no/such/dir/x.md" "$wt/no/such/x" "$TMP/elsewhere.md"; do
+  edit 0 "$wt" Edit file_path "$p"
+done
+edit 0 "$repo" Edit file_path "$repo/AGENTS.md"
+edit 0 "$repo" Edit file_path "$repo/AGENTS.md" AC_SCOPE=fam1
+edit 0 "$AC_HOME" Edit file_path "$repo/AGENTS.md"
+
+# 3. the payload as jq reads it (AT PARITY): a path that is no string is its
+# JSON text, a value printed before a parse error counts, and a second value
+# joins the name with LF.
+for p in "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":[\"$repo/AGENTS.md\"]}}" \
+         "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.md\"}}{\"tool_name\":\"Edit\"}" \
+         '{"tool_name":"Edit","tool_input":{}}' 'not json' '' '\n\n'; do
+  pl "$p"
+  verdict 0 "$wt" AC_CREW_ID=pg1
+done
+for p in "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.md\"}} junk" \
+         "{\"tool_name\":\"Ed\\\\u0000it\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.md\\\\n\"}}" \
+         "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$repo/sub/\\351.md\"}}"; do
+  pl "$p"
+  verdict 2 "$wt" AC_CREW_ID=pg1
+done
+
+# 4. a dependency or a geometry git cannot read: both allow.
+pl "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.md\"}}"
+verdict 0 "$wt" AC_CREW_ID=pg1 PATH="$TMP/failgit:$PATH"
+pgpath "$TMP/pg-nojq" bash env cat dirname git bun
+verdict 0 "$wt" AC_CREW_ID=pg1 PATH="$TMP/pg-nojq"
+pgpath "$TMP/pg-nogit" bash env cat dirname jq bun
+verdict 0 "$wt" AC_CREW_ID=pg1 PATH="$TMP/pg-nogit"
+verdict 0 "$AC_HOME" AC_SCOPE=fam1
+gone="$TMP/pg-gone"
+for side in "$obin" "$BIN"; do
+  mkdir -p "$gone"
+  rc=0
+  out="$(cd "$gone" && rmdir "$gone" && env AC_CREW_ID=pg1 LC_ALL=C "$side/ac-primary-guard.sh" <"$TMP/pg.pl" 2>/dev/null)" || rc=$?
+  assert_eq "$rc:$out" "0:" "a cwd with no name allows ($side)"
+done
+
+# --- named divergences: each row asserts both sides ---------------------------
+# BUN: no bun on PATH - the shim allows at once and says nothing, where the
+# original (bash, jq and git) judged.
+pgpath "$TMP/pg-nobun" bash env cat dirname jq git
+assert_eq "$(both_rc "$wt" AC_CREW_ID=pg1 PATH="$TMP/pg-nobun")" "2 0" "BUN: the original refuses with no bun on PATH, the shim allows"
+assert_contains "$(cat "$TMP/o.err")" "ac-primary-guard: REFUSED Edit on $repo/AGENTS.md" "BUN: the original's refusal"
+assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
+# BUN: a module that cannot load is the shim's no-op, never a refusal.
+pg_lf="$TMP/pg-loadfail"
+mkdir -p "$pg_lf/bin" "$pg_lf/src"
+cp "$BIN/ac-bun.sh" "$BIN/ac-primary-guard.sh" "$pg_lf/bin/"
+printf 'throw new Error("primary guard cannot load");\n' >"$pg_lf/src/primary-guard.ts"
+n_rc=0; (cd "$wt" && AC_CREW_ID=pg1 LC_ALL=C "$pg_lf/bin/ac-primary-guard.sh" <"$TMP/pg.pl") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc" "0" "BUN: a module that cannot load allows"
+assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
+assert_contains "$(cat "$TMP/n.err")" "primary guard cannot load" "BUN: the load failure is bun's own diagnosis"
+case "$(cat "$TMP/n.err")" in *"ac-primary-guard:"*) fail "BUN: a module that cannot load must never print the refusal" ;; esac
+# HOME RESOLUTION: a relative directory under an exported CDPATH - the
+# original's cd found the primary's namesake and refused a two-line target.
+printf '{"tool_name":"Edit","tool_input":{"file_path":"sub/x"}}' >"$TMP/pg.pl"
+assert_eq "$(both_rc "$wt" AC_CREW_ID=pg1 CDPATH="$repo")" "2 0" "HOME RESOLUTION: the port enters a relative directory without CDPATH"
+# HOME RESOLUTION: a directory whose name ends in LF is the one it names; the
+# original judged its sibling, the primary itself.
+mkdir -p "$repo
+"
+pl "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo\\\\n/x\"}}"
+assert_eq "$(both_rc "$wt" AC_CREW_ID=pg1)" "2 0" "HOME RESOLUTION: an LF-named directory is not its sibling"
+# LOGICAL CWD: from a cwd entered through a symlink, the original's cd walked
+# `..` from the logical $PWD; the port walks it from the physical cwd.
+ln -s "$wt" "$TMP/pg-wtlink"
+printf '{"tool_name":"Edit","tool_input":{"file_path":"../AGENTS.md"}}' >"$TMP/pg.pl"
+assert_eq "$(both_rc "$TMP/pg-wtlink" AC_CREW_ID=pg1)" "0 2" "LOGICAL CWD: the port resolves .. physically"
+# A cwd Bun cannot enter (a name ending in a backslash): an absolute target
+# judges alike, a relative one allows in the port.
+mkdir -p "$wt/bs\\"
+pl "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.md\"}}"
+verdict 2 "$wt/bs\\" AC_CREW_ID=pg1
+printf '{"tool_name":"Edit","tool_input":{"file_path":"../../../../AGENTS.md"}}' >"$TMP/pg.pl"
+assert_eq "$(both_rc "$wt/bs\\" AC_CREW_ID=pg1)" "2 0" "a cwd Bun cannot enter resolves no relative target"
+
 pass

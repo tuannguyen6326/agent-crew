@@ -190,4 +190,161 @@ assert_contains "$codex" 'pwd -P' \
 assert_contains "$codex" '[ -x "$root/bin/ac-delegation-guard.sh" ] || exit 0' \
   "a tree that does not carry the guard never runs it (codex)"
 
+# --- differential: src/delegation-guard.ts against the frozen bash original --
+# DISPUTED: the implementation (tests/fixtures/ac-delegation-guard.sh under bash vs src/delegation-guard.ts through bin/ac-delegation-guard.sh)
+# HELD-CONSTANT: the payload bytes on stdin, the cwd and its git geometry, the environment (AC_HOME or its absence, the badges, AC_SCOPE, AC_SOLO, AC_ALLOW_DELEGATION, PATH; LC_ALL=C unless a row says otherwise); stdout, stderr and exit status compared whole
+obin="$(make_oracle_bin ac-delegation-guard)"
+cmp -s "$obin/ac-delegation-guard.sh" "$ROOT/tests/fixtures/ac-delegation-guard.sh" \
+  || fail "the oracle bin must hold the frozen original"
+pl() { printf "$1" >"$TMP/dg.pl"; }  # pl <printf format> - the payload bytes of the rows after it
+same() {  # same <dir> [env words...] - both sides judge alike; the port's status lands in d_rc
+  local dir="$1" o_rc=0
+  shift
+  d_rc=0
+  (cd "$dir" && env "$@" LC_ALL="${DIFF_LC:-C}" "$obin/ac-delegation-guard.sh" <"$TMP/dg.pl") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+  (cd "$dir" && env "$@" LC_ALL="${DIFF_LC:-C}" "$BIN/ac-delegation-guard.sh" <"$TMP/dg.pl") >"$TMP/n.out" 2>"$TMP/n.err" || d_rc=$?
+  assert_eq "$d_rc" "$o_rc" "differential exit in $dir ($*)"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs in $dir ($*): $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
+  cmp -s "$TMP/o.err" "$TMP/n.err" || fail "differential stderr differs in $dir ($*): $(diff "$TMP/o.err" "$TMP/n.err" | head -n 4)"
+}
+verdict() {  # verdict <0|2> <dir> [env words...] - same, and the verdict itself pinned
+  local want="$1"
+  shift
+  same "$@"
+  assert_eq "$d_rc" "$want" "verdict in $*"
+}
+dgpath() {  # dgpath <dir> <tool...> - a PATH dir holding exactly these host tools
+  local d="$1" t
+  shift
+  mkdir -p "$d"
+  for t in "$@"; do ln -sf "$(command -v "$t")" "$d/$t"; done
+}
+
+# 1. the shape rule and its carve-outs, at a primary checkout (arm 2).
+for t in Task Agent Workflow AgentTool WorkflowRunner SubAgent task Bash Read TaskList ListAgents mcp__thing__Agent; do
+  pl "{\"tool_name\":\"$t\",\"tool_input\":{}}"
+  same "$primary"
+done
+pl '{"tool_name":"Task"}'
+verdict 2 "$primary"
+verdict 0 "$primary" AC_ALLOW_DELEGATION=1
+verdict 2 "$primary" AC_ALLOW_DELEGATION=yes
+verdict 0 "$primary" AC_SOLO=1
+verdict 2 "$primary" AC_SOLO=true
+
+# 2. the three scope arms.
+dg_nonrepo="$TMP/dg-nonrepo"
+mkdir -p "$dg_nonrepo"
+ln -s "$AC_HOME" "$TMP/dg-homelink"
+verdict 0 "$linked"
+verdict 2 "$AC_HOME"
+verdict 2 "$AC_HOME" AC_HOME=.
+verdict 2 "$AC_HOME" AC_HOME="$TMP/dg-homelink"
+verdict 0 "$dg_nonrepo"
+verdict 0 "$dg_nonrepo" AC_HOME="$TMP/dg-no-such-home"
+verdict 0 "$AC_HOME" AC_HOME="$TMP/dg-no-such-home"
+verdict 2 "$primary" AC_HOME="$TMP/dg-no-such-home"
+verdict 2 "$AC_HOME" -u AC_HOME
+verdict 2 "$AC_HOME" AC_HOME=
+verdict 2 "$primary" -u AC_HOME
+verdict 2 "$dg_nonrepo" -u AC_HOME
+verdict 2 "$AC_HOME" -u AC_HOME AC_SCOPE=fam
+verdict 0 "$AC_HOME" -u AC_HOME AC_CREW_ID=dg1
+verdict 0 "$AC_HOME" -u AC_HOME AC_FLEET_NAME=drydock
+verdict 2 "$primary" -u AC_HOME AC_CREW_ID=dg1
+verdict 2 "$primary" -u AC_HOME AC_FLEET_NAME=drydock
+verdict 0 "$linked" -u AC_HOME
+verdict 0 "$linked" -u AC_HOME AC_SCOPE=fam
+
+# 3. the payload as jq reads it (AT PARITY): every value printed before a
+# parse error is the name, joined by LF; a name that is no string is its JSON
+# text; NULs are dropped and trailing LFs stripped before the shape test.
+pl '{"tool_name":"Task"} garbage'
+verdict 2 "$primary"
+pl '{"tool_name":"Read"}{"tool_name":"Agent"}'
+verdict 2 "$primary"
+assert_contains "$(cat "$TMP/n.err")" "$(printf 'Read\nAgent creates work')" "AT PARITY: both values jq printed are the name"
+pl '{"tool_name":{"Agent":1}}'
+verdict 2 "$primary"
+for p in '{"tool_name":["Task"]}' '{"tool_name":true}' '{"tool_name":null}' '{"tool_name":""}' \
+         '{"tool_input":{}}' '{"tool_name":"m\\u0000cp__Agent"}' '{"tool_name":"ListAgents\\n\\n"}' \
+         'not json' '' '  ' '\n\n'; do
+  pl "$p"
+  verdict 0 "$primary"
+done
+for p in '{"tool_name":"Ta\\u0000sk"}' '{"tool_name":"Ta\000sk"}' '{"tool_name":"Task\\n"}' \
+         '{"tool_name":"Task"}\n\n\n' '{"tool_name":"100%%Agent"}'; do
+  pl "$p"
+  verdict 2 "$primary"
+done
+# a byte that is not UTF-8 reaches jq, which prints U+FFFD in its place
+pl '{"tool_name":"\351Agent"}'
+verdict 2 "$primary"
+DIFF_LC=en_US.UTF-8 verdict 2 "$primary"
+# past one 64 KiB read
+{ printf '{"pad":"'; head -c 70000 /dev/zero | tr '\0' x; printf '","tool_name":"Task"}'; } >"$TMP/dg.pl"
+verdict 2 "$primary"
+
+# 4. a missing dependency allows on both sides: jq anywhere, git under arm 3
+# (bun on PATH here - the black-box no-git rows now reach the shim's own
+# no-bun arm first, so these rows carry arm 3's git guard).
+pl '{"tool_name":"Task"}'
+dgpath "$TMP/dg-nojq" bash env cat dirname git bun
+verdict 0 "$primary" PATH="$TMP/dg-nojq"
+dgpath "$TMP/dg-nogit" bash env cat dirname jq bun
+verdict 0 "$linked" -u AC_HOME PATH="$TMP/dg-nogit"
+verdict 0 "$AC_HOME" -u AC_HOME PATH="$TMP/dg-nogit"
+verdict 0 "$primary" -u AC_HOME PATH="$TMP/dg-nogit"
+verdict 0 "$primary" PATH="$TMP/dg-nogit"
+# a cwd with no name: both allow (stdout and status; bash's own getcwd lines
+# on stderr are the shells', not the guard's)
+gone="$TMP/dg-gone"
+for side in "$obin" "$BIN"; do
+  mkdir -p "$gone"
+  rc=0
+  out="$(cd "$gone" && rmdir "$gone" && env -u AC_HOME LC_ALL=C "$side/ac-delegation-guard.sh" <"$TMP/dg.pl" 2>/dev/null)" || rc=$?
+  assert_eq "$rc:$out" "0:" "a cwd with no name allows ($side)"
+done
+
+# --- named divergences: each row asserts both sides ---------------------------
+# BUN: no bun on PATH - the shim allows at once and says nothing, where the
+# original (bash and jq alone) judged.
+dgpath "$TMP/dg-nobun" bash env cat dirname jq git
+o_rc=0; (cd "$primary" && PATH="$TMP/dg-nobun" LC_ALL=C "$obin/ac-delegation-guard.sh" <"$TMP/dg.pl") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; (cd "$primary" && PATH="$TMP/dg-nobun" LC_ALL=C "$BIN/ac-delegation-guard.sh" <"$TMP/dg.pl") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$o_rc $n_rc" "2 0" "BUN: the original refuses with no bun on PATH, the shim allows"
+assert_contains "$(cat "$TMP/o.err")" "ac-delegation-guard: Task creates work" "BUN: the original's refusal"
+assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
+# BUN: a module that cannot load is the shim's no-op, never a refusal.
+dg_lf="$TMP/dg-loadfail"
+mkdir -p "$dg_lf/bin" "$dg_lf/src"
+cp "$BIN/ac-bun.sh" "$BIN/ac-delegation-guard.sh" "$dg_lf/bin/"
+printf 'throw new Error("delegation guard cannot load");\n' >"$dg_lf/src/delegation-guard.ts"
+n_rc=0; (cd "$primary" && LC_ALL=C "$dg_lf/bin/ac-delegation-guard.sh" <"$TMP/dg.pl") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc" "0" "BUN: a module that cannot load allows"
+assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
+assert_contains "$(cat "$TMP/n.err")" "delegation guard cannot load" "BUN: the load failure is bun's own diagnosis"
+case "$(cat "$TMP/n.err")" in *"ac-delegation-guard:"*) fail "BUN: a module that cannot load must never print the refusal" ;; esac
+# HOME RESOLUTION: a cwd or home whose name ends in LF is the directory it
+# names, where the original's `$(...)` dropped the LF and compared the sibling.
+lfd="$TMP/dg-lf
+"
+mkdir -p "$lfd" "$TMP/dg-lf"
+verdict 2 "$lfd" AC_HOME="$lfd"
+o_rc=0; (cd "$lfd" && AC_HOME="$TMP/dg-lf" LC_ALL=C "$obin/ac-delegation-guard.sh" <"$TMP/dg.pl") >/dev/null 2>&1 || o_rc=$?
+n_rc=0; (cd "$lfd" && AC_HOME="$TMP/dg-lf" LC_ALL=C "$BIN/ac-delegation-guard.sh" <"$TMP/dg.pl") >/dev/null 2>&1 || n_rc=$?
+assert_eq "$o_rc $n_rc" "2 0" "HOME RESOLUTION: an LF-named cwd is not its sibling home"
+o_rc=0; (cd "$TMP/dg-lf" && AC_HOME="$lfd" LC_ALL=C "$obin/ac-delegation-guard.sh" <"$TMP/dg.pl") >/dev/null 2>&1 || o_rc=$?
+n_rc=0; (cd "$TMP/dg-lf" && AC_HOME="$lfd" LC_ALL=C "$BIN/ac-delegation-guard.sh" <"$TMP/dg.pl") >/dev/null 2>&1 || n_rc=$?
+assert_eq "$o_rc $n_rc" "2 0" "HOME RESOLUTION: nor an LF-named home its sibling cwd"
+# HOME RESOLUTION: a relative AC_HOME under an exported CDPATH - cd echoed its
+# destination into the original's captured path, so the home read as none.
+cdp="$TMP/dg-cdp"
+mkdir -p "$cdp"
+ln -s . "$cdp/self"
+verdict 2 "$cdp" -u CDPATH AC_HOME=self
+o_rc=0; (cd "$cdp" && CDPATH="$cdp" AC_HOME=self LC_ALL=C "$obin/ac-delegation-guard.sh" <"$TMP/dg.pl") >/dev/null 2>&1 || o_rc=$?
+n_rc=0; (cd "$cdp" && CDPATH="$cdp" AC_HOME=self LC_ALL=C "$BIN/ac-delegation-guard.sh" <"$TMP/dg.pl") >/dev/null 2>&1 || n_rc=$?
+assert_eq "$o_rc $n_rc" "0 2" "HOME RESOLUTION: the port enters a relative home without CDPATH"
+
 pass

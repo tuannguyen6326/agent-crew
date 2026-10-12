@@ -44,4 +44,4 @@ assert_contains "$agents" '/debrief stays' "AGENTS pointer"
 assert_contains "$architecture" "manual \`/debrief\` is the reset-time catch-all" "architecture pointer"
 assert_contains "$overview" 'Manual reset-time catch-all' "overview pointer"
 
-printf 'ok - debrief skill contract\n'
+pass

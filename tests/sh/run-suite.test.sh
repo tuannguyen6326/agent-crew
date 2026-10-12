@@ -235,19 +235,39 @@ git -C "$splitrepo" config user.email test@test
 git -C "$splitrepo" config user.name test
 printf '#!/usr/bin/env bash\n# fixture ac-spawn\n' >"$splitrepo/bin/ac-spawn.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-teardown\n' >"$splitrepo/bin/ac-teardown.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-brief\n' >"$splitrepo/bin/ac-brief.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-know\n' >"$splitrepo/bin/ac-know.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-gate\n' >"$splitrepo/bin/ac-gate.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-curate\n' >"$splitrepo/bin/ac-curate.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-gate-watch\n' >"$splitrepo/bin/ac-gate-watch.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-ship-watch\n' >"$splitrepo/bin/ac-ship-watch.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-qa-watch\n' >"$splitrepo/bin/ac-qa-watch.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-dashboard\n' >"$splitrepo/bin/ac-dashboard.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-ready\n' >"$splitrepo/bin/ac-ready.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-learn\n' >"$splitrepo/bin/ac-learn.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-pane-agent\n' >"$splitrepo/bin/ac-pane-agent.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-watch\n' >"$splitrepo/bin/ac-watch.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-watch-policy-hook\n' >"$splitrepo/bin/ac-watch-policy-hook.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-other, unrelated - proves the map NARROWS instead of widening\n' >"$splitrepo/bin/ac-other.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-qa-lib, pinned inside ac-qa.test.sh\n' >"$splitrepo/bin/ac-qa-lib.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-maintenance-lib, pinned inside ac-maintenance-core.test.sh\n' >"$splitrepo/bin/ac-maintenance-lib.sh"
 printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/sh/ac-other.test.sh"
-for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-qa ac-maintenance-core; do
+for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-teardown ac-qa ac-maintenance-core ac-brief ac-contract ac-know flag-values ac-gate ac-learn-loop ac-curate ac-backlog-sections ac-learning-automation-e2e ac-config-surface ac-gate-watch ac-watch-dash ac-ship-watch ac-qa-watch ac-ship ac-roomchief ac-room-parallel-cap ac-learn ac-learn-autoroom ac-learn-quote ac-pane-agent ac-brain ac-lib ac-watch ac-watch-jev ac-brain-freshen ac-lock ac-remote-wire ac-self-task ac-guard ac-harness-hooks; do
+  printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/sh/$t.test.sh"
+done
+for t in ac-dashboard-daemon ac-review ac-review-reply; do
+  printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/sh/$t.test.sh"
+done
+for t in ac-ready ac-backlog ac-task ac-watch ac-watch-autoarm ac-turnend-guard ac-session-start; do
   printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/sh/$t.test.sh"
 done
 chmod +x "$splitrepo"/bin/*.sh "$splitrepo"/tests/sh/*.test.sh
 git -C "$splitrepo" add -A
 git -C "$splitrepo" commit -q -m baseline
 
-# 1) touching bin/ac-spawn.sh alone selects its FOUR mapped split-name tests,
-#    excludes the unrelated colocated ac-other.test.sh, and does not widen.
+# 1) touching bin/ac-spawn.sh alone selects its FOUR split-name tests and the
+#    two roomchief suites, excludes the unrelated colocated ac-other.test.sh,
+#    and does not widen.
 printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-spawn.sh"
 res="$(run_runner --changed "$splitrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
@@ -256,7 +276,9 @@ assert_contains "$out" "RUNNING ac-spawn-branch-collision.test.sh" "ac-spawn.sh'
 assert_contains "$out" "RUNNING ac-spawn-dead-pane.test.sh" "ac-spawn.sh's split map must select ac-spawn-dead-pane.test.sh"
 assert_contains "$out" "RUNNING ac-spawn-model-effort.test.sh" "ac-spawn.sh's split map must select ac-spawn-model-effort.test.sh"
 assert_contains "$out" "RUNNING ac-spawn-teardown.test.sh" "ac-spawn.sh's split map must select ac-spawn-teardown.test.sh"
-assert_contains "$out" "4/4 passed" "must select exactly the four mapped tests, not widen to the full fixture set"
+assert_contains "$out" "RUNNING ac-roomchief.test.sh" "ac-spawn.sh's split map must select ac-roomchief.test.sh"
+assert_contains "$out" "RUNNING ac-room-parallel-cap.test.sh" "ac-spawn.sh's split map must select ac-room-parallel-cap.test.sh"
+assert_contains "$out" "6/6 passed" "must select exactly the six mapped tests, not widen to the full fixture set"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-spawn.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-spawn.sh must not print the false widen reason once its split-name map exists" ;;
@@ -283,18 +305,215 @@ assert_contains "$out" "RUNNING ac-maintenance-core.test.sh" "ac-maintenance-lib
 assert_contains "$out" "1/1 passed" "ac-maintenance-lib.sh selects exactly ac-maintenance-core.test.sh"
 git -C "$splitrepo" checkout -q -- bin/ac-maintenance-lib.sh
 
-# 2) touching bin/ac-teardown.sh alone selects its ONE mapped split-name test.
+# 2) touching bin/ac-teardown.sh alone selects its colocated leg AND its
+#    split-name black-box test - the colocated name must not shadow the split.
 printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-teardown.sh"
 res="$(run_runner --changed "$splitrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-teardown.sh's split test must still be green"
+assert_contains "$out" "RUNNING ac-teardown.test.sh" "ac-teardown.sh's split map must select its own ac-teardown.test.sh"
 assert_contains "$out" "RUNNING ac-spawn-teardown.test.sh" "ac-teardown.sh's split map must select ac-spawn-teardown.test.sh"
-assert_contains "$out" "1/1 passed" "must select exactly the one mapped test, not widen"
+assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-teardown.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-teardown.sh must not print the false widen reason once its split-name map exists" ;;
 esac
 git -C "$splitrepo" checkout -q -- bin/ac-teardown.sh
+
+# touching bin/ac-brief.sh alone selects its colocated leg AND
+# ac-contract.test.sh, which holds the escalation gate's black box.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-brief.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-brief.sh's split tests must still be green"
+assert_contains "$out" "RUNNING ac-brief.test.sh" "ac-brief.sh's split map must select its own ac-brief.test.sh"
+assert_contains "$out" "RUNNING ac-contract.test.sh" "ac-brief.sh's split map must select ac-contract.test.sh"
+assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-brief.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-brief.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-brief.sh
+
+# touching bin/ac-know.sh alone selects its colocated leg AND
+# flag-values.test.sh, which executes the entry's value-flag refusal.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-know.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-know.sh's split tests must still be green"
+assert_contains "$out" "RUNNING ac-know.test.sh" "ac-know.sh's split map must select its own ac-know.test.sh"
+assert_contains "$out" "RUNNING flag-values.test.sh" "ac-know.sh's split map must select flag-values.test.sh"
+assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-know.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-know.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-know.sh
+
+# touching bin/ac-gate.sh alone selects its colocated leg AND
+# ac-learn-loop.test.sh, which runs the real gate through `ac-learn.sh run`.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-gate.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-gate.sh's split tests must still be green"
+assert_contains "$out" "RUNNING ac-gate.test.sh" "ac-gate.sh's split map must select its own ac-gate.test.sh"
+assert_contains "$out" "RUNNING ac-learn-loop.test.sh" "ac-gate.sh's split map must select ac-learn-loop.test.sh"
+assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-gate.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-gate.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-gate.sh
+
+# touching bin/ac-curate.sh alone selects its colocated leg AND the three
+# suites that execute the entry, AND ac-config-surface.test.sh, which greps
+# src/curate.ts for the double-keyed snapshot hook.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-curate.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-curate.sh's split tests must still be green"
+for t in ac-curate ac-backlog-sections ac-learning-automation-e2e ac-learn-loop ac-config-surface; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-curate.sh's split map must select $t.test.sh"
+done
+assert_contains "$out" "5/5 passed" "must select exactly the five mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-curate.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-curate.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-curate.sh
+
+# touching bin/ac-gate-watch.sh alone selects its colocated leg AND
+# ac-gate.test.sh, whose board rows run it, AND ac-watch-dash.test.sh, which
+# greps src/gate-watch.ts.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-gate-watch.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-gate-watch.sh's split tests must still be green"
+for t in ac-gate-watch ac-gate ac-watch-dash; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-gate-watch.sh's split map must select $t.test.sh"
+done
+assert_contains "$out" "3/3 passed" "must select exactly the three mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-gate-watch.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-gate-watch.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-gate-watch.sh
+
+# touching bin/ac-ship-watch.sh (or bin/ac-qa-watch.sh) alone selects its
+# colocated leg, ac-watch-dash.test.sh (the shared body's leg) and its
+# opener's suite, which runs it `--once`.
+for w in ship qa; do
+  printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-$w-watch.sh"
+  res="$(run_runner --changed "$splitrepo/tests/sh")"
+  rc="${res%%|*}"; out="${res#*|}"
+  assert_eq "$rc" "0" "--changed narrowed to ac-$w-watch.sh's split tests must still be green"
+  for t in "ac-$w-watch" ac-watch-dash "ac-$w"; do
+    assert_contains "$out" "RUNNING $t.test.sh" "ac-$w-watch.sh's split map must select $t.test.sh"
+  done
+  assert_contains "$out" "3/3 passed" "must select exactly the three mapped tests, not widen"
+  case "$out" in
+    *"RUNNING ac-other.test.sh"*) fail "ac-$w-watch.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+    *"has no colocated test"*) fail "ac-$w-watch.sh must not print the false widen reason once its split-name map exists" ;;
+  esac
+  git -C "$splitrepo" checkout -q -- "bin/ac-$w-watch.sh"
+done
+
+# touching bin/ac-dashboard.sh alone selects the daemon suite, which holds its
+# leg, and the two review suites that start and stop real dashboards through
+# it - no suite carries the entry's own name.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-dashboard.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-dashboard.sh's split tests must still be green"
+for t in ac-dashboard-daemon ac-review ac-review-reply; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-dashboard.sh's split map must select $t.test.sh"
+done
+assert_contains "$out" "3/3 passed" "must select exactly the three mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-dashboard.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-dashboard.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-dashboard.sh
+
+# touching bin/ac-ready.sh alone selects its colocated leg AND the eight
+# suites that run the report, queued or watch-set.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-ready.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-ready.sh's split tests must still be green"
+for t in ac-ready ac-backlog ac-backlog-sections ac-contract ac-task ac-watch ac-watch-autoarm ac-turnend-guard ac-session-start; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-ready.sh's split map must select $t.test.sh"
+done
+assert_contains "$out" "9/9 passed" "must select exactly the nine mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-ready.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-ready.sh
+
+# touching bin/ac-learn.sh alone selects its colocated leg, the five suites
+# that execute the entry, AND ac-config-surface.test.sh, which greps
+# src/learn.ts for the knobs it reads.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-learn.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-learn.sh's split tests must still be green"
+for t in ac-learn ac-learn-loop ac-learn-autoroom ac-learn-quote ac-learning-automation-e2e ac-maintenance-core ac-config-surface; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-learn.sh's split map must select $t.test.sh"
+done
+assert_contains "$out" "7/7 passed" "must select exactly the seven mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-learn.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-learn.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-learn.sh
+
+# touching bin/ac-pane-agent.sh alone selects its colocated leg AND the four
+# suites that execute the pane agent or import its one-shot table.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-pane-agent.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-pane-agent.sh's split tests must still be green"
+for t in ac-pane-agent ac-teardown ac-spawn-teardown ac-brain ac-lib; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-pane-agent.sh's split map must select $t.test.sh"
+done
+assert_contains "$out" "5/5 passed" "must select exactly the five mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-pane-agent.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-pane-agent.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-pane-agent.sh
+
+# touching bin/ac-watch.sh alone selects its colocated leg AND the six suites
+# that execute the watcher.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-watch.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-watch.sh's split tests must still be green"
+for t in ac-watch ac-watch-jev ac-brain-freshen ac-lock ac-remote-wire ac-roomchief ac-self-task; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-watch.sh's split map must select $t.test.sh"
+done
+assert_contains "$out" "7/7 passed" "must select exactly the seven mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-watch.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-watch.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-watch.sh
+
+# touching bin/ac-watch-policy-hook.sh alone selects the two suites that hold
+# and run it - it has no colocated test of its own.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-watch-policy-hook.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-watch-policy-hook.sh's split tests must still be green"
+for t in ac-guard ac-harness-hooks; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-watch-policy-hook.sh's split map must select $t.test.sh"
+done
+assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "ac-watch-policy-hook.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
+  *"has no colocated test"*) fail "ac-watch-policy-hook.sh must not print the false widen reason once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-watch-policy-hook.sh
 
 # 3) the failure shape split_map's own comment names: add a NEW
 #    ac-spawn-<concern>.test.sh file (committed, so it is present on disk but
@@ -310,7 +529,7 @@ res="$(run_runner --changed "$splitrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-spawn.sh's split tests, plus the new one, must still be green"
 assert_contains "$out" "RUNNING ac-spawn-newconcern.test.sh" "a NEW ac-spawn-*.test.sh file must join ac-spawn.sh's split map without anyone adding it by hand"
-assert_contains "$out" "5/5 passed" "must select the four original mapped tests PLUS the new one, not silently miss it"
+assert_contains "$out" "7/7 passed" "must select the six original mapped tests PLUS the new one, not silently miss it"
 git -C "$splitrepo" checkout -q -- bin/ac-spawn.sh
 
 # --- --changed: TypeScript under src/ maps like bin/*.sh does ------------
@@ -337,9 +556,9 @@ printf 'import { u } from "./util.ts";\n' >"$tsrepo/src/qux.ts"
 printf 'export const u = 1;\n' >"$tsrepo/src/util.ts"
 printf 'import { u } from "../../src/util.ts";\n' >"$tsrepo/tests/ts/util.test.ts"
 # src/pth.ts has no entry of its own: two scripts run modes of it, the shape
-# of src/paths.ts under bin/ac-qa.sh and bin/ac-verify.sh.
+# of src/paths.ts under bin/ac-qa-lib.sh and bin/ac-verify.sh.
 printf 'export const p = 1;\n' >"$tsrepo/src/pth.ts"
-# The long tail after the starting line is bin/ac-qa.sh's shape: a pipe that
+# The long tail after the starting line is the bash ac-qa.sh's shape: a pipe that
 # stops reading at the first match SIGPIPEs its writer there.
 {
   # shellcheck disable=SC2016 # fixture CONTENT, expanded only if the fixture ran
@@ -532,6 +751,36 @@ res="$(run_runner "$sigdir")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "the runner must deliver SIGINT normally to a test's backgrounded child"
 assert_contains "$out" "1/1 passed" "the signal fixture must pass under a job-control-safe runner"
+
+# The repair path: a runner started as an async command (job control off)
+# inherits INT/QUIT ignored and re-execs through python3, which starts with
+# PIPE/XFSZ ignored itself. A trap on a signal ignored at entry is silently
+# refused, so each trap probe exits 42 only when its signal is at default.
+reexecdir="$TMP/fixture-reexec"
+mkdir -p "$reexecdir"
+cp "$sigdir/int-kills-child.test.sh" "$reexecdir/"
+cat >"$reexecdir/dispositions.test.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+yes | head -1 >/dev/null; st="${PIPESTATUS[0]}"
+[ "$st" = 141 ] || { printf 'FAIL: yes exited %s on a closed pipe - SIGPIPE is ignored\n' "$st" >&2; exit 1; }
+( trap 'exit 42' QUIT; sh -c 'kill -QUIT $PPID'; : ); st=$?
+[ "$st" = 42 ] || { printf 'FAIL: QUIT trap probe exited %s - SIGQUIT is ignored\n' "$st" >&2; exit 1; }
+big="$(mktemp)"
+( trap 'exit 42' XFSZ; ulimit -f 1; printf '%65536s' x >"$big" ) 2>/dev/null; st=$?
+rm -f "$big"
+[ "$st" = 42 ] || { printf 'FAIL: XFSZ trap probe exited %s - SIGXFSZ is ignored\n' "$st" >&2; exit 1; }
+printf 'PASS: dispositions.test.sh\n'
+FIXTURE
+set +e
+out="$(env -u AC_SUITE_INT_REPAIRED bash -c 'bash "$1" "$2" & wait "$!"' _ "$RUNNER" "$reexecdir" 2>&1)"; rc=$?
+set -e
+if command -v python3 >/dev/null 2>&1; then
+  assert_contains "$out" "re-execing with the disposition reset" "an async runner must take the python3 repair path"
+  assert_eq "$rc" "0" "a re-execed runner must hand every suite default INT/QUIT/PIPE/XFSZ: $out"
+  assert_contains "$out" "2/2 passed" "both disposition fixtures must pass under the re-execed runner"
+else
+  assert_eq "$rc" "3" "an async runner with no python3 must refuse"
+fi
 
 # --- the split layout: shell tests and their helpers live in tests/sh -------
 #

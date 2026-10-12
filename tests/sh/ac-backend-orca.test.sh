@@ -11,7 +11,7 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-command -v jq >/dev/null || { printf 'SKIP: jq not available\n'; exit 0; }
+command -v jq >/dev/null || skip 'jq not available'
 
 make_home
 make_fake_orca
@@ -623,7 +623,7 @@ a2_out="$(run_backend orca "orca_worktree_lease a2 '$a2'")"
 assert_eq "$(git -C "$a2_out" rev-parse HEAD)" "$a2_origin_sha" \
   "A2: ac_freshest_ref picks origin's newer commit over the stale local ref"
 
-# A2b: the LITERAL FMS direction (room evidence: "origin lags local", correct
+# A2b: the LITERAL direction (room evidence: "origin lags local", correct
 # branch NAME but 7 commits behind) - reconciled with the A2 measurement
 # above by reading "local" as the live checkout's actual HEAD position, not
 # its branch ref. A live checkout can advance PAST its own branch ref while
@@ -643,7 +643,7 @@ git -C "$a2b" commit -qam "feature base"
 git -C "$a2b" push -q -u origin feature
 git -C "$a2b" checkout -q --detach feature
 printf 'detached ahead\n' >>"$a2b/file.txt"
-git -C "$a2b" commit -qam "detached, ahead of the feature ref and origin - the FMS shape"
+git -C "$a2b" commit -qam "detached, ahead of the feature ref and origin - the observed shape"
 a2b_detached_sha="$(git -C "$a2b" rev-parse HEAD)"
 a2b_feature_ref_sha="$(git -C "$a2b" rev-parse feature)"
 [ "$a2b_detached_sha" != "$a2b_feature_ref_sha" ] \

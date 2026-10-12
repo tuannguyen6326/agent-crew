@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ac-project-mode.test.sh - the registry answers YOLO ONLY (captain order
-# 2026-08-10: delivery mode is per-task, resolved from the backlog row's
+# ac-project-mode.test.sh - the registry answers YOLO ONLY
+# (delivery mode is per-task, resolved from the backlog row's
 # contract pin / --mode by ac-brief.sh - never from records/projects.md).
 # A legacy [<mode>] bracket is tolerated, ignored content: old registries
 # keep resolving yolo without a migration, and a bogus legacy mode is not

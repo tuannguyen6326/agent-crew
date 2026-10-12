@@ -16,6 +16,13 @@
 # the tool it was really testing worked fine.
 make_fake_herdr
 
+# Nor from the box's gh, which helpers.sh mirrors out of PATH: a logged-in
+# stand-in is the gh every copy below links.
+mkdir -p "$TMP/gh-in"
+printf '#!/bin/sh\n[ "$1" != --version ] || echo "gh version 2.0.0"\nexit 0\n' >"$TMP/gh-in/gh"
+chmod +x "$TMP/gh-in/gh"
+PATH="$TMP/gh-in:$PATH"
+
 # A single canonical copy of every required tool, symlinked from the real
 # host - no tool can have more than one PATH entry here, so the PATH-shadow
 # probe below can never fire from ambient duplicates a dev box happens to
@@ -168,7 +175,7 @@ EOF
 
 # Acceptance (1): an older copy sits before a newer one on PATH -> the
 # digest MUST print the line - PROVEN BY RUNNING, and the detector
-# DIAGNOSES ONLY: rc stays 0, deliberately (captain, 2026-08-23 - some
+# DIAGNOSES ONLY: rc stays 0, deliberately (some
 # inert states, like this host's real nvm/homebrew pins, are chosen on
 # purpose, and a blocking line would fire every session forever over
 # them). The herdr protocol-compat check below is the real gate; this

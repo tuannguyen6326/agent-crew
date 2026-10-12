@@ -125,12 +125,25 @@ skill_verb_refs() {
 # script_verbs <ac-x.sh> - path to the cached list of verbs bin/<script>
 # dispatches: plain-token case arms (`verb)`, `verb|alias)`, and a spaced
 # `"" | verb | alias)` whose empty alternative names no verb) and `cmd_<verb>()`
-# functions, the shapes the bin/ scripts use. Empty for a single-purpose
-# script, which then has nothing to check a verb against.
+# functions, the shapes the bin/ scripts use. A ported entry is a shim over
+# src/<x>.ts (`ac_bun_exec src/<x>.ts`), whose dispatch is read instead: the
+# `case "verb":` arms, the `cmd === "verb"` / `verb === "verb"` tests and the
+# `"verb"` members of an `[...].includes(cmd)` list. Empty for a single-purpose script, which then has
+# nothing to check a verb against.
 script_verbs() {
-  local cache="$TMP/verbs/$1"
+  local cache="$TMP/verbs/$1" module
   if [ ! -f "$cache" ]; then
     mkdir -p "$TMP/verbs"
+    module="$(sed -n 's/^ac_bun_exec \(src\/[a-z0-9-]*\.ts\).*/\1/p' "$ROOT/bin/$1" | head -n 1)"
+    if [ -n "$module" ] && [ -f "$ROOT/$module" ]; then
+      awk '
+        /^[ \t]*case "[a-z][a-z0-9-]*":/ { s = $0; sub(/^[ \t]*case "/, "", s); sub(/".*/, "", s); print s }
+        /(cmd|verb) === "[a-z][a-z0-9-]*"/ { s = $0; while (match(s, /(cmd|verb) === "[a-z][a-z0-9-]*"/)) { t = substr(s, RSTART, RLENGTH); sub(/^[a-z]* === "/, "", t); sub(/"$/, "", t); print t; s = substr(s, RSTART + RLENGTH) } }
+        /\]\.includes\((cmd|verb)\)/ { s = $0; sub(/\]\.includes\(.*/, "", s); while (match(s, /"[a-z][a-z0-9-]*"/)) { print substr(s, RSTART + 1, RLENGTH - 2); s = substr(s, RSTART + RLENGTH) } }
+      ' "$ROOT/$module" | sort -u >"$cache"
+      printf '%s\n' "$cache"
+      return 0
+    fi
     awk '
       /^[ \t]*(""|[a-z][a-z0-9-]*)([ \t]*\|[ \t]*(""|[a-z][a-z0-9-]*))*\)/ {
         s = $0; sub(/^[ \t]+/, "", s); sub(/\).*/, "", s); gsub(/[ \t]/, "", s)

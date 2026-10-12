@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# ac-maintenance-core.test.sh - shared maintenance transaction and cadence
-# primitives used by automatic Learning and Curate.
+# ac-maintenance-core.test.sh - the bash maintenance transaction and cadence
+# primitives Learning and Curate ran until src/learn.ts took their last
+# caller: the live readers in bin/ac-maintenance-lib.sh, and the writers and
+# the transaction frozen at tests/fixtures/ac-maintenance-retired.sh, which
+# the oracles run and tests/ts/curate.test.ts and learn.test.ts hold the
+# TypeScript twins to.
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 # shellcheck source=../../bin/ac-lib.sh
 . "$BIN/ac-lib.sh"
 . "$BIN/ac-maintenance-lib.sh"
+. "$BIN/ac-bun.sh"
+. "$ROOT/tests/fixtures/ac-maintenance-retired.sh"
 make_home
 
 # Legacy cadence files remain readable and gain generation only on a write.

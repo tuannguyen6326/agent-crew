@@ -25,6 +25,9 @@
 # Exits 0 only when every run passed AND no hog survived. Exits 2 on refusal.
 
 . "$(dirname "$0")/helpers.sh"
+# A harness rather than a suite: its closing test is its verdict, so it
+# decides nothing through pass (helpers.sh cleanup).
+AC_SUITE_DECIDED=1
 
 t="${1:-}"
 if [ -z "$t" ] || [ ! -f "$t" ]; then
@@ -72,10 +75,16 @@ mkdir -p "$out"
 # signalling a live fan-out mid-flight and racing the reap, which makes a new
 # flake source inside a flake-FIXING harness - it would cost more than it
 # defends. Verified by hand instead: 4 orphans before, 0 after.
+#
+# runpids keeps every run of the whole stress, so at EXIT most leaders ended
+# minutes ago and their group ids may be reissued: each group is killed only
+# while its leader is still the process recorded in run_id (helpers.sh delayed
+# kills).
 runpids=""
+run_id=()
 kill_runs() {
   local p
-  for p in $runpids; do kill -9 -- -"$p" 2>/dev/null || true; done
+  for p in $runpids; do same_process "$p" "${run_id[$p]-}" && kill -9 -- -"$p" 2>/dev/null || true; done
   cleanup
 }
 trap kill_runs EXIT
@@ -84,9 +93,10 @@ trap kill_runs EXIT
 # which runs the EXIT trap above and reaps everything - a self-kill would not.
 # It is a spawn like any other, so it goes on runpids and dies with the rest.
 set -m
-( sleep 600; kill -TERM "$$" 2>/dev/null || true ) &
+kill_after 600 "$$" TERM
 set +m
-runpids="$runpids $!"
+runpids="$runpids $KILL_AFTER_PID"
+run_id[$KILL_AFTER_PID]="$(proc_identity "$KILL_AFTER_PID")"
 
 load_hogs "$hogs"
 printf 'stress: %s x%s, parallel %s, under %s hogs (AC_HOG_TTL=%ss)\n' \
@@ -107,6 +117,7 @@ while [ "$i" -lt "$runs" ]; do
     set +m
     pids="$pids $!"
     runpids="$runpids $!"
+    run_id[$!]="$(proc_identity "$!")"
     batch=$((batch + 1))
   done
   for p in $pids; do wait "$p" 2>/dev/null || true; done

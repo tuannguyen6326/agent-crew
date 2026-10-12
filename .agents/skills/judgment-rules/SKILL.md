@@ -25,8 +25,8 @@ description: The full text of the four fleet-wide judgment rules: finding-author
   CLAUSE (a)'s citation - not (b)'s declaration - is what rides the
   findings wire, as two flat keys per finding: `authority_class`
   (internal|external|none) + `authority` (a `file:line`, a URL, or
-  `captain <date>`). The shared normalizer `ac_findings_normalize`
-  (`bin/ac-pipeline-lib.sh`, the single enforcement point for both
+  `captain <date>`). The shared normalizer `findingsNormalize`
+  (`src/lib.ts`, the single enforcement point for both
   pipelines) DOWNGRADES an `action: fix` finding with no authority to
   `ask-user`, so an unfounded statement reaches the captain instead of
   a fixer - EXCEPT a `severity: info` finding, which the same normalizer
@@ -35,8 +35,8 @@ description: The full text of the four fleet-wide judgment rules: finding-author
   no review round reopens; the finding and its advisory `suggested_fix`
   still land in the findings JSON and the PR. `action: fix` itself is
   RESERVED for delivery-blocking findings - correctness, security,
-  regression, data loss, accepted-requirement/ruling violation (the reviewer prompt in `bin/ac-verify.sh` and the
-  findings contract in `bin/ac-ship.sh` carry the same rule).
+  regression, data loss, accepted-requirement/ruling violation (the reviewer prompt in `src/verify.ts` and the
+  findings contract in the `src/ship.ts` header carry the same rule).
   The normalizer preserves/supplies the captain-relay shape on every
   resulting `ask-user`; canonical verifiers must author it explicitly. The rule
   binds every author - crewmates, codereview/qa verifiers, gate judges, and you.
@@ -66,7 +66,7 @@ description: The full text of the four fleet-wide judgment rules: finding-author
   independently settled` - a finding carrying `needs-decision:`,
   naming the act used and the act that would settle the question -
   instead of confirming, never a third verdict value. Fleet POLICY
-  over a chief's request text: the codereview prompt in `bin/ac-verify.sh`
+  over a chief's request text: the codereview prompt in `src/verify.ts`
   carries only Clause V's room-ruling check (a requester ruling with no
   `DISPUTED` block settles to `ask-user`); Clause R's line and the `not
   independently settled` report are the requester's and the checker's to

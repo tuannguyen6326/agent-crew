@@ -4,9 +4,10 @@
 // ac_wake_publish on the RECORD BYTES and the FILENAME grammar (the fleet wire
 // three bash producers still write) under one PATH `date` stub, and watcherPid /
 // watcherNudge against ac_watcher_pid / ac_watcher_nudge over the lock-file
-// shapes and a stand-in watcher. A record the twin wrote is also drained by the
-// real bin/ac-wake-drain.sh. The CLI contract itself is tests/sh/ac-done.test.sh's,
-// whose differential leg runs the frozen bash original beside the shim.
+// shapes and stand-in watchers, the ported `/src/watch.ts` shape among them.
+// A record the twin wrote is also drained by the real bin/ac-wake-drain.sh.
+// The CLI contract itself is tests/sh/ac-done.test.sh's, whose differential
+// leg runs the frozen bash original beside the shim.
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -324,3 +325,53 @@ test("watcherNudge ends a live watcher's poll sleep, and only that, as ac_watche
     await busy.exited;
   }
 });
+
+// The ported watcher's own shape: bin/ac-watch.sh execs `bun --no-env-file
+// <root>/src/watch.ts <cwd>`, whose command line never names ac-watch, its poll
+// `sleep` a direct child. Each side finds it by `/src/watch.ts` and nudges
+// it; any other module of the same root is no watcher to either.
+test("watcherPid and watcherNudge find a ported watcher by its /src/watch.ts command line, as ac_watcher_pid does", async () => {
+  const sd = tmp("sd");
+  const port = tmp("port");
+  mkdirSync(join(port, "src"));
+  const body = `const s = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" }); await s.exited; await Bun.write(process.argv[2], "wait ended\\n");\n`;
+  writeFileSync(join(port, "src", "watch.ts"), body);
+  writeFileSync(join(port, "src", "dash.ts"), body);
+  const start = (module: string, flag: string) => {
+    const proc = Bun.spawn([process.execPath, "--no-env-file", join(port, "src", module), flag], { cwd: port, stdout: "ignore", stderr: "ignore" });
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      const ps = Bun.spawnSync(["ps", "-o", "pid=,ppid=,comm=", "-A"]).stdout.toString();
+      if (ps.split("\n").some((l) => l.trim().split(/\s+/)[1] === String(proc.pid) && /(^|\/)sleep$/.test(l.trim().split(/\s+/)[2] ?? ""))) break;
+      if (Date.now() > deadline) throw new Error("the ported stand-in never started its poll sleep");
+      Bun.sleepSync(50);
+    }
+    return proc;
+  };
+  const oFlag = join(port, "o.woke");
+  const o = start("watch.ts", oFlag);
+  armed(sd, ".watch.lock.d", o.pid);
+  expect(bash('ac_watcher_pid "$1" ""', sd).out).toBe(`${o.pid}\n`);
+  const want = bash('ac_watcher_nudge "$1" ""', sd);
+  expect(want.out).toMatch(/^nudged watcher pid=[0-9]+ \(poll sleep [0-9]+ ended early\)\n$/);
+  await o.exited;
+  expect(existsSync(oFlag)).toBe(true);
+  const nFlag = join(port, "n.woke");
+  const t = start("watch.ts", nFlag);
+  armed(sd, ".watch.lock.d", t.pid);
+  expect(watcherPid(sd, "")).toBe(String(t.pid));
+  expect(`${norm(watcherNudge(sd, ""))}\n`).toBe(norm(want.out));
+  await t.exited;
+  expect(existsSync(nFlag)).toBe(true);
+  const other = start("dash.ts", join(port, "x.woke"));
+  armed(sd, ".watch.lock.d", other.pid);
+  try {
+    expect(bash('ac_watcher_pid "$1" ""; echo "rc=$?"', sd).out).toBe("rc=1\n");
+    expect(watcherPid(sd, "")).toBe(null);
+    expect(watcherNudge(sd, "")).toBe("no armed watcher for this scope - the record waits in the spool");
+  } finally {
+    Bun.spawnSync(["pkill", "-P", String(other.pid)]);
+    other.kill();
+    await other.exited;
+  }
+}, 30000);

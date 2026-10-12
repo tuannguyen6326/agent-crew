@@ -9,7 +9,7 @@ Epics decompose an order into independently-landable stories, each intaken
 as its own direct/staged task and push-scheduled off landing checkpoints.
 The `intake-triage` skill holds the invariants (epic = multi-landable, the map is
 gated, scheduling is push-only, the cap protects captain attention); this
-skill is the full mechanics. `bin/ac-ready.sh`'s header owns the scheduler
+skill is the full mechanics. `src/ready.ts`'s header owns the scheduler
 primitive and the `blocked-by` grammar.
 
 ## Detection (at intake)

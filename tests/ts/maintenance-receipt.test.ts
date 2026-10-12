@@ -163,8 +163,9 @@ test("the staged file resolves under the run dir, one level above a plans dir", 
   expect(readEvidence(link.manifest, link.plan, evidence(MANIFEST_LINE, link.shas[0], "skill"), 12)).toBe(false);
 });
 
-// ac_maintenance_plan_validate's jq regexes let one trailing LF through, and
-// the shell's $(jq -r ...) then dropped it: the field reads without it.
+// The plan validation's jq regexes (maintenancePlanValidate) let one
+// trailing LF through, and the shell's $(jq -r ...) then dropped it: the
+// field reads without it.
 test("a plan field reads as $(jq -r) did, and a non-string one fails closed", () => {
   const r = mkRun([SKILL], { plan: (p) => {
     p.subject = "example\n";

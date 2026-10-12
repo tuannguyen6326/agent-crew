@@ -44,7 +44,7 @@ reset_family() { rm -f "$AC_HOME/state"/*-chief.meta; rm -rf "${AC_HOME:?}/data/
 # tests/run-suite.sh verdict recorded for THIS cadence generation and THIS tree,
 # so every case that expects a promote seeds one. Its own section near the
 # bottom takes the record away again. generation=0 because `due` writes a
-# counter file with no generation key, which ac_learn_generation reads as 0.
+# counter file with no generation key, which learnGeneration reads as 0.
 # The gate is FLEET-OPT-IN: config/learn-suite-gate=on.
 # This suite exercises the gated behavior, so the fixture pins it on; the
 # default-off contract has its own case below.
@@ -166,8 +166,8 @@ assert_eq "$(promotes)" "1" "E2: exactly one PROMOTED post"
 assert_no_file "$AC_HOME/state/.learn-autoroom.lock" "the lock is released once the winner is done"
 assert_no_file "$AC_HOME/state/.meta-claims/learning-chief" "the spawn-owned atomic claim is released once the winner is addressable"
 
-if ! grep -q 'spawn_meta_claim_acquire' "$BIN/ac-spawn.sh"; then
-  fail "ac-spawn.sh does not own the atomic pre-meta claim"
+if ! grep -q 'spawnMetaClaimAcquire' "$ROOT/src/spawn.ts"; then
+  fail "src/spawn.ts does not own the atomic pre-meta claim"
 fi
 
 # -- E2-SIGKILL: A dies INSIDE its pre-meta window and B contends for it -------
@@ -177,7 +177,7 @@ fi
 # held by a DEAD pid, reclaims it with no grace (ac_lock_stale), re-reads DUE
 # and still-no-meta, and launches a SECOND spawn into A's not-yet-addressable
 # window. The atomic claim is the only thing left between B and that window:
-# its owner pid is the ac-spawn.sh shell itself, a DESCENDANT of the killed
+# its owner pid is the spawn process itself, a DESCENDANT of the killed
 # caller and therefore still alive, so B blocks instead of reclaiming and then
 # dies on the duplicate-meta check INSIDE the claim. Remove the claim and the
 # harm reproduces - PROMOTED=2, DECIDED=2, the winner's window reaped out from
@@ -188,11 +188,11 @@ fi
 #   the barrier's child id is a walk DOWN the process table from A - never
 #     state/.meta-claims/ - so it answers identically on a tree that has no
 #     claim at all;
-#   B's arrival is a pass-through `head` shim keyed on a read of config/model.
-#     ac_config_read is `head -n1 <file>` (ac-lib.sh) and `ac_config_read model`
-#     is executed by exactly ONE site on the spawn path (ac-spawn.sh's "Fleet-wide defaults" block, which
-#     resolves the fleet defaults before any window or lease), so the record
-#     means "racer B's ac-spawn.sh RAN" and nothing weaker. That is the false
+#   B's arrival is a pass-through `bun` shim keyed on src/spawn.ts in its argv.
+#     bin/ac-spawn.sh is a shim that starts that module through bin/ac-bun.sh,
+#     which runs PATH's bun, and nothing else starts it, so the record means
+#     "racer B's spawn RAN" and nothing weaker - before any claim, so it
+#     answers alike on a tree with no claim. That is the false
 #     green this case exists to exclude: if B bails at the caller lock it never
 #     invokes ac-spawn.sh, the race never happens, and EVERY harm assertion
 #     below passes. Same shape as F2's PATH shim, keyed on a different path.
@@ -229,10 +229,6 @@ reset_family
 # anything at all.
 rm -f "$AC_HOME/state/.pane-learning-chief"
 due 9
-# ac_config_read only runs `head` when the file EXISTS. Inert for harness=fake -
-# a custom config/launch-<h> template consumes no model, and ac_record_launch_opts
-# records none for it - so this fixture only arms the observer.
-printf 'fixture-model\n' >"$AC_HOME/config/model"
 
 e2k_claim="$AC_HOME/state/.meta-claims/learning-chief"
 e2k_arrived="$TMP/e2k-b-invoked-spawn"
@@ -242,23 +238,23 @@ e2k_a=""
 e2k_job=""
 e2k_child=""
 
-e2k_head="$(command -v head)" || fail "E2-SIGKILL: no head on PATH - the arrival observer cannot pass through"
-case "$e2k_head" in
+e2k_bun="$(command -v bun)" || fail "E2-SIGKILL: no bun on PATH - the arrival observer cannot pass through"
+case "$e2k_bun" in
   /*) ;;
-  *) fail "E2-SIGKILL: head did not resolve to an absolute path ($e2k_head) - refusing to bake a relative pass-through" ;;
+  *) fail "E2-SIGKILL: bun did not resolve to an absolute path ($e2k_bun) - refusing to bake a relative pass-through" ;;
 esac
 mkdir -p "$TMP/e2k-shim"
-cat >"$TMP/e2k-shim/head" <<SHIM
+cat >"$TMP/e2k-shim/bun" <<SHIM
 #!/usr/bin/env bash
-# Records that a process in RACER B's tree read config/model - i.e. that B's
-# ac-spawn.sh ran at all. Everything else passes straight through.
-case "\$*" in *"/config/model") printf 'invoked\n' >>"$e2k_arrived" ;; esac
-exec "$e2k_head" "\$@"
+# Records that a process in RACER B's tree started src/spawn.ts - i.e. that
+# B's spawn ran at all. Everything else passes straight through.
+case "\$*" in *"/src/spawn.ts"*) printf 'invoked\n' >>"$e2k_arrived" ;; esac
+exec "$e2k_bun" "\$@"
 SHIM
-chmod +x "$TMP/e2k-shim/head"
+chmod +x "$TMP/e2k-shim/bun"
 
 e2k_spawn_child_of() {
-  # e2k_spawn_child_of <ancestor-pid> - the pid of a LIVE ac-spawn.sh descending
+  # e2k_spawn_child_of <ancestor-pid> - the pid of a LIVE spawn descending
   # from it, from ONE process-table read. Depth-agnostic with a cap: ac-learn.sh
   # runs the spawn in a command substitution, so the exact depth is an
   # implementation detail and a single ppid compare would miss it.
@@ -268,7 +264,7 @@ e2k_spawn_child_of() {
     END {
       for (i = 1; i <= NR; i++) {
         p = order[i]
-        if (argv[p] !~ /ac-spawn\.sh/) continue
+        if (argv[p] !~ /ac-spawn\.sh|\/src\/spawn\.ts/) continue
         q = p
         for (d = 0; d < 8; d++) {
           if (!(q in par)) break
@@ -375,7 +371,7 @@ e2k_reap() {
     # escalation that is not CONFIRMED is not a reap, so rc only clears when a
     # second bounded poll OBSERVES the candidate gone.
     if [ -n "$cand" ] && ps -p "$cand" >/dev/null 2>&1 \
-       && grep -q 'ac-spawn\.sh' < <(ps -o args= -p "$cand" 2>/dev/null) \
+       && grep -Eq 'ac-spawn\.sh|/src/spawn\.ts' < <(ps -o args= -p "$cand" 2>/dev/null) \
        && e2k_env_anchored "$cand"; then
       kill -9 "$cand" 2>/dev/null || true
       if e2k_wait_settled "$cand"; then rc=0; fi
@@ -453,7 +449,6 @@ assert_no_file "$e2k_claim" "E2-SIGKILL: the spawn-owned atomic claim is release
 # nothing about the double promote.
 assert_no_file "$AC_HOME/state/.learn-autoroom.lock" "E2-SIGKILL validity: B reclaimed the DEAD owner's lock and released it - nothing else can remove it"
 assert_file "$e2k_arrived" "E2-SIGKILL validity: racer B's ac-spawn.sh RAN - without this, every harm assertion above is vacuous"
-rm -f "$AC_HOME/config/model"
 
 # -- F2: the firing predicate is RE-READ under the lock ------------------------
 # A caller that passed the cheap pre-lock DUE gate can be overtaken: another
@@ -876,6 +871,54 @@ assert_eq "$(awk -F= '$1=="head"{print $2}' "$AC_HOME/state/.learn-suite-pin.met
 suite_task_clear
 rm -f "$AC_HOME/state/.learn-suite-pin.meta"
 
+# -- a run that DIED with no verdict re-pins too -----------------------------
+# A killed run records nothing, so the red self-heal above never meets a record
+# for its tree; relaunching on that tree would replay it for ever, however many
+# fixes land. Nothing was earned and nothing is in flight, so the fresh attempt
+# runs against live HEAD.
+reset_family
+suite_task_clear
+rm -f "$suite_rec"
+printf 'generation=0\nhead=%s\n' "$stale_sha" >"$AC_HOME/state/.learn-suite-pin.meta"
+printf 'kind=verify-suite\nbackend=herdr\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
+printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-$dead"
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+assert_no_file "$AC_HOME/state/$dead.meta" "the dead run is reclaimed"
+assert_contains "$out" "against ${suite_head:0:7}" "the fresh run is pinned to live HEAD, never the dead run's tree"
+assert_eq "$(awk -F= '$1=="head"{print $2}' "$AC_HOME/state/.learn-suite-pin.meta")" "$suite_head" \
+  "the pin record names live HEAD, so the suite task reads the same tree"
+suite_task_clear
+# The opposite direction is the unrecoverable one: re-pinning under a run that
+# may still be going would discard the verdict it is about to record.
+printf 'generation=0\nhead=%s\n' "$stale_sha" >"$AC_HOME/state/.learn-suite-pin.meta"
+printf 'kind=verify-suite\nbackend=herdr\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
+printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-$dead"
+: >"$FAKE_HERDR/.pane-api-down"
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+rm -f "$FAKE_HERDR/.pane-api-down"
+assert_contains "$out" "in flight" "a run that may still be going holds the gate"
+assert_eq "$(awk -F= '$1=="head"{print $2}' "$AC_HOME/state/.learn-suite-pin.meta")" "$stale_sha" \
+  "and keeps its pin - only a launch re-pins"
+suite_task_clear
+rm -f "$AC_HOME/state/.learn-suite-pin.meta"
+
+# -- reached through a fleet home's bin symlink, it still pins the distro ----
+# A fleet home symlinks this bin/, so `bin/ac-learn.sh` run from the home
+# reaches it by that path (the bash wake drain did, on 2026-10-01). A logical
+# bin/.. named the HOME as the checkout, git found no HEAD there, and the gate
+# pinned no-head - every run then died red within a second.
+reset_family
+suite_task_clear
+rm -f "$suite_rec" "$AC_HOME/state/.learn-suite-pin.meta"
+mkdir -p "$TMP/linkhome"
+ln -s "$BIN" "$TMP/linkhome/bin"
+out="$("$TMP/linkhome/bin/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+assert_contains "$out" "against ${suite_head:0:7}" "the run is pinned to the distro checkout's HEAD, not the home's missing one"
+assert_eq "$(awk -F= '$1=="head"{print $2}' "$AC_HOME/state/.learn-suite-pin.meta")" "$suite_head" \
+  "the pin record names the distro's HEAD"
+suite_task_clear
+rm -f "$AC_HOME/state/.learn-suite-pin.meta"
+
 # -- GREEN for this cycle and this tree: the promote proceeds ------------------
 green_suite
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a released autoroom must exit 0: $out"
@@ -941,6 +984,47 @@ set -e
 assert_eq "$suite_rc" "3" "the task exits with the runner's own status - a hand-run caller is told"
 assert_eq "$(awk -F= '$1=="status"{print $2}' "$suite_rec")" "red" "a failing suite records red"
 assert_eq "$(awk -F= '$1=="exit"{print $2}' "$suite_rec")" "3" "and keeps the runner's status, so a runner that could not run (exit 2) is not read as a test failure"
+
+# -- a run that HANGS ends at its ceiling and records red --------------------
+# A hung run writes no verdict, so it would hold the gate "in flight" until
+# someone closed its pane. The stub hangs the way run-suite.sh's suites do - a
+# job in its own process group - and the job ignores TERM, so only the KILL
+# reaches it.
+cat >"$TMP/suite-hang" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$\$" >"$TMP/hang.runner"
+set -m
+( trap '' TERM; while :; do /bin/sleep 1; done ) &
+printf '%s\n' "\$!" >"$TMP/hang.job"
+set +m
+wait
+EOF
+chmod +x "$TMP/suite-hang"
+rm -f "$suite_rec" "$TMP/hang.runner" "$TMP/hang.job"
+AC_LEARN_SUITE_TIMEOUT=2 AC_LEARN_SUITE_BIN="$TMP/suite-hang" "$BIN/ac-learn.sh" suite >"$TMP/hang.out" 2>&1 &
+hang_pid=$!
+for _ in $(seq 1 100); do kill -0 "$hang_pid" 2>/dev/null || break; /bin/sleep 0.2; done
+if kill -0 "$hang_pid" 2>/dev/null; then
+  # shellcheck disable=SC2046
+  kill -KILL "$hang_pid" $(cat "$TMP/hang.runner" "$TMP/hang.job" 2>/dev/null) 2>/dev/null || true
+  fail "a hung run must end at its ceiling, not hold the gate for ever"
+fi
+set +e
+wait "$hang_pid"
+suite_rc=$?
+set -e
+assert_eq "$suite_rc" "124" "a run killed at its ceiling exits 124, never a runner status"
+assert_eq "$(awk -F= '$1=="status"{print $2}' "$suite_rec")" "red" "a hung run records red"
+assert_eq "$(awk -F= '$1=="exit"{print $2}' "$suite_rec")" "124" "and its exit says the ceiling ended it"
+assert_contains "$(cat "$TMP/hang.out")" "ceiling" "the pane says why the run ended"
+if kill -0 "$(cat "$TMP/hang.job")" 2>/dev/null; then
+  kill -KILL "$(cat "$TMP/hang.job")" 2>/dev/null || true
+  fail "the job that ignored TERM, in its own process group, is reaped too"
+fi
+if kill -0 "$(cat "$TMP/hang.runner")" 2>/dev/null; then
+  kill -KILL "$(cat "$TMP/hang.runner")" 2>/dev/null || true
+  fail "and so is the runner"
+fi
 
 # -- the task RETIRES its own identity, so a dead run is never mistaken for a
 # live one: a checkpoint that finds neither a verdict nor a live task starts a

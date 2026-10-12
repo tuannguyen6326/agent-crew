@@ -33,7 +33,7 @@ description: The execution role and its review obligation: what an execution cre
   `reviewed_ref`, verifies only round N's still-open findings, and reviews the
   INTERDIFF `roundN.reviewed_ref..HEAD` as rigorously as a first pass; resolved
   findings from older rounds remain audit history, never permanent
-  re-attestation obligations. The full diff is context (`bin/ac-verify.sh` owns
+  re-attestation obligations. The full diff is context (`src/verify.ts` owns
   the prompt contract; sound because round 1 covered it at its own ref, and the
   normalizer floor owns out-of-delta findings). A validated ref is reviewed
   once: another round requires HEAD to move; pane/schema retries create no
@@ -43,7 +43,7 @@ description: The execution role and its review obligation: what an execution cre
   finding on code the fix delta never touched floors to advisory in the shared
   normalizer; a re-reported open id from the previous round stays blocking, with a
   non-overridable critical correctness/security/data-loss carve-out
-  (`bin/ac-pipeline-lib.sh` owns floor + fail directions); (2) past
+  (`findingsNormalize` in `src/lib.ts` owns floor + fail directions); (2) past
   `review.max_rounds` VERIFIER INVOCATIONS (per-project, default 3) the loop
   HOLDs for the OWNING chief's chief-decide - accept the residual with a
   `SELF-APPROVED: review-residual` receipt, or grant exactly ONE
@@ -73,7 +73,7 @@ description: The execution role and its review obligation: what an execution cre
     the caller declares the authority with `ac-brief.sh --captain-requested
     '<the captain's words, or the order ref>'`, which the brief then records.
   `--review no` is invalid for staged and `crew-ship` work.
-  EPIC EXCEPTION (captain ruling 2026-08-19: review and QA
+  EPIC EXCEPTION (review and QA
   run per EPIC, not per story): a story of a BRANCH-RECORDED epic (`data/<epic>/branches` -
   epic-branch-mech; `bin/ac-epic-branch.sh` owns the verbs) integrates on the
   epic branch, not production, so its per-story independent review defaults
@@ -112,7 +112,7 @@ description: The execution role and its review obligation: what an execution cre
   the map's history, never a defect. The lease follows the fleet backend the
     same way the crew lease does: a herdr fleet leases from the crew-tree pool,
     an orca fleet leases an Orca-managed worktree released at harvest with no
-    crew/<id> branch left behind (`bin/ac-verify.sh` verify_lease owns the
+    crew/<id> branch left behind (`src/verify.ts` verifyLease owns the
     contract).
 
 ## Verdict routing
@@ -124,9 +124,9 @@ description: The execution role and its review obligation: what an execution cre
 ## crew-ship validation (section 10)
 
 Project changes in `crew-ship` mode go through the crew-ship pipeline before PR: the crewmate runs the `crew-ship` skill in its worktree, state at `<repo>/.crew/ship/` via `bin/ac-ship.sh`.
-The pipeline mechanics - the 8 fixed steps (intent, rebase, review, test, document, lint, push, pr); the findings actions (`fix` is assigned to a crewmate fixer and the reviewer never fixes / `ask-user` parks and you relay to the captain / `no-op`); hold-and-fix (a failing step HOLDS, the run NEVER restarts from intent, and a fix commit that changes code re-opens completed `test`/`lint`); `fix-report`; and the FAIL-CLOSED `finish checks-passed|passed` gate - are owned by the `bin/ac-ship.sh` header and the `crew-ship` SKILL.md, not restated here.
+The pipeline mechanics - the 8 fixed steps (intent, rebase, review, test, document, lint, push, pr); the findings actions (`fix` is assigned to a crewmate fixer and the reviewer never fixes / `ask-user` parks and you relay to the captain / `no-op`); hold-and-fix (a failing step HOLDS, the run NEVER restarts from intent, and a fix commit that changes code re-opens completed `test`/`lint`); `fix-report`; and the FAIL-CLOSED `finish checks-passed|passed` gate - are owned by the header of `src/ship.ts` (started by `bin/ac-ship.sh`) and the `crew-ship` SKILL.md, not restated here.
 Two steps are FIXED POLICY, both FAILING TOWARD RUNNING: `lint` is OPT-IN (skip-by-default, runs only on `ac-ship.sh start --lint`), and `test` SKIPS on `ac-ship.sh start --tdd` - the implement DECLARES its TDD run is the evidence (a claim, not attestation); absent the flag the step RUNS, and a fix that changes code re-runs `test` regardless. The evidence-backed `attest-test`/`test.attestation` variant is the one chief verify uses (`attest-check`).
-The `test` step is also the ONLY place the unit suite runs fleet-wide: it publishes the run-scoped exact-SHA receipt (`<repo>/.crew/ship/<run>/test/receipt.env`) that a QA round may only READ. Its state is informational when the QA manifest has no `ut` row; when a `ut` row cites a concrete exact-tree test reference, that row requires this receipt to qualify for the same source SHA. QA never executes the cited test. A `--tdd` declaration writes no receipt (contract: the SHIP TEST RECEIPT block in `bin/ac-ship.sh`).
-Per-project pipeline config is captain-owned and branch-immune, HOME-ONLY at `projects/<name>.yaml` (the repo is never a config source): the keys, the MONOREPO scope+app model (whose closed scope list is `bin/ac-know.sh`'s record, never the yaml), and the config/scope proposal+install mechanics are owned by the `bin/ac-ship.sh` / `bin/ac-qa.sh` / `bin/ac-know.sh` headers and the `ac_project_config_file` resolver.
+The `test` step is also the ONLY place the unit suite runs fleet-wide: it publishes the run-scoped exact-SHA receipt (`<repo>/.crew/ship/<run>/test/receipt.env`) that a QA round may only READ. Its state is informational when the QA manifest has no `ut` row; when a `ut` row cites a concrete exact-tree test reference, that row requires this receipt to qualify for the same source SHA. QA never executes the cited test. A `--tdd` declaration writes no receipt (contract: the SHIP TEST RECEIPT block in the `src/ship.ts` header).
+Per-project pipeline config is captain-owned and branch-immune, HOME-ONLY at `projects/<name>.yaml` (the repo is never a config source): the keys, the MONOREPO scope+app model (whose closed scope list is `bin/ac-know.sh`'s record, never the yaml), and the config/scope proposal+install mechanics are owned by the `src/ship.ts` / `src/qa.ts` / `src/know.ts` headers and the `ac_project_config_file` resolver.
 The captain creates NONE of it: the task agent DISCOVERS and DRAFTS (`ac-qa.sh config-proposal`), and the CHIEF - never the drafting agent - reviews and installs (`ac-qa.sh config-install`, receipting `CONFIG-INSTALLED:` to the room); the captain vetoes by restoring the `.prev`. On financial/irreversible projects the captain may pin the install captain-required.
 Never merge a crew-ship PR whose run did not reach `checks-passed` (validated, unmerged; a `pr`-skipped run - empty-diff or `local-only` - reaches it with no PR raised); `passed` means the PR is already merged.

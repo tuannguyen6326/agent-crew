@@ -138,7 +138,7 @@ line number.
 The cite is what bumps `heat:`, the priority signal for which knowledge to
 re-verify, merge or retire first; recall itself deliberately never bumps it,
 since crediting eight entries you only skimmed would corrupt the very ranking
-it reads - `bin/ac-know.sh` and `bin/ac-scene.sh` own their conventions.
+it reads - the `src/know.ts` header and `bin/ac-scene.sh` own their conventions.
 
 ## Upgrade rule and captain re-route
 
@@ -201,7 +201,7 @@ captain redirects a task whose crewmate is already in flight -
   caller must discharge, the v2 merge marker and the canonical `report.md`
   publication, the >=1-visual floor, the closed
   tier/boundary/receipt model, and the fail-closed `finish` guards are
-  owned by `bin/ac-qa.sh`'s header (BOUNDARY POLICY block) and the
+  owned by `src/qa.ts`'s header (BOUNDARY POLICY block) and the
   crew-qa skill.
   MORE THAN ONE MODEL MAY LOOK, and exactly one still judges. A fleet that
   configures `panes.codereview-scout.lanes[]` gives each review round a set of
@@ -225,7 +225,7 @@ captain redirects a task whose crewmate is already in flight -
   across every repo it spans, boots its own stack from those repos' sources,
   and is kept alive between campaigns - takes the DOMAIN route instead. The
   domain names that repository once (`bin/ac-domain.sh qa-repo <domain>
-  --set <project>`; that verb's header block owns the declaration and the
+  --set <project>`; the qa-repo block of the `src/domain.ts` header owns the declaration and the
   refusal that makes REUSE mechanical), and a task carrying `domain:<d>`
   whose domain declares one has its behavioural proof ordered INTO that
   suite: an ordinary slice against an ordinary project of the domain,
@@ -266,7 +266,7 @@ create/verify/show/retire, the lease fence lives in `ac-tree.sh get` (herdr) and
 skill's epic exception, and `bin/ac-epic-ship.sh` is the gated 2-PR exit (stories
 terminal, partial-epic captain receipts, one review round at the tip, qa
 attestation when pinned; the captain merges every PR). The
-`epic-intake` skill owns the mechanics and `bin/ac-ready.sh`'s header owns the
+`epic-intake` skill owns the mechanics and `src/ready.ts`'s header owns the
 scheduler primitive + `blocked-by` grammar; the invariants that stay here: the
 STORY MAP is gated (and captain-required whenever any story is irreversible or
 financial); each story still gets its OWN intake triage with receipts (the map
@@ -281,3 +281,4 @@ It never mints a backlog row, never verifies, never authors or posts a verdict, 
 A drained `github <key> <payload>` wake obliges you to fold-or-mint the item per this section's check-the-queue-before-minting rule - the poll's own record never decides fold vs mint.
 When the item is a PR, VERIFY it yourself through the ordinary flow and post the verdict with `bin/ac-github.sh comment --repo <clone> --pr <n> --body <verdict>` (idempotent per exact verdict text), then STOP - the crew never merges a PR itself.
 When the item is an issue with no PR, VERIFY its premise and, once minted, spawn the ordinary fix flow under the `config/room-parallel` cap like any other task - the fix still ends in a PR the captain merges.
+Its brief names the issue number as the one this task fixes, which is what lets that PR close it and no other.

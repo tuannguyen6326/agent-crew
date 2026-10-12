@@ -9,10 +9,11 @@
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
+RBIN="$(make_retired_bin)"
 
 lib() {
   # lib <body> - run a body with ac-pipeline-lib.sh sourced, nothing else.
-  bash -c "set -euo pipefail; . '$BIN/ac-pipeline-lib.sh'; $1"
+  bash -c "set -euo pipefail; . '$RBIN/ac-pipeline-lib.sh'; $1"
 }
 
 cfg="$TMP/config.yaml"
@@ -83,8 +84,8 @@ printf 'qa:\n  serve: "echo flat"\n  scopes:\n' >"$empty"
 assert_eq "$(lib "ac_yaml_keys '$empty' qa.scopes")" "" "an EMPTY block has no children"
 lib "ac_yaml_has '$empty' qa.scopes" || fail "...but it is PRESENT, and ac_yaml_has must say so"
 lib "ac_yaml_has '$scoped' qa.scopes" || fail "a populated block is present"
-assert_fails bash -c ". '$BIN/ac-pipeline-lib.sh'; ac_yaml_has '$cfg' qa.scopes"
-assert_fails bash -c ". '$BIN/ac-pipeline-lib.sh'; ac_yaml_has '$scoped' qa.nope"
+assert_fails bash -c ". '$RBIN/ac-pipeline-lib.sh'; ac_yaml_has '$cfg' qa.scopes"
+assert_fails bash -c ". '$RBIN/ac-pipeline-lib.sh'; ac_yaml_has '$scoped' qa.nope"
 lib "ac_yaml_has '$scoped' qa.health_timeout" || fail "a scalar is present too"
 
 # --- ac_findings_normalize: fail-closed action + description fallback --------

@@ -66,7 +66,7 @@
 // The one caller, bin/ac-spawn.sh, already defaults `|| printf 'yolo=off\n'`
 // and drops stderr, so nothing there changed with the port.
 import { statSync, writeSync } from "node:fs";
-import { die, enterCaller, NO_HOME, physicalDir } from "./lib.ts";
+import { die, enterCaller, NO_HOME, physicalDir, spawnShellSync } from "./lib.ts";
 
 const { args } = enterCaller(process.argv.slice(2));
 const name = args[0] ?? "";
@@ -85,7 +85,7 @@ else {
       if (!statSync(records).isDirectory()) throw 0;
     } catch {
       try {
-        made = Bun.spawnSync(["mkdir", "-p", records], { stdout: "ignore", stderr: "inherit" }).exitCode === 0;
+        made = spawnShellSync(["mkdir", "-p", records], { stdout: "ignore", stderr: "inherit" }).exitCode === 0;
       } catch {
         made = false;
       }
@@ -106,12 +106,12 @@ let bracket = "";
 if (isFile(reg)) {
   let line = "";
   try {
-    line = Bun.spawnSync(["grep", "-E", `^- ${name} \\[`, reg], { stdout: "pipe", stderr: "ignore" }).stdout.toString("latin1").split("\n")[0];
+    line = spawnShellSync(["grep", "-E", `^- ${name} \\[`, reg], { stdout: "pipe", stderr: "ignore" }).stdout.toString("latin1").split("\n")[0];
   } catch {}
   if (line !== "") {
     let r: { exitCode: number | null; stdout: Buffer };
     try {
-      r = Bun.spawnSync(["sed", "-n", "s/^- [^[]*\\[\\([^]]*\\)\\].*/\\1/p"], { stdin: Buffer.from(`${line}\n`, "latin1"), stdout: "pipe", stderr: "inherit" });
+      r = spawnShellSync(["sed", "-n", "s/^- [^[]*\\[\\([^]]*\\)\\].*/\\1/p"], { stdin: Buffer.from(`${line}\n`, "latin1"), stdout: "pipe", stderr: "inherit" });
     } catch {
       r = { exitCode: 127, stdout: Buffer.alloc(0) };
     }

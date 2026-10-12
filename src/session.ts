@@ -23,7 +23,7 @@
 // argv: each value keeps both forms, bytes for printing, native for paths.
 import { statSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { die, enterCaller, metaGet, stateDir, warn } from "./lib.ts";
+import { die, enterCaller, metaGet, spawnShellSync, stateDir, warn } from "./lib.ts";
 
 const bin = join(import.meta.dir, "..", "bin");
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
@@ -73,12 +73,12 @@ const worktree = field("worktree");
 if (talk && live) {
   // `$(... || printf unknown)`: a failed state read keeps whatever it printed
   // first, then "unknown"; the substitution drops every trailing newline.
-  const r = Bun.spawnSync([join(bin, "ac-crew-state.sh"), id], { stdout: "pipe", stderr: "ignore" });
+  const r = spawnShellSync([join(bin, "ac-crew-state.sh"), id], { stdout: "pipe", stderr: "ignore" });
   const state = (r.stdout.toString("latin1") + (r.exitCode === 0 ? "" : "unknown")).replace(/\n+$/, "");
   if (state.startsWith("busy") || state.includes("working:") || state.startsWith("validate:"))
     die(b(`REFUSED: ${idB} is mid-turn (${state}) - two writers corrupt one session. Talk when it parks, or ac-follow.sh to watch now.`));
   // An unknown backend must not proceed here, the same direction as the
-  // collision-refusal guard (ac-spawn.sh reap_orphan_window): writing an
+  // collision-refusal guard (src/spawn.ts reapOrphanWindow): writing an
   // un-forked --talk into a pane that turns out to still be mid-turn corrupts
   // the session, the same class of harm the collision guard refuses to risk
   // on an unknown backend (a REAP guard on the other hand must not ACT on

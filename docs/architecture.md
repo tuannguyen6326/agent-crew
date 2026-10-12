@@ -44,7 +44,7 @@ A fleet home holds the fleet's state, not code; `AGENTS.md` section 2 lists its 
 | Path | Holds | Owner |
 |---|---|---|
 | `state/` | Task metas, status logs, wake spools, watcher beacons, locks, dot-prefixed counters. | `bin/ac-lib.sh`, `bin/ac-wake-lib.sh`, `bin/ac-maintenance-lib.sh` |
-| `data/` | Task dirs (`brief.md`, `report.md`, `kickoff.md`, `timeline.log`) and each family's `room.md`. | `bin/ac-brief.sh` header (the layout spec) |
+| `data/` | Task dirs (`brief.md`, `report.md`, `kickoff.md`, `timeline.log`) and each family's `room.md`. | `src/brief.ts` header (the layout spec) |
 | `records/` | Ledgers (`backlog.md`, `projects.md`, `captain.md`, `learnings.md`, `crewdeputies.md`, `crewdomains.md`), `repo-knowledge/`, `scenes/`, `standing-jobs.md`, `rig.json`. | Each file's own `bin/` script |
 | `config/` | Per-fleet knobs and user-owned hooks. | [`configuration.md`](configuration.md) |
 | `projects/` | Project clones plus each one's captain-owned `<name>.yaml`. | `ac_project_config_file` in `bin/ac-lib.sh` |
@@ -58,14 +58,12 @@ A caller that legitimately runs homeless, as every crewmate pane does, uses the 
 `seedRuntimeLinks` (`src/lib.ts`) symlinks the executable core - `bin`, `CLAUDE.md`, `.claude`, `AGENTS.md` - into a home, so a chief session runs with cwd = home while the code stays in the checkout.
 A real (non-symlink) entry is a per-home override and is left alone, a stale symlink is repointed, and `docs/` and `tests/` are never linked.
 `src/fleet-new.ts` calls it for a new fleet home and `src/home-seed.ts` for a crewdeputy home; its bash original `ac_seed_runtime_links` is retired, frozen at `tests/fixtures/ac-seed-runtime-links.sh` for the oracles.
-`state/.ac-root` (`ac_seed_root_pointer`) records the checkout, so a hook deployed under `config/` can find `bin/ac-lib.sh` from any cwd.
+`state/.ac-root`, rewritten by every `bin/ac-remote.sh` run (the `src/remote.ts` preamble; its bash original `ac_seed_root_pointer` is retired), records the checkout, so a hook deployed under `config/` can find `bin/ac-lib.sh` from any cwd.
 
 `bin/ac-lib.sh` is the core library every script sources.
 Its satellites are sourced directly by the callers that need them:
 - `bin/ac-wake-lib.sh` - wake scope and publication, the watcher nudge, the room pending/handback matchers, the chief-quiet predicates.
-- `bin/ac-maintenance-lib.sh` - the Learning/Curate cadence counters and the shared maintenance transaction.
-- `bin/ac-qa-lib.sh` - QA validation.
-- `bin/ac-pipeline-lib.sh` - the YAML subset reader, the findings normalizer and the transcript reader shared by `ac-ship.sh` and `ac-qa.sh`.
+- `bin/ac-maintenance-lib.sh` - the Learning/Curate cadence readers and the unsettled-transaction reader session start prints from.
 - `bin/ac-harness.sh` - the per-harness registry, sourced by `ac-lib.sh` itself.
 
 ## Session backends
@@ -91,7 +89,7 @@ Tests drive the herdr driver through a fake `herdr` CLI shipped in `tests/sh/hel
 A task's primary tree is leased by the fleet's backend.
 A herdr fleet leases a pooled detached-HEAD worktree (`<repo>/.crew/worktrees/<n>`, slot leases in `<repo>/.crew/slots/`) through `bin/ac-tree.sh`; slots are reused and returned, never deleted ([`worktrees.md`](worktrees.md)).
 An orca fleet leases one Orca-managed worktree per task on `crew/<id>`, which teardown removes rather than returns (the meta's `worktree_backend=orca`).
-The exact-ref verifier lease follows the same fork (`verify_lease` in `bin/ac-verify.sh`).
+The exact-ref verifier lease follows the same fork (`verifyLease` in `src/verify.ts`).
 
 ## Spawn and instruction seeding
 
@@ -102,18 +100,18 @@ A roomchief runs in the agent-crew checkout with no worktree and no brief - the 
 One crewmate spawn:
 - `bin/ac-brief.sh` has already written the brief and recorded `Mode:` and the review obligation.
 - The profile comes from `--harness`, else `config/crew-dispatch.json` through `bin/ac-dispatch-select.sh`, else `config/model` and `config/effort`.
-- The worktree is leased per backend and recorded in `state/<id>.meta` (the LEASES block in the header owns the grammar).
+- The worktree is leased per backend and recorded in `state/<id>.meta` (the LEASES block in the `src/spawn.ts` header owns the grammar).
 - The worktree is seeded: `ac_seed_crewmate_md`, `ac_seed_crew_settings`, `ac_seed_crew_skills`, `ac_seed_ports_env`.
 - The pane opens and the harness launches bare, with `AC_FLEET_*` variables (state dir, fleet name, scope, per-role knobs) on its launch line.
-- `deliver_kickoff` waits for the harness and its composer, answers startup dialogs, writes the prompt to `<task-dir>/kickoff.md`, and types one pointer line naming it.
+- `deliverKickoff` (`src/spawn.ts`) waits for the harness and its composer, answers startup dialogs, writes the prompt to `<task-dir>/kickoff.md`, and types one pointer line naming it.
 - Submit and arrival are both checked: a dead pane kills the spawn, and a swallowed kickoff leaves a status line and a `kickoff-unverified` wake.
 
 `bin/ac-self-task.sh start` runs the same four seeding calls for a chief-side edit.
 
 `bin/ac-harness.sh` is the one place a harness's facets live: the known set, the TUI busy regex, the instruction file, the pane-agent arm, the startup-dialog key and the recorded launch options.
 Every facet fails closed or answers a documented default.
-The three launch command tables stay at their arms (`ac_build_launch`, `oneshot_launch` in `bin/ac-pane-agent.sh`, and the brain's `synthCommand` in `src/brain.ts`), so a new harness edits the registry, those three arms, the TypeScript copy of the set in `src/lib.ts` (`HARNESSES`, held to the registry by `tests/ts/lib.test.ts`) and its entry in the `harness-operations` skill's `references/harness-facts.md`.
-`synthCommand` must print exactly what `oneshot_launch` prints for the same registry harness, model and effort, with `ultracode` sent as `xhigh` and any other unknown effort refused as the one-shot arm does; `tests/sh/ac-brain.test.sh` pins that.
+The three launch command tables stay at their arms (`ac_build_launch`, `ONESHOT` in `src/pane-agent.ts`, and the brain's `synthCommand` in `src/brain.ts`), so a new harness edits the registry, those three arms, the TypeScript copy of the set in `src/lib.ts` (`HARNESSES`, held to the registry by `tests/ts/lib.test.ts`) and its entry in the `harness-operations` skill's `references/harness-facts.md`.
+`synthCommand` must print exactly what `ONESHOT` prints for the same registry harness, model and effort, with `ultracode` sent as `xhigh` and any other unknown effort refused as the one-shot arm does; `tests/sh/ac-brain.test.sh` pins that.
 `agy` is the deliberate exception: the one-shot arm has a form for it, and the brain refuses it.
 A captain's custom template (`config/launch-<h>`) launches without joining the registry.
 
@@ -130,6 +128,7 @@ A repo-shipped skill of the same name wins, and dangling links from retired skil
 ## Task state on disk
 
 `state/<id>.meta` is the key=value task record (window, worktree, leases, project, kind, mode, session id, backend, PR), last write wins.
+Each rewrite (`ac_meta_set` in `bin/ac-lib.sh`, `metaSet`/`metaUpdate` in `src/lib.ts`) holds that meta's own lock, `<dir>/.<file>.lock`, so concurrent writers of different keys do not drop each other's - short of the race between two reclaimers of a dead holder's lock that `ac_lock_acquire` documents as its residual.
 The path is a namespace - every enumerator reads a file there as an agent in flight - which is why counters in `state/` are dot-prefixed.
 Two meta classes are defined once in `bin/ac-lib.sh`:
 - `ac_meta_is_verify` - `kind=verify-*` (`verify-codereview`, `verify-qa`, `verify-learning`, `verify-suite`) is excluded from crew accounting, never from supervision.
@@ -157,7 +156,7 @@ The fleet chief also drains, in place, the spool of any family whose roomchief i
 Records of a drainer that died mid-claim return to the spool: exactly-once normally, at-least-once across crashes.
 The drain then reports unacknowledged completions and prints `WATCHER-DOWN` when crew flies under a stale beacon.
 
-`bin/ac-watch.sh` costs no tokens while nothing happens; its header owns every arm and reason (marker, artifact, push, `gone`/`unobservable`, `ask`, `ended`, `limited`, `stale`, `heartbeat`).
+`bin/ac-watch.sh` costs no tokens while nothing happens; the header of `src/watch.ts`, which it starts, owns every arm and reason (marker, artifact, push, `gone`/`unobservable`, `ask`, `ended`, `limited`, `stale`, `heartbeat`).
 Each watcher stamps `state/.last-watcher-beat[.<family>]` and stands it down on exit, and records its `AC_WATCH_SKIP` in `state/.watcher-config[<suffix>]` so an arm with a different config refuses.
 A roomchief arms with `AC_WATCH_ONLY` from `bin/ac-ready.sh watch-set <family>`; the fleet watcher revalidates its skip set every poll and covers a family directly when its roomchief is gone.
 A blocking caller (`ac-gate.sh`, `ac-verify.sh`) writes a self-expiring `state/.chief-busy-until.<family>` so a live roomchief inside one long call keeps its skip.
@@ -198,7 +197,7 @@ The non-claude wirings ship with live probes pending, and `tests/sh/ac-harness-h
 `records/backlog.md` is the fleet-wide task index and `data/<family>/room.md` is one family's narrative; they never merge.
 
 `bin/ac-room.sh` owns rooms: `post`, `show`, `list`, `close`, `open`, `pending`, `handback`, and the gate-receipt verbs `gate-route`, `gate-verify`, `disposition`.
-`post` refuses a malformed `GATE:`/`ASK:`/`DECIDED:` opening (`ac_room_marker_malformed`).
+`post` refuses a malformed `GATE:`/`ASK:`/`DECIDED:` opening (the grammar of `ac_room_marker_malformed`).
 The captain's inbox count is one matcher, `ac_room_pending`, and the HANDBACK state another, `ac_room_handback_families`, both in `bin/ac-wake-lib.sh`; the digest, the dashboard and the guards all call them.
 
 The backlog grammar is [`backlog.md`](backlog.md), parsed by one module, `src/backlog.ts`; every awk site that reads a line's fields prepends the `AC_DONELINE_AWK` binding in `bin/ac-lib.sh` to its own program.
@@ -232,8 +231,8 @@ It leases an isolated worktree at the exact commit, stubs the project's instruct
 Its meta is `kind=verify-<kind>`, and round history carries forward only as structured findings.
 
 `bin/ac-ship.sh` is the crew-ship state machine driven by the `crew-ship` skill; its steps, findings, hold-and-fix, round cap and `checks-passed` gate are in [`validate-pipeline.md`](validate-pipeline.md), with `bin/ac-ship-watch.sh` as its board.
-`bin/ac-qa.sh` is the QA state machine whose durable run state owns the verdict and whose atomic attestation `qa.require_for_ship` gates on; see [`qa-attestation.md`](qa-attestation.md), with `bin/ac-qa-watch.sh` as its board.
-`ac_findings_normalize` in `bin/ac-pipeline-lib.sh` is the single enforcement point for the findings wire, including the downgrade of an unfounded `fix` to `ask-user`.
+`src/qa.ts`, started by `bin/ac-qa.sh`, is the QA state machine whose durable run state owns the verdict and whose atomic attestation `qa.require_for_ship` gates on; see [`qa-attestation.md`](qa-attestation.md), with `bin/ac-qa-watch.sh` as its board.
+`findingsNormalize` in `src/lib.ts` is the single enforcement point for the findings wire, including the downgrade of an unfounded `fix` to `ask-user`.
 
 ## Gates
 
@@ -255,15 +254,15 @@ The gate law is the `staged-gates` skill; report contents are [`staged-design-fl
 | Layer | Store | Owner |
 |---|---|---|
 | L0 narrative | `data/<family>/room.md` | `bin/ac-room.sh` |
-| L1 facts | `records/repo-knowledge/<project>.md`, one line per fact with provenance and freshness | `bin/ac-know.sh` |
+| L1 facts | `records/repo-knowledge/<project>.md`, one line per fact with provenance and freshness | `src/know.ts` (started by `bin/ac-know.sh`) |
 | L1 lessons | `records/learnings.md` `## Pending` | `bin/ac-learn.sh note` |
 | L2 scenes | `records/scenes/<slug>.md`, pull-only, never seeded | `bin/ac-scene.sh` |
-| L3 always-loaded | `$AC_HOME/CREWMATE-learned.md` and `$AC_HOME/skills/` | `bin/ac-learn.sh` transactions |
+| L3 always-loaded | `$AC_HOME/CREWMATE-learned.md` and `$AC_HOME/skills/` | `src/learn.ts` transactions (started by `bin/ac-learn.sh`) |
 | Index | `state/brain.sqlite` over the home's markdown, facts in `state/facts.md` | `src/brain.ts` |
 
 `ac-know.sh recall` walks scenes then facts, ranks by terms matched then `heat:`, and caps its output; `cite` (and `ac-scene.sh show --cite`) bumps heat.
 
-Learning (`bin/ac-learn.sh`):
+Learning (`src/learn.ts`, started by `bin/ac-learn.sh`):
 - `tick` advances the cadence; a keyed tick is idempotent through `state/.learn-ticks`.
 - At `config/learn-every` (default 8) the drain runs `autoroom`, which promotes a cap-exempt `learning` roomchief through spawn's atomic `.meta-claims`.
 - `autoroom` holds on the ledger shape gate and, only where `config/learn-suite-gate=on`, until `tests/run-suite.sh` is green for the current generation and tree.
@@ -272,7 +271,7 @@ Learning (`bin/ac-learn.sh`):
 
 Each complete Learning run ticks Curate, and at `config/curate-every` (default 5) Learning runs `bin/ac-curate.sh run`, which archives retired captain rules and old Done rows verbatim and gates anything non-deterministic.
 Neither has a cron or daemon.
-Both mutate knowledge only through the maintenance transaction in `bin/ac-maintenance-lib.sh` - a fleet lock, a pre-write backup, a closed schema, staged hashes, atomic replacement and a journal under `state/.maintenance-transactions/` - and `ac_maintenance_receipt_validate` re-derives every hash rather than trust a writer.
+Both mutate knowledge only through the maintenance transaction (`maintenanceApply` in `src/lib.ts`) - a fleet lock, a pre-write backup, a closed schema, staged hashes, atomic replacement and a journal under `state/.maintenance-transactions/` - and the receipt boundary (`receiptValidate` in `src/maintenance-receipt.ts`) re-derives every hash rather than trust a writer.
 `ac-learn.sh maintenance status|resume|abandon` settles a held transaction.
 
 The brain database is disposable: markdown stays the system of record (`src/brain.ts` header).
@@ -290,7 +289,7 @@ Its sites, each a proposal only: the watcher's notes on quiet wakes, `ac-dispatc
 ## The dashboard
 
 `bin/ac-dashboard.sh` runs it in the foreground by default, or detached with `start|stop|restart|status` (pid and log in `$AC_HOME/state/`).
-It runs `dashboard/app.ts` itself (through `bin/ac-bun.sh`, like every `src/` entry) under Bun with no build step.
+The entry is `src/dashboard.ts`: the foreground serves `dashboard/app.ts` in its own process, and the daemon runs `dashboard/app.ts` itself, both under Bun with no build step.
 
 | File | Role |
 |---|---|
@@ -310,7 +309,7 @@ Paths are gated by `realpathSync` against the home, and requests by local `Host`
 `bin/ac-remote.sh` is the durable state machine around a transport it never builds in: user-owned hooks (`config/remote-poll`, `remote-reply`, optional `remote-ack`) carry Slack or anything else, and every verb degrades safely without them.
 `poll` stashes each new order at `state/remote-inbox/<rid>.json` (the rid is the idempotency key) and publishes one `remote-order <rid>` wake to the fleet spool.
 `order` stashes a local order the same way, which is how a solo session hands work to the chief; replies land at `state/remote-inbox/<rid>.replies.md`.
-Only the fleet-scoped watcher owned by the session-lock holder runs the poll slot (LOCK GATE in `bin/ac-watch.sh`).
+Only the fleet-scoped watcher owned by the session-lock holder runs the poll slot (LOCK GATE in the `src/watch.ts` header).
 The chief's handling is the `remote-orders` skill; an example transport is `docs/examples/slack-remote`.
 
 `bin/ac-github.sh poll` only detects: it records open PRs and issues from a clone's `origin` under `state/.github/<slug>/` and publishes a `github` wake, never minting, verifying, spawning or merging; `comment` posts a verdict the crew already produced.
@@ -326,7 +325,7 @@ Orders go out through `bin/ac-send.sh`, and recovery is `ac-spawn.sh <id> --crew
 A crewdomain is state inside this fleet: a package at `crewdomains/<name>/` plus one line in `records/crewdomains.md`.
 The package holds `records/projects.md`, `CREWMATE.md` (the last seeded layer) and `projects/` (symlinks into the fleet's own clones), plus an optional `qa-repo`.
 Its work is the `domain:<name>`-tokened slice of the fleet backlog, worked by a domainchief - an ordinary roomchief whose meta gains `domain=` and whose launch line gains `AC_DOMAIN`, derived from the row token at promote.
-`bin/ac-domain.sh` owns every verb and the package layout; choosing between the two is the `deputies-domains` skill.
+The `src/domain.ts` header (behind `bin/ac-domain.sh`) owns every verb and the package layout; choosing between the two is the `deputies-domains` skill.
 
 ## The skills layer
 
@@ -347,21 +346,21 @@ Every tracked package follows the Agent Skills spec, enforced by `tests/sh/ac-sk
 |---|---|
 | Home, metas, locks, config reads, seeding, meta classes, landing ledger | `bin/ac-lib.sh` |
 | Backlog parsing and mutation | `src/backlog.ts` (awk sites through `AC_DONELINE_AWK` in `bin/ac-lib.sh`), `bin/ac-task.sh`; grammar in [`backlog.md`](backlog.md) |
-| Task-data layout | `bin/ac-brief.sh` |
+| Task-data layout | `src/brief.ts` (started by `bin/ac-brief.sh`) |
 | Closed-family relocation to `data/archive/<year>/` | `bin/ac-archive.sh` (manual only) |
 | Harness facets | `bin/ac-harness.sh` |
 | Backend contract and launch line | `bin/ac-backend.sh`, `bin/ac-backend-orca.sh` |
-| Worktree pool | `bin/ac-tree.sh` |
-| Spawn, kickoff, leases grammar | `bin/ac-spawn.sh` |
-| Watcher, wake keying, push, drain | `bin/ac-watch.sh`, `bin/ac-wake-lib.sh`, `src/done.ts`, `bin/ac-wake-drain.sh` |
+| Worktree pool | `src/tree.ts` (started by `bin/ac-tree.sh`) |
+| Spawn, kickoff, leases grammar | `src/spawn.ts` (started by `bin/ac-spawn.sh`) |
+| Watcher, wake keying, push, drain | `src/watch.ts` (`bin/ac-watch.sh`), `bin/ac-wake-lib.sh`, `src/done.ts`, `src/wake-drain.ts` |
 | Rooms and gate receipts | `bin/ac-room.sh` |
-| Pane agents, exact-ref verification | `bin/ac-pane-agent.sh`, `bin/ac-verify.sh` |
-| crew-ship and QA pipelines | `bin/ac-ship.sh`, `bin/ac-qa.sh`, `bin/ac-pipeline-lib.sh` |
-| Second chief and maintenance gate | `bin/ac-gate.sh` |
-| Knowledge, scenes, brain | `bin/ac-know.sh`, `bin/ac-scene.sh`, `src/brain.ts` |
-| Learning, Curate, maintenance transaction | `bin/ac-learn.sh`, `bin/ac-curate.sh`, `bin/ac-maintenance-lib.sh` |
-| System One | `bin/ac-jev.sh`, `bin/ac-compact-advise.sh` |
+| Pane agents, exact-ref verification | `bin/ac-pane-agent.sh`, `src/verify.ts` (started by `bin/ac-verify.sh`) |
+| crew-ship and QA pipelines | `src/ship.ts` (started by `bin/ac-ship.sh`), `src/qa.ts` (started by `bin/ac-qa.sh`), `src/lib.ts` |
+| Second chief and maintenance gate | `src/gate.ts` (started by `bin/ac-gate.sh`) |
+| Knowledge, scenes, brain | `src/know.ts` (started by `bin/ac-know.sh`), `bin/ac-scene.sh`, `src/brain.ts` |
+| Learning, Curate, maintenance transaction | `src/learn.ts` (started by `bin/ac-learn.sh`), `src/curate.ts` (started by `bin/ac-curate.sh`), `src/lib.ts` (`maintenanceApply`), `bin/ac-maintenance-lib.sh` (the readers) |
+| System One | `src/jev.ts` (started by `bin/ac-jev.sh`), `src/compact-advise.ts` (started by `bin/ac-compact-advise.sh`) |
 | Dashboard | `dashboard/app.ts` |
-| Remote orders, GitHub intake | `bin/ac-remote.sh`, `bin/ac-github.sh` |
-| Deputies, domains | `bin/ac-deputy.sh`, `bin/ac-domain.sh` |
+| Remote orders, GitHub intake | `src/remote.ts`, `src/github.ts` |
+| Deputies, domains | `src/deputy.ts`, `src/domain.ts` |
 | Rig manifest, standing jobs, pre-push gate | `bin/ac-rig.sh`, `bin/ac-standing-jobs.sh`, `bin/ac-push-gate.sh` |

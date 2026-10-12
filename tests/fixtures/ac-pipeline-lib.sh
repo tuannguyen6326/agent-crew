@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # ac-pipeline-lib.sh - shared helpers for the two pipeline state machines
-# (ac-ship.sh + ac-qa.sh). Not an entrypoint; sourced after ac-lib.sh.
+# (src/ship.ts and src/qa.ts, which bin/ac-ship.sh and bin/ac-qa.sh start,
+# through their src/lib.ts twins). Not an entrypoint;
+# sourced after ac-lib.sh.
 #
 # Owns: the flat nested-scalar YAML subset reader (ac_yaml_get, its
 # block-enumerating sibling ac_yaml_keys, and the presence predicate
@@ -15,10 +17,20 @@
 # ac_findings_summary) - the fail-closed action/description normalization and
 # the action-count summary both pipelines' cmd_findings share.
 #
+# src/ship.ts reaches ac_yaml_get, ac_findings_normalize and
+# ac_findings_summary through their src/lib.ts twins (yamlGet,
+# findingsNormalize, findingsSummary), which spawn these same awk and jq
+# programs, copied verbatim; tests/ts/ship.test.ts holds each twin to its
+# function here, so a program changed on one side alone fails that test.
+# ac_yaml_keys and ac_yaml_has have the same kind of twins (yamlKeys, yamlHas),
+# held to their functions by tests/ts/qa-lib.test.ts.
+#
 # Also owns: the transcript-final reader (ac_transcript_final) - the last
 # assistant message text pulled from a Claude Code session transcript, the
 # pane agent's verdict both pipelines read - and ac_verdict_json, which pulls
 # the bare JSON verdict object out of that (often prose-wrapped) final message.
+# Its twin is src/lib.ts's verdictJson, spawning the awk below verbatim;
+# tests/ts/verify-twins.test.ts holds the two to each other.
 
 ac_yaml_get() {
   # ac_yaml_get <file> <dotted.key> - flat nested-scalar YAML subset reader.
@@ -108,7 +120,7 @@ ac_delivery_mode_block() {
     crew-ship)
       printf -- '- Mode crew-ship: run the `crew-ship` skill. Its `ac-ship` engine owns the guarded 8-step delivery pipeline (intent, rebase, review, test, document, lint, push, pr). Hand over only after checks pass and include the PR URL.' ;;
     direct-pr)
-      printf -- '- Mode direct-pr: after %s, push `%s` and open a PR against %s. The PR body covers intent, changes, and verification evidence.' "$loop" "$branch" "$base" ;;
+      printf -- '- Mode direct-pr: after %s, push `%s` and open a PR against %s. The PR body covers intent, changes, and verification evidence, and ends with `Closes #<n>` only for the GitHub issue the brief says this task fixes; never put close, fix or resolve before any other `#<n>` - GitHub closes that issue on merge.' "$loop" "$branch" "$base" ;;
     feature-pr)
       printf -- '- Mode feature-pr: after %s, leave `%s` clean and fully committed - it lands onto the feature integration branch `%s` (the chief runs ac-merge-local). Never push or open a PR; publication happens ONCE at the feature ship.' "$loop" "$branch" "$integ" ;;
     local-only)

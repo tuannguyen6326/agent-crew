@@ -40,7 +40,7 @@ rules apply with the crewchief playing both parts.
 
 The no-side-effect rule below binds CHIEF initiative; the captain invoking
 `/brainstorm` IS the adoption of this one promote. Standard hot-room
-promote, nothing new (mechanics: `bin/ac-spawn.sh` header):
+promote, nothing new (mechanics: `src/spawn.ts` header):
 
 1. `bin/ac-room.sh post brainstorm-<slug> crewchief "BRAINSTORM: <topic
    verbatim> - ideation only: converse with the captain and journal here;
@@ -62,7 +62,7 @@ promote, nothing new (mechanics: `bin/ac-spawn.sh` header):
    pass its full profile as spawn flags (a fleet may pin brainstorms to a
    different harness this way - the rule is the captain's durable word);
    (c) neither - pass nothing and the promote resolves the ladder itself
-   (routed default, else `config/crew-harness`; `bin/ac-spawn.sh` header
+   (routed default, else `config/crew-harness`; `src/spawn.ts` header
    owns the contract).
 3. Tell the captain where it lives: Board -> brainstorm-<slug> -> chat, or
    the pane itself.

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ac-watch.test.sh - watcher semantics: the durable wake queue + drain +
 # turn-end guard predicate (backend-free), then scope routing, liveness and
-# marker passes driven through the file-backed fake herdr CLI (helpers.sh).
+# marker passes driven through the file-backed fake herdr CLI (helpers.sh), and
+# last the differential leg holding src/watch.ts to the frozen original.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
@@ -501,9 +502,10 @@ assert_contains "$out" "WAKE NOT DURABLE" \
   "a failed publish reaches the chief on the one channel that is actually read"
 
 # ...and NO site publishes behind queue_wake's back: one wake path, one place
-# that can report a loss. ac_wake_publish must appear exactly once in this
-# file - inside queue_wake - with every caller going through it.
-assert_eq "$(grep -v '^[[:space:]]*#' "$BIN/ac-watch.sh" | grep -c 'ac_wake_publish ' || true)" "1" \
+# that can report a loss. The entry is a shim; in src/watch.ts a wakePublish(
+# call must appear exactly once - inside queueWake - with every caller going
+# through it.
+assert_eq "$(grep -v '^[[:space:]]*//' "$ROOT/src/watch.ts" | grep -c 'wakePublish(' || true)" "1" \
   "every wake in the watcher goes through queue_wake, so none can lose its record silently"
 
 # ...and the episode LATCH must not advance on a record that never reached
@@ -2121,8 +2123,8 @@ hold_close cfg-hold "$cfgpid"
 # --- (2a) AC_WATCH_SKIP is compared as a SET, not a string (behavior:
 # watch-skip-compared-as-a-string-not-a-set): the two producers of this list
 # disagree on ORDER by construction (a chief types its own order,
-# ac-watch-autoarm.sh's promoted_families() enumerates via a glob the shell
-# sorts alphabetically), so a same-membership re-arm in a different order
+# src/watch-autoarm.ts's promotedFamilies() lists the chief metas in byte
+# order), so a same-membership re-arm in a different order
 # must not read as a config swap.
 reset_state
 mkdir -p "$AC_HOME/data/ska" "$AC_HOME/data/skb" "$AC_HOME/data/skc"
@@ -2161,7 +2163,7 @@ hold_close set-hold "$setpid"
 # wake record sitting in the spool. Coverage-exists must not read as
 # nothing-to-do. Both refusal paths (idempotent already-running, and
 # config-mismatch) are covered, and the autoarm consumer's classification
-# prefix (ac-watch-autoarm.sh's `case "$reason"` classifier) must still match on a single line - a
+# prefix (src/watch-autoarm.ts's reason-line classifier) must still match on a single line - a
 # refusal that BECOMES a second line breaks that hook's `tail -n 1` reduction
 # of the reason, so the pending state must ride the SAME line, never a new one.
 reset_state
@@ -2175,7 +2177,7 @@ printf '1\treport\tt1\tdone: shipped\n' >"$state/.wake-spool/1.1.000000"   # a w
 
 # Idempotent path (identical config) with a pending wake: still "already
 # running" (idempotent, exit 0 unchanged), but now says a wake is waiting.
-# stdout only (2>/dev/null), the same channel ac-watch-autoarm.sh's `reason=` capture reads -
+# stdout only (2>/dev/null), the same channel src/watch-autoarm.ts's reason capture reads -
 # stderr carries the unrelated lock-acquire owner_note, never the reason.
 out="$(AC_LOCK_PID=$$ AC_WATCH_SKIP=ska AC_POLL=1 AC_HEARTBEAT=1 bash "$BIN/ac-watch.sh" 2>/dev/null)"
 case "$out" in
@@ -2240,7 +2242,7 @@ assert_eq "$(printf '%s\n' "$out" | sed '/^$/d' | wc -l | tr -d ' ')" "1" \
   "the refusal stays ONE line - ac-watch-autoarm.sh reduces this stdout to its LAST non-empty line before classifying"
 
 # The HOOK's own stand-aside is the untouched path, and it is the one whose
-# prefix ac-watch-autoarm.sh's `case "$reason"` classifier globs on: same incumbent, same lock, exit 0.
+# prefix src/watch-autoarm.ts's reason-line classifier matches: same incumbent, same lock, exit 0.
 out="$(AC_AUTOARM=1 AC_LOCK_PID=$$ AC_WATCH_SKIP=ska AC_POLL=1 AC_HEARTBEAT=1 bash "$BIN/ac-watch.sh" 2>/dev/null)"
 case "$out" in
   'already running'*) : ;;
@@ -2798,6 +2800,32 @@ printf 'idle\n' >"$FAKE_HERDR/panes/pLIM2.status"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "ended:lim2" "the limit's words in prose are an ordinary ended turn"
 rm -f "$state/lim.meta" "$state/lim2.meta"
+
+# CODEX LIMITS AND EXPIRED LOGINS: codex states its usage limit, capacity and
+# quota in its own sentences (strings of codex-cli 0.160.0), and an expired
+# login - claude's `<cause> · Please run /login` (2.1.293) or codex's
+# refresh-token sentence - waits on a human signing in again: `needs-login:`,
+# never `ended:`. Codex's sentences carry no `·`, so they count only on a
+# codex pane.
+lim_case() {  # lim_case <id> <harness> <line> <reason>
+  printf 'window=crew:%s\nbackend=herdr\nharness=%s\n' "$1" "$2" >"$state/$1.meta"
+  seed_pane "$1" "p$1" "t$1"
+  printf '%s\n' "$3" >>"$(fake_pane_buf "$1")"
+  bash "$BIN/ac-watch.sh" --once >/dev/null
+  rm -rf "$state"/.wake-spool*
+  printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-$1"
+  printf 'idle\n' >"$FAKE_HERDR/panes/p$1.status"
+  out="$(bash "$BIN/ac-watch.sh" --once)"
+  assert_contains "$out" "$4:$1" "a $2 pane ending on '$3' wakes as $4:"
+  rm -f "$state/$1.meta"
+}
+lim_case cxl codex "■ You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:41 PM." limited
+lim_case cxc codex "■ Selected model is at capacity. Please try a different model." limited
+lim_case cxq codex "■ Quota exceeded. Check your plan and billing details." limited
+lim_case cxs codex "■ You hit your spend cap set in your workspace. Increase your spend cap to continue." limited
+lim_case cxa codex "■ Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again." needs-login
+lim_case cll claude "  ⎿  Login expired · Please run /login" needs-login
+lim_case clp claude "You’ve hit your usage limit. These are only words in a claude pane." ended
 rm -rf "$state"/.wake-spool*
 
 # COMPACT NOTE: a quiet claude crewmate whose transcript the compact adviser
@@ -3427,29 +3455,37 @@ assert_contains "$(fleet_spool)" "gone	ub1" "the second gone wake is published d
 # bash itself return 127 from the very call being classified. The watcher's
 # `if [ "$alive_rc" = 2 ]` gate was the ONLY door into the unobservable
 # branch; anything else (127 included) fell through into the death path.
+# This row once drove that 127 through a lab bin/ with the herdr driver
+# renamed; the backend verbs are native now (src/lib.ts backendCall), so no
+# driver can fail to load under the watcher, and the row reaches the same
+# unobservable read with herdr absent from PATH (the liveness ladder's 2).
 reset_state
 rm -f "$state"/*.status
-make_loadfail_bin
 printf 'window=crew:lf1\nbackend=herdr\n' >"$state/lf1.meta"
 seed_pane lf1 pLF1 tLF1
-out="$(bash "$LOADFAIL_BIN/ac-watch.sh" --once)"
-assert_contains "$out" "unobservable:lf1" "a driver-load failure (127) wakes the chief as UNOBSERVABLE"
-case "$out" in *gone:lf1*) \
-  fail "THE REGRESSION: exit 127 (loadable-driver failure) must never be reported as a gone pane" ;; esac
-assert_contains "$(cat "$state/lf1.status")" "unobservable:" "the status records what actually happened"
-case "$(cat "$state/lf1.status")" in *"failed:"*) \
-  fail "THE REGRESSION: a driver-load failure must write no death record" ;; esac
-assert_contains "$(fleet_spool)" "unobservable	lf1" "the wake is published durably like every other"
-assert_no_file "$state/.gone-lf1" "the gone dedup marker is untouched - a real death is still news"
+nh_path="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin:/sbin"
+if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
+  out="$(PATH="$nh_path" bash "$BIN/ac-watch.sh" --once)"
+  assert_contains "$out" "unobservable:lf1" "a driver-load failure (127) wakes the chief as UNOBSERVABLE"
+  case "$out" in *gone:lf1*) \
+    fail "THE REGRESSION: exit 127 (loadable-driver failure) must never be reported as a gone pane" ;; esac
+  assert_contains "$(cat "$state/lf1.status")" "unobservable:" "the status records what actually happened"
+  case "$(cat "$state/lf1.status")" in *"failed:"*) \
+    fail "THE REGRESSION: a driver-load failure must write no death record" ;; esac
+  assert_contains "$(fleet_spool)" "unobservable	lf1" "the wake is published durably like every other"
+  assert_no_file "$state/.gone-lf1" "the gone dedup marker is untouched - a real death is still news"
+else
+  printf 'SKIP: the watcher with herdr absent - bun shares its directory with a herdr on this host\n'
+fi
 
 reset_state
 rm -f "$state"/*.status
 
 # --- queue_wake never notifies - the notify moved to the blocked-by-captain
 # --- edge in bin/ac-room.sh's cmd_post -------------------------------------
-# The captain rule first cut this to ask/gone/unobservable+handback (a
-# notification on every durable wake was noise on a busy fleet). CAPTAIN
-# 2026-07-30 ("k co gi thi dung co chay ac-notify" / "block boi captain")
+# The rule first cut this to ask/gone/unobservable+handback (a
+# notification on every durable wake was noise on a busy fleet). Notifying
+# only on a block by the captain
 # went further: ask/gone/unobservable are chief-owned events too - the chief
 # answers or steers them, none of them is captain-approval - so queue_wake no
 # longer calls ac-notify.sh for ANY kind. The one thing that genuinely waits
@@ -3534,8 +3570,8 @@ assert_contains "$(fleet_spool)" "ended its turn" "ended wake still publishes du
 assert_eq "$(notified ended)" "0" "ended no longer notifies"
 rm -rf "$state"/.wake-spool*
 
-# unobservable - the backend-unreadable state. A captain ruling had added
-# it to the (now-removed) keep-list; 2026-07-30 removes it along with
+# unobservable - the backend-unreadable state. An earlier rule had added
+# it to the (now-removed) keep-list; the current rule removes it along with
 # ask/gone - it is chief-owned (the chief checks the backend), not
 # captain-approval.
 rm -f "$state"/*.meta
@@ -3946,10 +3982,12 @@ assert_contains "$out" "solo" "the refusal names the solo session"
 # watcher with a WARN that names the entry, and records no owner (the remote
 # poller stays off without one). Before this, every non-zero rc printed the
 # foreign-owner refusal, so a missing bun grounded the watcher under a lie.
+# The watcher is itself a shim over src/watch.ts, so the stub fails only the
+# lock's module and starts every other.
 reset_state
 failbun="$TMP/failbun"
 mkdir -p "$failbun"
-printf '#!/bin/sh\necho "bun stub: cannot start" >&2\nexit 1\n' >"$failbun/bun"
+printf '#!/bin/sh\ncase "$*" in *src/lock.ts*) echo "bun stub: cannot start" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v bun)" >"$failbun/bun"
 chmod +x "$failbun/bun"
 printf 'stale-owner\n' >"$state/.watcher-owner"
 rc=0; out="$(PATH="$failbun:$PATH" AC_LOCK_PID=$$ AC_POLL=1 AC_HEARTBEAT=0 bash "$BIN/ac-watch.sh" 2>"$TMP/failbun.err")" || rc=$?
@@ -3982,5 +4020,983 @@ rc=0; out="$(AC_LOCK_PID=99999999 AC_POLL=1 AC_HEARTBEAT=0 bash "$BIN/ac-watch.s
 assert_eq "$rc" "2" "a live foreign holder still refuses the arm"
 assert_eq "$out" "refused: fleet watcher not armed - another session owns this home" "with the unchanged refusal line"
 reset_state
+
+# --- differential: src/watch.ts against the frozen bash original --------------
+# DISPUTED: the implementation (tests/fixtures/ac-watch.sh under bash vs src/watch.ts through bin/ac-watch.sh)
+# HELD-CONSTANT: two side roots seeded alike ($WA_OH for the oracle, $WA_NH for the shim) - a home at <side>/home, the caller's cwd <side>/cwd, a TMPDIR, a HOME and a claude transcript root under it; a lab bin/ per side holding every live script (the oracle's ac-watch.sh the frozen original, the shim's the live shim, src/ linked beside each) with ac-lock, ac-remote, ac-jev, ac-compact-advise and ac-brain replaced by ONE logging stub answering per sentinel file; a stub dir <side>/stub first on PATH - herdr and orca logging argv and answering per sentinel file, `date` reading <side>/stub/clock (`+%s%N` the clock and a per-side call counter, the ISO stamp the clock's), `sleep` advancing that clock by a whole-second argument (a real sleep while <side>/stub/block exists, and for a fraction); env (every knob the watcher reads scrubbed, then the row's - the side root spelled HOME, in values only), stdin /dev/null, LC_ALL=C unless a row names en_US.UTF-8, each side forked by a perl reaper that records its exit status and the signal that ended it, every run bounded by a SIGKILL watchdog; exit status, stdout and stderr compared whole (the side root spelled HOME, a lab root LAB, pids PID, the arm chain CHAIN), then the home's tree, every state and data file's bytes, and the stub log.
+WA_OBIN="$(make_oracle_bin ac-watch)"
+WA_NBIN="$TMP/wan/bin"
+mkdir -p "$WA_NBIN"
+cp "$BIN"/*.sh "$WA_NBIN/"
+ln -s "$ROOT/src" "$TMP/wan/src"
+ln -s "$ROOT/dashboard" "$TMP/wan/dashboard"
+for wa_b in "$WA_OBIN" "$WA_NBIN"; do
+  for wa_s in ac-lock ac-remote ac-jev ac-compact-advise ac-brain; do
+    cat >"$wa_b/$wa_s.sh" <<'STUB'
+#!/bin/sh
+n="${0##*/}"
+d="$STUB_DIR"
+printf '%s %s\n' "$n" "$*" >>"$d/log"
+case "$n $1" in
+  "ac-lock.sh acquire")
+    printf 'lock: acquired\n'
+    [ ! -f "$d/lock-acquire.err" ] || cat "$d/lock-acquire.err" >&2
+    exit "$(cat "$d/lock-acquire.rc" 2>/dev/null || echo 0)" ;;
+  "ac-lock.sh status")
+    printf 'held pid=4242 since=2023-11-14T22:13:20Z\n'
+    exit "$(cat "$d/lock-status.rc" 2>/dev/null || echo 0)" ;;
+  "ac-remote.sh poll")
+    [ ! -f "$d/poll.out" ] || cat "$d/poll.out"
+    [ ! -f "$d/poll.err" ] || cat "$d/poll.err" >&2
+    if [ -f "$d/poll.hang" ]; then while :; do /bin/sleep 1; done; fi
+    exit "$(cat "$d/poll.rc" 2>/dev/null || echo 0)" ;;
+  "ac-jev.sh ask")
+    [ ! -f "$d/jev.err" ] || cat "$d/jev.err" >&2
+    [ ! -f "$d/jev.out" ] || cat "$d/jev.out"
+    exit "$(cat "$d/jev.rc" 2>/dev/null || echo 0)" ;;
+esac
+if [ "$n" = ac-compact-advise.sh ]; then
+  [ ! -f "$d/compact.err" ] || cat "$d/compact.err" >&2
+  [ ! -f "$d/compact.out" ] || cat "$d/compact.out"
+fi
+exit 0
+STUB
+    chmod +x "$wa_b/$wa_s.sh"
+  done
+done
+WA_OH="$TMP/wside-o"; WA_NH="$TMP/wside-n"
+WA_T=1700000000
+WA_ENV=(); WA_LC=C; WA_NOISE=0; WA_WRAP=(); WA_BOUND=30
+WA_UNSET=(-u AC_HOME -u AC_SCOPE -u AC_SOLO -u AC_BACKEND -u AC_FLEET_STATE -u AC_FLEET_SCOPE -u AC_WATCH_ONLY
+  -u AC_WATCH_SKIP -u AC_AUTOARM -u AC_POLL -u AC_HEARTBEAT -u AC_STALE -u AC_BUSY_MAX -u AC_GUARD_GRACE
+  -u AC_ARMLOG_KEEP -u AC_REMOTE_POLL -u AC_REMOTE_POLL_TIMEOUT -u AC_CAPTAIN_RE -u AC_DECISION_RE -u AC_BUSY_RE
+  -u AC_COMPACT_ADVISE -u AC_BRAIN_SYNC_IV -u AC_LOCK_STALE_GRACE -u AC_HERDR_SESSION -u AC_HERDR_RPC_TIMEOUT
+  -u EPOCHSECONDS -u LANG -u LC_CTYPE)
+wa_env() {  # wa_env <side root> - the environment a side runs under, in WA_E
+  local h="$1" x v
+  WA_E=("LC_ALL=$WA_LC" "PATH=$h/stub:$PATH" "STUB_DIR=$h/stub" "AC_HOME=$h/home" "TMPDIR=$h/tmp" "HOME=$h/user"
+        "AC_CLAUDE_TRANSCRIPT_ROOT=$h/user/tx" "AC_SEND_SETTLE=0")
+  for x in ${WA_ENV[@]+"${WA_ENV[@]}"}; do v="${x#*=}"; WA_E+=("${x%%=*}=${v//HOME/$h}"); done
+}
+# A side's exit status is never read through this shell's `wait`: bash 3.2
+# keeps every finished command's status by pid, the foreground ones included,
+# and `wait` on a job already reaped answers the OLDEST status kept under that
+# pid - on a host whose pids wrap, an earlier command's (a USR1 death read 0).
+# A perl reaper forks the side as its own process group, publishes its pid and
+# records the status the kernel reports - 128+n for a signal death, as the
+# shell reads it, and beside it the signal itself (0 for an exit), which tells
+# a death BY the signal from an exit with that number.
+WA_REAPER='my ($pidf, $rcd) = splice(@ARGV, 0, 2);
+my ($o, $r);
+my $c = fork // die "reaper: fork: $!\n";
+if ($c == 0) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV; exit 127 }
+unlink "$rcd/$c";
+(open($o, ">", "$pidf.tmp") && print($o "$c\n") && close($o) && rename("$pidf.tmp", $pidf)) or die "reaper: $pidf: $!\n";
+waitpid($c, 0);
+my $k = $? & 127;
+my $s = $k ? 128 + $k : $? >> 8;
+(open($r, ">", "$rcd/$c.tmp") && print($r "$s $k\n") && close($r) && rename("$rcd/$c.tmp", "$rcd/$c")) or die "reaper: $rcd/$c: $!\n";'
+mkdir -p "$TMP/wa-rc"
+wa_launch() {  # wa_launch <bin> <side root> <prefix> <args...> - the side in the background, its own process group; WA_PID, its reaper WA_JOB
+  local bin="$1" h="$2" p="$3" x a=(); shift 3
+  wa_env "$h"
+  for x in "$@"; do a+=("${x//HOME/$h}"); done
+  rm -f "$h/stub/log" "$TMP/$p.pid"
+  set -m
+  (cd "$h/cwd" && exec perl -e "$WA_REAPER" "$TMP/$p.pid" "$TMP/wa-rc" \
+    env "${WA_UNSET[@]}" "${WA_E[@]}" ${WA_WRAP[@]+"${WA_WRAP[@]}"} "$bin/ac-watch.sh" ${a[@]+"${a[@]}"}) \
+    </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.err" &
+  WA_JOB=$!
+  set +m
+  for _ in $(seq 1 1000); do [ ! -s "$TMP/$p.pid" ] || break; /bin/sleep 0.01; done
+  WA_PID="$(cat "$TMP/$p.pid")" || fail "the $p side's reaper published no pid"
+}
+wa_status() {  # wa_status <side pid> - its exit status as its reaper recorded it, in WA_ST; the signal that ended it (0 for an exit), in WA_SIG
+  for _ in $(seq 1 1000); do [ ! -s "$TMP/wa-rc/$1" ] || break; /bin/sleep 0.01; done
+  read -r WA_ST WA_SIG <"$TMP/wa-rc/$1" || fail "no exit status recorded for side pid $1"
+}
+wa_run() {  # wa_run <bin> <side root> <prefix> <args...> - one run to its end, SIGKILLed with its group past WA_BOUND
+  local pid w
+  wa_launch "$@"; pid=$WA_PID
+  kill_after "$WA_BOUND" "$pid" KILL group
+  w=$KILL_AFTER_PID
+  wait "$WA_JOB" 2>/dev/null || true
+  wa_status "$pid"
+  kill "$w" 2>/dev/null || true
+  wait "$w" 2>/dev/null || true
+  return "$WA_ST"
+}
+wa_norm() {  # wa_norm <side root>
+  LC_ALL=C sed -E -e "s#$1#HOME#g" -e "s#$TMP/oracle-ac-watch#LAB#g" -e "s#$TMP/wan#LAB#g" \
+    -e 's/chain=.*$/chain=CHAIN/' -e 's/pid=[0-9]+/pid=PID/g' -e 's/releaser=[0-9]+/releaser=PID/g' \
+    -e 's/(pid|process) [0-9]+/\1 PID/g' -e 's/--release [0-9]+/--release PID/g' \
+    -e 's/([0-9]{19,})\.[0-9]+\.([0-9]{6})/\1.PID.\2/g' -e 's/\.tmp\.[0-9]+/.tmp.PID/g' \
+    -e 's/\.remote-poll\.(out|err)\.[0-9]+/.remote-poll.\1.PID/g' \
+    -e 's/ac-watch-(jev|compact)\.[A-Za-z0-9]{6}/ac-watch-\1.XXXXXX/g'
+}
+wa_snap() {  # wa_snap <side root> - the home's tree, every state and data file's bytes, the stub log
+  local h="$1" f
+  { (cd "$h/home" 2>/dev/null && find . -print) || true; } | LC_ALL=C sort
+  { (cd "$h/home" 2>/dev/null && find state data -type f) || true; } | LC_ALL=C sort | while IFS= read -r f; do
+    printf '== %s\n' "$f"
+    case "$f" in
+      *.lock.d/pid) printf 'PID\n' ;;
+      *) cat "$h/home/$f" 2>/dev/null || printf '(unreadable)\n' ;;
+    esac
+  done
+  printf '== log\n'; cat "$h/stub/log" 2>/dev/null || true
+}
+WA_ORC=0; WA_NRC=0
+wa_pair() {  # both sides run to their end, their outputs normalized
+  WA_ORC=0; WA_NRC=0
+  wa_run "$WA_OBIN" "$WA_OH" o "$@" || WA_ORC=$?
+  wa_run "$WA_NBIN" "$WA_NH" n "$@" || WA_NRC=$?
+  wa_outs
+}
+wa_outs() {
+  wa_norm "$WA_OH" <"$TMP/o.raw" >"$TMP/o.out"; wa_norm "$WA_OH" <"$TMP/o.err" >"$TMP/o.err2"
+  wa_norm "$WA_NH" <"$TMP/n.raw" >"$TMP/n.out"; wa_norm "$WA_NH" <"$TMP/n.err" >"$TMP/n.err2"
+}
+wa_compare() {  # wa_compare <what> - both sides' answers and worlds, normalized, byte-identical
+  # Named (SHELL-OWN STDERR): bash 3.2's job-control race line from the herdr
+  # driver's `set -m`, which the original prints on some runs and never the port.
+  LC_ALL=C sed -E '/: child setpgid \([0-9]+ to [0-9]+\): Operation not permitted$/d' "$TMP/o.err2" >"$TMP/o.err3"; mv "$TMP/o.err3" "$TMP/o.err2"
+  if [ "$WA_NOISE" = 1 ]; then
+    # Named (SHELL-OWN STDERR): the original's own `<script>: line N: ...` lines.
+    LC_ALL=C grep -Eq '^[^ ]*: line [0-9]+: ' "$TMP/o.err2" || fail "differential: no shell noise to drop for $1"
+    LC_ALL=C sed -E '/^[^ ]*: line [0-9]+: /d' "$TMP/o.err2" >"$TMP/o.err3"; mv "$TMP/o.err3" "$TMP/o.err2"
+  fi
+  wa_snap "$WA_OH" | wa_norm "$WA_OH" >"$TMP/o.snap"; wa_snap "$WA_NH" | wa_norm "$WA_NH" >"$TMP/n.snap"
+  assert_eq "$WA_NRC" "$WA_ORC" "differential exit for $1"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs for $1: $(diff "$TMP/o.out" "$TMP/n.out" | head -n 8)"
+  cmp -s "$TMP/o.err2" "$TMP/n.err2" || fail "differential stderr differs for $1: $(diff "$TMP/o.err2" "$TMP/n.err2" | head -n 8)"
+  cmp -s "$TMP/o.snap" "$TMP/n.snap" || fail "differential world differs for $1: $(diff "$TMP/o.snap" "$TMP/n.snap" | head -n 12)"
+}
+wa_same() { wa_pair "$@"; wa_compare "'$*' (${WA_ENV[*]+${WA_ENV[*]}}, LC_ALL=$WA_LC) at line ${BASH_LINENO[0]}"; }
+wa_same_utf8() { WA_LC=en_US.UTF-8; wa_same "$@"; WA_LC=C; }
+wa_sides() { wa_pair "$@"; }  # both run, nothing compared: a named divergence's row asserts by hand
+nout() { cat "$TMP/n.out"; }
+oout() { cat "$TMP/o.out"; }
+nerr() { cat "$TMP/n.err2"; }
+oerr() { cat "$TMP/o.err2"; }
+nsnap() { cat "$TMP/n.snap"; }
+wa_both() {  # wa_both <fn> <args...> - a seeding step with H at each side root; a literal $H in an argument is that root
+  local h x a; for h in "$WA_OH" "$WA_NH"; do H="$h"; a=(); for x in "$@"; do a+=("${x//\$H/$h}"); done; "${a[@]}"; done
+}
+wa_fresh() {  # a clean side: home, cwd, TMPDIR, HOME, the PATH stubs, the clock at WA_T
+  rm -rf "$H"
+  mkdir -p "$H/home/state" "$H/home/data" "$H/home/config" "$H/home/records" "$H/cwd" "$H/stub" "$H/tmp" "$H/user/tx"
+  printf '%s\n' "$WA_T" >"$H/stub/clock"
+  cat >"$H/stub/date" <<'EOF'
+#!/bin/sh
+d="$STUB_DIR"
+c="$(cat "$d/clock")"
+case "$*" in
+  +%s) [ ! -f "$d/tick" ] || { c=$((c + 1)); printf '%s\n' "$c" >"$d/clock"; }; printf '%s\n' "$c" ;;
+  +%s%N)
+    [ ! -f "$d/badclock" ] || { printf 'N\n'; exit 0; }
+    n=$(( $(cat "$d/ns" 2>/dev/null || echo 0) + 1 )); printf '%s\n' "$n" >"$d/ns"; printf '%s%09d\n' "$c" "$n" ;;
+  "-u +%Y-%m-%dT%H:%M:%SZ") exec /bin/date -u -r "$c" '+%Y-%m-%dT%H:%M:%SZ' ;;
+  *) exec /bin/date "$@" ;;
+esac
+EOF
+  cat >"$H/stub/sleep" <<'EOF'
+#!/bin/sh
+d="$STUB_DIR"
+[ ! -f "$d/block" ] || exec /bin/sleep 30
+case "$1" in ''|*[!0-9]*) exec /bin/sleep "$@" ;; esac
+printf 'sleep %s\n' "$1" >>"$d/log"
+c="$(cat "$d/clock")"; printf '%s\n' "$((c + $1))" >"$d/clock"
+EOF
+  cat >"$H/stub/herdr" <<'EOF'
+#!/bin/sh
+d="$STUB_DIR"
+printf 'herdr %s\n' "$*" >>"$d/log"
+case "$1 $2" in
+  "pane get") [ -e "$d/win-$3" ] || exit 1
+    printf '{"result":{"pane":{"pane_id":"%s","agent_status":"%s"}}}\n' "$3" "$(cat "$d/status-$3" 2>/dev/null || echo working)" ;;
+  "pane list") [ ! -e "$d/list-fails" ] || exit 1; printf '{"result":{"panes":[]}}\n' ;;
+  "status server") printf '{"running":true}\n' ;;
+  "pane read") [ -e "$d/tail-$3" ] || exit 1; cat "$d/tail-$3" ;;
+  "pane report-agent"|"pane release-agent"|"pane send-text"|"pane send-keys"|"tab focus") exit 0 ;;
+  *) exit 2 ;;
+esac
+EOF
+  cat >"$H/stub/orca" <<'EOF'
+#!/bin/sh
+d="$STUB_DIR"
+printf 'orca %s\n' "$*" >>"$d/log"
+case "$1 $2" in
+  "terminal show") [ -e "$d/win-$4" ] && c=true || c=false
+    w=null; [ ! -e "$d/wait-$4" ] || w='{"reason":"permission"}'
+    printf '{"ok":true,"result":{"terminal":{"connected":%s,"agentWait":%s,"title":"%s"}}}\n' "$c" "$w" "$(cat "$d/title-$4" 2>/dev/null)" ;;
+  "terminal read") [ -e "$d/tail-$4" ] || exit 1; jq -Rs '{ok:true,result:{terminal:{tail:(split("\n")[:-1])}}}' <"$d/tail-$4" ;;
+  "terminal wait") printf '{"ok":true,"result":{"wait":{"satisfied":false}}}\n' ;;
+  *) printf '{"ok":true}\n' ;;
+esac
+EOF
+  chmod +x "$H/stub/date" "$H/stub/sleep" "$H/stub/herdr" "$H/stub/orca"
+}
+m() { printf -- "$2" >"$H/home/state/$1.meta"; }  # m <id> <printf format>
+pane() { printf '%s t%s\n' "${2:-p$1}" "$1" >"$H/home/state/.pane-$1"; }  # pane <id> [<handle>]
+win() { : >"$H/stub/win-$1"; }
+unwin() { rm -f "$H/stub/win-$1"; }
+ptail() { printf -- "$2" >"$H/stub/tail-$1"; }  # ptail <handle> <printf format>
+pstat() { printf '%s\n' "$2" >"$H/stub/status-$1"; }  # pstat <handle> <herdr agent_status>
+sent() { : >"$H/stub/$1"; }  # sent <sentinel>
+unsent() { rm -f "$H/stub/$1"; }
+put() { printf -- "$2" >"$H/stub/$1"; }  # put <stub file> <printf format>
+crew() {  # crew <id> [<tail format> [<meta extra>]] - a live herdr crewmate pane, its tail just captured
+  m "$1" "kind=implement\nbackend=herdr\n${3:-}"; pane "$1"; win "p$1"; ptail "p$1" "${2:-working on it\n}"
+}
+ocrew() {  # ocrew <id> [<tail format>] - a live orca crewmate pane
+  m "$1" 'kind=implement\nbackend=orca\n'; pane "$1" "h$1"; win "h$1"; ptail "h$1" "${2:-working on it\n}"
+}
+stamp() { local k="$1" i="$2" f="$3"; shift 3; printf -- "$f" "$@" >"$H/home/state/.$k-$i"; }  # stamp <kind> <id> <printf format> [args]
+quiet() { stamp change "$1" "$((WA_T - ${2:-999}))\n"; stamp hash "$1" '%s\n' "$3"; }  # quiet <id> [<age>] <its tail's cksum>
+ck() { printf -- "$1" | sed '/^$/d' | tail -n 25 | { v="$(cat)"; printf '%s' "$v" | cksum | awk '{print $1}'; }; }
+cfg() { printf '%s\n' "$2" >"$H/home/config/$1"; }
+beat() { printf '%s\n' "$1" >"$H/home/state/.last-watcher-beat${2:+.$2}"; }
+st() { printf -- "$2" >"$H/home/state/$1.status"; }  # st <id> <printf format>
+rec() { mkdir -p "$H/home/state/.wake-spool${1:+.$1}"; printf -- "$3" >"$H/home/state/.wake-spool${1:+.$1}/$2"; }  # rec <fam|''> <name> <format>
+brief() { mkdir -p "$H/home/data/$1"; printf 'b\n' >"$H/home/data/$1/brief.md"; }  # brief <dir under data>
+rep() { brief "$1"; printf -- "$2" >"$H/home/data/$1/report.md"; }  # rep <dir under data> <format>
+room() { mkdir -p "$H/home/data/$1"; printf -- "$2" >"$H/home/data/$1/room.md"; }  # room <fam> <format>
+chief() { m "$1-chief" "kind=roomchief\nbackend=herdr\n"; pane "$1-chief"; win "p$1-chief"; }  # chief <fam> - a live roomchief
+rmst() { local g; for g in "$@"; do (cd "$H/home/state" && rm -rf $g); done; }  # rmst <glob>... - state entries, globbed there
+WA_RAWL="$(printf 'You\342\200\231ve hit your usage limit.')"
+WA_BAD="$(printf 'caf\351')"
+reset_wa() { WA_ENV=(); WA_LC=C; WA_NOISE=0; WA_WRAP=(); WA_BOUND=30; }
+
+# 1. CLI and preamble: the backend first, then solo, then the home; --once, a
+#    trailing word, and W1 - any other word arms (rc 0 `heartbeat` at
+#    AC_HEARTBEAT=0, the session lock acquired for the caller).
+wa_both wa_fresh
+WA_ENV=(AC_HEARTBEAT=0 AC_POLL=10)
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 1: --once"
+wa_same --once extra; assert_eq "$(nout)" "check:quiet" "row 1: a trailing word is ignored"
+wa_same; assert_eq "$(nout)" "heartbeat" "row 1: no argument arms"
+assert_contains "$(nerr)" "lock: acquired" "row 1: the owner gate's note is relayed on stderr"
+for wa_w in -h --help --onc ''; do
+  wa_same "$wa_w"; assert_eq "$(nout)" "heartbeat" "row 1: W1 - '$wa_w' arms"
+done
+wa_both cfg backend tmux
+wa_same --once; assert_eq "$WA_NRC" 1 "row 1: an unsupported backend refuses"
+assert_contains "$(nerr)" "ERROR: unsupported backend 'tmux'" "row 1: its text"
+WA_ENV=(AC_SOLO=1); wa_same --once; assert_contains "$(nerr)" "unsupported backend" "row 1: the backend is checked before solo"
+wa_both rm -f '$H/home/config/backend'
+wa_same --once; assert_eq "$(nerr)" "ERROR: a solo session (AC_SOLO=1) never arms a watcher - supervision belongs to the chief session (solo-session skill)" "row 1: solo refused"
+WA_ENV=(AC_SOLO=0); wa_same --once; assert_eq "$(nout)" "check:quiet" "row 1: AC_SOLO=0 watches"
+WA_ENV=(AC_HOME=); wa_same --once; assert_eq "$WA_NRC" 1 "row 1: homeless refuses"
+assert_contains "$(nerr)" "AC_HOME is not set" "row 1: with ac_home's text"
+reset_wa
+
+# 1b. --release: the usage, a foreign pid (W4's sibling refusal), no fleet
+#     watcher at all, a scoped watcher and its wrapper refused, the orphan
+#     exception, an undeliverable TERM withdrawing its marker.
+wa_both wa_fresh
+for wa_t in '' abc 1x; do
+  wa_same --release "$wa_t"; assert_eq "$(nerr)" "usage: ac-watch.sh --release <pid>" "row 1b: '$wa_t' is no pid"
+done
+wa_same --release 99999999; assert_eq "$WA_NRC" 2 "row 1b: no fleet watcher here refuses"
+assert_contains "$(nerr)" "refused: pid PID is not this home's fleet watcher - it may belong to another fleet" "row 1b: the home-crossing text"
+assert_contains "$(nsnap)" "release REFUSED pid=PID - not this home's fleet watcher" "row 1b: the refusal is in the arm log"
+/bin/sh -c '/bin/sleep 30 & wait' & wa_wrap=$!
+wa_scop=""
+for _ in $(seq 1 100); do wa_scop="$(pgrep -P "$wa_wrap" 2>/dev/null || true)"; [ -n "$wa_scop" ] && break; /bin/sleep 0.05; done
+[ -n "$wa_scop" ] || fail "row 1b: the scoped stand-in never started"
+wa_both mkdir -p '$H/home/state/.watch-only-famq.lock.d'
+wa_both sh -c 'printf "%s\n" "$1" >"$2"' _ "$wa_scop" '$H/home/state/.watch-only-famq.lock.d/pid'
+wa_same --release "$wa_scop"; assert_contains "$(nerr)" "is the scoped watcher for family famq - it belongs to that family's roomchief" "row 1b: a scoped watcher is refused"
+wa_same --release "$wa_wrap"; assert_contains "$(nerr)" "the harness-tracked WRAPPER of the scoped watcher for family famq" "row 1b: and its wrapper"
+kill "$wa_scop" "$wa_wrap" 2>/dev/null || true; wait "$wa_wrap" 2>/dev/null || true
+wa_both room famq '- [2023-11-14 22:13] crewchief> PROMOTED: famq\n- [2023-11-14 22:14] crewchief> DEMOTED: roomchief closed\n'
+# The orphan exception TERMs the scoped watcher: one stand-in per side.
+for wa_h in "$WA_OH" "$WA_NH"; do
+  /bin/sleep 30 & printf '%s\n' "$!" >"$wa_h/home/state/.watch-only-famq.lock.d/pid"; printf '%s\n' "$!" >"$wa_h/orphan.pid"
+done
+WA_ORC=0; WA_NRC=0
+wa_run "$WA_OBIN" "$WA_OH" o --release "$(cat "$WA_OH/orphan.pid")" || WA_ORC=$?
+wa_run "$WA_NBIN" "$WA_NH" n --release "$(cat "$WA_NH/orphan.pid")" || WA_NRC=$?
+wa_outs
+for wa_h in "$WA_OH" "$WA_NH"; do
+  wa_v="$(cat "$wa_h/orphan.pid")"; dead_within "$wa_v" 3 || fail "row 1b: the orphan is TERMed"
+  wait "$wa_v" 2>/dev/null || true; rm -f "$wa_h/orphan.pid"
+done
+wa_both rmst '.watcher-release-*' 
+wa_compare "the orphan release"
+assert_eq "$(nout)" "released: pid=PID reason=config-swap - re-arm the corrected config" "row 1b: the orphan of a demoted family is released"
+assert_contains "$(nerr)" "whose roomchief is DEMOTED/CLOSED - releasing the orphan" "row 1b: with its note"
+wa_both rm -rf '$H/home/state/.watch-only-famq.lock.d'
+# An undeliverable TERM: the fleet lock names a dead pid.
+wa_dead="$(sh -c 'echo $$')"
+wa_both mkdir -p '$H/home/state/.watch.lock.d'
+wa_both sh -c 'printf "%s\n" "$1" >"$2"' _ "$wa_dead" '$H/home/state/.watch.lock.d/pid'
+wa_same --release "$wa_dead"; assert_contains "$(nerr)" "refused: no process PID to release (marker withdrawn)" "row 1b: the marker is withdrawn"
+assert_contains "$(nsnap)" "release FAILED pid=PID - no such process (marker withdrawn)" "row 1b: logged"
+# W4: a live pid that is no watcher, recorded in the fleet lock, is TERMed.
+for wa_h in "$WA_OH" "$WA_NH"; do
+  /bin/sleep 30 & printf '%s\n' "$!" >"$wa_h/home/state/.watch.lock.d/pid"; printf '%s\n' "$!" >"$wa_h/victim.pid"
+done
+WA_ORC=0; WA_NRC=0
+wa_run "$WA_OBIN" "$WA_OH" o --release "$(cat "$WA_OH/victim.pid")" || WA_ORC=$?
+wa_run "$WA_NBIN" "$WA_NH" n --release "$(cat "$WA_NH/victim.pid")" || WA_NRC=$?
+wa_outs
+for wa_h in "$WA_OH" "$WA_NH"; do
+  wa_v="$(cat "$wa_h/victim.pid")"; rm -f "$wa_h/victim.pid"
+  dead_within "$wa_v" 3 || fail "row 1b: W4 - each side TERMs whatever pid the lock names"
+  assert_file "$wa_h/home/state/.watcher-release-$wa_v" "row 1b: W4 - the marker is left for a target that never reads it"
+  rm -f "$wa_h/home/state/.watcher-release-$wa_v" "$wa_h/home/state/.watch.lock.d/pid"
+  wait "$wa_v" 2>/dev/null || true
+done
+wa_compare "W4: a reused pid"
+assert_eq "$(nout)" "released: pid=PID reason=config-swap - re-arm the corrected config" "row 1b: W4 at parity"
+wa_both rm -rf '$H/home/state/.watch.lock.d'
+reset_wa
+
+# 2. Scope and skip guards: a valid scope defaults AC_WATCH_ONLY, a watch set
+#    must contain it, a malformed scope is the fleet; W8 under both locales;
+#    a skip with a scope, a foreign skip, W9's list shapes.
+wa_both wa_fresh
+WA_ENV=(AC_SCOPE=fam1); wa_same --once
+assert_eq "$(nerr)" "scoped watcher: AC_WATCH_ONLY defaulted to AC_SCOPE=fam1" "row 2: the default is named"
+WA_ENV=(AC_SCOPE=fam1 AC_WATCH_ONLY=fam1); wa_same --once
+WA_ENV=(AC_SCOPE=fam1 "AC_WATCH_ONLY=st1,fam1 x"); wa_same --once; assert_eq "$(nout)" "check:quiet" "row 2: a set containing the scope"
+WA_ENV=(AC_SCOPE=fam1 AC_WATCH_ONLY=fam2,fam10); wa_same --once; assert_eq "$WA_NRC" 2 "row 2: a set without the scope refuses"
+assert_eq "$(nout)" "refused: scoped watcher AC_WATCH_ONLY must contain the family it files for (AC_WATCH_ONLY=fam2,fam10, AC_SCOPE=fam1)" "row 2: on stdout"
+WA_ENV=(AC_SCOPE=a.b AC_WATCH_ONLY=zz); wa_same --once; assert_eq "$(nout)" "check:quiet" "row 2: a malformed scope is the fleet's"
+WA_ENV=("AC_SCOPE=$WA_BAD"); wa_same --once; assert_eq "$(nerr)" "" "row 2: an invalid byte is no scope under C"
+WA_ENV=("AC_SCOPE=café"); wa_same --once; assert_eq "$(nerr)" "" "row 2: W8 - nor is café under C"
+WA_LC=en_US.UTF-8; wa_sides --once; WA_LC=C
+assert_eq "$(nerr)" "" "row 2: W8 - the port reads café's grammar per the text: a fleet watcher"
+assert_eq "$(oerr)" "scoped watcher: AC_WATCH_ONLY defaulted to AC_SCOPE=café" "row 2: W8 - bash 3.2's UTF-8 range scoped it (named)"
+# The scoped original beat for café; the world compares again from the next row.
+wa_both rm -f '$H/home/state/.last-watcher-beat.café'
+WA_ENV=(AC_SCOPE=fam1 AC_WATCH_SKIP=fam1); wa_same --once; assert_eq "$WA_NRC" 2 "row 2: a skip with a scope refuses"
+assert_contains "$(nout)" "refused: AC_WATCH_SKIP cannot be combined with AC_SCOPE=fam1" "row 2: its text"
+WA_ENV=(AC_WATCH_SKIP=ghost); wa_same --once; assert_contains "$(nout)" "refused: AC_WATCH_SKIP entry ghost does not belong to this home (AC_WATCH_SKIP=ghost)" "row 2: a foreign skip"
+wa_both brief famd; wa_both brief famm
+for wa_k in famd famm 'famd, famm' ',famd,' 'famd,,famm'; do
+  WA_ENV=("AC_WATCH_SKIP=$wa_k"); wa_same --once; assert_eq "$(nout)" "check:quiet" "row 2: skip '$wa_k' is this home's"
+done
+WA_ENV=('AC_WATCH_SKIP=fam*'); wa_both touch '$H/cwd/famd'
+wa_sides --once
+assert_contains "$(nout)" "refused: AC_WATCH_SKIP entry fam* does not belong to this home" "row 2: W9 - the port never globs the list"
+assert_eq "$(oout)" "check:quiet" "row 2: W9 - the original globbed fam* against its cwd (named)"
+reset_wa
+
+# 3. Arm: the owner gate (rc 0, 1, 2, a failing status), the arm line, the
+#    watch-config and autoarm marker, the exit cleanup; the singleton (same set,
+#    reordered, different, an autoarm incumbent from a hand and a hook arm,
+#    pending yes/no, scoped), a stale lock reclaimed, a fresh pid-less one held.
+wa_both wa_fresh
+WA_ENV=(AC_HEARTBEAT=0 AC_POLL=10 AC_AUTOARM=1); wa_same
+assert_contains "$(nsnap)" "arm pid=PID target=fleet poll=10s heartbeat=0s chain=CHAIN" "row 3: the arm line"
+assert_contains "$(nsnap)" "== state/.watcher-owner
+4242" "row 3: the holder recorded"
+wa_both put lock-acquire.rc '2'; wa_same; assert_eq "$(nout)" "refused: fleet watcher not armed - another session owns this home" "row 3: rc 2 refuses"
+wa_both put lock-acquire.rc '1'; wa_both put lock-acquire.err 'bun stub: cannot start\n'
+wa_same; assert_eq "$(nout)" "heartbeat" "row 3: rc 1 arms without the gate"
+assert_contains "$(nerr)" "WARN: session lock acquire failed (rc=1, ac-lock.sh) - arming without the owner gate" "row 3: and says so"
+wa_both rm -f '$H/stub/lock-acquire.rc' '$H/stub/lock-acquire.err'
+wa_both put lock-status.rc '3'; wa_same; assert_contains "$(nerr)" "WARN: session lock status failed (rc=3, ac-lock.sh)" "row 3: a failing status"
+wa_both rm -f '$H/stub/lock-status.rc'
+WA_ENV=(AC_HEARTBEAT=0 AC_POLL=10 AC_WATCH_ONLY=famz); wa_same; assert_contains "$(nsnap)" "target=only:famz" "row 3: a scoped arm skips the gate"
+# The singleton: a live holder (a stand-in pid) and its recorded config.
+hold_open wa_single; wa_hold=$HOLD_PID
+wa_held() {  # wa_held <lock suffix> <config> [autoarm]
+  mkdir -p "$H/home/state/.watch$1.lock.d"; printf '%s\n' "$wa_hold" >"$H/home/state/.watch$1.lock.d/pid"
+  printf '%s\n' "$2" >"$H/home/state/.watcher-config$1"
+  [ -z "${3:-}" ] || : >"$H/home/state/.watch$1.lock.d/autoarm"
+}
+wa_both brief fa; wa_both brief fb; wa_both wa_held '' 'fb,fa'
+WA_ENV=(AC_HEARTBEAT=0 AC_WATCH_SKIP=fa,fb); wa_same; assert_eq "$(nout)" "already running - pending: your inbox is empty - nothing waiting" "row 3: the same set reordered"
+wa_both rec '' 1.1.000000 '1\treport\tz\tdone: x\n'
+wa_same; assert_contains "$(nout)" "pending: your inbox is non-empty" "row 3: pending named"
+WA_ENV=(AC_HEARTBEAT=0 AC_WATCH_SKIP=fa); wa_same; assert_eq "$WA_NRC" 2 "row 3: a different set refuses"
+assert_contains "$(nout)" "refused: a live watcher (pid PID) holds a DIFFERENT watch-config (running AC_WATCH_SKIP=[fb,fa], new AC_WATCH_SKIP=[fa])" "row 3: naming both"
+wa_both rm -rf '$H/home/state/.wake-spool'
+wa_both wa_held '' '' autoarm
+WA_ENV=(AC_HEARTBEAT=0); wa_same; assert_contains "$(nout)" "refused: the live watcher (pid PID) is the auto-arm hook's own" "row 3: a hand arm over the hook's"
+WA_ENV=(AC_HEARTBEAT=0 AC_AUTOARM=1); wa_same; assert_contains "$(nout)" "already running" "row 3: a hook arm over its own"
+wa_both wa_held -only-fs '' autoarm
+WA_ENV=(AC_HEARTBEAT=0 AC_SCOPE=fs); wa_same; assert_contains "$(nout)" "already running" "row 3: a scoped arm stays idempotent"
+hold_close wa_single "$wa_hold"
+wa_both rm -rf '$H/home/state/.watch.lock.d' '$H/home/state/.watch-only-fs.lock.d' '$H/home/state/.watcher-config' '$H/home/state/.watcher-config-only-fs'
+# Stale shapes: a dead pid and an aged pid-less dir are reclaimed; a fresh pid-less one holds.
+wa_both mkdir -p '$H/home/state/.watch.lock.d'; wa_both sh -c 'printf "%s\n" "$1" >"$2"' _ "$wa_dead" '$H/home/state/.watch.lock.d/pid'
+WA_ENV=(AC_HEARTBEAT=0); wa_same; assert_eq "$(nout)" "heartbeat" "row 3: a dead owner is reclaimed"
+wa_both mkdir -p '$H/home/state/.watch.lock.d'; wa_both touch -t 202001010000 '$H/home/state/.watch.lock.d'
+wa_same; assert_eq "$(nout)" "heartbeat" "row 3: an aged pid-less lock is reclaimed"
+wa_both mkdir -p '$H/home/state/.watch.lock.d'
+wa_same; assert_eq "$(nout)" "already running - pending: your inbox is empty - nothing waiting" "row 3: a fresh pid-less lock holds"
+wa_both rm -rf '$H/home/state/.watch.lock.d'
+reset_wa
+
+# 4. The pane pass (--once), herdr and orca.
+wa_both wa_fresh
+WA_ENV=(AC_HEARTBEAT=0)
+# Liveness: unreadable (once per outage), gone (once), back.
+wa_both crew t1; wa_both unwin pt1; wa_both sent list-fails
+wa_same --once; assert_eq "$(nout)" "unobservable:t1" "row 4: an unreadable backend"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: once per outage"
+wa_both unsent list-fails
+wa_same --once; assert_eq "$(nout)" "gone:t1" "row 4: gone"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: gone once"
+wa_both win pt1; wa_same --once
+wa_both rm -f '$H/home/state/t1.meta'
+# ask, its two resume lines, the captain-wait mask.
+wa_both crew t2; wa_both pstat pt2 blocked
+wa_same --once; assert_eq "$(nout)" "ask:t2" "row 4: ask"
+wa_both touch '$H/home/state/.captain-wait-t2'; wa_same --once
+wa_both rm -f '$H/home/state/.captain-wait-t2'; wa_both pstat pt2 idle; wa_same --once
+assert_contains "$(nsnap)" "idle: pane no longer blocked, turn complete" "row 4: the turn-complete resume"
+wa_both pstat pt2 blocked; wa_same --once; wa_both pstat pt2 working; wa_same --once
+assert_contains "$(nsnap)" "working: pane no longer blocked, agent resumed" "row 4: the working resume"
+wa_both rm -f '$H/home/state/t2.meta'
+# Markers: new, seen, re-wake, push adopt, a foreign stamp, decision idle/busy,
+# reconcile, supersession, re-task forget.
+wa_both crew t3 'line\n\ndone: shipped it\n'
+wa_same --once; assert_eq "$(nout)" "report:t3" "row 4: a new marker"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: seen"
+wa_both ptail pt3 'more work\ndone: shipped it\n'
+wa_same --once; assert_eq "$(nout)" "report:t3" "row 4: re-wake"
+assert_contains "$(nsnap)" "done: shipped it (pane advanced since the last wake)" "row 4: the re-wake payload"
+wa_both crew t4 '⏺ done: pushed\n'; wa_both stamp seen t4 'done: pushed\n'
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: push adopt anchors silently"
+wa_both crew t5 'needs-decision: pick one\n'; wa_same --once
+assert_contains "$(nsnap)" "herdr pane report-agent pt5 --source ac-fleet --agent crew --state blocked --message needs-decision: pick one" "row 4: an idle decision stamps"
+wa_both crew t6 'needs-decision: pick two\nesc to interrupt\n'; wa_same --once
+wa_both crew t7 'blocked: on review\n'; wa_both stamp seen t7 'blocked: on review\n'; wa_both stamp seen-hash t7 '%s\n' "$(ck 'blocked: on review\n')"
+wa_same --once; assert_contains "$(nsnap)" "herdr pane report-agent pt7" "row 4: reconcile re-stamps silently"
+wa_both crew t8 'blocked: waiting\nesc to interrupt\n'; wa_both stamp seen t8 'blocked: waiting\n'; wa_both touch '$H/home/state/.captain-wait-t8'
+wa_same --once; assert_contains "$(nsnap)" "working: superseded blocked: waiting" "row 4: supersession"
+wa_both crew t9 'Working...\n'; wa_both stamp seen t9 'done: old\n'
+wa_same --once; assert_no_file "$WA_NH/home/state/.seen-t9" "row 4: a re-task forgets the reported completion"
+wa_both rmst 't?.meta' 
+# The artifact channel: appear, identical, revised, busy-deferred, ambiguous.
+wa_both crew aw-plan 'pondering it\n'; wa_both rep aw/plan 'the plan\n'
+wa_same --once; assert_eq "$(nout)" "report:aw-plan" "row 4: a report appears"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: identical"
+wa_both sh -c 'printf "rev\n" >>"$1"' _ '$H/home/data/aw/plan/report.md'
+wa_both ptail paw-plan 'esc to interrupt\n'; wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: busy defers"
+wa_both ptail paw-plan 'idle now\n'; wa_same --once; assert_eq "$(nout)" "report:aw-plan" "row 4: revised"
+wa_both brief aw-plan; wa_both sh -c 'printf "x\n" >>"$1"' _ '$H/home/data/aw/plan/report.md'
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: an ambiguous task dir reports nothing"
+wa_both rm -rf '$H/home/state/aw-plan.meta' '$H/home/data/aw' '$H/home/data/aw-plan'
+# The busy-stall bound, off at 0, held by a busy declaration.
+wa_both crew bs1 'esc to interrupt\n'; wa_both stamp busy bs1 "$((WA_T - 3000))\n"
+WA_ENV=(AC_BUSY_MAX=0); wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: AC_BUSY_MAX=0"
+wa_both sh -c 'printf "%s\n" "$1" >"$2"' _ "$((WA_T + 60))" '$H/home/state/.chief-busy-until.bs1'
+WA_ENV=(); wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a busy declaration holds it"
+wa_both rm -f '$H/home/state/.chief-busy-until.bs1'
+wa_same --once; assert_eq "$(nout)" "stale:bs1" "row 4: the bound"
+assert_contains "$(nsnap)" "busy but stalled: 3000s inside one call with no turn end" "row 4: its status"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: once per run"
+wa_both rm -f '$H/home/state/bs1.meta'
+# The quiet arm: limited (claude, codex), needs-login (claude, codex), a
+# completion already reported, ended, stale; unreadable idle stamps.
+wa_quiet() {  # wa_quiet <id> <tail format> <agent status> [<meta extra>]
+  crew "$1" "$2" "${4:-}"; pstat "p$1" "$3"; quiet "$1" 999 "$(ck "$2")"
+}
+wa_both wa_quiet q1 "You've hit your weekly limit · resets 10pm (UTC)\n" idle
+wa_same --once; assert_eq "$(nout)" "limited:q1" "row 4: limited"
+wa_both wa_quiet q2 "$WA_RAWL\n" idle 'harness=codex\n'
+wa_same --once; assert_eq "$(nout)" "limited:q2" "row 4: a codex limit"
+wa_both wa_quiet q3 'Not logged in · Please run /login\n' idle
+wa_same --once; assert_eq "$(nout)" "needs-login:q3" "row 4: needs-login"
+wa_both wa_quiet q4 'Your session has expired. Please reauthenticate.\n' done 'harness=codex\n'
+wa_same --once; assert_eq "$(nout)" "needs-login:q4" "row 4: a codex login"
+wa_both wa_quiet q5 'all quiet\n' idle; wa_both stamp seen q5 'done: shipped\n'
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a reported completion anchors silently"
+wa_both wa_quiet q6 'all quiet\n' idle
+wa_same --once; assert_eq "$(nout)" "ended:q6" "row 4: ended"
+wa_both wa_quiet q7 'all quiet\n' working
+wa_same --once; assert_eq "$(nout)" "stale:q7" "row 4: stale"
+wa_both rmst 'q?.meta' 
+for wa_bad in '' 0009; do
+  wa_both wa_quiet us1 'all quiet\n' working; wa_both stamp change us1 "$wa_bad"
+  wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: an unreadable idle stamp ('$wa_bad') restarts"
+done
+wa_both rm -f '$H/home/state/us1.meta'
+# Stale deferral: a declared wait, the same a window later, gate-parked findings.
+wa_both wa_quiet dw1 'all quiet\n' working; wa_both st dw1 '2023-11-14T22:00:00Z needs-decision: waiting on the captain\n'
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a declared wait defers"
+assert_contains "$(nsnap)" "deferred-stale:dw1 declared-wait needs-decision" "row 4: logged"
+wa_both stamp change dw1 "$((WA_T - 999))\n"
+wa_same --once; assert_eq "$(nout)" "stale:dw1" "row 4: the same declaration a window later"
+wa_both rm -f '$H/home/state/dw1.meta'
+wa_both wa_quiet g1 'all quiet\n' working 'worktree=$H/wt\n'
+wa_both mkdir -p '$H/wt/.crew/ship/current/findings'
+wa_both sh -c 'printf "%s\n" "$1" >"$2"' _ '{"findings":[{"action":"ask-user","id":"F1"}]}' '$H/wt/.crew/ship/current/findings/review.json'
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: gate-parked findings defer"
+assert_contains "$(nsnap)" "deferred-stale:g1 gate-parked" "row 4: logged as gate-parked"
+wa_both rm -rf '$H/home/state/g1.meta' '$H/wt'
+# A supervising chief stays quiet: a live child, a gate parked on the captain.
+wa_both chief famc; wa_both quiet famc-chief 999 "$(ck 'chief prose\n')"; wa_both ptail pfamc-chief 'chief prose\n'; wa_both pstat pfamc-chief idle
+wa_both crew famc-t1 'working\nesc to interrupt\n' 'fleet_scope=famc\n'
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a chief with a live child is quiet"
+wa_both rm -f '$H/home/state/famc-t1.meta'
+wa_both room famc '- [2023-11-14 22:13] famc-chief> GATE: approve the plan\n'
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a chief parked at a gate is quiet"
+wa_both rm -f '$H/home/state/famc-chief.meta'; wa_both rm -rf '$H/home/data/famc'
+# A verifier is polled, a self task is not.
+wa_both crew v1 'done: verdict\n' 'kind=verify-codereview\n'; wa_both m v1 'kind=verify-codereview\nbackend=herdr\n'
+wa_same --once; assert_eq "$(nout)" "report:v1" "row 4: a verifier is supervised"
+wa_both m v1 'kind=self\nbackend=herdr\n'; wa_both ptail pv1 'done: other\n'
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a self task is not polled"
+wa_both rm -f '$H/home/state/v1.meta'
+# The skip revalidation: live coverage skips, a stale beacon within the grace
+# skips, a gone roomchief revokes (coverage wake, a line typed into its pane),
+# W3's leftover stamp revokes a fresh tenure at once.
+wa_both chief famk; wa_both crew famk-t1 'done: stolen?\n'; wa_both beat "$WA_T" famk
+WA_ENV=(AC_WATCH_SKIP=famk); wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: live coverage skips"
+wa_both beat 0 famk; wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a stale beacon inside the grace skips"
+wa_both rm -f '$H/home/state/.skip-stale-since-famk'
+wa_both sh -c 'printf "%s\n" "$1" >"$2"' _ "$((WA_T - 900))" '$H/home/state/.skip-stale-since-famk'
+wa_same --once; assert_eq "$(nout)" "report:famk-t1" "row 4: W3 - a stale-since stamp from an earlier tenure revokes at once"
+assert_contains "$(nsnap)" "coverage"$'\t'"famk-chief"$'\t'"scoped coverage down for famk" "row 4: the coverage record"
+assert_contains "$(nsnap)" "herdr pane send-text pfamk-chief wake: your scoped watcher for famk is down" "row 4: the typed line"
+wa_both rm -f '$H/home/state/famk-chief.meta' '$H/home/state/famk-t1.meta'
+reset_wa
+# orca: gone, ask, a marker.
+WA_ENV=(AC_HEARTBEAT=0)
+wa_both ocrew o1 'done: orca shipped\n'
+wa_same --once; assert_eq "$(nout)" "report:o1" "row 4: an orca marker"
+wa_both touch '$H/stub/wait-ho1'; wa_both rm -f '$H/home/state/.ask-o1'
+wa_same --once; assert_eq "$(nout)" "ask:o1" "row 4: an orca ask"
+wa_both unwin ho1; wa_same --once; assert_eq "$(nout)" "gone:o1" "row 4: an orca gone"
+wa_both rm -f '$H/home/state/o1.meta'
+# W2: an invalid byte above a marker cuts the tail under UTF-8, never under C.
+wa_both crew u1 'caf\351 bytes\ndone: past the byte\n'
+wa_same --once; assert_eq "$(nout)" "report:u1" "row 4: W2 - under C the marker wakes"
+wa_both wa_fresh; wa_both crew u1 'caf\351 bytes\ndone: past the byte\n'
+wa_same_utf8 --once; assert_eq "$(nout)" "check:quiet" "row 4: W2 - under UTF-8 the cut tail hides it"
+assert_contains "$(nerr)" "sed: RE error: illegal byte sequence" "row 4: W2 - sed's own line"
+wa_both rm -f '$H/home/state/u1.meta'
+# jev and compact notes; a failing jev; a publish that fails (badclock).
+wa_both wa_quiet j1 'all quiet\n' idle 'session_id=s1\n'
+wa_both mkdir -p '$H/user/tx/proj'; wa_both touch '$H/user/tx/proj/s1.jsonl'
+wa_both put jev.out '{"done":{"choice":"finished","p":{"finished":0.9}}}\n'
+wa_both put compact.out 'compact=advise score=7 floor=5 usage=80'
+wa_same --once; assert_eq "$(nout)" "ended:j1" "row 4: ended with notes"
+assert_contains "$(nsnap)" "the ask may be prose jev=finished p=0.9 compact=advise score=7 floor=5 usage=80" "row 4: both notes ride the payload"
+wa_both rm -f '$H/stub/jev.out'; wa_both put jev.err 'jev: transport: refused\n'; wa_both put jev.rc '1'
+wa_both wa_quiet j2 'still quiet\n' working
+wa_same --once; assert_eq "$(nout)" "stale:j2" "row 4: a failing jev"
+assert_contains "$(nsnap)" "jev: transport: refused (j2)" "row 4: its line in the arm log"
+wa_both rm -f '$H/home/state/j1.meta' '$H/home/state/j2.meta' '$H/stub/jev.err' '$H/stub/jev.rc' '$H/stub/compact.out'
+wa_both crew b1 'done: no clock\n'; wa_both sent badclock
+wa_same --once; assert_eq "$(nout)" "report:b1 - WAKE NOT DURABLE: this line is the only record; the state dir may be unwritable" "row 4: a failed publish rides the reason line"
+wa_both unsent badclock; wa_both rm -f '$H/home/state/b1.meta'
+reset_wa
+
+# 5. Push: a record published during the poll wait, nudged by bin/ac-done.sh
+#    (each side's watcher found by the widened match), the arm snapshot, an
+#    orphan family spool, a live family's spool skipped, the report anchored.
+# wa_sleep_of <pid> - its poll sleep child. awk reads ps to the end: an early
+# exit SIGPIPEs ps, and pipefail turns that into the assignment's status.
+wa_sleep_of() { ps -eo pid,ppid,comm | awk -v p="$1" '!f && $2==p && $3 ~ /(^|\/)sleep$/ {print $1; f=1}'; }
+wa_await() {  # wa_await <side root> - the side's watcher in its poll wait (a beacon + a sleep child)
+  local i sp
+  for i in $(seq 1 400); do
+    if [ -n "$(cd "$1/home/state" && ls -a | grep '^\.last-watcher-beat' || true)" ]; then
+      sp="$(wa_sleep_of "$WA_PID")"
+      [ -n "$sp" ] && return 0
+    fi
+    /bin/sleep 0.05
+  done
+  return 1
+}
+wa_armed() {  # wa_armed <bin> <side root> <prefix> - an armed side parked in its blocking poll wait; WA_PID
+  wa_launch "$1" "$2" "$3"
+  wa_await "$2" || { kill -KILL -"$WA_PID" 2>/dev/null || true; fail "the $3 side never reached its poll wait"; }
+}
+wa_end() {  # wa_end <rc var> - the armed side's end, bounded
+  local p="$WA_PID"
+  dead_within "$p" 10 || { kill -KILL -"$p" 2>/dev/null || true; fail "an armed side outlived its end"; }
+  wa_status "$p"
+  eval "$1=\$WA_ST"
+}
+wa_both wa_fresh
+wa_both sent block
+WA_ENV=(AC_POLL=10 AC_HEARTBEAT=600)
+wa_both rec '' 1.1.000000 '1\treport\tolder\tdone: backlog\n'
+wa_both crew pp1 'working\nesc to interrupt\n'; wa_both rep pp1 'the report\n'
+for wa_s in o n; do
+  if [ "$wa_s" = o ]; then wa_b="$WA_OBIN"; wa_h="$WA_OH"; else wa_b="$WA_NBIN"; wa_h="$WA_NH"; fi
+  wa_armed "$wa_b" "$wa_h" "$wa_s"
+  wa_nudge="$(cd "$wa_h/cwd" && env "${WA_UNSET[@]}" "PATH=$wa_h/stub:$PATH" "STUB_DIR=$wa_h/stub" AC_FLEET_STATE="$wa_h/home/state" AC_FLEET_SCOPE= "$BIN/ac-done.sh" pp1 'done: pushed' 2>&1)"
+  assert_contains "$wa_nudge" "nudged watcher pid=$WA_PID" "row 5: ac-done finds and nudges the $wa_s side's watcher"
+  if [ "$wa_s" = o ]; then wa_end WA_ORC; else wa_end WA_NRC; fi
+done
+wa_outs
+wa_both unsent block
+wa_compare "a push"
+assert_eq "$(nout)" "push:pp1" "row 5: the pushed record exits, the backlog record does not"
+assert_contains "$(nsnap)" "== state/.report-hash-pp1
+$(cksum <"$WA_NH/home/data/pp1/report.md" | awk '{print $1}')" "row 5: the report is anchored at the exit"
+# An orphan family's spool is the fleet's; a live family's is its own chief's.
+wa_both sent block
+wa_both chief famlive
+for wa_s in o n; do
+  if [ "$wa_s" = o ]; then wa_b="$WA_OBIN"; wa_h="$WA_OH"; else wa_b="$WA_NBIN"; wa_h="$WA_NH"; fi
+  wa_armed "$wa_b" "$wa_h" "$wa_s"
+  H="$wa_h"; rec famlive 2.1.000000 '2\treport\tfamlive-t1\tdone: theirs\n'; rec famgone 2.1.000001 '2\treport\tfamgone-t1\tdone: ours\n'
+  kill "$(wa_sleep_of "$WA_PID")" 2>/dev/null || true
+  if [ "$wa_s" = o ]; then wa_end WA_ORC; else wa_end WA_NRC; fi
+done
+wa_outs
+wa_both unsent block
+wa_compare "an orphan spool"
+assert_eq "$(nout)" "push:famgone-t1" "row 5: an orphan family's push is the fleet's, a live family's skipped"
+wa_both rm -f '$H/home/state/famlive-chief.meta' '$H/home/state/pp1.meta'
+reset_wa
+
+# 6. The remote slot: the gate (scoped, owner != holder, interval 0/abc/09),
+#    a quiet poll, orders, a death before and after ingest and its latch, a
+#    timeout and its latch, the capture files swept.
+wa_both wa_fresh
+wa_both cfg remote-poll-interval 60
+wa_both sh -c 'printf "pid=4242\nsince=x\n" >"$1"; printf "4242\n" >"$2"' _ '$H/home/state/.session-lock' '$H/home/state/.watcher-owner'
+WA_ENV=(AC_HEARTBEAT=0)
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 6: a quiet poll"
+assert_contains "$(nsnap)" "ac-remote.sh poll" "row 6: the poll ran"
+wa_both put poll.out 'remote-order r1 hello\nremote-order r2 world\n'
+wa_same --once; assert_eq "$(nout)" "remote:r1" "row 6: orders"
+wa_both rm -f '$H/stub/poll.out'; wa_both put poll.rc '3'; wa_both put poll.err 'first\nERROR: could not publish r9\n'
+wa_same --once; assert_eq "$(nout)" "remote-failed:none" "row 6: a death before ingest"
+assert_contains "$(nsnap)" "remote-failed"$'\t'"captain"$'\t'"poll exited 3; last rid ingested: none - ERROR: could not publish r9" "row 6: its wake names the producer's last line"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 6: the latch holds a repeat quiet"
+wa_both put poll.out 'remote-order r5 a\n'
+wa_same --once; assert_eq "$(nout)" "remote-failed:r5" "row 6: a death after ingest names the last rid"
+wa_both rm -f '$H/stub/poll.out' '$H/stub/poll.rc' '$H/stub/poll.err'
+wa_same --once; assert_no_file "$WA_NH/home/state/.remote-poll-failed" "row 6: a completed poll clears the latch"
+wa_both sent poll.hang
+WA_ENV=(AC_HEARTBEAT=0 AC_REMOTE_POLL_TIMEOUT=1)
+wa_same --once; assert_eq "$(nout)" "remote-timeout:none" "row 6: a hung poll is killed at its ceiling"
+assert_contains "$(nsnap)" "remote poll TIMED OUT: poll exceeded 1s and was killed; last rid ingested: none" "row 6: logged"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 6: the timeout latch"
+wa_both unsent poll.hang
+WA_ENV=(AC_HEARTBEAT=0 AC_WATCH_ONLY=famr); wa_same --once
+assert_eq "$(grep -c 'ac-remote.sh poll' "$TMP/n.snap" || true)" "0" "row 6: a scoped watcher never polls"
+WA_ENV=(AC_HEARTBEAT=0); wa_both sh -c 'printf "999\n" >"$1"' _ '$H/home/state/.watcher-owner'; wa_same --once
+assert_eq "$(grep -c 'ac-remote.sh poll' "$TMP/n.snap" || true)" "0" "row 6: an owner that is not the holder never polls"
+wa_both sh -c 'printf "4242\n" >"$1"' _ '$H/home/state/.watcher-owner'
+for wa_iv in 0 abc; do
+  WA_ENV=(AC_HEARTBEAT=0 "AC_REMOTE_POLL=$wa_iv"); wa_same --once
+  assert_eq "$(grep -c 'ac-remote.sh poll' "$TMP/n.snap" || true)" "0" "row 6: AC_REMOTE_POLL=$wa_iv is the slot off"
+done
+WA_ENV=(AC_HEARTBEAT=0 AC_REMOTE_POLL=09); wa_same --once
+assert_eq "$(grep -c 'ac-remote.sh poll' "$TMP/n.snap" || true)" "1" "row 6: 09 is read base ten, the slot on"
+# Mid-poll: the poll's 0.2 s ticks are grandchildren, so a push's nudge finds
+# no poll wait to end (H2); a TERM then names the last rid the poll ingested.
+wa_both put poll.out 'remote-order r7 x\n'; wa_both sent poll.hang
+WA_ENV=(AC_POLL=10 AC_HEARTBEAT=600 AC_REMOTE_POLL=1)
+for wa_s in o n; do
+  if [ "$wa_s" = o ]; then wa_b="$WA_OBIN"; wa_h="$WA_OH"; else wa_b="$WA_NBIN"; wa_h="$WA_NH"; fi
+  wa_launch "$wa_b" "$wa_h" "$wa_s"
+  for _ in $(seq 1 200); do
+    grep -q 'remote-order r7' "$wa_h"/home/state/.remote-poll.out.* 2>/dev/null && break
+    /bin/sleep 0.05
+  done
+  wa_nudge="$(env "${WA_UNSET[@]}" "PATH=$PATH" bash -c '. "$1/ac-lib.sh"; . "$1/ac-wake-lib.sh"; ac_watcher_nudge "$2" ""' _ "$BIN" "$wa_h/home/state" 2>/dev/null || true)"
+  assert_contains "$wa_nudge" "is mid-poll, nothing to nudge" "row 6: a nudge inside the $wa_s side's poll finds no poll wait"
+  kill -TERM "$WA_PID"
+  if [ "$wa_s" = o ]; then wa_end WA_ORC; else wa_end WA_NRC; fi
+done
+wa_outs
+wa_both unsent poll.hang; wa_both rm -f '$H/stub/poll.out'
+assert_eq "$(nout)" "$(oout)" "row 6: a signal mid-poll, both sides"
+assert_eq "$(nout)" "signal:TERM pid=PID target=fleet - watcher killed externally - poll interrupted mid-flight; last rid ingested: r7, lock released; re-arm to restore coverage" "row 6: the signal line names the rid the poll ingested"
+assert_eq "$(cd "$WA_NH/home/state" && ls -a | grep -c '^\.remote-poll\.' || true)" "0" "row 6: the capture files are swept on the way out"
+reset_wa
+
+# 7. The loop: heartbeat after whole poll waits, the beacon stood down at
+#    exit, brain freshen, the arm-log trim at twice the keep, W7's knobs.
+wa_both wa_fresh
+WA_ENV=(AC_POLL=10 AC_HEARTBEAT=25)
+wa_same; assert_eq "$(nout)" "heartbeat" "row 7: heartbeat"
+assert_eq "$(grep -c '^sleep 10$' "$TMP/n.snap" || true)" "3" "row 7: three poll waits to the heartbeat"
+assert_contains "$(nsnap)" "== state/.last-watcher-beat
+0" "row 7: the beacon is stood down at exit"
+wa_both touch '$H/home/state/brain.sqlite'
+WA_ENV=(AC_HEARTBEAT=0); wa_pair --once
+for _ in $(seq 1 60); do
+  grep -q 'ac-brain.sh sync' "$WA_OH/stub/log" 2>/dev/null && grep -q 'ac-brain.sh sync' "$WA_NH/stub/log" 2>/dev/null && break
+  /bin/sleep 0.05
+done
+wa_compare "brain freshen"
+assert_contains "$(nsnap)" "ac-brain.sh sync --home HOME/home --compact" "row 7: a never-synced brain is freshened, detached"
+wa_both rm -f '$H/home/state/brain.sqlite' '$H/home/state/.brain-freshen-attempt'
+wa_both sh -c 'for i in 1 2 3 4 5 6; do printf "old %s\n" "$i"; done >"$1"' _ '$H/home/state/.watcher-arm.log'
+WA_ENV=(AC_HEARTBEAT=0 AC_ARMLOG_KEEP=2); wa_same
+assert_eq "$(wc -l <"$WA_NH/home/state/.watcher-arm.log" | tr -d ' ')" "2" "row 7: past twice the keep, trimmed to the keep"
+WA_ENV=(AC_HEARTBEAT=0 AC_ARMLOG_KEEP=abc); WA_NOISE=1; wa_same
+assert_eq "$(nout)" "" "row 7: W7 - an identifier keep ends the arm with no reason line"
+assert_eq "$WA_NRC" "0" "row 7: W7 - exit 0 with the cleanup"
+WA_ENV=(AC_HEARTBEAT=0 AC_ARMLOG_KEEP=5x); wa_same
+assert_eq "$(nout)" "heartbeat" "row 7: W7 - a malformed keep discards the arm's command and goes on"
+WA_NOISE=0
+# AC_POLL that sleep refuses spins the loop; a clock that ticks per read
+# bounds it here, and the pass count is the clock's, so only the end compares.
+wa_both sent tick
+WA_ENV=(AC_HEARTBEAT=20 AC_POLL=abc); wa_sides
+assert_eq "$(nout)|$(oout)" "heartbeat|heartbeat" "row 7: W7 - a refused AC_POLL spins to the heartbeat on both sides"
+assert_contains "$(nerr)" "sleep" "row 7: W7 - sleep's own complaint, per pass"
+wa_both unsent tick
+reset_wa
+
+# 8. Signals: TERM and INT in the poll wait (the sleep reaped), a TERM to the
+#    sleep alone absorbed, an owner-marked TERM (fresh, stale), the HUP group
+#    (cleanup, no line, a death BY the signal), QUIT and PROF (no cleanup),
+#    INT ignored at entry.
+wa_sig() {  # wa_sig <signal> [<to-sleep-first>] - each side armed, parked, signalled
+  local s sp
+  for s in o n; do
+    if [ "$s" = o ]; then wa_b="$WA_OBIN"; wa_h="$WA_OH"; else wa_b="$WA_NBIN"; wa_h="$WA_NH"; fi
+    wa_armed "$wa_b" "$wa_h" "$s"
+    if [ -n "${2:-}" ]; then
+      sp="$(wa_sleep_of "$WA_PID")"; kill "$sp" 2>/dev/null || true
+      for _ in $(seq 1 200); do [ "$(wa_sleep_of "$WA_PID")" != "$sp" ] && [ -n "$(wa_sleep_of "$WA_PID")" ] && break; /bin/sleep 0.05; done
+    fi
+    sp="$(wa_sleep_of "$WA_PID")"
+    [ -z "${WA_MARK:-}" ] || printf 'releaser=77\ntarget=%s\nreason=config-swap\nepoch=%s\n' "$WA_PID" "$WA_MARK" >"$wa_h/home/state/.watcher-release-$WA_PID"
+    kill -s "$1" "$WA_PID"
+    if [ "$s" = o ]; then wa_end WA_ORC; WA_OSIG=$WA_SIG; else wa_end WA_NRC; WA_NSIG=$WA_SIG; fi
+    kill "$sp" 2>/dev/null || true
+  done
+  wa_outs
+}
+wa_both wa_fresh; wa_both sent block
+WA_ENV=(AC_POLL=10 AC_HEARTBEAT=600)
+# Named (SHELL-OWN STDERR): the original's notice for the poll sleep the
+# handler killed, `<script>: line N: <pid> Terminated: 15 sleep "$1"`.
+WA_NOISE=1
+wa_sig TERM; wa_compare "TERM"
+assert_eq "$(nout)" "signal:TERM pid=PID target=fleet - watcher killed externally, lock released; re-arm to restore coverage" "row 8: TERM"
+assert_no_file "$WA_NH/home/state/.watch.lock.d" "row 8: the lock released"
+wa_sig INT; wa_compare "INT"; assert_contains "$(nout)" "signal:INT" "row 8: INT"
+wa_sig TERM sleep-first; wa_compare "TERM after a nudge"; assert_contains "$(nout)" "signal:TERM" "row 8: a kill on the sleep alone is absorbed"
+WA_MARK="$WA_T"; wa_sig TERM; wa_compare "an owner-marked TERM"
+assert_eq "$(nout)" "signal:TERM pid=PID target=fleet - config-swap by owner (released by pid=PID), lock released; re-arm to restore coverage" "row 8: owner-marked"
+WA_MARK="$((WA_T - 100))"; wa_sig TERM; wa_compare "a stale marker"
+assert_contains "$(nout)" "watcher killed externally" "row 8: a stale marker never silences"
+WA_MARK=""; WA_NOISE=0
+for wa_sg in HUP USR1 USR2 ALRM PIPE XCPU VTALRM; do
+  wa_sig "$wa_sg"; wa_compare "$wa_sg"
+  assert_eq "$(nout)" "" "row 8: $wa_sg prints no reason line"
+  assert_no_file "$WA_NH/home/state/.watch.lock.d" "row 8: $wa_sg runs the exit cleanup"
+  assert_eq "$WA_OSIG $WA_NSIG" "$(kill -l "$wa_sg") $(kill -l "$wa_sg")" "row 8: $wa_sg - both die BY the signal"
+done
+for wa_sg in QUIT PROF; do
+  wa_sig "$wa_sg"
+  assert_eq "$WA_NRC" "$WA_ORC" "row 8: $wa_sg's status"
+  wa_both rm -rf '$H/home/state/.watch.lock.d'
+done
+WA_WRAP=(/bin/sh -c 'trap "" INT; exec "$0" "$@"'); WA_NOISE=1
+for wa_s in o n; do
+  if [ "$wa_s" = o ]; then wa_b="$WA_OBIN"; wa_h="$WA_OH"; else wa_b="$WA_NBIN"; wa_h="$WA_NH"; fi
+  wa_armed "$wa_b" "$wa_h" "$wa_s"
+  kill -INT "$WA_PID"; /bin/sleep 0.5
+  kill -0 "$WA_PID" 2>/dev/null || fail "row 8: the $wa_s side died of an INT it started with ignored"
+  kill -TERM "$WA_PID"
+  if [ "$wa_s" = o ]; then wa_end WA_ORC; else wa_end WA_NRC; fi
+done
+wa_outs; wa_compare "INT ignored at entry"
+assert_contains "$(nout)" "signal:TERM" "row 8: INT ignored at entry is never handled"
+wa_both unsent block
+reset_wa
+
+# 9. Concurrency: a second identical arm while one runs; --once beside an
+#    armed watcher on one marker (the dedup stamp shared).
+wa_both wa_fresh; wa_both sent block
+WA_ENV=(AC_POLL=10 AC_HEARTBEAT=600)
+for wa_s in o n; do
+  if [ "$wa_s" = o ]; then wa_b="$WA_OBIN"; wa_h="$WA_OH"; else wa_b="$WA_NBIN"; wa_h="$WA_NH"; fi
+  wa_armed "$wa_b" "$wa_h" "arm$wa_s"
+  eval "wa_pid_$wa_s=\$WA_PID"
+done
+wa_pair; wa_compare "a second arm"
+assert_eq "$(nout)" "already running - pending: your inbox is empty - nothing waiting" "row 9: a second identical arm"
+wa_both crew c1 'done: once beside armed\n'
+wa_pair --once; wa_compare "--once beside an armed watcher"
+assert_eq "$(nout)" "report:c1" "row 9: the checkpoint reports and stamps"
+for wa_s in o n; do eval "WA_PID=\$wa_pid_$wa_s"; kill -TERM "$WA_PID"; if [ "$wa_s" = o ]; then wa_end WA_ORC; else wa_end WA_NRC; fi; done
+wa_both unsent block
+reset_wa
+
+# 10. Continuation: what one side wrote the other reads with no spurious wake;
+#     a lock one side holds refuses the other's arm; --release across sides.
+wa_both wa_fresh
+WA_ENV=(AC_HEARTBEAT=0)
+wa_both crew k1 'done: across\n'
+wa_run "$WA_OBIN" "$WA_OH" o --once || true
+wa_run "$WA_NBIN" "$WA_OH" n --once || true
+assert_eq "$(cat "$TMP/n.raw")" "check:quiet" "row 10: the port reads the original's stamps as seen"
+wa_run "$WA_NBIN" "$WA_NH" n --once || true
+wa_run "$WA_OBIN" "$WA_NH" o --once || true
+assert_eq "$(cat "$TMP/o.raw")" "check:quiet" "row 10: the original reads the port's stamps as seen"
+wa_both sent block
+WA_ENV=(AC_POLL=10 AC_HEARTBEAT=600)
+wa_armed "$WA_OBIN" "$WA_OH" armo; wa_opid=$WA_PID
+wa_run "$WA_NBIN" "$WA_OH" n || true
+assert_contains "$(cat "$TMP/n.raw")" "already running" "row 10: the original's lock refuses the port's arm"
+wa_run "$WA_NBIN" "$WA_OH" n --release "$wa_opid" || true
+assert_contains "$(cat "$TMP/n.raw")" "released: pid=$wa_opid" "row 10: the port releases the original"
+WA_PID=$wa_opid; wa_end WA_ORC
+assert_contains "$(cat "$TMP/armo.raw")" "config-swap by owner (released by pid=" "row 10: which reads the port's marker"
+wa_armed "$WA_NBIN" "$WA_NH" armn; wa_npid=$WA_PID
+wa_run "$WA_OBIN" "$WA_NH" o --release "$wa_npid" || true
+assert_contains "$(cat "$TMP/o.raw")" "released: pid=$wa_npid" "row 10: the original releases the port"
+WA_PID=$wa_npid; wa_end WA_NRC
+assert_contains "$(cat "$TMP/armn.raw")" "config-swap by owner (released by pid=" "row 10: which reads the original's marker"
+# ac-remote's order finds either side's live watcher by its command line.
+for wa_s in o n; do
+  if [ "$wa_s" = o ]; then wa_b="$WA_OBIN"; wa_h="$WA_OH"; else wa_b="$WA_NBIN"; wa_h="$WA_NH"; fi
+  wa_armed "$wa_b" "$wa_h" "arm$wa_s"
+  wa_ord="$(cd "$wa_h/cwd" && env "${WA_UNSET[@]}" "PATH=$wa_h/stub:$PATH" "STUB_DIR=$wa_h/stub" "AC_HOME=$wa_h/home" "$BIN/ac-remote.sh" order 'across the port' 2>&1 || true)"
+  assert_contains "$wa_ord" "remote-order local-" "row 10: the order is stashed on the $wa_s side"
+  case "$wa_ord" in *"no live fleet watcher"*) fail "row 10: ac-remote finds the $wa_s side's live watcher" ;; esac
+  kill -TERM "$WA_PID"
+  if [ "$wa_s" = o ]; then wa_end WA_ORC; else wa_end WA_NRC; fi
+done
+wa_both unsent block
+reset_wa
+
+# 11. A closed stdout, at --once and armed. A reader that has left ends both
+#     141 (SIGPIPE) with the exit cleanup; a stdout closed outright (>&-, no
+#     pipe) fails the first write and ends both 1 with the cleanup - bash's
+#     printf with its own `write error` line (SHELL-OWN), the port's write
+#     with EBADF. FAIL-PATH (named): the original's failed `heartbeat` line
+#     stayed in printf's buffer, and the exit's beacon write flushed it into
+#     state/.last-watcher-beat ahead of the 0; the port's beacon is the 0 alone.
+wa_beat() {  # wa_beat <what> <rc> - an armed run's exits, each side's beacon, then the worlds with the beacon reset
+  assert_eq "$WA_ORC $WA_NRC" "$2 $2" "row 11: $1 - the exits"
+  assert_eq "$(cat "$WA_OH/home/state/.last-watcher-beat")" "heartbeat
+0" "row 11: $1 - the original's beacon took its failed line"
+  assert_eq "$(cat "$WA_NH/home/state/.last-watcher-beat")" "0" "row 11: $1 - the port's beacon is the 0 alone"
+  wa_both sh -c 'printf "0\n" >"$1"' _ '$H/home/state/.last-watcher-beat'
+  wa_snap "$WA_OH" | wa_norm "$WA_OH" >"$TMP/o.snap"; wa_snap "$WA_NH" | wa_norm "$WA_NH" >"$TMP/n.snap"
+  cmp -s "$TMP/o.snap" "$TMP/n.snap" || fail "row 11: $1 - the world differs: $(diff "$TMP/o.snap" "$TMP/n.snap" | head -n 12)"
+}
+wa_both wa_fresh
+WA_ENV=(AC_HEARTBEAT=0 AC_POLL=10)
+WA_WRAP=(python3 -c 'import os, signal, sys
+r, w = os.pipe(); os.close(r); os.dup2(w, 1); os.close(w)
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+os.execvp(sys.argv[1], sys.argv[1:])')
+wa_same --once; assert_eq "$WA_NRC" 141 "row 11: a reader that has left ends --once 141"
+wa_sides
+assert_eq "$(nerr)" "$(LC_ALL=C sed -E '/^[^ ]*: line [0-9]+: printf: write error: Broken pipe$/d' "$TMP/o.err2")" "row 11: armed, a reader that has left - the same stderr but bash's own line"
+wa_beat "armed, a reader that has left" 141
+WA_WRAP=(/bin/bash -c 'exec "$0" "$@" >&-')
+wa_sides --once
+assert_eq "$WA_ORC $WA_NRC" "1 1" "row 11: --once with stdout closed - the exits"
+wa_snap "$WA_OH" | wa_norm "$WA_OH" >"$TMP/o.snap"; wa_snap "$WA_NH" | wa_norm "$WA_NH" >"$TMP/n.snap"
+cmp -s "$TMP/o.snap" "$TMP/n.snap" || fail "row 11: --once with stdout closed - the world differs: $(diff "$TMP/o.snap" "$TMP/n.snap" | head -n 12)"
+assert_contains "$(oerr)" "printf: write error: Bad file descriptor" "row 11: --once - the original's printf failed"
+assert_contains "$(nerr)" "EBADF" "row 11: --once - the port's write failed"
+wa_sides
+assert_contains "$(oerr)" "printf: write error: Bad file descriptor" "row 11: armed with stdout closed - the original's printf failed"
+assert_contains "$(nerr)" "EBADF" "row 11: armed with stdout closed - the port's write failed"
+wa_beat "armed with stdout closed" 1
+reset_wa
+
+# 12. W11 EXCLUSIVE TEMPS: a symlink to a sentinel planted at each predictable
+#     name - the arm-log trim's temp, the beacon's, the release marker's (and
+#     the marker's own name), the remote poll's two captures and jev's error
+#     file. The original wrote through the link (named); the port leaves the
+#     sentinel's bytes and the link alone, takes the next exclusive name and
+#     completes, that name gone with the work. A wrapper plants the pid-keyed
+#     names under the pid it execs into.
+WA_PLANT='while IFS= read -r l; do ln -s "$STUB_DIR/sentinel" "$(printf %s "$l" | sed "s/@PID@/$$/")"; done <"$STUB_DIR/plant"; exec "$0" "$@"'
+wa_plant() {  # wa_plant <path...> - each side's sentinel and the links its wrapper plants ($H the side root, @PID@ the side's pid)
+  local h p
+  for h in "$WA_OH" "$WA_NH"; do
+    printf 'sentinel\n' >"$h/stub/sentinel"
+    : >"$h/stub/plant"
+    for p in "$@"; do printf '%s\n' "${p//\$H/$h}" >>"$h/stub/plant"; done
+  done
+  WA_WRAP=(/bin/sh -c "$WA_PLANT")
+}
+wa_kept() {  # wa_kept <row> - the port's sentinel and every link it planted untouched, nothing left at the next name; the original's sentinel written through
+  local l
+  assert_eq "$(cat "$WA_NH/stub/sentinel")" "sentinel" "row 12: $1 - the port never writes through a planted link"
+  while IFS= read -r l; do
+    l="${l//@PID@/$WA_PID}"
+    assert_eq "$(readlink "$l")" "$WA_NH/stub/sentinel" "row 12: $1 - the link at ${l##*/} stays"
+    assert_no_file "$l.1" "row 12: $1 - nothing is left at ${l##*/}.1"
+  done <"$WA_NH/stub/plant"
+  [ "$(cat "$WA_OH/stub/sentinel")" != sentinel ] || fail "row 12: $1 - the original wrote through the link (W11, named)"
+}
+wa_both wa_fresh
+wa_plant '$H/home/state/.watcher-arm.log.tmp.@PID@'
+wa_both sh -c 'for i in 1 2 3 4 5 6; do printf "old %s\n" "$i"; done >"$1"' _ '$H/home/state/.watcher-arm.log'
+WA_ENV=(AC_HEARTBEAT=0 AC_ARMLOG_KEEP=2); wa_sides
+assert_eq "$(nout)" "heartbeat" "row 12: the arm-log trim - the arm completes"
+[ ! -L "$WA_NH/home/state/.watcher-arm.log" ] || fail "row 12: the arm-log trim - the arm log stays a file of its own"
+assert_eq "$(wc -l <"$WA_NH/home/state/.watcher-arm.log" | tr -d ' ')" "2" "row 12: the arm-log trim - trimmed to the keep"
+wa_kept "the arm-log trim"
+wa_both wa_fresh
+wa_plant '$H/home/state/.last-watcher-beat.tmp.@PID@'
+WA_ENV=(AC_HEARTBEAT=0 AC_POLL=10); wa_sides
+assert_eq "$(nout)" "heartbeat" "row 12: the beacon - the arm completes"
+[ ! -L "$WA_NH/home/state/.last-watcher-beat" ] || fail "row 12: the beacon - a file of its own"
+assert_eq "$(cat "$WA_NH/home/state/.last-watcher-beat")" "0" "row 12: the beacon - stood down at exit"
+wa_kept "the beacon"
+wa_both wa_fresh
+wa_plant
+for wa_h in "$WA_OH" "$WA_NH"; do
+  mkdir -p "$wa_h/home/state/.watch.lock.d"
+  /bin/sleep 30 & printf '%s\n' "$!" >"$wa_h/home/state/.watch.lock.d/pid"; printf '%s\n' "$!" >"$wa_h/victim.pid"
+  printf '%s\n' "$wa_h/home/state/.watcher-release-$!.tmp.@PID@" >"$wa_h/stub/plant"
+  ln -s "$wa_h/stub/sentinel" "$wa_h/home/state/.watcher-release-$!"
+done
+WA_ORC=0; WA_NRC=0
+wa_run "$WA_OBIN" "$WA_OH" o --release "$(cat "$WA_OH/victim.pid")" || WA_ORC=$?
+wa_run "$WA_NBIN" "$WA_NH" n --release "$(cat "$WA_NH/victim.pid")" || WA_NRC=$?
+wa_outs
+wa_v="$(cat "$WA_NH/victim.pid")"
+assert_eq "$(nout)" "released: pid=PID reason=config-swap - re-arm the corrected config" "row 12: the release marker - the release completes"
+[ ! -L "$WA_NH/home/state/.watcher-release-$wa_v" ] || fail "row 12: the release marker - renamed over the link at its name"
+assert_eq "$(sed -n '1,3p' "$WA_NH/home/state/.watcher-release-$wa_v")" "releaser=$WA_PID
+target=$wa_v
+reason=config-swap" "row 12: the release marker - its record"
+wa_kept "the release marker"
+for wa_h in "$WA_OH" "$WA_NH"; do
+  wa_v="$(cat "$wa_h/victim.pid")"; rm -f "$wa_h/victim.pid"
+  dead_within "$wa_v" 3 || fail "row 12: the release marker - each side TERMs its target"
+  wait "$wa_v" 2>/dev/null || true
+done
+wa_both wa_fresh
+wa_both cfg remote-poll-interval 60
+wa_both sh -c 'printf "pid=4242\nsince=x\n" >"$1"; printf "4242\n" >"$2"' _ '$H/home/state/.session-lock' '$H/home/state/.watcher-owner'
+wa_both put poll.out 'remote-order r1 hello\n'
+wa_plant '$H/home/state/.remote-poll.out.@PID@' '$H/home/state/.remote-poll.err.@PID@'
+WA_ENV=(AC_HEARTBEAT=0); wa_sides --once
+assert_eq "$(nout)" "remote:r1" "row 12: the remote captures - the poll completes"
+wa_kept "the remote captures"
+# jev's error file is <mktemp's name>.err: a PATH mktemp names it.
+wa_jev_mktemp() {
+  cat >"$H/stub/mktemp" <<'EOF'
+#!/bin/sh
+case "$1" in
+  */ac-watch-jev.XXXXXX) f="${1%XXXXXX}PLANTD"; : >"$f" && printf '%s\n' "$f" ;;
+  *) exec /usr/bin/mktemp "$@" ;;
+esac
+EOF
+  chmod +x "$H/stub/mktemp"
+}
+wa_both wa_fresh; wa_both wa_jev_mktemp
+wa_both wa_quiet j2 'still quiet\n' working
+wa_both put jev.err 'jev: transport: refused\n'; wa_both put jev.rc '1'
+wa_plant '$H/tmp/ac-watch-jev.PLANTD.err'
+WA_ENV=(AC_HEARTBEAT=0); wa_sides --once
+assert_eq "$(nout)" "stale:j2" "row 12: jev's error file - the quiet arm completes"
+assert_contains "$(cat "$WA_NH/home/state/.watcher-arm.log")" "jev: transport: refused (j2)" "row 12: jev's error file - its line reaches the arm log"
+assert_no_file "$WA_NH/tmp/ac-watch-jev.PLANTD" "row 12: jev's error file - its state file is gone"
+wa_kept "jev's error file"
+reset_wa
 
 pass

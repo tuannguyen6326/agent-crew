@@ -127,8 +127,7 @@ else
 fi
 
 # wezterm renders the herdr UI. herdr draws in any terminal, so this is a
-# preference, not a requirement - but it is the terminal
-# docs/examples/wezterm-agent-crew.lua wires the fleet statusline into.
+# preference, not a requirement.
 if command -v wezterm >/dev/null 2>&1 || [ -d /Applications/WezTerm.app ]; then
   printf 'OK: wezterm\n'
 else

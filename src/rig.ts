@@ -21,7 +21,7 @@
 // delimiter words, src/standing-jobs.ts's cadence/recreate parse returns the
 // wrong cadence and the wrong action, silently. A manifest carrying paths and
 // commands walks into that on day one. YAML was never a candidate: this distro
-// has no yq, only ac_yaml_get (bin/ac-pipeline-lib.sh), which cannot read a
+// has no yq, only the flat YAML subset reader (yamlGet, src/lib.ts), which cannot read a
 // list.
 //
 // GRAMMAR (this header is the authoritative spec):
@@ -40,7 +40,7 @@
 // `UNVERIFIABLE` is a first-class third answer for a fact no read-only command
 // on this host can settle, and it is what keeps the manifest honest rather
 // than confident. The vocabulary is not invented here: `ac-know.sh verify`
-// already grades entries FRESH / SUSPECT / UNVERIFIABLE / MANUAL.
+// (src/know.ts) already grades entries FRESH / SUSPECT / UNVERIFIABLE / MANUAL.
 //
 //   OK:           <class>/<id> - <what matched>
 //   DRIFT:        <class>/<id> - declared <x>, reality <y>
@@ -53,7 +53,7 @@
 // symmetric: a FALSE OK is the unrecoverable one - it makes the verb
 // decorative. So an absent, unparseable, wrong-shaped or wrong-home manifest
 // REFUSES; it is never graded clean. This is the `validate` half of the
-// distro's list/validate split (bin/ac-deputy.sh's `list` / `validate: the
+// distro's list/validate split (src/deputy.ts's `list` / `validate: the
 // strict twin` header sections): a strict twin that exits non-zero, not a
 // digest renderer that may never take session start down. No src/lib.ts twin
 // decides this entry's status: the home is checked here, before any helper
@@ -149,13 +149,13 @@
 // - SERVICE LIVENESS (dashboard, remote poll, brain). Services start and stop
 //   on demand - the dashboard daemon's pid file can outlive a crash until the
 //   next start/stop reads it stale (bin/ac-dashboard.sh) - and the watcher
-//   beacon is stood down to 0 on every normal exit (bin/ac-watch.sh
-//   stand_down_beacon) - a declared expected liveness would be a false-drift
+//   beacon is stood down to 0 on every normal exit (src/watch.ts
+//   exitCleanup) - a declared expected liveness would be a false-drift
 //   generator.
 // - PROJECTS. records/projects.md is already its own single source; a copy
 //   here would be a second one.
 // - CREWDEPUTIES / CREWDOMAINS. Both already have a declared file plus a
-//   strict checker (bin/ac-deputy.sh cmd_validate, bin/ac-domain.sh cmd_validate).
+//   strict checker (src/deputy.ts validate, src/domain.ts validate).
 // - TOOLCHAIN BINARIES. bin/ac-bootstrap.sh's need/opt list is the source and
 //   already gates.
 //
@@ -164,7 +164,7 @@
 // first one would silently bless whatever rot the home already carries.
 import { existsSync, readdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { basename, join } from "node:path";
-import { configRead, enterCaller, physicalDir, recordsDir, stateDir } from "./lib.ts";
+import { configRead, enterCaller, physicalDir, recordsDir, spawnShellSync, stateDir } from "./lib.ts";
 
 const bin = join(import.meta.dir, "..", "bin");
 const US = "\x1f";
@@ -210,7 +210,7 @@ const sayDrift = (id: string, what: string, fix: string): void => {
 // jq's answer as bytes with every NUL and every trailing newline dropped, as
 // `$(...)` dropped them; null when jq failed.
 function jq(args: string[], file: string): string | null {
-  const r = Bun.spawnSync(["jq", ...args, file], { stdout: "pipe", stderr: "ignore" });
+  const r = spawnShellSync(["jq", ...args, file], { stdout: "pipe", stderr: "ignore" });
   if (r.exitCode !== 0) return null;
   return r.stdout.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
 }
@@ -287,7 +287,7 @@ function checkWiring(manifest: string): void {
   // A git that cannot be launched at all is the same `! git ...` branch.
   let isRepo = false;
   try {
-    isRepo = Bun.spawnSync(["git", "-C", native(actual), "rev-parse", "--git-dir"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+    isRepo = spawnShellSync(["git", "-C", native(actual), "rev-parse", "--git-dir"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
   } catch {}
   if (!isRepo) {
     sayDrift("wiring/distro_checkout", `declared ${declared}, and the path is not a git repository`, `restore the checkout at ${actual}, or correct records/rig.json`);
@@ -368,7 +368,7 @@ function checkStandingJobs(manifest: string): void {
   // A sibling that cannot be launched (gone, mode 000) failed the `||` too.
   let ids: string | null = null;
   try {
-    const r = Bun.spawnSync([join(bin, "ac-standing-jobs.sh"), "--ids"], { stdout: "pipe", stderr: "ignore" });
+    const r = spawnShellSync([join(bin, "ac-standing-jobs.sh"), "--ids"], { stdout: "pipe", stderr: "ignore" });
     if (r.exitCode === 0) ids = r.stdout.toString("latin1");
   } catch {}
   if (ids === null)

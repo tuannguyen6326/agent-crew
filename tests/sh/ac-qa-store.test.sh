@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ac-qa-store.test.sh - the QA store learning loop (contract: QA STORE
-# LEARNING LOOP in bin/ac-qa-lib.sh): history rows per curated run, machine
+# LEARNING LOOP in tests/fixtures/ac-qa-lib.sh): history rows per curated run, machine
 # promotion after N consecutive same-body passes, re-verification of store
 # cases, the flaky and body-change resets, and the judge-vs-human kappa.
 # Pure functions over explicit paths - no live run, no docker - plus the
@@ -12,7 +12,8 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 make_home
-lib() { AC_HOME="$AC_HOME" bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-pipeline-lib.sh'; . '$BIN/ac-qa-lib.sh'; $1"; }
+RBIN="$(make_retired_bin)"
+lib() { AC_HOME="$AC_HOME" bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; $1"; }
 
 store="$TMP/store"; mkdir -p "$store"
 plan="$TMP/testplan.md"

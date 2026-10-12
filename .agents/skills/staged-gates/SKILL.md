@@ -27,7 +27,7 @@ Staged-flow task data nests under the family dir: design reports remain in
 material in `qa/`. Historical `review/` and `ship/` dirs are readable but are
 never created by the normal flow.
 Family-level files stay at `data/<family>/` root: `room.md` and gate artifacts.
-Direct tasks and plain scouts stay flat at `data/<id>/` (`ac-brief.sh` is the authoritative layout spec).
+Direct tasks and plain scouts stay flat at `data/<id>/` (the header of `src/brief.ts`, which `ac-brief.sh` starts, is the authoritative layout spec).
 Stage admission is receipted, never inferred: BEFORE the first design report,
 the owning chief posts one `STAGE-ADMISSION: stage=<spec|architecture|plan>
 decision=<admit|skip> grounds=<one line>` per stage to the family room

@@ -19,10 +19,21 @@
 # QA gate (ac_qa_gate_matrix / ac_qa_gate_ok).
 #
 # LIVE PRODUCTION CALLERS (derived from the tree, not the audit - see
-# report.md): bin/ac-qa.sh, bin/ac-verify.sh, bin/ac-merge-local.sh
-# (ac_qa_gate_ok) and bin/ac-pr-merge.sh (ac_qa_required, ac_qa_gate_matrix,
-# ac_qa_gate_ok) - the merge helpers are load-bearing: ac-merge-local.sh is
-# the script that lands THIS split's own family.
+# report.md): bin/ac-verify.sh, for the validators (ac_qa_attestation_parse
+# among them); src/qa.ts, which bin/ac-qa.sh starts, calls their twins, and
+# its frozen bash original (tests/fixtures/ac-qa.sh) still sources this
+# file as the qa leg's oracle. The merge gate itself -
+# ac_qa_required, ac_qa_gate_ok, ac_qa_gate_matrix - has NO production
+# caller: the live gate is src/lib.ts's qa-gate twins (qaRequired, qaGateOk,
+# qaAttestationParse), run in process by src/merge-local.ts and
+# src/pr-merge.ts, and these three stay as the test oracles the twins are
+# pinned to (tests/ts/qa-gate.test.ts; the frozen entries under
+# tests/fixtures/ source them too). An edit to them changes no merge until
+# the twin changes with it.
+# The validators bin/ac-verify.sh's qa verb calls, and the QA STORE LEARNING
+# LOOP, have twins in src/qa-lib.ts, which spawn their jq and awk programs
+# verbatim; tests/ts/qa-lib.test.ts holds each twin to its function here, so a
+# change on one side alone fails it.
 #
 # LAYERING: depends only on ac-lib.sh core (ac_die, ac_warn, ac_config_read,
 # ac_project_config_file, ac_repo_root, ...) and, for the scoped-config path,
@@ -35,11 +46,12 @@
 
 ac_qa_required() {
   # ac_qa_required <project-repo> - is the qa.require_for_ship merge gate
-  # ENFORCED for this target? Returns 0 when the policy source sets
-  # qa.require_for_ship: true, 1 otherwise. Reads the policy WITHOUT a head
+  # ENFORCED for this target? Returns 0 when the policy source enforces it
+  # (the grammar below), 1 otherwise. Reads the policy WITHOUT a head
   # sha, so a caller can decide enforcement even when the PR head cannot be
-  # resolved - the fail-closed contract in ac-pr-merge.sh depends on this to
-  # refuse (never skip) a required gate on an unknown head.
+  # resolved - the fail-closed contract of ac-pr-merge.sh (src/pr-merge.ts,
+  # through this function's twin qaRequired) depends on this to refuse (never
+  # skip) a required gate on an unknown head.
   # Policy source: the canonical $AC_HOME/projects/<name>.yaml (legacy path while
   # un-migrated). It is captain-owned and outside the project repo, so no branch
   # can alter the gate. Resolve through ac_project_config_file, the ONE config
@@ -47,16 +59,40 @@ ac_qa_required() {
   # copy fails the gate CLOSED (its ac_die propagates - a $(...) capture would
   # swallow it) instead of silently selecting a copy; then read its RESOLVED path
   # so the gate stays correct on an un-migrated (legacy) home too.
+  # A policy that cannot be READ refuses (ac_die, as the RETIRED copy does)
+  # rather than reading "not enforced": a git that cannot run resolves no repo
+  # to its policy, and a regular file at the canonical path that cannot be
+  # read hides it. A dir git says is no repo has no policy keyed to it, so it
+  # stays not enforced.
+  # Grammar, read in the C locale (under UTF-8 macOS awk aborts on a byte that
+  # is no UTF-8, which read as "not enforced"): a column-0 `qa:`, then
+  # optional space and an optional `#` comment, opens the block; a column-0
+  # line that is no comment closes it. The FIRST `<space>require_for_ship:`
+  # inside it (any depth) is ENFORCED unless its value - the text past that
+  # key's own colon, a comment (a `#` after a space) cut with the rest of the
+  # line, `"` and `'` deleted, its ends trimmed of [:space:] (a TAB or a
+  # CRLF's CR too) - is an explicit false spelling: false, False, FALSE, no,
+  # No, NO, off, Off, OFF. A value that starts with `#` is none, cut or not;
+  # an empty or odd value enforces; no such key in the block, or no block, is
+  # not enforced.
   local repo="$1" cfg required hc
+  git --version >/dev/null 2>&1 \
+    || ac_die "qa.require_for_ship: git did not run (is it on PATH?), so the project policy for '$repo' cannot be resolved - refusing the merge rather than reading it as not enforced"
   ac_project_config_file "$repo" >/dev/null || true
-  if hc="$(ac_project_config_file "$repo" 2>/dev/null)"; then cfg="$(cat "$hc")"; else cfg=""; fi
-  required="$(printf '%s\n' "$cfg" | awk '
-    /^qa:[[:space:]]*$/ { inq = 1; next }
+  if hc="$(ac_project_config_file "$repo" 2>/dev/null)"; then
+    cfg="$(cat "$hc" 2>/dev/null)" \
+      || ac_die "qa.require_for_ship: the project policy $hc cannot be read - refusing the merge rather than reading it as not enforced"
+  else cfg=""; fi
+  required="$(printf '%s\n' "$cfg" | LC_ALL=C awk '
+    /^qa:[[:space:]]*(#.*)?$/ { inq = 1; next }
     inq && /^[^[:space:]#]/ { inq = 0 }
     inq && /^[[:space:]]+require_for_ship:/ {
-      v = $0; sub(/.*:[[:space:]]*/, "", v); gsub(/["'\'' ]/, "", v); print v; exit
+      v = $0; sub(/^[[:space:]]+require_for_ship:/, "", v)
+      sub(/[[:space:]]#.*/, "", v); gsub(/["'\'']/, "", v)
+      sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v)
+      print (v ~ /^(false|False|FALSE|no|No|NO|off|Off|OFF)$/) ? "off" : "on"; exit
     }')"
-  [ "$required" = true ]
+  [ "$required" = on ]
 }
 
 ac_qa_attestation_parse() {
@@ -112,9 +148,9 @@ ac_qa_attestation_parse() {
     || { AC_QA_ATTESTATION_ERROR="source_sha mismatch"; return 1; }
   [ -n "$profile_key" ] && [ -n "$profile_sha" ] && [ -n "$config_sha" ] \
     || { AC_QA_ATTESTATION_ERROR="missing profile/config identity"; return 1; }
-  case "$cases_passed:$cases_total" in
-    *[!0-9:]*|0:*|*:0|:*) AC_QA_ATTESTATION_ERROR="invalid case counts"; return 1 ;;
-  esac
+  # Canonical decimal, so >= 1: a leading zero would let `00` equal `00`.
+  case "$cases_passed" in ''|0*|*[!0-9]*) AC_QA_ATTESTATION_ERROR="invalid case counts"; return 1 ;; esac
+  case "$cases_total" in ''|0*|*[!0-9]*) AC_QA_ATTESTATION_ERROR="invalid case counts"; return 1 ;; esac
   [ "$cases_passed" = "$cases_total" ] \
     || { AC_QA_ATTESTATION_ERROR="case counts differ"; return 1; }
   if [ -n "$want_scope" ]; then
@@ -613,7 +649,7 @@ ac_qa_ship_receipt_status() {
   # Prints `qualifies:<reason>` or `not-qualifies:<reason>` on ONE closed reason
   # (executed|execution-attestation|absent|incomplete|non-zero|stale|invalid|
   # scoped - a green changed-file-only run, deliberately never suite proof;
-  # ac-ship.sh's SCOPED TEST block owns why) and always returns 0: an
+  # src/ship.ts's SCOPED TEST block owns why) and always returns 0: an
   # unreadable receipt is a NOT-qualifying answer, not an error a caller could
   # mistake for proof.
   local src="$1" want_sha="$2" qual reason sha exit_code cmd_sha out_sha started ended
@@ -869,9 +905,11 @@ ac_qa_gate_matrix() {
     [ -n "$key" ] || { ac_warn "qa.require_for_ship: a required-profile manifest entry has no profile_key ($manifest) - refusing rather than guessing which profile it means"; return 1; }
     n=$((n + 1))
     # profile_key is <project>/<scope>/<app>; the marker is keyed <sha>.<scope>.<app>.
+    # The name class is spelled out: under a UTF-8 locale bash 3.2's A-Z
+    # collates `é` inside it.
     app="${key##*/}"; rest="${key%/*}"; scope="${rest##*/}"
-    case "$scope" in ''|*[!A-Za-z0-9_-]*) ac_warn "qa.require_for_ship: required profile '$key' does not parse to <project>/<scope>/<app> (scope segment invalid) - fix the task manifest"; return 1 ;; esac
-    case "$app" in ''|*[!A-Za-z0-9_-]*) ac_warn "qa.require_for_ship: required profile '$key' does not parse to <project>/<scope>/<app> (app segment invalid) - fix the task manifest"; return 1 ;; esac
+    case "$scope" in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*) ac_warn "qa.require_for_ship: required profile '$key' does not parse to <project>/<scope>/<app> (scope segment invalid) - fix the task manifest"; return 1 ;; esac
+    case "$app" in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*) ac_warn "qa.require_for_ship: required profile '$key' does not parse to <project>/<scope>/<app> (app segment invalid) - fix the task manifest"; return 1 ;; esac
     marker="$dir/$sha.$scope.$app"
     if [ ! -f "$marker" ]; then
       ac_warn "qa.require_for_ship: required profile '$key' has no passing crew-qa attestation for ${sha:0:12} - run crew-qa for EVERY required profile at this head before merging"
@@ -938,9 +976,10 @@ ac_qa_gate_ok() {
   # indistinguishable from "the yaml declares no scopes". With no scope map
   # either, that steers a SCOPED project into the FLAT arm, where a bare
   # sha-only marker satisfies the gate: precisely the fail-open the two-sided
-  # read exists to refuse, at the last gate before a merge. Both merge helpers
-  # source the sibling and say why; this makes the gate itself prove it,
-  # because a caller's sourcing discipline is not something a gate may assume.
+  # read exists to refuse, at the last gate before a merge. The frozen merge
+  # entries under tests/fixtures/ source the sibling and say why; this makes
+  # the gate itself prove it, because a caller's sourcing discipline is not
+  # something a gate may assume.
   command -v ac_yaml_has >/dev/null 2>&1 || {
     ac_warn "qa.require_for_ship: this merge gate cannot read the project yaml - its caller sourced ac-lib.sh WITHOUT its sibling ac-pipeline-lib.sh, so the scoped/flat mode cannot be determined. Refusing the merge rather than reading an unbound command as 'no scopes'. Fix the caller: source bin/ac-pipeline-lib.sh after bin/ac-lib.sh."
     return 1
@@ -950,8 +989,10 @@ ac_qa_gate_ok() {
   # partial migration: with qa.scopes in the yaml and the map absent or
   # unreadable, it would classify the project FLAT and accept a legacy bare
   # marker - defeating the whole point in precisely the state a migration
-  # passes through, and at the last gate.
-  map_scoped="$(ac_knowledge_scopes "$repo" 2>/dev/null)" || rc=$?
+  # passes through, and at the last gate. Both sides are read in the C locale:
+  # under UTF-8 macOS awk aborts on a byte that is no UTF-8, and an aborted
+  # qa.scopes read is "absent" - FLAT, where a bare marker passes.
+  map_scoped="$(LC_ALL=C ac_knowledge_scopes "$repo" 2>/dev/null)" || rc=$?
   if [ "$rc" -ne 0 ]; then
     ac_warn "qa.require_for_ship: the project's scope map is AMBIGUOUS (two live entries for one scope, or a malformed line) - refusing the merge rather than guessing which profile a marker proves. Fix it with bin/ac-know.sh scope-proposal, then re-run: bin/ac-know.sh verify"
     return 1
@@ -962,7 +1003,7 @@ ac_qa_gate_ok() {
   # exists to refuse.
   yaml_scoped=0
   if cfg="$(ac_project_config_file "$repo" 2>/dev/null)"; then
-    ac_yaml_has "$cfg" qa.scopes && yaml_scoped=1
+    LC_ALL=C ac_yaml_has "$cfg" qa.scopes && yaml_scoped=1
   fi
 
   if [ -z "$map_scoped" ] && [ "$yaml_scoped" = 0 ]; then
@@ -987,8 +1028,10 @@ ac_qa_gate_ok() {
   # SCOPED. A candidate must clear THREE tests before it counts, and one that
   # fails any of them can never satisfy the gate: a regular FILE (-f, not -e,
   # so a directory left by an aborted write is not an attestation), EXACTLY
-  # two components, and both inside the declared name grammar. Because no
-  # legal scope or app name may contain a dot, "one dot" is a total parse.
+  # two components, and both inside the declared name grammar - its class
+  # spelled out, because under a UTF-8 locale bash 3.2's A-Z collates `é`
+  # inside it. Because no legal scope or app name may contain a dot, "one
+  # dot" is a total parse.
   # A failing candidate is SKIPPED and NAMED: a stray file must not be able to
   # block a merge that has a genuine pair beside it, and it must not be able
   # to authorise one either. Both halves are load-bearing.
@@ -1002,8 +1045,8 @@ ac_qa_gate_ok() {
       *) skipped="$skipped $base"; continue ;;
     esac
     scope="${rest%%.*}"; app="${rest#*.}"
-    case "$scope" in ''|*[!A-Za-z0-9_-]*) skipped="$skipped $base"; continue ;; esac
-    case "$app" in ''|*[!A-Za-z0-9_-]*) skipped="$skipped $base"; continue ;; esac
+    case "$scope" in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*) skipped="$skipped $base"; continue ;; esac
+    case "$app" in ''|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*) skipped="$skipped $base"; continue ;; esac
     if ac_qa_attestation_parse "$m" "$sha" "$scope" "$app"; then
       pairs="$pairs $scope/$app"
     else

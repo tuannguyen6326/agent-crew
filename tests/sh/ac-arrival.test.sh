@@ -5,8 +5,9 @@
 # (typed-human-turn extraction, tool-result/array content excluded, LAST turn
 # wins for --resume), and ac_arrival_wait (the three-state contract these
 # compose into: 0 CONFIRMED / 1 REFUTED / 2 UNOBSERVABLE, 2 never collapsed
-# into 1 - contract: bin/ac-backend.sh WINDOW LIVENESS). These back both
-# bin/ac-spawn.sh's kickoff delivery and bin/ac-send.sh's steer delivery;
+# into 1 - contract: bin/ac-backend.sh WINDOW LIVENESS). These back
+# bin/ac-spawn.sh's kickoff delivery, and bin/ac-send.sh's steer delivery
+# through their twin in src/lib.ts (held to them by tests/ts/send.test.ts);
 # neither script's own suite re-derives this contract, they just exercise it.
 
 . "$(dirname "$0")/helpers.sh" \

@@ -138,7 +138,9 @@ run_side() {  # run_side <bin> <out> <err> <args...> - one side, from the world'
 norm() { LC_ALL=C sed -e "s#$OROOT#ROOT#g" -e "s#$ROOT#ROOT#g" "$1"; }
 snap() {  # snap <dir> <out> - every entry under <dir>, byte order: a dir, a link and its target, or a file with its mode and bytes
   : >"$2"
-  (cd "$1" && find . -mindepth 1 | LC_ALL=C sort | while IFS= read -r f; do
+  # bun parks its transpiler cache under $HOME/Library/Caches once a module is
+  # large enough; the world's HOME is the side root, so that tree is not the port's
+  (cd "$1" && find . -mindepth 1 -path ./h/Library -prune -o -mindepth 1 -print | LC_ALL=C sort | while IFS= read -r f; do
     if [ -L "$f" ]; then printf '== %s -> %s\n' "$f" "$(readlink "$f")"
     elif [ -d "$f" ]; then printf '== %s/\n' "$f"
     else printf '== %s %s\n' "$f" "$(stat -f %Lp "$f")"; cat "$f"; printf '\n--\n'; fi

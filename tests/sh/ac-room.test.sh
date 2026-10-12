@@ -171,8 +171,8 @@ assert_contains "$("$BIN/ac-room.sh" list)" "HANDBACK            gizmo" "list su
 case "$("$BIN/ac-room.sh" list)" in *"HANDBACK            gizmo"*) fail "DEMOTED must settle the hand-back" ;; esac
 rm -rf "$AC_HOME/state"/.wake-spool*
 
-# A hand-back is chief-owned, not captain-approval - captain ruling
-# ("block boi captain") moved the one captain notification off it: it still
+# A hand-back is chief-owned, not captain-approval - notifying only on a
+# block by the captain moved the one captain notification off it: it still
 # posts and nudges (both asserted above), it just no longer rings ac-notify.sh.
 notify_log="$TMP/notify-handback.log"
 notify_hook="$TMP/notify-handback-hook.sh"
@@ -707,7 +707,7 @@ done
 # reading-zero, observed live 2026-07-28 on family
 # routed-pane-rules-for-gate-codereview-roomchief: both panes stamped
 # needs-decision while `list`/`pending` read 0). The liveness source is the
-# watcher's OWN stamp (bin/ac-watch.sh check_fleet's ask-alert touches state/.ask-<id> the
+# watcher's OWN stamp (src/watch.ts checkFleet's ask-alert touches state/.ask-<id> the
 # instant backend_agent_blocked is true and rm -f's it the instant it
 # clears, with no clearing status line) - constructed directly here, never a
 # live repro.
@@ -730,8 +730,8 @@ assert_contains "$("$BIN/ac-room.sh" list | grep stuck)" "ok" \
 
 # A REAL pending item renders byte-identically to before - the stamp check is
 # only consulted while the room's own accounting is 0, so ac_room_pending's
-# count (and everything built on it: ac_chief_gate_parked, the turn-end guard,
-# the statusline) never changes.
+# count (and everything built on it: ac_chief_gate_parked, the turn-end guard)
+# never changes.
 "$BIN/ac-room.sh" post stuck crewchief "GATE: real question" >/dev/null
 touch "$AC_HOME/state/.ask-stuck-chief"
 assert_contains "$("$BIN/ac-room.sh" list | grep stuck)" "PENDING-CAPTAIN(1)  stuck" \
@@ -740,8 +740,8 @@ rm -f "$AC_HOME/state/.ask-stuck-chief"
 "$BIN/ac-room.sh" post stuck captain "DECIDED: go" >/dev/null
 
 # --- notify fires only on the blocked-by-captain TRANSITION -----------------
-# A captain ruling ("k co gi thi dung co chay ac-notify" / "block boi
-# captain"): the fleet is blocked BY THE CAPTAIN exactly when a room GATE:/
+# A notification is only for a block by the captain, never otherwise:
+# the fleet is blocked BY THE CAPTAIN exactly when a room GATE:/
 # ASK: is pending on them - ac_room_pending's own count, unchanged (FENCE:
 # never re-derive or widen that predicate). `cmd_post` is where this now
 # lives: it fires ac-notify.sh on the EDGE into blocked (pending 0 -> >0),
@@ -903,7 +903,7 @@ done
 
 # GREEN 4: the ONE named DECIDED exception - ac-spawn.sh's cap-gate exemption
 # receipt DECLARES itself via AC_ROOM_PROMOTE_RECEIPT=1 (bin/ac-spawn.sh's roomchief-path DECIDED: receipt post,
-# the roomchief's own explicit-signal ruling 2026-07-30, not text-shape
+# an explicit signal, not text-shape
 # matching) and must post through, unscoped, while the SAME roomchief is live.
 AC_ROOM_PROMOTE_RECEIPT=1 "$BIN/ac-room.sh" post ownfam crewchief \
   "DECIDED: ownfam captain-initiated promote (order ref: x) - EXEMPT, does NOT count toward room-parallel=5" >/dev/null
@@ -1116,16 +1116,22 @@ assert_contains "$err" "BACKEND" "the rc=2 refusal names the BACKEND as unreadab
 case "$err" in *"is gone"*) fail "an unreadable backend must never be reported as gone" ;; esac
 case "$err" in *teardown*) fail "an unreadable backend must never invite a teardown of a possibly-live roomchief" ;; esac
 
-# ...and exit 127 (a driver failed to LOAD) refuses the SAME way - the real
-# production shape of a driver file that failed to load (ac_backend_route
-# dispatches per call to backend_${fn}_herdr, so a missing driver function
-# makes bash itself return 127 from the call being classified).
-make_loadfail_bin
-err="$("$LOADFAIL_BIN/ac-room.sh" open openfam 2>&1)" \
-  && fail "THE REGRESSION: open must refuse a 127 driver-load failure, never treat it as gone"
-assert_contains "$err" "BACKEND" "the 127 refusal names the BACKEND, same as rc=2"
-case "$err" in *"is gone"*) fail "a 127 driver failure must never be reported as gone" ;; esac
-case "$err" in *teardown*) fail "a 127 driver failure must never invite a teardown of a possibly-live roomchief" ;; esac
+# ...and a backend that cannot be READ at all refuses the SAME way. This row
+# once drove a driver that failed to LOAD (bash's 127, through a lab bin/ with
+# the herdr driver renamed); the backend verbs are native now (src/lib.ts
+# backendCall), so no driver can fail to load under open, and the row reaches
+# the same unobservable read with herdr absent from PATH (the liveness
+# ladder's 2).
+nh_path="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin:/sbin"
+if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
+  err="$(PATH="$nh_path" "$BIN/ac-room.sh" open openfam 2>&1)" \
+    && fail "THE REGRESSION: open must refuse a backend absent from PATH, never treat it as gone"
+  assert_contains "$err" "BACKEND" "herdr absent from PATH refuses naming the BACKEND, same as rc=2"
+  case "$err" in *"is gone"*) fail "herdr absent from PATH must never be reported as gone" ;; esac
+  case "$err" in *teardown*) fail "herdr absent from PATH must never invite a teardown of a possibly-live roomchief" ;; esac
+else
+  printf 'SKIP: open with herdr absent - bun shares its directory with a herdr on this host\n'
+fi
 
 # --- list: an unreadable room is no answer, never an empty inbox --------------
 # The rows pass (src/room.ts) exits 2 with no rows when any room cannot be read;
@@ -1150,5 +1156,644 @@ if [ "$(id -u)" != 0 ]; then
   assert_contains "$ss" "inbox is UNKNOWN" "session-start says the inbox is unknown"
   assert_contains "$dash" "inbox is UNKNOWN" "...and so does the dashboard"
 fi
+
+# --- differential: src/room.ts against the frozen bash original ------------
+# DISPUTED: the implementation (tests/fixtures/ac-room.sh, calling the frozen tests/fixtures/ac-notify.sh, under bash vs src/room.ts with src/notify.ts in-process through bin/ac-room.sh)
+# HELD-CONSTANT: two side roots seeded alike ($ROH for the oracle, $RNH for the shim) - a home at <side>/home and the fake herdr's state at <side>/herdr; argv and env (the side root spelled HOME, substituted in values only); cwd (the side root); stdin (/dev/null, or row 19's line); LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - make_fake_herdr's herdr (behind row 19's stdin-logging wrapper there), orca and osascript that log their argv and answer per sentinel file, a date answering one fixed instant per format (or failing per sentinel); the sibling bin/ac-remote.sh (the live one on both sides) with a config/remote-reply hook logging what reaches the thread; exit status, stdout and stderr compared whole (the side root spelled HOME, either bin root spelled ROOT, pids spelled PID), then the world a row may touch: every path under the home, every room (live and archived), every spool record, the captain-wait stamps and every stub log.
+robin="$(make_oracle_bin ac-room)"
+cp "$ROOT/tests/fixtures/ac-notify.sh" "$robin/ac-notify.sh"
+ROH="$TMP/rside-o"; RNH="$TMP/rside-n"
+RSTUBS="$TMP/rstubs"; mkdir -p "$RSTUBS"
+cat >"$RSTUBS/date" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *%N*) [ ! -e "$STUB_DIR/date.fail-ns" ] || exit 4
+        [ ! -e "$STUB_DIR/date.empty-ns" ] || exit 0
+        echo 1767225600000000000 ;;
+  *%S*) [ ! -e "$STUB_DIR/date.fail" ] || { echo 'date: the stub refuses' >&2; exit 3; }
+        echo 2026-01-01T00:00:00Z ;;
+  *%M*) [ ! -e "$STUB_DIR/date.fail-vn" ] || exit 5
+        echo "2026-01-01 07:00 ${TZ:-no TZ}" ;;
+  *%s*) echo 1767225600 ;;
+  *) exec /bin/date "$@" ;;
+esac
+STUB
+cat >"$RSTUBS/orca" <<'STUB'
+#!/bin/sh
+printf 'orca %s\n' "$*" >>"$STUB_DIR/orca.log"
+[ -e "$STUB_DIR/orca.alive" ] || exit 1
+printf '{"ok":true,"result":{"terminal":{"connected":true}}}\n'
+STUB
+cat >"$RSTUBS/osascript" <<'STUB'
+#!/bin/sh
+printf 'osascript %s\n' "$*" >>"$STUB_DIR/osa.log"
+[ ! -e "$STUB_DIR/osa.fail" ] || exit 1
+STUB
+chmod +x "$RSTUBS/date" "$RSTUBS/orca" "$RSTUBS/osascript"
+rboth() {  # rboth <cmd> <args...> - a seeding step at each side root: H names it, and so does a literal $H in an argument
+  local h x a; for h in "$ROH" "$RNH"; do H="$h"; a=(); for x in "$@"; do a+=("${x//\$H/$h}"); done; "${a[@]}"; done
+}
+rseed() {
+  rm -rf "$H"; mkdir -p "$H/home/state" "$H/home/data" "$H/home/config" "$H/home/records" "$H/herdr/panes" "$H/herdr/tabs"
+  printf 'off\n' >"$H/home/config/wedge-alarm"
+}
+rput() { mkdir -p "$(dirname "$H/$1")"; printf -- "$2" >"$H/$1"; }   # rput <path under the side> <printf format>
+rcfg() { printf '%s\n' "$2" >"$H/home/config/$1"; }
+rchief() {  # rchief <fam> [<meta backend>] - a promoted roomchief whose fake herdr pane is alive
+  printf 'backend=%s\nkind=roomchief\n' "${2:-herdr}" >"$H/home/state/$1-chief.meta"
+  printf 'p%s t%s\n' "$1" "$1" >"$H/home/state/.pane-$1-chief"
+  printf 'p%s\n' "$1" >"$H/herdr/tabs/t$1"; : >"$H/herdr/panes/p$1.buf"
+}
+rhook() {  # a remote-reply hook logging what reaches the thread
+  cat >"$H/home/config/remote-reply" <<'HOOK'
+#!/usr/bin/env bash
+{ cat; printf 'rid=%s mention=%s\n' "$AC_REMOTE_RID" "${AC_REMOTE_MENTION:-}"; } >>"$STUB_DIR/mirror.log"
+[ ! -e "$STUB_DIR/mirror.fail" ] || exit 1
+printf '1700.77\n'
+HOOK
+  chmod +x "$H/home/config/remote-reply"
+}
+RHOMELESS=0; RLC=C; RENV=()
+rrun_side() {  # rrun_side <bin> <side root> <prefix> <args...>
+  local bin="$1" h="$2" p="$3" x v; shift 3
+  local a=() e=("LC_ALL=$RLC" "PATH=$RSTUBS:$TMP/stubbin:$PATH" "STUB_DIR=$h" "FAKE_HERDR=$h/herdr")
+  [ "$RHOMELESS" = 1 ] || e+=(AC_HOME="$h/home")
+  for x in ${RENV[@]+"${RENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//HOME/$h}"); done
+  for x in "$@"; do a+=("${x//HOME/$h}"); done
+  (cd "$h" && env -u AC_HOME -u AC_SCOPE -u AC_ROOM_PROMOTE_RECEIPT -u AC_BACKEND -u AC_FLEET_STATE "${e[@]}" \
+    "$bin/ac-room.sh" ${a[@]+"${a[@]}"}) <"${RSTDIN:-/dev/null}" >"$TMP/$p.raw" 2>"$TMP/$p.err"
+}
+rnorm() {
+  LC_ALL=C sed -E -e "s#$2#HOME#g" -e "s#$TMP/oracle-ac-room#ROOT#g" -e "s#$TMP/loadfail#ROOT#g" -e "s#$TMP/oloadfail#ROOT#g" \
+    -e "s#$ROOT#ROOT#g" -e 's/pid=[0-9]+/pid=PID/g' -e 's/sleep [0-9]+ ended/sleep PID ended/g' \
+    -e 's/(1767225600000000000)\.[0-9]+\./\1.PID./g' "$1"
+}
+RO_RC=0; RN_RC=0; RO_BIN="$robin"; RN_BIN="$BIN"
+rpair() {  # rpair <args...> - both sides run, outputs normalised, nothing compared yet
+  RO_RC=0; RN_RC=0
+  rrun_side "$RO_BIN" "$ROH" o "$@" || RO_RC=$?
+  rrun_side "$RN_BIN" "$RNH" n "$@" || RN_RC=$?
+  rnorm "$TMP/o.raw" "$ROH" >"$TMP/o.out"; rnorm "$TMP/o.err" "$ROH" >"$TMP/o.err2"
+  rnorm "$TMP/n.raw" "$RNH" >"$TMP/n.out"; rnorm "$TMP/n.err" "$RNH" >"$TMP/n.err2"
+}
+rsame_io() {
+  assert_eq "$RN_RC" "$RO_RC" "room differential exit for '$*'"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "room differential stdout differs for '$*': $(diff "$TMP/o.out" "$TMP/n.out" | head -n 6)"
+  cmp -s "$TMP/o.err2" "$TMP/n.err2" || fail "room differential stderr differs for '$*': $(diff "$TMP/o.err2" "$TMP/n.err2" | head -n 6)"
+}
+rworld() {  # rworld <side root> - what a row may change
+  local h="$1" f
+  (cd "$h/home" && find . 2>/dev/null | LC_ALL=C sort)
+  for f in "$h"/home/data/*/room.md "$h"/home/data/archive/*/*/room.md "$h"/home/state/.wake-spool*/* \
+    "$h"/home/state/.captain-wait-* "$h"/home/state/remote-threads/* "$h"/herdr/log "$h"/*.log; do
+    [ -f "$f" ] || continue
+    printf '== %s\n' "$f"; cat "$f" 2>/dev/null || printf '<unreadable>'; printf '\n'
+  done
+}
+rsame_world() {
+  rworld "$ROH" >"$TMP/o.world"; rworld "$RNH" >"$TMP/n.world"
+  rnorm "$TMP/o.world" "$ROH" >"$TMP/o.world2"; rnorm "$TMP/n.world" "$RNH" >"$TMP/n.world2"
+  cmp -s "$TMP/o.world2" "$TMP/n.world2" || fail "room differential world differs after '$*': $(diff "$TMP/o.world2" "$TMP/n.world2" | head -n 8)"
+}
+rsame() { rpair "$@"; rsame_io "$@"; rsame_world "$@"; }
+rboth_utf8() { RLC=en_US.UTF-8; rsame "$@"; RLC=C; }   # the row again under a UTF-8 locale
+rout() { cat "$TMP/n.out"; }
+rerr() { cat "$TMP/n.err2"; }
+roerr() { cat "$TMP/o.err2"; }
+rroom() { cat "$RNH/home/data/$1/room.md"; }
+RNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
+RTS='2026-01-01T00:00:00Z'
+rboth rseed
+
+# 1. usage and the backend gate. No verb, -h, an unknown verb: the header on
+#    stdout, exit 2 - W26 NAMED: the port prints src/room.ts's spec header,
+#    the shim's being a pointer. `rows` is W26 too: the shim answers the
+#    room.ts projection where the original printed the header.
+rbash_head="$(awk 'NR>1{if(!/^#/)exit; print}' "$ROOT/tests/fixtures/ac-room.sh" | sed 's/^# \{0,1\}//')"
+rts_head="$(awk '!/^\/\//{exit} {print}' "$ROOT/src/room.ts" | sed -E 's#^// ?##')"
+for rv in "" -h bogus; do
+  rpair $rv
+  assert_eq "$RO_RC $RN_RC" "2 2" "1: usage '$rv' exits 2 on both sides"
+  assert_eq "$(cat "$TMP/o.out")" "$rbash_head" "1: the original prints its own header for '$rv'"
+  assert_eq "$(rout)" "$rts_head" "1: W26 named - the port prints src/room.ts's header for '$rv'"
+  assert_eq "$(cat "$TMP/o.err2" "$TMP/n.err2")" "" "1: usage '$rv' writes no stderr"
+  rsame_world "usage $rv"
+done
+rpair rows nofile
+assert_eq "$RO_RC $RN_RC" "2 2" "1: rows exits 2 on both sides"
+assert_eq "$(cat "$TMP/o.out")" "$rbash_head" "1: rows is no verb of the original"
+assert_eq "$(rout):$(rerr)" ":ERROR: cannot read nofile" "1: W26 named - the shim answers the rows projection"
+rboth rcfg backend tmux
+for rv in list "post f a t" ""; do
+  # shellcheck disable=SC2086
+  rsame $rv
+  assert_eq "$(rerr)" "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "1: W25 config/backend=tmux refuses '$rv'"
+done
+rboth rm -f '$H/home/config/backend'
+rboth rcfg backend $' \t orca \r'
+rsame list; assert_eq "$(rout)" "(no rooms yet)" "1: a trimmed config/backend orca is valid"
+rboth rm -f '$H/home/config/backend'
+RENV=(AC_BACKEND=Herdr); rsame list; assert_eq "$RN_RC" 1 "1: AC_BACKEND=Herdr refuses"; RENV=()
+rboth rput fs/config/backend 'bogus\tx\n'; rboth mkdir -p '$H/fs/state'
+RENV=(AC_FLEET_STATE=HOME/fs/state/); rsame list
+assert_eq "$(rerr)" "ERROR: unsupported backend 'bogus' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "1: the AC_FLEET_STATE rung, cut at its first blank"
+if [ "$(id -u)" != 0 ]; then
+  rboth chmod 000 '$H/fs/config/backend'
+  rsame list; assert_contains "$(rerr)" "head: HOME/fs/state/../config/backend: Permission denied" "1: that file unreadable ends every verb with head's line"
+  assert_eq "$RN_RC" 1 "1: ...and status"
+  rboth chmod 644 '$H/fs/config/backend'
+fi
+RENV=()
+
+# 2. post arity, W2 (empty args joined by one space), the family charset.
+for rv in "post" "post f" "post f a"; do
+  # shellcheck disable=SC2086
+  rsame $rv; assert_eq "$(rerr)" "ERROR: usage: ac-room.sh post <family> <actor> <text...>" "2: $rv"
+done
+rsame post "" a t; assert_eq "$RN_RC" 1 "2: an empty family"
+rsame post f "" t; assert_eq "$RN_RC" 1 "2: an empty actor"
+rsame post f a "" ""
+assert_eq "$(rroom f)" "# Room: f
+
+- [$RTS] a>  " "2: W2 - two empty words post the text ' '"
+rsame post 'b f' a t; assert_eq "$(rerr)" "ERROR: family must be [a-zA-Z0-9_-]: b f" "2: a blank in the family"
+rsame post café a t; assert_eq "$RN_RC" 1 "2: a non-ASCII family under C"
+RLC=en_US.UTF-8; rpair post café a t; RLC=C
+assert_eq "$RO_RC $RN_RC" "0 1" "2: W1 named - bash 3.2's range lets é through under UTF-8, the port reads the text"
+assert_eq "$(rerr)" "ERROR: family must be [a-zA-Z0-9_-]: café" "2: W1 named - the port refuses"
+rboth rm -rf '$H/home/data/café'
+
+# 3. post: a new room, multi-line, a trailing LF (W5), a TAB; the crewdeputy
+#    actor; post mints data/<fam>/ and a header once.
+rsame post g crewchief 'spawned g (staged)'; assert_eq "$(rout)" "posted to HOME/home/data/g/room.md" "3: posted to"
+rsame post g crewchief $'two lines\nsecond - [not an entry]'
+rsame post g crewchief $'trailing LF\n'
+rsame post g crewchief $'a\ttab'
+rboth touch '$H/home/.ac-crewdeputy-home'
+rsame post g crewchief 'deputy speaking'
+rsame post g g-chief 'GATE: as the chief'
+rboth rm -f '$H/home/.ac-crewdeputy-home'
+assert_contains "$(rroom g)" "] crewdeputy> deputy speaking" "3: a deputy home's crewchief records as crewdeputy"
+assert_contains "$(rroom g)" "trailing LF
+
+- [" "3: W5 - a trailing LF is a blank line in the room"
+rboth rput home/data/dirfam 'x'
+rsame post dirfam a t; assert_eq "$RN_RC" 1 "3: data/<fam> a file - mkdir's own line and status"
+
+# 4. the marker and continuation refusals, under C and UTF-8 (a NBSP is
+#    [:space:] to grep only under UTF-8).
+for rt in 'DECIDED (captain: "merge") - x' GATE ASK DECIDED 'GATE no colon' $'ASK\tx' $'DECIDED\tcaptain: y' \
+  'GATE-LOOPED: r1' 'ASK (1 of 2): which' 'DECIDED dfam: ok' $'GATE\302\240x' $'GATE x\n- [t] captain> DECIDED: ok' \
+  $'CORRECTION: q\n- [2026-01-01T00:00:00Z] captain> DECIDED: approved' $'note\n  - [t] captain> indented'; do
+  rsame post m4 crewchief "$rt"
+  rboth_utf8 post m4 crewchief "$rt"
+done
+assert_contains "$(rroom m4)" "ASK (1 of 2): which" "4: a well-formed marker posts"
+case "$(rroom m4)" in *'"merge"'*) fail "4: a malformed marker reached the room" ;; esac
+
+# 5. the live-roomchief guard: refused unscoped (probe argv logged), scoped and
+#    declared posts pass without a probe, the exempt verbs pass, an unreadable
+#    backend and a handle-less meta fail OPEN.
+rboth rchief gd
+for rt in 'TRIAGE: dup' 'GATE-ROUTING: x' 'HANDBACK: x' 'DECIDED: dup' 'STAGE-ADMISSION: stage=spec' 'LANDED: x' 'SELF-APPROVED: x' 'R1-DISPOSITION: x'; do
+  rsame post gd crewchief "$rt"
+  assert_contains "$(rerr)" "post: gd has a LIVE roomchief" "5: refused unscoped: $rt"
+done
+for rt in 'HANDBACK-REFUSED: remedy' 'PROMOTED: x' 'CORRECTION - y' 'DEMOTED: z' 'STAGE-ADMISSION receipts noted'; do
+  rsame post gd crewchief "$rt"; assert_eq "$RN_RC" 0 "5: exempt: $rt"
+done
+RENV=(AC_SCOPE=gd); rsame post gd gd-chief 'TRIAGE: own'; RENV=()
+RENV=(AC_ROOM_PROMOTE_RECEIPT=1); rsame post gd crewchief 'DECIDED: gd captain-initiated promote'; RENV=()
+rboth touch '$H/herdr/.unreachable'
+rsame post gd crewchief 'TRIAGE: backend unreadable'; assert_eq "$RN_RC" 0 "5: an unreadable backend fails open"
+rboth rm -f '$H/herdr/.unreachable'
+rboth rm -f '$H/home/state/.pane-gd-chief'
+rsame post gd crewchief 'GATE: no handle'; assert_eq "$RN_RC" 0 "5: a meta with no pane handle is not live"
+rboth rchief gd bogus
+rsame post gd crewchief 'TRIAGE: a bogus meta backend'; assert_eq "$RN_RC" 0 "5: a bogus meta backend reads not live"
+if [ "$(id -u)" != 0 ]; then
+  rboth rchief gd; rboth chmod 000 '$H/home/state/gd-chief.meta'
+  rsame post gd crewchief 'TRIAGE: an unreadable meta probes herdr'
+  rboth chmod 644 '$H/home/state/gd-chief.meta'
+fi
+rboth rm -f '$H/home/state/gd-chief.meta'
+
+# 6. the notify edge, in-process on the shim side: 0->1 rings, 1->2 and the
+#    receipts stay silent, a settle then a re-open rings again; every channel.
+rboth rcfg wedge-alarm 'command:printf "%s|%s\n" "$AC_NOTIFY_TITLE" "$AC_NOTIFY_MESSAGE" >>"$STUB_DIR/notify.log"'
+for rt in 'spawned' 'TRIAGE: t' 'GATE: one' 'ASK: two' 'SELF-APPROVED: s' 'DECIDED: a' 'DECIDED: b' 'GATE: fresh'; do
+  rsame post n6 crewchief "$rt"
+done
+assert_eq "$(cat "$RNH/notify.log")" "crew blocked|n6: GATE: one
+crew blocked|n6: GATE: fresh" "6: exactly the two 0->1 edges notify"
+ri=0
+for rch in herdr osascript bell off auto 'command:exit 9' '  command:exit 0  ' 'command:' $'\357\273\277off'; do
+  ri=$((ri + 1)); rboth rcfg wedge-alarm "$rch"
+  rsame post "n6c$ri" crewchief "GATE: via $rch"
+done
+rboth touch '$H/osa.fail'; rboth rcfg wedge-alarm osascript; rsame post n6f crewchief 'GATE: osascript fails'
+rboth rcfg backend orca; rboth rcfg wedge-alarm auto; rsame post n6g crewchief 'GATE: auto, orca fleet'
+if [ "$(id -u)" != 0 ]; then
+  rboth rcfg wedge-alarm bell; rboth chmod 000 '$H/home/config/wedge-alarm'
+  rsame post n6h crewchief 'GATE: an unreadable channel'
+  assert_eq "$(rerr)" "" "6: notify's head line stays in the sink, as the bash dropped notify's stderr"
+  rboth chmod 644 '$H/home/config/wedge-alarm'
+fi
+rboth rm -f '$H/home/config/backend' '$H/osa.fail'
+rboth rcfg wedge-alarm off
+assert_contains "$(cat "$RNH/herdr/log")" "herdr notification show crew blocked --body n6c1: GATE: via herdr --sound none --position top-right" "6: herdr's argv"
+assert_contains "$(cat "$RNH/osa.log")" 'osascript -e display notification "n6c2: GATE: via osascript" with title "crew blocked"' "6: osascript's argv"
+
+# 7. the markerless WARN: a chief actor at 0 pending, not with an item open,
+#    not on a recognized verb.
+rsame post w7 w7-chief 'still investigating'; assert_contains "$(rerr)" "WARN: post: w7-chief posted with no marker" "7: warned"
+for rt in 'TRIAGE: t' 'SELF-APPROVED: s' 'LANDED: l' 'PROMOTED: p' 'DEMOTED: d' 'CORRECTION: c' 'HANDBACK-REFUSED: h' 'CLOSED: c' 'R1-DISPOSITION: r' 'STAGE-ADMISSION: s'; do
+  rsame post w7 w7-chief "$rt"; assert_eq "$(rerr)" "" "7: no warn on $rt"
+done
+rsame post w7 crewchief 'GATE: open'
+rsame post w7 w7-chief 'narrative while pending'; assert_eq "$(rerr)" "" "7: no warn with an item open"
+
+# 8. the remote mirror (config/remote-mirror=on): header, bullets, mention,
+#    the dead-mirror WARN, a failing display date; `[A-Z]*:*` is W6.
+rboth rcfg remote-mirror on; rboth rhook
+rsame post mf crewchief 'GATE: mirrored entry. SCOPE: chỉ test render'
+rsame post mf crewchief 'SELF-APPROVED: grounds: (1) suite xanh. (2) diff khớp brief.'
+rsame post mf captain 'DECIDED: approve'
+rsame post mf crewchief 'ASK: which one?'
+assert_contains "$(cat "$RNH/mirror.log")" "rid=mf mention=captain
+" "8: ASK: mentions the captain too"
+rsame post mf captain 'DECIDED: that one'
+rsame post mf crewchief 'plain prose, no verb'
+rsame post mf crewchief 'note: lowercase verb'
+rsame post mf crewchief 'Mixed: Case. ORDER: AB_C: x (12) y'
+assert_contains "$(cat "$RNH/mirror.log")" "] [GATE] [mf]* crewchief" "8: the bracket header"
+assert_contains "$(cat "$RNH/mirror.log")" "2026-01-01 07:00 Asia/Ho_Chi_Minh" "8: the display stamp's date ran with TZ added"
+assert_contains "$(cat "$RNH/mirror.log")" "rid=mf mention=captain" "8: GATE: mentions the captain"
+RLC=en_US.UTF-8; rpair post mf crewchief 'lower: verb'; RLC=C
+assert_eq "$RO_RC $RN_RC" "0 0" "8: W6 both post"
+assert_contains "$(cat "$ROH/mirror.log")" "[lower] [mf]* crewchief" "8: W6 - bash 3.2's [A-Z] took a lowercase verb under UTF-8"
+assert_contains "$(cat "$RNH/mirror.log")" "[mf]* crewchief" "8: W6 named - the port reads [A-Z] per the text"
+rboth rm -f '$H/mirror.log'
+RLC=en_US.UTF-8; rpair post mf crewchief "$(printf 'GATE: caf\351')"; RLC=C
+assert_eq "$RO_RC" 1 "8: W7 - BSD sed aborts the original on an invalid byte under UTF-8, after the append"
+assert_contains "$(roerr)" "illegal byte sequence" "8: W7 - sed's own line"
+assert_eq "$RN_RC" 0 "8: W7 named - argv reaches the port decoded (U+FFFD), so its sed has a valid line"
+assert_contains "$(rroom mf)" "$(printf 'GATE: caf\357\277\275')" "8: W7 named - the port's room holds the decoded byte"
+cp "$ROH/home/data/mf/room.md" "$RNH/home/data/mf/room.md"
+rboth rm -f '$H/mirror.log'
+rboth touch '$H/mirror.fail'; rsame post mf crewchief 'entry with a dead mirror'
+assert_contains "$(rerr)" "WARN: room mirror to remote thread failed for mf (room entry saved)" "8: the dead mirror warns"
+rboth rm -f '$H/mirror.fail'; rboth touch '$H/date.fail-vn'
+rsame post mf crewchief 'GATE: vn date fails'; assert_eq "$RN_RC" 5 "8: a failing display date ends the post with its status, after the append"
+rboth rm -f '$H/date.fail-vn' '$H/home/config/remote-mirror' '$H/home/config/remote-reply'
+
+# 9. the captain-wait stamp, through the FLEET backend (W19: an orca chief
+#    meta under a herdr fleet is stamped through herdr).
+rboth rchief st
+RENV=(AC_SCOPE=st)
+rsame post st st-chief 'ASK: chọn (a) hay (b)?'
+assert_contains "$(cat "$RNH/herdr/log")" "herdr pane report-agent pst --source ac-fleet --agent crew --state blocked --message ĐANG CHỜ captain - 1 mục trong room st" "9: mark_wait's argv"
+rsame post st captain 'DECIDED: a'
+rsame post st captain 'narrative, no stamp to clear'
+rboth rchief st orca
+rsame post st st-chief 'GATE: an orca chief, a herdr fleet'
+rboth rm -f '$H/home/state/.pane-st-chief'
+rsame post st captain 'DECIDED: handle gone'
+RENV=()
+
+# 10. date failing: post ends with date's status, the header-only room left
+#     (W9); close writes `- []` and goes on.
+rboth touch '$H/date.fail'
+rsame post d10 crewchief 'GATE: no clock'; assert_eq "$RN_RC" 3 "10: W9 - post exits with date's status"
+assert_eq "$(rroom d10)" "# Room: d10" "10: W9 - the header-only room is left"
+rsame close d10 done; assert_contains "$(rroom d10)" "- [] crewchief> CLOSED: done" "10: W9 - close writes an empty stamp"
+rboth rm -f '$H/date.fail'
+
+# 11. homeless and an unenterable home. post is W3 NAMED - the original
+#     printed the refusal once per swallowed `$(ac_home)` and went on to
+#     `mkdir -p /<family>`; the port refuses once. Run only on a read-only /.
+RHOMELESS=1
+if [ ! -w / ]; then
+  for ra in "post zz-room-leg crewchief t" "post zz-room-leg a t" "post zz-room-leg a TRIAGE: t"; do
+    # shellcheck disable=SC2086
+    rpair $ra
+    assert_eq "$RO_RC $RN_RC" "1 1" "11: homeless '$ra' exits 1 on both sides"
+    assert_contains "$(roerr)" "$RNOHOME" "11: the original's refusal for '$ra'"
+    assert_eq "$(rerr)" "$RNOHOME" "11: W3 named - the port refuses once for '$ra'"
+  done
+fi
+rsame pending zz-room-leg; assert_eq "$(rout)" 0 "11: W16 - homeless pending reads 0"
+rsame show zz-room-leg
+rsame close zz-room-leg
+rsame list
+rboth rput r.md 'x\n'
+rsame gate-route zz-room-leg spec --report r.md --uncertainty no --consequence low --authority chief --grounds g
+RHOMELESS=0
+RENV=(AC_HOME=HOME/none)
+for ra in "post zz-room-leg a t" "pending zz-room-leg" "show zz-room-leg" "close zz-room-leg" list; do
+  # shellcheck disable=SC2086
+  rpair $ra
+  assert_eq "$RN_RC" "$RO_RC" "11: an unenterable home: '$ra' exits as the original"
+  assert_contains "$(rerr)" "AC_HOME is not a readable directory: HOME/none" "11: W4 named - the port names the variable for '$ra'"
+  assert_contains "$(roerr)" "HOME/none: No such file or directory" "11: W4 - the original printed cd's own line for '$ra'"
+done
+RENV=()
+
+# 12. pending: a missing, a live and an archived room, an unreadable one.
+rboth rput home/data/archive/2026/arc/room.md '- [t] crewchief> GATE: archived\n- [t] captain> DECIDED: done\n'
+for rf in nosuch g w7 arc 'a*'; do rsame pending "$rf"; done
+if [ "$(id -u)" != 0 ]; then
+  rboth chmod 000 '$H/home/data/w7/room.md'
+  rsame pending w7; assert_eq "$RN_RC" 2 "12: an unreadable room is grep's line, exit 2"
+  assert_contains "$(rerr)" "grep: HOME/home/data/w7/room.md: Permission denied" "12: grep's own line"
+  rboth chmod 644 '$H/home/data/w7/room.md'
+fi
+
+# 13. show: whole, windowed, W28 (`+1` all, ` 2 ` tail's error, 007), the
+#     non-numbers, a NUL room, an empty room, archived, unreadable.
+rboth rput home/data/nul/room.md '# Room: nul\n\n- [t] a> x\000y\n'
+rboth rput home/data/empty/room.md '# Room: empty\n\n'
+for rn in "" 2 +1 " 2 " 007 abc -1 0 9223372036854775807 9223372036854775808 $'\t3' $'3\n'; do
+  rsame show g "$rn"
+done
+rsame show nul; rsame show nul 1; rsame show empty 3; rsame show arc 1; rsame show nosuch; rsame show
+if [ "$(id -u)" != 0 ]; then
+  rboth chmod 000 '$H/home/data/g/room.md'
+  rsame show g; assert_eq "$RN_RC" 1 "13: cat's line and status"
+  rsame show g 2; assert_eq "$RN_RC" 1 "13: head's line and status"
+  rboth chmod 644 '$H/home/data/g/room.md'
+fi
+
+# 14. list over a fresh world: no rooms, an empty room, the BLOCKED stamp, the
+#     combined token, 10+ pending, W10 (a first entry that is no file), W11 (a
+#     later one), W13 (trailing 0x1f), W14 (café), W12 (the 120 cut) under C
+#     and UTF-8, byte order.
+rboth rseed
+rsame list; assert_eq "$(rout)" "(no rooms yet)" "14: no rooms"
+rboth rput home/data/l-empty/room.md ''
+rboth rput home/data/l-blk/room.md '- [t] crewchief> spawned\n'
+rboth touch '$H/home/state/.ask-l-blk-chief' '$H/home/state/.ask-l-gate-chief'
+rboth rput home/data/l-gate/room.md '- [t] crewchief> GATE: g\n'
+rboth rput home/data/l-combo/room.md '- [t] crewchief> GATE: g\n- [t] l-combo-chief> HANDBACK: done\n'
+rboth rput home/data/l-hb/room.md '- [t] l-hb-chief> HANDBACK: done\n'
+rboth rput home/data/l-ten/room.md "$(for i in 1 2 3 4 5 6 7 8 9 10 11; do printf -- '- [t] c> GATE: %s\\n' "$i"; done)"
+rboth rput home/data/l-us1/room.md '- [t] c> one trailing\037\n'
+rboth rput home/data/l-us2/room.md '- [t] c> two trailing\037\037\n'
+rboth rput home/data/l-usm/room.md '- [t] c> mid\037dle\037\n'
+rboth rput home/data/l-utf8/room.md "- [t] c> $(for i in $(seq 1 130); do printf 'é'; done)\n"
+rboth rput home/data/l-cut/room.md "- [t] c> $(printf '%0108d' 0)\303\251\303\n"
+rboth rput home/data/l-bad/room.md "- [t] c> $(printf '%0110d' 0)\355\240\200\300\200tail\n"
+rsame list
+rboth_utf8 list
+assert_contains "$(rout)" "PENDING-CAPTAIN(11)  l-ten	" "14: 10+ pending widens the token"
+rboth rput home/data/Upper/room.md '- [t] c> byte order\n'
+rsame list; assert_eq "$(rout | head -n 1)" "ok                  Upper	- [t] c> byte order" "14: byte order, the oracle under C"
+RLC=en_US.UTF-8; rpair list; RLC=C
+assert_eq "$RO_RC $RN_RC" "0 0" "14: W27 - both list under UTF-8"
+assert_eq "$(LC_ALL=C sort "$TMP/o.out")" "$(LC_ALL=C sort "$TMP/n.out")" "14: W27 - the same lines"
+assert_eq "$(tail -n 1 "$TMP/o.out" | cut -f1)" "ok                  Upper" "14: W27 - the original's glob followed the UTF-8 collation"
+assert_eq "$(rout | head -n 1 | cut -f1)" "ok                  Upper" "14: W27 named - the port keeps byte order"
+rboth rput home/data/café/room.md '- [t] c> accented family\n'
+rsame list; assert_contains "$(rout)" "$(printf 'ok                  caf\351\t')" "14: W14 - the rows pass prints the family re-encoded"
+rboth rm -rf '$H/home/data/café'
+rboth mkdir -p '$H/home/data/AA-dir/room.md'
+rsame list; assert_eq "$(rout)" "(no rooms yet)" "14: W10 - a directory first in the glob empties the inbox"
+rboth rm -rf '$H/home/data/AA-dir'; rboth mkdir -p '$H/home/data/AA-dang'; rboth ln -s '$H/nowhere' '$H/home/data/AA-dang/room.md'
+rsame list; assert_eq "$(rout)" "(no rooms yet)" "14: W10 - so does a dangling link"
+rboth rm -rf '$H/home/data/AA-dang'; rboth mkdir -p '$H/home/data/zz-dir/room.md'
+rsame list; assert_eq "$RN_RC" 1 "14: W11 - a later directory fails the list"
+assert_eq "$(rerr)" "ERROR: cannot read HOME/home/data/zz-dir/room.md
+ERROR: list: the room set could not be read - the inbox has no answer, not zero rooms" "14: W11 - its two lines"
+rboth rm -rf '$H/home/data/zz-dir'
+rboth mkdir -p '$H/home/data/.hidden'; rboth rput home/data/.hidden/room.md '- [t] c> GATE: hidden\n'
+rboth rput home/data/nofile 'x'
+rsame list
+
+# 15. close: the preflight, W8, W15, the spool arms, a scope that is no
+#     family name (its spool is the FLEET spool).
+rboth rseed
+rboth rput home/data/c/room.md '- [t] c> GATE: open\n'
+rsame close c shipped; assert_contains "$(rerr)" "still has pending gates/asks" "15: pending refuses"
+rboth rput home/data/c/room.md '- [t] c> spawned\n'
+rboth rput home/state/c-chief.meta 'kind=roomchief\n'; rsame close c; rboth rm -f '$H/home/state/c-chief.meta'
+rboth mkdir -p '$H/home/data/c/spec'; rboth rput home/state/c-spec.meta 'kind=ship\n'; rsame close c; rboth rm -f '$H/home/state/c-spec.meta'
+rboth rput home/state/storyc.meta 'kind=ship\nfleet_scope=c\n'; rsame close c; rboth rm -f '$H/home/state/storyc.meta'
+rboth rput home/state/a.meta 'fleet_scope=c\n'; rboth rput home/state/c.meta 'kind=ship\n'
+rsame close c; assert_eq "$(rerr)" "ERROR: close: a is still in flight" "15: ORDER - the first member in byte order is named"
+rboth rm -f '$H/home/state/a.meta' '$H/home/state/c.meta'
+rboth rput home/state/c-review.meta 'kind=verify-codereview\n'
+rboth rput home/state/v.meta 'kind=verify-codereview\nfleet_scope=c\n'
+rboth rput home/state/c-curate.meta 'kind=ship\n'
+if [ "$(id -u)" != 0 ]; then
+  rboth rput home/state/zz.meta 'fleet_scope=c\n'; rboth chmod 000 '$H/home/state/zz.meta'
+fi
+rsame close c "shipped to main"
+assert_contains "$(rroom c)" "- [$RTS] crewchief> CLOSED: shipped to main" "15: CLOSED posted past a verify meta and a prefix family"
+rboth rm -f '$H/home/state/zz.meta' '$H/home/state/c-review.meta' '$H/home/state/c-curate.meta' '$H/home/state/v.meta'
+rsame close c; assert_contains "$(rroom c)" "CLOSED: landed" "15: the default outcome"
+rsame close c ''; assert_eq "$(rout)" "room c closed: " "15: W8 - one empty outcome is no default"
+rsame close c '' ''
+rsame close nosuch; rsame close
+rboth mkdir -p '$H/home/state/.wake-spool.c'; rsame close c; assert_no_file "$RNH/home/state/.wake-spool.c" "15: an empty spool is removed"
+rboth mkdir -p '$H/home/state/.wake-spool.c'; rboth touch '$H/home/state/.wake-spool.c/.dot'
+rsame close c; assert_contains "$(rerr)" "could not be removed" "15: a dotfile-only spool cannot be removed"
+rboth rm -rf '$H/home/state/.wake-spool.c'; rboth mkdir -p '$H/home/state/.wake-spool.c/sub'
+rsame close c; assert_contains "$(rerr)" "still holds undrained records" "15: a subdirectory counts as a record"
+rboth rm -rf '$H/home/state/.wake-spool.c'; rboth mkdir -p '$H/home/state/.wake-spool.c'
+rboth ln -s '$H/nowhere' '$H/home/state/.wake-spool.c/dangling'
+rsame close c; assert_contains "$(rerr)" "could not be removed" "15: a dangling link is no record, and rmdir fails"
+rboth rm -rf '$H/home/state/.wake-spool.c'
+rboth rput home/data/a.b/room.md '- [t] c> x\n'; rboth mkdir -p '$H/home/state/.wake-spool'
+rsame close a.b; assert_no_file "$RNH/home/state/.wake-spool" "15: a family that is no scope name removes the FLEET spool"
+if [ "$(id -u)" != 0 ]; then
+  rboth chmod 000 '$H/home/data/c/room.md'
+  rsame close c; assert_contains "$(rerr)" "grep: HOME/home/data/c/room.md: Permission denied" "15: W15 - grep's line, then the refusal"
+  rboth chmod 644 '$H/home/data/c/room.md'
+fi
+
+# 16. open: no meta, alive, gone, unreadable, a timeout, a driver that failed
+#     to load (127), an orca chief (W18), a bogus meta backend (a UTF-8 name
+#     refused as its bytes, one that is not UTF-8 as U+FFFD - named) and an
+#     unreadable meta.
+rsame open o; assert_contains "$(rerr)" "room o is not promoted" "16: no meta"
+rsame open
+rboth rchief o
+rsame open o; assert_eq "$(rout)" "focused o-chief (herdr:pane-po)" "16: alive"
+rboth touch '$H/herdr/.unreachable'; rsame open o; assert_contains "$(rerr)" "the BACKEND could not be READ for o-chief - whether herdr:pane-po" "16: unreadable"
+rboth rm -f '$H/herdr/.unreachable'
+rboth touch '$H/herdr/.hang'; RENV=(AC_HERDR_RPC_TIMEOUT=1); rsame open o; RENV=(); rboth rm -f '$H/herdr/.hang'
+assert_eq "$RN_RC" 1 "16: a timed-out backend is unreadable, never gone"
+for h in "$ROH" "$RNH"; do kill $(cat "$h/herdr/hang-children" 2>/dev/null) 2>/dev/null || true; done
+rboth rm -f '$H/herdr/panes/po.buf'; rsame open o; assert_contains "$(rerr)" "roomchief window is gone" "16: gone"
+rboth rchief o
+# Named (D1): a driver that failed to load is the oracle's 127, read as the
+# BACKEND refusal; the shim has no counterpart (N/A - its backend verbs are
+# native, src/lib.ts backendCall), so the oracle alone runs this row.
+rm -rf "$TMP/oloadfail"; mkdir -p "$TMP/oloadfail"; cp -R "$robin" "$TMP/oloadfail/bin"
+sed -i.bak 's/^backend_window_alive_herdr() {/backend_window_alive_herdr_MISSING_DRIVER() {/' "$TMP/oloadfail/bin/ac-backend.sh"
+RO_RC=0; rrun_side "$TMP/oloadfail/bin" "$ROH" o open o || RO_RC=$?
+rnorm "$TMP/o.err" "$ROH" >"$TMP/o.err2"
+assert_eq "$RO_RC" 1 "16: the oracle's 127 from a driver that failed to load"
+assert_contains "$(roerr)" "the BACKEND could not be READ for o-chief" "16: ...is unreadable, never gone"
+assert_contains "$(roerr)" "backend_window_alive_herdr: command not found" "16: ...bash names the missing driver"
+rboth rchief o orca
+rsame open o; assert_contains "$(rerr)" "whether orca:po still exists is UNKNOWN, so this is NOT treated as gone; check the backend itself (herdr status server)" "16: W18 - names herdr for orca"
+rboth touch '$H/orca.alive'; rsame open o; assert_eq "$(rout)" "focused o-chief (orca:po)" "16: an alive orca chief"
+rboth rm -f '$H/orca.alive'
+rboth rchief o bogus; rsame open o; assert_contains "$(rerr)" "unsupported backend 'bogus'" "16: a bogus meta backend exits inside the route"
+assert_eq "$RN_RC" 1 "16: ...with its status"
+rboth rchief o $'caf\303\251'; rsame open o
+assert_eq "$(rerr)" "ERROR: unsupported backend 'caf$(printf '\303\251')' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "16: a meta's UTF-8 backend name is refused as its bytes"
+rboth rchief o $'caf\351'; rpair open o; rsame_world open o
+assert_eq "$RO_RC:$RN_RC:$(cat "$TMP/o.out")|$(rout)" "1:1:|" "16: a non-UTF-8 meta backend - the same exit, nothing on stdout"
+assert_eq "$(roerr)" "ERROR: unsupported backend 'caf$(printf '\351')' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "16: a non-UTF-8 meta backend - the original's byte"
+assert_eq "$(rerr)" "ERROR: unsupported backend 'caf$(printf '\357\277\275')' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "16: a non-UTF-8 meta backend - the port's U+FFFD (named)"
+if [ "$(id -u)" != 0 ]; then
+  rboth rchief o; rboth chmod 000 '$H/home/state/o-chief.meta'
+  rsame open o; assert_contains "$(rerr)" "WARN: cannot read meta file" "16: an unreadable meta warns and reads herdr"
+  rboth chmod 644 '$H/home/state/o-chief.meta'
+fi
+
+# 17. handback: usage, the record (the FLEET spool, even scoped; TAB/LF fold),
+#     the guard, W17 (a clock printing nothing exits 1 with the HANDBACK
+#     recorded; a failing clock exits with its status), the nudge lines.
+rboth rseed
+rsame handback; rsame handback hb
+rsame handback hb $'landed:\ta tab\nand a line'
+RENV=(AC_SCOPE=hb); rsame handback hb 'scoped'; RENV=()
+assert_eq "$(rout)" "handback posted and queued for hb - no armed watcher for this scope - the record waits in the spool" "17: the quiet nudge"
+rboth rchief hb; rsame handback hb 'refused'; assert_contains "$(rerr)" "has a LIVE roomchief" "17: the guard applies"
+if [ "$(id -u)" != 0 ]; then
+  rboth mkdir -p '$H/rotmp'; rboth chmod 555 '$H/rotmp'
+  RENV=(AC_SCOPE=hb TMPDIR=HOME/rotmp); rsame handback hb 'a read-only TMPDIR'; RENV=()
+  assert_eq "$RN_RC" 0 "17: the stamp needs no writable TMPDIR"
+  assert_contains "$(cat "$RNH"/home/state/.wake-spool/*)" "handback	hb-chief	a read-only TMPDIR" "17: ...and the wake is queued"
+  RENV=(TMPDIR=HOME/rotmp); rsame post hb crewchief 'TRIAGE: the guard under a read-only TMPDIR'; RENV=()
+  assert_contains "$(rerr)" "has a LIVE roomchief" "17: the guard reads the live chief without a writable TMPDIR"
+  rboth chmod 755 '$H/rotmp'
+fi
+rboth rm -f '$H/home/state/hb-chief.meta'
+rboth touch '$H/date.empty-ns'; rsame handback hb 'bad clock'; assert_eq "$RN_RC:$(rerr)" "1:" "17: W17 - silent exit 1"
+rboth rm -f '$H/date.empty-ns'; rboth touch '$H/date.fail-ns'; rsame handback hb 'failing clock'; assert_eq "$RN_RC" 4 "17: date's status"
+rboth rm -f '$H/date.fail-ns'
+bash -c 'exec -a ac-watch-room-leg /bin/sleep 60' & rwpid=$!
+rboth mkdir -p '$H/home/state/.watch.lock.d'; rboth eval 'printf "%s\n" "$rwpid" >"$H/home/state/.watch.lock.d/pid"'
+rsame handback hb 'mid-poll watcher'; assert_contains "$(rout)" "is mid-poll, nothing to nudge" "17: a watcher with no sleep child"
+kill "$rwpid" 2>/dev/null || true; wait "$rwpid" 2>/dev/null || true
+rnudge() { bash -c 'exec -a ac-watch-room-leg bash -c "/bin/sleep 60 & wait"' 2>/dev/null & printf '%s\n' "$!" >"$H/home/state/.watch.lock.d/pid"; RWP="$RWP $!"; }
+RWP=""; rboth rnudge; sleep 0.3
+rsame handback hb 'nudged'; assert_contains "$(rout)" "nudged watcher pid=PID (poll sleep PID ended early)" "17: the nudge"
+for p in $RWP; do kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true; done
+rboth rm -rf '$H/home/state/.watch.lock.d'
+
+# 18. the receipt verbs: every refusal in contract order, the aliases, flags,
+#     grounds (W22 under both locales), the paths, the partitions, W20.
+rboth rseed
+rboth rput home/data/rv/spec/report.md '# report\nbody\n'
+rboth rput home/data/rv/arch/report.md '# arch\n'
+rboth rput home/data/rv/spec/second-chief-r1.md '---\nx: y\n---\n# R1\n## Required Changes\n1. one\n  2. two\n## After\n3. not counted\n'
+RR="HOME/home/data/rv/spec/report.md"; RR1="HOME/home/data/rv/spec/second-chief-r1.md"
+rgr() { rsame gate-route rv spec --report "$RR" --uncertainty "$1" --consequence "$2" --authority "$3" --grounds g; }
+rgr no low chief; rgr yes low chief; rgr no high chief; rgr no low captain
+rsame route-gate rv architecture --report HOME/home/data/rv/arch/report.md --uncertainty no --consequence low --authority chief --grounds via the alias
+rsame gate-verify rv spec --round 1 --report "$RR" --grounds 'one line'
+rsame verify-gate rv spec --round 2 --report home/data/rv/spec/report.md --grounds relative to the caller cwd
+rsame gate-verify rv spec --round 1 --round 2 --report "$RR" --grounds the last of a repeated flag wins
+for ra in "gate-verify rv" "gate-verify rv spec" "gate-verify rv spec --round" "gate-verify rv spec --round 1 --report" \
+  "gate-verify rv spec --round 1 --report $RR" "gate-verify rv spec --round 1 --report $RR --grounds" \
+  "gate-verify rv spec --bogus 1" "gate-verify rv spec --round 3 --report $RR --grounds g" \
+  "gate-verify rv learning --round 1 --report $RR --grounds g" "gate-verify r.v spec --round 1 --report $RR --grounds g" \
+  "gate-verify rv learning --round 3 --report $RR --grounds g" "gate-verify r.v learning --round 3 --report $RR --grounds g" \
+  "gate-verify rv spec --round 1 --report HOME/nope --grounds g" "gate-verify rv plan --round 1 --report $RR --grounds g" \
+  "gate-route rv spec --report $RR --uncertainty maybe --consequence low --authority chief --grounds g" \
+  "gate-route rv spec --report $RR --uncertainty no --consequence medium --authority chief --grounds g" \
+  "gate-route rv spec --report $RR --uncertainty no --consequence low --authority mixed --grounds g" \
+  "gate-route rv nope --report $RR --uncertainty no --consequence low --authority chief --grounds g" \
+  "gate-route rv spec --uncertainty no --consequence low --authority chief --grounds g" \
+  "disposition rv spec --r1 $RR1 --accepted 1 --disputed 2 --authority bogus --grounds g" \
+  "disposition rv nope --r1 $RR1 --accepted 1 --disputed 2 --authority bogus --grounds g" \
+  "gate-verify rv __proto__ --round 1 --report $RR --grounds g" "gate-verify rv constructor --round 1 --report $RR --grounds g" \
+  "gate-route rv __proto__ --report $RR --uncertainty no --consequence low --authority chief --grounds g" \
+  "disposition rv __proto__ --r1 $RR1 --accepted 1 --disputed 2 --authority chief-owned --grounds g"; do
+  # shellcheck disable=SC2086
+  rsame $ra; assert_eq "$RN_RC" 1 "18: refused: $ra"
+done
+for rg in $'multi\nline' $'cr\rhere' '   ' $'\t'; do rsame gate-verify rv spec --round 1 --report "$RR" --grounds "$rg"; done
+rsame gate-verify r.v learning --round 3 --report "$RR" --grounds $'x\ny'
+assert_eq "$(rerr)" "ERROR: gate-verify grounds must be one physical line" "18: the grounds line is judged first"
+rsame gate-verify rv spec --round 1 --report "$RR" --grounds $'\302\240'
+assert_eq "$RN_RC" 0 "18: W22 - a NBSP is no [:space:] under C"
+RLC=en_US.UTF-8; rsame gate-verify rv spec --round 1 --report "$RR" --grounds $'\302\240'; RLC=C
+assert_eq "$RN_RC" 1 "18: W22 - under UTF-8 a NBSP is [:space:], the grounds blank"
+rboth ln -s home/data/rv/spec/report.md '$H/link.md'
+rsame gate-verify rv spec --round 1 --report link.md --grounds g; assert_contains "$(rerr)" "must name a non-empty plain file" "18: a symlinked report"
+rboth rput empty.md ''
+rsame gate-verify rv spec --round 1 --report empty.md --grounds g
+rboth rput other.md 'x\n'
+rsame gate-verify rv spec --round 1 --report other.md --grounds g; assert_eq "$(rerr)" "ERROR: gate-verify --report must be HOME/home/data/rv/spec/report.md" "18: the path mismatch"
+if [ "$(id -u)" != 0 ]; then
+  rboth chmod 000 '$H/home/data/rv/spec/report.md'
+  rpair gate-verify rv spec --round 1 --report "$RR" --grounds g
+  assert_eq "$RO_RC $RN_RC" "1 1" "18: W24 - an unreadable report exits 1"
+  assert_contains "$(roerr)" "HOME/home/data/rv/spec/report.md: Permission denied" "18: W24 - the shell's own redirection line"
+  assert_eq "$(rerr)" "" "18: W24 named - the shell's own line is not reproduced"
+  rsame_world "W24"
+  rboth chmod 644 '$H/home/data/rv/spec/report.md'
+fi
+rdp() { rsame disposition rv spec --r1 "$RR1" --accepted "$1" --disputed "$2" --authority "$3" --grounds g; }
+rdp 1,2,1 none none; rdp 1 2,1 chief-owned; rdp none 2,1,1 mixed; rdp 1,1 2 chief-owned
+rdp 1 2,1 none; rdp 1,2,1 none chief-owned; rdp 1 2 chief-owned; rdp 1,2 none none
+rdp 02 1,1 mixed; rdp 0 1,2,1 mixed; rdp '1,2,' none none; rdp 'a' none none; rdp '' none none; rdp 2,1 none none
+assert_contains "$(rroom rv)" "accepted=1,2 disputed=none authority=none grounds=g" "18: a partition posts"
+assert_contains "$(rroom rv)" "accepted=1 disputed=2 authority=chief-owned" "18: a disputed id with its authority"
+rdp '1\0542' none none; assert_eq "$RN_RC" 0 "18: W20 - an awk escape in an id list reads as its byte (1,2)"
+rboth rput home/data/rv/design/second-chief-r1.md '---\n---\n## Required Changes\n01. zero-padded\n'
+rboth rput home/data/rv/design/report.md 'r\n'
+for ra in "1 none none" "01 none none" "none 1 mixed"; do
+  # shellcheck disable=SC2086
+  set -- $ra
+  rsame disposition rv design --r1 HOME/home/data/rv/design/second-chief-r1.md --accepted "$1" --disputed "$2" --authority "$3" --grounds g
+  assert_eq "$RN_RC" 1 "18: an R1 id written 01 matches no normalized id: $ra"
+done
+rboth rput home/data/rv/plan/second-chief-r1.md '---\n---\n## Required Changes\nnone\n'
+rboth rput home/data/rv/plan/report.md 'r\n'
+rsame disposition rv plan --r1 HOME/home/data/rv/plan/second-chief-r1.md --accepted 1 --disputed none --authority none --grounds g
+assert_contains "$(rerr)" "no numbered Required Changes" "18: no ids to adjudicate"
+rboth rm -f '$H/home/data/rv/plan/report.md'
+rsame disposition rv plan --r1 HOME/home/data/rv/plan/second-chief-r1.md --accepted 1 --disputed none --authority none --grounds g
+assert_contains "$(rerr)" "requires a non-empty current report" "18: no current report"
+if [ "$(id -u)" != 0 ]; then
+  rboth chmod 000 '$H/home/data/rv/spec/second-chief-r1.md'
+  rsame disposition rv spec --r1 "$RR1" --accepted 1,2,1 --disputed none --authority none --grounds g
+  assert_eq "$RN_RC" 2 "18: an unreadable R1 is awk's exit 2"
+  rboth chmod 644 '$H/home/data/rv/spec/second-chief-r1.md'
+fi
+
+# 19. stdin by position: a herdr that logs what its stdin holds, then
+#     answers as the fake herdr; the caller's stdin holds a line. The guard's
+#     probe ran in the original's `( )`, so herdr reads nothing there on both
+#     sides; the stamp's report-agent and open's pane get ran at top level and
+#     read the caller's stdin.
+mkdir -p "$TMP/rstdin"
+cat >"$TMP/rstdin/herdr" <<STUB
+#!/bin/sh
+printf 'herdr %s stdin=[%s]\n' "\$*" "\$(cat)" >>"\$STUB_DIR/stdin.log"
+exec "$TMP/stubbin/herdr" "\$@"
+STUB
+chmod +x "$TMP/rstdin/herdr"
+printf 'caller-stdin\n' >"$TMP/rstdin.in"
+rboth rseed; rboth rchief w6
+RSTDIN="$TMP/rstdin.in"; rpath="PATH=$TMP/rstdin:$RSTUBS:$TMP/stubbin:$PATH"
+RENV=("$rpath"); rsame post w6 crewchief 'TRIAGE: unscoped, the chief live'
+assert_contains "$(rerr)" "has a LIVE roomchief" "19: the guard refuses"
+assert_eq "$(cat "$RNH/stdin.log")" "herdr pane get pw6 stdin=[]" "19: the guard's herdr reads nothing"
+rboth rm -f '$H/stdin.log'
+RENV=("$rpath" AC_SCOPE=w6); rsame post w6 w6-chief 'GATE: scoped, the stamp set'
+assert_eq "$(cat "$RNH/stdin.log")" "herdr pane report-agent pw6 --source ac-fleet --agent crew --state blocked --message ĐANG CHỜ captain - 1 mục trong room w6 stdin=[caller-stdin]" "19: the stamp's report-agent reads the caller's stdin"
+rboth rm -f '$H/stdin.log'
+RENV=("$rpath"); rsame open w6
+assert_eq "$(cat "$RNH/stdin.log")" "herdr pane get pw6 stdin=[caller-stdin]
+herdr tab focus tw6 stdin=[]" "19: open's pane get reads the caller's stdin"
+RSTDIN=""; RENV=()
 
 pass

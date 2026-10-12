@@ -7,7 +7,7 @@
 # `backend=` key), else config/backend, else the fleet's config/backend
 # found through AC_FLEET_STATE (a homeless crewmate's channel), else herdr -
 # and every value other than `herdr`/`orca` is refused. tmux and wezterm support was removed
-# 2026-07-17 by captain order: one contract, one test surface - both survive
+# by design: one contract, one test surface - both survive
 # the orca driver (per-fleet config/backend picks the driver; the contract
 # below and its tests stay singular).
 #
@@ -49,7 +49,9 @@
 #                                     handle - a pane agent (ac-pane-agent.sh)
 #                                     holds only the raw id herdr handed it, so
 #                                     the id-keyed verbs cannot reach it. Fails
-#                                     closed on an empty pane id.
+#                                     closed on an empty pane id. Its twin is
+#                                     src/lib.ts's backendCapturePane
+#                                     (tests/ts/verify-twins.test.ts).
 #   backend_send_line_pane <pane-id> <text>
 #                                     send_line in that same raw-pane
 #                                     addressing, with the SAME verified-submit
@@ -132,8 +134,8 @@
 # CAPTAIN-WAIT STAMP (the authoritative contract): a pane whose task waits on
 # a captain ACTION (an AC_DECISION_RE marker: needs-decision:/blocked:, plus
 # the crew-ship delivery marker awaiting the captain's merge - checks-passed:)
-# shows agent status BLOCKED in the herdr UI - captain order
-# 2026-07-17. The
+# shows agent status BLOCKED in the herdr UI.
+# The
 # stamp is `pane report-agent --source ac-fleet --state blocked`; verified
 # behavior (2026-07-17): an external report MASKS herdr's built-in agent
 # detection until released, and a release leaves the pane carrying NO `agent`
@@ -201,7 +203,7 @@
 # socket call returned protocol_mismatch exit 1, and within 50s BOTH live agents
 # of a family were stamped `failed: window gone` while their processes ran on -
 # one of them committed its fix through the same blind transport (2026-07-25).
-# The discriminator carries NO version knowledge, by captain rule (2026-07-22:
+# The discriminator carries NO version knowledge, by design (the distro is
 # runtime-robust over probe-established constants, fail closed on anything
 # unrecognised). It classifies toward UNOBSERVABLE: only a DEFINITE answer from a
 # reachable backend may become `gone`. A failing `pane get` is followed by ONE
@@ -306,7 +308,7 @@
 # signature and probing it would fake a verdict either way. send_key therefore
 # FOCUSES the tab first - the focus quirk is the same one, and closing it is
 # the whole guarantee the key path has - and delivery stays UNVERIFIED, which
-# ac-send.sh reports in those words (contract: its header).
+# ac-send.sh reports in those words (contract: src/send.ts's header).
 #
 # herdr knobs: AC_HERDR_SESSION > config/herdr-session (adds --session <name>;
 # neither set = the default herdr session, addressed with no --session flag);
@@ -348,12 +350,12 @@
 # budget, and it is not the watcher: the Stop hooks pay the two-call ladder once
 # per promoted family, so 2 x ceiling x room-parallel must clear their 30s - at
 # the default 5 families that caps the ceiling below 3. The watcher's own
-# beacon-gap arithmetic lives in ac-watch.sh.
+# beacon-gap arithmetic lives in the src/watch.ts header (HUNG POLL).
 # RESIDUALS, stated rather than hidden, because a bound that is claimed wider
 # than it reaches is worse than one honestly scoped. Raw `herdr` invocations
 # that never enter this funnel stay unbounded: ac_herdr_tab_open's own four
 # below; the pane-lifecycle and watch-tab calls in the pane-agent, gate, ship,
-# qa, spawn and relocate paths. TRIAGED BY CONSEQUENCE rather than wrapped by
+# qa and spawn paths. TRIAGED BY CONSEQUENCE rather than wrapped by
 # reflex: the bootstrap protocol-compat probe was the one that sat on a chief's
 # OWN session-start path, where a hang stops the chief from starting rather
 # than degrading a sweep - it now carries its own ceiling and its own MISSING
@@ -365,8 +367,8 @@
 # including the window probes it makes through the wake library, all arrive
 # here. The orca driver carries no ceiling of its own beyond that same probe.
 #
-# FAMILY WORKSPACE GROUPING (the authoritative contract; captain order
-# 2026-08-06, mirroring the dashboard's home -> family -> panes tree):
+# FAMILY WORKSPACE GROUPING (the authoritative contract,
+# mirroring the dashboard's home -> family -> panes tree):
 # every pane of one task family shares ONE workspace labelled
 # "<fleet> · <family>" - the family's chief, its crewmates, its verification
 # panes and its ship/qa watch tabs all land there, so the herdr sidebar reads
@@ -445,7 +447,7 @@ ac_backend >/dev/null
 #   --model/--effort; codex takes -m plus the effort as a CONFIG OVERRIDE,
 #   `-c model_reasoning_effort=<e>` - codex has no --effort flag, and -c is its
 #   global override mechanism (`codex --help`, codex-cli 0.144.6). The form is
-#   VERIFIED for the headless judge (bin/ac-pane-agent.sh oneshot_launch, `codex exec`). The
+#   VERIFIED for the headless judge (src/pane-agent.ts ONESHOT, `codex exec`). The
 #   INTERACTIVE TUI reading - against a config default of xhigh, launching
 #   with `-c model_reasoning_effort=low` rendered `low` in the TUI header
 #   (2026-07-21, clean CODEX_HOME) - is the fix probe's reported result, NOT
@@ -494,15 +496,15 @@ ac_backend >/dev/null
 #   selector - resolved via `panes.roomchief`; it has NO --rule mechanism at
 #   all today.
 #   Three kinds - gate, codereview, roomchief - may ALSO be ROUTED (`rules` +
-#   a MANDATORY `default`, captain ruling 2026-07-28,
+#   a MANDATORY `default`,
 #   routed-pane-rules-for-gate-codereview-roomchief), so this function always
 #   resolves the mandatory default for them rather than dying when no
 #   selector is at hand - exactly what a mechanism with no chief in the loop
 #   needs (the system-initiated Learning promote, ac-learn.sh cmd_autoroom, carries
 #   no --harness and no agent to judge a `when` clause). WHO can bypass this
 #   function to choose instead differs per kind, judged by WHERE an agent
-#   with AC_HOME actually sits in each call chain (captain ruling
-#   2026-07-28, same family, second round):
+#   with AC_HOME actually sits in each call chain (same family, second
+#   round):
 #   - gate: ac-gate.sh runs PER ROUND with the owning roomchief's real
 #     AC_HOME, so its own `--rule <n|default>` flag forwards straight to
 #     ac-dispatch-select.sh --pane gate --rule, bypassing this function
@@ -535,6 +537,10 @@ ac_backend >/dev/null
 #   the answer must be reached from two different worlds - ac-spawn.sh resolves
 #   it where AC_HOME is real and threads it to the homeless verification panes,
 #   ac-pane-agent.sh reads it first-hand for the homed learning scout.
+#
+# ac_claude_config_env, ac_build_launch, ac_resolve_profile and ac_pane_profile
+# have TypeScript twins in src/lib.ts that tests/ts/spawn-twins.test.ts holds
+# to them, so the mote changes on both sides at once.
 
 ac_claude_config_env() {
   # ac_claude_config_env - the CLAUDE_CONFIG_DIR= prefix for a launch line,
@@ -724,9 +730,10 @@ herdr_rpc_bounded() {
   # watchdog always finishes and reports, and one that stood down means the call
   # ended on its own. It parks in `wait` on its own `sleep` because bash defers
   # a trap until a foreground child exits, which would cost the by-pid
-  # stand-down the whole ceiling (measured: 1.89s against 0.006s). Its kills
-  # tolerate failure because it inherits the caller's errexit: a group that
-  # never formed, or a leader already reaped, would otherwise end it before the
+  # stand-down the whole ceiling (measured: 1.89s against 0.006s). Its wait
+  # and kills tolerate failure because it inherits the caller's errexit: a
+  # sleep that refuses its value (past 2147483647 s), a group that never
+  # formed, or a leader already reaped, would otherwise end it before the
   # by-pid TERM and before its report. Left open is the instant where a call
   # ending on its own meets the fire - read as the timeout. Its sleep is the
   # system one, resolved once per process on the default PATH: a caller's PATH
@@ -744,7 +751,7 @@ herdr_rpc_bounded() {
   pid=$!
   {
     trap 'exit 0' TERM
-    "$_ac_rpc_sleep" "$secs" & wait "$!"
+    "$_ac_rpc_sleep" "$secs" & wait "$!" || true
     trap '' TERM
     kill -TERM -"$pid" 2>/dev/null || true
     kill -TERM "$pid" 2>/dev/null || true
@@ -1450,7 +1457,11 @@ backend_clear_wait_herdr() {
 # because a consumer may flip it per task after sourcing (ac_task_backend: one
 # teardown/send/watch process can serve herdr and orca tasks in one run).
 # Unknown names refuse here with the same message ac_backend gives at source
-# time.
+# time. window_new, dialog_answer(_pane), agent_idle(_pane), submit_verified and
+# ac_startup_dialogs have TypeScript twins in src/lib.ts that
+# tests/ts/spawn-twins.test.ts holds to both drivers; send_line_pane,
+# send_key_pane, capture_pane, harness_up_pane, agent_status_pane and
+# backend_startup_dialogs_pane have theirs held by tests/ts/pane-agent-twins.test.ts.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ac-backend-orca.sh"
 
 ac_backend_route() {
@@ -1496,7 +1507,7 @@ backend_startup_dialogs()      { ac_startup_dialogs backend_dialog_answer backen
 backend_startup_dialogs_pane() { ac_startup_dialogs backend_dialog_answer_pane backend_send_key_pane backend_harness_up_pane "$@"; }
 ac_startup_dialogs() {
   # ac_startup_dialogs <answer-fn> <key-fn> <up-fn> <handle> <harness>
-  # The one startup sequence both launchers (ac-spawn.sh deliver_kickoff,
+  # The one startup sequence both launchers (src/spawn.ts deliverKickoff,
   # ac-pane-agent.sh's crewmate arm) run between the launch line and their
   # composer-ready wait. Observation-driven where the backend observes:
   # a named dialog is answered and the loop looks again at once (codex's

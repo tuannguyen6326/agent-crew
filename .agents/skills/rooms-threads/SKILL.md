@@ -82,7 +82,7 @@ English verbatim - they are machine-parsed; and the Slack mirror bullets
 exactly two marker families - ALL-CAPS section tokens
 (INPUTS:/SCOPE:/PLAN:/WHY:) and numbered items ((1) (2) ...) - so
 structure long entries with those or they render as one block. The
-`remote-orders` skill and the `bin/ac-remote.sh` header own the mechanics;
+`remote-orders` skill and the `src/remote.ts` header own the mechanics;
 exactly one poller exists fleet-wide (the lock-holding fleet watcher).
 
 Room lifecycle: a room opens with its family's first captain-facing
@@ -141,7 +141,7 @@ live thread on your own initiative.
 Promote with
 `bin/ac-spawn.sh --roomchief <family>` - CAPPED at `config/room-parallel`
 (default 5) chiefs in flight, refused fail-closed past it
-(contract: the `bin/ac-spawn.sh` header). At the cap, demote a landed family
+(contract: the `src/spawn.ts` header). At the cap, demote a landed family
 before promoting the next; teardown of a chief names the next queued family.
 POST THE ORDER INTO THE ROOM FIRST: the room IS the roomchief's brief, so a
 promote into a room holding no entry is refused fail-closed (same contract) -
@@ -151,7 +151,7 @@ never counts, and so is a system-initiated one (`--system-initiated`, a promote
 the fleet made by itself on a STANDING captain rule - the learning room is the
 one in-distro caller); the crewchief adds one past a full cap only with the
 captain's sanction (`--over-cap`), all three mechanized in the
-`bin/ac-spawn.sh` header - never by writing `config/room-parallel`.
+`src/spawn.ts` header - never by writing `config/room-parallel`.
 The roomchief owns that family's
 stages and gates in its own resumable session (AC_SCOPE set; it arms its
 watcher with `AC_WATCH_ONLY=$(bin/ac-ready.sh watch-set <family>)` - its own
@@ -164,7 +164,7 @@ stale past a re-arm grace AND past any bounded BUSY DECLARATION its chief
 made - a LIVE roomchief mid re-arm, or blocked inside one synchronous call
 too long to re-arm from, is held so its done wake is never stolen to the
 fleet spool), so the skip needs no manual drop
-(contract: the `bin/ac-watch.sh` header). The `<family>-chief` pane is
+(contract: the `src/watch.ts` header). The `<family>-chief` pane is
 fleet-scoped either way: the roomchief never self-watches it, and your
 fleet watcher keeps it - a chief's hand-back (`done:`) must wake YOU
 for the demote/close/backlog sweep. A roomchief is a scoped
@@ -220,8 +220,8 @@ crewmate the ROOMCHIEF itself spawned that still reaches the fleet
 spool is DRAINED and ACKED SILENTLY; draining stays mandatory (the
 Stop hook enforces it), only the forward is dropped - the roomchief's
 own scoped watcher "files its wakes under AC_SCOPE but WATCHES the ids
-in AC_WATCH_ONLY" (`bin/ac-watch.sh`'s scope-containment reconciliation
-block) and so already covers its crewmate panes, making the forward a
+in AC_WATCH_ONLY" (the `src/watch.ts` header's scope-containment
+reconciliation block) and so already covers its crewmate panes, making the forward a
 redundant fast path: dropping it costs poll latency, never a signal. A
 crewmate the CREWCHIEF spawned before promotion carries no family
 scope for its whole life (the `task-lifecycle` skill) - its wake on the

@@ -145,8 +145,7 @@
 // bun.
 import { accessSync, constants, statSync, writeSync } from "node:fs";
 import { constants as osConstants } from "node:os";
-import { resolve } from "node:path";
-import { crewBranch, defaultBranch, die, enterCaller, epicBaseFor, metaGet, require, taskMeta } from "./lib.ts";
+import { crewBranch, defaultBranch, die, enterCaller, epicBaseFor, metaGet, require, spawnShellSync, STARTED_BIN, taskMeta } from "./lib.ts";
 
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
 const native = (s: string): string => Buffer.from(s, "latin1").toString("utf8");
@@ -155,10 +154,10 @@ type Io = "inherit" | "ignore" | "pipe";
 // The shell's status for a child: its exit, 128+signal, 127 when it could not
 // start. stdin is the caller's unless a buffer is fed (xargs, sort): every git
 // the bash ran inherited it, and an external diff may read it.
-function run(cmd: string[], stdout: Io, stderr: Io, opts: { stdin?: Buffer; env?: Record<string, string | undefined> } = {}): { status: number; out: Buffer } {
+function run(cmd: string[], stdout: Io, stderr: Io, opts: { stdin?: Buffer } = {}): { status: number; out: Buffer } {
   let r: ReturnType<typeof Bun.spawnSync>;
   try {
-    r = Bun.spawnSync(cmd, { stdin: opts.stdin ?? "inherit", stdout, stderr, env: opts.env ?? process.env });
+    r = spawnShellSync(cmd, { stdin: opts.stdin ?? "inherit", stdout, stderr });
   } catch {
     return { status: 127, out: Buffer.alloc(0) };
   }
@@ -177,7 +176,7 @@ function isDir(p: string): boolean {
 const { args } = enterCaller(process.argv.slice(2));
 
 if (!` ${args.join(" ")} `.includes(" --no-guard ")) {
-  const guard = resolve(import.meta.dir, "..", "bin", "ac-guard.sh");
+  const guard = `${STARTED_BIN}/ac-guard.sh`;
   let executable = false;
   try {
     accessSync(guard, constants.X_OK);
@@ -322,7 +321,7 @@ function graphData(): void {
     }
     if (failed === 0 && refs.status !== 0) failed = refs.status;
   }
-  const sorted = run(["sort", "-s", "-t\t", "-k1,1rn"], "pipe", "inherit", { stdin: Buffer.concat(chunks), env: { ...process.env, LC_ALL: "C" } });
+  const sorted = run(["/usr/bin/env", "LC_ALL=C", "sort", "-s", "-t\t", "-k1,1rn"], "pipe", "inherit", { stdin: Buffer.concat(chunks) });
   if (sorted.status !== 0) process.exit(sorted.status);
   // awk's records: split on LF, the empty tail after a final LF being none.
   const lines = sorted.out.toString("latin1").split("\n");

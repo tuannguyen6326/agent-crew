@@ -329,12 +329,11 @@ out="$("$BIN/ac-merge-local.sh" c12 2>&1)"
 assert_contains "$out" "KNOWLEDGE-GAP" "a superseded entry does not answer the landing flag"
 
 # ---- Case 10: the SCOPED merge gate, driven through the HELPER -------------
-#              This is the LAYERING proof, and its location is load-bearing:
-#              ac_qa_gate_ok lives in ac-qa-lib.sh but reads the project yaml
-#              through ac_yaml_has, which lives in ac-pipeline-lib.sh. A unit
-#              test on the function passes even with the helper's source line
-#              missing - which is exactly the bug. Only driving the SCRIPT
-#              catches it.
+#              The two-sided gate end to end: the entry hands it the project
+#              and the crew head, and it reads both the yaml's qa.scopes and
+#              the repo-knowledge record (the gate itself is src/lib.ts's
+#              qaGateOk; tests/ts/qa-gate.test.ts holds it to ac_qa_gate_ok
+#              arm by arm).
 mkdir -p "$AC_HOME/projects" "$AC_HOME/records/repo-knowledge"
 rg1="$(make_repo g1repo)"
 add_crew "$rg1" g1
@@ -601,5 +600,602 @@ EOF
   git -C "$rrace" merge-base --is-ancestor "$late" main \
     && fail "$race_mode: a commit pushed after the qa gate must not ride the merge"
 done
+
+# --- differential: src/merge-local.ts against the frozen bash original -------
+# DISPUTED: the implementation (tests/fixtures/ac-merge-local.sh under bash vs src/merge-local.ts through bin/ac-merge-local.sh)
+# HELD-CONSTANT: two side roots seeded alike ($OH for the oracle, $NH for the shim) - a home at <side>/home whose projects/ clones (and the bare origins under <side>/remotes) carry the same fixed-date commits so every sha agrees - argv and env (the side root spelled HOME, substituted in values only), cwd (the side root, or a repo under it where a row says), stdin /dev/null, LC_ALL=C, GIT_AUTHOR_DATE/GIT_COMMITTER_DATE fixed so a commit made during the run agrees too, AC_GUARD_ROOT at a non-repo dir (the guard's checkout checks name where bin/ sits, which differs by construction) and a fresh watcher beat in each home, PATH stubs for `date` (one fixed instant) and `sleep` (logged, instant); exit status, stdout and stderr compared whole (the side root spelled HOME, the oracle's and this checkout's distro roots spelled DISTRO), then the world a row may touch: every clone's and origin's refs, HEAD, MERGE_HEAD, porcelain status and working-tree files, the names under state/, the landing ledger, every status log and timeline, and the sleep log.
+obin="$(make_oracle_bin ac-merge-local)"
+OROOT="$(dirname "$obin")"
+OH="$TMP/mside-o"; NH="$TMP/mside-n"
+MSTUBS="$TMP/mstubs"; mkdir -p "$MSTUBS" "$TMP/mguard-root"
+cat >"$MSTUBS/date" <<'STUB'
+#!/bin/sh
+case "$*" in *%s*) echo 1767225600 ;; *) echo 2026-01-01T00:00:00Z ;; esac
+STUB
+cat >"$MSTUBS/sleep" <<'STUB'
+#!/bin/sh
+printf 'sleep %s\n' "$*" >>"$SLEEP_LOG"
+STUB
+chmod +x "$MSTUBS/date" "$MSTUBS/sleep"
+NOW=1767225600
+FIXED=2026-01-01T00:00:00Z
+gitc() { GIT_AUTHOR_DATE=$FIXED GIT_COMMITTER_DATE=$FIXED git "$@"; }
+both() {  # both <fn> <args...> - run a seeding step with H at each side root
+  local h; for h in "$OH" "$NH"; do H="$h"; "$@"; done
+}
+mseed() { mkdir -p "$H/home/state" "$H/home/data" "$H/home/records" "$H/home/projects" "$H/remotes"; printf '%s\n' "$NOW" >"$H/home/state/.last-watcher-beat"; }
+minit() {  # minit <dir> - a repo with one fixed-date commit on main
+  git init -q -b main "$1"; git -C "$1" config user.email test@test; git -C "$1" config user.name test
+  printf 'hello\n' >"$1/file.txt"; git -C "$1" add -A; gitc -C "$1" commit -qm init
+}
+mrepo() { minit "$H/home/projects/$1"; }
+mcrew() {  # mcrew <repo> <family> [<file>, default <family>.txt] - crew/<family> one fixed-date commit ahead of the checked-out branch, then back on it
+  local r="$H/home/projects/$1" cur
+  cur="$(git -C "$r" symbolic-ref --short HEAD)"
+  git -C "$r" checkout -q -b "crew/$2"; printf 'crew %s\n' "$2" >"$r/${3:-$2.txt}"
+  git -C "$r" add -A; gitc -C "$r" commit -qm "crew $2"; git -C "$r" checkout -q "$cur"
+}
+mmain() {  # mmain <repo> <file> <content> - the checked-out branch advances by one fixed-date commit
+  local r="$H/home/projects/$1"
+  printf '%s\n' "$3" >"$r/$2"; git -C "$r" add -A; gitc -C "$r" commit -qm "main: $2"
+}
+mmeta() { printf 'project_dir=%s\nworktree=%s\n' "$H/home/projects/$2" "$H/home/projects/$2/.crew/worktrees/1" >"$H/home/state/$1.meta"; }
+mput() { mkdir -p "$(dirname "$H/$1")"; printf -- "$2" >"$H/$1"; }
+HOMELESS=0
+ML_ENV=()
+ML_PATH=""
+ML_CWD=""
+mrun() {  # mrun <bin> <side root> <prefix> <args...> - HOME in an arg or an env value is that side's root
+  local bin="$1" h="$2" p="$3" x v; shift 3
+  local a=() e=(LC_ALL=C "PATH=${ML_PATH:-$MSTUBS:$PATH}" "SLEEP_LOG=$h/sleep.log" "AC_GUARD_ROOT=$TMP/mguard-root" "GIT_AUTHOR_DATE=$FIXED" "GIT_COMMITTER_DATE=$FIXED")
+  [ "$HOMELESS" = 1 ] || e+=("AC_HOME=$h/home")
+  for x in ${ML_ENV[@]+"${ML_ENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//HOME/$h}"); done
+  for x in "$@"; do a+=("${x//HOME/$h}"); done
+  (cd "$h/$ML_CWD" && env -u AC_HOME "${e[@]}" "$bin/ac-merge-local.sh" ${a[@]+"${a[@]}"}) </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.err"
+}
+mnorm() { LC_ALL=C sed -e "s#$2#HOME#g" -e "s#$OROOT#DISTRO#g" -e "s#$ROOT#DISTRO#g" "$1"; }
+O_RC=0; N_RC=0
+mpair() {  # mpair <args...> - both sides run, outputs normalised, nothing compared yet
+  O_RC=0; N_RC=0
+  mrun "$obin" "$OH" o "$@" || O_RC=$?
+  mrun "$BIN" "$NH" n "$@" || N_RC=$?
+  mnorm "$TMP/o.raw" "$OH" >"$TMP/o.out"; mnorm "$TMP/o.err" "$OH" >"$TMP/o.err2"
+  mnorm "$TMP/n.raw" "$NH" >"$TMP/n.out"; mnorm "$TMP/n.err" "$NH" >"$TMP/n.err2"
+}
+same_io() {
+  assert_eq "$N_RC" "$O_RC" "differential exit for '$*'"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs for '$*': $(diff "$TMP/o.out" "$TMP/n.out" | head -n 6)"
+  cmp -s "$TMP/o.err2" "$TMP/n.err2" || fail "differential stderr differs for '$*': $(diff "$TMP/o.err2" "$TMP/n.err2" | head -n 6)"
+}
+mworld() {  # mworld <side root> - what a row may change
+  local h="$1" r f
+  for r in "$h"/home/projects/* "$h"/remotes/*.git "$h"/cwdrepo "$h"/wt-*; do
+    [ -d "$r" ] || continue
+    printf '== %s\n' "$r"
+    git -C "$r" for-each-ref --format='%(refname) %(objectname)' 2>&1 || true
+    printf 'HEAD %s %s\n' "$(git -C "$r" symbolic-ref -q HEAD || printf detached)" "$(git -C "$r" rev-parse -q --verify HEAD || printf none)"
+    if git -C "$r" rev-parse -q --verify MERGE_HEAD >/dev/null; then printf 'MERGING\n'; fi
+    if [ "$(git -C "$r" rev-parse --is-bare-repository)" = false ]; then
+      git -C "$r" status --porcelain --untracked-files=all
+      (cd "$r" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort | while IFS= read -r f; do printf '%s %s\n' "$f" "$(cksum <"$f" 2>&1 || true)"; done)
+    fi
+  done
+  printf '== state\n'; ls -A "$h/home/state"
+  for f in "$h"/home/state/.landings "$h"/home/state/*.status "$h"/home/data/*/timeline.log "$h"/home/data/*/*/timeline.log "$h"/sleep.log; do
+    [ -f "$f" ] || continue
+    printf '== %s\n' "$f"; cat "$f" 2>&1 || true; printf '\n'
+  done
+}
+same_world() {
+  mworld "$OH" >"$TMP/o.world"; mworld "$NH" >"$TMP/n.world"
+  mnorm "$TMP/o.world" "$OH" >"$TMP/o.world2"; mnorm "$TMP/n.world" "$NH" >"$TMP/n.world2"
+  cmp -s "$TMP/o.world2" "$TMP/n.world2" || fail "differential world differs after '$*': $(diff "$TMP/o.world2" "$TMP/n.world2" | head -n 8)"
+}
+msame() { mpair "$@"; same_io "$@"; same_world "$@"; }
+m_out() { cat "$TMP/n.out"; }
+m_err() { cat "$TMP/n.err2"; }
+o_err() { cat "$TMP/o.err2"; }
+MUSAGE='ERROR: usage: ac-merge-local.sh <id> [--no-ff]'
+kgap() {  # kgap <family> <repo> - the KNOWLEDGE-GAP warn as both sides print it
+  printf "WARN: KNOWLEDGE-GAP: family %s is landing on %s with no repo-knowledge entry -\nrecord what it learned (DISTRO/bin/ac-know.sh add --home HOME/home --repo HOME/home/projects/%s --family %s --src-file <path>:<line> --fact '<what you learned>')\nor dismiss if it learned nothing about the codebase. Record: HOME/home/records/repo-knowledge/%s.md" "$1" "$2" "$2" "$1" "$2"
+}
+both mseed
+
+# 1. usage, exit 1, before the home: no id, an empty id, a second argument
+#    that is not exactly --no-ff; W9 - a third argument is ignored (the land
+#    runs as --no-ff); git absent from PATH refuses after the guard ran
+both mrepo r1; both mcrew r1 c1; both mmeta c1 r1
+msame; assert_eq "$(m_err)" "$MUSAGE" "1: no id"; assert_eq "$N_RC" 1 "1: usage exits 1"
+msame '' --no-ff; assert_eq "$(m_err)" "$MUSAGE" "1: an empty id"
+msame c1 --noff; assert_eq "$(m_err)" "$MUSAGE" "1: a misspelt flag"
+msame c1 -n; assert_eq "$(m_err)" "$MUSAGE" "1: any other second argument"
+msame c1 --no-ff extra
+assert_eq "$(m_out)" "merged crew/c1 into main (--no-ff)" "1: W9 - a third argument is ignored"
+assert_eq "$(m_err)" "$(kgap c1 r1)" "1: the knowledge flag rides the land"
+NOGIT="$TMP/mnogit"; mkdir -p "$NOGIT"
+for d in /usr/bin /bin "$(dirname "$(command -v bun)")"; do
+  for f in "$d"/*; do [ -x "$f" ] && [ "$(basename "$f")" != git ] && [ ! -e "$NOGIT/$(basename "$f")" ] && ln -s "$f" "$NOGIT/$(basename "$f")"; done
+done
+ML_PATH="$MSTUBS:$NOGIT"; msame c1; ML_PATH=""
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "ERROR: required tool not found: git" "1: no git on PATH"
+
+# 2. the meta: homeless (the refusal, then the entry's own line), no meta, an
+#    unreadable one (metaGet's WARN alone, exit 1 - W2), a meta without
+#    project_dir run from a repo cwd (W1: `git -C ""` lands in the caller's
+#    cwd), a meta without worktree (the refusal names it empty)
+HOMELESS=1; msame c1; HOMELESS=0
+assert_eq "$(m_err)" "ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one
+ERROR: no crewmate meta for c1" "2: homeless"
+msame nosuch; assert_eq "$(m_err)" "ERROR: no crewmate meta for nosuch" "2: no meta"
+if [ "$(id -u)" != 0 ]; then
+  lockmeta() { mmeta u2 r1; chmod 000 "$H/home/state/u2.meta"; }
+  both lockmeta
+  msame u2
+  assert_eq "$(tail -n 1 "$TMP/n.err2")" "WARN: cannot read meta file HOME/home/state/u2.meta" "2: W2 - an unreadable meta is the WARN alone"
+  assert_eq "$N_RC" 1 "2: W2 - exit 1"
+  unlockmeta() { chmod 644 "$H/home/state/u2.meta"; rm -f "$H/home/state/u2.meta"; }
+  both unlockmeta
+fi
+w1seed() {
+  minit "$H/cwdrepo"; git -C "$H/cwdrepo" checkout -q -b crew/w1; printf 'w1\n' >"$H/cwdrepo/w1.txt"
+  git -C "$H/cwdrepo" add -A; gitc -C "$H/cwdrepo" commit -qm w1; git -C "$H/cwdrepo" checkout -q main
+  printf 'worktree=%s\n' "$H/wt" >"$H/home/state/w1.meta"
+}
+both w1seed
+ML_CWD=cwdrepo; msame w1; ML_CWD=""
+assert_eq "$(m_out)" "fast-forwarded main to crew/w1" "2: W1 - an empty project_dir lands the caller's cwd repo"
+assert_eq "$(m_err)" "" "2: W1 - no knowledge flag for an empty repo"
+assert_eq "$(git -C "$NH/cwdrepo" rev-parse main)" "$(git -C "$NH/cwdrepo" rev-parse crew/w1)" "2: W1 - the cwd repo's main moved"
+nowt() { printf 'project_dir=%s\n' "$H/home/projects/r1" >"$H/home/state/nob.meta"; }
+both nowt
+msame nob
+assert_eq "$(m_err)" "ERROR: branch crew/nob not found in HOME/home/projects/r1 (did the crewmate commit? worktree: )" "2: no worktree in the meta"
+gone() { printf 'project_dir=%s\nworktree=x\n' "$H/home/projects/gone" >"$H/home/state/gone.meta"; }
+both gone
+mpair gone
+assert_eq "$N_RC $O_RC" "1 1" "2: a project_dir that is gone: exit 1 on both sides"
+assert_eq "$(m_out)$(cat "$TMP/o.out")" "" "2: ...nothing on stdout"
+assert_eq "$(o_err)" "fatal: cannot change to 'HOME/home/projects/gone': No such file or directory
+fatal: cannot change to 'HOME/home/projects/gone': No such file or directory
+ERROR: primary checkout is on 'DETACHED', not 'main'" "2: ...the original's default-branch probe printed git's two lines"
+assert_eq "$(m_err)" "ERROR: primary checkout is on 'DETACHED', not 'main'" "2: ...defaultBranch (src/lib.ts) drops them - named"
+same_world "gone"
+
+# 3. lands: a clean ff, the no-op re-land, a family-scoped id, a staged id
+#    whose stage dir exists (its family's branch) and one whose does not (its
+#    own); the status line and its timeline mirror ride the world
+both mrepo r3; both mcrew r3 c3; both mmeta c3 r3
+msame c3
+assert_eq "$(m_out)" "fast-forwarded main to crew/c3" "3: a clean ff"
+assert_eq "$(cat "$NH/home/state/c3.status")" "$FIXED merged: local main" "3: the status line"
+assert_eq "$(cat "$NH/home/data/c3/timeline.log")" "$FIXED merged: local main" "3: its timeline mirror"
+assert_eq "$(tail -n 1 "$NH/home/state/.landings")" "$NOW	c3	c3.txt" "3: the ledger record"
+msame c3
+assert_eq "$(m_out)" "main already contains crew/c3; nothing to move" "3: the no-op re-land"
+both mcrew r3 foo foo.txt; both mmeta foo-r2 r3
+msame foo-r2; assert_eq "$(m_out)" "fast-forwarded main to crew/foo" "3: a revision id lands its family"
+both mcrew r3 c7 c7.txt; both mmeta c7-ship r3
+stagedir() { mkdir -p "$H/home/data/c7/ship"; }
+msame c7-ship; assert_eq "$(m_err)" "ERROR: branch crew/c7-ship not found in HOME/home/projects/r3 (did the crewmate commit? worktree: HOME/home/projects/r3/.crew/worktrees/1)" "3: no stage dir - the id is its own family"
+both stagedir
+msame c7-ship; assert_eq "$(m_out)" "fast-forwarded main to crew/c7" "3: a stage dir - the family's branch"
+
+# 4. refusals, the clone untouched: tracked dirt (git's quoting, a rename),
+#    detached, a side branch, diverged - bare, AC_SCOPE, AC_CREW_ID
+dirt() {
+  local r="$H/home/projects/r4"
+  minit "$r"; printf 'a\n' >"$r/a b.txt"; printf 'c\n' >"$r/c.txt"; printf 'e\n' >"$r/$(printf 'caf\303\251.txt')"
+  git -C "$r" add -A; gitc -C "$r" commit -qm files
+  mcrew r4 c4; mmeta c4 r4
+  printf 'more\n' >>"$r/a b.txt"; printf 'more\n' >>"$r/$(printf 'caf\303\251.txt')"; git -C "$r" mv c.txt d.txt
+}
+both dirt
+msame c4
+assert_eq "$(m_err)" 'ERROR: primary checkout is dirty: "a b.txt" "caf\303\251.txt" c.txt -> d.txt (commit, stash, or discard, then retry)' "4: dirt named as git quotes it"
+undirt() { git -C "$H/home/projects/r4" reset -q --hard; git -C "$H/home/projects/r4" checkout -q --detach; }
+both undirt
+msame c4; assert_eq "$(m_err)" "ERROR: primary checkout is on 'DETACHED', not 'main'" "4: detached"
+onside() { git -C "$H/home/projects/r4" checkout -q -b side; }
+both onside
+msame c4; assert_eq "$(m_err)" "ERROR: primary checkout is on 'side', not 'main'" "4: a side branch"
+diverge() { git -C "$H/home/projects/r4" checkout -q main; mmain r4 mainfile.txt "main moved"; }
+both diverge
+msame c4
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "ERROR: crew/c4 is not fast-forwardable: main has diverged from it. Land a conflict-free branch with 'ac-merge-local.sh c4 --no-ff', or rebase crew/c4 onto main first" "4: diverged, unscoped"
+SCOPED="ERROR: crew/c4 is not fast-forwardable: main has diverged from it. --no-ff is not available here (the primary-checkout commit guard refuses it for a crewmate/roomchief) - rebase crew/c4 onto main and re-run the plain land, or hand the landing back to the crewchief"
+ML_ENV=(AC_SCOPE=fam); msame c4; ML_ENV=()
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "$SCOPED" "4: diverged under AC_SCOPE"
+ML_ENV=(AC_CREW_ID=c4); msame c4; ML_ENV=()
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "$SCOPED" "4: diverged under AC_CREW_ID alone"
+ML_ENV=(AC_SCOPE= AC_CREW_ID=); msame c4; ML_ENV=()
+assert_contains "$(m_err)" "Land a conflict-free branch" "4: an EMPTY scope is unscoped"
+
+# 5. an untracked file colliding with an incoming path: git refuses the ff and
+#    the --no-ff merge never starts, in the entry's voice, nothing moved
+both mrepo r5; both mcrew r5 c5; both mmeta c5 r5
+collide() { printf 'stray\n' >"$H/home/projects/r5/c5.txt"; }
+both collide
+msame c5
+assert_contains "$(m_err)" "ERROR: fast-forward of crew/c5 failed: error: The following untracked working tree files would be overwritten by merge:" "5: the ff collision"
+assert_contains "$(m_err)" "(main untouched)" "5: ...main untouched"
+uncollide() { rm -f "$H/home/projects/r5/c5.txt"; }
+both uncollide; both mmain r5 mainfile.txt "main moved"; both collide
+msame c5 --no-ff
+assert_contains "$(m_err)" "ERROR: --no-ff merge of crew/c5 never started: error: The following untracked working tree files would be overwritten by merge:" "5: the --no-ff collision never started"
+assert_contains "$(m_err)" "(checkout untouched, still clean on main)" "5: ...the checkout untouched"
+
+# 6. --no-ff: a clean land, a conflict (aborted, clean), unrelated history
+#    (never started - and W5: its three-dot diff fails, so the landed set is
+#    silently empty), the no-op, a commit a hook refuses (aborted, restored)
+both mrepo r6; both mcrew r6 c6; both mmain r6 mainfile.txt "main moved"; both mmeta c6 r6
+msame c6 --no-ff
+assert_eq "$(m_out)" "merged crew/c6 into main (--no-ff)" "6: a clean --no-ff land"
+assert_eq "$(cat "$NH/home/state/c6.status")" "$FIXED merged: local main (--no-ff)" "6: its status line"
+msame c6 --no-ff
+assert_eq "$(m_out)" "main already contains crew/c6; no merge commit created (--no-ff)" "6: the no-op"
+assert_eq "$(sed -n 2p "$NH/home/state/c6.status")" "$FIXED merged: local main" "6: the no-op's status line"
+both mcrew r6 cx; both mmain r6 cx.txt "main's own version"; both mmeta cx r6
+msame cx --no-ff
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "ERROR: --no-ff merge of crew/cx conflicts on: cx.txt (checkout left clean on main)" "6: a conflict"
+orphan() {
+  local r="$H/home/projects/r6"
+  git -C "$r" checkout -q --orphan crew/co; git -C "$r" rm -qrf . >/dev/null
+  printf 'orphan\n' >"$r/orphan.txt"; git -C "$r" add -A; gitc -C "$r" commit -qm orphan; git -C "$r" checkout -q main
+  mmeta co r6
+}
+both orphan
+msame co --no-ff
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "ERROR: --no-ff merge of crew/co never started: fatal: refusing to merge unrelated histories (checkout untouched, still clean on main)" "6: unrelated history"
+assert_contains "$(m_err)" "fatal: main...refs/heads/crew/co: no merge base" "6: W5 - the three-dot diff failed, git's line passed, the landed set empty"
+hook() { mcrew r6 ch ch.txt; mmeta ch r6; printf '#!/bin/sh\necho hook says no\nexit 1\n' >"$H/home/projects/r6/.git/hooks/pre-commit"; chmod +x "$H/home/projects/r6/.git/hooks/pre-commit"; }
+both hook
+msame ch --no-ff
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "ERROR: --no-ff commit of crew/ch was refused: hook says no (checkout restored, clean on main)" "6: a refused commit"
+
+# 7. the landing ledger: a >7d record pruned, a header line (W6: its epoch
+#    reads 0 - silent, then pruned), a <24h foreign record warned with its
+#    live or ARCHIVED room, the own family and a >24h one silent, a path with
+#    spaces; a lock held by a live pid (ten stubbed sleeps, the UNSERIALIZED
+#    WARN, the records written, the lock left to its holder); W10: an
+#    EMPTY-family record shifts the read and its path dies in the shell's
+#    arithmetic before the merge; an unreadable ledger dies with awk's 2
+ledger() { printf -- "$1" >"$H/home/state/.landings"; }
+both mrepo r7; both mcrew r7 c7a 'a b.txt'; both mmeta c7a r7
+rooms() { mput home/data/live/room.md 'x\n'; mput home/data/archive/2025/arch/room.md 'x\n'; }
+both rooms
+both ledger "epoch\tfamily\ta b.txt\n$((NOW - 8 * 86400))\told\ta b.txt\n$((NOW - 3600))\tlive\ta b.txt\n$((NOW - 7200))\tarch\ta b.txt\n$((NOW - 60))\tc7a\ta b.txt\n$((NOW - 25 * 3600))\tstranger\ta b.txt\n"
+msame c7a
+assert_eq "$(m_err)" "WARN: LANDING-OVERLAP: a b.txt landed 1h ago by family live - required reading: HOME/home/data/live/room.md
+WARN: LANDING-OVERLAP: a b.txt landed 2h ago by family arch - required reading: HOME/home/data/archive/2025/arch/room.md
+$(kgap c7a r7)" "7: the foreign records warn, live and archived rooms"
+assert_eq "$(cat "$NH/home/state/.landings")" "$((NOW - 3600))	live	a b.txt
+$((NOW - 7200))	arch	a b.txt
+$((NOW - 60))	c7a	a b.txt
+$((NOW - 25 * 3600))	stranger	a b.txt
+$NOW	c7a	a b.txt" "7: the >7d record and the header pruned, the land appended"
+both mcrew r7 c7b b.txt; both mmeta c7b r7
+held() { mkdir -p "$H/home/state/.landings.lock"; printf '%s\n' "$$" >"$H/home/state/.landings.lock/pid"; }
+both held
+msame c7b
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "WARN: landing ledger: HOME/home/state/.landings.lock could not be acquired within 10s - recording UNSERIALIZED, so a concurrent landing's records may be lost and its <24h LANDING-OVERLAP warn may not fire for them" "7: the UNSERIALIZED WARN after the knowledge flag"
+assert_eq "$(wc -l <"$NH/sleep.log" | tr -d ' ')" 10 "7: ten waits, each a spawned sleep"
+assert_eq "$(tail -n 1 "$NH/home/state/.landings")" "$NOW	c7b	b.txt" "7: recorded anyway"
+assert_eq "$(cat "$NH/home/state/.landings.lock/pid")" "$$" "7: the holder keeps its lock"
+unheld() { rm -rf "$H/home/state/.landings.lock" "$H/sleep.log"; }
+both unheld
+both mcrew r7 c7c g; both mmeta c7c r7
+both ledger "$((NOW - 10))\t\tg\n"
+mpair c7c
+assert_eq "$N_RC $O_RC" "1 1" "7: W10 - an empty-family record ends the run with 1 on both sides"
+assert_contains "$(o_err)" "g: unbound variable" "7: W10 - the original died in the shell's arithmetic"
+assert_eq "$(m_err)" "" "7: W10 - the port names no shell line (SHELL-OWN STDERR)"
+assert_eq "$(m_out)" "" "7: W10 - nothing landed"
+same_world "W10"
+both ledger "$((NOW - 10))\t\t5\n"
+both mcrew r7 c7d 5; both mmeta c7d r7
+msame c7d
+assert_eq "$(sed -n 1p "$TMP/n.err2")" "WARN: LANDING-OVERLAP:  landed 0h ago by family 10 - required reading: HOME/home/data/10/room.md" "7: W10 - a numeric path shifts quietly"
+if [ "$(id -u)" != 0 ]; then
+  both mcrew r7 c7e e.txt; both mmeta c7e r7
+  both ledger "$((NOW - 10))\tx\te.txt\n"
+  shut() { chmod 000 "$H/home/state/.landings"; }
+  both shut
+  mpair c7e
+  open_ledger() { chmod 644 "$H/home/state/.landings"; }
+  both open_ledger
+  assert_eq "$N_RC $O_RC" "2 2" "7: an unreadable ledger ends the run with awk's 2"
+  assert_contains "$(o_err)" "can't open file" "7: ...awk's own line on the original"
+  assert_eq "$(m_err)" "" "7: ...not reproduced"
+  same_world "unreadable ledger"
+fi
+
+# 8. KNOWLEDGE-GAP through the entry: the family's own entry silences it, a
+#    sibling's or a superseded one does not
+both mrepo r8; both mcrew r8 c8; both mmeta c8 r8
+know() { mput home/records/repo-knowledge/r8.md "$1"; }
+both know '- fact x | src: cmd:true | at: d 2026-07-21 | by: other\n## Superseded\n- fact y | by: c8\n'
+msame c8; assert_eq "$(m_err)" "$(kgap c8 r8)" "8: a sibling's and a superseded entry"
+both mcrew r8 c8b c8b.txt; both mmeta c8b r8
+both know '- fact x | src: cmd:true | at: d 2026-07-21 | by: c8b\n'
+msame c8b; assert_eq "$(m_err)" "" "8: the family's own entry"
+
+# 9. the qa gate, src/lib.ts's twin on the port's side and the original's own
+#    sourcing of the bash function on the other: flat with and without a
+#    marker, MODE MISMATCH both ways, the bare marker on a scoped project, the
+#    scoped pass, the required-profile matrix, the RETIRED legacy config (its
+#    die is the run's exit - no blocked line), the require_for_ship spellings
+#    (anything but a false spelling enforces: `True` and a comment after
+#    `true` do, a quoted `No` with a comment and a CR does not), an unreadable
+#    yaml (its refusal is the run's exit, as the RETIRED one), W8 a CRLF scope
+#    line, W10 a string manifest entry, W11 a shifted pin, `00` counts (an
+#    invalid marker), and a project_dir that is a linked worktree
+gate_repo() {  # gate_repo <name> <yaml> - a clone with crew/<name>, its yaml, the markers dir ignored
+  mrepo "$1"; mcrew "$1" "$1"; mmeta "$1" "$1"
+  [ -z "$2" ] || printf -- "$2" >"$H/home/projects/$1.yaml"
+  printf '/.crew/\n' >>"$H/home/projects/$1/.git/info/exclude"; mkdir -p "$H/home/projects/$1/.crew/qa/passed"
+}
+marker() {  # marker <name> <suffix> [<scope> <app>] - a passing v2 attestation for crew/<name>'s head
+  local r="$H/home/projects/$1" sha
+  sha="$(git -C "$r" rev-parse "crew/$1")"
+  { printf 'schema=agentcrew.qa-attestation/v2\noutcome=passed\nrun=r\ntask=t\ncompleted_at=2026-07-24T00:00:00Z\nsource_sha=%s\nprofile_key=%s/%s/%s\n' "$sha" "$1" "${3:-flat}" "${4:-flat}"
+    printf 'profile_sha256=p\nconfig_sha256=c\ncases_passed=1\ncases_total=1\n'
+    [ -z "${3:-}" ] || printf 'scope=%s\napp=%s\n' "$3" "$4"; } >"$r/.crew/qa/passed/$sha$2"
+}
+REQ='qa:\n  require_for_ship: true\n'
+SCOPED_YAML='qa:\n  require_for_ship: true\n  scopes:\n    orchid:\n      seed: "true"\n'
+sha12() { git -C "$NH/home/projects/$1" rev-parse "crew/$1" | cut -c1-12; }
+both gate_repo q1 "$REQ"
+msame q1
+assert_eq "$(m_err)" "WARN: qa.require_for_ship: no passing crew-qa run recorded for $(sha12 q1) - run crew-qa on this head before merging
+ERROR: local merge blocked by qa.require_for_ship (see message above)" "9: flat, no marker"
+both marker q1 ''
+msame q1; assert_eq "$(m_out)" "fast-forwarded main to crew/q1" "9: flat, a marker"
+both gate_repo q2 "$SCOPED_YAML"; both marker q2 ''
+msame q2; assert_contains "$(m_err)" "MODE MISMATCH - the fleet-home config declares scopes" "9: yaml scopes, no map"
+mapq() { mput "home/records/repo-knowledge/$1.md" '- scope orchid = orchid-service | src: cmd:true | at: d 2026-07-21 | by: fam\n'; }
+both gate_repo q3 "$REQ"; both mapq q3
+msame q3; assert_contains "$(m_err)" "MODE MISMATCH - the repo-knowledge record declares scopes" "9: map scopes, no yaml"
+both mapq q2
+msame q2; assert_contains "$(m_err)" "A bare sha-only marker IS on disk" "9: the bare marker on a scoped project"
+both marker q2 .orchid.orchid-service orchid orchid-service
+msame q2
+assert_eq "$(m_out)" "qa: passed profiles for $(sha12 q2): orchid/orchid-service
+fast-forwarded main to crew/q2" "9: the scoped pass prints its pairs"
+manifest() { mput "home/data/$1/qa/manifest.json" "{\"required_profiles\":[{\"profile_key\":\"$1/orchid/orchid-service\"},{\"profile_key\":\"$1/cedar/cedar-service\"}]}\n"; }
+both gate_repo q4 "$REQ"; both manifest q4; both marker q4 .orchid.orchid-service orchid orchid-service
+msame q4
+assert_contains "$(m_err)" "WARN: qa.require_for_ship: required profile 'q4/cedar/cedar-service' has no passing crew-qa attestation for $(sha12 q4)" "9: the matrix, one of two"
+both marker q4 .cedar.cedar-service cedar cedar-service
+msame q4
+assert_eq "$(sed -n 1p "$TMP/n.out")" "qa: all 2 required profile(s) satisfied for $(sha12 q4): q4/orchid/orchid-service q4/cedar/cedar-service" "9: the matrix, both"
+retired() { mput home/config/projects/q5.yaml "$REQ"; }
+both gate_repo q5 "$REQ"; both retired
+msame q5
+assert_eq "$(m_err)" "ERROR: project config for 'q5' found at the RETIRED legacy path (HOME/home/config/projects/q5.yaml), which is no longer read - move it: mv \"HOME/home/config/projects/q5.yaml\" \"HOME/home/projects/q5.yaml\" (or delete it if HOME/home/projects/q5.yaml is already authoritative)" "9: RETIRED - the die is the exit"
+assert_eq "$N_RC" 1 "9: RETIRED exits 1"
+both gate_repo q6 'qa:\n  require_for_ship: "true"\n'
+msame q6; assert_contains "$(m_err)" "no passing crew-qa run recorded" "9: a quoted true is required"
+MBLOCKED='ERROR: local merge blocked by qa.require_for_ship (see message above)'
+both gate_repo q7 'qa:\n  require_for_ship: True\n'
+msame q7
+assert_eq "$(m_err)" "WARN: qa.require_for_ship: no passing crew-qa run recorded for $(sha12 q7) - run crew-qa on this head before merging
+$MBLOCKED" "9: True enforces"
+both gate_repo q8 'qa:\n  other: 1\n'
+msame q8; assert_eq "$(m_out)" "fast-forwarded main to crew/q8" "9: no require_for_ship"
+both gate_repo q9 'qa:\r\n  require_for_ship: "No" # off\r\n'
+msame q9; assert_eq "$(m_out)" "fast-forwarded main to crew/q9" "9: a false spelling is not enforced"
+both gate_repo qw1 'qa:\n  require_for_ship: true # on\n'
+msame qw1
+assert_eq "$(m_err)" "WARN: qa.require_for_ship: no passing crew-qa run recorded for $(sha12 qw1) - run crew-qa on this head before merging
+$MBLOCKED" "9: a comment after true enforces"
+if [ "$(id -u)" != 0 ]; then
+  both gate_repo qw3 "$REQ"
+  shuty() { chmod 000 "$H/home/projects/qw3.yaml"; }
+  openy() { chmod 644 "$H/home/projects/qw3.yaml"; }
+  both shuty; msame qw3; both openy
+  assert_eq "$N_RC" 1 "9: an unreadable yaml ends the run with 1"
+  assert_eq "$(m_err)" "ERROR: qa.require_for_ship: the project policy HOME/home/projects/qw3.yaml cannot be read - refusing the merge rather than reading it as not enforced" "9: ...its refusal alone, no blocked line"
+  assert_eq "$(m_out)" "" "9: ...nothing landed"
+fi
+crlfmap() { mput "home/records/repo-knowledge/$1.md" '- scope orchid = orchid-service\r\n'; }
+both gate_repo qw8 "$SCOPED_YAML"; both crlfmap qw8
+msame qw8
+assert_eq "$(m_err)" "WARN: qa.require_for_ship: the project's scope map is AMBIGUOUS (two live entries for one scope, or a malformed line) - refusing the merge rather than guessing which profile a marker proves. Fix it with bin/ac-know.sh scope-proposal, then re-run: bin/ac-know.sh verify
+$MBLOCKED" "9: W8 - a CRLF scope line is AMBIGUOUS"
+both gate_repo qw10 "$REQ"; both mput home/data/qw10/qa/manifest.json '{"required_profiles":["qw10/orchid/orchid-service"]}\n'
+msame qw10
+assert_eq "$(m_err)" "WARN: qa.require_for_ship: the task's required-profile manifest is empty or unreadable (HOME/home/data/qw10/qa/manifest.json) - refusing rather than merging against an undefined required set
+$MBLOCKED" "9: W10 - a string entry reads as no manifest"
+both gate_repo qw11 "$REQ"; both marker qw11 .orchid.orchid-service orchid orchid-service
+both mput home/data/qw11/qa/manifest.json '{"required_profiles":[{"profile_key":"qw11/orchid/orchid-service","e2e_sha":"E"}]}\n'
+msame qw11
+assert_eq "$(m_err)" "WARN: qa.require_for_ship: the attestation for 'qw11/orchid/orchid-service' is invalid (profile hash mismatch) - re-run crew-qa for this exact profile and head
+$MBLOCKED" "9: W11 - an e2e pin with no profile pin lands in the profile pin"
+zeroes() {  # zeroes <name> - the flat marker's case counts spelled 00
+  local f; f="$H/home/projects/$1/.crew/qa/passed/$(git -C "$H/home/projects/$1" rev-parse "crew/$1")"
+  LC_ALL=C sed -e 's/^cases_passed=1$/cases_passed=00/' -e 's/^cases_total=1$/cases_total=00/' "$f" >"$f.t"; mv "$f.t" "$f"
+}
+both gate_repo qw13 "$REQ"; both marker qw13 ''; both zeroes qw13
+msame qw13
+assert_eq "$(m_err)" "WARN: qa.require_for_ship: ignored invalid flat QA attestation for $(sha12 qw13): invalid case counts
+WARN: qa.require_for_ship: no passing crew-qa run recorded for $(sha12 qw13) - run crew-qa on this head before merging
+$MBLOCKED" "9: 00 case counts are an invalid marker"
+wtland() {  # the primary checkout moved off main, main checked out in the linked worktree <side>/wt-qwt, the meta's project_dir
+  gate_repo qwt "$REQ"; marker qwt ''
+  git -C "$H/home/projects/qwt" checkout -q -b side; git -C "$H/home/projects/qwt" worktree add -q "$H/wt-qwt" main
+  printf 'project_dir=%s\nworktree=%s\n' "$H/wt-qwt" "$H/home/projects/qwt/.crew/worktrees/1" >"$H/home/state/qwt.meta"
+}
+both wtland
+msame qwt
+assert_eq "$(m_out)" "fast-forwarded main to crew/qwt" "9: a linked worktree lands on the main repo's yaml and marker"
+assert_eq "$(git -C "$NH/wt-qwt" rev-parse main)" "$(git -C "$NH/home/projects/qwt" rev-parse crew/qwt)" "9: ...main moved in the worktree"
+
+# 10. an epic or feature record: the deferred qa line on STDOUT, the target
+#     only on origin (W4: git's tracking line on stdout), the ref-only ff and
+#     its push=yes, the no-op, the in-place ff (target checked out) and its
+#     failure, the ref-only failure (target checked out in a linked worktree),
+#     a failing push (the WARN, the landing stands), the target nowhere
+#     (epic and feature remedies), --no-ff refused, the non-ff refused, an
+#     unreadable ledger, a push=deferred feature landing (no push)
+epic_seed() {
+  minit "$H/src-ep"
+  git clone -q --bare "$H/src-ep" "$H/remotes/ep.git"
+  git clone -q "$H/remotes/ep.git" "$H/home/projects/ep"
+  git -C "$H/home/projects/ep" config user.email test@test; git -C "$H/home/projects/ep" config user.name test
+  mput home/records/backlog.md '- [ ] e1-s1 [src:cap flow:direct mode:local-only qa:no] - story one; epic:e1 (repo: ep)\n- [ ] e1-s2 [src:cap flow:direct mode:local-only qa:no] - story two; epic:e1 (repo: ep)\n- [ ] f1-m1 [src:cap flow:direct mode:feature-pr qa:no] - member; feature:f1 (repo: ep)\n'
+  mput home/data/e1/branches 'ep epic/e1 push=yes\n'
+  mput home/data/f1/branches 'ep feat/f1 push=deferred\n'
+  mmeta e1-s1 ep; mmeta e1-s2 ep; mmeta f1-m1 ep
+  local r="$H/home/projects/ep"
+  git -C "$r" checkout -q -b crew/e1-s1; printf 's1\n' >"$r/s1.txt"; git -C "$r" add -A; gitc -C "$r" commit -qm s1; git -C "$r" checkout -q main
+}
+both epic_seed
+msame e1-s1
+assert_eq "$(m_err)" "ERROR: epic target epic/e1 exists neither locally nor on origin - cut it first: ac-epic-branch.sh create <epic> ep" "10: the target nowhere"
+publish() { git -C "$H/src-ep" branch epic/e1; git -C "$H/src-ep" push -q "$H/remotes/ep.git" epic/e1:epic/e1; git -C "$H/home/projects/ep" fetch -q origin; }
+both publish
+msame e1-s1
+assert_eq "$(m_out)" "branch 'epic/e1' set up to track 'origin/epic/e1'.
+qa.require_for_ship: deferred to the epic gate (epic-branch landing)
+fast-forwarded epic/e1 to crew/e1-s1 (ref-only)
+pushed epic/e1 to origin (record push=yes)" "10: W4 - git's tracking line, then the ref-only ff and its push"
+assert_eq "$(cat "$NH/home/state/e1-s1.status")" "$FIXED merged: local epic/e1 (epic)" "10: the epic status line"
+assert_eq "$(git -C "$NH/remotes/ep.git" rev-parse epic/e1)" "$(git -C "$NH/home/projects/ep" rev-parse crew/e1-s1)" "10: origin followed"
+msame e1-s1
+assert_eq "$(m_out)" "qa.require_for_ship: deferred to the epic gate (epic-branch landing)
+epic/e1 already contains crew/e1-s1; nothing to move
+pushed epic/e1 to origin (record push=yes)" "10: the no-op still pushes"
+msame e1-s1 --no-ff
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "ERROR: --no-ff is not available for an epic-branch landing: a merge commit onto epic/e1 belongs in a leased worktree, never the primary checkout - rebase crew/e1-s1 onto epic/e1 and land ff, or route the merge through the epic gate" "10: --no-ff refused"
+inplace() {
+  local r="$H/home/projects/ep"
+  git -C "$r" checkout -q epic/e1; git -C "$r" checkout -q -b crew/e1-s2; printf 's2\n' >"$r/s2.txt"; git -C "$r" add -A; gitc -C "$r" commit -qm s2
+  git -C "$r" checkout -q epic/e1; printf 'stray\n' >"$r/s2.txt"
+}
+both inplace
+msame e1-s2
+assert_contains "$(m_err)" "ERROR: ff of epic/e1 (checked out) from crew/e1-s2 failed: error: The following untracked working tree files would be overwritten by merge:" "10: the in-place failure"
+assert_contains "$(m_err)" "(epic/e1 untouched)" "10: ...epic/e1 untouched"
+unstray() { rm -f "$H/home/projects/ep/s2.txt"; }
+both unstray
+msame e1-s2
+assert_eq "$(sed -n 2p "$TMP/n.out")" "fast-forwarded epic/e1 to crew/e1-s2 (in place)" "10: the in-place ff"
+sibling() {
+  local r="$H/home/projects/ep"
+  git -C "$r" checkout -q -B crew/e1-s1 epic/e1~1
+  printf 's1 again\n' >"$r/s1b.txt"; git -C "$r" add -A; gitc -C "$r" commit -qm s1b; git -C "$r" checkout -q main
+}
+both sibling
+msame e1-s1
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "ERROR: crew/e1-s1 is not fast-forwardable: epic/e1 has diverged from it (a sibling story landed first). Rebase crew/e1-s1 onto epic/e1 and re-run the plain land" "10: the non-ff epic"
+lockwt() {
+  local r="$H/home/projects/ep"
+  git -C "$r" checkout -q -B crew/e1-s1 epic/e1; printf 's1c\n' >"$r/s1c.txt"; git -C "$r" add -A; gitc -C "$r" commit -qm s1c; git -C "$r" checkout -q main
+  git -C "$r" worktree add -q "$H/wt-ep" epic/e1
+}
+both lockwt
+msame e1-s1
+assert_contains "$(m_err)" "ERROR: ff update of epic/e1 from crew/e1-s1 failed: fatal: refusing to fetch into branch 'refs/heads/epic/e1' checked out at 'HOME/wt-ep' (epic/e1 untouched)" "10: the ref-only failure"
+unwt() { git -C "$H/home/projects/ep" worktree remove --force "$H/wt-ep"; git -C "$H/home/projects/ep" remote set-url origin "$H/nowhere.git"; }
+both unwt
+msame e1-s1
+assert_eq "$(tail -n 1 "$TMP/n.err2")" "WARN: push of epic/e1 to origin FAILED - the landing stands; retry: git -C HOME/home/projects/ep push --no-verify origin epic/e1" "10: a failing push"
+assert_eq "$(sed -n 2p "$TMP/n.out")" "fast-forwarded epic/e1 to crew/e1-s1 (ref-only)" "10: ...the landing stands"
+mcrewf() { local r="$H/home/projects/ep"; git -C "$r" checkout -q -b crew/f1-m1; printf 'm1\n' >"$r/m1.txt"; git -C "$r" add -A; gitc -C "$r" commit -qm m1; git -C "$r" checkout -q main; }
+both mcrewf
+msame f1-m1
+assert_eq "$(m_err)" "ERROR: feature target feat/f1 does not exist locally - cut it first: ac-feature.sh create <feature> ep" "10: the feature target missing"
+cutf() { git -C "$H/home/projects/ep" branch feat/f1 main; }
+both cutf
+msame f1-m1
+assert_eq "$(m_out)" "qa.require_for_ship: deferred to the feature ship gate (feature-branch landing)
+fast-forwarded feat/f1 to crew/f1-m1 (ref-only)" "10: the feature landing, never pushed"
+if [ "$(id -u)" != 0 ]; then
+  shutl() { chmod 000 "$H/home/records/backlog.md"; }
+  openl() { chmod 644 "$H/home/records/backlog.md"; }
+  both shutl; mpair f1-m1; both openl
+  assert_eq "$N_RC $O_RC" "1 1" "10: an unreadable ledger exits 1 on both sides"
+  assert_eq "$(tail -n 1 "$TMP/o.err2")" "ERROR: cannot read the ledger to resolve the epic-branch fence for f1-m1" "10: an unreadable ledger"
+  assert_contains "$(o_err)" "can't open file" "10: ...after the original's awk line"
+  assert_eq "$(m_err)" "ERROR: cannot read the ledger to resolve the epic-branch fence for f1-m1" "10: ...which epicBaseFor (src/lib.ts) does not print - named"
+  same_world "unreadable ledger"
+fi
+
+# 11. the gate and the merge see the SAME head: a PATH git stub (keyed on
+#     " merge " in its argv, as the original leg's) advances crew/<id> the
+#     moment the merge runs; only the attested sha lands, ff and --no-ff
+REAL_GIT="$(command -v git)"
+RSTUB="$TMP/mrace"; mkdir -p "$RSTUB"
+cat >"$RSTUB/git" <<EOF
+#!/usr/bin/env bash
+case " \$* " in
+  *" merge "*)
+    if [ ! -e "\$RACE_REPO/.raced" ]; then
+      : >"\$RACE_REPO/.raced"
+      late="\$("$REAL_GIT" -C "\$RACE_REPO" commit-tree "\$RACE_BRANCH^{tree}" -p "\$RACE_BRANCH" -m late)"
+      "$REAL_GIT" -C "\$RACE_REPO" update-ref "refs/heads/\$RACE_BRANCH" "\$late"
+    fi ;;
+esac
+exec "$REAL_GIT" "\$@"
+EOF
+chmod +x "$RSTUB/git"
+for rmode in ff no-ff; do
+  both gate_repo "race$rmode" "$REQ"; both marker "race$rmode" ''
+  [ "$rmode" = ff ] || both mmain "race$rmode" side.txt "main moved"
+  gated="$(git -C "$NH/home/projects/race$rmode" rev-parse "crew/race$rmode")"
+  ML_PATH="$RSTUB:$MSTUBS:$PATH"; ML_ENV=("RACE_REPO=HOME/home/projects/race$rmode" "RACE_BRANCH=crew/race$rmode")
+  flag=""; [ "$rmode" = ff ] || flag=--no-ff
+  msame "race$rmode" $flag
+  ML_PATH=""; ML_ENV=()
+  assert_eq "$N_RC" 0 "11: $rmode - the gated head lands"
+  late="$(git -C "$NH/home/projects/race$rmode" rev-parse "crew/race$rmode")"
+  [ "$late" != "$gated" ] || fail "11: $rmode - the stub must have advanced the branch"
+  git -C "$NH/home/projects/race$rmode" merge-base --is-ancestor "$gated" main || fail "11: $rmode - the attested head is on main"
+  git -C "$NH/home/projects/race$rmode" merge-base --is-ancestor "$late" main && fail "11: $rmode - the late commit must not ride the merge"
+done
+
+# 12. the status append runs bare after the merge: a status path that cannot
+#     take the append ends the run with 1, the land already done (the shell's
+#     own redirection line is not reproduced)
+both mrepo r12; both mcrew r12 c12; both mmeta c12 r12
+nostatus() { mkdir -p "$H/home/state/c12.status"; rm -f "$H/home/state/.landings"; }
+both nostatus
+mpair c12
+assert_eq "$N_RC $O_RC" "1 1" "12: the failed append exits 1 on both sides"
+assert_eq "$(m_out)" "" "12: no landing line"
+assert_contains "$(o_err)" "Is a directory" "12: the original's shell line"
+assert_eq "$(m_err)" "$(kgap c12 r12)" "12: the port's entry lines only"
+same_world "unwritable status"
+assert_eq "$(git -C "$NH/home/projects/r12" rev-parse main)" "$(git -C "$NH/home/projects/r12" rev-parse crew/c12)" "12: the land happened first"
+
+# 13. the guard rides first: a stale watcher beat is WATCHER-DOWN on stderr
+#     before the entry's own lines, and stamps state/.guard-stamp alike
+stale() { printf '1\n' >"$H/home/state/.last-watcher-beat"; }
+both stale
+msame nosuch
+assert_eq "$(m_err)" "WATCHER-DOWN: crew in flight with no live watcher - arm bin/ac-watch.sh
+ERROR: no crewmate meta for nosuch" "13: the guard first"
+[ -e "$NH/home/state/.guard-stamp" ] || fail "13: the guard stamped"
+
+# 14. the ROOT seam: a lab bin/ whose root links src/ starts the module from
+#     the distro checkout, yet its guard and the remedy's ac-know.sh are the
+#     LAB's - as the original's $(dirname "$0") and ac_root named its own bin/
+#     (STARTED_BIN, never import.meta.dir). The gate is not the lab's: its
+#     ac-qa-lib.sh override of ac_qa_gate_ok would open the gate on a head
+#     with no marker, and the twin in src/lib.ts refuses that head flat
+LAB="$TMP/mlab"; mkdir -p "$LAB/bin"; cp "$BIN"/*.sh "$LAB/bin/"; ln -s "$ROOT/src" "$LAB/src"
+rm -f "$LAB/bin/ac-guard.sh"
+printf '\nac_qa_gate_ok() { printf '"'"'lab gate %%s\\n'"'"' "$3"; }\n' >>"$LAB/bin/ac-qa-lib.sh"
+H="$NH"; gate_repo lab "$REQ"; rm -f "$NH/home/state/.guard-stamp"
+lab_land() { (cd "$NH" && env -u AC_HOME LC_ALL=C PATH="$MSTUBS:$PATH" AC_HOME="$NH/home" AC_GUARD_ROOT="$TMP/mguard-root" "$LAB/bin/ac-merge-local.sh" lab 2>"$TMP/lab.err"); }
+out="$(lab_land)" && fail "14: the lab's gate override must not open the port's gate"
+assert_eq "$out" "" "14: no land"
+assert_eq "$(cat "$TMP/lab.err")" "WARN: qa.require_for_ship: no passing crew-qa run recorded for $(sha12 lab) - run crew-qa on this head before merging
+$MBLOCKED" "14: the flat refusal - the lab's ac_qa_gate_ok is not consulted"
+marker lab ''
+out="$(lab_land)" || fail "14: the lab land"
+assert_eq "$out" "fast-forwarded main to crew/lab" "14: no lab gate line"
+case "$(cat "$TMP/lab.err")" in *WATCHER-DOWN*) fail "14: the lab has no guard, yet one ran" ;; esac
+assert_contains "$(cat "$TMP/lab.err")" "record what it learned ($LAB/bin/ac-know.sh add" "14: the remedy names the lab's bin/"
 
 pass

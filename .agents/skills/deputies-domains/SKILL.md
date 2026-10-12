@@ -21,7 +21,7 @@ deputy carrying its charter one-liner, absolute `home:`, free-text `scope:`, and
 clone list (grammar owner: the `crewdeputy routing table` block in
 `bin/ac-lib.sh`; `bin/ac-deputy.sh validate` is the strict check). The
 session-start digest prints it IN FULL - `bin/ac-deputy.sh list`, contract in
-that script's header - with one liveness state per entry
+the `src/deputy.ts` header - with one liveness state per entry
 (`LIVE`/`DOWN`/`UNOBSERVABLE`/`NOT-RUNNING`/`HOME-MISSING`) and the exact
 recover command on the recoverable ones, so routing knowledge and live
 ownership are deterministic
@@ -49,7 +49,7 @@ parent at intake - a judgment call, not a mode rule.
 
 A routed order goes out on the MARKED channel: `bin/ac-send.sh <deputy-id>
 '<order>'` prefixes it with the chief-order marker for `kind=crewdeputy` targets
-only (contract: the `bin/ac-send.sh` header), refuses rather than delivering an
+only (contract: the `src/send.ts` header), refuses rather than delivering an
 unmarked or misaddressed one, and records `routed:` on `state/<id>.status` - the
 parent's durable index, since routed work opens NO parent backlog row (the
 deputy records it in its own ledger). The deputy answers on the RETURN CHANNEL,
@@ -99,8 +99,10 @@ its own clone set). Retire with `bin/ac-domain.sh retire <name>` - fail-closed
 (refuses while any OPEN tokened row or flying domainchief exists), removes
 exactly the registry line, and never deletes the package.
 `bin/ac-domain.sh list` rides the session-start digest and always exits 0; it
-reports any ORPHAN-TOKEN - a row naming a domain with no VALID registry line -
-which you reconcile by `unassign`-ing the token or re-`new`-ing the domain.
+reports any ORPHAN-TOKEN - an OPEN row naming a domain with no VALID registry
+line (a Done row keeps its token as provenance) - which you reconcile by
+`unassign`-ing the token or re-`new`-ing the domain (a kept package is
+re-adopted, its knowledge untouched).
 
 ## Domain standing rules
 

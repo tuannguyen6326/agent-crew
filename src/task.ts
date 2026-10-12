@@ -64,7 +64,7 @@
 import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { acDoneline, records } from "./backlog.ts";
-import { contractLint, enterCaller, lockAcquire, lockRelease, recordsDir } from "./lib.ts";
+import { contractLint, enterCaller, lockAcquire, lockRelease, recordsDir, spawnShellSync } from "./lib.ts";
 
 // The ledger is bytes (latin1, one character per byte), and so is every
 // argument written into it or echoed back from it.
@@ -94,7 +94,7 @@ const ledger = join(recs, "backlog.md");
 const lockdir = join(recs, ".backlog.md.lock");
 // date(1), not Date: ICU misreads POSIX TZ strings, and src/ready.ts decides a
 // dated hold is spent by date(1) too.
-const today = Bun.spawnSync(["date", "+%Y-%m-%d"]).stdout.toString().trim();
+const today = spawnShellSync(["date", "+%Y-%m-%d"]).stdout.toString().trim();
 
 // --- ledger buffer ------------------------------------------------------------
 
@@ -133,7 +133,7 @@ function save(): void {
   const tmp = `${ledger}.${process.pid}`;
   writing(ledger, () => {
     try {
-      const cp = Bun.spawnSync(["cp", "-p", ledger, tmp]);
+      const cp = spawnShellSync(["cp", "-p", ledger, tmp]);
       if (cp.exitCode !== 0) throw new Error(cp.stderr.toString().trim());
       writeFileSync(tmp, bytes(L.length ? L.map((l) => `${l}\n`).join("") : "\n"));
       renameSync(tmp, ledger);

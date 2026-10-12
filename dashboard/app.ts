@@ -1,7 +1,8 @@
 // app.ts - agent-crew local web dashboard (Bun runtime, no build step).
 //
-// Launched by bin/ac-dashboard.sh through bin/ac-bun.sh; the import.meta.main
-// guard at the end of this module calls dashboardMain().
+// Served through bin/ac-dashboard.sh (src/dashboard.ts): its foreground imports
+// this module and calls dashboardMain(); its daemon starts this file under bun,
+// where the import.meta.main guard at the end of this module calls it.
 // Serves ONE self-contained SPA shell (inline CSS + inline vanilla JS, no
 // framework, no external asset in the shell itself) over 127.0.0.1 only; the
 // mermaid renderer (jsdelivr) and the whiteboard (esm.sh, WHITEBOARD_CDN) load
@@ -155,7 +156,7 @@ export function learningsCiteFamily(text: string, family: string): boolean {
 // Crewdomains (dash-domain-records): read-only render of records/crewdomains.md
 // (the routing table, bin/ac-lib.sh `crewdomain routing table` block) and each registered package at
 // crewdomains/<name>/ (the three-member shape plus the optional `qa-repo`,
-// bin/ac-domain.sh's `new` header).
+// src/domain.ts's `new` header).
 // The tally is the ONE piece of accounting this file never re-derives: it
 // shells out to the fleet's own ac_domain_tally (bin/ac-lib.sh) instead of
 // counting backlog lines a second way.
@@ -6773,10 +6774,11 @@ function parsePort(argv: string[]): number {
   return 8787;
 }
 
-// The server entry: only the import.meta.main guard at the end of this module
-// calls it, so importing the module stays side-effect-free.
-export function dashboardMain() {
-  const port = parsePort(process.argv);
+// The server entry, called by the import.meta.main guard at the end of this
+// module and by src/dashboard.ts's foreground, which hands it `--port <port>`;
+// importing the module stays side-effect-free.
+export function dashboardMain(argv: string[] = process.argv) {
+  const port = parsePort(argv);
   mainPort = port; // the share listener (REVIEW SHARE) lives on port+1
   scanShares();    // re-arm durable shares across a dashboard restart
   // Fleet-state watchers (dashboard/watch.ts): a status/meta/backlog/room
@@ -7377,8 +7379,8 @@ export function dashboardMain() {
             }
             const res = reviewMutate(p, id, { type: "annotate", anchor: a.anchor, text: a.text, at, image });
             // No live poller and not yet waked: tell the fleet, once - a
-            // message into a session nobody polls must never fall silent
-            // (captain decision 2026-08-01).
+            // message into a session nobody polls must never fall
+            // silent.
             if (res.status === 200 && !reviewPollers.get(id) && !reviewWaked.has(id)) {
               reviewWaked.add(id);
               publishReviewWake(p, id, a.text);

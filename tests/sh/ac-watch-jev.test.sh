@@ -89,7 +89,7 @@ p="$(payload j3)"
 assert_contains "$p" "the ask may be prose jev=finished p=0.96" "on: payload carries the note"
 assert_eq "$(hits)" "2" "on: one request"
 assert_contains "$(cat "$state/j3.status")" "ended its turn" "on: the status note is unchanged"
-case "$(cat "$state/j3.status")" in *jev=*) fail "on: the status log never carries the note (declared_wait reads it)" ;; esac
+case "$(cat "$state/j3.status")" in *jev=*) fail "on: the status log never carries the note (declaredWait reads it)" ;; esac
 rm -f "$state/j3.meta"
 
 # 4. on, quiet-while-working: the soft stale payload gains the note too.

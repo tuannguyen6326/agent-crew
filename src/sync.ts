@@ -72,13 +72,13 @@
 // EXIT: 0 when every project is synced or fresh; 1 when any project was
 // STUCK or FAILED (the sweep still visits every project); 2 usage.
 //
-// THE BOUNDED FETCH reproduces fetch_bounded's mechanics, not its bytes: the
-// fetch is spawned DETACHED (node:child_process - Bun.spawn has no detached
-// option), so it leads its own process group as a job backgrounded under
-// `set -m` did, and the deadline kills the GROUP - TERM, `sleep 0.5`, KILL,
-// then the leader is reaped - so a transport helper git forked (`git
-// remote-ext` for an `ext::` URL, and the command under it) dies with it
-// instead of living on under ppid 1. Liveness is polled every `sleep 0.2`
+// THE BOUNDED FETCH (src/lib.ts runBounded, which src/tree.ts shares)
+// reproduces fetch_bounded's mechanics, not its bytes: the
+// fetch is spawned DETACHED, so it leads its own process group as a job
+// backgrounded under `set -m` did, and the deadline kills the GROUP - TERM,
+// `sleep 0.5`, KILL, then the leader is reaped - so a transport helper git
+// forked (`git remote-ext` for an `ext::` URL, and the command under it) dies
+// with it instead of living on under ppid 1. Liveness is polled every `sleep 0.2`
 // (the sleeps are spawned so a PATH stub binds both sides); the clock is the
 // shell's integer `$SECONDS`: whole wall-clock seconds, so a deadline of N
 // fires at the first poll after the Nth second boundary (N=0 on the first
@@ -114,11 +114,10 @@
 // hand (standing jobs may name it in prose). Without bun the shim prints
 // `ERROR: required tool not found: bun` and exits 1 to that hand; no `set -e`
 // caller dies silently, so nothing fails soft.
-import { spawn } from "node:child_process";
 import { readdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { basename } from "node:path";
-import { configRead, defaultBranch, die, enterCaller, metaGet, physicalDir, projectDir, projectsDir, warn } from "./lib.ts";
+import { defaultBranch, die, enterCaller, metaGet, physicalDir, projectDir, projectsDir, runBounded, spawnShellSync, syncTimeout, warn } from "./lib.ts";
 
 // Lines are bytes: git's output is read as latin1 and written back as the
 // same bytes; a path from argv or readdir is UTF-8 and joins them as bytes.
@@ -141,7 +140,7 @@ function isDir(p: string): boolean {
 function git(repo: string, args: string[], stdout: "pipe" | "ignore", stderr: "ignore" | "inherit"): { rc: number; out: string } {
   try {
     // stdin is the caller's, as every git the bash ran inherited it.
-    const r = Bun.spawnSync(["git", "-C", repo, ...args.map(u8)], { stdin: "inherit", stdout, stderr, env: process.env });
+    const r = spawnShellSync(["git", "-C", repo, ...args.map(u8)], { stdin: "inherit", stdout, stderr });
     const sig = r.signalCode ? ((osConstants.signals as Record<string, number>)[r.signalCode] ?? 0) : 0;
     return { rc: r.exitCode ?? 128 + sig, out: stdout === "pipe" ? r.stdout.toString("latin1") : "" };
   } catch {
@@ -153,71 +152,6 @@ const captured = (s: string): string => s.replace(/\n+$/, "");
 
 // awk's default field split: runs of blanks, the ends trimmed.
 const awkFields = (line: string): string[] => line.replace(/^[ \t]+|[ \t]+$/g, "").split(/[ \t]+/);
-
-// `${AC_SYNC_TIMEOUT:-$(ac_config_read ...)}`: the knob is read only when the
-// override is empty, and inside `$(...)` an AC_HOME that cannot be entered
-// (cd's own line on stderr) or a knob this user cannot read (head's) read as
-// "" - neither line is reproduced, the digit check falls back to 60 and the
-// sweep goes on.
-function syncTimeout(): string {
-  let t = process.env.AC_SYNC_TIMEOUT || "";
-  if (!t) {
-    const h = process.env.AC_HOME;
-    if (!h || physicalDir(h)) {
-      try {
-        t = configRead("sync-timeout", "60");
-      } catch {}
-    }
-  }
-  return /^[0-9]+$/.test(t) ? t : "60";
-}
-
-const sleep = async (secs: string): Promise<void> => {
-  await Bun.spawn(["sleep", secs], { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: process.env }).exited;
-};
-
-async function fetchBounded(repo: string, secs: string): Promise<number> {
-  // stdin stays the caller's (a backgrounded job under `set -m` kept it);
-  // stdout and stderr were discarded.
-  const child = spawn("git", ["-C", repo, "-c", "http.lowSpeedLimit=1", `-c`, `http.lowSpeedTime=${secs}`, "fetch", "origin", "--prune", "--quiet"], {
-    detached: true,
-    stdio: ["inherit", "ignore", "ignore"],
-    env: process.env,
-  });
-  let status: number | null = null;
-  const ended = new Promise<void>((resolve) => {
-    child.on("exit", (code, signal) => {
-      status = code ?? 128 + ((osConstants.signals as Record<string, number>)[signal ?? ""] ?? 0);
-      resolve();
-    });
-    child.on("error", () => {
-      status = 127;
-      resolve();
-    });
-  });
-  if (child.pid === undefined) {
-    await ended;
-    return status!;
-  }
-  const limit = Number(secs);
-  const start = Math.floor(Date.now() / 1000);
-  const killGroup = (sig: "SIGTERM" | "SIGKILL"): void => {
-    try {
-      process.kill(-child.pid!, sig);
-    } catch {}
-  };
-  while (status === null) {
-    if (Math.floor(Date.now() / 1000) - start >= limit) {
-      killGroup("SIGTERM");
-      await sleep("0.5");
-      killGroup("SIGKILL");
-      await ended;
-      return 124;
-    }
-    await sleep("0.2");
-  }
-  return status;
-}
 
 function neededBranches(repo: string): string[] {
   const needed: string[] = [];
@@ -280,7 +214,7 @@ async function syncProject(repo: string): Promise<number> {
     return 0;
   }
   const t = syncTimeout();
-  const frc = await fetchBounded(repo, t);
+  const frc = (await runBounded(["git", "-C", repo, "-c", "http.lowSpeedLimit=1", "-c", `http.lowSpeedTime=${t}`, "fetch", "origin", "--prune", "--quiet"], t, "ignore")).status;
   if (frc === 124) {
     say(`FAILED ${name}: fetch timed out after ${t}s`);
     return 1;

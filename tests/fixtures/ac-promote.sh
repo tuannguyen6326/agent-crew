@@ -7,8 +7,8 @@
 # A scout steered mid-flight into writing code on crew/<id> stops being a
 # report-only task. Promoting rewrites state/<id>.meta (each key via the
 # atomic per-key rewrite): kind=scout flips to kind=ship, and mode= is set
-# from --mode - REQUIRED, because mode is per-task (captain order
-# 2026-08-10) and the registry default is gone; a promotion is the task
+# from --mode - REQUIRED, because mode is per-task
+# and the registry default is gone; a promotion is the task
 # GAINING a delivery mode, so the choice must be explicit here. Promoting
 # into `crew-ship` is a time-expensive choice: it needs the captain's word,
 # declared with --captain-requested '<the captain's words, or the order

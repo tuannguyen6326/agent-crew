@@ -79,14 +79,38 @@
 //   solo session "solo", else AC_SCOPE names a scoped chief as <fam>-chief,
 //   else the unscoped default "crewchief".
 // - Scale ceiling: vector retrieval is an in-process linear cosine scan,
-//   supported to 50k embedded chunks (doctor's vector_scan_scale check fails
-//   past it). An ANN index is deliberately out until measurements demand it.
+//   supported to 50k embedded chunks of live pages (doctor's vector_scan_scale
+//   check fails past it). An ANN index is deliberately out until measurements demand it.
 //
-// CLI: bin/ac-brain.sh is the entry. It starts this module through
-//   bin/ac-bun.sh, so the caller's cwd arrives as the first argument and
-//   enterCaller (src/lib.ts) returns there; a relative --home is refused when
-//   that cwd has no name. serve's per-call re-exec starts the module the same
-//   way (bunChild). Every command prints ONE JSON value.
+// CLI: bin/ac-brain.sh is the entry - `ac-brain.sh <verb> [args...]
+//   [--home <abs path>]` from any harness that has bash, pi and cursor
+//   included; no MCP needed (serve is the optional MCP stdio surface for
+//   harnesses that want it). It is a shim that starts this module through
+//   bin/ac-bun.sh as `entry <argv...>`, so the caller's cwd arrives as the
+//   first argument and enterCaller (src/lib.ts) returns there.
+//   THE ENTRY'S HOME: every `--home <value>` pair, before, among or after the
+//   verb's words, is taken out of argv and the last one wins (a value that is
+//   itself `--home` is a value); an empty value, or none, falls back to
+//   AC_HOME. That home must be a directory (a link to one counts) where the
+//   caller stood - a cwd Bun cannot name is looked up under the path ac-bun.sh
+//   handed over - and it rides back appended as `--home <home>`, every other
+//   word handed on as given (`--home=<x>` is a word of the verb's). The
+//   entry's refusals carry no protocol_version (stdout, exit 1):
+//     {"error":"invalid_params","message":"--home needs a value","suggestion":"pass --home <abs path> or set AC_HOME"}
+//   for a `--home` with nothing after it, wherever it stands, before any home
+//   is looked at, and
+//     {"error":"invalid_params","message":"no fleet home","suggestion":"pass --home <abs path> or set AC_HOME"}
+//   for no home, or one that is no directory. Without bun on PATH no module
+//   runs, so the shim itself prints, before reading any argument (exit 1):
+//     {"error":"unavailable","message":"bun not on PATH","suggestion":"install bun (https://bun.sh) - the engine runs on it"}
+//   THE DIRECT FORM - a verb first, as serve's per-call re-exec and the
+//   dashboard start the module (bunChild) - reads the FIRST `--home`'s value,
+//   else AC_HOME, so a tool argument named home never moves serve off the
+//   home it was started on. Both forms then refuse a relative home when the
+//   caller's cwd has no name (`the current directory cannot be resolved, so a
+//   relative home cannot be either`), and a home that does not exist as the
+//   direct form reads it is `no fleet home`, both in the protocol_version
+//   shape below. Every command prints ONE JSON value.
 //   sync [--rebuild] [--dry-run] [--no-embed] [--force-reconcile] [--break-lease]
 //   recall [--query q] [--entity slug] [--agent a] [--since iso|7d] [--limit n]
 //          [--budget-tokens n] [--no-boosts] [--deputy id]
@@ -104,16 +128,84 @@
 //   dialect. The seven verb NAMES are shared memory-verbs vocabulary, but the
 //   response shapes are deliberately not wire-conformant to any external
 //   MEMORY_VERBS spec; do not point an external protocol client at serve.
+//
+// ORACLE. The bash entry the entry form replaced stays frozen at
+//   tests/fixtures/ac-brain.sh; the differential leg of
+//   tests/sh/ac-brain.test.sh holds the entry form to it.
+// ESCAPE HATCH. The frozen original starts this module in the direct form,
+//   which the port left as it was, so it runs from a bin/ copy beside the
+//   live module:
+//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"; ln -s "$PWD/src" "$o/src"
+//   cp tests/fixtures/ac-brain.sh "$o/bin/ac-brain.sh"
+//   then "$o/bin/ac-brain.sh" <verb> ... by hand. Every script caller below
+//   reads a failed call as no answer, so a broken entry costs the brain,
+//   never the caller's own run.
+// AT PARITY (each pinned in the leg):
+// - The entry's two refusals carry no protocol_version, where every refusal
+//   of the module carries it (Errors above).
+// - An empty --home value is no refusal: it reads AC_HOME.
+// - The home is the spelling given, tested with [ -d ] and resolve()d, never
+//   cd'd into: an LF-ended name is that directory, so HOME RESOLUTION's
+//   physicalDir binding has no artifact to replace here.
+// DIVERGENCES from the frozen original (the leg names each one a row can show):
+// - HOME RESOLUTION: from a cwd that has no path at all (deleted) the
+//   original's [ -d ] still looked inside the deleted directory, which holds
+//   no name but `.` and `..`, so a relative home such as `rel` was `no fleet
+//   home`; started in the distro root, the port cannot look there, and the
+//   direct form refuses every relative home with its cannot-be-resolved line
+//   (exit 1 both).
+// - SHELL-OWN STDERR: bash's own getcwd lines from a deleted cwd
+//   (`shell-init:`, `chdir:`) are not reproduced - the shim prints one per
+//   shell and cd it runs, where a refusal the original made in bash came
+//   before its cd, one line fewer.
+// - BYTES: argv arrives decoded, so a home that is no UTF-8 is tested as its
+//   U+FFFD spelling where the original tested the bytes - the same answer
+//   on APFS, which refuses such a name.
+// CALLERS: by path - src/prompt-recall.ts (recall; a failed call is no
+//   hits), src/wake-drain.ts (sync and delta with no --home, so AC_HOME's
+//   rung; only a 0 is read), src/lib.ts brainFreshen (src/watch.ts and the
+//   prompt-recall hook; a detached sync, output dropped) and bin/ac-lib.sh
+//   ac_brain_freshen (the same); src/self-task.ts through the prompt-recall
+//   hook. The ac-brain and solo-session skills, the crewmate layer, the
+//   compaction nudge (src/sessionstart-nudge.ts) and the roomchief prompt
+//   (src/spawn.ts) tell agents to run it; so the path and every JSON byte
+//   stay. In the direct form: serve's re-exec and dashboard/app.ts
+//   (/api/brain-recall, /api/brain-synthesize).
 import { Database } from "bun:sqlite";
 import { readdirSync, statSync, readFileSync, existsSync, appendFileSync, mkdirSync, writeFileSync } from "fs";
 import { join, relative, dirname, basename, isAbsolute, resolve } from "path";
 import { hostname } from "os";
-import { bunChild, enterCaller } from "./lib.ts";
+import { bunChild, enterCaller, spawnShellSync } from "./lib.ts";
 
 const SCHEMA_VERSION = 1;
 const CHUNKER_VERSION = 1;
-const { args, atCaller } = enterCaller(process.argv.slice(2));
+const { args: started, atCaller } = enterCaller(process.argv.slice(2));
+const args = started[0] === "entry" ? entryArgs(started.slice(1), process.argv[2] ?? "", atCaller) : started;
 const cmd = args[0];
+// The entry's reading of its argv (the header's CLI): the direct form's args
+// with the home appended, or a refusal in the entry's own JSON.
+function entryArgs(given: string[], caller: string, atCaller: boolean): string[] {
+  const refuse = (message: string): never => {
+    console.log(JSON.stringify({ error: "invalid_params", message, suggestion: "pass --home <abs path> or set AC_HOME" }));
+    process.exit(1);
+  };
+  const argv: string[] = [];
+  let home = "";
+  for (let i = 0; i < given.length; i++) {
+    if (given[i] !== "--home") argv.push(given[i]);
+    else if (i + 1 < given.length) home = given[++i];
+    else refuse("--home needs a value");
+  }
+  home ||= process.env.AC_HOME ?? "";
+  // `[ -d ]` where the caller stood: a cwd Bun cannot name left this process
+  // in the distro root, but the kernel still reads the path ac-bun.sh handed
+  // over. A cwd with no path at all (deleted) leaves nowhere to look, and the
+  // direct form refuses a relative home there.
+  const at = isAbsolute(home) || atCaller ? home : caller && `${caller}/${home}`;
+  const dir = (p: string) => { try { return statSync(p).isDirectory(); } catch { return false; } };
+  if (!home || (at !== "" && !dir(at))) refuse("no fleet home");
+  return [...argv, "--home", home];
+}
 function opt(name: string, dflt?: string): string | undefined {
   const i = args.indexOf("--" + name);
   return i >= 0 && i + 1 < args.length ? args[i + 1] : dflt;
@@ -527,7 +619,10 @@ function syncInner(db: Database, t0: number) {
     for (const t of ["pages", "shadows", "chunks", "chunks_fts", "pages_fts", "links", "aliases"]) db.run(`DELETE FROM ${t}`);
   }
   const cfg = loadCfg();
-  const excludes = new Set<string>(cfg.excludes || ["state", "logs", "whiteboards", "skills-archive", "scenes-archive", "node_modules", ".git", ".crew"]);
+  // verify: every review round copies the family room and its prompt into
+  // data/<fam>/verify/ - regenerated bulk duplicating the indexed room.md,
+  // which once held most of a home's embedded chunks.
+  const excludes = new Set<string>(cfg.excludes || ["state", "logs", "whiteboards", "skills-archive", "scenes-archive", "node_modules", ".git", ".crew", "verify"]);
   const files: string[] = [];
   const walk = (dir: string) => {
     let ents; try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }
@@ -1079,7 +1174,7 @@ async function cmdRemember() {
   const provenance = opt("provenance");
   if (!fact) die("invalid_params", "no fact text", "ac-brain remember '<fact>' --provenance '<source>' --agent <id>");
   if (!provenance || !provenance.trim())
-    die("provenance_required", "every fact carries its source", "add --provenance '<where this came from>' (e.g. \"captain 2026-08-16\", \"session xyz\")");
+    die("provenance_required", "every fact carries its source", "add --provenance '<where this came from>' (e.g. \"captain, <date>\", \"session xyz\")");
   if (provenance.length > 500) die("invalid_params", "provenance > 500 chars", "shorten it; provenance is an attribution, not a document");
   const kind = opt("kind", "fact")!;
   if (!["event", "preference", "commitment", "belief", "fact"].includes(kind))
@@ -1376,8 +1471,9 @@ async function cmdDoctor() {
     // Published scale ceiling: vector retrieval is an in-process linear cosine
     // scan, supported to 50k embedded chunks. Exceeding it FAILS the check -
     // a stated limit, not a hidden latency cliff; ANN stays out until real
-    // corpora demand it.
-    const embN = (db.query("SELECT COUNT(*) c FROM chunks WHERE embedding IS NOT NULL").get() as any).c;
+    // corpora demand it. Counted as the scan selects them: a soft-deleted
+    // page keeps its vectors for the revive window but is never scanned.
+    const embN = (db.query("SELECT COUNT(*) c FROM chunks WHERE embedding IS NOT NULL AND slug IN (SELECT slug FROM pages WHERE deleted_at IS NULL)").get() as any).c;
     push("vector_scan_scale", embN <= 50000, `${embN} embedded chunks (linear-scan budget 50000)`);
   }
   const failed = checks.filter(c => c.status === "fail");
@@ -1404,15 +1500,15 @@ function synthCommand(): string | null {
   if (!harness) { harness = knob("crew-harness"); model = model || knob("model"); }
   const mm = model ? ` --model ${model}` : "";
   // ultracode is a claude preset, not a tier: the one-shot arm sends xhigh in
-  // its place (bin/ac-pane-agent.sh EFFORT_FLAG), so no engine sees the name.
+  // its place (src/pane-agent.ts effortFlag), so no engine sees the name.
   if (effort === "ultracode") effort = "xhigh";
   // No engine is not a refusal: an orphan effort knob has nothing to reach.
   if (!harness) return null;
   // The arm refuses any other tier before a CLI sees it, so this twin does too.
   if (effort && !["low", "medium", "high", "xhigh", "max"].includes(effort))
     throw new Error(`invalid effort: ${effort} (expected low|medium|high|xhigh|max|ultracode)`);
-  // Each form is byte-for-byte what bin/ac-pane-agent.sh's oneshot_launch
-  // prints for the same harness/model/effort - that function owns why each
+  // Each form is byte-for-byte what src/pane-agent.ts's ONESHOT table
+  // prints for the same harness/model/effort - that table owns why each
   // flag is there; tests/sh/ac-brain.test.sh fails the moment the two part.
   switch (harness) {
     case "claude": return `claude -p${mm}${effort ? ` --effort ${effort}` : ""}`;
@@ -1498,7 +1594,7 @@ async function cmdSynthesize() {
     try {
       // The prompt is record text: it goes in as $1, never inside the string
       // bash parses, which would run any $(...) a record carries.
-      const proc = Bun.spawnSync(["bash", "-lc", `${cmdline} "$1"`, "ac-brain-synthesize", prompt], { timeout: 180000 });
+      const proc = spawnShellSync(["bash", "-lc", `${cmdline} "$1"`, "ac-brain-synthesize", prompt], { timeout: 180000 });
       const text = new TextDecoder().decode(proc.stdout).trim();
       if (proc.exitCode === 0 && text) { answer = text; status = "ok"; }
       else status = "llm_error";
@@ -1555,7 +1651,7 @@ async function cmdServe() {
         continue;
       }
       const child = bunChild("src/brain.ts", argv);
-      const proc = Bun.spawnSync(child.cmd, { cwd: child.cwd, env: child.env });
+      const proc = spawnShellSync(child.cmd, { cwd: child.cwd });
       const text = new TextDecoder().decode(proc.stdout).trim() || new TextDecoder().decode(proc.stderr).trim();
       send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text }], isError: proc.exitCode !== 0 } });
     } else if (id !== undefined)

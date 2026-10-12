@@ -1,5 +1,5 @@
 // done.ts - the agent-side PUSH of a completion. AUTHORITATIVE for the push
-// contract; ac-watch.sh's PUSH CHANNEL block owns the watcher half. The entry
+// contract; src/watch.ts's PUSH CHANNEL block owns the watcher half. The entry
 // is bin/ac-done.sh (a shim that starts this file through bin/ac-bun.sh); THIS
 // header is the authoritative spec, and the bash original it replaced stays
 // frozen at tests/fixtures/ac-done.sh as the oracle the differential leg of
@@ -8,7 +8,8 @@
 //   ac-done.sh <id> <marker>
 //
 // An agent runs this the moment it announces `done:` / `blocked:` /
-// `needs-decision:` / `failed:` (or a roomchief its hand-back), so its chief's
+// `needs-decision:` / `failed:`, a `paused:` before idling on its own
+// background work, or a roomchief its hand-back, so its chief's
 // harness wakes in tens of milliseconds instead of waiting for the watcher's
 // next poll tick (0-15s). The PRINTED marker line stays exactly as it is: the
 // pane is the BACKUP channel, and ac-watch.sh stays the BACKUP WATCHER that
@@ -21,7 +22,7 @@
 //  1. DEDUP STAMP - one completion, ONE wake. The pane carries the same
 //     completion, so the push stamps the watcher's OWN marker dedup FIRST:
 //     state/.seen-<id> = `<marker>\n` (the marker's RAW bytes, a TAB or LF in
-//     it kept - ac-watch.sh marker_seen compares the pane line against it),
+//     it kept - src/watch.ts markerSeen compares the pane line against it),
 //     and state/.seen-hash-<id> is REMOVED, never faked: it is the pane-tail
 //     hash recorded AT A WAKE, which an agent cannot know, and its ABSENCE is
 //     what tells the watcher to adopt the pane silently (PUSH ADOPT there).
@@ -37,9 +38,10 @@
 //     ac_watcher_nudge): the poll `sleep` child of the pid in
 //     `.watch.lock.d/pid` (`.watch-only-<scope>.lock.d/pid` for a legal scope)
 //     is signalled, under the wrong-kill guard - the pid must be alive, its
-//     `ps -o command=` must name ac-watch, and the target must be a `sleep`
-//     child of exactly that pid. Nothing to nudge is the correct QUIET
-//     outcome: the record is the guarantee, the nudge an accelerator.
+//     `ps -o command=` must name ac-watch or /src/watch.ts, and the target
+//     must be a `sleep` child of exactly that pid. Nothing to nudge is the
+//     correct QUIET outcome: the record is the guarantee, the nudge an
+//     accelerator.
 //
 // stdout on success, one line, exit 0:
 //   pushed <id> scope=<AC_FLEET_SCOPE as given | fleet> - <nudge outcome>
@@ -52,7 +54,7 @@
 // the record went to the FLEET spool (`AC_FLEET_SCOPE=a/b` prints `scope=a/b`)
 // - the bash's reading, kept.
 //
-// CHANNEL: a crewmate has no AC_HOME, deliberately (ac-spawn.sh's header
+// CHANNEL: a crewmate has no AC_HOME, deliberately (the src/spawn.ts header
 // block), so two NARROW SCALARS on its launch line carry what this needs:
 //   AC_FLEET_STATE - the fleet's state/ dir (the spool to write and the
 //                    watcher lock to read); a relative path resolves against

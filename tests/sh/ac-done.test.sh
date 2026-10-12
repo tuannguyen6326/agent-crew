@@ -63,7 +63,7 @@ assert_contains "$(spool_records)" "done: nobody is watching" "the record is dur
 
 # --- the nudge: the watcher's poll sleep ends early --------------------------
 # A stand-in whose command line is a watcher's and whose child is the poll
-# `sleep` - exactly what poll_wait runs. Killing that child alone ends the
+# `sleep` - exactly what the watcher's poll wait runs. Killing that child alone ends the
 # wait; the stand-in records that it returned.
 mkdir -p "$TMP/fakewatch"
 flag="$TMP/fakewatch/woke"
@@ -109,6 +109,28 @@ assert_file "$flag" "a family push nudges the family's own scoped watcher"
 wait "$fake_pid" 2>/dev/null || true
 rm -f "$flag"
 rm -rf "$state/.watch-only-f2.lock.d"
+
+# The ported watcher runs as `bun --no-env-file <root>/src/watch.ts <cwd>`, a
+# command line that never names ac-watch: the push must still find and nudge it.
+mkdir -p "$TMP/portwatch/src"
+cat >"$TMP/portwatch/src/watch.ts" <<EOF
+const s = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+await s.exited;
+await Bun.write("$flag", "wait ended\\n");
+EOF
+bun --no-env-file "$TMP/portwatch/src/watch.ts" "$TMP" >/dev/null 2>&1 &
+fake_pid=$!
+mkdir -p "$state/.watch.lock.d"
+printf '%s\n' "$fake_pid" >"$state/.watch.lock.d/pid"
+i=0
+while [ "$i" -lt 50 ] && [ -z "$(pgrep -P "$fake_pid" 2>/dev/null || true)" ]; do sleep 0.1; i=$((i + 1)); done
+out="$(push c4p 'done: nudge the port')"
+assert_contains "$out" "nudged watcher pid=$fake_pid" "a ported watcher (/src/watch.ts) is found and nudged"
+i=0; while [ ! -f "$flag" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+assert_file "$flag" "the nudge ended the ported watcher's poll wait"
+wait "$fake_pid" 2>/dev/null || true
+rm -f "$flag"
+rm -rf "$state/.watch.lock.d"
 
 # --- wrong-kill guard: a REUSED pid is never signalled -----------------------
 # The recorded pid is alive but runs something else entirely (the shape pid

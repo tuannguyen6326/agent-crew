@@ -1,7 +1,7 @@
 # Fleet-home per-project crew-ship and qa config. Install as
 # $AC_HOME/projects/<project-name>.yaml. Never place this config in the
-# product repo. The bin/ac-ship.sh and bin/ac-qa.sh headers are the authoritative
-# key contracts.
+# product repo. The src/ship.ts and src/qa.ts headers (started by bin/ac-ship.sh
+# and bin/ac-qa.sh) are the authoritative key contracts.
 
 commands:
   test: "npm test"

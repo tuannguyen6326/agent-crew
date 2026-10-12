@@ -28,8 +28,8 @@ It is VISIBILITY only - no brief, no harness, no room, no gate, no stage, no
 promote tier - and it is not a loophole around the prime directive: real
 project work still goes to a crewmate.
 That script's header is the authoritative spec.
-The ONE exception with a room behind it is the SOLO CHIEF (captain ruling
-2026-09-16): a family the crewchief judges too small to cost a crewmate is
+The ONE exception with a room behind it is the SOLO CHIEF:
+a family the crewchief judges too small to cost a crewmate is
 promoted with `bin/ac-spawn.sh --roomchief <family> --solo`, receipted
 `TRIAGE: ... promote=solo-chief - why`, and its roomchief works each slice
 ITSELF through `bin/ac-self-task.sh start <family>-<slug> <project>` - a
@@ -51,7 +51,7 @@ does the teardown pass, reading `UNLANDABLE` where `LANDED` would be - a
 rebase to force the land is not an exit (it changes the sha a review
 receipt binds by); and the delegation
 fence stays - a solo chief edits with its own hands or spawns a crewmate,
-never a harness subagent. `bin/ac-spawn.sh`'s header owns the flag.
+never a harness subagent. The `src/spawn.ts` header owns the flag.
 
 A SOLO SESSION (env `AC_SOLO=1`, opened with `ac <fleet> --solo`) is the
 OTHER sanctioned way a human-driven session writes code in a fleet: a second
@@ -144,7 +144,7 @@ write it down", so nothing-new is SAID, never inferred: `--no-lesson
 report's `none` under `## Lessons`, same contract), and the Done row is
 never waived. Once the loop is complete the teardown runs the keyed
 `ac-learn.sh tick <id>` itself - no chief lands a solo slice, so no chief
-would (`bin/ac-teardown.sh`'s header owns the gate).
+would (`src/teardown.ts`'s header owns the gate).
 A solo session ENDS when the captain closes it - no ritual, no lock to
 release, nothing owed at that moment, because everything durable was
 written when it happened. A slice does not end with the session: its pane

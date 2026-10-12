@@ -184,8 +184,8 @@ jq 'del(.panes.qa.harness) | .panes.qa.rules[0].use = [{"harness":"claude"}]' \
 mv "$AC_HOME/config/crew-dispatch.json.tmp" "$AC_HOME/config/crew-dispatch.json"
 assert_fails "$BIN/ac-dispatch-select.sh" --pane qa --list
 
-# --- gate, codereview, roomchief also get the routed `rules` form (captain
-# ruling 2026-07-28, routed-pane-rules-for-gate-codereview-roomchief) - but,
+# --- gate, codereview, roomchief also get the routed `rules` form
+# (routed-pane-rules-for-gate-codereview-roomchief) - but,
 # unlike panes.qa above, `default` is MANDATORY once routed, so a caller that
 # passes no selector resolves it deterministically instead of dying. panes.qa
 # itself stays untouched (asserted above, unaffected by anything below).

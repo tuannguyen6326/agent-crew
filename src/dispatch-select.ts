@@ -114,7 +114,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:os";
 import { existsSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { HARNESSES, ONESHOT_ONLY_HARNESSES, configRead, die, enterCaller, envHome, harnessLaunchable, stateDir } from "./lib.ts";
+import { HARNESSES, ONESHOT_ONLY_HARNESSES, configRead, die, enterCaller, envHome, harnessLaunchable, spawnShellSync, stateDir } from "./lib.ts";
 
 type Json = any;
 
@@ -407,7 +407,7 @@ function main(args: string[]): void {
       const crit = entries(alt(field(load(), "rules"), [])).map((r, i) => `${i + 1}=${jqText(field(r, "when"))}`);
       if (crit.length === 0) refuse(`no rules in ${cfg}`);
       const jev = join(import.meta.dir, "..", "bin", "ac-jev.sh");
-      const ask = Bun.spawnSync([jev, "ask", "--site", "dispatch", "--state-file", brief, "--choice", "rule",
+      const ask = spawnShellSync([jev, "ask", "--site", "dispatch", "--state-file", brief, "--choice", "rule",
         "--instructions", "Which dispatch rule describes the task in the state? Each option is one rule's when clause.",
         "--criteria", ...crit], { stdin: "inherit", stderr: "inherit" });
       if (ask.exitCode !== 0) process.exit(childStatus(ask));
@@ -419,7 +419,7 @@ function main(args: string[]): void {
       } catch {
         refuse(`ac-jev.sh ask printed unreadable JSON: ${out}`);
       }
-      const sha = Bun.spawnSync([jev, "sha", "--state-file", brief], { stdin: "inherit", stderr: "inherit" });
+      const sha = spawnShellSync([jev, "sha", "--state-file", brief], { stdin: "inherit", stderr: "inherit" });
       say(`propose: rule=${jqRaw(rule.choice)} p=${jqRaw(rule.p[rule.choice])} state_sha=${sha.stdout.toString().replace(/\n+$/, "")}`);
       return;
     }

@@ -1,7 +1,8 @@
-// paths.ts - the QA scripts' path checks and free-port pick. bin/ac-qa.sh,
-// bin/ac-qa-lib.sh and bin/ac-verify.sh start it through bin/ac-bun.sh, always
-// inside a subshell because ac_bun_exec execs; THIS header is the
-// authoritative spec.
+// paths.ts - the QA scripts' path checks and free-port pick. src/qa.ts imports
+// within, receiptOk and freePort in process and src/verify.ts imports
+// `within`; the frozen tests/fixtures/ac-qa-lib.sh starts it through
+// bin/ac-bun.sh, always inside a subshell because ac_bun_exec execs; THIS
+// header is the authoritative spec.
 //
 // Usage (the caller's cwd arrives first, from ac_bun_exec):
 //   paths.ts within <root> <candidate>
@@ -125,7 +126,7 @@ export function receiptOk(rd: string, caseId: string, path: string, cwd: () => s
   return pyRealpath(pyDirname(path), cwd) === pyRealpath(pyJoin(rd, "boundaries", caseId), cwd);
 }
 
-function freePort(): number {
+export function freePort(): number {
   const s = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
   const port = s.port;
   s.stop(true);

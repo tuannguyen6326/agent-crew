@@ -1,5 +1,6 @@
-// pane-agent.test.ts - Bun unit tests for src/pane-agent.ts, the JSON readers
-// and writers bin/ac-pane-agent.sh and ac_transcript_final_epoch start. Every
+// pane-agent.test.ts - Bun unit tests for src/pane-agent.ts: its JSON readers
+// and writers (run by the pane agent itself, and started by
+// ac_transcript_final_epoch for iso-epoch) and its one-shot table. Every JSON
 // expected string is what python3's json module (3.14.7) produced for the same
 // input: the user's files were written in that serialization, so it is the
 // contract. Run through tests/sh/src.test.sh.
@@ -9,7 +10,7 @@ import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  decodeStrict, dumps, hasFinalText, isoEpoch, loads, mergeStopHook, pidGone, seedTrust, strip, truthy, wrapTranscript,
+  decodeStrict, dumps, effortFlag, hasFinalText, isoEpoch, loads, mergeStopHook, oneshotLaunch, pidGone, seedTrust, strip, truthy, wrapTranscript,
 } from "../../src/pane-agent.ts";
 
 const MODULE = join(import.meta.dir, "..", "..", "src", "pane-agent.ts");
@@ -286,4 +287,21 @@ test("stop-hook leaves a settings file too deep to parse as it was, never rewrit
   writeFileSync(settings, deep);
   expect(cli(d, ["stop-hook", "settings.local.json", "/m"]).code).toBe(1);
   expect(readFileSync(settings, "utf8")).toBe(deep);
+});
+
+// tests/sh/ac-brain.test.sh holds brain.ts's twin to the registry forms;
+// agy, the --timeout text it carries, and a name no arm knows are held here.
+test("oneshotLaunch composes each one-shot form, effortFlag maps the tiers", () => {
+  expect(oneshotLaunch("codex")).toBe("codex exec -s read-only --skip-git-repo-check -c model_reasoning_summary=auto");
+  expect(oneshotLaunch("codex", "m", "high")).toBe("codex exec -s read-only --skip-git-repo-check -m m -c model_reasoning_effort=high -c model_reasoning_summary=auto");
+  expect(oneshotLaunch("claude", "opus", "max")).toBe("claude -p --model opus --effort max");
+  expect(oneshotLaunch("opencode", "m", "low")).toBe("opencode run -m m --variant low");
+  expect(oneshotLaunch("pi", "m", "low")).toBe("pi -p --model m --thinking low");
+  expect(oneshotLaunch("cursor", "m", "low")).toBe("cursor-agent -p --trust --model m");
+  expect(oneshotLaunch("agy", "Gemini 3.8 Flash (Low)", "", "900")).toBe('agy --mode plan --dangerously-skip-permissions --model "Gemini 3.8 Flash (Low)" --print-timeout 900s -p');
+  expect(oneshotLaunch("agy", "", "high", "010")).toBe("agy --mode plan --dangerously-skip-permissions --print-timeout 010s -p");
+  for (const h of ["bogus", "toString", ""]) expect(oneshotLaunch(h)).toBeNull();
+  for (const e of ["", "low", "medium", "high", "xhigh", "max"]) expect(effortFlag(e)).toBe(e);
+  expect(effortFlag("ultracode")).toBe("xhigh");
+  for (const e of ["bogus", "High", " low"]) expect(effortFlag(e)).toBeNull();
 });

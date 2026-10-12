@@ -24,7 +24,7 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-command -v jq >/dev/null 2>&1 || { printf 'SKIP: jq not installed\n'; exit 0; }
+command -v jq >/dev/null 2>&1 || skip 'jq not installed'
 
 make_home
 
@@ -59,8 +59,8 @@ run_poll() { # run_poll <resp-dir> [extra poll args...] -> sets $out $rc, uses $
   RESP_DIR="$dir" PATH="$TMP/stub:$PATH" AC_HOME="$AC_HOME" \
     "$BIN/ac-review.sh" poll "$artifact" "$@" >"$TMP/poll.out" 2>&1 &
   pid=$!
-  ( sleep 5; kill -9 "$pid" 2>/dev/null ) &
-  watchdog=$!
+  kill_after 5 "$pid"
+  watchdog=$KILL_AFTER_PID
   wait "$pid" 2>/dev/null || rc=$?
   kill "$watchdog" 2>/dev/null || true
   wait "$watchdog" 2>/dev/null || true

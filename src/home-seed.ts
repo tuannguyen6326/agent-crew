@@ -86,7 +86,7 @@
 // bytes (latin1); the home path is printed as Bun names it.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { die, enterCaller, envHome, iso, recordsDir, seedRuntimeLinks, warn } from "./lib.ts";
+import { die, enterCaller, envHome, iso, recordsDir, seedRuntimeLinks, spawnShellSync, warn } from "./lib.ts";
 
 const KNOBS = ["backend", "crew-harness", "crew-dispatch.json", "herdr-session", "wedge-alarm", "captain", "flow", "promote"];
 
@@ -136,7 +136,7 @@ export function registryLine(file: string, p: string): string {
 // A spawned binary speaks for itself on stderr and, failing, ends the run
 // with its status - `set -e` in the bash original.
 function run(cmd: string[]): void {
-  const r = Bun.spawnSync(cmd, { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+  const r = spawnShellSync(cmd, { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
   if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);
 }
 
@@ -196,7 +196,7 @@ function main(args: string[]): void {
     const src = `${parent}/projects/${p}`;
     const dst = `${home}/projects/${p}`;
     run(["git", "clone", "--quiet", src, dst]);
-    const origin = Bun.spawnSync(["git", "-C", src, "remote", "get-url", "origin"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" })
+    const origin = spawnShellSync(["git", "-C", src, "remote", "get-url", "origin"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" })
       .stdout.toString().replace(/\n+$/, "");
     if (origin !== "") run(["git", "-C", dst, "remote", "set-url", "origin", origin]);
     const line = registryLine(join(recordsDir(), "projects.md"), p) || `- ${bytes(p)} - inherited from parent (added ${iso()})`;

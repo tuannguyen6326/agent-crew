@@ -91,7 +91,7 @@
 // record (head/awk/cat) are not reproduced, its exit status is; the archive
 // years are read in byte order under any locale.
 import { chmodSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
-import { dataDir, die, enterCaller, epicBranchEntry, epicBranchesFile, freshestRef, pushControlPlane } from "./lib.ts";
+import { dataDir, die, enterCaller, epicBranchEntry, epicBranchesFile, freshestRef, pushControlPlane, spawnShellSync } from "./lib.ts";
 
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
@@ -100,7 +100,7 @@ const out = (s: string): void => {
   writeSync(1, b(s));
 };
 function git(dir: string, args: string[], io: "inherit" | "ignore"): number {
-  return Bun.spawnSync(["git", "-C", dir, ...args], { stdout: io, stderr: io }).exitCode ?? 1;
+  return spawnShellSync(["git", "-C", dir, ...args], { stdout: io, stderr: io }).exitCode ?? 1;
 }
 
 function chiefOnly(verb: string): void {
@@ -152,7 +152,7 @@ function cmdCreate(epic: string, repo: string): void {
       out(`exists: ${branch} on origin of ${bytes(repo)} (left untouched)\n`);
       return;
     }
-    const r = Bun.spawnSync(["git", "-C", dir, "rev-parse", freshestRef(dir)], { stdout: "pipe", stderr: "inherit" });
+    const r = spawnShellSync(["git", "-C", dir, "rev-parse", freshestRef(dir)], { stdout: "pipe", stderr: "inherit" });
     if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);
     const sha = r.stdout.toString().replace(/\n+$/, "");
     if (pushControlPlane(dir, ["--quiet", "origin", `${sha}:${ref}`]) !== 0) die(b(`create: pushing ${branch} to origin of ${bytes(repo)} failed`));
@@ -208,7 +208,7 @@ function cmdRetire(epic: string): void {
     out(`already retired: ${head}\n`);
     return;
   }
-  const stamp = Bun.spawnSync(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdout: "pipe", stderr: "inherit" }).stdout.toString().replace(/\n+$/, "");
+  const stamp = spawnShellSync(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdout: "pipe", stderr: "inherit" }).stdout.toString().replace(/\n+$/, "");
   // A sibling temp file renamed over the record, so a reader mid-write sees
   // the old record or the new one, never a torn one. Created exclusively, as
   // mktemp did: a path already at the name (a symlink back to the record,

@@ -1,7 +1,7 @@
 // app.test.ts - Bun unit test for the dashboard's PURE parsers.
 // Run: bun test dashboard/app.test.ts   (importing app.ts does NOT start the
 // server - Bun.serve lives inside dashboardMain, called only by app.ts's own
-// import.meta.main guard).
+// import.meta.main guard and src/dashboard.ts's foreground).
 //
 // Only the two non-trivial pure functions are tested: the rest of app.ts
 // is thin IO/shell-out/render that a unit test would only re-assert the obvious
@@ -363,13 +363,13 @@ test("parseArtifactPath names family + full sub-path + kind for ANY file (no all
 test("parseArtifactPath now surfaces the files the old allowlist hid", () => {
   // arbitrary md / json / log / patch / png that used to return null
   expect(parseArtifactPath("greet/spec/notes.md")).toEqual({ family: "greet", stage: "spec/notes.md", kind: "md" });
-  expect(parseArtifactPath("shp/review-r3/ship-review.abc.json")).toEqual({
-    family: "shp",
+  expect(parseArtifactPath("shop/review-r3/ship-review.abc.json")).toEqual({
+    family: "shop",
     stage: "review-r3/ship-review.abc.json",
     kind: "text",
   });
-  expect(parseArtifactPath("shp/evidence/qa-ledger.png")).toEqual({
-    family: "shp",
+  expect(parseArtifactPath("shop/evidence/qa-ledger.png")).toEqual({
+    family: "shop",
     stage: "evidence/qa-ledger.png",
     kind: "image",
   });
@@ -402,21 +402,21 @@ const art = (id: string, mtime: number) => ({ id, mtime, kind: "md" as const });
 
 test("stemRegroup nests a fan-out sub-family under its base, transitively, nav id untouched", () => {
   const list = [
-    { id: "pviam-wire/room.md", mtime: 1 },
-    { id: "pviam-wire-a/report.md", mtime: 2 },
-    { id: "pviam-wire-e34/brief.md", mtime: 3 },
-    { id: "pviam-wire-e34-r2/wip.patch", mtime: 4 },
+    { id: "demo-wire/room.md", mtime: 1 },
+    { id: "demo-wire-a/report.md", mtime: 2 },
+    { id: "demo-wire-e34/brief.md", mtime: 3 },
+    { id: "demo-wire-e34-r2/wip.patch", mtime: 4 },
     { id: "other-fam/report.md", mtime: 5 },
   ];
   const out = stemRegroup(list) as any[];
   expect(out[0].gid).toBeUndefined(); // the base itself stays put
-  expect(out[1].gid).toBe("pviam-wire/-a/report.md");
-  expect(out[1].id).toBe("pviam-wire-a/report.md"); // navigation id untouched
-  expect(out[2].gid).toBe("pviam-wire/-e34/brief.md");
-  expect(out[3].gid).toBe("pviam-wire/-e34/-r2/wip.patch"); // chains follow their parent
+  expect(out[1].gid).toBe("demo-wire/-a/report.md");
+  expect(out[1].id).toBe("demo-wire-a/report.md"); // navigation id untouched
+  expect(out[2].gid).toBe("demo-wire/-e34/brief.md");
+  expect(out[3].gid).toBe("demo-wire/-e34/-r2/wip.patch"); // chains follow their parent
   expect(out[4].gid).toBeUndefined(); // no base present - stays top-level
   const root = groupArtifacts(out);
-  expect(root.dirs.length).toBe(2); // pviam-wire + other-fam, not 5 folders
+  expect(root.dirs.length).toBe(2); // demo-wire + other-fam, not 5 folders
 });
 
 test("parseEpicBranches reads the record grammar incl. retirement", () => {
@@ -432,26 +432,26 @@ test("parseEpicBranches reads the record grammar incl. retirement", () => {
 
 test("groupArtifacts nests family -> each sub-dir -> files, keyed by path prefix", () => {
   const root = groupArtifacts([
-    art("shp/review-r2/qa/testplan.md", 300),
-    art("shp/report.md", 100),
+    art("shop/review-r2/qa/testplan.md", 300),
+    art("shop/report.md", 100),
   ]);
   expect(root.dirs.length).toBe(1);
   const fam = root.dirs[0];
-  expect(fam.name).toBe("shp");
-  expect(fam.key).toBe("shp");
+  expect(fam.name).toBe("shop");
+  expect(fam.key).toBe("shop");
   expect(fam.count).toBe(2);
   // the family's own file stays a leaf of the family node
   expect(fam.files.map((f) => f.name)).toEqual(["report.md"]);
   const rev = fam.dirs[0];
   expect(rev.name).toBe("review-r2");
-  expect(rev.key).toBe("shp/review-r2");
+  expect(rev.key).toBe("shop/review-r2");
   expect(rev.files.length).toBe(0);
   const qa = rev.dirs[0];
   expect(qa.name).toBe("qa");
-  expect(qa.key).toBe("shp/review-r2/qa");
+  expect(qa.key).toBe("shop/review-r2/qa");
   // the leaf label is the file's OWN basename - the dirs are its ancestors
   expect(qa.files.map((f) => f.name)).toEqual(["testplan.md"]);
-  expect(qa.files[0].art.id).toBe("shp/review-r2/qa/testplan.md");
+  expect(qa.files[0].art.id).toBe("shop/review-r2/qa/testplan.md");
 });
 
 test("groupArtifacts orders newest-first at BOTH levels (files, and dirs by newest contained)", () => {
@@ -494,13 +494,13 @@ test("groupArtifacts handles a single-file family", () => {
 
 test("isHtmlArtifact accepts an html artifact whatever the case of its extension", () => {
   expect(isHtmlArtifact("/home/data/dashboard-design/review.html")).toBe(true);
-  expect(isHtmlArtifact("shp/qa/evidence/index.HTML")).toBe(true);
+  expect(isHtmlArtifact("shop/qa/evidence/index.HTML")).toBe(true);
   expect(isHtmlArtifact("greet/Review.Html")).toBe(true);
 });
 
 test("isHtmlArtifact rejects markdown, an extensionless path, and a missing one", () => {
   expect(isHtmlArtifact("/home/data/greet/report.md")).toBe(false);
-  expect(isHtmlArtifact("shp/review-r2/qa/testplan.md")).toBe(false);
+  expect(isHtmlArtifact("shop/review-r2/qa/testplan.md")).toBe(false);
   // ".html" must be the EXTENSION, not just present somewhere in the path
   expect(isHtmlArtifact("/home/data/html/report.md")).toBe(false);
   expect(isHtmlArtifact("greet/review.html.md")).toBe(false);
@@ -514,7 +514,7 @@ test("isHtmlArtifact rejects markdown, an extensionless path, and a missing one"
 // viewer's Review button and the Board detail viewer's Review button share ---
 
 test("reviewableArtifact accepts html and markdown, case-insensitively", () => {
-  expect(reviewableArtifact("shp/qa/evidence/index.HTML")).toBe(true);
+  expect(reviewableArtifact("shop/qa/evidence/index.HTML")).toBe(true);
   expect(reviewableArtifact("greet/report.md")).toBe(true);
   expect(reviewableArtifact("greet/report.MD")).toBe(true);
 });
@@ -1030,8 +1030,8 @@ test("the System One knobs are editable, constrained, and placed in a config sec
   expect(isEditableConfig("jev")).toBe(true);
   expect(CONFIG_KNOB_META["jev"].options).toEqual(["off", "shadow", "on"]);
   expect(isEditableConfig("jev-provider")).toBe(true);
-  // Only the gateway providers are offered: the captain ruled the local Laya
-  // sandbox out of the distro (2026-09-21), so the UI never suggests it.
+  // Only the gateway providers are offered: the local Laya sandbox is out
+  // of the distro, so the UI never suggests it.
   expect(CONFIG_KNOB_META["jev-provider"].options).toEqual(["openrouter", "typesafe", "opencode"]);
   expect(isEditableConfig("jev-laya-port")).toBe(false);
   // An allowlisted knob with no section is invisible in the UI: every editable

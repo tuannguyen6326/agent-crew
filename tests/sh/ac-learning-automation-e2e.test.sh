@@ -4,7 +4,7 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-command -v jq >/dev/null || { printf 'SKIP: jq not available\n'; exit 0; }
+command -v jq >/dev/null || skip 'jq not available'
 # shellcheck source=../../bin/ac-lib.sh
 . "$BIN/ac-lib.sh"
 make_home

@@ -31,7 +31,7 @@ Mark each step `running` -> `completed|skipped|failed` as you go
 transitions: `baseline` and `serve` are recorded by their own commands,
 which publish the proof the pass gate reads, and a direct completion of
 either refuses.
-THE POLICY THIS RUN OBEYS (`bin/ac-qa.sh`'s BOUNDARY
+THE POLICY THIS RUN OBEYS (`src/qa.ts`'s BOUNDARY
 POLICY block is the spec): QA evidence comes only from the client-facing,
 API, integration, E2E, and database boundaries of the BOOTED deliverable;
 QA never executes, re-runs, or counts unit tests for this round; a passing
@@ -49,7 +49,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
    the handoff into `<run>/profile/`. Verify from a clean context: a fresh pool
    worktree detached at the target commit, never the implementer's tree;
    `git status` stays clean the whole way.
-   `start` ENFORCES this (TARGET-CHECKOUT BINDING, `bin/ac-qa.sh` header):
+   `start` ENFORCES this (TARGET-CHECKOUT BINDING, `src/qa.ts` header):
    it refuses unless the worktree's HEAD IS `--target` with a clean tracked
    tree, and `finish passed` re-proves it before minting the pass - so the
    attestation can never key a commit the run did not exercise.
@@ -64,7 +64,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
    refuses by name if you omit either, or name one that does not exist, and
    it never falls back to a repo-level value - so a refusal here is the
    mechanism working, not a workaround to route around. The contract and the
-   full refusal chain live in `bin/ac-qa.sh`'s SCOPED CONFIG header block.
+   full refusal chain live in `src/qa.ts`'s SCOPED CONFIG header block.
    RESOLVED PROFILE (normal execution): a fresh verifier never discovers or
    drafts config itself. `ac-qa.sh agent`'s PROFILE RESOLVE preflight
    compiles, validates, and freezes the profile from the two durable
@@ -152,7 +152,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
      noisier failures. Declaring it because the stack usually has one is
      the evasion this gate exists to kill; if you cannot name the case
      that needs it, it is not needed. The declaration is what `infra up`
-     boots, and `bin/ac-qa.sh`'s header owns the containment rule that
+     boots, and `src/qa.ts`'s header owns the containment rule that
      makes it stick.
    - The plan is the record: any case you execute is in the plan first.
    - Case ids are greppable test titles (`TC-<n>-<slug>`) so api/db cases
@@ -304,7 +304,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
      `finish passed` REFUSES with none on record - it re-reads every
      registered file, so an artifact you deleted stops counting. Register
      as you capture: `step evidence completed` refuses without one too,
-     while the live stack can still produce it. `bin/ac-qa.sh`'s header
+     while the live stack can still produce it. `src/qa.ts`'s header
      owns this contract. The per-web-case screenshot rule of step 6 still
      stands on top of it - one picture per run is the FLOOR, not the goal.
    - SECRET SCRUB - scrub before anything enters evidence (raw serve/infra
@@ -341,7 +341,7 @@ is a ledger row + finding, never a reason to stop verifying the rest.
    the disputed variable and DECLARES it in two header lines,
    `# DISPUTED: <the one variable>` and `# HELD-CONSTANT: <everything the
    two legs share, named>`; pass it as `--repro <path>` - `case` refuses a
-   missing, non-executable, or header-less one. `bin/ac-qa.sh`'s
+   missing, non-executable, or header-less one. `src/qa.ts`'s
    FINDING AUTHORITY header owns the contract; comparing the headers
    against the script body is a reader's job (adversarial checklist).
    Re-post a decided `ask-user` finding through the same findings command with
@@ -417,5 +417,5 @@ is a ledger row + finding, never a reason to stop verifying the rest.
   NOT post to the PR, the room, or the captain, and you do NOT merge -
   staying off those surfaces is part of your independence. The caller that
   invoked you carries your report outward under the RELAY CONTRACT, which
-  `bin/ac-qa.sh`'s header owns and `ac-qa.sh relay-report` renders.
+  `src/qa.ts`'s header owns and `ac-qa.sh relay-report` renders.
 - Read `references/gotchas.md` before the infra/serve phases.

@@ -4,10 +4,10 @@
 // until a chief runs `ac-tree.sh remove --force <path>` - `get` skips a dirty
 // slot by design and never resets it silently, and this module never does
 // either) vs broken (worktree dir survives, gitdir unreadable - `ac-tree.sh
-// list` reports this as its own `broken` state, because is_dirty is blind on
-// such a tree) vs aged-leased (a durable lease - empty owner_pid, ac-tree.sh
-// lease_reclaimable "No owner = durable" - held past 24h with no reclaim path
-// of its own: acquire_slot, prune_pass and remove_slot all skip a leased slot
+// list` reports this as its own `broken` state, because isDirty is blind on
+// such a tree) vs aged-leased (a durable lease - empty owner_pid, src/tree.ts
+// leaseReclaimable "No owner = durable" - held past 24h with no reclaim path
+// of its own: acquireSlot, prunePass and removeSlot all skip a leased slot
 // by design, so nothing else ever names it). Reads pool state ONLY via
 // `ac-tree.sh list --repo <repo>`, never by re-deriving lease/dirty/broken
 // state itself; age comes from the leased_at/owner_pid fields that wire
@@ -19,11 +19,11 @@
 //
 // The aged-leased signal is SUSPICION, not death: an absent state/<id>.meta
 // for the holder proves nothing while the holder may simply not have
-// published it yet (bin/ac-verify.sh leases in verify_lease and publishes meta
-// only later in publish_meta). This module never reclaims, resets or expires
+// published it yet (src/verify.ts leases in verifyLease and publishes the meta
+// only later in publishMeta). This module never reclaims, resets or expires
 // anything - it only names the slot and the exact `remove --include-leased` a
 // chief may choose to run: that command's own broken/dirty/unmerged gates
-// (remove_slot, bin/ac-tree.sh) stay armed without --force, so it REFUSES
+// (removeSlot, src/tree.ts) stay armed without --force, so it REFUSES
 // instead of discarding if the slot still holds real content.
 //
 //   ac-pool-health.sh [--repo <path>]...
@@ -77,7 +77,7 @@
 // back as those bytes, so a path prints as the shell printed it.
 import { mkdirSync, readdirSync, statSync, writeSync } from "node:fs";
 import { basename, join } from "node:path";
-import { die, enterCaller, leaseAgeSecs, NO_HOME, physicalDir, tabFields } from "./lib.ts";
+import { die, enterCaller, leaseAgeSecs, NO_HOME, physicalDir, spawnShellSync, tabFields } from "./lib.ts";
 
 const bin = join(import.meta.dir, "..", "bin");
 const AGED_LEASE_THRESHOLD_SECS = 86400;
@@ -86,7 +86,7 @@ const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 // under bash: a non-zero status, nothing on stdout.
 const spawn = (cmd: string[]): { rc: number; out: string } => {
   try {
-    const r = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "ignore" });
+    const r = spawnShellSync(cmd, { stdout: "pipe", stderr: "ignore" });
     return { rc: r.exitCode ?? 1, out: r.stdout.toString("latin1") };
   } catch {
     return { rc: 127, out: "" };

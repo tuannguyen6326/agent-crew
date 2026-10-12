@@ -7,7 +7,7 @@ description: Judge whether a delivered change warrants documentation, author the
 
 The doc-authoring METHOD for a delivered change, in fixed order: JUDGE -> CREATE -> SYNC.
 Three call sites, one skill: direct-flow task delivery, the PR step of `direct-pr` mode, and the crew-ship pipeline's document step.
-Inside the pipeline this skill AUGMENTS the document step's sync-only behavior with new-doc authoring; the `bin/ac-ship.sh` header stays authoritative for pipeline mechanics (hold-and-fix, findings, gating, `document.instructions`) - this skill owns only HOW docs are judged, written, and synced.
+Inside the pipeline this skill AUGMENTS the document step's sync-only behavior with new-doc authoring; the `src/ship.ts` header (started by `bin/ac-ship.sh`) stays authoritative for pipeline mechanics (hold-and-fix, findings, gating, `document.instructions`) - this skill owns only HOW docs are judged, written, and synced.
 
 ## 1. Judge first - does THIS change need documentation at all?
 

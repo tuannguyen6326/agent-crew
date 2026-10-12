@@ -187,7 +187,9 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    a genuine rebase still opens one.
 4. **test** - `bin/ac-ship.sh cmd test` runs the configured baseline
    (exit 4 = not configured). Non-zero exit = `error` findings; fix (limit
-   `auto_fix.test`, default 3) and re-run.
+   `auto_fix.test`, default 3) and re-run. With `test.base_attribution: on`
+   a failing full run also prints a `base attribution:` line - quote it
+   rather than claiming a failure is pre-existing; it never passes the step.
    test SKIP when the implement used TDD (the lean-pipeline
    ruling) - the captain chose a DECLARATION: pass
    `ac-ship.sh start --tdd` and this step starts `skipped`, the implement's
@@ -284,10 +286,13 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    user-facing impact (release automation keys off them). Body sections:
    `## Intent`, `## What Changed`, `## Risk Assessment` (from `meta
    review`), `## Testing` (from `meta test`), `## Pipeline` (issue -> fix
-   -> verification narrative per round). End with the signature line
+   -> verification narrative per round). When the brief names the GitHub
+   issue this task fixes, add `Closes #<n>` for that issue alone; never put
+   close, fix or resolve before any other `#<n>` - GitHub closes that issue
+   on merge. End with the signature line
    `Validated by agent-crew crew-ship` - unless `bin/ac-ship.sh status`
    prints an `override:` row (a `review-residual` acceptance or a `--tdd`
-   declaration; the `bin/ac-ship.sh` header's OVERRIDE MARKER block owns
+   declaration; the `src/ship.ts` header's OVERRIDE MARKER block owns
    it): then the signature is `Validated by agent-crew crew-ship -
    passed-with-override: <kind> (<reason>; receipt <receipt_sha256>)`,
    one per row, copied verbatim. An approved failure never signs as clean.
@@ -310,7 +315,7 @@ non-skipped step is `completed` and no `fix` finding (or undecided
 `ask-user`) remains, and `passed` additionally requires HEAD merged into
 the run's delivery target (the default branch when no `--target` was
 pinned) - it names whatever is outstanding. `failed`/`cancelled`
-are always allowed. (Contract: the `bin/ac-ship.sh` header FINISH block.)
+are always allowed. (Contract: the `src/ship.ts` header FINISH block.)
 
 ## After ship: qa gate (only when a `<family>-qa` stage was triaged in)
 
@@ -348,7 +353,7 @@ exactly like you call the independent `review-agent`:
    the RELAY CONTRACT in from this run's own state - the envelope, the case
    table, the visual artifacts to EMBED in the PR comment, the room post,
    and the duty to CORRECT any PR-body claim the run supersedes ("not run",
-   "verified statically only", "tests pending"). `bin/ac-qa.sh`'s header
+   "verified statically only", "tests pending"). `src/qa.ts`'s header
    owns that contract; this step is a pointer to it, not a second copy.
 4. **Hand back:** `done: qa passed, PR #<n> ready for merge`. The merge
    gate stays with the captain - qa's verdict informs it, never bypasses it.

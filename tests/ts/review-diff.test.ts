@@ -9,7 +9,7 @@
 // tests/sh/ac-review-diff.test.sh's, whose differential leg runs the frozen
 // bash original beside the shim.
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crewBranch, epicBaseFor, familyOfId } from "../../src/lib.ts";
@@ -182,4 +182,10 @@ test("epicBaseFor homeless is rc 1 and says nothing - the refusal ac_records_dir
   expect(want.err).toContain("ERROR: AC_HOME is not set");
   expect(epicBaseFor("e1-s1", "proj")).toEqual({ rc: 1 });
   expect(twinStderr('epicBaseFor("e1-s1", "proj").rc')).toBe("");
+});
+
+test("the guard is spawned from STARTED_BIN, the bin the caller started in - never the distro checkout import.meta.dir resolves to", () => {
+  const src = readFileSync(join(import.meta.dir, "..", "..", "src", "review-diff.ts"), "latin1");
+  expect(src.includes("import.meta.dir")).toBe(false);
+  expect(src.includes("${STARTED_BIN}/ac-guard.sh")).toBe(true);
 });

@@ -73,8 +73,8 @@
 # reap works regardless of what the recorder does with catchable signals and
 # never fabricates a catch record. A second arm while one is live REFUSES,
 # naming the running pid and this command (a remedy that names no target is what
-# drove operators to improvise pattern kills - ac-watch.sh's NAMED RELEASE
-# TARGET block).
+# drove operators to improvise pattern kills - the NAMED RELEASE TARGET block
+# of src/watch.ts's header).
 # STALE PIDFILE. Catch-then-EXIT means a pidfile OUTLIVES every catch, so a
 # recorded pid is believed only while it is still a recorder: `ps -p <pid> -o
 # command=` must name `.term-recorder.bin`, never `kill -0` alone. Without that

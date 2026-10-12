@@ -20,9 +20,9 @@
 # SPLIT (audit-f3, codebase-audit-2026-07-29 finding 3): the ac_qa_*
 # validation block, the wake/spool/room/chief-quiet block, and the
 # Learning/Curate cadence + maintenance-transaction block moved out to
-# bin/ac-qa-lib.sh, bin/ac-wake-lib.sh and bin/ac-maintenance-lib.sh
-# respectively - each sourced directly by the callers that need it (this file
-# does NOT source them, mirroring bin/ac-pipeline-lib.sh). The two
+# ac-qa-lib.sh (frozen in tests/fixtures/ since its last live caller was
+# ported), bin/ac-wake-lib.sh and bin/ac-maintenance-lib.sh respectively -
+# each sourced by the callers that need it, never by this file. The two
 # herdr-specific pane-agent workspace/tab helpers moved to bin/ac-backend.sh.
 #
 # The agent-crew home is the directory that holds state/, data/, config/ and
@@ -75,13 +75,13 @@ ac_skills_dir() { local h; h="$(ac_home)" || return 1; mkdir -p "$h/skills"; pri
 # fleet store: a MOVE target for retired prefix-cluster siblings, never a skill.
 # One source of truth for the name so the seed loop (ac_seed_crew_skills, class 2)
 # and the curator agree - a mismatch would re-seed archived skills. It rides
-# under skills/, so ac_records_backup already tars it (no extra backup wiring).
+# under skills/, so the records backup (src/lib.ts recordsBackup) already tars
+# it (no extra backup wiring).
 AC_SKILLS_ARCHIVE_BASENAME=skills-archive
-ac_skills_archive_dir() { printf '%s\n' "$(ac_skills_dir)/$AC_SKILLS_ARCHIVE_BASENAME"; }
 ac_records_dir() {
   # Fleet record files (backlog.md, projects.md, captain.md, learnings.md,
-  # crewdeputies.md) live in records/, a SIBLING of data/ (captain-pinned
-  # 2026-07-17) - ledgers separate from task dirs. The interim-layout
+  # crewdeputies.md) live in records/, a SIBLING of data/ -
+  # ledgers separate from task dirs. The interim-layout
   # migration (data/records/<f> or data/<f> moved in on first resolve) that
   # used to run here cost 10 stats + an rmdir on EVERY call across 47 call
   # sites; retired by audit-f7 after every fleet home was verified clean of
@@ -105,16 +105,10 @@ ac_projects_dir() { local h; h="$(ac_home)" || return 1; mkdir -p "$h/projects";
 # $AC_HOME/config/<hook> has no fixed relative path back to the distro and
 # cannot rely on the caller's cwd, so it cannot find bin/ac-lib.sh on its
 # own; this pointer lets it, from any cwd, with only AC_HOME set. Written by
-# ac_seed_root_pointer, called by bin/ac-remote.sh on every invocation (poll
-# cadence, reply, thread-post, ack all run through it) so an existing home
-# self-heals the pointer with no manual bootstrap step.
+# bin/ac-remote.sh on every invocation (poll cadence, reply, thread-post, ack
+# all run through it; src/remote.ts's PREAMBLE) so an existing home self-heals
+# the pointer with no manual bootstrap step.
 ac_root_pointer_path() { printf '%s/.ac-root\n' "$(ac_state_dir)"; }
-ac_seed_root_pointer() {
-  [ -n "${AC_HOME:-}" ] || return 0
-  local ptr root
-  ptr="$(ac_root_pointer_path)"; root="$(ac_root)"
-  [ "$(cat "$ptr" 2>/dev/null || true)" = "$root" ] || printf '%s\n' "$root" >"$ptr"
-}
 
 ac_die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 ac_warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -211,14 +205,31 @@ ac_meta_get() {
 ac_meta_set() {
   # ac_meta_set <file> <key> <value> - atomic rewrite (replace the key,
   # keep the rest); readers still take the last value for a key.
-  local file="$1" key="$2" value="$3" tmp="$1.tmp.$$"
-  if [ -f "$file" ]; then
-    grep -v "^$key=" "$file" >"$tmp" || true
-  else
-    : >"$tmp"
+  # ONE WRITER AT A TIME per meta: the read-modify-rename runs under the lock
+  # <dir>/.<file>.lock (ac_lock_acquire, 10 waits), because two unlocked
+  # rewrites of one meta each carry the file as THEY read it and the later
+  # rename drops the other's key. src/lib.ts metaSet takes the same lock, so
+  # bash and TypeScript writers exclude each other, as far as ac_lock_acquire
+  # excludes at all (its two-reclaimer residual, below). A directory the lock
+  # cannot be made in, or a lock still held after the waits, is refused with
+  # nothing written and status 1.
+  local file="$1" key="$2" value="$3" tmp="$1.tmp.$$" dir=. lock rc=0
+  case "$file" in */*) dir="${file%/*}" ;; esac
+  lock="$dir/.${file##*/}.lock"
+  if ! [ -w "$dir" ] || ! [ -x "$dir" ] || ! ac_lock_acquire "$lock" 10; then
+    ac_warn "cannot lock meta file $file - nothing written"
+    return 1
   fi
-  printf '%s=%s\n' "$key" "$value" >>"$tmp"
-  mv "$tmp" "$file"
+  {
+    if [ -f "$file" ]; then
+      grep -v "^$key=" "$file" >"$tmp" || true
+    else
+      : >"$tmp"
+    fi
+    printf '%s=%s\n' "$key" "$value" >>"$tmp" && mv "$tmp" "$file"
+  } || rc=$?
+  ac_lock_release "$lock"
+  return "$rc"
 }
 
 ac_skill_usage_bump() {
@@ -229,11 +240,13 @@ ac_skill_usage_bump() {
   # only for fleet-learned skills (ac_seed_crew_skills class 2), on each new
   # symlink - never for class-1 built-ins.
   #
-  # BEST-EFFORT and race-tolerant, never failing or blocking the seed: many
-  # crewmates seed the same skill at once, so ac_meta_set's atomic rename is what
-  # matters - it can never CORRUPT the file, only lose an increment when two
-  # seeders read the same count. seeded_count is therefore a lower bound, which
-  # is fine for a cheap v1 signal; a lock would be bigger than the value it buys.
+  # BEST-EFFORT and race-tolerant, never failing the seed: many crewmates seed
+  # the same skill at once. ac_meta_set's lock serializes the rewrites, so
+  # they do not drop each other's keys, but the count is read outside it -
+  # two seeders that read the same count still lose an increment.
+  # seeded_count is therefore a lower bound, which is fine for a cheap v1
+  # signal; a lock around the read too would be bigger than the value it
+  # buys. A contended rewrite waits on the lock, and one it refuses is skipped.
   local dir="${1:-}" meta cur
   [ -n "$dir" ] && [ -d "$dir" ] || return 0
   meta="$dir/.usage.meta"
@@ -401,7 +414,8 @@ ac_compact_pct_env() {
   # Claude's own auto-compact then fires at that percent of the window instead
   # of just under its end (claude 2.1.284: min(window*pct/100, window-13000)).
   # Out-of-range values are dropped with one reason line on stderr, because
-  # claude ignores them silently.
+  # claude ignores them silently. Twinned in src/lib.ts (compactPctEnv,
+  # tests/ts/spawn-twins.test.ts).
   local p
   p="$(ac_config_read compact-pct '')"
   [ -n "$p" ] || return 0
@@ -662,7 +676,7 @@ ac_domain_qa_repo() {
   # domain's own projects/ view, so the repo a QA run works is the same clone
   # the crewchief reads and nothing can drift.
   #
-  # WHY A DOMAIN AND NOT A PROJECT owns this (captain ruling 2026-09-11): one
+  # WHY A DOMAIN AND NOT A PROJECT owns this: one
   # maintained e2e suite proves a whole product line across the four to six
   # repos it spans, so the only level where "which suite proves this" has ONE
   # answer is the domain. A project-level key would have to be repeated in
@@ -707,7 +721,9 @@ ac_domain_view_entry() {
   # The MEMBERSHIP invariant is link RESOLUTION, not the link text - which is
   # what makes an absolute link as valid as a relative one and what survives a
   # rename. ONE predicate with TWO consumers: `ac-domain.sh validate` explains
-  # each class, and ac-spawn.sh's pre-lease guard accepts only `ok` - a guard
+  # each class (through domainViewEntry, the src/lib.ts twin
+  # tests/ts/domain.test.ts holds to this function), and ac-spawn.sh's
+  # pre-lease guard accepts only `ok` - a guard
   # that merely tested existence would pass a plain directory or a link
   # resolving outside the fleet clones, leaving the domain scope fail-open.
   # Pure shell (no realpath(1), no python): resolve the link's TARGET against
@@ -718,8 +734,8 @@ ac_domain_view_entry() {
   [ -L "$link" ] || { printf 'not-symlink\n'; return 1; }
   [ -e "$link" ] || { printf 'dangling\n'; return 1; }
   clones="$(cd -P "$home/projects" 2>/dev/null && pwd -P)" || clones="$home/projects"
-  # ONE-HOP CONTAINMENT (captain ruling 2026-08-03, select at the lab session,
-  # recorded in ac-homes/drydock/data/domain-view-symlinked-clones/room.md):
+  # ONE-HOP CONTAINMENT, the rule for a domain view onto a symlinked
+  # clone:
   # stop resolving the moment the chain LANDS at $AC_HOME/projects/<name> -
   # never follow further, even when that fleet clone is itself a symlink to a
   # captain checkout. That is exactly the trust level ac-spawn.sh, ac-tree.sh
@@ -786,8 +802,7 @@ ac_domain_binding() {
   [ -n "${AC_DOMAIN:-}" ] && { printf '%s\n' "$AC_DOMAIN"; return 0; }
   # AC_SCOPE's grammar mirrors ac_wake_scope_ok (bin/ac-wake-lib.sh), inlined
   # rather than sourced: this file deliberately never sources ac-wake-lib.sh
-  # (the SPLIT note above), and a caller of ac_seed_crewmate_md (ac-self-task.sh)
-  # sources only this file.
+  # (the SPLIT note above).
   case "${AC_SCOPE:-}" in '' | *[!A-Za-z0-9_-]*) return 0 ;; esac
   # `|| true`: an unreadable-but-present meta is a real error ac_meta_get
   # propagates (fail-closed, right for a lock file) - here it must not abort
@@ -864,7 +879,7 @@ ac_hook_trace() {
   # the most unconditionally-executed new code path in the distro - a
   # missing state dir, a permissions error, or a read-only filesystem writes
   # nothing and never surfaces to the caller. Trimmed in place like
-  # bin/ac-watch.sh's watch_log, so the trail stays bounded.
+  # src/watch.ts's watchLog, so the trail stays bounded.
   local sd f keep="${AC_STOPHOOK_LOG_KEEP:-200}"
   sd="$(ac_state_dir 2>/dev/null)" || return 0
   f="$sd/.stop-hooks.log"
@@ -901,8 +916,9 @@ ac_hook_trace() {
 # indistinguishable from a real marker at the regex layer and can still wake -
 # accepted, backstopped by the .seen-<id> dedup, the stale-wake detector, and
 # on the ONE producer a chief controls directly, the write-side guard below
-# (ac_bare_marker_verbs, wired into bin/ac-send.sh); a full fix needs
-# capture-level line-rejoin (out of scope).
+# (ac_bare_marker_verbs, twinned for ac-send in src/lib.ts); a full fix needs
+# capture-level line-rejoin (out of scope). src/lib.ts's CAPTAIN_RE copies this
+# default, held to it by tests/ts/wake-drain.test.ts.
 _ac_captain_re_default='^[^[:alpha:][:digit:]"'\''`=+#/*-]*(done|needs-decision|blocked|failed|paused|merged|checks-passed):([[:space:]]|$)'
 AC_CAPTAIN_RE="${AC_CAPTAIN_RE:-$_ac_captain_re_default}"
 # The CAPTAIN-WAIT subset of the captain markers: lines that park a pane on a
@@ -923,8 +939,8 @@ ac_bare_marker_verbs() {
   # ac_bare_marker_verbs <text> - the WRITE-SIDE twin of AC_CAPTAIN_RE: print
   # every BARE marker verb the text carries, one per line, deduped in
   # first-seen order; return 1 when there is none. Any writer that puts text
-  # into a pane can call it (bin/ac-send.sh does) to warn its author before
-  # the watcher greps those same words back out of the pane tail.
+  # into a pane can call it (src/send.ts runs its twin) to warn its author
+  # before the watcher greps those same words back out of the pane tail.
   # Deliberately BROADER than AC_CAPTAIN_RE, which anchors at a LINE START:
   # text typed into a pane re-wraps, so a mid-sentence marker phrase lands at
   # visual column 0 and matches there - the Residual above, and the lived case.
@@ -950,10 +966,10 @@ ac_bare_marker_verbs() {
 # Family-level files (room.md, gate artifacts) live at data/<family>/ root.
 # A roomchief's own data dir nests the same way, at data/<family>/chief, but
 # `chief` is NOT a staged-flow production stage: it carries no brief (the room
-# IS the roomchief's brief) and ac-brief.sh's stage whitelist refuses it.
+# IS the roomchief's brief) and src/brief.ts's stage whitelist refuses it.
 # FAN-OUT NESTING (tasks/): a section-8 fan-out sub-task - free slug, no stage
 # or -rN suffix - that a SCOPED chief scaffolds lives at
-# data/<family>/tasks/<slug>/ (create rule: ac-brief.sh, keyed on AC_SCOPE so
+# data/<family>/tasks/<slug>/ (create rule: src/brief.ts, keyed on AC_SCOPE so
 # an unrelated top-level id that merely EXTENDS another family's name never
 # nests). The read side recovers the family by what EXISTS - longest prefix
 # whose tasks/<slug>/brief.md is on disk - so no environment is needed to
@@ -968,12 +984,12 @@ ac_stage_dir_for_id() {
   # -chief is an ordinary arm too (a roomchief's own data dir nests under its
   # family instead of a phantom data/<family>-chief/ sibling):
   #   sample-task-chief -> sample-task/chief
-  # Pure suffix grammar, with NO disk check - it doubles as the "where do I
-  # CREATE this brief" resolver (ac-brief.sh), which cannot require a dir it
-  # is about to create. Family MEMBERSHIP (does this suffix actually name an
-  # existing family) is ac_family_of_id's own, stricter concern. ac-brief.sh's
-  # own stage whitelist still refuses `--stage chief`, so this never becomes a
-  # briefable production stage.
+  # Pure suffix grammar, with NO disk check - its twin stageDirForId is the
+  # "where do I CREATE this brief" resolver of src/brief.ts, which cannot
+  # require a dir it is about to create. Family MEMBERSHIP (does this suffix
+  # actually name an existing family) is ac_family_of_id's own, stricter
+  # concern. src/brief.ts's own stage whitelist still refuses `--stage chief`,
+  # so this never becomes a briefable production stage.
   local id="$1" base rev="" fam stage
   base="$id"
   case "$base" in
@@ -990,7 +1006,7 @@ ac_stage_dir_for_id() {
     *-chief)  fam="${base%-chief}";  stage=chief ;;
     *)
       # A bare revision id (<family>-rN, no stage suffix) is a same-stage
-      # implement revision per the bin/ac-brief.sh layout - it nests as <family>/implement-rN.
+      # implement revision per the src/brief.ts layout - it nests as <family>/implement-rN.
       # Direct -rN ids stay usable: ac_task_dir falls back to the flat dir
       # when no such nested brief exists.
       [ -n "$rev" ] && printf '%s/implement%s\n' "$base" "$rev"
@@ -1233,7 +1249,7 @@ ac_status_timeline_mirror() {
 }
 
 # --- claude transcript arrival check (kickoff-prompt delivery: ac-spawn.sh;
-# delivery verification: ac-send.sh) --------------------------------------
+# delivery verification: ac-send, through its twin in src/lib.ts) ----------
 #
 # backend_send_line/backend_submit_verified prove a SUBMIT - the pane's
 # composer reacted to Enter - never that the text which ARRIVED equals the
@@ -1258,7 +1274,8 @@ ac_claude_transcript_root() {
   # injectable seam this probe needs: hard-wired to $HOME/.claude/projects it
   # could never be driven from the fake-backend test suite. Under a
   # CLAUDE_CONFIG_DIR (which ac_claude_config_env hands every pane) claude
-  # keeps its transcripts there instead of ~/.claude.
+  # keeps its transcripts there instead of ~/.claude. Twin: src/lib.ts
+  # claudeTranscriptRoot (tests/ts/pane-agent-twins.test.ts).
   printf '%s\n' "${AC_CLAUDE_TRANSCRIPT_ROOT:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects}"
 }
 
@@ -1362,12 +1379,12 @@ ac_arrival_wait() {
 # actually writes one.
 #
 # EXCLUDED FROM ACCOUNTING, NEVER FROM SUPERVISION. Its six consumers:
-#   - ac-watch.sh check_fleet     - does NOT branch: the watcher polls a verifier
+#   - src/watch.ts checkFleet     - does NOT branch: the watcher polls a verifier
 #                                   exactly like a crewmate (gone:/ask:/ended:)
 #   - ac_chief_child_live (ac-wake-lib.sh) - not a live family child
 #   - ac-room.sh close            - never blocks a family room from closing
-#   - ac-teardown.sh landed_proof - never blocks a roomchief demote
-#   - ac-wake-drain.sh            - out of report_completions and the
+#   - src/teardown.ts landedProof - never blocks a roomchief demote
+#   - ac-wake-drain.sh            - out of the completion report and the
 #                                   WATCHER-DOWN inflight tally
 #   - ac-fleets.sh                - reported in its own `verify[]` array, never
 #                                   in crew.tasks[] or crew.count
@@ -1396,12 +1413,12 @@ ac_meta_is_verify() {
 # a pane that can never emit a captain marker, and polling it would wake the
 # chief about its own typing - a self-loop, and a turn end the chief could never
 # reach while editing. So the four SUPERVISION-DEMAND surfaces skip it:
-#   - ac-watch.sh check_fleet     - not polled (no markers, no stale/ended wakes)
+#   - src/watch.ts checkFleet     - not polled (no markers, no stale/ended wakes)
 #   - ac-guard.sh                 - out of the WATCHER-DOWN inflight tally
 #   - ac-wake-drain.sh            - out of that same tally
 #   - ac-watch-autoarm.sh / ac-turnend-guard.sh - owes no Stop-hook coverage
 # ACCOUNTING is deliberately untouched: ac-dash.sh, ac-fleets.sh,
-# ac-fleet-view.sh and ac-statusline.sh all render it as the crewmate row it is,
+# and ac-fleet-view.sh all render it as the crewmate row it is,
 # which is the entire point of the mechanism. Landing is untouched too - teardown
 # reads it as an ordinary committing task and ac-merge-local.sh needs no kind.
 # Every other kind fails CLOSED to "not a self task", so nothing on disk today
@@ -1426,13 +1443,16 @@ ac_crew_metas() {
   # loop over <state_dir>/*.meta that filters by crew-ness; each one calls
   # this and NAMES its policy as skip-classes. The policies stay deliberately
   # different per consumer - the watcher skips only self (verifier panes are
-  # supervised; ac-watch.sh check_fleet's contract), supervision tallies skip
+  # supervised; src/watch.ts checkFleet's contract), supervision tallies skip
   # verify+self (a self task owes no watcher - the SELF-TASK block above),
   # accounting skips only verify (a self task is still listed) - but the
   # class DEFINITIONS live here once, in ONE awk pass for N metas instead of
   # one ac_meta_get fork per meta. kind reads last-write-wins, ac_meta_get's
   # rule; a meta that is empty or vanishes mid-read has no kind and is
   # COUNTED, fail-safe, exactly as the open-coded loops counted it.
+  # The TypeScript twin, src/lib.ts's crewMetas, runs this awk program
+  # verbatim and is pinned to this function by a differential test
+  # (tests/ts/fleet-view.test.ts), so a change here that it misses reddens it.
   local sd="$1" c sv=0 ss=0 sc=0
   shift
   for c in "$@"; do
@@ -1464,12 +1484,14 @@ ac_crew_metas() {
 ac_task_stamps() {
   # ac_task_stamps <state_dir> <id> - print every per-id watcher stamp path,
   # one per line: the AUTHORITATIVE reap list (audit-f4). The writers stay in
-  # bin/ac-watch.sh and bin/ac-done.sh; the reapers (ac-teardown.sh's
-  # reap_watcher_stamps) iterate THIS list instead of a hand copy - the hand
-  # list had already leaked once (11 orphan .change-* stamps observed live,
-  # ac-teardown.sh's own comment), then leaked again by omission when
+  # bin/ac-watch.sh and bin/ac-done.sh; the reaper (src/teardown.ts) iterates
+  # this list's twin, taskStamps in src/lib.ts, which tests/ts/teardown.test.ts
+  # holds to THIS one, instead of a hand copy - the hand list had already
+  # leaked once (11 orphan .change-* stamps observed live, ac-teardown.sh's
+  # own comment), then leaked again by omission when
   # .seen-hash-/.report-hash-/.superseded- were added with no reaper at all.
-  # A new stamp kind is added HERE, beside the ones it rides with.
+  # A new stamp kind is added HERE and to the twin, beside the ones it rides
+  # with.
   local sd="$1" tid="$2" b
   for b in hash change seen seen-hash stale gone ask unobservable \
     report-hash superseded busy busy-stalled; do
@@ -1511,7 +1533,7 @@ ac_captain() {
 #     the chief judges. (The incident: two families landed OPPOSITE
 #     conclusions on one file within hours because the second lander never
 #     saw the first family's room evidence.)
-#   - the INTAKE CHECK - `ac-ready.sh overlap` (that header owns the verb):
+#   - the INTAKE CHECK - `ac-ready.sh overlap` (src/ready.ts's header owns the verb):
 #     read-only ledger + in-flight lookups on an order's expected files.
 # The family of a landing id is the id with its stage/revision suffix
 # stripped (ac_family_of_id), so <task>-ship landing after <task>'s own
@@ -1535,7 +1557,7 @@ ac_family_of_id() {
   # data/<family>/<stage>-rN: a genuine revision's base stage was already
   # briefed (its first round exists before any revision is ever asked for),
   # while the -rN dir itself may not exist yet at THIS call - the same
-  # chicken-and-egg ac-brief.sh's own crew_branch reorder works around. When
+  # chicken-and-egg src/brief.ts's own crew-branch ordering works around. When
   # the base dir is absent, a stage-suffixed revision of a flat id must land
   # on the SAME family as the un-revised flat id, never on a family the
   # un-revised id itself does not have (dash-review-r2 with no data/dash/
@@ -1582,8 +1604,9 @@ ac_family_owned() {
   # ac_family_owned <id> <state_dir> - 0 when a task is in flight that already
   # owns crew/<family> for <id>'s family, 1 when none is. Shared by every entry
   # point that commits on crew/<id> and lands via ac-merge-local.sh
-  # (ac-spawn.sh, ac-self-task.sh) as the second half of THE BRANCH COLLISION
-  # REFUSAL (ac-spawn.sh header owns the contract): membership is
+  # (src/spawn.ts, and src/self-task.ts through its twin src/lib.ts familyOwned)
+  # as the second half of THE BRANCH COLLISION REFUSAL (src/spawn.ts header
+  # owns the contract): membership is
   # ac_family_of_id, the SAME derivation ac_crew_branch builds the branch name
   # from, so owner and branch can never disagree. A VERIFICATION agent is not
   # a family child and holds no crew branch, and neither does a roomchief or
@@ -1735,7 +1758,9 @@ or dismiss if it learned nothing about the codebase. Record: $rec"
 # and reclaimed when its worktree directory is gone. What this does NOT do:
 # rewrite compose files or check the host for a foreign listener - the range
 # is a contract between crewmates, and a repo that needs more takes it from
-# its own .crew/ports.env conventions.
+# its own .crew/ports.env conventions. The allocation, the release and the
+# seed have twins in src/lib.ts, held to them by tests/ts/spawn-twins.test.ts
+# (the release by tests/ts/teardown.test.ts).
 AC_PORT_STRIDE=100
 
 ac_port_registry() { printf '%s/port-slots.tsv\n' "$(ac_state_dir)"; }
@@ -1856,7 +1881,7 @@ ac_solo_landing_check() {
   # flipped the whole family into HANDBACK and wedged the crewchief's turn end
   # with a remedy that said "demote the roomchief" while the roomchief was
   # alive and mid-family. And the receipt is a RECORD, not a key: the branch
-  # fence (ac-teardown.sh landed_proof) runs before this gate and keeps
+  # fence (src/teardown.ts landedProof) runs before this gate and keeps
   # refusing until the crewchief has landed the branch --no-ff; only then does
   # UNLANDABLE stand where LANDED would.
   # Both receipts are matched by SHAPE - `> <VERB>: <id> ` - never by the id
@@ -1916,6 +1941,12 @@ ac_solo_landing_check() {
   [ -z "$hint" ] || printf 'missing - the solo contract owes these at landing:%s\n' "$hint"
   [ -z "$hint" ]
 }
+
+# The seed below - ac_seed_crewmate_md with the install, exclude and
+# disposable helpers under it, ac_seed_crew_settings, ac_seed_crew_skills with
+# ac_skill_usage_bump, and ac_domain_binding - has TypeScript twins in
+# src/lib.ts that tests/ts/spawn-twins.test.ts holds to these functions, so a
+# change here that a twin misses reddens it.
 
 # Where the fleet layer lands when the harness's own instruction file is
 # already taken (ac_seed_crewmate_md). NOT a file any harness loads - no such
@@ -2331,7 +2362,7 @@ ac_fleet_name() {
   # Why not basename "$(ac_home)" for the homeless rungs: ac_home() REFUSES
   # with no AC_HOME, and before it did it answered ac_root, the checkout that
   # owns bin/ - which is where the damage below came from. A crewmate pane
-  # carries no AC_HOME by design (ac-qa.sh header), so every pane agent it
+  # carries no AC_HOME by design (src/qa.ts header), so every pane agent it
   # launches resolved the
   # label against its POOL WORKTREE ("1") or, when it ran the
   # distro's bin/ by absolute path, against the distro repo ("agent-crew")
@@ -2392,9 +2423,10 @@ ac_worktree_status() {
   # a non-ASCII name, and a quoted name is no path on disk. An operation git
   # left in progress adds `O  <state>`: a stopped rebase or bisect can leave a
   # clean tree, and no reset clears its state, so the next lessee's git trips
-  # on it.
+  # on it. The status never rewrites the index: a leased tree is read while
+  # its crewmate's own git may need index.lock.
   local rc=0 rec tag path mode blob f filemode sparse gd op
-  git -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
+  git --no-optional-locks -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
   filemode="$(git -C "$1" config --get core.fileMode 2>/dev/null || printf 'true')"
   sparse="$(git -C "$1" config --get core.sparseCheckout 2>/dev/null || printf 'false')"
   while IFS= read -r -d '' rec; do
@@ -2512,15 +2544,31 @@ ac_git_push_control_plane() {
 # A record whose first line is `# retired <iso>` is deliberately ended:
 # readers treat it as no-fence, and verify explains the retirement.
 
+ac_fence_dir() {
+  # ac_fence_dir <records|data> - where the epic fence reads <sub>: the home's
+  # (minted) under AC_HOME, else the home a crewmate pane's AC_FLEET_STATE
+  # sits in. A pane carries no AC_HOME by design (ac_backend reads its config
+  # the same way), and its own second lease must ride the fence. The `..` is
+  # left to the kernel, so a symlinked state dir names its target's home.
+  if [ -z "${AC_HOME:-}" ] && [ -n "${AC_FLEET_STATE:-}" ]; then
+    printf '%s/../%s\n' "${AC_FLEET_STATE%/}" "$1"
+    return 0
+  fi
+  case "$1" in
+    records) ac_records_dir ;;
+    *) ac_data_dir ;;
+  esac
+}
+
 ac_epic_branches_file() {
   # ac_epic_branches_file <epic> - resolved record path, live else archived;
   # rc 1 when the record never existed. Charset-guarded like ac_room_file:
   # an unsafe name must never reach the archive glob.
   local epic="$1" live y
-  live="$(ac_data_dir)/$epic/branches"
+  live="$(ac_fence_dir data)/$epic/branches"
   [ -f "$live" ] && { printf '%s\n' "$live"; return 0; }
   case "$epic" in '' | *[!a-zA-Z0-9_-]*) return 1 ;; esac
-  for y in "$(ac_data_dir)"/archive/*/"$epic"/branches; do
+  for y in "$(ac_fence_dir data)"/archive/*/"$epic"/branches; do
     [ -f "$y" ] && { printf '%s\n' "$y"; return 0; }
   done
   return 1
@@ -2539,7 +2587,7 @@ ac_epic_base_for() {
   # a retired record - retirement is the DELIBERATE end of the fence); rc 2 =
   # the ledger exists but could not be read, which proves nothing either way.
   local id="$1" repo="$2" ledger row rc=0 row_id row_epic row_feature cand entry
-  ledger="$(ac_records_dir)/backlog.md"
+  ledger="$(ac_fence_dir records)/backlog.md"
   [ -f "$ledger" ] || return 1
   row="$(LC_ALL=C awk -v want="$id" "$AC_DONELINE_AWK"'
     /^- \[/ { ac_doneline($0, f); if (!(f["id"] in row)) row[f["id"]] = f["epic"] "\t" f["feature"] }
@@ -2649,7 +2697,8 @@ ac_knowledge_file() {
   # (ac_project_config_file states it). ALWAYS prints, unlike its twin: callers
   # test -f. An exists-only shape forces every WRITER to re-derive the path
   # inline, and a second deriver is exactly what this key argument rules out.
-  # Grammar of the file itself: bin/ac-know.sh, its only sanctioned writer.
+  # Grammar of the file itself: the src/know.ts header (bin/ac-know.sh is its
+  # only sanctioned writer).
   local repo="$1" name
   name="$(ac_project_config_name "$repo")" || return 1
   printf '%s/repo-knowledge/%s.md\n' "$(ac_records_dir)" "$name"
@@ -2717,9 +2766,10 @@ ac_home_resolve() {
   # ac_home_resolve <--home value|''> <repo> - THE fleet-home ladder for the
   # tools a HOMELESS pane runs (ac-know.sh, ac-qa.sh). ONE copy on purpose:
   # the same ladder written twice is how one site gets fixed and the other
-  # stays broken. The one twin, src/lib.ts's envHome (rungs 2-3, for the
-  # TypeScript ports), is pinned to this function by a differential test
-  # (tests/ts/lib.test.ts), so a fix here that it misses reddens that test.
+  # stays broken. Its twins in src/lib.ts - homeResolve (the whole ladder,
+  # src/know.ts's) and envHome (rungs 2-3, for the other TypeScript ports) -
+  # are pinned to this function by differential tests (tests/ts/know.test.ts,
+  # tests/ts/lib.test.ts), so a fix here that one misses reddens its test.
   #   1. --home <abs>, guarded below;
   #   2. $AC_HOME tested DIRECTLY - never through ac_home(), which REFUSES
   #      when the variable is unset (and, before it refused, handed back a
@@ -2727,7 +2777,7 @@ ac_home_resolve() {
   #      tests the variable itself;
   #   3. neither - prints NOTHING and returns 0. What "no home" means is the
   #      caller's to decide: ac-know.sh REFUSES outright, every verb alike
-  #      (settle_home, ac-know.sh - cmd_verify was the last holdout
+  #      (settleHome, src/know.ts - verify was the last holdout
   #      and lost its own rung 3 too); ac-qa.sh's two verbs answer a homeless
   #      run DIFFERENTLY ON PURPOSE - `start` KEEPS RUNNING, freezing an empty
   #      config (or refusing when a selector was given), while `agent`
@@ -2854,6 +2904,8 @@ ac_orphan_snapshot_scan() {
 # whose fan-out ledger appeared later than the verdict on disk, and ac-verify,
 # refusing a verdict older than the last scout lane. Both must agree on the
 # clock, so both read the message's ISO stamp here rather than a file mtime.
+# src/lib.ts's transcriptFinalEpoch is held to this function
+# (tests/ts/verify-twins.test.ts).
 ac_transcript_final_epoch() {
   local ts
   ts="$(jq -rs '[.[] | select(.type == "assistant")] | last | .timestamp // ""' "$1" 2>/dev/null || true)"

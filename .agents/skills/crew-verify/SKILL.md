@@ -7,7 +7,8 @@ description: Run ONE independent, exact-ref code review round over your committe
 
 One round of independent code review, run by YOU (the worker) against YOUR
 committed tree, judged by a reviewer that is not you.
-`bin/ac-verify.sh codereview` is the runner and its header is the authoritative
+`bin/ac-verify.sh codereview` is the runner and the header of `src/verify.ts`, which
+it starts, is the authoritative
 contract for the round (lease, context neutralization, history, rejection log);
 this skill owns only WHEN you call it, HOW you read what comes back, and WHAT
 you do next.

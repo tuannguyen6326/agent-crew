@@ -58,8 +58,8 @@ AC_FLEET_REVIEW     spawn->crewmate review-obligation threading
 AC_PA_LABEL         pane-agent internal label threading
 AC_LOCK_PID         lock-owner record wire (ac-lock.sh)
 AC_ARRIVAL_LAST     intra-run wire: ac-lib.sh's arrival probe hands the text it
-                    actually read back to ac-send.sh, which quotes it in a
-                    REFUTED arrival line
+                    actually read back to its caller (src/lib.ts's twin returns
+                    it to src/send.ts, which quotes it in a REFUTED arrival line)
 AC_CHIEF_SOLO       spawn->roomchief launch-line threading: marks the session a
                     SOLO CHIEF beside AC_SCOPE (read by ac-session-start.sh)
 AC_VERIFY_NEUTRALIZED_MARK  shared constant, not an override: ac-verify.sh prints
@@ -95,8 +95,8 @@ AC_VERIFY_QA_RELAY_BIN  sibling-path override: qa relay fake driver
 AC_GATE             sibling-path override: ac-gate.sh fake driver
 AC_CURATE           sibling-path override: ac-curate.sh fake driver
 AC_COMPACT_ADVISE   sibling-path override: ac-compact-advise.sh fake driver
-AC_COMPACT_SEND_WAIT  test-only shortener (ac-compact-advise.sh header AUTO)
-AC_TEARDOWN_QA_TIMEOUT  test-only shortener (ac-teardown.sh header says so)
+AC_COMPACT_SEND_WAIT  test-only shortener (src/compact-advise.ts header AUTO)
+AC_TEARDOWN_QA_TIMEOUT  test-only shortener (src/teardown.ts header says so)
 "
 
 known_extra() {
@@ -167,10 +167,10 @@ EOF
 [ -z "$phantom" ] || fail "documented env rows with no reader in bin/ or src/:$phantom - a captain can set these to no effect; delete the row or restore the reader"
 
 # --- the two exec hooks stay double-keyed ------------------------------------
-grep -q 'AC_TEST_HOOKS.*AC_CURATE_SNAPSHOT_HOOK\|AC_CURATE_SNAPSHOT_HOOK' "$BIN/ac-curate.sh" || fail "curate snapshot hook site vanished - update this test"
-grep -q 'AC_TEST_HOOKS' < <(grep -B2 '"${AC_CURATE_SNAPSHOT_HOOK}" "$records"' "$BIN/ac-curate.sh") \
+grep -q 'AC_CURATE_SNAPSHOT_HOOK' "$ROOT/src/curate.ts" || fail "curate snapshot hook site vanished - update this test"
+grep -q 'AC_TEST_HOOKS' < <(grep -B2 -F 'spawn([b8(hook), records_]);' "$ROOT/src/curate.ts") \
   || fail "the curate snapshot hook must stay double-keyed on AC_TEST_HOOKS (audit-f8): an inherited env var alone must never make production exec an arbitrary file"
-grep -q 'AC_TEST_HOOKS' < <(grep -B2 '"${AC_QA_PROFILE_RECHECK_HOOK}" "$cfg" "$know"' "$BIN/ac-qa.sh") \
+grep -q 'AC_TEST_HOOKS' < <(grep -B2 -F 'run([hook, cfg, know], { stdout: "inherit" });' "$ROOT/src/qa.ts") \
   || fail "the qa profile-recheck hook must stay double-keyed on AC_TEST_HOOKS (audit-f8)"
 
 pass

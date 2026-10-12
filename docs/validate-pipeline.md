@@ -6,7 +6,7 @@ The crewmate IS the runner: it performs the judgment steps and records their out
 This page is a map, not the law.
 The authorities are:
 
-- the `bin/ac-ship.sh` header - the state machine, every command, and the named contract blocks (TDD ATTESTATION, SHIP TEST RECEIPT, PUSH INCORPORATION, FINISH, OVERRIDE MARKER, REVIEW-ROUND CONVERGENCE);
+- the header of `src/ship.ts`, which `bin/ac-ship.sh` starts - the state machine, every command, and the named contract blocks (TDD ATTESTATION, SHIP TEST RECEIPT, PUSH INCORPORATION, FINISH, OVERRIDE MARKER, REVIEW-ROUND CONVERGENCE);
 - `.agents/skills/crew-ship/SKILL.md` - the runner's step-by-step procedure;
 - the `delivery-review` skill - when a task takes crew-ship at all, and the review obligation it fulfils.
 
@@ -90,6 +90,11 @@ A fix commit moves HEAD, so the attestation goes stale by construction.
 Precedence: a fresh attestation first, then the scoped run when the key is set and the changed set is non-empty, then the full suite.
 A scoped green completes the step, but its receipt says `not-qualifies:scoped`: a partial run is never suite proof.
 
+### Base attribution
+
+`test.base_attribution: on` re-runs a failing full `commands.test` on the base in a throwaway checkout and prints one `base attribution:` line saying whether the base passes or also fails.
+The step still fails; a base that also fails is evidence to read, since a base checkout carries no untracked setup.
+
 ### The test receipt
 
 The test step is the only place the unit suite runs in the whole crew.
@@ -117,7 +122,7 @@ Every judgment step reports a JSON array through `ac-ship.sh findings <step>` (s
   - `no-op` is informational; advisory improvements ride here with an optional `suggested_fix`.
 - `authority_class`: `internal` | `external` | `none`; `authority`: one sentence naming who states the expected behavior and where (a `file:line`, a URL, or `captain <date>`).
 
-The shared normalizer `ac_findings_normalize` (`bin/ac-pipeline-lib.sh`) fails closed:
+The shared normalizer `findingsNormalize` (`src/lib.ts`) fails closed:
 
 - a missing, empty or unknown action, including the retired `auto-fix` alias, becomes `ask-user`;
 - a `fix` with `severity: info` is floored to `no-op` (`severity_floored: true`) first;
@@ -141,7 +146,7 @@ Completed earlier steps stay completed, and the held step re-runs on the fix dif
 The review step is never a self-review.
 `ac-ship.sh review-agent` is a thin adapter over `bin/ac-verify.sh codereview`, which leases an isolated worktree at the exact ref, runs one fresh reviewer pane, validates the verdict object `{findings[], summary, risk_level, risk_rationale, reviewed_ref}`, captures the evidence, then reaps the pane and returns the lease.
 There is no resumable reviewer session, no headless fallback, and no second reviewer outside the engine.
-The `ac-verify.sh` header owns the reviewer prompt and the round itself.
+The header of `src/verify.ts`, which `bin/ac-verify.sh` starts, owns the reviewer prompt and the round itself.
 
 - **Receipt binding.** `<run>/review.agent` binds the verdict to `reviewed_ref`.
   `step review completed` refuses when HEAD differs, and `push` and `finish checks-passed|passed` re-check the same binding, so a commit after review cannot be pushed or recorded as validated.
@@ -196,7 +201,8 @@ Each writes a row to `<run>/override` (`review-residual` or `tdd-declared`), cle
 ├── pushed.tsv                # <branch>\t<sha> per landed push
 ├── current -> <run-id>
 └── <run-id>/
-    ├── run.meta              # intent, branch, target, outcome, attestation
+    ├── intent                # the --intent goal verbatim, every line
+    ├── run.meta              # intent (first line), branch, target, outcome, attestation
     ├── steps.tsv             # step<TAB>status<TAB>fix-rounds
     ├── findings/<step>.json  # normalized findings
     ├── findings/<step>.meta.json  # PR-body envelope
@@ -220,7 +226,7 @@ Without herdr, run `ac-ship-watch.sh` in any terminal.
 ## Config
 
 Config is HOME-ONLY: `$AC_HOME/projects/<name>.yaml`, captain-owned and branch-immune; the project repo is never a config source (resolver: `ac_project_config_file` in `bin/ac-lib.sh`).
-Ship keys: `commands.{test,lint,format}`, `commands.test-changed`, `auto_fix.<step>`, `ignore_patterns`, `document.instructions`, `test.evidence.{store_in_repo,dir}`, `test.attestation`, `review.max_rounds`.
+Ship keys: `commands.{test,lint,format}`, `commands.test-changed`, `auto_fix.<step>`, `ignore_patterns`, `document.instructions`, `test.evidence.{store_in_repo,dir}`, `test.attestation`, `test.base_attribution`, `review.max_rounds`.
 `cmd <test|lint|format>` returns the command's own exit code, or 4 when nothing is configured.
 See [configuration.md](configuration.md) for the schema and an example.
 

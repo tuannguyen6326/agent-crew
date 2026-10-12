@@ -4,7 +4,10 @@
 // double-ERROR included), metaSet against ac_meta_set on the BYTES of the
 // rewritten meta (repeated keys, `=` in values, CRLF, a missing key, an absent
 // file, an unterminated tail, a bare key line, a two-line value, a NUL - the
-// one divergence the port keeps on purpose, both sides' bytes asserted),
+// one divergence the port keeps on purpose, both sides' bytes asserted) and
+// on the meta lock both take (a live holder waited out then refused, a dead
+// one reclaimed, an unwritable dir refused at once, a bash and a TypeScript
+// writer losing neither's key), metaUpdate's pairs computed under that lock,
 // statusAppend against ac_status_append on the status line and its timeline
 // mirror under one PATH `date` stub, metaIsVerify against ac_meta_is_verify,
 // and stageDirForId / taskDir against ac_stage_dir_for_id / ac_task_dir over
@@ -260,6 +263,108 @@ test("metaSet matches the key literally where ac_meta_set read it as a BRE", () 
   expect(readFileSync(join(od, "t1.meta"), "latin1")).toBe("a.b=3\n");
   metaSet(join(nd, "t1.meta"), "a.b", "3");
   expect(readFileSync(join(nd, "t1.meta"), "latin1")).toBe("aXb=1\na.b=3\n");
+});
+
+// The meta lock both sides take (ac_meta_set's comment): <dir>/.<file>.lock,
+// one pid-file protocol, its waits PATH `sleep 1`s - a stub here, counting or
+// briefly sleeping.
+function stubBin(name: string, body: string): string {
+  const d = tmp(name);
+  writeFileSync(join(d, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  return d;
+}
+const metaSetTs = (file: string): string => `try { L.metaSet(${JSON.stringify(file)}, "pr", "x"); } catch (e) { process.stdout.write(String((e as { code?: string }).code)); process.exit(1); }`;
+
+test("metaSet and ac_meta_set wait out a live holder of the one meta lock, then refuse", () => {
+  const od = tmp("o"), nd = tmp("n"), sb = stubBin("sleep", 'echo x >>"$MS_SLEEPS"');
+  for (const d of [od, nd]) {
+    writeFileSync(join(d, "t1.meta"), "kind=ship\n");
+    mkdirSync(join(d, ".t1.meta.lock"));
+    writeFileSync(join(d, ".t1.meta.lock", "pid"), `${process.pid}\n`);
+  }
+  const env = { PATH: `${sb}:${process.env.PATH}`, MS_SLEEPS: join(sb, "count") };
+  expect(bash('ac_meta_set "$1" pr x', env, join(od, "t1.meta"))).toEqual({ out: "", err: `WARN: cannot lock meta file ${od}/t1.meta - nothing written\n`, rc: 1 });
+  expect(ts(metaSetTs(join(nd, "t1.meta")), env)).toEqual({ out: "ELOCK", err: `WARN: cannot lock meta file ${nd}/t1.meta - nothing written\n`, rc: 1 });
+  expect(readFileSync(join(sb, "count"), "latin1")).toBe("x\n".repeat(20));
+  for (const d of [od, nd]) {
+    expect(readFileSync(join(d, "t1.meta"), "latin1")).toBe("kind=ship\n");
+    expect(readFileSync(join(d, ".t1.meta.lock", "pid"), "latin1")).toBe(`${process.pid}\n`);
+  }
+});
+
+test("metaSet and ac_meta_set reclaim a dead holder's meta lock and write", () => {
+  const gone = Bun.spawnSync(["sh", "-c", "echo $$"]).stdout.toString().trim();
+  const od = tmp("o"), nd = tmp("n");
+  for (const d of [od, nd]) {
+    writeFileSync(join(d, "t1.meta"), "kind=ship\n");
+    mkdirSync(join(d, ".t1.meta.lock"));
+    writeFileSync(join(d, ".t1.meta.lock", "pid"), `${gone}\n`);
+  }
+  expect(bash('ac_meta_set "$1" pr x', {}, join(od, "t1.meta"))).toEqual({ out: "", err: "", rc: 0 });
+  metaSet(join(nd, "t1.meta"), "pr", "x");
+  expect(snapshot(nd)).toEqual(snapshot(od));
+  expect(readdirSync(nd)).toEqual(["t1.meta"]);
+  expect(readFileSync(join(nd, "t1.meta"), "latin1")).toBe("kind=ship\npr=x\n");
+});
+
+test.skipIf(isRoot)("metaSet and ac_meta_set refuse a directory the meta lock cannot be made in, at once", () => {
+  const od = tmp("o"), nd = tmp("n"), sb = stubBin("sleep", 'echo x >>"$MS_SLEEPS"');
+  for (const d of [od, nd]) {
+    writeFileSync(join(d, "t1.meta"), "k=v\n");
+    chmodSync(d, 0o555);
+  }
+  const env = { PATH: `${sb}:${process.env.PATH}`, MS_SLEEPS: join(sb, "count") };
+  const o = bash('ac_meta_set "$1" pr x', env, join(od, "t1.meta"));
+  const n = ts(metaSetTs(join(nd, "t1.meta")), env);
+  for (const d of [od, nd]) chmodSync(d, 0o755);
+  expect(o).toEqual({ out: "", err: `WARN: cannot lock meta file ${od}/t1.meta - nothing written\n`, rc: 1 });
+  expect(n).toEqual({ out: "ELOCK", err: `WARN: cannot lock meta file ${nd}/t1.meta - nothing written\n`, rc: 1 });
+  expect(existsSync(join(sb, "count"))).toBe(false);
+  for (const d of [od, nd]) expect([readdirSync(d), readFileSync(join(d, "t1.meta"), "latin1")]).toEqual([["t1.meta"], "k=v\n"]);
+});
+
+test("a metaSet whose rename fails releases the meta lock", () => {
+  const d = tmp("n"), sb = stubBin("mv", 'echo "mv: the stub refuses" >&2\nexit 1');
+  writeFileSync(join(d, "t1.meta"), "k=v\n");
+  expect(ts(metaSetTs(join(d, "t1.meta")), { PATH: `${sb}:${process.env.PATH}` })).toEqual({ out: "EMV", err: "mv: the stub refuses\n", rc: 1 });
+  expect(readdirSync(d).filter((x) => !x.startsWith("t1.meta.tmp."))).toEqual(["t1.meta"]);
+});
+
+test("a bash and a TypeScript writer of different keys lose neither's", async () => {
+  const d = tmp("race"), sb = stubBin("sleep", "exec /bin/sleep 0.1");
+  const f = join(d, "t1.meta");
+  writeFileSync(f, "kind=ship\n");
+  const env = { ...(process.env as Record<string, string>), LC_ALL: "C", PATH: `${sb}:${process.env.PATH}` };
+  const b = Bun.spawn(["bash", "-c", '. "$0/ac-lib.sh"; for i in $(seq 1 40); do ac_meta_set "$1" "a$i" 1; done', binDir, f], { env });
+  const t = Bun.spawn([process.execPath, "--no-env-file", "-e", `import * as L from "./src/lib.ts"; for (let i = 1; i <= 40; i++) L.metaSet(${JSON.stringify(f)}, "b" + i, "1");`], { cwd: root, env });
+  expect([await b.exited, await t.exited]).toEqual([0, 0]);
+  const lines = readFileSync(f, "latin1").split("\n");
+  expect([lines.filter((l) => /^[ab][0-9]+=1$/.test(l)).length, lines.filter((l) => l === "kind=ship").length]).toEqual([80, 1]);
+  expect(readdirSync(d)).toEqual(["t1.meta"]);
+});
+
+// The holder's write lands while metaUpdate waits; the checkpoint is the stub
+// sleep's first call, never a timer.
+test("metaUpdate computes its pairs from the meta as it stands once the lock is held, in one rename", async () => {
+  const d = tmp("upd"), sb = tmp("bin");
+  writeFileSync(join(sb, "sleep"), '#!/bin/sh\n: >"$MS_WAITING"\nexec /bin/sleep 0.1\n', { mode: 0o755 });
+  writeFileSync(join(sb, "mv"), '#!/bin/sh\necho x >>"$MS_MVS"\nexec /bin/mv "$@"\n', { mode: 0o755 });
+  const f = join(d, "t2.meta");
+  writeFileSync(f, "kind=ship\nleases=/w1\nlease_ids=i1\n");
+  mkdirSync(join(d, ".t2.meta.lock"));
+  writeFileSync(join(d, ".t2.meta.lock", "pid"), `${process.pid}\n`);
+  const env = { ...(process.env as Record<string, string>), PATH: `${sb}:${process.env.PATH}`, MS_WAITING: join(sb, "waiting"), MS_MVS: join(sb, "mvs") };
+  const child = Bun.spawn(
+    [process.execPath, "--no-env-file", "-e", `import * as L from "./src/lib.ts"; L.metaUpdate(${JSON.stringify(f)}, (get) => [["leases", get("leases") + ":/w3"], ["lease_ids", get("lease_ids") + ":i3"]]);`],
+    { cwd: root, env, stderr: "pipe" },
+  );
+  while (!existsSync(join(sb, "waiting")) && child.exitCode === null) await Bun.sleep(20);
+  writeFileSync(f, "kind=ship\nleases=/w1:/w2\nlease_ids=i1:i2\n");
+  rmSync(join(d, ".t2.meta.lock"), { recursive: true });
+  expect([await child.exited, await new Response(child.stderr).text()]).toEqual([0, ""]);
+  expect(readFileSync(f, "latin1")).toBe("kind=ship\nleases=/w1:/w2:/w3\nlease_ids=i1:i2:i3\n");
+  expect(readFileSync(join(sb, "mvs"), "latin1")).toBe("x\n");
+  expect(readdirSync(d)).toEqual(["t2.meta"]);
 });
 
 test("metaIsVerify answers as ac_meta_is_verify, silent on an unreadable meta", () => {

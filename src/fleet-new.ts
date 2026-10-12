@@ -141,7 +141,7 @@
 import { existsSync, readFileSync, readSync, writeFileSync, writeSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { resolve } from "node:path";
-import { configDir, dataDir, die, enterCaller, physicalDir, projectsDir, recordsDir, seedRuntimeLinks, stateDir } from "./lib.ts";
+import { configDir, dataDir, die, enterCaller, physicalDir, projectsDir, recordsDir, seedRuntimeLinks, spawnShellSync, stateDir } from "./lib.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const NAME_OK = /^[a-zA-Z0-9_-]*$/;
@@ -210,7 +210,7 @@ function homeEnv(): string {
 
 // The shell's status for a child: its exit, 128+signal when a signal ended it.
 function run(cmd: string[]): void {
-  const r = Bun.spawnSync(cmd, { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+  const r = spawnShellSync(cmd, { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
   if (r.exitCode === 0) return;
   const sig = r.signalCode ? (osConstants.signals as Record<string, number>)[r.signalCode] ?? 0 : 0;
   process.exit(r.exitCode ?? 128 + sig);

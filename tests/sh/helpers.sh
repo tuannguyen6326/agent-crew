@@ -22,7 +22,21 @@ TMP="$(cd "$TMP" && pwd -P)"
 # reap_hogs is defined further down, so anything failing in between (set -e)
 # would enter cleanup with reap_hogs still unbound - a `command not found`
 # that aborts cleanup and leaks $TMP. Verified; the guard keeps the rm.
-cleanup() { type reap_hogs >/dev/null 2>&1 && reap_hogs; rm -rf "$TMP"; }
+#
+# A suite DECIDES its verdict through pass, skip or fail, and an exit that
+# decided nothing is a failure: /bin/bash 3.2 exits with this trap's own status
+# after a `set -u` death, and $? reads 0 in here, so a suite that died on an
+# unbound variable mid-file used to exit 0 and read PASS to every runner.
+AC_SUITE_DECIDED=""
+cleanup() {
+  local rc=$?
+  type reap_hogs >/dev/null 2>&1 && reap_hogs
+  rm -rf "$TMP"
+  [ -z "$AC_SUITE_DECIDED" ] || return 0
+  printf 'FAIL: %s ended before pass, skip or fail (bash 3.2 exits 0 from an unbound variable otherwise)\n' "$(basename "$0")" >&2
+  [ "$rc" != 0 ] || rc=1
+  exit "$rc"
+}
 trap cleanup EXIT
 
 # Tests must NEVER see (or touch!) the operator's live fleet: the harness
@@ -56,6 +70,45 @@ mkdir -p "$AC_CLAUDE_TRANSCRIPT_ROOT"
 # port would answer every synthesize leg instead of the command under test.
 # Port 1 is never served; the connect is refused at once.
 export AC_BRAIN_OLLAMA_URL="http://127.0.0.1:1/v1"
+# Nor may a test run the host's REAL herdr or orca. A suite's fake prepended to
+# PATH shields only a first-match lookup: once that fake reports a version,
+# bin/ac-bootstrap.sh's shadow_check runs EVERY further copy on PATH, and
+# bin/ac-pane-agent.sh appends /opt/homebrew/bin. So each inherited PATH dir
+# holding either is swapped for a mirror of its other tools, and refusing
+# stand-ins lead PATH - ahead of the host, behind every fake a suite prepends.
+# docker and codegraph are mirrored out too, with no stand-in: the code reaches
+# them only through `command -v`, so absent is the not-installed path every
+# host shares, and a suite that exercises docker plants its own stub.
+# gh goes the same way, and its token variables with it, so no suite reads the
+# operator's GitHub login: every gh call in the code sits behind a presence
+# check or is reached only by a suite that plants its own gh.
+unset GH_TOKEN GITHUB_TOKEN
+mkdir -p "$TMP/no-host-backend"
+for _ac_tool in herdr orca; do
+  printf '#!/bin/sh\necho "%s: refused - no test reaches the host binary (tests/sh/helpers.sh)" >&2\nexit 1\n' \
+    "$_ac_tool" >"$TMP/no-host-backend/$_ac_tool"
+  chmod +x "$TMP/no-host-backend/$_ac_tool"
+done
+_ac_path="$TMP/no-host-backend" _ac_n=0
+IFS=: read -ra _ac_dirs <<<"$PATH"
+for _ac_dir in "${_ac_dirs[@]}"; do
+  # Dropped, never mirrored: an empty entry is whatever dir the shell is in
+  # at each lookup, so a host gh there would answer.
+  [ -n "$_ac_dir" ] || continue
+  if [ -e "$_ac_dir/herdr" ] || [ -e "$_ac_dir/orca" ] || [ -e "$_ac_dir/docker" ] || [ -e "$_ac_dir/codegraph" ] || [ -e "$_ac_dir/gh" ]; then
+    _ac_n=$((_ac_n + 1))
+    mkdir -p "$TMP/host-path/$_ac_n"
+    # Linked by the dir's absolute name: a relative PATH entry's link would
+    # resolve beneath the mirror and dangle. CDPATH= keeps an exported CDPATH
+    # from swapping in a namesake dir.
+    ln -s "$(CDPATH= cd -- "$_ac_dir" && pwd)"/* "$TMP/host-path/$_ac_n/"
+    rm -f "$TMP/host-path/$_ac_n/herdr" "$TMP/host-path/$_ac_n/orca" "$TMP/host-path/$_ac_n/docker" "$TMP/host-path/$_ac_n/codegraph" "$TMP/host-path/$_ac_n/gh"
+    _ac_dir="$TMP/host-path/$_ac_n"
+  fi
+  _ac_path="$_ac_path:$_ac_dir"
+done
+export PATH="$_ac_path"
+unset _ac_tool _ac_path _ac_n _ac_dirs _ac_dir
 # Hermetic scope, too: every roomchief session runs with AC_SCOPE (and often
 # AC_WATCH_ONLY) exported, and scope changes what the scripts under test route,
 # watch and refuse - so an inherited scope reds the suite for exactly the
@@ -91,6 +144,13 @@ unset AC_SCOPE AC_WATCH_ONLY AC_WATCH_SKIP AC_FLEET_MODEL AC_FLEET_EFFORT \
       AC_FLEET_STATE AC_FLEET_SCOPE \
       AC_FLEET_NAME AC_FLEET_REVIEW AC_CREW_ID \
       AC_FLEET_HOME_CHECKED AC_FLEET_PROJECT_CONFIG
+# A value the code under test sets for its own children is pinned by reading it
+# back in a stub, so an inherited copy passes that pin vacuously or reds a row
+# asserting its absence: Claude Code exports GIT_TERMINAL_PROMPT=0, which
+# ac-ship's push sets beside GIT_OPTIONAL_LOCKS=0; a configured herdr session
+# rides every herdr call as HERDR_SESSION; a chief running under its own
+# CLAUDE_CONFIG_DIR passes it on in every launch line.
+unset GIT_TERMINAL_PROMPT GIT_OPTIONAL_LOCKS HERDR_SESSION CLAUDE_CONFIG_DIR
 # The double key for the two arbitrary-exec test hooks (audit-f8): production
 # code runs AC_CURATE_SNAPSHOT_HOOK / AC_QA_PROFILE_RECHECK_HOOK only when
 # this is ALSO set, and only the suite sets it.
@@ -109,7 +169,7 @@ for _ac_fleet_prefix in "${!AC_FLEET_PROFILE_@}" "${!AC_FLEET_AGENT_@}" \
 done
 unset _ac_fleet_prefix
 
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+fail() { AC_SUITE_DECIDED=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_eq() { [ "$1" = "$2" ] || fail "${3:-assert_eq}: want '$2' got '$1'"; }
 assert_contains() { [ -n "$2" ] || fail "${3:-assert_contains}: empty needle"; [ "$2" != -- ] || fail "${3:-assert_contains}: takes no -- (the needle is the second argument)"; case "$1" in *"$2"*) ;; *) fail "${3:-assert_contains}: '$2' not found in: $1" ;; esac; }
 assert_file() { [ -f "$1" ] || fail "${2:-assert_file}: missing $1"; }
@@ -186,19 +246,94 @@ make_repo() {
   printf '%s\n' "$r"
 }
 
+# Sourced libs with no live caller left, frozen whole under tests/fixtures/.
+# ac-qa-lib.sh sources ac-bun.sh from its own directory, so it is sourced from
+# a bin/ built here, never from tests/fixtures/ itself.
+RETIRED_LIBS="ac-qa-lib.sh ac-pipeline-lib.sh"
+
 make_oracle_bin() {
   # make_oracle_bin <ac-name> - a bin/ for a port's differential leg: every
-  # live script copied beside the bash original frozen at
+  # live script and retired lib copied beside the bash original frozen at
   # tests/fixtures/<ac-name>.sh, under a root that links src/ and dashboard/, so
   # a sibling shim (bin/ac-bun.sh resolves <bin>/..) still starts its module.
   # Prints the bin dir; the leg runs the oracle from here, the shim from $BIN.
-  local d="$TMP/oracle-$1"
+  local d="$TMP/oracle-$1" lib
   mkdir -p "$d/bin"
   cp "$BIN"/*.sh "$d/bin/"
+  for lib in $RETIRED_LIBS; do cp "$ROOT/tests/fixtures/$lib" "$d/bin/$lib"; done
   ln -s "$ROOT/src" "$d/src"
   ln -s "$ROOT/dashboard" "$d/dashboard"
   cp "$ROOT/tests/fixtures/$1.sh" "$d/bin/$1.sh"
   printf '%s\n' "$d/bin"
+}
+
+make_retired_bin() {
+  # make_retired_bin - make_oracle_bin's bin/ with no entry swapped: the live
+  # scripts plus the retired libs, for a test that sources a retired lib
+  # directly. Built once per suite; prints the bin dir.
+  local d="$TMP/retired" lib
+  if [ ! -d "$d/bin" ]; then
+    mkdir -p "$d/bin"
+    cp "$BIN"/*.sh "$d/bin/"
+    for lib in $RETIRED_LIBS; do cp "$ROOT/tests/fixtures/$lib" "$d/bin/$lib"; done
+    ln -s "$ROOT/src" "$d/src"
+    ln -s "$ROOT/dashboard" "$d/dashboard"
+  fi
+  printf '%s\n' "$d/bin"
+}
+
+# --- delayed kills ------------------------------------------------------------
+#
+# AUTHORITATIVE for how a test bounds a process it started, and for signalling a
+# pid it recorded earlier. A pid is a NUMBER this host hands out again: measured
+# at 29k-58k new pids a minute against a 99999 ceiling, the whole space turns
+# over every 1.7 to 3.5 minutes. A bare `( sleep 60; kill -9 "$pid" ) &` whose
+# target ended early can therefore SIGKILL whatever process of this user holds
+# the number by then - probably how a bun in another suite died rc 137 exactly
+# 60s after tests/sh/ac-lock.test.sh had finished (no pid log proves it).
+#
+#   proc_identity <pid>          who <pid> is: its start time, empty once gone
+#   same_process <pid> <ident>   true only while <pid> is still that process
+#   kill_after <secs> <pid> [<signal>] [group]
+#                                signal <pid> (KILL by default; `group`: its
+#                                process group) once <secs> pass. The watchdog's
+#                                pid is KILL_AFTER_PID; a `kill` on it stands it
+#                                down, its sleep included.
+#
+# Identity is the start time `ps -o lstart=` reports: exec keeps it, and no
+# reissued pid can carry it - a turnover takes minutes, lstart counts seconds.
+# The command line is NOT part of it: an entry that execs changes `command=`
+# (measured), so a bound on a shim would never fire. ps and sleep are called by
+# path because suites lead PATH with stubs of both.
+#
+# The watchdog stands itself down within a second of its target ending, so none
+# outlives what it guards - not one armed inside `$(...)`, not one orphaned by a
+# SIGKILLed run, both out of any trap's reach. cleanup does NOT cancel it: a
+# target still alive at EXIT is an orphan only its watchdog will ever end.
+proc_identity() {
+  case "$1" in '' | *[!0-9]*) return 0 ;; esac
+  /bin/ps -o lstart= -p "$1" 2>/dev/null || true
+}
+
+same_process() { [ -n "$2" ] && [ "$(proc_identity "$1")" = "$2" ]; }
+
+kill_after() {
+  local secs="$1" pid="$2" sig="${3:-KILL}" group="${4:-}" id
+  id="$(proc_identity "$pid")"
+  ( set +e
+    s=""
+    trap '[ -z "$s" ] || kill "$s" 2>/dev/null; exit 0' TERM
+    n=0
+    while [ "$n" -lt "$secs" ] && kill -0 "$pid" 2>/dev/null; do
+      /bin/sleep 1 & s=$!
+      wait "$s"
+      s=""
+      n=$((n + 1))
+    done
+    [ "$n" -ge "$secs" ] && same_process "$pid" "$id" || exit 0
+    if [ "$group" = group ]; then kill -"$sig" -- -"$pid"; else kill -"$sig" "$pid"; fi
+  ) >/dev/null 2>&1 &
+  KILL_AFTER_PID=$!
 }
 
 # --- load harness -------------------------------------------------------------
@@ -228,7 +363,10 @@ make_oracle_bin() {
 #
 # Survivors are counted BY RECORDED PID, never by pgrep pattern: a pattern
 # match would also count another agent's unrelated load and turn a green run
-# red for someone else's mess.
+# red for someone else's mess. The pid alone is not enough either: a run that
+# outlives AC_HOG_TTL reaps hogs whose pids may be reissued by then, so each is
+# also recorded with its identity and only that process is counted or killed
+# (see the delayed-kills block above).
 
 AC_HOG_TTL="${AC_HOG_TTL:-300}"
 # Must stay ABOVE the functions below: cleanup's `type reap_hogs` guard only
@@ -236,6 +374,7 @@ AC_HOG_TTL="${AC_HOG_TTL:-300}"
 # reap_hogs and an early failure enters cleanup with _ac_hogs unbound, which
 # under set -u aborts inside the guard instead of skipping it.
 _ac_hogs=""
+_ac_hog_id=()
 
 load_hogs() {
   # load_hogs [n=4] - spawn n self-limiting CPU hogs, recording every pid.
@@ -246,6 +385,7 @@ load_hogs() {
   while [ "$i" -lt "$n" ]; do
     ( SECONDS=0; while [ "$SECONDS" -lt "$AC_HOG_TTL" ]; do :; done ) &
     _ac_hogs="$_ac_hogs $!"
+    _ac_hog_id[$!]="$(proc_identity "$!")"
     # Lowest priority, so the box's real work outruns the load we manufacture.
     # A courtesy only: nice changes PRIORITY, not how many cores are occupied -
     # the cap on the hog COUNT is what bounds the blast (tests/sh/stress.sh).
@@ -255,10 +395,10 @@ load_hogs() {
 }
 
 hog_survivors() {
-  # hog_survivors - how many spawned hogs are still alive, checked by pid.
+  # hog_survivors - how many spawned hogs are still alive, checked by pid and identity.
   local p n=0
   for p in $_ac_hogs; do
-    kill -0 "$p" 2>/dev/null && n=$((n + 1))
+    same_process "$p" "${_ac_hog_id[$p]-}" && n=$((n + 1))
   done
   printf '%s\n' "$n"
 }
@@ -277,10 +417,10 @@ reap_hogs() {
   # and a catchable signal can be ignored (or masked by a caller's disposition),
   # which would leave the wait below blocked for the hog's whole remaining TTL -
   # hanging the suite instead of failing it. The wait is still required: it
-  # reaps the zombie, which kill -0 would otherwise count as a live survivor.
+  # reaps the zombie, which keeps its identity and so would count as a survivor.
   local p left
   [ -n "$_ac_hogs" ] || return 0
-  for p in $_ac_hogs; do kill -9 "$p" 2>/dev/null || true; done
+  for p in $_ac_hogs; do same_process "$p" "${_ac_hog_id[$p]-}" && kill -9 "$p" 2>/dev/null || true; done
   for p in $_ac_hogs; do wait "$p" 2>/dev/null || true; done
   left="$(hog_survivors)"
   # Clear ONLY on a clean reap. hog_survivors reads _ac_hogs, so clearing it
@@ -289,6 +429,7 @@ reap_hogs() {
   # record so the assertion can still see it.
   if [ "$left" = 0 ]; then
     _ac_hogs=""
+    _ac_hog_id=()
   else
     printf 'WARNING: %s hog(s) survived reap_hogs: %s\n' "$left" "$_ac_hogs" >&2
   fi
@@ -1111,4 +1252,5 @@ fake_pane_buf() {
   printf '%s/panes/%s.buf\n' "$FAKE_HERDR" "$(fake_pane "$1")"
 }
 
-pass() { printf 'PASS: %s\n' "$(basename "$0")"; }
+pass() { AC_SUITE_DECIDED=1; printf 'PASS: %s\n' "$(basename "$0")"; }
+skip() { AC_SUITE_DECIDED=1; printf 'SKIP: %s\n' "$*"; exit 0; }

@@ -72,7 +72,7 @@ assert_file "$AC_HOME/state/capreq.meta" "annotated captain-requested Review lin
 assert_eq "$(meta_review capreq)" yes "the annotation is stripped before the value lands in meta"
 "$BIN/ac-teardown.sh" capreq --force >/dev/null 2>&1
 
-# --- a staged epic story's derived review (captain ruling 2026-08-19) ---------------
+# --- a staged epic story's derived review -------------------------------------------
 mkdir -p "$AC_HOME/data/epicfix"
 printf 'proj epic/epicfix\n' >"$AC_HOME/data/epicfix/branches"
 "$BIN/ac-epic-branch.sh" create epicfix proj >/dev/null

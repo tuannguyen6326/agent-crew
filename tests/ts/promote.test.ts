@@ -1,6 +1,6 @@
 // promote.test.ts - the lib.ts twin src/promote.ts introduced, held to its bash
 // original differentially: deliveryModeBlock against ac_delivery_mode_block in
-// bin/ac-pipeline-lib.sh, whose bash copy STAYS LIVE for bin/ac-brief.sh - two
+// tests/fixtures/ac-pipeline-lib.sh, whose bash copy the frozen originals still run - two
 // renderers of one delivery contract, so every mode the bash renders (and the
 // empty answer for one it does not) is compared byte for byte, with no trailing
 // newline, over argument bytes printf's %s passes untouched. The CLI contract
@@ -13,7 +13,7 @@ import { deliveryModeBlock } from "../../src/lib.ts";
 const binDir = join(import.meta.dir, "..", "..", "bin");
 
 function bash(fn: string, ...args: string[]) {
-  const r = Bun.spawnSync(["bash", "-c", `. "$0/ac-lib.sh"; . "$0/ac-pipeline-lib.sh"; ${fn} "$@"`, binDir, ...args], {
+  const r = Bun.spawnSync(["bash", "-c", `. "$0/ac-lib.sh"; . "$0/../tests/fixtures/ac-pipeline-lib.sh"; ${fn} "$@"`, binDir, ...args], {
     stdout: "pipe",
     stderr: "pipe",
     env: { ...(process.env as Record<string, string>), LC_ALL: "C" },
@@ -43,7 +43,7 @@ test("deliveryModeBlock renders every mode ac_delivery_mode_block renders, byte 
     "- Mode crew-ship: run the `crew-ship` skill. Its `ac-ship` engine owns the guarded 8-step delivery pipeline (intent, rebase, review, test, document, lint, push, pr). Hand over only after checks pass and include the PR URL.",
   );
   expect(deliveryModeBlock("direct-pr", branch, base, integ, loop)).toBe(
-    "- Mode direct-pr: after delivery preparation, push `crew/s1` and open a PR against the recorded target branch. The PR body covers intent, changes, and verification evidence.",
+    "- Mode direct-pr: after delivery preparation, push `crew/s1` and open a PR against the recorded target branch. The PR body covers intent, changes, and verification evidence, and ends with `Closes #<n>` only for the GitHub issue the brief says this task fixes; never put close, fix or resolve before any other `#<n>` - GitHub closes that issue on merge.",
   );
   expect(deliveryModeBlock("feature-pr", branch, base, integ, loop)).toBe(
     "- Mode feature-pr: after delivery preparation, leave `crew/s1` clean and fully committed - it lands onto the feature integration branch `the recorded integration branch` (the chief runs ac-merge-local). Never push or open a PR; publication happens ONCE at the feature ship.",

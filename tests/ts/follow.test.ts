@@ -1,9 +1,14 @@
 // follow.test.ts - Bun unit tests for src/follow.ts's pure layer: the places
-// where python's semantics differ from plain JS and a naive port would drift.
-// The CLI contract stays owned by the black-box tests/sh/ac-follow.test.sh. Run
-// through tests/sh/src.test.sh.
+// where python's semantics differ from plain JS and a naive port would drift,
+// and the lib.ts twin the entry resolves its transcript directory through.
+// The CLI contract stays owned by tests/sh/ac-follow.test.sh, whose
+// differential leg runs the frozen original beside the shim. Run through
+// tests/sh/src.test.sh.
 
-import { test, expect } from "bun:test";
+import { afterAll, test, expect } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ANSI, Malformed, PLAIN, clip, dumps, lines, pyStr, render, truthy } from "../../src/follow.ts";
 
 const rendered = (line: string, colors = PLAIN): string => {
@@ -83,4 +88,39 @@ test("a record of the wrong shape is Malformed, after what was already printed",
   expect(() => render('{"message":{"content":[{"type":"text","text":"before"},7]}}', PLAIN, (x) => (s += x)))
     .toThrow(Malformed);
   expect(s).toBe("before");
+});
+
+// claudeTranscriptRoot, the lib.ts twin the entry resolves the transcript
+// directory through, held to its LIVE bash original ac_claude_transcript_root
+// (the arrival probe and ac-pane-agent.sh still call it).
+// DISPUTED: the implementation of the transcript root (ac_claude_transcript_root in bin/ac-lib.sh vs claudeTranscriptRoot in src/lib.ts)
+// HELD-CONSTANT: argv (none); env (PATH the host's, XDG_CACHE_HOME a scratch dir, AC_CLAUDE_TRANSCRIPT_ROOT, CLAUDE_CONFIG_DIR and HOME only as a row sets them); cwd (the distro root); stdin (/dev/null); stdout compared whole, a `set -u` death read as null.
+const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
+const CACHE = realpathSync(mkdtempSync(join(tmpdir(), "ac-follow-ts-")));
+afterAll(() => rmSync(CACHE, { recursive: true, force: true }));
+
+function rootSide(env: Record<string, string>, oracle: boolean): string | null {
+  const cmd = oracle
+    ? ["/bin/bash", "-c", 'set -u; . "$0/ac-lib.sh" || exit $?; ac_claude_transcript_root', join(ROOT, "bin")]
+    : [process.execPath, "-e", `import { writeSync } from "node:fs"; const L = await import(${JSON.stringify(join(ROOT, "src", "lib.ts"))}); const r = L.claudeTranscriptRoot(); if (r === null) process.exit(1); writeSync(1, r + "\\n");`];
+  const r = Bun.spawnSync(cmd, { cwd: ROOT, env: { PATH: process.env.PATH!, XDG_CACHE_HOME: CACHE, ...env }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  return r.exitCode === 0 ? r.stdout.toString("latin1") : null;
+}
+
+test("claudeTranscriptRoot answers ac_claude_transcript_root's ladder, an empty rung falling through", () => {
+  for (const env of [
+    { AC_CLAUDE_TRANSCRIPT_ROOT: "/r", CLAUDE_CONFIG_DIR: "/c", HOME: "/h" },
+    { AC_CLAUDE_TRANSCRIPT_ROOT: "rel", HOME: "/h" },
+    { AC_CLAUDE_TRANSCRIPT_ROOT: "", CLAUDE_CONFIG_DIR: "/c", HOME: "/h" },
+    { CLAUDE_CONFIG_DIR: "/c" },
+    { AC_CLAUDE_TRANSCRIPT_ROOT: "", CLAUDE_CONFIG_DIR: "", HOME: "/h" },
+    { HOME: "" },
+    { AC_CLAUDE_TRANSCRIPT_ROOT: "/r" },
+    {},
+    { CLAUDE_CONFIG_DIR: "" },
+  ] as Record<string, string>[]) {
+    expect({ env, root: rootSide(env, false) }).toEqual({ env, root: rootSide(env, true) });
+  }
+  expect(rootSide({}, true)).toBeNull();
+  expect(rootSide({ HOME: "" }, false)).toBe("/.claude/projects\n");
 });

@@ -77,4 +77,4 @@ while IFS= read -r f; do
   [ -z "$bad" ] || fail "clean-room/rejected-runtime leak in $f: $bad"
 done < <(find "$dir" -type f)
 
-printf 'ok - harness-operations skill contract\n'
+pass

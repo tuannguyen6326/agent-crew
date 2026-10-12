@@ -166,7 +166,7 @@
 // entered is `ERROR: AC_HOME is not a readable directory: <h>` where the bash
 // printed its own `cd:` line (the HOME RESOLUTION ruling), same exit 1.
 import { linkSync, mkdirSync, rmdirSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
-import { die, enterCaller, HARNESS_RE, iso, metaGet, pidAlive, stateDir, warn } from "./lib.ts";
+import { die, enterCaller, HARNESS_RE, iso, metaGet, pidAlive, spawnShellSync, stateDir, warn } from "./lib.ts";
 
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 const native = (b: string): string => Buffer.from(b, "latin1").toString("utf8");
@@ -187,7 +187,7 @@ const SHELLS = new Set(["bash", "sh", "zsh", "dash", "fish", "-bash", "-sh", "-z
 // `$(ps ... 2>/dev/null || true)`: whatever ps printed, failed or not.
 function ps(...a: string[]): string {
   try {
-    const r = Bun.spawnSync(["ps", ...a], { stdin: "inherit", stdout: "pipe", stderr: "ignore", env: process.env });
+    const r = spawnShellSync(["ps", ...a], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
     return r.stdout.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
   } catch {
     return "";
@@ -212,7 +212,7 @@ function harnessLine(cmd: string, worker: boolean): boolean {
   const pat = `(^|[ /])(${harnessRe})${worker ? " bg-[a-z0-9-]+" : ""}( |$)`;
   if (PLAIN_RE.test(harnessRe)) return new RegExp(pat, "m").test(native(cmd));
   try {
-    const r = Bun.spawnSync(["grep", "-qE", pat], { stdin: Buffer.from(`${cmd}\n`, "latin1"), stdout: "ignore", stderr: "inherit", env: process.env });
+    const r = spawnShellSync(["grep", "-qE", pat], { stdin: Buffer.from(`${cmd}\n`, "latin1"), stdout: "ignore", stderr: "inherit" });
     return r.exitCode === 0;
   } catch {
     return false;

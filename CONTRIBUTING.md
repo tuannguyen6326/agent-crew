@@ -57,7 +57,7 @@ Read [`docs/concepts.md`](docs/concepts.md) first if you are new to the model.
 | Backlog grammar | `docs/backlog.md` | `src/backlog.ts` is the one parser, and its header the full spec; awk sites read it through `AC_DONELINE_AWK` in `bin/ac-lib.sh`. |
 | Config files and env knobs | `docs/configuration.md` | The environment table is the knob manifest, enforced by `tests/sh/ac-config-surface.test.sh`. |
 | Script index | `docs/scripts.md` | A map only; each row points to the owning header. |
-| Web dashboard | `dashboard/app.ts`, `dashboard/lib.ts`, `dashboard/page.ts`, `dashboard/watch.ts` | Bun, no build step. `bin/ac-dashboard.sh` starts `dashboard/app.ts` through `bin/ac-bun.sh`. `app.ts`'s header owns the route and API contract; `lib.ts` is the pure layer. Tests: `dashboard/app.test.ts`, `dashboard/watch.test.ts`. |
+| Web dashboard | `dashboard/app.ts`, `dashboard/lib.ts`, `dashboard/page.ts`, `dashboard/watch.ts` | Bun, no build step. `bin/ac-dashboard.sh` starts `src/dashboard.ts` (the entry's spec), which serves `dashboard/app.ts` in the foreground or starts it as the daemon. `app.ts`'s header owns the route and API contract; `lib.ts` is the pure layer. Tests: `dashboard/app.test.ts`, `dashboard/watch.test.ts`. |
 | Tests | `tests/sh/<name>.test.sh` | Colocated per behavior; `tests/run-suite.sh` is the only suite runner. Bun unit tests for `src/` live in `tests/ts/<name>.test.ts` and run through `tests/sh/src.test.sh`. |
 
 ## Dev loop
@@ -82,14 +82,14 @@ bin/ac-lint.sh                     # opt-in: bash -n + shellcheck over changed f
   It assumes shellcheck 0.11 or newer.
 - For dashboard page changes, also run `bin/ac-page-lint.sh`, which lints every served page's inline scripts.
 
-The script headers of `tests/run-suite.sh` and `bin/ac-lint.sh` are the authoritative specs for these flags.
+The headers of `tests/run-suite.sh` and `src/lint.ts` (the module `bin/ac-lint.sh` starts) are the authoritative specs for these flags.
 
 ## Adding a script
 
 ### Bash or TypeScript
 
 - Write the logic in TypeScript under `src/<name>.ts` when it parses or writes structured data (JSON, ledgers, metas), runs past about 200 lines or branches heavily, loops for a long time, or needs unit tests.
-- Every `bin/` entry is ported in its turn, thin `git`/`herdr`/`gh` glue included (the port spawns the same binaries rather than re-implementing them); the hooks wired in `.claude/settings.json` and the git hooks (`bin/ac-push-gate.sh`, installed as `pre-push`) stay bash, because a hook that must never wedge the harness or a push owes no runtime but the shell. The order is leaves first, a shared helper when its last bash caller goes, the long-running loops last as long-running TypeScript processes - never a shim started per poll.
+- Every `bin/` entry is ported in its turn, thin `git`/`herdr`/`gh` glue included (the port spawns the same binaries rather than re-implementing them), and so are the harness hooks wired in `.claude/settings.json`: a hook's entry is a fail-open shim that starts its module through `ac_bun_exec_hook` (`bin/ac-bun.sh`), which exits 0 when bun is not on PATH and answers only the module's own 0 or 2, so a missing runtime, a module that cannot load and a crash are each the hook's no-op and never a refusal; the thin `*-cursor.sh` adapters stay bash. The git hooks (`bin/ac-push-gate.sh`, installed as `pre-push`, and the `pre-commit` and `commit-msg` guard bodies `src/tree.ts` installs on a repo's first lease) stay bash, because a bun-dependent git hook would refuse every push or commit on a box without bun, and the only way past it is the forbidden `--no-verify`; `bin/ac-bootstrap.sh` and `bin/ac-setup.sh` stay bash because they run on a fresh box before bun exists and are what tells the operator how to install it; `bin/ac-session-start.sh` stays bash because it is where a missing bun is reported, and it keeps the digest alive when a bun-backed ride-along fails. The order is leaves first, a shared helper when its last bash caller goes, the long-running loops last as long-running TypeScript processes - never a shim started per poll.
 - A ported script keeps its `bin/ac-<name>.sh` entry as a shim that starts `src/<name>.ts` through `bin/ac-bun.sh` (see `bin/ac-dispatch-select.sh`), so callers, hooks and skills keep the path and nothing in a caller's cwd or environment configures bun; the `src/` module's header is the spec, and it reads its arguments through `enterCaller` (`src/lib.ts`).
 - A `bin/ac-lib.sh` helper gets a twin in `src/lib.ts` only when a port calls it, keeps its bash original's observable contract, and is pinned to that original by a differential test.
 - Unit tests go in `tests/ts/<name>.test.ts`; the black-box `tests/sh/ac-<name>.test.sh` stays the CLI contract and must pass unchanged across the port.
@@ -106,7 +106,7 @@ The script headers of `tests/run-suite.sh` and `bin/ac-lint.sh` are the authorit
     || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
   ```
 
-- `tests/sh/helpers.sh` gives every test a throwaway `AC_HOME`, disposable repos, and asserts such as `assert_eq`, `assert_contains` and `assert_fails`; end a passing file with `pass`.
+- `tests/sh/helpers.sh` gives every test a throwaway `AC_HOME`, disposable repos, a `PATH` on which the host's real `herdr` and `orca` are unreachable (drive them through `make_fake_herdr`/`make_fake_orca`) and its `docker`, `codegraph` and `gh` are absent (a test that exercises one plants its own stub), and asserts such as `assert_eq`, `assert_contains` and `assert_fails`; end a passing file with `pass`, and leave early for a missing optional tool with `skip '<why>'`. A file that exits without deciding through `pass`, `skip` or a failed assert fails, because under `/bin/bash` 3.2 a `set -u` death would otherwise exit 0.
 - Any new `AC_*` variable the script reads needs a row in the `docs/configuration.md` environment table, or a declaration with a reason inside `tests/sh/ac-config-surface.test.sh` if it is an internal wire or test seam.
 - Add a row to `docs/scripts.md` that points to the header.
 
@@ -125,6 +125,7 @@ The script headers of `tests/run-suite.sh` and `bin/ac-lint.sh` are the authorit
 - Some tests pin exact phrases in `AGENTS.md`, skills and `docs/`.
   Before rewording, search for the phrase: `git grep -n -F '<phrase>' tests/`.
 - `tests/sh/public-source-scrub.test.sh` fails on private identifiers anywhere in tracked text; keep examples neutral.
+- `tests/sh/provenance-scrub.test.sh` fails on a dated ruling in published text (`bin/`, `src/`, `.agents/`, `docs/`, `dashboard/`, the root docs and `tests/sh` comments); state the rule as a design fact and leave its provenance to the fleet's records.
 - The `docs/configuration.md` environment table is machine-read: each row starts with `` | `AC_NAME` | ``, and a family of dynamic names is documented as one templated row such as `` `AC_X_<...>` ``.
   Every plain row must have a reader in `bin/` or `src/`, and every `AC_*` name read there must have a row or a declaration.
 - Link to the owning header or skill instead of copying tables or procedures.

@@ -844,6 +844,16 @@ out="$(run_backend herdr '
   printf "rc=%s ticks=%s\n" "$rc" "$(( SECONDS - pre ))"')"
 assert_eq "$out" "rc=3 ticks=2" "a call that fails on its own under the ceiling keeps its own status"
 
+# A ceiling the system sleep refuses (past 2147483647 s) fires at once under a
+# caller's errexit too. The call stands bare (an `||` would put errexit to
+# sleep for the whole function), and the watchdog inherits errexit, so a
+# refused sleep must not end it before it fires - the call would run unbounded.
+out="$(run_backend herdr '
+  s=$SECONDS
+  trap '"'"'printf "rc=%s fast=%s\n" "$?" "$(( SECONDS - s < 2 ))"'"'"' EXIT
+  herdr_rpc_bounded 2147483648 bash -c "sleep 3; exit 0"')" || true
+assert_eq "$out" "rc=124 fast=1" "a ceiling sleep refuses fires at once under errexit, never unbounded"
+
 # The other direction: a call the ceiling DID kill still reads 124, and the
 # member that ignored the TERM is swept once the leader is reaped.
 cat >"$TMP/term-ignorer" <<'EOF'

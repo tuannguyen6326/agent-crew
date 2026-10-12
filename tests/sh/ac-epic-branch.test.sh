@@ -169,7 +169,7 @@ out="$("$BIN/ac-merge-local.sh" eppy3-s1)"
 assert_contains "$out" "already contains" "a re-land is a truthful no-op"
 
 # --- review derivation under the epic ruling (slice 4) ------------------------
-# Captain ruling 2026-08-19: a branch-recorded epic's stories default to
+# A branch-recorded epic's stories default to
 # review=no (the epic gate owns the round); staged keeps its design gates but
 # drops the code-review round; crew-ship KEEPS its pipeline round (story-sized
 # via --target) until the epic-gate slice; a non-epic staged task still

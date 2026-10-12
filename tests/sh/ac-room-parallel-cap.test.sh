@@ -309,7 +309,7 @@ rm -f "$AC_HOME/config/room-parallel"
 
 # 14. AC-13: the header is the AUTHORITATIVE contract for the cap and its exempt
 #     classes - a behaviour change that leaves it stale is incomplete.
-hdr="$(sed -n '1,140p' "$BIN/ac-spawn.sh")"
+hdr="$(sed -n '1,140p' "$ROOT/src/spawn.ts")"
 assert_contains "$hdr" "--system-initiated" "the header documents the new flag"
 assert_contains "$hdr" "initiated_by=system" "the header documents the new origin value"
 assert_contains "$hdr" "post-meta bookkeeping tail" "the header documents what a --roomchief exit status means"

@@ -38,10 +38,12 @@ EOF
 chmod +x "$stub/herdr"
 
 # A bin/ whose ac-ready.sh and ac-remote.sh are sentinel stubs: the drain
-# invokes its ride-alongs as siblings of $0, so this is how "did the drain
-# call them?" is observed. Every other script is the real one.
-fakebin="$TMP/fakebin"
+# invokes its ride-alongs from the bin/ it was started from, so this is how
+# "did the drain call them?" is observed. Every other script is the real one;
+# the root beside it links src/, where bin/ac-bun.sh finds the drain's module.
+fakebin="$TMP/fake/bin"
 mkdir -p "$fakebin"
+ln -s "$ROOT/src" "$TMP/fake/src"
 for f in "$ROOT"/bin/*.sh; do ln -sf "$f" "$fakebin/$(basename "$f")"; done
 for s in ac-ready ac-remote; do
   rm -f "$fakebin/$s.sh"
@@ -673,7 +675,7 @@ case "$(drain fam1)" in *WATCHER-DOWN*) fail "roomchief must not report down on 
 assert_contains "$(drain '')" "WATCHER-DOWN" "fleet sees its own stale beat"
 
 # ... and a beat of 0 - an ABSENT beacon, or one holding the `0` that
-# stand_down_beacon writes on every watcher exit - is genuinely uncovered and
+# watcher's exit cleanup writes on every exit - is genuinely uncovered and
 # must STILL fire, but no age is computable from it: `now - 0` printed an
 # epoch-sized 56-year age that once read to a chief as a live outage.
 # The three no-beat states fire identically and read DIFFERENTLY, because they
@@ -982,5 +984,565 @@ rc=0; out="$(PATH="$stub:$PATH" AC_SOLO=1 bash "$fakebin/ac-wake-drain.sh" 2>&1)
 [ "$rc" -ne 0 ] || fail "a solo session's drain must refuse"
 assert_contains "$out" "solo" "the refusal names the solo session"
 assert_eq "$(spool_records "$state/.wake-spool")" "1" "a refused solo drain leaves the chief's record in the spool"
+
+# --- differential: src/wake-drain.ts against the frozen bash original --------
+# DISPUTED: the implementation (tests/fixtures/ac-wake-drain.sh under bash vs src/wake-drain.ts through bin/ac-wake-drain.sh)
+# HELD-CONSTANT: two side roots seeded alike ($OH for the oracle, $NH for the shim) - a home at <side>/home and the caller's cwd <side>/cwd; a lab bin/ per side holding every live script (the oracle's ac-wake-drain.sh the frozen original, the shim's the live shim, src/ linked beside each) with ac-ready, ac-remote, ac-learn and ac-brain replaced by ONE logging stub (argv and AC_BACKEND, answers per sentinel file); a stub dir <side>/stub first on PATH - herdr and orca logging argv (herdr with HERDR_SESSION) and answering per sentinel file, `date +%s` answering <side>/stub/clock, every other date /bin/date's; argv, env (every knob the drain reads scrubbed, then AC_HOME and the row's - the side root spelled HOME, in values only), stdin /dev/null (row 9's stdin rows: a line), LC_ALL=C unless a row names en_US.UTF-8; exit status, stdout and stderr compared whole (the side root spelled HOME, a lab root LAB, a claim dir's pid PID), then the home's tree, every spool and claim record's bytes and the stub log.
+WD_OBIN="$(make_oracle_bin ac-wake-drain)"
+WD_NBIN="$TMP/wdn/bin"
+mkdir -p "$WD_NBIN"
+cp "$BIN"/*.sh "$WD_NBIN/"
+ln -s "$ROOT/src" "$TMP/wdn/src"
+for wd_b in "$WD_OBIN" "$WD_NBIN"; do
+  for wd_s in ac-ready ac-remote ac-learn ac-brain; do
+    cat >"$wd_b/$wd_s.sh" <<'STUB'
+#!/bin/sh
+n="${0##*/}"
+printf '%s %s [AC_BACKEND=%s]\n' "$n" "$*" "${AC_BACKEND-unset}" >>"$STUB_DIR/log"
+case "$n $1" in
+  "ac-brain.sh sync") [ ! -f "$STUB_DIR/brain-sync" ] || cat "$STUB_DIR/brain-sync" ;;
+  "ac-brain.sh delta") [ ! -f "$STUB_DIR/brain-delta" ] || cat "$STUB_DIR/brain-delta" ;;
+esac
+[ ! -f "$STUB_DIR/$n.kill" ] || kill -TERM $$
+[ ! -f "$STUB_DIR/$n.rc" ] || exit "$(cat "$STUB_DIR/$n.rc")"
+exit 0
+STUB
+    chmod +x "$wd_b/$wd_s.sh"
+  done
+done
+OH="$TMP/wside-o"; NH="$TMP/wside-n"
+WT=1700000000
+WD_ENV=(); WD_LC=C; WD_HOMELESS=0; WD_NOISE=0; WD_WRAP=""; WD_PATH="$PATH"
+wd_run() {  # wd_run <bin> <side root> <prefix> <args...>
+  local bin="$1" h="$2" p="$3" x v; shift 3
+  local a=() e=("LC_ALL=$WD_LC" "PATH=$h/stub:$WD_PATH" "STUB_DIR=$h/stub")
+  [ "$WD_HOMELESS" = 1 ] || e+=("AC_HOME=$h/home")
+  for x in ${WD_ENV[@]+"${WD_ENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//HOME/$h}"); done
+  for x in "$@"; do a+=("${x//HOME/$h}"); done
+  rm -f "$h/stub/log"
+  local cmd=("$bin/ac-wake-drain.sh")
+  [ -z "$WD_WRAP" ] || cmd=(bash -c "$WD_WRAP" _ "$h/home/state" "$bin/ac-wake-drain.sh")
+  (cd "$h/cwd" && env -u AC_HOME -u AC_SCOPE -u AC_SOLO -u AC_BACKEND -u AC_FLEET_STATE -u AC_STALE -u AC_GUARD_GRACE \
+    -u AC_BUSY_RE -u AC_CAPTAIN_RE -u AC_HERDR_SESSION -u AC_HERDR_RPC_TIMEOUT -u EPOCHSECONDS -u LANG -u LC_CTYPE \
+    "${e[@]}" "${cmd[@]}" ${a[@]+"${a[@]}"}) <"${WD_STDIN:-/dev/null}" >"$TMP/$p.raw" 2>"$TMP/$p.err"
+}
+wd_norm() { LC_ALL=C sed -e "s#$1#HOME#g" -e "s#$TMP/oracle-ac-wake-drain#LAB#g" -e "s#$TMP/wdn#LAB#g" -E -e 's/\.wake-spool-draining\.[0-9]+/.wake-spool-draining.PID/g'; }
+wd_snap() {  # wd_snap <side root> - the home's tree, every spool/claim record's bytes, the stub log
+  local h="$1" f
+  { (cd "$h/home" 2>/dev/null && find . -print) || true; } | LC_ALL=C sort
+  { (cd "$h/home/state" 2>/dev/null && find .wake-spool* -type f 2>/dev/null) || true; } | LC_ALL=C sort | while IFS= read -r f; do
+    printf '== %s\n' "$f"; cat "$h/home/state/$f" 2>/dev/null || printf '(unreadable)\n'
+  done
+  printf '== log\n'; cat "$h/stub/log" 2>/dev/null || true
+}
+O_RC=0; N_RC=0
+wd_compare() {  # wd_compare <what> - both sides' answers, normalized, byte-identical
+  if [ "$WD_NOISE" = 1 ]; then
+    # Named (SHELL-OWN STDERR): the original's own `<script>: line N: ...` lines.
+    /usr/bin/grep -Eq '^[^ ]*: line [0-9]+: ' "$TMP/o.err2" || fail "differential: no shell noise to drop for $1"
+    LC_ALL=C sed -E '/^[^ ]*: line [0-9]+: /d' "$TMP/o.err2" >"$TMP/o.err3"; mv "$TMP/o.err3" "$TMP/o.err2"
+  fi
+  wd_snap "$OH" | wd_norm "$OH" >"$TMP/o.snap"; wd_snap "$NH" | wd_norm "$NH" >"$TMP/n.snap"
+  assert_eq "$N_RC" "$O_RC" "differential exit for $1"
+  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs for $1: $(diff "$TMP/o.out" "$TMP/n.out" | head -n 8)"
+  cmp -s "$TMP/o.err2" "$TMP/n.err2" || fail "differential stderr differs for $1: $(diff "$TMP/o.err2" "$TMP/n.err2" | head -n 8)"
+  cmp -s "$TMP/o.snap" "$TMP/n.snap" || fail "differential world differs for $1: $(diff "$TMP/o.snap" "$TMP/n.snap" | head -n 8)"
+}
+wd_pair() {  # both sides run, their outputs normalized
+  O_RC=0; N_RC=0
+  wd_run "$WD_OBIN" "$OH" o "$@" || O_RC=$?
+  wd_run "$WD_NBIN" "$NH" n "$@" || N_RC=$?
+  wd_norm "$OH" <"$TMP/o.raw" >"$TMP/o.out"; wd_norm "$OH" <"$TMP/o.err" >"$TMP/o.err2"
+  wd_norm "$NH" <"$TMP/n.raw" >"$TMP/n.out"; wd_norm "$NH" <"$TMP/n.err" >"$TMP/n.err2"
+}
+same() { wd_pair "$@"; wd_compare "'$*' (${WD_ENV[*]+${WD_ENV[*]}}, LC_ALL=$WD_LC) at line ${BASH_LINENO[0]}"; }
+same_utf8() { WD_LC=en_US.UTF-8; same "$@"; WD_LC=C; }
+nout() { cat "$TMP/n.out"; }
+nerr() { cat "$TMP/n.err2"; }
+nlog() { sed -n '/^== log$/,$p' "$TMP/n.snap" | sed 1d; }
+both() {  # both <fn> <args...> - a seeding step with H at each side root; a literal $H in an argument is that root
+  local h x a; for h in "$OH" "$NH"; do H="$h"; a=(); for x in "$@"; do a+=("${x//\$H/$h}"); done; "${a[@]}"; done
+}
+fresh() {  # a clean side: home, cwd, the PATH stubs, the clock at WT
+  rm -rf "$H"; mkdir -p "$H/home/state" "$H/home/data" "$H/home/config" "$H/cwd" "$H/stub"
+  printf '%s\n' "$WT" >"$H/stub/clock"
+  cat >"$H/stub/date" <<'EOF'
+#!/bin/sh
+[ "$*" = +%s ] && exec cat "$STUB_DIR/clock"
+exec /bin/date "$@"
+EOF
+  cat >"$H/stub/herdr" <<'EOF'
+#!/bin/sh
+d="$STUB_DIR"
+printf 'herdr %s [%s]\n' "$*" "${HERDR_SESSION:-}" >>"$d/log"
+case "$1 $2" in
+  "pane get") [ -e "$d/win-$3" ] ;;
+  "pane list") [ ! -e "$d/list-fails" ] || exit 1; printf '{"result":{"panes":[]}}\n' ;;
+  "status server") printf '{"running":true}\n' ;;
+  "pane read") [ -e "$d/tail-$3" ] || exit 1; cat "$d/tail-$3" ;;
+  *) exit 2 ;;
+esac
+EOF
+  cat >"$H/stub/orca" <<'EOF'
+#!/bin/sh
+d="$STUB_DIR"
+printf 'orca %s\n' "$*" >>"$d/log"
+case "$1 $2" in
+  "terminal show") [ -e "$d/win-$4" ] && c=true || c=false; printf '{"ok":true,"result":{"terminal":{"connected":%s}}}\n' "$c" ;;
+  "terminal read") [ -e "$d/tail-$4" ] || exit 1; jq -Rs '{ok:true,result:{terminal:{tail:(split("\n")[:-1])}}}' <"$d/tail-$4" ;;
+  *) printf '{"ok":true}\n' ;;
+esac
+EOF
+  chmod +x "$H/stub/date" "$H/stub/herdr" "$H/stub/orca"
+}
+rec() { mkdir -p "$H/home/state/.wake-spool${1:+.$1}"; printf "$3" >"$H/home/state/.wake-spool${1:+.$1}/$2"; }  # rec <family|''> <name> <printf format>
+claim() { mkdir -p "$H/home/state/.wake-spool-draining.$1"; printf "$3" >"$H/home/state/.wake-spool-draining.$1/$2"; }  # claim <suffix> <name> <format>
+m() { printf "$2" >"$H/home/state/$1.meta"; }  # m <id> <printf format>
+pane() { printf '%s t\n' "${2:-p$1}" >"$H/home/state/.pane-$1"; }  # pane <id> [<handle>]
+win() { : >"$H/stub/win-$1"; }
+ptail() { printf "$2" >"$H/stub/tail-$1"; }  # ptail <handle> <printf format>
+chief() {  # chief <fam> [<backend>] - a promoted roomchief meta and its pane handle (live only with win p<fam>-chief)
+  m "$1-chief" "kind=roomchief\nbackend=${2:-herdr}\n"; pane "$1-chief"
+}
+chg() { printf "$2" >"$H/home/state/.change-$1"; touch -t 202301010000 "$H/home/state/.change-$1"; }  # chg <id> <printf format>
+idle() { m "$1" 'kind=implement\nbackend=herdr\n'; pane "$1"; win "p$1"; chg "$1" "$((WT - 999))\n"; ptail "p$1" "${2:-quiet here}\n"; }
+report() {  # report <id> <dir under data> - a past-dated stage report
+  mkdir -p "$H/home/data/$2"; printf 'b\n' >"$H/home/data/$2/brief.md"; printf 'r\n' >"$H/home/data/$2/report.md"
+  touch -t 202301010000 "$H/home/data/$2/report.md"
+}
+cfg() { printf '%s\n' "$2" >"$H/home/config/$1"; }
+beat() { printf '%s\n' "$1" >"$H/home/state/.last-watcher-beat${2:+.$2}"; }
+st() { printf "$2" >"$H/home/state/$1.status"; }  # st <id> <printf format>
+WD_E1=$'\303\251'
+
+# 1. the gate: the backend first, then the home, then solo, then argv (W1, W2,
+#    W3); a refused solo run leaves the chief's record and mints state/ alone.
+both fresh
+same bogus; assert_eq "$(nerr)" "ERROR: usage: ac-wake-drain.sh | ac-wake-drain.sh ack <id> [<id>...]" "row 1: an unknown verb"
+same ack; assert_eq "$(nerr)" "ERROR: usage: ac-wake-drain.sh ack <id> [<id>...]" "row 1: ack with no id"
+same ack a b
+same ack ''
+same ack c ../x; assert_eq "$N_RC" 1 "row 1: W3 - the failing touch ends the run"
+assert_contains "$(nerr)" "touch: HOME/home/state/.ack-../x: No such file or directory" "row 1: W3 - touch's own line"
+same ack c/d
+same ack $'e\n\n'
+both rec '' 1.1.000000 '1\treport\tz1\tdone: x\n'
+WD_ENV=(AC_SOLO=1); same; same ack x; same bogus; WD_ENV=()
+assert_eq "$(nerr)" "ERROR: a solo session (AC_SOLO=1) never drains or acks wakes - they belong to the chief session (solo-session skill)" "row 1: solo refused"
+assert_contains "$(cat "$TMP/n.snap")" "== .wake-spool/1.1.000000" "row 1: a refused solo run leaves the record"
+WD_ENV=(AC_SOLO=0); same; assert_contains "$(nout)" "report z1 done: x" "row 1: AC_SOLO=0 drains"
+both rec '' 1.1.000000 '1\treport\tz2\tdone: y\n'
+WD_ENV=("AC_SOLO= 1"); same; assert_contains "$(nout)" "report z2 done: y" "row 1: AC_SOLO=' 1' drains"; WD_ENV=()
+same '' extra; assert_eq "$N_RC" 0 "row 1: an empty first argument is the drain"
+both rm -rf '$H/home/state'
+WD_HOMELESS=1; same; WD_ENV=(AC_SOLO=1); same; WD_ENV=(); WD_HOMELESS=0
+assert_contains "$(nerr)" "AC_HOME is not set" "row 1: W2 - homeless refuses before solo"
+both cfg backend tmux
+same; same ack x; WD_ENV=(AC_SOLO=1); same; WD_ENV=()
+assert_eq "$(nerr)" "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "row 1: W1 config/backend"
+both rm -f '$H/home/config/backend'
+WD_ENV=(AC_BACKEND=Herdr); same; WD_ENV=(AC_BACKEND=Herdr AC_SOLO=1); same; WD_HOMELESS=1; same; WD_HOMELESS=0; WD_ENV=()
+assert_contains "$(nerr)" "unsupported backend 'Herdr'" "row 1: W1 before the home and solo"
+# Named (the HOME RESOLUTION ruling): a home cd cannot enter is the port's own
+# line where the original printed cd's.
+WD_ENV=(AC_HOME=HOME/nowhere); wd_pair; WD_ENV=()
+assert_eq "$O_RC $N_RC" "1 1" "row 1: an AC_HOME cd cannot enter exits 1 on both sides"
+assert_eq "$(nerr)" "ERROR: AC_HOME is not a readable directory: HOME/nowhere" "row 1: the HOME RESOLUTION line"
+
+# 2. an empty home: `no queued wakes`, the scheduler and autoroom, config/
+#    minted (W21); the remote push only with an executable remote-poll; a
+#    scoped drain runs no ride-along.
+both fresh; both rm -rf '$H/home/config'
+same; assert_eq "$(nout)" "no queued wakes" "row 2: empty"
+assert_contains "$(cat "$TMP/n.snap")" "./config" "row 2: W21 config/ minted"
+WD_ENV=(AC_SCOPE=fam2); same; assert_eq "$(nlog)" "" "row 2: a scoped drain runs no ride-along"; WD_ENV=()
+both eval 'printf "#!/bin/sh\n" >"$H/home/config/remote-poll"'
+same; case "$(nlog)" in *push-pending*) fail "row 2: a remote-poll that is not executable pushes nothing" ;; esac
+both chmod +x '$H/home/config/remote-poll'
+same; assert_contains "$(nlog)" "ac-remote.sh push-pending" "row 2: an executable remote-poll pushes"
+# state/ is minted by a spawned `mkdir -p`: a regular file there is mkdir's own
+# line, and the drain goes on with that path.
+both fresh; both rm -rf '$H/home/state'; both eval ': >"$H/home/state"'
+same; assert_eq "$N_RC $(nout)" "0 no queued wakes" "row 2: a file at state/ drains nothing, exit 0"
+assert_contains "$(nerr)" "mkdir: HOME/home/state: File exists" "row 2: mkdir's own line"
+same ack x; assert_eq "$N_RC" 1 "row 2: an ack under a file at state/ is touch's failure"
+
+# 3. the rendering: the read's field split (W4, W5), awk's TAB and NUL cut
+#    (W6), per-file records, a two-line record, bytes, the remote label.
+both fresh
+both rec '' 1.1.000001 '1\treport\tr1\t  done: trailing and  inner  spaces  \n'
+both rec '' 1.1.000002 '1\treport\tr2\t\n'
+both rec '' 1.1.000003 '1\treport\t\tpayload words here\n'
+both rec '' 1.1.000004 '1\treport\tr4\tpart\textra\n'
+both rec '' 1.1.000005 '1\treport\tr5\tno LF'
+both rec '' 1.1.000006 '1\treport\tr6\tline one\n2\tstale\tr6b\tline two\n'
+both rec '' 1.1.000007 '1\treport\tr7\tback\\\\slash \\n\n'
+both rec '' 1.1.000008 '1\treport\tr8\tbyte \351 and \303\251 and a NUL\000cut\n'
+both rec '' 1.1.000009 '1\tremote\tcaptain\tremote-order rid9\n'
+both rec '' 1.1.000010 '1\tremote\tcaptain\tno prefix\n'
+both rec '' 1.1.000011 '\n'
+both rec '' 1.1.000012 '1\t  spaced kind\tr12\tx\n'
+same
+assert_contains "$(nout)" $'report r2 \nreport payload words here' "row 3: W4/W5 - an empty payload keeps its space, an empty id takes the payload's first word"
+assert_contains "$(nout)" "report r4 part
+" "row 3: W6 - a TAB cuts the payload"
+same; assert_eq "$(nout)" "no queued wakes" "row 3: the records are gone"
+# the status context: annotated, deduped, bounded (W7 - characters under
+# UTF-8, bytes under C), a symlink, no space, empty, a blank last line, an LF-less one.
+wd_status() {
+  local p
+  p="$(printf 'x%.0s' $(seq 1 160))"
+  st a1 '2026-01-01T00:00:00Z blocked: on the schema\n'; rec '' 1.1.000001 '1\tstale\ta1\t\n'
+  st a2 '2026-01-01T00:00:00Z done: shipped it\n'; rec '' 1.1.000002 '1\treport\ta2\tdone: shipped it\n'
+  st a3 "t ${p}\n"; rec '' 1.1.000003 '1\tstale\ta3\t\n'
+  st a4 "t ${p}y\n"; rec '' 1.1.000004 '1\tstale\ta4\t\n'
+  st a5 "t $(printf "$WD_E1%.0s" $(seq 1 160))\n"; rec '' 1.1.000005 '1\tstale\ta5\t\n'
+  st a6 "t $(printf "$WD_E1%.0s" $(seq 1 161))\n"; rec '' 1.1.000006 '1\tstale\ta6\t\n'
+  st real7 't linked status\n'; ln -s real7.status "$H/home/state/a7.status"; rec '' 1.1.000007 '1\tstale\ta7\t\n'
+  st a8 'nospace\n'; rec '' 1.1.000008 '1\tstale\ta8\t\n'
+  st a9 ''; rec '' 1.1.000009 '1\tstale\ta9\t\n'
+  st a10 'x first\n\n'; rec '' 1.1.000010 '1\tstale\ta10\t\n'
+  st a11 'x older\nx no LF at the end'; rec '' 1.1.000011 '1\tstale\ta11\t\n'
+  mkdir -p "$H/home/state/a12.status"; rec '' 1.1.000012 '1\tstale\ta12\t\n'
+  st a13 'x \351 byte\r\n'; rec '' 1.1.000013 '1\tstale\ta13\t\n'
+}
+both fresh; both wd_status; same
+assert_contains "$(nout)" "  status a1: blocked: on the schema" "row 3: annotated"
+case "$(nout)" in *"status a2:"*) fail "row 3: a payload that says it is not repeated" ;; esac
+assert_contains "$(nout)" "  status a4: $(printf 'x%.0s' $(seq 1 157))..." "row 3: past 160 cut to 157 and ..."
+both fresh; both wd_status; same_utf8
+assert_contains "$(nout)" "  status a5: $(printf "$WD_E1%.0s" $(seq 1 160))
+" "row 3: W7 - 160 characters stay whole under UTF-8"
+if [ "$(id -u)" != 0 ]; then
+  both fresh; both st u1 'x unreadable\n'; both chmod 000 '$H/home/state/u1.status'; both rec '' 1.1.000001 '1\tstale\tu1\t\n'
+  same; case "$(nout)" in *"status u1"*) fail "row 3: an unreadable status is not annotated" ;; esac
+  both chmod 644 '$H/home/state/u1.status'
+fi
+
+# 4. scope: a malformed scope drains the FLEET spool and nothing else (W18);
+#    the fleet drains orphans (no chief meta, a dead window) and leaves a live
+#    family, each probe on config/herdr-session; a roomchief drains its own.
+both fresh
+both cfg herdr-session s1
+both rec '' 1.1.000001 '1\treport\tf1\tdone: fleet\n'
+both rec famL 1.1.000001 '1\treport\tfamL-t1\tdone: live family\n'; both chief famL; both win pfamL-chief
+both rec famD 1.1.000001 '1\treport\tfamD-t1\tdone: dead window\n'; both chief famD
+both rec famA 1.1.000001 '1\treport\tfamA-t1\tdone: archived chief\n'
+both rec famO 1.1.000001 '1\treport\tfamO-t1\tdone: orca chief\n'; both chief famO orca; both win pfamO-chief
+both rec famB 1.1.000001 '1\treport\tfamB-t1\tdone: a refused meta backend\n'; both chief famB tmux; both win pfamB-chief
+WD_ENV=(AC_SCOPE=bad.scope); same; WD_ENV=()
+assert_contains "$(nout)" "report f1 done: fleet" "row 4: W18 - a malformed scope drains the fleet's spool"
+same
+assert_contains "$(nlog)" "herdr pane get pfamD-chief --session s1 [s1]" "row 4: the probe on the configured session"
+case "$(nout)" in *"live family"*|*"orca chief"*) fail "row 4: a live family is its chief's" ;; esac
+assert_contains "$(nout)" "report famB-t1 done: a refused meta backend" "row 4: a refused meta backend reads not live"
+WD_ENV=(AC_SCOPE=famL); same; assert_contains "$(nout)" "report famL-t1 done: live family" "row 4: the roomchief drains its own"; WD_ENV=()
+
+# 5. orphan order (W24): byte order on both sides under C; under UTF-8 bash
+#    3.2's glob collated afam first, the port keeps byte order (named).
+wd_order() { for f in afam Bfam Cfam; do rec "$f" 1.1.000001 "1\treport\t$f-t1\tdone: $f\n"; done; }
+both fresh; both wd_order; same
+assert_eq "$(nout)" "report Bfam-t1 done: Bfam
+report Cfam-t1 done: Cfam
+report afam-t1 done: afam" "row 5: byte order"
+both fresh; both wd_order; WD_LC=en_US.UTF-8; wd_pair; WD_LC=C
+assert_eq "$(head -n 1 "$TMP/o.raw") | $(head -n 1 "$TMP/n.raw")" "report afam-t1 done: afam | report Bfam-t1 done: Bfam" \
+  "row 5: W24 named - the original's UTF-8 glob collated afam first, the port walks bytes"
+
+# 6. the dead-claim sweep.
+both fresh
+sh -c 'exit 0' & WD_DEAD=$!; wait "$WD_DEAD" 2>/dev/null || true
+both claim "$WD_DEAD" "1.$WD_DEAD.000001" '1\treport\tc-chief\tdone: a chief record\n'
+both claim "$WD_DEAD" "1.$WD_DEAD.000002" '1\treport\tfamS-api\tdone: by fleet_scope\n'
+both m famS-api 'fleet_scope=famS\n'; both chief famS; both win pfamS-chief
+both mkdir -p '$H/home/data/famR/review'
+both claim "$WD_DEAD" "1.$WD_DEAD.000003" '1\treport\tfamR-review\tdone: by suffix\n'
+both claim "$WD_DEAD" "1.$WD_DEAD.000004" '1\treport\tflat1\tdone: a flat id\n'
+both claim "$WD_DEAD" "1.$WD_DEAD.000005" '\n'
+both claim notapid 1.1.000001 '1\treport\tn1\tdone: not a pid\n'
+both claim "x.wake-spool-draining.$WD_DEAD" 1.1.000001 '1\treport\tn2\tdone: the last tag decides\n'
+both claim "" 1.1.000001 '1\treport\tn3\tdone: an empty suffix\n'
+same
+assert_contains "$(nout)" "report flat1 done: a flat id" "row 6: W9 - a flat id goes through its own spool"
+assert_contains "$(cat "$TMP/n.snap")" "./state/.wake-spool.flat1" "row 6: W9 - its empty spool is left behind"
+assert_contains "$(cat "$TMP/n.snap")" "== .wake-spool.famS/1.$WD_DEAD.000002" "row 6: a member's record goes back to its live chief's spool"
+WD_ENV=(AC_SCOPE=famS); same; WD_ENV=()
+# a live drainer by its name is kept; a reused pid is swept; a blind ps keeps.
+bash -c 'exec -a ac-wake-drain.sh sleep 60' & WD_LIVE=$!
+sleep 60 & WD_REUSE=$!
+both fresh
+both claim "$WD_LIVE" 1.1.000001 '1\treport\tl1\tdone: a live drainer\n'
+both claim "$WD_REUSE" 1.1.000001 '1\treport\tl2\tdone: a reused pid\n'
+same
+assert_contains "$(cat "$TMP/n.snap")" "== .wake-spool-draining.PID/1.1.000001" "row 6: a live drainer's claim is kept"
+assert_contains "$(nout)" "report l2 done: a reused pid" "row 6: a reused pid is swept"
+both eval 'printf "#!/bin/sh\ncase \"\$*\" in *command=*) exit 1 ;; esac\nexec /bin/ps \"\$@\"\n" >"$H/stub/ps"; chmod +x "$H/stub/ps"'
+both claim "$WD_REUSE" 1.1.000002 '1\treport\tl3\tdone: a blind ps\n'
+same; case "$(nout)" in *"blind ps"*) fail "row 6: an unreadable command is kept" ;; esac
+both rm -f '$H/stub/ps'
+# W8 NAMED - THE ONE EXPECTED DIVERGENCE: a live claimer running this module
+# (`bun --no-env-file <root>/src/wake-drain.ts`) is a drainer to the port and
+# a reused pid to the original, which steals its records.
+bash -c "exec -a 'bun --no-env-file $TMP/held/src/wake-drain.ts /cwd' sleep 60" & WD_TS=$!
+both fresh
+both claim "$WD_TS" 1.1.000001 '1\treport\tl4\tdone: held by a TS drainer\n'
+wd_pair
+assert_contains "$(cat "$TMP/o.raw")" "report l4 done: held by a TS drainer" "row 6: W8 - the original steals a live TS drainer's claim"
+assert_eq "$(head -n 1 "$TMP/n.raw")" "no queued wakes" "row 6: W8 - the port keeps it"
+[ -f "$NH/home/state/.wake-spool-draining.$WD_TS/1.1.000001" ] || fail "row 6: W8 - the record stays in the live claim"
+kill "$WD_LIVE" "$WD_REUSE" "$WD_TS" 2>/dev/null; wait "$WD_LIVE" "$WD_REUSE" "$WD_TS" 2>/dev/null || true
+# our own pid's claim is a predecessor's.
+both fresh
+WD_WRAP='d="$1/.wake-spool-draining.$$"; mkdir -p "$d"; printf "1\treport\to1\tdone: own pid\n" >"$d/1.1.000001"; exec "$2"'
+same; WD_WRAP=""
+assert_contains "$(nout)" "report o1 done: own pid" "row 6: our own pid's claim is a predecessor's"
+# an unreadable record is skipped, its claim kept; W12: a file at a family
+# spool's path ends every drain at the sweep, before anything drains.
+if [ "$(id -u)" != 0 ]; then
+  both fresh
+  both claim "$WD_DEAD" 1.1.000001 '1\treport\tu2\tdone: unreadable\n'; both chmod 000 "\$H/home/state/.wake-spool-draining.$WD_DEAD/1.1.000001"
+  both rec '' 1.1.000002 '1\treport\tu3\tdone: drained anyway\n'
+  same; assert_contains "$(nout)" "report u3 done: drained anyway" "row 6: an unreadable claimed record is skipped"
+  both chmod 644 "\$H/home/state/.wake-spool-draining.$WD_DEAD/1.1.000001"
+fi
+both fresh
+both m famZ-api 'fleet_scope=famZ\n'; both eval ': >"$H/home/state/.wake-spool.famZ"'
+both claim "$WD_DEAD" 1.1.000001 '1\treport\tfamZ-api\tdone: wedged\n'
+both rec '' 1.1.000002 '1\treport\tz3\tdone: never drained\n'
+same; assert_eq "$N_RC" 1 "row 6: W12 - mkdir's status ends the drain"
+assert_contains "$(nerr)" "mkdir: HOME/home/state/.wake-spool.famZ: File exists" "row 6: W12 - mkdir's line"
+assert_eq "$(nout)" "" "row 6: W12 - nothing drained"
+
+# 7. spool hazards: a subdirectory is claimed and destroyed unread (W10); a
+#    dangling link sorting first strands the records in the claim until the
+#    next drain (W11) and litters forever; a dot entry, an empty spool and a
+#    file at the fleet spool's path drain nothing.
+both fresh
+both mkdir -p '$H/home/state/.wake-spool/0sub'; both eval 'printf "1\treport\tsub1\tdone: inside\n" >"$H/home/state/.wake-spool/0sub/r"'
+both rec '' 1.1.000001 '1\treport\tw10\tdone: beside a subdir\n'
+same; assert_eq "$(nout)" "report w10 done: beside a subdir" "row 7: W10"
+both fresh
+both mkdir -p '$H/home/state/.wake-spool'; both ln -s '$H/nowhere' '$H/home/state/.wake-spool/0dangling'
+both rec '' 1.1.000001 '1\treport\tw11\tdone: stranded\n'
+same; assert_eq "$(nout)" "no queued wakes" "row 7: W11 - a dangling first entry reads as a racer"
+assert_contains "$(nerr)" "rmdir: HOME/home/state/.wake-spool-draining.PID: Directory not empty" "row 7: W11 - rmdir's own line"
+same; assert_contains "$(nout)" "report w11 done: stranded" "row 7: W11 - the next drain's sweep returns them"
+both fresh
+both rec '' .hidden '1\treport\tdot\tdone: x\n'; both mkdir -p '$H/home/state/.wake-spool.famE'
+same; assert_eq "$(nout)" "no queued wakes" "row 7: a dot entry and an empty spool"
+both rm -rf '$H/home/state/.wake-spool'; both eval ': >"$H/home/state/.wake-spool"'
+same
+
+# 8. completions: the report channel - nested, fan-out, ambiguous, acked, the
+#    same second (W14), a verifier skipped, a self task reported, membership.
+both fresh
+both m famA-spec 'kind=spec\n'; both report famA-spec famA/spec
+both m famA-api 'fleet_scope=famA\n'; both report famA-api famA/tasks/api
+both m amb 'kind=x\n'; both report amb amb; both report amb amb/implement
+both m ack1 'kind=x\n'; both report ack1 ack1; both touch -t 202401010000 '$H/home/state/.ack-ack1'
+both m sec1 'kind=x\n'; both report sec1 sec1
+both touch '$H/home/state/.ack-sec1'
+both perl -MTime::HiRes=utime -e 'utime(1700000000.0, 1700000000.0, $ARGV[0]); utime(1700000000.5, 1700000000.5, $ARGV[1])' \
+  '$H/home/state/.ack-sec1' '$H/home/data/sec1/report.md'
+both m ver1 'kind=verify-codereview\n'; both report ver1 ver1
+both m self1 'kind=self\n'; both report self1 self1
+same
+assert_contains "$(nout)" "UNACKNOWLEDGED COMPLETION: famA-spec has a report at HOME/home/data/famA/spec/report.md" "row 8: nested"
+assert_contains "$(nout)" "UNACKNOWLEDGED COMPLETION: self1" "row 8: a self task's report"
+case "$(nout)" in *ack1*|*sec1*|*ver1*|*" amb "*) fail "row 8: acked, same-second (W14), verifier and ambiguous stay silent: $(nout)" ;; esac
+both chief famA; both win pfamA-chief
+same; case "$(nout)" in *famA-*) fail "row 8: a live family's completions are its chief's" ;; esac
+WD_ENV=(AC_SCOPE=famA); same; WD_ENV=()
+assert_contains "$(nout)" "UNACKNOWLEDGED COMPLETION: famA-api" "row 8: a member by fleet_scope reaches its chief"
+
+# 9. idleness: quiet, busy, a captain marker, the stamp's grammar (W16), the
+#    knob's (W15), the chief suppressions, an unreadable room (W25), the
+#    member and task metas (W20), orca, the capture's bytes (W13), the clock.
+both fresh
+both idle i1
+both idle i2 'esc to interrupt'
+both idle i3 $'Working\342\200\246 on it'
+both idle i4 'done: finished'
+both idle i5; both chg i5 ''
+both idle i6; both chg i6 '0009\n'
+both idle i7; both chg i7 '18446744073709551615\n'
+both idle i8; both chg i8 "$WT\n"
+same
+assert_contains "$(nout)" "IDLE-MAY-BE-WAITING-ON-YOU: i1 quiet for 999s with no marker (peek: bin/ac-peek.sh i1; silence it: bin/ac-wake-drain.sh ack i1)" "row 9: idle"
+assert_contains "$(nout)" "IDLE-MAY-BE-WAITING-ON-YOU: i7 quiet for 1700000001s" "row 9: W16 - a 20-digit stamp wraps"
+WD_ENV=(AC_STALE=abc); WD_NOISE=1; same; WD_NOISE=0
+case "$(nout)" in *IDLE*) fail "row 9: W15 - a non-integer AC_STALE is never idle" ;; esac
+WD_ENV=("AC_STALE= 240"); same; WD_ENV=(AC_STALE=+1000); same; WD_ENV=(AC_STALE=0999); same
+WD_ENV=(AC_STALE=0x10); WD_NOISE=1; same; WD_NOISE=0; WD_ENV=()
+WD_ENV=(EPOCHSECONDS=12abc); WD_NOISE=1; same; WD_NOISE=0
+assert_eq "$N_RC $(nout)" "0 no queued wakes" "row 9: the clock's evaluation error discards the rest of the pass"
+WD_ENV=(EPOCHSECONDS=abc); WD_NOISE=1; same; WD_NOISE=0; assert_eq "$N_RC" 1 "row 9: an identifier clock is set -u's abort"
+WD_ENV=(EPOCHSECONDS=1700000500); same
+# the clock's text is an EXPRESSION to `$(( ))` - arithmetic, parentheses, hex,
+# an assignment, the comma - and a name in it is a variable of the shell's
+# scope: stamp the pass's own here, beat not yet set (set -u's abort).
+for e in '1700000000+1' '(2*850000000)' '0x6553F100' 'x=1700000000' '1700000000,5'; do WD_ENV=("EPOCHSECONDS=$e"); same; done
+WD_ENV=(EPOCHSECONDS=1700000000+1); same
+assert_contains "$(nout)" "IDLE-MAY-BE-WAITING-ON-YOU: i1 quiet for 1000s" "row 9: an expression clock is evaluated"
+WD_NOISE=1; for e in stamp beat; do WD_ENV=("EPOCHSECONDS=$e"); same; done; WD_NOISE=0; WD_ENV=()
+# the chief suppressions: parked at a gate, a live member (suffix,
+# fleet_scope), a prefix family, the chief's own pane, an unreadable member
+# meta warned, an unreadable room (W25: grep's line, not parked).
+both fresh
+both idle pk-chief; both mkdir -p '$H/home/data/pk'; both eval 'printf "# Room: pk\n\n- [t] crewchief> GATE: approve?\n" >"$H/home/data/pk/room.md"'
+both idle sv-chief; both mkdir -p '$H/home/data/sv/spec'; both m sv-spec 'kind=spec\n'; both pane sv-spec; both win psv-spec
+both idle sf-chief; both m story1 'fleet_scope=sf\n'; both pane story1; both win pstory1
+both idle px-chief; both m px-curate-x 'kind=x\n'; both pane px-curate-x; both win ppx-curate-x
+both m vf-x 'kind=verify-qa\nfleet_scope=px\n'; both pane vf-x; both win pvf-x
+same
+for c in pk sv sf; do case "$(nout)" in *"YOU: $c-chief"*) fail "row 9: $c-chief is expected quiet" ;; esac; done
+assert_contains "$(nout)" "IDLE-MAY-BE-WAITING-ON-YOU: px-chief" "row 9: a prefix family and a verifier are no members"
+if [ "$(id -u)" != 0 ]; then
+  both chmod 000 '$H/home/data/pk/room.md' '$H/home/state/story1.meta'
+  WD_NOISE=1; same; WD_NOISE=0
+  assert_contains "$(nerr)" "grep: HOME/home/data/pk/room.md: Permission denied" "row 9: W25 - grep's own line"
+  assert_contains "$(nerr)" "WARN: cannot read meta file HOME/home/state/story1.meta" "row 9: an unreadable member meta warns"
+  assert_contains "$(nout)" "IDLE-MAY-BE-WAITING-ON-YOU: pk-chief" "row 9: W25 - an unreadable room is not parked"
+  both chmod 644 '$H/home/data/pk/room.md' '$H/home/state/story1.meta'
+fi
+# an orca task, an unreadable task meta (W20), a capture that fails.
+both fresh
+both idle h0; both rm -f '$H/stub/tail-ph0'
+both idle o1; both m o1 'backend=orca\n'; both pane o1 ho1; both win ho1; both ptail ho1 'orca quiet\n'
+same
+assert_contains "$(nlog)" "orca terminal read --terminal ho1 --limit 40 --screen --json" "row 9: the orca capture's argv"
+assert_contains "$(nlog)" "ac-ready.sh  [AC_BACKEND=orca]" "row 9: W19 - the last idle task's backend reaches the ride-alongs"
+# W19 with a name the capture's route refuses: a UTF-8 one reaches the
+# ride-alongs as its bytes, one that is not UTF-8 as U+FFFD (named).
+both fresh; both idle u1; both m u1 "kind=implement\nbackend=caf$WD_E1\n"
+same; assert_contains "$(nlog)" "ac-ready.sh  [AC_BACKEND=caf$WD_E1]" "row 9: W19 - a meta's UTF-8 backend name reaches the ride-alongs as its bytes"
+both m u1 'kind=implement\nbackend=caf\351\n'
+wd_pair
+assert_eq "$N_RC:$(nout)|$(nerr)" "$O_RC:$(cat "$TMP/o.out")|$(cat "$TMP/o.err2")" "row 9: a non-UTF-8 backend= - the same exit, stdout and stderr"
+assert_eq "$(LC_ALL=C /usr/bin/grep '^ac-ready' "$OH/stub/log")" "ac-ready.sh  [AC_BACKEND=caf$(printf '\351')]" "row 9: W19 - a non-UTF-8 backend= reaches the original's ride-alongs as its byte"
+assert_eq "$(LC_ALL=C /usr/bin/grep '^ac-ready' "$NH/stub/log")" "ac-ready.sh  [AC_BACKEND=caf$(printf '\357\277\275')]" "row 9: ... and the port's as U+FFFD (named)"
+if [ "$(id -u)" != 0 ]; then
+  both fresh; both idle w20; both chmod 000 '$H/home/state/w20.meta'
+  same; assert_contains "$(nerr)" "WARN: cannot read meta file HOME/home/state/w20.meta" "row 9: W20"
+  both chmod 644 '$H/home/state/w20.meta'
+fi
+# W13: an invalid byte in an idle pane's capture - BSD sed aborts under
+# UTF-8 and the drain exits 1 after the wakes were consumed; under C it reads.
+wd_w13() { rec '' 1.1.000001 '1\treport\tq1\tdone: consumed\n'; idle b13 'bad \351 byte'; }
+both fresh; both wd_w13; same
+assert_contains "$(nout)" "IDLE-MAY-BE-WAITING-ON-YOU: b13" "row 9: W13 - under C the byte reads"
+both fresh; both wd_w13; same_utf8
+assert_eq "$N_RC" 1 "row 9: W13 - sed's abort ends the drain"
+assert_eq "$(nout)" "report q1 done: consumed" "row 9: W13 - after the wakes were printed"
+assert_contains "$(nerr)" "sed: RE error: illegal byte sequence" "row 9: W13 - sed's own line"
+# stdin by position: a herdr that logs what its stdin holds, the drain's
+# stdin a line. The completion scope's roomchief probe and chiefChildLive's
+# member probes ran in the original's `( )`, so herdr reads nothing there on
+# both sides - the caller's stdin passed to them is orca's alone.
+wd_w6() {
+  cat >"$H/stub/herdr" <<'EOF'
+#!/bin/sh
+d="$STUB_DIR"
+printf 'herdr %s stdin=[%s]\n' "$*" "$(cat)" >>"$d/log"
+case "$1 $2" in
+  "pane get") [ -e "$d/win-$3" ] ;;
+  "pane list") printf '{"result":{"panes":[]}}\n' ;;
+  "pane read") [ -e "$d/tail-$3" ] || exit 1; cat "$d/tail-$3" ;;
+  *) exit 2 ;;
+esac
+EOF
+  m w6-api 'fleet_scope=w6\n'; report w6-api w6/tasks/api; chief w6
+  idle sv-chief; mkdir -p "$H/home/data/sv/spec"; m sv-spec 'kind=spec\n'; pane sv-spec; win psv-spec
+}
+both fresh; both wd_w6
+printf 'caller-stdin\n' >"$TMP/wd-stdin"
+WD_STDIN="$TMP/wd-stdin"; same; WD_STDIN=""
+assert_contains "$(nout)" "UNACKNOWLEDGED COMPLETION: w6-api" "row 9 (stdin): the completion scope probed the chief"
+case "$(nout)" in *"YOU: sv-chief"*) fail "row 9 (stdin): a live member keeps its chief quiet" ;; esac
+assert_eq "$(nlog | /usr/bin/grep -c 'stdin=\[\]$')" "$(nlog | /usr/bin/grep -c '^herdr ')" "row 9 (stdin): no herdr call read the caller's stdin"
+assert_contains "$(nlog)" "herdr pane get pw6-chief stdin=[]" "row 9 (stdin): ...the completion scope's"
+assert_contains "$(nlog)" "herdr pane get psv-spec stdin=[]" "row 9 (stdin): ...chiefChildLive's"
+
+# 10. WATCHER-DOWN: the in-flight set, the beacon per scope, the grace's
+#     grammar (W15), a 20-digit beat (W16), EPOCHSECONDS as the clock.
+both fresh
+both m t1 'kind=x\n'; both m v1 'kind=verify-x\n'; both m s1 'kind=self\n'; both chief cf; both mkdir -p '$H/home/state/d.meta'
+for b in "" 0 "" 0009 $((WT - 1000)) $((WT - 10)) 99999999999999999999 18446744073709551615 9223372036854775808; do
+  if [ -z "$b" ]; then both rm -f '$H/home/state/.last-watcher-beat'; else both beat "$b"; fi
+  same
+done
+both beat 0; WD_ENV=(AC_SCOPE=cf); same; both beat "$((WT - 10))" cf; same; WD_ENV=()
+both beat "$((WT - 1000))"
+WD_ENV=(AC_GUARD_GRACE=xyz); WD_NOISE=1; same; WD_ENV=(AC_GUARD_GRACE=0x10); same; WD_NOISE=0
+WD_ENV=("AC_GUARD_GRACE= 300"); same; WD_ENV=(AC_GUARD_GRACE=+2000); same; WD_ENV=(EPOCHSECONDS=5); same
+WD_ENV=(EPOCHSECONDS=12abc); WD_NOISE=1; same; WD_NOISE=0
+for e in '(2*850000000)' '0x6553F100' '1700000000,5'; do WD_ENV=("EPOCHSECONDS=$e"); same; done
+WD_ENV=(EPOCHSECONDS=1700000000+1); same; WD_ENV=()
+assert_contains "$(nout)" "no fresh beat (age 1001s)" "row 10: an expression clock is evaluated"
+both beat "$((WT - 1000))"; same
+assert_contains "$(nout)" "WATCHER-DOWN: 3 crewmate(s) in flight but no fresh beat (age 1000s)." "row 10: verifier and self out, a chief and a dir named x.meta in"
+
+# 11. the scheduler's exit, killed (128+n), autoroom failing.
+both fresh
+both eval 'printf "3\n" >"$H/stub/ac-ready.sh.rc"'; same
+assert_eq "$(nout)" "no queued wakes
+WARN   scheduler unavailable: ac-ready.sh exited 3 - run it to see why" "row 11: the scheduler's status"
+both rm -f '$H/stub/ac-ready.sh.rc'; both touch '$H/stub/ac-ready.sh.kill'; WD_NOISE=1; same; WD_NOISE=0
+assert_contains "$(nout)" "exited 143" "row 11: a signal is 128+n"
+both rm -f '$H/stub/ac-ready.sh.kill'; both eval 'printf "5\n" >"$H/stub/ac-learn.sh.rc"'; same; assert_eq "$N_RC" 0 "row 11: autoroom's failure never ends the drain"
+
+# 12. the brain: sync's numbers (W22), the delta through jq (W23), scoped
+#     cursors, no jq on PATH.
+both fresh; both touch '$H/home/state/brain.sqlite'
+for wd_sync in '{\n "files": 42,\n "changed": 1\n}\n' '{"files": 7, "changed": 0, "nested": {"files": 9}}\n' '' 'not json\n'; do
+  both eval "printf '$wd_sync' >\"\$H/stub/brain-sync\""
+  same
+done
+assert_contains "$(nout)" "brain-sync ok -  files,  changed" "row 12: W22 - no number is an empty field"
+both eval 'printf "2\n" >"$H/stub/ac-brain.sh.rc"'; same; both rm -f '$H/stub/ac-brain.sh.rc'
+wd_pages="$(for i in 1 2 3 4 5 6 7 8 9; do printf '{"path":"p%s"},' "$i"; done)"
+for wd_delta in "{\"since\":\"s\",\"pages\":[${wd_pages}{\"slug\":\"sl\"},{}],\"facts\":[{\"fact\":\"$(printf 'f%.0s' $(seq 1 170))\"},{},{\"fact\":\"b\"},{\"fact\":\"c\"},{\"fact\":\"d\"},{\"fact\":\"e\"}],\"has_more\":true}" \
+  '{"first_wake":true}' '{"error":"x"}' '{"pages":"abc"}' 'not json' '{}'; do
+  both eval "printf '%s\n' '$wd_delta' >\"\$H/stub/brain-delta\""
+  same; WD_ENV=(AC_SCOPE=fam12); same; WD_ENV=()
+done
+assert_contains "$(nout)" "brain-delta: 0 page(s), 0 fact(s) since ?" "row 12: an empty delta"
+WD_NOJQ="$TMP/nojq"; mkdir -p "$WD_NOJQ"
+for f in /usr/bin/* /bin/*; do case "${f##*/}" in jq) ;; *) ln -sf "$f" "$WD_NOJQ/" ;; esac; done
+WD_PATH="$WD_NOJQ:$(dirname "$(command -v bun)")"; same; WD_PATH="$PATH"
+case "$(nlog)" in *delta*) fail "row 12: no jq, no delta call" ;; esac
+
+# 13. concurrency: one drain HELD inside its claim (its emit awk has read the
+#     records and waits on a gate), a second drain beside it. Two shims: the
+#     second keeps the live TS claimer, every record emits once. The frozen
+#     original as the second: it reads the TS claimer as a reused pid and
+#     emits the same records again - W8, the reason the match was widened.
+WD_GATE="$TMP/wd-gate"; mkfifo "$WD_GATE" "$WD_GATE.in"
+mkdir -p "$TMP/wd-hold"
+cat >"$TMP/wd-hold/awk" <<EOF
+#!/bin/sh
+case "\$*" in
+  *'printf "%s %s %s'*) [ -e "\$STUB_DIR/hold" ] || exec /usr/bin/awk "\$@"
+    rm -f "\$STUB_DIR/hold"; o="\$(/usr/bin/awk "\$@"; printf x)"
+    printf '\n' >"$WD_GATE.in"; read -r _ <>"$WD_GATE"; printf '%s' "\${o%x}" ;;
+  *) exec /usr/bin/awk "\$@" ;;
+esac
+EOF
+chmod +x "$TMP/wd-hold/awk"
+wd_held() {  # wd_held <second bin> - the shim held in its claim on $NH, then <second bin> on $NH
+  local held
+  H="$NH"; fresh; rec '' 1.1.000001 '1\treport\th1\tdone: once\n'; rec '' 1.1.000002 '1\treport\th2\tdone: twice?\n'; : >"$NH/stub/hold"
+  WD_PATH="$TMP/wd-hold:$PATH"
+  wd_run "$WD_NBIN" "$NH" h1 & held=$!
+  read -r -t 60 _ <>"$WD_GATE.in" || fail "row 13: the held drain never reached its gate"
+  wd_run "$1" "$NH" h2 || true
+  exec 9<>"$WD_GATE"; printf '\n' >&9; wait "$held" || true; exec 9>&-
+  WD_PATH="$PATH"
+}
+wd_held "$WD_NBIN"
+assert_eq "$(cat "$TMP/h1.raw" "$TMP/h2.raw" | grep -c '^report h')" "2" "row 13: two shims emit each record once"
+assert_contains "$(cat "$TMP/h2.raw")" "no queued wakes" "row 13: the second shim keeps the live TS drainer's claim"
+wd_held "$WD_OBIN"
+assert_eq "$(cat "$TMP/h1.raw" "$TMP/h2.raw" | grep -c '^report h')" "4" "row 13: W8 - the original steals the live TS claim and re-emits"
 
 pass

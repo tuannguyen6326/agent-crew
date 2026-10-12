@@ -5,7 +5,8 @@ import { test, expect, beforeEach, afterAll } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, realpathSync, existsSync, symlinkSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { envHome, configRead, stateDir, enterCaller, bunChild, sha256File, contractLint, pidAlive, lockAcquire, lockRelease, HARNESSES, ONESHOT_ONLY_HARNESSES, harnessLaunchable } from "../../src/lib.ts";
+import { envHome, configRead, stateDir, enterCaller, bunChild, sha256File, contractLint, pidAlive, lockAcquire, lockRelease, HARNESSES, ONESHOT_ONLY_HARNESSES, harnessLaunchable, runBounded } from "../../src/lib.ts";
+import { ONESHOT } from "../../src/pane-agent.ts";
 
 const LIB = join(import.meta.dir, "..", "..", "src", "lib.ts");
 
@@ -362,13 +363,14 @@ test("bunChild starts a src module the way bin/ac-bun.sh does", () => {
   process.env.JSC_dumpOptions = "1";
   try {
     const root = join(import.meta.dir, "..", "..");
+    const unset = Object.keys(process.env).filter((k) => /^(BUN_|JSC_)/.test(k)).flatMap((k) => ["-u", k]);
+    expect(unset).toContain("BUN_OPTIONS");
+    expect(unset).toContain("JSC_dumpOptions");
     enterCaller([""]);
-    expect(bunChild("src/brain.ts", ["stats"]).cmd).toEqual([process.execPath, "--no-env-file", join(root, "src/brain.ts"), "", "stats"]);
+    expect(bunChild("src/brain.ts", ["stats"]).cmd).toEqual(["/usr/bin/env", ...unset, process.execPath, "--no-env-file", join(root, "src/brain.ts"), "", "stats"]);
     enterCaller([here]);
     const c = bunChild("src/brain.ts", ["stats"]);
-    expect(c.cmd).toEqual([process.execPath, "--no-env-file", join(root, "src/brain.ts"), here, "stats"]);
-    expect(c.cwd).toBe(root);
-    expect(Object.keys(c.env).filter((k) => /^(BUN_|JSC_)/.test(k))).toEqual([]);
+    expect(c).toEqual({ cmd: ["/usr/bin/env", ...unset, process.execPath, "--no-env-file", join(root, "src/brain.ts"), here, "stats"], cwd: root });
   } finally {
     delete process.env.BUN_OPTIONS;
     delete process.env.JSC_dumpOptions;
@@ -408,7 +410,8 @@ test("configRead drops NUL bytes, as the shell's $(...) did", () => {
   expect(configRead("crew-harness")).toBe("codex");
 });
 
-// The lists are copies of two bash tables; lifting both keeps the copies honest.
+// The lists are copies of a bash table and of the pane agent's one-shot table;
+// reading both keeps the copies honest.
 function bashFn(file: string, fn: string): string {
   const src = readFileSync(join(import.meta.dir, "..", "..", "bin", file), "utf8");
   const at = src.indexOf(`\n${fn}() {\n`);
@@ -416,10 +419,10 @@ function bashFn(file: string, fn: string): string {
   return src.slice(at, src.indexOf("\n}\n", at));
 }
 
-test("the harness lists are ac_harness_known's registry plus oneshot_launch's other arms", () => {
+test("the harness lists are ac_harness_known's registry plus the pane agent's other one-shot arms", () => {
   const registry = (/case "\$1" in ([^)]*)\) return 0/.exec(bashFn("ac-harness.sh", "ac_harness_known")) ?? ["", ""])[1]
     .split("|").map((s) => s.trim());
-  const oneshot = [...bashFn("ac-pane-agent.sh", "oneshot_launch").matchAll(/^ {4}([a-z-]+)\)\s+printf/gm)].map((m) => m[1]);
+  const oneshot = Object.keys(ONESHOT);
   expect(oneshot.length).toBeGreaterThan(0);
   expect([...HARNESSES].sort()).toEqual(registry.sort());
   expect([...HARNESSES, ...ONESHOT_ONLY_HARNESSES].sort()).toEqual([...new Set([...registry, ...oneshot])].sort());
@@ -434,4 +437,32 @@ test("harnessLaunchable: a registry or one-shot name, or the home's config/launc
   // ac-spawn.sh takes a template only when `[ -f ]` holds.
   mkdirSync(join(h, "config", "launch-dir"));
   expect(harnessLaunchable(h, "dir")).toBe(false);
+});
+
+// runBounded (src/sync.ts's fetch_bounded twin, shared with src/tree.ts): a
+// child that ends answers its own status and, piped, its stdout; one past the
+// deadline answers 124 with its whole process group gone; one that cannot
+// start answers 127. Its clock is whole seconds, so a deadline of N can fire
+// as soon as N-1 seconds in: "2" leaves the child time to start.
+test("runBounded answers a child's status and piped stdout", async () => {
+  expect(await runBounded(["sh", "-c", "printf 'a\\tb\\n'; exit 3"], "5", "pipe")).toEqual({ status: 3, out: Buffer.from("a\tb\n") });
+  expect(await runBounded(["sh", "-c", "echo gone"], "5", "ignore")).toEqual({ status: 0, out: Buffer.alloc(0) });
+  expect((await runBounded([join(tempDir("ac-lib-ts-nobin-"), "missing")], "5", "pipe")).status).toBe(127);
+});
+
+test("runBounded kills the whole group of a child past its deadline: 124", async () => {
+  const d = tempDir("ac-lib-ts-bounded-");
+  const r = await runBounded(["sh", "-c", `sleep 30 & echo $! >"${d}/grandchild"; echo started; wait`], "2", "pipe");
+  expect(r).toEqual({ status: 124, out: Buffer.from("started\n") });
+  const gc = readFileSync(join(d, "grandchild"), "utf8").trim();
+  expect(pidAlive(gc)).toBe(false);
+});
+
+// The leader may end first while a descendant still holds the piped stdout:
+// the call is not done until both have, so the deadline still governs it.
+test("runBounded keeps its deadline while a descendant holds the piped stdout", async () => {
+  const d = tempDir("ac-lib-ts-bounded-");
+  const r = await runBounded(["sh", "-c", `sleep 30 & echo $! >"${d}/grandchild"; echo started`], "2", "pipe");
+  expect(r).toEqual({ status: 124, out: Buffer.from("started\n") });
+  expect(pidAlive(readFileSync(join(d, "grandchild"), "utf8").trim())).toBe(false);
 });

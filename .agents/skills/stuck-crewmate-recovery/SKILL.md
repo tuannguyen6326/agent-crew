@@ -21,6 +21,7 @@ Do NOT classify these as stuck - they are healthy states:
 - a blocked interactive prompt (a real dialog - answer it deliberately, do not "recover" it);
 - a completed-but-awaiting-landing task (the work is done and waiting to merge);
 - a `limited:` pane (stopped on the provider usage limit - it can do nothing until the reset its wake names, so a steer only spends a refused turn).
+- a `needs-login:` pane (stopped on an expired provider login - no wait and no steer cures it; escalate to the captain to sign that harness in again).
 
 ## The evidence ladder - escalate in order
 

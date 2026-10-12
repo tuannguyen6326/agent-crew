@@ -169,7 +169,7 @@
 // as its decimal value on both sides (jq takes `--argjson 007` as 7). Reads
 // only - no lock, no mkdir, no temp file, nothing written under any home.
 import { existsSync, readdirSync, readFileSync, statSync, writeSync } from "node:fs";
-import { configReadDir, die, enterCaller, iso, metaGet, metaIsVerify, now, physicalDir, wakeFamilySpools, watcherBeatRead } from "./lib.ts";
+import { configReadDir, die, enterCaller, iso, metaGet, metaIsVerify, now, physicalDir, spawnShellSync, wakeFamilySpools, watcherBeatRead } from "./lib.ts";
 
 const bin = `${process.cwd()}/bin`;
 // `now="$(ac_now)"` survived a date(1) that could not run: `${EPOCHSECONDS:-$(date
@@ -303,7 +303,7 @@ function lastStatus(stf: string): string {
 
 const psAlive = (pid: string): boolean => {
   try {
-    return Bun.spawnSync(["ps", "-p", native(pid)], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+    return spawnShellSync(["ps", "-p", native(pid)], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
   } catch {
     return false;
   }
@@ -389,7 +389,7 @@ function survey(home: string, depth: number, recurse = true): Home {
   if (isDir(`${home}/data`)) {
     let rows = "";
     try {
-      const r = Bun.spawnSync([`${bin}/ac-room.sh`, "list"], { stdout: "pipe", stderr: "ignore", env: { ...process.env, AC_HOME: home } });
+      const r = spawnShellSync(["/usr/bin/env", `AC_HOME=${home}`, `${bin}/ac-room.sh`, "list"], { stdout: "pipe", stderr: "ignore" });
       rows = r.stdout.toString("latin1");
       if (r.exitCode !== 0) h.inbox.unreadable = true;
     } catch {
@@ -557,7 +557,7 @@ function graceToken(): Raw {
   if (/^(0|-?[1-9][0-9]*)$/.test(grace)) return new Raw(grace);
   let r: ReturnType<typeof Bun.spawnSync>;
   try {
-    r = Bun.spawnSync(["jq", "-cn", "--argjson", "g", grace, "$g"], { stdout: "pipe", stderr: "inherit", env: process.env });
+    r = spawnShellSync(["jq", "-cn", "--argjson", "g", grace, "$g"], { stdout: "pipe", stderr: "inherit" });
   } catch {
     die("required tool not found: jq");
   }
@@ -568,7 +568,7 @@ function graceToken(): Raw {
 function emitJson(doc: J): never {
   let r: ReturnType<typeof Bun.spawnSync>;
   try {
-    r = Bun.spawnSync(["jq", "."], { stdin: Buffer.from(ser(doc), "latin1"), stdout: "inherit", stderr: "inherit", env: process.env });
+    r = spawnShellSync(["jq", "."], { stdin: Buffer.from(ser(doc), "latin1"), stdout: "inherit", stderr: "inherit" });
   } catch {
     die("required tool not found: jq");
   }

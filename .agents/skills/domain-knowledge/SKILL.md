@@ -15,13 +15,13 @@ kill.
 
 This skill is INSTRUCTIONS, not an engine. It calls `bin/ac-domain.sh`; it
 never re-implements that script's logic, and it ships no `scripts/`. Do NOT
-modify `bin/ac-domain.sh` to close a gap this skill hits - see Boundary below.
+modify `bin/ac-domain.sh` or the `src/domain.ts` it starts to close a gap this skill hits - see Boundary below.
 
 ## When to load
 
 The captain invokes this as `/domain-knowledge <name> [project]`. It runs in
 the crewchief's own session - unscoped, never a roomchief's - because
-`domain_chief_only` in `bin/ac-domain.sh` refuses every mutating verb when
+the chief-only gate in `bin/ac-domain.sh` refuses every mutating verb when
 `AC_SCOPE` is set, and `bin/ac-ledger-guard.sh` fences the fleet
 `records/captain.md` in a scoped session. Neither guard fires here on purpose.
 
@@ -59,12 +59,12 @@ at once, never one without the other:
   has one), and the `## <project>` heading, together.
 - REMOVE: delete both symlinks and the heading section, together.
 
-There is no verb in `bin/ac-domain.sh` for this - `cmd_new` is the only writer
+There is no verb in `bin/ac-domain.sh` for this - `new` is the only writer
 of `projects/`, and there is no verb that adds or removes a project from an
 EXISTING domain's view. That gap is exactly why this skill prescribes the
 symlink work by hand and then gates it on `validate` (step 3) - see Boundary.
 
-Symlink shape, copied from `cmd_new`, relative and at this exact depth
+Symlink shape, copied from `new`, relative and at this exact depth
 (written from inside `<pkg>/projects/`, where `../../../` is the fleet home):
 
     ln -s ../../../projects/<p>       <pkg>/projects/<p>
@@ -118,7 +118,7 @@ keeps them in sync, and `validate` is how it proves it did.
 
 ## Boundary
 
-Do not modify `bin/ac-domain.sh` to add a verb that would close the
+Do not modify `bin/ac-domain.sh` or `src/domain.ts` to add a verb that would close the
 add/remove-project gap in step 2(b). If an acceptance check genuinely cannot
 be satisfied without touching that script, that is a `needs-decision:` for
 the chief - never a silent scope expansion.

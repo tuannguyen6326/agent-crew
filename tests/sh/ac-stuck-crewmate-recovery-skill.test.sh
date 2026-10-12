@@ -69,4 +69,4 @@ while IFS= read -r f; do
   [ -z "$bad" ] || fail "clean-room leak in $f: $bad"
 done < <(find "$dir" -type f)
 
-printf 'ok - stuck-crewmate-recovery skill contract\n'
+pass

@@ -85,6 +85,11 @@ assert_contains "$buf" "claude --permission-mode auto --resume $old_sid" "the fr
 assert_contains "$buf" "AC_FLEET_STATE=" "the crewmate's launch env rides the resume line (its completion push needs it)"
 assert_contains "$buf" "AC_CREW_ID=r1" "the crewmate's own id rides the resume line"
 assert_contains "$buf" "has been RECOVERED" "the agent is told its pane was recovered"
+# The pane can die mid-turn, killing whatever command was running - a push, a
+# PR create, a test run - so the agent reconciles before it continues.
+assert_contains "$buf" "killed mid-way" "...that a command running when the pane died may not have finished"
+assert_contains "$buf" "git status" "...and what to check before re-running it"
+case "$buf" in *"nothing lost"*) fail "recovery never promises nothing was lost: $buf" ;; esac
 case "$(cat "$FAKE_HERDR/log")" in *"tab close"*) fail "recovery closes nothing - the old pane was already gone" ;; esac
 assert_contains "$(cat "$FAKE_HERDR/log")" "tab create --workspace" "the fresh pane lands in a family workspace the ordinary spawn way"
 

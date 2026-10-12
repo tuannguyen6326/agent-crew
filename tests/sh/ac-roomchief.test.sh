@@ -302,8 +302,8 @@ rm -f "$AC_HOME/config/crew-dispatch.json"
 
 # (5) EVIDENCE: the real Learning-shaped call - --system-initiated with NO
 # --harness at all (bin/ac-learn.sh cmd_autoroom's exact shape) - against a ROUTED
-# panes.roomchief carrying the now-MANDATORY `default` (captain ruling
-# 2026-07-28, routed-pane-rules-for-gate-codereview-roomchief). It must
+# panes.roomchief carrying the now-MANDATORY `default`
+# (routed-pane-rules-for-gate-codereview-roomchief). It must
 # resolve the default DETERMINISTICALLY and must NOT die: this is precisely
 # the caller the mandatory default exists to serve - no agent anywhere in the
 # loop to read the routed rule's `when` clause.
@@ -334,7 +334,7 @@ assert_fails "$BIN/ac-room.sh" open never-promoted
 
 # A chief parked at a captain gate is expected-quiet: stale suppressed
 # while its room has an unanswered GATE, back on once DECIDED lands.
-# The subject is ac-watch's gate-parked branch and nothing else: check_fleet
+# The subject is ac-watch's gate-parked branch and nothing else: checkFleet
 # emits ONE event per pass (it returns at the first actionable id) walking
 # state/*.meta in glob order, where fam1-chief sorts first - and under
 # AC_STALE=0 fam1-chief (no pending gate of its own) would take the very
@@ -506,7 +506,7 @@ assert_file "$FAKE_HERDR/tabs/tFOR" "the co-tenant's tab survives the reap attem
 "$BIN/ac-teardown.sh" orph3-chief >/dev/null
 
 # --- SOLO CHIEF: a roomchief that works its family's slices itself -----------
-# Captain ruling 2026-09-16: a small family need not cost a crewmate. The
+# A small family need not cost a crewmate. The
 # crewchief promotes it with --solo and the roomchief works each slice through
 # ac-self-task.sh, under every other roomchief duty. What must hold: the flag is
 # roomchief-only, the meta records it (every other process reads durable

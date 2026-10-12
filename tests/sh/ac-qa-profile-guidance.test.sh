@@ -86,4 +86,4 @@ assert_contains "$agents_doc" 'only when the frozen coverage manifest selects a 
 assert_contains "$agents_doc" 'Dispatch remains model routing only' \
   "intake guidance keeps dispatch rules out of QA behavior policy"
 
-printf 'ok - qa-profile-guidance doc/skill reconciliation\n'
+pass

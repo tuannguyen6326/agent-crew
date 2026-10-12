@@ -239,7 +239,7 @@ case "$ppbuf" in *AC_FLEET_PROFILE_LEARNING*) fail "a homed kind needs no thread
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
 # --codereview-rule pins a ROUTED panes.codereview deliberately at spawn time
-# (captain decision 2026-07-28, routed-pane-rules-for-gate-codereview-
+# (routed-pane-rules-for-gate-codereview-
 # roomchief: the chief is the only actor ever in a position to judge a `when`
 # clause here, since an execution crewmate never gets AC_HOME). Read back
 # from the REAL launch line, not inferred.
@@ -800,21 +800,24 @@ case "$err" in *"already exists"*) fail "an unreadable backend is not a window-a
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second deputy window was created"
 assert_file "$AC_HOME/state/.pane-dep1" "the blind recovery left the deputy's window alone"
 
-# ...and exit 127 (a driver failed to LOAD) refuses the SAME way, never
-# treated as the legitimate GONE path that would let recovery reap and
-# re-spawn onto a possibly-live deputy (contract: ac-backend.sh WINDOW
-# LIVENESS; ac_backend_route's per-call dispatch means a driver function that
-# failed to load makes bash itself return 127 from the very call being
-# classified - the real production shape, not a hand-picked sentinel). A
-# `case` with no default lets 127 fall straight through to backend_window_new
-# - fail-OPEN, the same hazard the rc=2 guard above exists for.
-make_loadfail_bin
-: >"$FAKE_HERDR/log"
-err="$("$LOADFAIL_BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
-  && fail "THE REGRESSION: --recover must refuse a 127 driver-load failure, never reap and re-spawn onto a possibly-live deputy"
-assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
-assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second deputy window was created"
-assert_file "$AC_HOME/state/.pane-dep1" "the refused recovery left the live deputy's window alone"
+# ...and any code but 0 and 1 refuses the SAME way, never treated as the
+# legitimate GONE path that would let recovery reap and re-spawn onto a
+# possibly-live deputy (contract: ac-backend.sh WINDOW LIVENESS). This row once
+# drove a driver that failed to LOAD (bash's 127, through a lab bin/ with the
+# herdr driver renamed); the backend verbs are native now (src/lib.ts
+# backendCall), so no driver can fail to load, and the row reaches the same
+# unreadable verdict with herdr absent from PATH (the liveness ladder's 2).
+nh_path="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin:/sbin"
+if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
+  : >"$FAKE_HERDR/log"
+  err="$(PATH="$nh_path" "$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
+    && fail "THE REGRESSION: --recover must refuse a 127 driver-load failure, never reap and re-spawn onto a possibly-live deputy"
+  assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
+  assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second deputy window was created"
+  assert_file "$AC_HOME/state/.pane-dep1" "the refused recovery left the live deputy's window alone"
+else
+  printf 'SKIP: deputy recovery with herdr absent - bun shares its directory with a herdr on this host\n'
+fi
 
 # The crew path's own guard, same defect: reaching it PROVES no meta exists (the
 # duplicate-meta refusal above dies on one), so the orphan handle a SIGKILLed
@@ -842,16 +845,22 @@ case "$err" in *"already exists"*) fail "an unreadable backend is not a window-a
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
 assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
 
-# ...and exit 127 refuses the SAME way at the ordinary spawn path too - the
-# exact production shape a missing default branch let fall through to
-# backend_window_new.
-: >"$FAKE_HERDR/log"
-err="$("$LOADFAIL_BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
-  && fail "THE REGRESSION: a crew spawn must refuse a 127 driver-load failure, never open a second window"
-assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
-case "$err" in *"already exists"*) fail "a 127 driver failure is not a window-already-exists verdict" ;; esac
-assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
-assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
+# ...and any code but 0 and 1 refuses the SAME way at the ordinary spawn path
+# too - the exact production shape a missing default branch let fall through
+# to backend_window_new. This row once drove a driver that failed to LOAD
+# (bash's 127); with the backend verbs native, it reaches the same unreadable
+# verdict with herdr absent from PATH, as the deputy recovery row above does.
+if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
+  : >"$FAKE_HERDR/log"
+  err="$(PATH="$nh_path" "$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
+    && fail "THE REGRESSION: a crew spawn must refuse a 127 driver-load failure, never open a second window"
+  assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
+  case "$err" in *"already exists"*) fail "a 127 driver failure is not a window-already-exists verdict" ;; esac
+  assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
+  assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
+else
+  printf 'SKIP: the crew spawn with herdr absent - bun shares its directory with a herdr on this host\n'
+fi
 
 # reap_orphan_window (bin/ac-spawn.sh, called from the crewdeputy NON-recover
 # path): the SAME fail-OPEN as the ordinary crew/recover guards above, but a
@@ -906,17 +915,20 @@ assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
 assert_contains "$err" "could not be READ" "the rc=2 refusal blames the BACKEND, not the pane"
 assert_no_file "$AC_HOME/state/dep5.meta" "the refused spawn leaves no task in flight"
 
-# ...and exit 127 (a driver failed to LOAD) refuses the SAME way - the real
-# production shape of a driver file that failed to load (ac_backend_route
-# dispatches per call to backend_${fn}_herdr, so a missing driver function
-# makes bash itself return 127 from the call being classified).
-make_loadfail_bin
-: >"$FAKE_HERDR/log"
-err="$("$LOADFAIL_BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake 2>&1)" \
-  && fail "THE REGRESSION: reap_orphan_window must refuse a 127 driver-load failure, never open a second window"
-assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
-assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "A1: no second window created on rc=127"
-assert_no_file "$AC_HOME/state/dep5.meta" "the refused spawn leaves no task in flight"
+# ...and any code but 0 and 1 refuses the SAME way. This row once drove a
+# driver that failed to LOAD (bash's 127); with the backend verbs native, it
+# reaches the same unreadable verdict with herdr absent from PATH, as the
+# deputy recovery row above does.
+if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
+  : >"$FAKE_HERDR/log"
+  err="$(PATH="$nh_path" "$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake 2>&1)" \
+    && fail "THE REGRESSION: reap_orphan_window must refuse a 127 driver-load failure, never open a second window"
+  assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
+  assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "A1: no second window created on rc=127"
+  assert_no_file "$AC_HOME/state/dep5.meta" "the refused spawn leaves no task in flight"
+else
+  printf 'SKIP: the orphan reap with herdr absent - bun shares its directory with a herdr on this host\n'
+fi
 rm -rf "$dhome5"
 
 # Ladder step 2: the home is gone on disk. Repairing or removing a registry
@@ -1132,7 +1144,7 @@ assert_contains "$out" "refusing teardown of t23" \
 assert_no_file "$AC_HOME/data/t23/verification" "a refused teardown writes NOTHING durable"
 assert_file "$AC_HOME/state/t23-verify-qa.meta" "a refused teardown leaves the live verifier alone"
 # The let-through direction: past the gate the preflight still runs, before the
-# task meta is archived (header: VERIFIER SWEEP).
+# task meta is archived (src/teardown.ts header: VERIFIER SWEEP).
 git -C "$repo" merge -q --ff-only crew/t23
 "$BIN/ac-teardown.sh" t23 >/dev/null 2>&1 || fail "a landed task must tear down"
 assert_file "$AC_HOME/state/archive/t23/meta"
@@ -1412,8 +1424,9 @@ grep -q "leased.*t15" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
 # landed_proof refuses a demote while any member of the family stands (member =
 # ac_family_of_id, or the meta's fleet_scope). A VERIFICATION agent carries a
 # family id but is NOT crew, and nobody tears it down - counting it would strand
-# the roomchief undemotable. No project_dir on these metas, so the qa-infra
-# sweep is skipped (this case is about landed_proof, not docker).
+# the roomchief undemotable. No member of dem is archived with a project_dir,
+# so the qa-infra sweep has nowhere to run (this case is about landed_proof,
+# not docker).
 "$BIN/ac-room.sh" post dem crewchief "spawned dem-review" >/dev/null
 printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/dem-chief.meta"
 # ac_family_of_id trusts a stage suffix only once its nested brief dir exists
@@ -1511,6 +1524,44 @@ assert_contains "$err24" "could not read" "the warning says the file could not b
 assert_contains "$err24" "$fake_lease24/.crew/qa/qrun24/serve.pid" "the warning names the unreadable serve.pid path"
 assert_file "$fake_lease24/.crew/qa/qrun24/serve.pid" "an unreadable serve.pid record is KEPT, not deleted"
 
+# --- kill_serve_pid: a recorded pid is a positive decimal, or nothing is signalled ---
+# `kill -0` accepts 0 and 00 (the caller's own process group) and -1 (every
+# process of the user), and the group signal that followed reached whatever
+# that named. The values here cannot reach past the teardown under test: -5
+# names no group, 12x no pid, and 0/00 signal only teardown's own group
+# because it runs as a `set -m` job. No test ever writes -1.
+for v in -5 12x 0 00; do
+  case "$v" in -5) t=t25a ;; 12x) t=t25b ;; 0) t=t25c ;; 00) t=t25d ;; esac
+  fl="$TMP/fake-lease-$t"
+  mkdir -p "$fl/.crew/qa/qrun25"
+  printf 'task=%s\n' "$t" >"$fl/.crew/qa/qrun25/run.meta"
+  printf '%s\n' "$v" >"$fl/.crew/qa/qrun25/serve.pid"
+  printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nworktree=%s\nleases=%s\n' "$repo" "$fl" "$fl" >"$AC_HOME/state/$t.meta"
+  rc=0
+  set -m
+  "$BIN/ac-teardown.sh" "$t" --force </dev/null >"$TMP/$t.out" 2>"$TMP/$t.err" &
+  wait "$!" || rc=$?
+  set +m
+  assert_eq "$rc:$(cat "$TMP/$t.out")" "0:teardown $t complete (forced)" "a serve.pid of '$v' never ends teardown by a signal it sent itself"
+  assert_contains "$(cat "$TMP/$t.err")" "WARN: not signalling qa serve pid '$v' ($fl/.crew/qa/qrun25/serve.pid): not a process id - a qa serve process may still be running and could not be identified" "a serve.pid of '$v' is named, not signalled"
+  assert_file "$fl/.crew/qa/qrun25/serve.pid" "a serve.pid of '$v' is kept for the hand that inspects it"
+done
+# 1 negates to -1: refused too. Run on the function with a kill spy, so not
+# even a broken guard can send a real signal - the frozen original's, which the
+# port's killServePid is held to under the same spy (tests/ts/teardown.test.ts).
+{
+  printf 'kill() { printf "%%s\\n" "$*" >>"$KSP_LOG"; return 0; }\n'
+  printf 'ac_warn() { printf "WARN: %%s\\n" "$*" >&2; }\n'
+  sed -n '/^kill_serve_pid() {/,/^}/p' "$ROOT/tests/fixtures/ac-teardown.sh"
+  printf 'kill_serve_pid "$1"\n'
+} >"$TMP/ksp.sh"
+mkdir -p "$TMP/ksp"
+printf '1\n' >"$TMP/ksp/serve.pid"
+ksp_err="$(KSP_LOG="$TMP/ksp.kills" bash "$TMP/ksp.sh" "$TMP/ksp/serve.pid" 2>&1)"
+assert_eq "$ksp_err" "WARN: not signalling qa serve pid '1' ($TMP/ksp/serve.pid): not a process id - a qa serve process may still be running and could not be identified" "a serve.pid of 1 is named, not signalled"
+assert_no_file "$TMP/ksp.kills" "a serve.pid of 1 meets no kill of any kind"
+assert_file "$TMP/ksp/serve.pid" "a serve.pid of 1 is kept"
+
 # --- bounded qa-infra sweep: docker can no longer park or silence teardown -----
 # The last step (ac-qa.sh infra down) had no bound and no evidence channel: a
 # HUNG docker parked teardown there forever, so neither the completion line nor
@@ -1518,13 +1569,17 @@ assert_file "$fake_lease24/.crew/qa/qrun24/serve.pid" "an unreadable serve.pid r
 # and the deaths recorded at this step exited 144 (signal 16, SIGURG) in total
 # silence. The metas below are written by hand (the ac-room-parallel-cap.test.sh
 # idiom) and kind=roomchief on purpose: a chief holds no lease and no crew
-# branch, so the qa-infra step and the tail after it are all that runs.
+# branch, so the qa-infra step and the tail after it are all that runs. A
+# chief sweeps where its family's members ran, read from their archived
+# metas, so each family gets one member archived in $repo.
 dstub="$TMP/dstub"; mkdir -p "$dstub"
 export PATH="$dstub:$PATH"
 qa_chief() {
   printf 'kind=roomchief\nbackend=herdr\nworktree=%s\nproject_dir=%s\n' "$repo" "$repo" \
     >"$AC_HOME/state/$1.meta"
   printf 'p20 t20\n' >"$AC_HOME/state/.pane-$1"
+  mkdir -p "$AC_HOME/state/archive/${1%-chief}-m"
+  printf 'kind=crewmate\nfleet_scope=%s\nproject_dir=%s\n' "${1%-chief}" "$repo" >"$AC_HOME/state/archive/${1%-chief}-m/meta"
 }
 cat >"$AC_HOME/records/backlog.md" <<'EOF'
 # Backlog
@@ -1849,8 +1904,8 @@ assert_eq "$(meta_field "$AC_HOME/state/dfam7-chief.meta" domain)" "bare" \
 # --- AC-12.2 / CR-007: the crew-spawn view guard -----------------------------
 # A view nothing enforces is decoration. The refusal sits immediately after the
 # project resolves and before the worktree lease, so a wrong-project spawn costs
-# no slot. It reads MEMBERSHIP through ac_domain_view_entry - the same predicate
-# `ac-domain.sh validate` reports with - not mere existence: a plain directory
+# no slot. It reads MEMBERSHIP through ac_domain_view_entry - the predicate
+# `ac-domain.sh validate` reports with, through its pinned twin - not mere existence: a plain directory
 # and a link resolving outside the fleet clones both EXIST and are both invalid.
 #
 # The view can only ever select from $AC_HOME/projects/, so the fixture repo

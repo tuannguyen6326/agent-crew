@@ -66,7 +66,7 @@
 // `not a git repo: <root>` echoes that character where the original echoed
 // the byte (exit status and stdout agree).
 import { writeSync } from "node:fs";
-import { die, enterCaller } from "./lib.ts";
+import { die, enterCaller, spawnShellSync } from "./lib.ts";
 
 const callerCwd = process.argv[2] ?? "";
 const { args, atCaller } = enterCaller(process.argv.slice(2));
@@ -78,7 +78,7 @@ const gitRoot = !atCaller && callerCwd !== "" && !root.startsWith("/") ? `${call
 // A launch that fails (no git on PATH) is a failed probe, as exit 127 was.
 const quiet = (...a: string[]): number => {
   try {
-    return Bun.spawnSync(["git", "-C", gitRoot, ...a], { stdout: "ignore", stderr: "ignore" }).exitCode ?? 1;
+    return spawnShellSync(["git", "-C", gitRoot, ...a], { stdout: "ignore", stderr: "ignore" }).exitCode ?? 1;
   } catch {
     return 127;
   }
@@ -88,7 +88,7 @@ const quiet = (...a: string[]): number => {
 function captured(stderr: "ignore" | "inherit", ...a: string[]): Buffer {
   let r: { stdout: Uint8Array };
   try {
-    r = Bun.spawnSync(["git", "-C", gitRoot, ...a], { stdout: "pipe", stderr });
+    r = spawnShellSync(["git", "-C", gitRoot, ...a], { stdout: "pipe", stderr });
   } catch {
     r = { stdout: new Uint8Array(0) };
   }
@@ -113,7 +113,7 @@ const branch = def.toString();
 // show-ref's stderr passed through in the original (a GIT_TRACE line, say).
 let shown = 1;
 try {
-  shown = Bun.spawnSync(["git", "-C", gitRoot, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`], { stdout: "ignore", stderr: "inherit" }).exitCode ?? 1;
+  shown = spawnShellSync(["git", "-C", gitRoot, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`], { stdout: "ignore", stderr: "inherit" }).exitCode ?? 1;
 } catch {}
 if (shown !== 0) {
   say("fetched only (origin has no ", def, ")");

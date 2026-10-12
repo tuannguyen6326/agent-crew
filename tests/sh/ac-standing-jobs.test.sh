@@ -15,9 +15,9 @@ out="$("$BIN/ac-standing-jobs.sh")"
 assert_contains "$out" "-- standing jobs --" "header always prints"
 assert_contains "$out" "records/standing-jobs.md" "names the missing declaration file"
 
-# 2. Both jobs captain.md declares today (drydock, 2026-07-21/22): the
-#    cross-fleet monitor ON at :07/:37, the Slack STATUS job OFF since
-#    2026-07-22.
+# 2. Two jobs as a fleet's captain.md declares them: the
+#    cross-fleet monitor ON at :07/:37, the Slack STATUS job OFF with
+#    a dated disable note.
 cat >"$AC_HOME/records/standing-jobs.md" <<'EOF'
 - cross-fleet-monitor [on] cadence::07/:37 recreate:CronCreate a job at :07 and :37 past each hour running the cross-fleet sweep (bin/ac-fleets.sh), queueing findings into drydock's backlog
 - slack-status-30min [off] cadence:every 30 minutes recreate:CronCreate a 30-min job posting fleet STATUS to Slack (disabled 2026-07-22 - do not re-create unless TN asks again)

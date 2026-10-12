@@ -213,7 +213,18 @@ assert_contains "$dig" "pool health unavailable" \
   "a bun that cannot start leaves the pool block UNKNOWN, never silent"
 assert_contains "$dig" "standing jobs digest unavailable" \
   "a bun that cannot start leaves the standing-jobs block UNKNOWN, never silent"
-assert_contains "$dig" "WARN"$'\t'"ledger unreadable" "the crewdomain block names the unread ledger"
+assert_contains "$dig" "-- fleet --
+WARN: fleet view unavailable (bin/ac-fleet-view.sh failed) - the crew list is UNKNOWN, not empty" \
+  "a bun that cannot start leaves the fleet block UNKNOWN, never empty"
+assert_contains "$dig" "-- wakes --
+WARN: wake drain unavailable (bin/ac-wake-drain.sh failed) - queued wakes are UNKNOWN, not empty; run bin/ac-wake-drain.sh by hand" \
+  "a bun that cannot start leaves the wakes block UNKNOWN, never empty"
+assert_contains "$dig" "-- crewdeputies (routing table) --
+WARN: crewdeputy routing table unavailable (bin/ac-deputy.sh list failed) - the deputies are UNKNOWN, not absent; run bin/ac-deputy.sh list by hand" \
+  "a bun that cannot start leaves the crewdeputy block UNKNOWN, never absent"
+assert_contains "$dig" "-- crewdomains (routing table) --
+WARN: crewdomain routing table unavailable (bin/ac-domain.sh list failed) - the domains are UNKNOWN, not absent; run bin/ac-domain.sh list by hand" \
+  "a bun that cannot start leaves the crewdomain block UNKNOWN, never absent"
 assert_contains "$dig" "-- supervision --" "the blocks after the crewdomain block still print"
 
 # A digest block may never take session start down: even a corrupt registry

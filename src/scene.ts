@@ -45,7 +45,7 @@
 // ""); the summary is line 3 past `summary: `, "" when line 3 is not one; a
 // head value drops its NUL bytes as `$(...)` dropped them; the body is
 // everything after the fourth LF. Readers of this shape outside this
-// module: bin/ac-session-start.sh (count, hottest), bin/ac-know.sh (recall,
+// module: bin/ac-session-start.sh (count, hottest), src/know.ts (recall,
 // cite's open command), bin/ac-learn.sh (`list` is a DISTILL source verbatim;
 // stale by `updated=`), src/brain.ts (kind scene, scenes-archive excluded).
 // A heat is read as bash arithmetic read it: a leading zero makes it octal
@@ -172,7 +172,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { configRead, die, enterCaller, iso, lockAcquire, lockRelease, recordsDir } from "./lib.ts";
+import { configRead, die, enterCaller, iso, lockAcquire, lockRelease, recordsDir, spawnShellSync } from "./lib.ts";
 
 const BODY_MAX = 16384;
 const LF = Buffer.from("\n");
@@ -277,7 +277,7 @@ function sceneCount(): { n: bigint; ok: boolean } {
   const dir = scenesDir();
   const names = sceneNames();
   if (names.length === 0) return { n: 0n, ok: true };
-  const r = Bun.spawnSync(["ls", ...names.map((n) => join(dir, n))], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+  const r = spawnShellSync(["ls", ...names.map((n) => join(dir, n))], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
   return { n: BigInt((r.stdout.toString("latin1").match(/\n/g) ?? []).length), ok: r.exitCode === 0 };
 }
 
@@ -342,7 +342,7 @@ function sceneWrite(slug: string, created: string, heat: bigint, summary: Buffer
 }
 
 const sleepOne = (): void => {
-  Bun.spawnSync(["sleep", "1"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: process.env });
+  spawnShellSync(["sleep", "1"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 };
 
 function lock(): void {
@@ -366,7 +366,7 @@ function coldest(n: number): string[] {
     if (!isFile(f)) continue;
     rows.push(`${sceneMeta(f, "heat") || "0"}\t${sceneMeta(f, "updated")}\t${shown(name.slice(0, -3))}\n`);
   }
-  const r = Bun.spawnSync(["sort", "-t", "\t", "-k1,1n", "-k2,2"], { stdin: b(rows.join("")), stdout: "pipe", stderr: "inherit", env: { ...process.env, LC_ALL: "C" } });
+  const r = spawnShellSync(["/usr/bin/env", "LC_ALL=C", "sort", "-t", "\t", "-k1,1n", "-k2,2"], { stdin: b(rows.join("")), stdout: "pipe", stderr: "inherit" });
   const sorted = r.stdout.toString("latin1").split("\n");
   if (sorted[sorted.length - 1] === "") sorted.pop();
   return sorted.slice(0, n).map((l) => {
@@ -468,7 +468,7 @@ function cmdMerge(rest: string[]): void {
   for (const s of srcs) {
     // mv itself: an archive copy of the same slug is overwritten as mv
     // overwrites it, and a failure ends the run with mv's own status and line.
-    const r = Bun.spawnSync(["mv", sceneFile(s), join(archiveDir(), `${s}.md`)], { stdout: "ignore", stderr: "inherit" });
+    const r = spawnShellSync(["mv", sceneFile(s), join(archiveDir(), `${s}.md`)], { stdout: "ignore", stderr: "inherit" });
     if (r.exitCode !== 0) {
       unlock();
       process.exit(r.exitCode ?? 1);

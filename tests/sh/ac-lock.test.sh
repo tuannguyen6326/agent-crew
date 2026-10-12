@@ -50,10 +50,10 @@ lockf="$state/.session-lock"
 #
 # So the bound comes from OUTSIDE the holder instead: the holder keeps its
 # plain read-only `<fifo` open, semantics untouched, and a detached watchdog
-# kills it after <ttl>. The watchdog never touches the fifo, so nothing about
-# EOF or reader-count changes; it only guarantees the holder cannot outlive the
-# run. Both processes redirect their own output, so neither can hold a caller's
-# pipe.
+# (helpers.sh kill_after) kills it after <ttl>. The watchdog never touches the
+# fifo, so nothing about EOF or reader-count changes; it only guarantees the
+# holder cannot outlive the run. Both processes redirect their own output, so
+# neither can hold a caller's pipe.
 #
 # TTLs are set from the measured green runtime of this file (22s), not copied
 # from the sibling's 90: a gate held for one case takes 60s (~40x the longest
@@ -64,7 +64,7 @@ fifo_hold() {
   local fifo="$1" ttl="$2" h
   ( read -r _ <"$fifo" ) >/dev/null 2>&1 &
   h=$!
-  ( sleep "$ttl"; kill -9 "$h" 2>/dev/null || true ) >/dev/null 2>&1 &
+  kill_after "$ttl" "$h"
   printf '%s\n' "$h"
 }
 
@@ -78,7 +78,8 @@ fifo_hold() {
 FOREIGN_HOLD="$TMP/foreign.hold"
 mkfifo "$FOREIGN_HOLD"
 FOREIGN="$(fifo_hold "$FOREIGN_HOLD" 300)"
-kill_foreign() { kill "$FOREIGN" 2>/dev/null || true; wait "$FOREIGN" 2>/dev/null || true; cleanup; }
+FOREIGN_ID="$(proc_identity "$FOREIGN")"
+kill_foreign() { same_process "$FOREIGN" "$FOREIGN_ID" && kill "$FOREIGN" 2>/dev/null || true; wait "$FOREIGN" 2>/dev/null || true; cleanup; }
 trap kill_foreign EXIT
 
 # A provably dead pid for stale-recovery cases.
@@ -255,10 +256,11 @@ cat >"$sparebin/wrapper.sh" 2>"$TMP/wrapper-heredoc.stderr" <<EOF
 #
 # This one cannot use fifo_hold: it must EXEC as this same pid, so the holder
 # and the thing under test are one process. The bound is therefore a watchdog
-# this process kills ITSELF before exec'ing - fired only while we are still the
-# wrapper, so it can never reach the ac-lock.sh run (or, after it exits, a
-# recycled pid).
-( sleep 60; kill -9 \$\$ 2>/dev/null ) >/dev/null 2>&1 &
+# this process kills ITSELF before exec'ing, so it can never reach the
+# ac-lock.sh run. A wrapper killed before that leaves it armed, so it fires only
+# while this pid still has the start time it had here - never at a recycled pid.
+_id="\$(/bin/ps -o lstart= -p \$\$)"
+( sleep 60; [ "\$(/bin/ps -o lstart= -p \$\$)" != "\$_id" ] || kill -9 \$\$ 2>/dev/null ) >/dev/null 2>&1 &
 _wd=\$!
 # The read's STATUS is deliberately ignored: the release path closes the gate
 # with no newline, so EOF must still acquire (a bare \`|| exit 0\` here breaks
@@ -488,21 +490,25 @@ mkfifo "$SESS_HOLD"
 # RACE_PIDS records EVERY worker this section spawns (session holders), so every
 # exit path can reap them by their OWN pids - never a pattern. reap_race is the
 # EXIT backstop; the test also reaps explicitly and asserts zero survivors below.
+# The list is never pruned, so every reap meets pids that ended sections ago:
+# RACE_ID keeps each one's identity, and only that process is signalled or
+# counted (helpers.sh delayed kills).
 RACE_PIDS=""
+RACE_ID=()
 reap_race() {
   local p
-  for p in $RACE_PIDS; do kill "$p" 2>/dev/null || true; done
+  for p in $RACE_PIDS; do same_process "$p" "${RACE_ID[$p]-}" && kill "$p" 2>/dev/null || true; done
   for p in $RACE_PIDS; do wait "$p" 2>/dev/null || true; done
 }
 race_survivors() {
-  # How many recorded workers are still alive, by pid.
+  # How many recorded workers are still alive, by pid and identity.
   local p n=0
-  for p in $RACE_PIDS; do kill -0 "$p" 2>/dev/null && n=$((n + 1)); done
+  for p in $RACE_PIDS; do same_process "$p" "${RACE_ID[$p]-}" && n=$((n + 1)); done
   printf '%s\n' "$n"
 }
 race_cleanup() {
   # Supersedes kill_foreign as the EXIT handler: also reaps every worker pid.
-  kill "$FOREIGN" 2>/dev/null || true
+  same_process "$FOREIGN" "$FOREIGN_ID" && kill "$FOREIGN" 2>/dev/null || true
   wait "$FOREIGN" 2>/dev/null || true
   reap_race
   cleanup
@@ -521,6 +527,7 @@ spawn_sessions() {
     sh_pid="$(fifo_hold "$SESS_HOLD" 60)"
     SESSIONS="$SESSIONS $sh_pid"
     RACE_PIDS="$RACE_PIDS $sh_pid"
+    RACE_ID[$sh_pid]="$(proc_identity "$sh_pid")"
     i=$((i + 1))
   done
 }
@@ -1018,7 +1025,8 @@ lreset
 #     behind a fifo gate and execs into its entry as that same pid.
 cat >"$TMP/lgate.sh" <<'EOF'
 #!/usr/bin/env bash
-( sleep 60; kill -9 $$ 2>/dev/null ) >/dev/null 2>&1 &
+_id="$(/bin/ps -o lstart= -p $$)"
+( sleep 60; [ "$(/bin/ps -o lstart= -p $$)" != "$_id" ] || kill -9 $$ 2>/dev/null ) >/dev/null 2>&1 &
 _wd=$!
 read -r _ <"$1"
 kill "$_wd" 2>/dev/null || true
@@ -1033,6 +1041,7 @@ plant_and_acquire() {  # plant_and_acquire <bin> <home> <out> - the row on one s
   AC_HOME="$h" AC_LOCK_PID=$$ LC_ALL=C PATH="$TMP/lstub:$PATH" STUB_ISO="$STUB_ISO" "$TMP/lgate.sh" "$gate" "$b" >"$o" 2>&1 &
   pid=$!
   RACE_PIDS="$RACE_PIDS $pid"
+  RACE_ID[$pid]="$(proc_identity "$pid")"
   ln -s "$h/state/victim" "$h/state/.session-lock.tmp.$pid"
   printf x >"$gate"
   wait "$pid" 2>/dev/null || fail "exclusive-temp row: acquire under $b failed: $(cat "$o")"

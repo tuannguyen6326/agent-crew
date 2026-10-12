@@ -11,7 +11,7 @@
 //                      [--captain-requested '<ref>' --reason '<one line>']
 //
 // A scout steered mid-flight into writing code on crew/<id> stops being a
-// report-only task. Mode is per-task (captain order 2026-08-10) and the
+// report-only task. Mode is per-task and the
 // registry default is gone, so --mode is REQUIRED: a promotion is exactly the
 // moment the task GAINS a delivery mode. Promoting into crew-ship is a
 // time-expensive choice: it needs the captain's word, declared with
@@ -104,7 +104,7 @@
 //                     A write that fails refuses `ERROR: cannot write <path>: <code>`, exit 1,
 //                     in place of the shell's own redirection line.
 //   the pane notice   <distro root>/bin/ac-send.sh <id> '<notice>' is SPAWNED
-//                     (it stays bash) with stdout and stderr discarded, where
+//                     (a shim of src/send.ts) with stdout and stderr discarded, where
 //                     the notice is
 //                       NOTICE: this task was promoted to SHIP - deliver the project change on crew/<id>; delivery per mode=<mode>. Read your full contract: <abs path of ship-instructions.md>. A report alone no longer lands it.
 //                     Exit 0 prints stdout line 2 `notified crewmate <id> of
@@ -129,7 +129,7 @@
 // found: bun`, exit 1, from the shim.
 import { statSync, writeFileSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
-import { dataDir, deliveryModeBlock, die, enterCaller, metaGet, metaSet, statusAppend, taskMeta, taskStatus } from "./lib.ts";
+import { dataDir, deliveryModeBlock, die, enterCaller, metaGet, metaSet, spawnShellSync, statusAppend, taskMeta, taskStatus } from "./lib.ts";
 
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
@@ -200,7 +200,7 @@ if (!appended) die(b(`cannot append ${bytes(taskStatus(id))}`));
 writeSync(1, b(`promoted ${bytes(id)}: kind scout -> ship, mode=${mode} (ship teardown protection now applies)\n`));
 
 const instructions = `${dataDir()}/${id}/ship-instructions.md`;
-const made = Bun.spawnSync(["mkdir", "-p", `${dataDir()}/${id}`], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+const made = spawnShellSync(["mkdir", "-p", `${dataDir()}/${id}`], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
 if (made.exitCode !== 0) process.exit(made.exitCode ?? 1);
 const contract = `# Ship contract: ${id} (promoted from scout)
 
@@ -222,6 +222,6 @@ try {
 const notice = `NOTICE: this task was promoted to SHIP - deliver the project change on crew/${id}; delivery per mode=${mode}. Read your full contract: ${instructions}. A report alone no longer lands it.`;
 let sent = false;
 try {
-  sent = Bun.spawnSync([resolve(import.meta.dir, "..", "bin", "ac-send.sh"), id, notice], { stdin: "inherit", stdout: "ignore", stderr: "ignore", env: process.env }).exitCode === 0;
+  sent = spawnShellSync([resolve(import.meta.dir, "..", "bin", "ac-send.sh"), id, notice], { stdin: "inherit", stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 } catch {}
 writeSync(1, sent ? b(`notified crewmate ${bytes(id)} of the ship contract\n`) : Buffer.from("crewmate window not reachable; promotion recorded in meta only\n"));

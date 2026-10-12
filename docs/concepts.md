@@ -127,7 +127,7 @@ A contract token already pinned on the row is pre-consent and is never re-asked.
 `bin/ac-brief.sh` enforces this mechanically: a heavy value with no row pin needs `--captain-requested` plus `--reason`, recorded on the brief's `Escalation:` line.
 The cheap path (direct, `direct-pr`/`local-only`, no review, no QA) stays autonomous.
 
-Owner: [`intake-triage`](../.agents/skills/intake-triage/SKILL.md) skill, `bin/ac-brief.sh` header.
+Owner: [`intake-triage`](../.agents/skills/intake-triage/SKILL.md) skill, `src/brief.ts` header.
 
 ### Requirements check
 
@@ -154,17 +154,17 @@ Only an unanswered `GATE:` or `ASK:` is pending; the pending set across rooms is
 Receipts are also said in chat, because a decision the captain has to discover in a file was not reported.
 A 2-4 option ask goes out as a select with the recommendation first.
 
-Owner: [`rooms-threads`](../.agents/skills/rooms-threads/SKILL.md) skill, `bin/ac-room.sh` header.
+Owner: [`rooms-threads`](../.agents/skills/rooms-threads/SKILL.md) skill, `src/room.ts` header.
 
 ## Supervision
 
 ### The zero-token watcher
 
 `bin/ac-watch.sh` polls every pane in bash, absorbs benign output, and exits with one reason line only when something is actionable.
-Reasons include `report:`, `gone:`, `ask:`, `ended:`, `limited:`, `stale:`, `push:`, `unobservable:` and `heartbeat`; `unobservable` means the backend could not be read, never that the agent died.
+Reasons include `report:`, `gone:`, `ask:`, `ended:`, `limited:`, `needs-login:`, `stale:`, `push:`, `unobservable:` and `heartbeat`; `unobservable` means the backend could not be read, never that the agent died.
 The watcher must run as the harness's own background task so its exit wakes the chief; on claude the Stop hook `bin/ac-watch-autoarm.sh` holds and re-arms it automatically.
 
-Owners: `bin/ac-watch.sh` header, [`task-lifecycle`](../.agents/skills/task-lifecycle/SKILL.md) skill.
+Owners: the `src/watch.ts` header (`bin/ac-watch.sh` is its entry), [`task-lifecycle`](../.agents/skills/task-lifecycle/SKILL.md) skill.
 
 ### The wake spool and push completion
 
@@ -183,7 +183,7 @@ Harness hooks turn the most-violated rules into mechanical checks; on claude the
 - UserPromptSubmit: `bin/ac-prompt-recall.sh` hands a human-driven session the top fleet-memory hits before the model reads the prompt.
 - SessionStart: `bin/ac-sessionstart-nudge.sh` reminds a fresh chief session to run `bin/ac-session-start.sh`, and re-orients a compacted one.
 
-Owners: each script's header.
+Owners: each script's header, or for a ported hook the header of the `src/` module its fail-open shim starts.
 
 ## Truth on disk
 
@@ -196,7 +196,7 @@ All persistent truth lives on disk and in the backend session; conversation memo
 `bin/ac-session-start.sh` rebuilds the chief's picture at every session start and drains queued wakes.
 After a compaction, the SessionStart hook tells a chief to rebuild footing from disk with `bin/ac-brain.sh context_pack` and reload the skill for the work in flight, and tells a crewmate to re-read its brief and status log.
 
-Owners: [`AGENTS.md`](../AGENTS.md) section 2, `bin/ac-brief.sh` header, [`docs/backlog.md`](backlog.md), `bin/ac-sessionstart-nudge.sh` header.
+Owners: [`AGENTS.md`](../AGENTS.md) section 2, `src/brief.ts` header, [`docs/backlog.md`](backlog.md), `bin/ac-sessionstart-nudge.sh` header.
 
 ## The knowledge loop
 
@@ -209,7 +209,7 @@ Learning happens at landing, never deferred to a manual debrief.
 
 At intake the chief reads by the order's question with `bin/ac-know.sh recall` and cites what it used; citing is what bumps an entry's heat.
 
-Owners: [`task-lifecycle`](../.agents/skills/task-lifecycle/SKILL.md) skill, the `bin/ac-know.sh`, `bin/ac-learn.sh`, `src/scene.ts` and `src/brain.ts` headers.
+Owners: [`task-lifecycle`](../.agents/skills/task-lifecycle/SKILL.md) skill, the `src/know.ts`, `bin/ac-learn.sh`, `src/scene.ts` and `src/brain.ts` headers.
 
 ## Review and QA as obligations
 
@@ -222,7 +222,7 @@ A `fix` verdict loops back to the execution crewmate; `ask-user` holds delivery 
 Past `review.max_rounds` the loop holds for the owning chief's decision.
 Inside `crew-ship`, the pipeline's review step fulfills the obligation, and `push` refuses a stale `reviewed_ref`.
 
-Owners: [`delivery-review`](../.agents/skills/delivery-review/SKILL.md) skill, `bin/ac-verify.sh` and `bin/ac-ship.sh` headers, [`docs/validate-pipeline.md`](validate-pipeline.md).
+Owners: [`delivery-review`](../.agents/skills/delivery-review/SKILL.md) skill, the `src/verify.ts` header (started by `bin/ac-verify.sh`) and the `src/ship.ts` header (started by `bin/ac-ship.sh`), [`docs/validate-pipeline.md`](validate-pipeline.md).
 
 ### crew-qa
 
@@ -231,7 +231,7 @@ Its evidence comes only from the booted deliverable's client-facing, API, integr
 The verdict lives in durable run state, not in pane prose, and QA never posts or merges on its own.
 A project can set `qa.require_for_ship: true` so merge helpers refuse a head with no passing QA run.
 
-Owners: [`crew-qa`](../.agents/skills/crew-qa/SKILL.md) skill, `bin/ac-qa.sh` header, [`docs/qa-attestation.md`](qa-attestation.md).
+Owners: [`crew-qa`](../.agents/skills/crew-qa/SKILL.md) skill, the `src/qa.ts` header (started by `bin/ac-qa.sh`), [`docs/qa-attestation.md`](qa-attestation.md).
 
 ## The four judgment rules
 
@@ -263,7 +263,7 @@ Its answers are proposals only, and they are asked at five sites:
 
 `config/jev-provider` selects the provider.
 
-Owner: `bin/ac-jev.sh` header, [`docs/configuration.md`](configuration.md).
+Owner: the `src/jev.ts` header (`bin/ac-jev.sh` starts it), [`docs/configuration.md`](configuration.md).
 
 ### The compact adviser
 
@@ -272,7 +272,7 @@ It scores the session from its transcript and context usage against a floor that
 As a claude Stop hook it judges only human-read sessions (a solo session, or a chief at the fleet home) and shows its advice to the human, not the model.
 Crewmates are judged by the watcher instead, which appends the note to a quiet wake; the chief decides whether to send `/compact`.
 
-Owner: `bin/ac-compact-advise.sh` header.
+Owner: the `src/compact-advise.ts` header (`bin/ac-compact-advise.sh` starts it).
 
 ## Where to go next
 

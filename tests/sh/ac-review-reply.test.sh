@@ -11,8 +11,8 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-command -v jq >/dev/null 2>&1 || { printf 'SKIP: jq not installed\n'; exit 0; }
-command -v bun >/dev/null 2>&1 || { printf 'SKIP: bun not installed\n'; exit 0; }
+command -v jq >/dev/null 2>&1 || skip 'jq not installed'
+command -v bun >/dev/null 2>&1 || skip 'bun not installed'
 
 make_home
 DB="$BIN/ac-dashboard.sh"

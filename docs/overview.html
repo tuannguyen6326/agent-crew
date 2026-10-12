@@ -485,7 +485,7 @@
     <dt>routing</dt><dd>once a family is promoted, the crewchief neither works, inspects nor relays it — two chiefs on one family is a role violation; <code>ac-ledger-guard.sh</code> bars a roomchief from the fleet ledgers</dd>
     <dt>handback</dt><dd><code>ac-room.sh handback</code> posts <code>HANDBACK:</code> and queues a durable wake; the crewchief demotes the chief and closes the room, fail-closed</dd>
   </dl>
-  <p>Law: the <code>rooms-threads</code> skill, <code>bin/ac-room.sh</code> header.</p>
+  <p>Law: the <code>rooms-threads</code> skill, <code>src/room.ts</code> header.</p>
 </section>
 
 <section id="solo">
@@ -625,12 +625,13 @@
     <tr><td><code>ask:&lt;id&gt;</code></td><td>blocked on an interactive prompt — answer or steer at once</td></tr>
     <tr><td><code>ended:&lt;id&gt;</code></td><td>the pane ended its turn with no marker — read it</td></tr>
     <tr><td><code>limited:&lt;id&gt;</code></td><td>the provider usage limit stopped the pane — wait for the reset, do not steer</td></tr>
+    <tr><td><code>needs-login:&lt;id&gt;</code></td><td>an expired provider login stopped the pane — the captain signs that harness in again, do not steer</td></tr>
     <tr><td><code>stale:&lt;id&gt;</code></td><td>quiet while working, or busy past the busy-stall bound</td></tr>
     <tr><td><code>gone:&lt;id&gt;</code></td><td>the backend answered and does not know that pane</td></tr>
     <tr><td><code>unobservable:&lt;id&gt;</code></td><td>the backend could not be read — fix the backend, never tear the crew down</td></tr>
     <tr><td><code>heartbeat</code></td><td>nothing actionable — re-arm</td></tr>
   </table></div>
-  <p>This is a partial view; the full exit-reason vocabulary is owned by the <code>bin/ac-watch.sh</code> header.</p>
+  <p>This is a partial view; the full exit-reason vocabulary is owned by the <code>src/watch.ts</code> header (<code>bin/ac-watch.sh</code> is its entry).</p>
 </section>
 
 <section id="hooks">
@@ -688,7 +689,7 @@
       <text class="t2" x="652" y="195">watch-autoarm: hold and re-arm</text>
       <text class="t2" x="652" y="210">the watcher (asyncRewake)</text>
     </svg>
-    <p class="cap">Every hook is a <code>bin/ac-*.sh</code> script whose header is its spec: <code>ac-sessionstart-nudge.sh</code>, <code>ac-prompt-recall.sh</code>, <code>ac-delegation-guard.sh</code>, <code>ac-ledger-guard.sh</code>, <code>ac-primary-guard.sh</code>, <code>ac-watch-policy-hook.sh</code> (Bash tool only), <code>ac-turnend-guard.sh</code>, <code>ac-compact-advise.sh --hook</code>, <code>ac-watch-autoarm.sh</code>.</p>
+    <p class="cap">Every hook is a <code>bin/ac-*.sh</code> entry whose header is its spec, or, once ported, a fail-open shim whose <code>src/</code> module's header is: <code>ac-sessionstart-nudge.sh</code>, <code>ac-prompt-recall.sh</code>, <code>ac-delegation-guard.sh</code>, <code>ac-ledger-guard.sh</code>, <code>ac-primary-guard.sh</code>, <code>ac-watch-policy-hook.sh</code> (Bash tool only), <code>ac-turnend-guard.sh</code>, <code>ac-compact-advise.sh --hook</code>, <code>ac-watch-autoarm.sh</code>.</p>
   </div>
 </section>
 

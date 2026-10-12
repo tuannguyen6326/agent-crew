@@ -26,6 +26,9 @@
 # Handles are runtime-issued UUIDs and never recycled (measured), so the kill
 # ownership proof needs no creation-label round-trip: the recorded handle can
 # only be this task's terminal.
+# orca_place_pane (with orca_resolve_group and orca_tab_handles) and
+# orca_worktree_lease have TypeScript twins in src/lib.ts that
+# tests/ts/spawn-twins.test.ts holds to them.
 
 orca_json() {
   # orca_json <args...> - run the orca CLI with --json. Non-zero exit and an
@@ -97,7 +100,7 @@ orca_worktree_lease() {
   # AHEAD of its own branch ref while detached (the branch ref and
   # origin's tracking ref both stay put) reconciles: the branch NAME
   # resolves "correctly" yet a name-based lookup still lands behind,
-  # because neither ref moved - measured against the room's own FMS
+  # because neither ref moved - measured against one room's own
   # evidence (correct branch, 7 commits behind, no symptom). The optional
   # 3rd arg (ac-self-task.sh/ac-spawn.sh's own --base-branch) names the
   # branch explicitly and wins over the live checkout (detached or not),

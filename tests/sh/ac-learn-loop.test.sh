@@ -13,16 +13,27 @@
 . "$BIN/ac-lib.sh"
 . "$BIN/ac-maintenance-lib.sh"
 
+# twin <expr> [<arg>...] - <expr> over src/lib.ts (L) and
+# src/maintenance-receipt.ts (M), its arguments A, in one bun process: the code
+# the fleet runs where a bash helper retired once src/learn.ts took its last
+# caller (the bash one is frozen at tests/fixtures/ac-maintenance-retired.sh,
+# and tests/ts holds each twin to it). A string answer is printed; the status
+# is a number answer, else 1 for false or null and 0 for anything else.
+twin() {
+  local expr="$1"; shift
+  (cd "$ROOT" && bun --no-env-file -e "const L = await import('./src/lib.ts'); const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
+}
+
 make_home
 
-# --- ac_learn_backup: the Q8 reversibility floor ----------------------------
+# --- the learn backup: the Q8 reversibility floor ----------------------------
 
 printf '## 2026-07-18 - fam (chief)\n- a durable lesson.\n' >"$AC_HOME/records/learnings.md"
 printf 'captain policy line\n' >"$AC_HOME/records/captain.md"
 mkdir -p "$AC_HOME/skills/existing"
 printf 'an existing skill\n' >"$AC_HOME/skills/existing/SKILL.md"
 
-arc="$(ac_learn_backup)"
+arc="$(twin 'L.recordsBackup("learn")')"
 assert_file "$arc" "backup archive created"
 case "$arc" in
   "$AC_HOME/state/backups/"learn-*.tar.gz) ;;
@@ -90,9 +101,9 @@ find "$AC_HOME/state/.maintenance-transactions" -name journal -exec grep -q '^st
 assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "0" "counter reset to debriefs=0 after land (legacy key migrated)"
 [ -n "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" ] || fail "last_run stamped after land"
 
-# A BUSY cadence lock is not a newer generation: ac_learn_reset answers 1 for
-# both and warns only for the lock (bin/ac-maintenance-lib.sh), so land's own
-# words must not contradict that warning. The lock is held by THIS live
+# A BUSY cadence lock is not a newer generation: the reset (learnReset,
+# src/lib.ts) warns only for the lock, so land's own words must not contradict
+# that warning. The lock is held by THIS live
 # process; a no-op `sleep` on PATH spins the acquire's timeout instantly.
 mkdir -p "$TMP/fastbin"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/fastbin/sleep"
@@ -295,23 +306,23 @@ grep -qF -- '- when recovering a rebase onto a moved pin -> use skill pin-dance'
   || fail "skill land appends its discovery pointer line"
 grep -qxF '## look-it-up' "$cml" || fail "pointer append preserves existing lesson entries"
 
-# --- no-silent-loss guard (lib): a rewrite dropping an entry is refused ------
-# The guard is the maintenance-lib property future rewriters (curate) must
-# pass: every '## <slug>' present before and absent after must be accounted
-# retired, else the rewrite refuses.
+# --- no-silent-loss guard: a rewrite dropping an entry is refused ------------
+# The guard (crewmateLearnedNoLoss, src/lib.ts) is the property every
+# CREWMATE-learned.md rewriter must pass: every '## <slug>' present before and
+# absent after must be accounted retired, else the rewrite refuses.
 printf '# F\n\n## keep-me\n\nbody.\n\n## drop-me\n\nbody.\n' >"$TMP/nl-live.md"
 printf '# F\n\n## keep-me\n\nbody.\n' >"$TMP/nl-staged.md"
-if ac_crewmate_learned_no_loss "$TMP/nl-live.md" "$TMP/nl-staged.md" ""; then
+if twin 'L.crewmateLearnedNoLoss(A[0], A[1], A[2])' "$TMP/nl-live.md" "$TMP/nl-staged.md" ""; then
   fail "dropping '## drop-me' with no retired accounting must refuse"
 fi
 printf 'retired: drop-me\n' >"$TMP/nl-retired.md"
-ac_crewmate_learned_no_loss "$TMP/nl-live.md" "$TMP/nl-staged.md" "$TMP/nl-retired.md" \
+twin 'L.crewmateLearnedNoLoss(A[0], A[1], A[2])' "$TMP/nl-live.md" "$TMP/nl-staged.md" "$TMP/nl-retired.md" \
   || fail "a drop accounted in the retired file passes"
-ac_crewmate_learned_no_loss "$TMP/nl-live.md" "$TMP/nl-live.md" "" \
+twin 'L.crewmateLearnedNoLoss(A[0], A[1], A[2])' "$TMP/nl-live.md" "$TMP/nl-live.md" "" \
   || fail "an unchanged file passes trivially"
 
 # --- crewmate layer rides the reversibility backup ---------------------------
-arc2="$(ac_records_backup learn)"
+arc2="$(twin 'L.recordsBackup("learn")')"
 grep -q 'CREWMATE-learned.md' < <(tar -tzf "$arc2") || fail "CREWMATE-learned.md is in the records backup"
 
 # --- land refuses an UNAPPROVED candidate (no writes happen) -----------------
@@ -419,7 +430,7 @@ if [ "${1:-}" = reap-pane ]; then
   printf 'reap-pane %s\n' "$pane" >>"$AC_LEARN_REAP_LOG"
   echo "REAP-STDOUT-MARKER"
   # The real helper always exits 0 and reports the outcome on its event
-  # instead (ac-pane-agent.sh REAP OUTCOME). AC_LEARN_REAP_STUCK names a pane
+  # instead (src/pane-agent.ts REAP OUTCOME). AC_LEARN_REAP_STUCK names a pane
   # the close did NOT take on.
   if [ "$pane" = "${AC_LEARN_REAP_STUCK:-}" ]; then
     printf '{"event":"reap-pane-done","pane":"%s","closed":false}\n' "$pane"
@@ -860,7 +871,7 @@ FENCEDEOF
     || fail "AC3: fam-before appears when there is no last_run (full Done section)"
 
   # AC6: a window with zero members (anchor far in the future) still produces
-  # window.md stating so, and the run completes normally with ac_curate_tick
+  # window.md stating so, and the run completes normally with the Curate tick
   # advanced by exactly one.
   printf 'debriefs=0\nlast_run=%s\n' "$(epoch_for_date 2099-01-01)" >"$AC_HOME/state/.learn.meta"
   curate_before="$(ac_meta_get "$AC_HOME/state/.curate.meta" runs_since)"
@@ -870,7 +881,7 @@ FENCEDEOF
   window6="$rundir6/sources/retro/window.md"
   grep -qF 'no families landed in this window' "$window6" || fail "AC6: a zero-member window says so explicitly"
   curate_after="$(ac_meta_get "$AC_HOME/state/.curate.meta" runs_since)"
-  assert_eq "$curate_after" "$((curate_before + 1))" "AC6: ac_curate_tick still advances by one on a zero-member run"
+  assert_eq "$curate_after" "$((curate_before + 1))" "AC6: the Curate tick still advances by one on a zero-member run"
 
   # AC9/AC10: the run summary's retro: line, and the warn-only guard when the
   # window has members but the scout writes no retro.md.
@@ -898,7 +909,7 @@ STUB2
   assert_contains "$(cat "$TMP/noretro.err")" 'WARN' "AC10: a non-empty window with no retro.md warns on stderr"
 
   # --- the RUN consumes the cadence cycle --------------------------------------
-  # ac_learn_reset moved from `land` to the END of cmd_run: the counter counts
+  # The reset moved from `land` to the END of the run: the counter counts
   # debriefs-since-the-last-EXAMINATION, and `run` IS the examination. On `land`
   # a distill that legitimately proposed nothing left debriefs over threshold
   # forever - harmless while a human read the digest, a silently dead loop once
@@ -928,7 +939,7 @@ STUB2
   assert_eq "$(find "$rundir_reset" -maxdepth 1 -name 'candidate-*.md' | wc -l | tr -d ' ')" "0" \
     "the run that consumed the cycle proposed NO candidates"
 
-  # A run that ABORTS never consumes the cycle - the twin of the ac_curate_tick
+  # A run that ABORTS never consumes the cycle - the twin of the Curate tick
   # placement assertion, and what keeps a failed run's crossing re-triggerable.
   cat >"$TMP/stub-pane-nodone.sh" <<'STUB3'
 #!/usr/bin/env bash
@@ -979,30 +990,38 @@ STUB4
 
   # A ledger the parser could not read is a window nothing read, not an empty
   # one: the run stops before the scout and the cycle stays due.
-  failbun="$TMP/failbun"
-  mkdir -p "$failbun"
-  printf '#!/bin/sh\nexit 1\n' >"$failbun/bun"
-  chmod +x "$failbun/bun"
-  printf 'debriefs=9\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
-  rm -rf "${AC_HOME:?}"/data/learning-*
-  set +e
-  PATH="$failbun:$PATH" AC_PANE_AGENT="$TMP/stub-pane.sh" "$BIN/ac-learn.sh" run >/dev/null 2>"$TMP/nobun.err"
-  nobun_rc=$?
-  set -e
-  [ "$nobun_rc" != 0 ] || fail "a run whose ledger could not be read must fail"
-  assert_contains "$(cat "$TMP/nobun.err")" "cannot read the ledger for the retro window" \
-    "the run names why it stopped"
-  assert_contains "$(cat "$TMP/nobun.err")" "the backlog parser failed on $backlog" \
-    "... and which ledger it could not read"
-  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" \
-    "an unread ledger leaves the counter untouched"
-  assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
-    "an unread ledger leaves the retro window anchor untouched"
+  # src/learn.ts parses the ledger in-process, so no parser child can fail
+  # under it, and a PATH `bun` that exits 1 now stops the shim before the
+  # module runs: the ledger turns mode 000 once the run's records backup has
+  # tarred it (a PATH `tar` that does so after the real one), so the retro
+  # window's read is the first that cannot read it (skipped under root, which
+  # reads it). The parser child's own `the backlog parser failed on <ledger>`
+  # line is unreachable there, on the frozen original too (its awk cannot open
+  # the file, so the binding never starts the parser).
+  if [ "$(id -u)" != 0 ]; then
+    lockledger="$TMP/lockledger"
+    mkdir -p "$lockledger"
+    printf '#!/bin/sh\n"%s" "$@" || exit $?\nchmod 000 "%s"\n' "$(command -v tar)" "$backlog" >"$lockledger/tar"
+    chmod +x "$lockledger/tar"
+    printf 'debriefs=9\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
+    rm -rf "${AC_HOME:?}"/data/learning-*
+    set +e
+    PATH="$lockledger:$PATH" AC_PANE_AGENT="$TMP/stub-pane.sh" "$BIN/ac-learn.sh" run >/dev/null 2>"$TMP/nobun.err"
+    nobun_rc=$?
+    set -e
+    chmod 644 "$backlog"
+    [ "$nobun_rc" != 0 ] || fail "a run whose ledger could not be read must fail"
+    assert_contains "$(cat "$TMP/nobun.err")" "cannot read the ledger for the retro window" \
+      "the run names why it stopped"
+    assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "9" \
+      "an unread ledger leaves the counter untouched"
+    assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" last_run)" "$old_anchor" \
+      "an unread ledger leaves the retro window anchor untouched"
+  fi
 
   # --- a BUSY cadence lock is not a newer generation, and never an abort -------
-  # ac_learn_reset answers 1 for a busy lock and for a newer generation alike,
-  # warning only for the lock (bin/ac-maintenance-lib.sh), so the run must not
-  # then claim a newer generation. Each lock is held by THIS live process.
+  # The reset (learnReset, src/lib.ts) warns only for a busy lock, never for a
+  # newer generation, so the run must not then claim a newer generation. Each lock is held by THIS live process.
   printf 'debriefs=9\ngeneration=4\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
   rm -rf "${AC_HOME:?}"/data/learning-*
   hold_lock "$AC_HOME/state/.learn-cadence.lock"
@@ -1469,7 +1488,7 @@ GATE5
   envfail_out="$(probe_leg real)"
   assert_contains "$(cat "$(probe_receipt)")" 'I read the run report and the manifest' \
     "the control judge really did read what E was denied"
-  honest_verdict="$(ac_maintenance_receipt_validate "$(probe_receipt)" \
+  honest_verdict="$(twin 'M.receiptValidate(A[0], A[1], A[2], 12)' "$(probe_receipt)" \
     "$(probe_rundir)/plans/envfail-skill.json" \
     "$(probe_rundir)/candidates/envfail-skill.md")" || honest_verdict="REFUSED"
   assert_eq "$honest_verdict" "revise" \

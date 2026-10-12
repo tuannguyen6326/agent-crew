@@ -69,4 +69,4 @@ assert_contains "$liblines" "crew-qa" "...alongside the other verification route
 # --- instructions only: no scripts/ shipped -----------------------------------
 [ ! -d "$dir/scripts" ] || fail "domain-e2e ships scripts/ - the suite owns its own runner"
 
-printf 'ok - domain-e2e skill contract\n'
+pass

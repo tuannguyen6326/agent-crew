@@ -29,7 +29,7 @@ Load before a harness-specific spawn, trust-dialog response, skill invocation, i
 
 ## Source-of-truth split - do not restate the mechanics
 
-- `bin/ac-spawn.sh` owns launch-command construction, model and effort flags, session metadata, kickoff delivery, and the supported harness names.
+- `src/spawn.ts` (started by `bin/ac-spawn.sh`) owns launch-command construction, model and effort flags, session metadata, kickoff delivery, and the supported harness names.
 - `bin/ac-backend.sh` owns the herdr composer, submit-verification, focus, blocked-pane detection, and backend lifecycle.
 - This skill owns only the verified crewchief-facing facts: busy vs idle evidence; trust and permission dialogs; safe interrupt behavior; exit behavior; resume support and limits; skill-invocation form; known popup or submit hazards; and the evidence required before claiming an operation landed.
 
@@ -55,4 +55,4 @@ Read it before acting on a specific harness; it is kept out of the main file so 
 
 - Every harness fact must be backed by current Agent Crew code, an existing regression test, or an empirical scratch validation recorded in task evidence. Facts for unsupported runtimes must not be imported.
 - Adding a harness requires an isolated verification task that checks launch, busy detection, trust dialog, literal send, submit confirmation, interrupt, exit, resume, and skill invocation before the adapter is declared supported.
-- Any new mechanic belongs in the owning script (`bin/ac-spawn.sh` or `bin/ac-backend.sh`) and its tests before the concise fact is added here.
+- Any new mechanic belongs in the owning source (`src/spawn.ts` or `bin/ac-backend.sh`) and its tests before the concise fact is added here.

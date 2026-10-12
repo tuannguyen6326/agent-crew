@@ -9,7 +9,7 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-command -v zsh >/dev/null 2>&1 || { printf 'SKIP: zsh not available\n'; exit 0; }
+command -v zsh >/dev/null 2>&1 || skip 'zsh not available'
 
 make_fake_herdr
 home="$TMP/h"

@@ -15,6 +15,8 @@ strict test-driven development. Do NOT write implementation before its test.
 
 1. **Red** - write a test that captures the expected behavior (for a bug: a
    test that reproduces it) and run it; confirm it FAILS for the right reason.
+   Take each expected value from the spec or a worked example, never from the
+   code under test - a value it computes itself passes by construction.
 2. **Green** - write the minimal code to make that test pass; run and confirm.
 3. **Refactor** - clean up with the test staying green.
 
@@ -239,6 +241,8 @@ moment you print a `done:`, `blocked:`, `needs-decision:` or `failed:` line
 (`bin/ac-done.sh <id> '<the exact line you printed>'`) - it wakes your chief in
 milliseconds. Both channels carry the same completion and it still wakes the
 chief exactly once, so never drop the printed line either.
+
+Before ending a turn to wait on your own background work (a shell, monitor, pipeline or long command you started), print and push a `paused:` line naming the job and what ends it.
 
 Keep marker verbs out of prose. Never write a bare AC_CAPTAIN_RE marker verb
 immediately followed by a colon inside narrative text: drop the colon (e.g.

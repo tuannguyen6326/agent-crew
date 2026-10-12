@@ -13,7 +13,7 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-command -v bun >/dev/null 2>&1 || { printf 'SKIP: bun not available - dashboard/app.test.ts skipped\n'; exit 0; }
+command -v bun >/dev/null 2>&1 || skip 'bun not available - dashboard/app.test.ts skipped'
 
 bun test "$ROOT/dashboard/app.test.ts" "$ROOT/dashboard/watch.test.ts"
 pass

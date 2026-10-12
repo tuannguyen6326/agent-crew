@@ -1228,7 +1228,7 @@ export function chiefFitPx(cols: number, clientWidth: number): number {
 
 export interface ArtifactNode {
   name: string; // this dir's own segment
-  key: string; // the full path prefix down to it ("shp/review-r2")
+  key: string; // the full path prefix down to it ("shop/review-r2")
   dirs: ArtifactNode[]; // sub-dirs, newest-first by the newest mtime they contain
   files: { name: string; art: any }[]; // leaves, newest-first
   mtime: number; // newest mtime anywhere in this subtree

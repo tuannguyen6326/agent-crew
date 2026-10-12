@@ -82,7 +82,7 @@
 // run answers `ERROR: required tool not found: bun`, exit 1, from the shim.
 import { statSync, writeSync } from "node:fs";
 import { constants as osConstants } from "node:os";
-import { die, enterCaller, metaSet, require, statusAppend, taskMeta, taskStatus } from "./lib.ts";
+import { die, enterCaller, metaSet, require, spawnShellSync, statusAppend, taskMeta, taskStatus } from "./lib.ts";
 
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
@@ -101,7 +101,7 @@ if (!isFile) die(b(`no crewmate meta for ${bytes(id)}`));
 if (!/^https:\/\/github\.com\/[\s\S]*\/[\s\S]*\/pull\/[0-9]/.test(url)) die(b(`not a full GitHub PR URL: ${bytes(url)}`));
 
 function gh(...a: string[]): string {
-  const r = Bun.spawnSync(["gh", ...a], { stdin: "inherit", stdout: "pipe", stderr: "inherit", env: process.env });
+  const r = spawnShellSync(["gh", ...a], { stdin: "inherit", stdout: "pipe", stderr: "inherit" });
   if (r.exitCode !== 0) {
     const sig = r.signalCode ? (osConstants.signals as Record<string, number>)[r.signalCode] ?? 0 : 0;
     process.exit(r.exitCode ?? 128 + sig);

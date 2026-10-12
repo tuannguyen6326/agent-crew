@@ -43,7 +43,7 @@ printf '%s\n' "\$TMP" >"\$pidfile.tmpdir"
 printf '%s\n' "\$_ac_hogs" >"\$pidfile"
 printf '%s\n' "\$(hog_survivors)" >"\$pidfile.alive"
 case "\$mode" in
-  clean)   : ;;
+  clean)   pass ;;
   failing) fail "deliberate failure" ;;
   # 'wait' is a builtin: holding on it spawns no extra process, so a SIGKILLed
   # hold leaves ONLY the hogs to be judged - never a stray sleep of our own.
@@ -248,12 +248,14 @@ assert_eq "$readiness_rc" "1" "wait_ready gives up on a marker that is never wri
 # the fleet knobs, ac-watch.sh refuses a skip naming a foreign family - so an
 # inherited value silently decides what the fixture asserts, or reds it
 # outright. Sourced in a child, because our own copy was scrubbed at line 1.
+# A child that borrows helpers.sh as a library rather than running as a suite
+# sets AC_SUITE_DECIDED itself: its exit status is its own verdict.
 iso="$(AC_SCOPE=fam AC_WATCH_ONLY=fam AC_WATCH_SKIP=fam \
   AC_FLEET_MODEL=opus AC_FLEET_EFFORT=xhigh \
   AC_FLEET_MODEL_CODEREVIEW=haiku AC_FLEET_MODEL_QA=haiku \
   AC_FLEET_PROFILE_CODEREVIEW=x AC_FLEET_PROFILE_QA=x AC_FLEET_PROFILE_SOMETHINGELSE=x \
   AC_FLEET_HOME_CHECKED=1 AC_FLEET_PROJECT_CONFIG=/tmp/some-project.yaml \
-  bash -c '. "$1/tests/sh/helpers.sh"
+  bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1
     printf "%s %s %s %s %s %s %s %s %s %s %s %s\n" "${AC_SCOPE-unset}" "${AC_WATCH_ONLY-unset}" \
       "${AC_WATCH_SKIP-unset}" "${AC_FLEET_MODEL-unset}" "${AC_FLEET_EFFORT-unset}" \
       "${AC_FLEET_MODEL_CODEREVIEW-unset}" "${AC_FLEET_MODEL_QA-unset}" \
@@ -465,6 +467,7 @@ wait_all_dead "$TMP/h0" 5 || fail "hold_close left its holder alive"
 cat >"$TMP/holdchild.sh" <<CHILD
 #!/usr/bin/env bash
 . "$ROOT/tests/sh/helpers.sh"
+AC_SUITE_DECIDED=1
 hold_open gate
 printf '%s\n' "\$HOLD_PID" >"\$1"
 printf '%s\n' "\$TMP" >"\$1.tmpdir"
@@ -487,6 +490,7 @@ wait_all_dead "$TMP/h1" 10 \
 cat >"$TMP/holdgone.sh" <<CHILD
 #!/usr/bin/env bash
 . "$ROOT/tests/sh/helpers.sh"
+AC_SUITE_DECIDED=1
 hold_open gate
 printf '%s\n' "\$TMP" >"\$1.tmpdir"
 kill -9 "\$HOLD_PID"
@@ -501,5 +505,236 @@ assert_contains "$(cat "$TMP/h2.out")" "hold gate 'gate' expired" "the refusal N
 case "$(cat "$TMP/h2.out")" in
   *'NOT REACHED'*) fail "hold_close returned instead of refusing" ;;
 esac
+
+# --- 15. the host's own herdr/orca never answers a test -----------------------
+
+# A fake prepended to PATH shields only a first-match lookup. On a host with
+# herdr installed, every ac-room run executed it (2026-10-04): the session-start
+# row's bin/ac-bootstrap.sh asks EVERY copy on PATH for its version, the fake's
+# and the host's alike. bin/ac-pane-agent.sh appends /opt/homebrew/bin to its
+# own PATH, too. A planted pair logging each call stands in for the host's, so
+# this holds on a host with neither installed.
+host="$TMP/host-backend"
+mkdir -p "$host"
+for b in herdr orca; do
+  cat >"$host/$b" <<HOST
+#!/bin/sh
+printf '%s: %s\n' "\$ROW" "$b \$*" >>"$host/calls"
+echo "$b 9.9.9"
+HOST
+  chmod +x "$host/$b"
+done
+PATH="$host:$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
+  export ROW=first-match; herdr --version; orca status --json
+  export ROW=bootstrap-probe; make_fake_herdr; "$BIN/ac-bootstrap.sh" --quiet
+  grep -c "^herdr --version" "$FAKE_HERDR/log" >"$2/fake-versions"
+  export ROW=appended; rm "$TMP/stubbin/herdr"; PATH="$PATH:$2"; herdr --version; orca status --json
+  true' _ "$ROOT" "$host" >/dev/null 2>&1
+assert_eq "$(cat "$host/calls" 2>/dev/null || true)" "" \
+  "the host's herdr/orca answer no test - not on first match, not to bootstrap's every-copy probe, not from a dir a script appends"
+# The probe route was really taken: bootstrap asked the suite's fake.
+[ "$(cat "$host/fake-versions" 2>/dev/null || echo 0)" -ge 1 ] \
+  || fail "bootstrap never reached its version probe, so the every-copy route went unexercised"
+
+# A RELATIVE PATH dir holding herdr is mirrored too, and its other tools still
+# run - a mirror link made from the relative spelling would dangle.
+rel="$TMP/relhost"
+mkdir -p "$rel/tools"
+cp "$host/herdr" "$rel/tools/herdr"
+printf '#!/bin/sh\necho kept\n' >"$rel/tools/ac-mirror-probe"
+chmod +x "$rel/tools/ac-mirror-probe"
+out="$(cd "$rel" && PATH="tools:$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
+  export ROW=relative; herdr --version >/dev/null 2>&1; ac-mirror-probe' _ "$ROOT" 2>/dev/null)" || true
+assert_eq "$out" "kept" "a relative PATH dir's other tools survive the mirror"
+# ...whatever CDPATH an exported environment carries: a decoy tools/ on it
+# must not stand in for the cwd's.
+mkdir -p "$TMP/decoy/tools"
+out="$(cd "$rel" && CDPATH="$TMP/decoy" PATH="tools:$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
+  ac-mirror-probe' _ "$ROOT" 2>/dev/null)" || true
+assert_eq "$out" "kept" "the mirror reads the relative dir itself, not a CDPATH namesake"
+assert_eq "$(cat "$host/calls" 2>/dev/null || true)" "" "and its herdr answers no test"
+
+# --- 16. the host's own docker/codegraph are absent to a test ----------------
+
+# Optional tools the code reaches only through `command -v` - teardown's
+# qa-infra sweep, session start's qa reap, ac_codegraph_worktree on every
+# lease - so on a host that has them every teardown and spawn under test ran
+# `docker compose ... down -v` and `codegraph init` (ac-teardown dossier:
+# 260 and 107 calls in 11 suites). They are mirrored out with no stand-in: a
+# suite takes the not-installed path a host without them takes, and one that
+# exercises docker plants its own stub.
+host2="$TMP/host-tools"
+mkdir -p "$host2"
+for b in docker codegraph; do
+  cat >"$host2/$b" <<HOST
+#!/bin/sh
+printf '%s\n' "$b \$*" >>"$host2/calls"
+HOST
+  chmod +x "$host2/$b"
+done
+printf '#!/bin/sh\necho kept\n' >"$host2/ac-tool-probe"
+chmod +x "$host2/ac-tool-probe"
+out="$(PATH="$host2:$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
+  command -v docker >/dev/null 2>&1 && echo docker-found
+  command -v codegraph >/dev/null 2>&1 && echo codegraph-found
+  docker compose ls >/dev/null 2>&1; codegraph init >/dev/null 2>&1
+  ac-tool-probe' _ "$ROOT" 2>/dev/null)" || true
+assert_eq "$out" "kept" "docker and codegraph are not found, and their dir's other tools survive the mirror"
+assert_eq "$(cat "$host2/calls" 2>/dev/null || true)" "" "the host's docker/codegraph answer no test"
+
+# --- 17. a suite exits 0 only by deciding: pass or skip -----------------------
+
+# /bin/bash 3.2 (macOS) exits with the EXIT trap's own status after a `set -u`
+# death, and $? reads 0 inside that trap: a suite that died on an unbound
+# variable mid-file exited 0, and every runner judging by status read PASS.
+# Each child sources the real helpers and runs under /bin/bash where the host
+# has one, the shell the runners start.
+vbash=bash; [ ! -x /bin/bash ] || vbash=/bin/bash
+verdict_child() {  # verdict_child <name> <body> - a suite of <body> after the sourcing; prints "<rc>|<stdout>|<stderr's last line>"
+  local f="$TMP/$1.test.sh" rc=0
+  printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\n%s\n' "$ROOT" "$2" >"$f"
+  "$vbash" "$f" >"$f.out" 2>"$f.err" || rc=$?
+  printf '%s|%s|%s' "$rc" "$(cat "$f.out")" "$(tail -n 1 "$f.err")"
+}
+assert_eq "$(verdict_child v-unbound 'echo "$AC_VERDICT_NEVER_SET"')" "1||FAIL: v-unbound.test.sh ended before pass, skip or fail (bash 3.2 exits 0 from an unbound variable otherwise)" \
+  "an unbound-variable death is a failure, named"
+assert_eq "$(verdict_child v-undecided 'true')" "1||FAIL: v-undecided.test.sh ended before pass, skip or fail (bash 3.2 exits 0 from an unbound variable otherwise)" \
+  "a suite that never decides is a failure"
+assert_eq "$(verdict_child v-pass 'pass')" "0|PASS: v-pass.test.sh|" "pass decides green"
+assert_eq "$(verdict_child v-skip "skip 'jq not available'")" "0|SKIP: jq not available|" "skip decides green, saying why"
+assert_eq "$(verdict_child v-fail 'fail "deliberately red"')" "1||FAIL: deliberately red" "fail decides red, its own line last"
+assert_eq "$(verdict_child v-exit3 'exit 3')" "3||FAIL: v-exit3.test.sh ended before pass, skip or fail (bash 3.2 exits 0 from an unbound variable otherwise)" \
+  "an undecided non-zero exit keeps its status"
+assert_eq "$(verdict_child v-own-trap 'mine() { cleanup; }; trap mine EXIT; echo "$AC_VERDICT_NEVER_SET"')" "1||FAIL: v-own-trap.test.sh ended before pass, skip or fail (bash 3.2 exits 0 from an unbound variable otherwise)" \
+  "a suite whose own EXIT trap chains cleanup is covered too"
+
+# --- 18. the host's own gh and its login are absent to a test -----------------
+
+# The host's gh answers with the operator's GitHub login: ac-qa's fetch-check
+# took its token from `gh auth token` (or GH_TOKEN/GITHUB_TOKEN first), and
+# every session start under test ran bootstrap's `gh auth status`. Mirrored out
+# with no stand-in, like docker; a suite that exercises gh plants its own.
+host3="$TMP/host-gh"
+mkdir -p "$host3"
+cat >"$host3/gh" <<HOST
+#!/bin/sh
+printf '%s\n' "gh \$*" >>"$host3/calls"
+HOST
+chmod +x "$host3/gh"
+printf '#!/bin/sh\necho kept\n' >"$host3/ac-gh-probe"
+chmod +x "$host3/ac-gh-probe"
+out="$(GH_TOKEN=host-token GITHUB_TOKEN=host-token PATH="$host3:$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
+  command -v gh >/dev/null 2>&1 && echo gh-found
+  gh auth token >/dev/null 2>&1
+  printf "%s %s\n" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}"
+  ac-gh-probe' _ "$ROOT" 2>/dev/null)" || true
+assert_eq "$out" "unset unset
+kept" "gh is not found, no token variable survives, and its dir's other tools survive the mirror"
+assert_eq "$(cat "$host3/calls" 2>/dev/null || true)" "" "the host's gh answers no test"
+# An empty PATH entry is the cwd to the shell, so a suite run from the dir
+# holding gh would reach it through a leading or an interior one.
+out="$(cd "$host3" && PATH=":$TMP/no-host-backend::$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
+  command -v gh >/dev/null 2>&1 && echo gh-found
+  gh auth token >/dev/null 2>&1
+  echo ran' _ "$ROOT" 2>/dev/null)" || true
+assert_eq "$out" "ran" "an empty PATH entry finds no gh in the cwd"
+assert_eq "$(cat "$host3/calls" 2>/dev/null || true)" "" "the cwd's gh answers no test"
+
+# --- 19. a value the code sets for its children is never inherited -----------
+
+# Each of these is set by the code for a child and read back by a stub, so an
+# inherited copy decides the row: ac-ship.test.sh's pin that push exports
+# GIT_TERMINAL_PROMPT=0 passed with the export deleted under Claude Code, which
+# exports the same value, and ac-guard's herdr rows assert an EMPTY session.
+iso="$(GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 HERDR_SESSION=host CLAUDE_CONFIG_DIR=/host/cfg \
+  bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1
+    printf "%s %s %s %s\n" "${GIT_TERMINAL_PROMPT-unset}" "${GIT_OPTIONAL_LOCKS-unset}" \
+      "${HERDR_SESSION-unset}" "${CLAUDE_CONFIG_DIR-unset}"' \
+    _ "$ROOT")"
+assert_eq "$iso" "unset unset unset unset" \
+  "sourcing helpers.sh drops GIT_TERMINAL_PROMPT, GIT_OPTIONAL_LOCKS, HERDR_SESSION and CLAUDE_CONFIG_DIR"
+
+# --- 20. a delayed kill reaches only the process it was armed on --------------
+
+# tests/sh/ac-lock.test.sh armed `( sleep 60; kill -9 "$h" ) &` per holder and
+# never stood it down, so every fire landed on a freed pid this host may
+# already have reissued. A pid now owned by another process cannot be
+# staged without signalling a process this suite does not own, so the change of
+# owner is staged by the identity instead: the arm reads one, the fire another.
+assert_eq "$(same_process $$ "$(proc_identity $$)" && echo same)" "same" "a live pid is the process its identity names"
+same_process $$ "Thu Jan  1 00:00:00 1970" && fail "a pid whose start time differs is another process"
+same_process "" "" && fail "no pid and no identity is never a match"
+hold_open ka-gone; ka_pid=$HOLD_PID
+ka_id="$(proc_identity "$ka_pid")"
+[ -n "$ka_id" ] || fail "a live pid has an identity"
+hold_close ka-gone "$ka_pid"
+assert_eq "$(proc_identity "$ka_pid")" "" "a pid that is gone has no identity"
+same_process "$ka_pid" "$ka_id" && fail "a pid that is gone is never the process recorded for it"
+
+hold_open ka-same; ka_pid=$HOLD_PID
+SECONDS=0
+kill_after 1 "$ka_pid"
+ka_rc=0; wait "$ka_pid" || ka_rc=$?
+assert_eq "$ka_rc" "137" "kill_after SIGKILLs the process it was armed on once its time is up"
+[ "$SECONDS" -ge 1 ] || fail "kill_after fired before its bound"
+
+hold_open ka-reused; ka_pid=$HOLD_PID
+( proc_identity() {
+    if [ -e "$TMP/ka-reused.armed" ]; then printf 'the process that holds the pid now'
+    else : >"$TMP/ka-reused.armed"; printf 'the process kill_after was armed on'; fi
+  }
+  kill_after 1 "$ka_pid"
+  wait "$KILL_AFTER_PID" )
+kill -0 "$ka_pid" 2>/dev/null || fail "kill_after signalled a pid that names another process than the one it was armed on"
+hold_close ka-reused "$ka_pid"
+
+hold_open ka-ends; ka_pid=$HOLD_PID
+kill_after 30 "$ka_pid"; ka_wd=$KILL_AFTER_PID
+hold_close ka-ends "$ka_pid"
+SECONDS=0
+wait "$ka_wd" || true
+[ "$SECONDS" -le 2 ] || fail "a watchdog outlived its target by ${SECONDS}s - it must stand down within a second"
+
+# A kill on the watchdog while its target lives leaves the target alone and
+# ends the sleep it waits on. Taken on a sleep just started, so one the kill
+# missed would still have most of its second to run at the check.
+hold_open ka-cancel; ka_pid=$HOLD_PID
+kill_after 30 "$ka_pid"; ka_wd=$KILL_AFTER_PID
+ka_first="" ka_i=0
+while :; do
+  ka_sleep="$(pgrep -P "$ka_wd" 2>/dev/null || true)"
+  if [ -n "$ka_sleep" ]; then [ -n "$ka_first" ] || ka_first=$ka_sleep; [ "$ka_sleep" = "$ka_first" ] || break; fi
+  ka_i=$((ka_i + 1)); [ "$ka_i" -lt 100 ] || fail "the watchdog never started a second sleep"
+  sleep 0.05
+done
+SECONDS=0
+kill "$ka_wd"
+wait "$ka_wd" || true
+[ "$SECONDS" -le 2 ] || fail "a watchdog ran on for ${SECONDS}s after a kill"
+ka_i=0
+while kill -0 "$ka_sleep" 2>/dev/null; do
+  ka_i=$((ka_i + 1)); [ "$ka_i" -lt 10 ] || fail "a kill on the watchdog left its sleep running"
+  sleep 0.05
+done
+kill -0 "$ka_pid" 2>/dev/null || fail "a kill on the watchdog reached its target"
+hold_close ka-cancel "$ka_pid"
+
+# A run that outlives AC_HOG_TTL reaps hog pids that may be reissued by then.
+# The reap runs in a subshell, so the hog is no child of the reaping shell -
+# what a reissued pid is.
+AC_HOG_TTL=30 load_hogs 1
+ka_hog="${_ac_hogs##* }"
+( _ac_hog_id[$ka_hog]="the process that held the pid when the hog was recorded"; reap_hogs )
+kill -0 "$ka_hog" 2>/dev/null || fail "reap_hogs SIGKILLed a pid that no longer names the hog it recorded"
+reap_hogs
+assert_no_hogs "the hog's own identity still reaps it"
+
+set -m
+( /bin/sleep 30 & printf '%s\n' "$!" >"$TMP/ka-group.inner"; wait ) & ka_pid=$!
+set +m
+kill_after 1 "$ka_pid" KILL group
+ka_rc=0; wait "$ka_pid" || ka_rc=$?
+assert_eq "$ka_rc" "137" "kill_after ... group takes the leader"
+wait_all_dead "$TMP/ka-group.inner" 2 || fail "kill_after ... group left a member of the group alive"
 
 pass

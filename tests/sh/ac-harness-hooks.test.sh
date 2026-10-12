@@ -84,8 +84,13 @@ while IFS= read -r cmd; do
   # claude-only.
   [ -x "$root/bin/$script" ] \
     || fail "claude wires bin/$script but it is missing or not executable - that hook is permanently inert"
+  # A ported hook's entry is a fail-open shim: its verdicts live in the module
+  # it starts, and a module that is not there makes the shim a silent no-op.
+  mod="$(sed -n 's|^ac_bun_exec_hook \(src/[a-z0-9-]*\.ts\) "\$@"$|\1|p' "$root/bin/$script" | head -n 1)"
+  [ -z "$mod" ] || [ -f "$root/$mod" ] \
+    || fail "bin/$script starts $mod, which is missing - that hook is permanently inert"
 
-  if grep -q 'exit 2' "$root/bin/$script"; then
+  if grep -q 'exit 2' "$root/bin/$script" || { [ -n "$mod" ] && grep -q 'exit(2)' "$root/$mod"; }; then
     want=2; desc="objects"
   else
     want=9; desc="exits $want"

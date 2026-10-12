@@ -75,4 +75,4 @@ assert_contains "$liblines" "crew-ship" "...alongside the engine that owns the o
 # --- instructions only: no scripts/ shipped -----------------------------------
 [ ! -d "$dir/scripts" ] || fail "crew-verify ships scripts/ - bin/ac-verify.sh is the runner"
 
-printf 'ok - crew-verify skill contract\n'
+pass

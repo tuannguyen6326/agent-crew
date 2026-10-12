@@ -1,8 +1,8 @@
 # QA Attestation Contract
 
 This document summarizes the public runtime contract implemented by
-`bin/ac-qa.sh`, `bin/ac-verify.sh`, `bin/ac-qa-lib.sh`, and the merge helpers.
-The script headers and the `crew-qa` skill remain authoritative for
+`src/qa.ts` (started by `bin/ac-qa.sh`), `src/verify.ts` (started by `bin/ac-verify.sh`), `src/qa-lib.ts`, and the merge helpers.
+The script and module headers and the `crew-qa` skill remain authoritative for
 command-level details. For where QA sits in delivery, see
 [validate-pipeline.md](validate-pipeline.md) and [concepts.md](concepts.md);
 for the `qa:` config keys, see [configuration.md](configuration.md).
@@ -96,9 +96,9 @@ from that consumed bundle; it does not re-read fleet config, repo knowledge, or
 the live shared store. A missing project store is represented by an explicit
 empty versioned manifest.
 
-## Boundary policy (captain ruling, 2026-07-25)
+## Boundary policy
 
-The ruling, as quoted in the `bin/ac-qa.sh` header (BOUNDARY POLICY): QA must
+The rule, as stated in the `src/qa.ts` header (BOUNDARY POLICY): QA must
 boot the service and check behavior through the client/API/integration
 boundary, and QA never runs or re-runs unit tests.
 
@@ -286,8 +286,9 @@ with the same parser used by merge gates, then atomically renames it.
 
 All merge-gate arms validate the body, including flat projects. They require a
 passing schema/outcome, exact source SHA, non-empty profile/config identity,
-positive equal case counts, scoped body/filename agreement, a valid optional QA
-rule, and matching optional profile/E2E pins. Empty, partial, malformed, legacy,
+positive equal case counts spelled in canonical decimal (`01` or `00` is
+invalid), scoped body/filename agreement, a valid optional QA rule, and
+matching optional profile/E2E pins. Empty, partial, malformed, legacy,
 off-head, or renamed scoped markers do not authorize a required QA merge.
 
 ## Store reuse, fixtures, and oracle amendments

@@ -32,7 +32,7 @@ Four judgment rules bind every chief and crewmate; the `judgment-rules` skill ho
 | `src/` | TypeScript logic of the ported `bin/` entries (each such entry is a shim that execs it); each module's header is its spec. |
 | `state/` | Volatile runtime signals (metas, status logs, wake spools). |
 | `records/` | Fleet ledgers, `repo-knowledge/`, `scenes/`, `standing-jobs.md`, `rig.json` - each owned by its `bin/` script. |
-| `data/` | Task dirs and family rooms; `bin/ac-brief.sh` owns the layout. |
+| `data/` | Task dirs and family rooms; `bin/ac-brief.sh` owns the layout (the header of `src/brief.ts`, which it starts, is the spec). |
 | `projects/` | Project clones (read-only to you) and their captain-owned `<name>.yaml`. |
 | `config/` | Per-fleet config knobs. |
 | `skills/` | Per-fleet learned skills, seeded into crew worktrees. |
@@ -75,13 +75,13 @@ staged:  crewchief -> design crewmate -> execution crewmate
 
 ## 6. Worktrees (in-repo pool)
 
-`bin/ac-tree.sh` owns the pooled worktrees under `<repo>/.crew/worktrees/<n>` (its header is the spec; orca fleets lease Orca-managed worktrees): reused, never deleted or created by hand, and a dirty slot is never silently reset.
+`bin/ac-tree.sh` owns the pooled worktrees under `<repo>/.crew/worktrees/<n>` (the header of `src/tree.ts`, which it starts, is the spec; orca fleets lease Orca-managed worktrees): reused, never deleted or created by hand, and a dirty slot is never silently reset.
 
 ## 7. Supervision protocol
 
 Arm `bin/ac-watch.sh` whenever crew is in flight, as the harness's OWN background task - NEVER `nohup`/`&`/`disown` it inside a tool call, which orphans it so its exit wakes no one (on claude the Stop hook `bin/ac-watch-autoarm.sh` does this for you).
 On any wake: `bin/ac-wake-drain.sh`, act on each wake, then re-arm before the turn ends; an `unobservable` wake is a backend read failure, never a death.
-Wake reasons and the full protocol live in the `bin/ac-watch.sh` header and the `task-lifecycle` skill; a `kind=self` meta is excluded from supervision but stays in accounting - every fleet view lists it.
+Wake reasons and the full protocol live in the header of `src/watch.ts` (which `bin/ac-watch.sh` starts) and the `task-lifecycle` skill; a `kind=self` meta is excluded from supervision but stays in accounting - every fleet view lists it.
 Stop and PreToolUse hooks back this up: `ac-turnend-guard.sh`, `ac-watch-policy-hook.sh`, `ac-ledger-guard.sh`, `ac-primary-guard.sh`, `ac-delegation-guard.sh`.
 
 ## 8. Escalation etiquette
@@ -100,7 +100,7 @@ Before minting a row, fold into a related Queued row; never fold into an In flig
 
 ## 10. Validation (crew-ship)
 
-`crew-ship` changes go through the 8-step pipeline run by the crewmate's `crew-ship` skill; the `bin/ac-ship.sh` header owns every mechanic and the `delivery-review` skill the policy (opt-in lint, `--tdd`, `attest-check`, captain-owned `projects/<name>.yaml` that the agent drafts and the chief installs).
+`crew-ship` changes go through the 8-step pipeline run by the crewmate's `crew-ship` skill; the header of `src/ship.ts`, which `bin/ac-ship.sh` starts, owns every mechanic and the `delivery-review` skill the policy (opt-in lint, `--tdd`, `attest-check`, captain-owned `projects/<name>.yaml` that the agent drafts and the chief installs).
 Never merge a crew-ship PR whose run did not reach `checks-passed`.
 
 ## 11. Rich review
@@ -139,7 +139,7 @@ Crew worktrees are seeded only with `AC_CREW_SKILLS` (`bin/ac-lib.sh`) plus the 
 ## 13. Editing this repo
 
 `bin/ac-lint.sh` is opt-in - run it only when the captain requests it in the order or the brief; every behavior gets a colocated `tests/sh/*.test.sh`.
-Run the suite only with `tests/run-suite.sh`; it is not a landing gate - per-change verify is changed-file tests plus do-not-break tests ONLY, and the bare suite runs only as the Learning DISTILL gate of a fleet that pins `config/learn-suite-gate=on` (default off; `bin/ac-learn.sh` header).
+Run the suite only with `tests/run-suite.sh`; it is not a landing gate - per-change verify is changed-file tests plus do-not-break tests ONLY, and the bare suite runs only as the Learning DISTILL gate of a fleet that pins `config/learn-suite-gate=on` (default off; `src/learn.ts` header).
 Each contract has exactly one authoritative file - a script header, a skill, or one doc section; everything else points to it.
 Markdown: plain-dash lists; one sentence per line for new blocks, and an existing hard-wrapped block keeps its shape - never reflow a block as a side effect, never mix the two shapes in one block.
 Never add an agent co-author line to commits in project repos (the `commit-msg` guard `bin/ac-tree.sh` installs refuses one).

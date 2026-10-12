@@ -1,12 +1,37 @@
 // maintenance-receipt.ts - the parsing half of the maintenance authorization
 // boundary Learning and Curate share: the receipt check and the read-evidence
-// check. bin/ac-maintenance-lib.sh starts it through bin/ac-bun.sh, always
-// inside a subshell because ac_bun_exec execs, behind the unchanged bash names
-// ac_maintenance_evidence_value, ac_maintenance_read_evidence and
-// ac_maintenance_receipt_validate; THIS header is the authoritative spec. The
-// lib's READ-EVIDENCE block owns the rationale, and its one copy of
-// AC_MAINTENANCE_QUOTE_MIN (bin/ac-gate.sh prints it into the judge prompt)
-// arrives here as <quote-min>.
+// check. src/curate.ts and src/learn.ts call receiptValidate in process for
+// their receipt boundary and src/gate.ts imports readEvidence for the gate's
+// write-time check; the CLI below is what the frozen bash helpers
+// (tests/fixtures/ac-maintenance-retired.sh, for the oracles that still run
+// them) start through bin/ac-bun.sh, always inside a subshell because
+// ac_bun_exec execs. THIS header is the authoritative spec. The lib's
+// READ-EVIDENCE block owns the rationale, and its AC_MAINTENANCE_QUOTE_MIN
+// (src/gate.ts prints the same value into the judge prompt, held to it by
+// tests/ts/gate.test.ts) arrives here as <quote-min>.
+//
+// receiptValidate is the AUTHORIZATION BOUNDARY Learning and Curate share,
+// and it trusts no writer: it re-derives every hash and, for any receipt whose
+// `authority` is not `repository-policy`, re-runs the read-evidence check on
+// the settled bytes. `repository-policy` is the one exemption, and its MINTERS
+// ARE NAMED HERE because there are three of them and only one makes the
+// exemption load-bearing - an auditor who finds the other two has to re-derive
+// that they do not matter:
+//   - policyReceipt (src/curate.ts) mints `continue` for the
+//     deterministic-records plan, and that receipt IS validated - by
+//     receiptValidate in Curate's cmdRun, which dies the whole pass unless the
+//     answer is `continue`. THIS is the one the exemption exists for: Curate
+//     built those files itself, deterministically, with no judge in the loop
+//     to be blind.
+//   - askReceipt (src/curate.ts) and policyAskReceipt (src/learn.ts) mint
+//     `ask-captain` for a gate that was unavailable and for a captain-owned
+//     `kind: rule`. Neither receipt ever reaches the boundary - both callers
+//     escalate and return first - so the exemption carries them nowhere; they
+//     take the value to keep one receipt shape.
+// A fourth receipt written beside them is not this exemption at all:
+// src/learn.ts prepareCandidatePlan mints `agentcrew.captain-decision/v1` for
+// the legacy manual land, and the schema check rejects it before `authority`
+// is read. Every other authority, recognised or not, owes its proof.
 //
 // Usage (the caller's cwd arrives first, from ac_bun_exec):
 //   evidence-value <label>                               stdin = a receipt
@@ -21,7 +46,8 @@
 //       Prints the receipt's decision and a newline when it passes every rule
 //       under RECEIPT-CHECK, else exit 1 with nothing printed. The caller has
 //       already proved the receipt and the manifest plain files and passed the
-//       plan through ac_maintenance_plan_validate, which stays bash.
+//       plan through the plan validation (maintenancePlanValidate,
+//       src/lib.ts; its bash original is frozen for the oracles).
 // A usage error, and a relative path when the caller's cwd has no name, exit 1
 // with an ERROR line on stderr - a refusal, never a pass.
 //
@@ -76,8 +102,8 @@
 // -F, since a value holds no LF. Read-evidence's stdin, and the receipt it is
 // run over, first lose every NUL and trailing LF, as the shell's $(cat) did.
 // A plan field reads as $(jq -r ...) did: the string's UTF-8 bytes less NULs
-// and trailing LFs, because the jq regexes of ac_maintenance_plan_validate let
-// one trailing LF through. The plan is parsed as JSON after one leading UTF-8
+// and trailing LFs, because the plan validation's jq regexes
+// (maintenancePlanValidate) let one trailing LF through. The plan is parsed as JSON after one leading UTF-8
 // BOM is dropped, which jq accepts too.
 //
 // Deliberate divergences; only the last is reachable from a caller in this
@@ -104,9 +130,9 @@
 //     block rules out. Only a judge quoting more than 64 KiB reaches this,
 //     through bin/ac-gate.sh or the receipt boundary.
 
-import { lstatSync, readFileSync, realpathSync, writeSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { die, enterCaller, sha256File } from "./lib.ts";
+import { die, enterCaller, maintenancePlanValidate, physicalDir, sha256File } from "./lib.ts";
 
 const SPACE = "[ \\t\\n\\v\\f\\r]";
 const TRIM = new RegExp(`^${SPACE}+|${SPACE}+$`, "g");
@@ -321,6 +347,41 @@ function stdin(): string {
   } catch {
     return "";
   }
+}
+
+// The receipt boundary's half the TypeScript callers (src/curate.ts,
+// src/learn.ts) run in process: the receipt and manifest plain files (no
+// link), the plan validated against its run - the plan's dir resolved
+// physically, or its parent when that dir is `plans` - then receiptCheck; the
+// decision, null for any refusal. The paths are bytes (latin1), as those
+// callers hold them.
+export function receiptValidate(receipt: string, plan: string, manifest: string, quoteMin: number): string | null {
+  const u8 = (s: string): string => Buffer.from(s, "latin1").toString("utf8");
+  const plain = (p: string): boolean => {
+    try {
+      return statSync(Buffer.from(p, "latin1")).isFile() && !lstatSync(Buffer.from(p, "latin1")).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  };
+  const shellDirname = (p: string): string => {
+    const t = p.replace(/\/+$/, "");
+    if (t === "") return p === "" ? "." : "/";
+    const i = t.lastIndexOf("/");
+    if (i < 0) return ".";
+    const d = t.slice(0, i).replace(/\/+$/, "");
+    return d === "" ? "/" : d;
+  };
+  const shellBasename = (p: string): string => {
+    const t = p.replace(/\/+$/, "");
+    return t === "" ? (p === "" ? "" : "/") : t.slice(t.lastIndexOf("/") + 1);
+  };
+  if (!plain(receipt) || !plain(manifest)) return null;
+  let run = physicalDir(u8(shellDirname(plan)));
+  if (run === null) return null;
+  if (shellBasename(run) === "plans") run = physicalDir(`${run}/..`);
+  if (run === null || !maintenancePlanValidate(u8(plan), run)) return null;
+  return receiptCheck(u8(receipt), u8(plan), u8(manifest), quoteMin);
 }
 
 const USAGE = "usage: maintenance-receipt.ts evidence-value <label> | read-evidence <manifest> <plan.json> <quote-min> | receipt-check <receipt.md> <plan.json> <manifest> <quote-min>";

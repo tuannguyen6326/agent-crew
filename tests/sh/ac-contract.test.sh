@@ -110,9 +110,9 @@ assert_contains "$out" "WARN   tab-row contract: qa:maybe invalid" "... and is l
 assert_contains "$("$BIN/ac-ready.sh" queued)" "tab-row" "... and is offered by queued like any plain row"
 
 # --- THE ESCALATION GATE (ac-brief.sh) ---------------------------------------
-# The captain's rule verbatim: "confirm với captain khi sử dụng các mode take
-# time (staged, crew-ship, qa, code-reviewer)" + "đưa ra lý do khi chọn các
-# mode take time" - and the "đã define trong backlog thì không cần hỏi" half.
+# The rule: a mode that takes time (staged, crew-ship, qa, code-reviewer)
+# needs the captain's confirmation, and the ask states why it is chosen -
+# and a mode the ledger row already pins needs no ask.
 # Cheap-path autonomy is the counter-invariant: direct/local-only/rev:no/qa:no
 # must scaffold with no authority at all.
 
@@ -193,17 +193,23 @@ chmod +x "$failbun/bun"
 rc=0; (export PATH="$failbun:$PATH"; ac_row_contract_for_id g-pinned-mode "$backlog" >/dev/null 2>&1) || rc=$?
 assert_eq "$rc" "2" "G6b: ac_row_contract_for_id on a ledger it could not read"
 rm -f "$TMP/parses"
-out="$(PATH="$failbun:$PATH" STUB_FAIL_AT=1 "$BIN/ac-brief.sh" g-pinned-mode gproj --mode crew-ship --review yes \
-  --captain-requested 'x' --reason 'r' 2>&1)" && fail "G6b: a pin the parser could not read must refuse, never scaffold"
-assert_contains "$out" "cannot read the ledger $backlog for the delivery contract of g-pinned-mode" \
-  "G6b: the mode-pin read names the ledger it could not read"
-assert_no_file "$AC_HOME/data/g-pinned-mode/brief.md" "G6b: nothing scaffolded"
-rm -f "$TMP/parses"
-out="$(PATH="$failbun:$PATH" STUB_FAIL_AT=3 "$BIN/ac-brief.sh" g-norow gproj --mode local-only 2>&1)" \
-  && fail "G6b: a contract the escalation gate could not read must refuse, never scaffold"
-assert_contains "$out" "cannot read the ledger $backlog for the delivery contract of g-norow" \
-  "G6b: the escalation gate's contract read names the ledger it could not read"
-assert_no_file "$AC_HOME/data/g-norow/brief.md" "G6b: nothing scaffolded by the gate"
+# src/brief.ts reads the ledger once, in-process, so no parser child can fail
+# under it: a mode-000 ledger is the ledger it could not read (skipped under
+# root, which reads it).
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$backlog"
+  out="$("$BIN/ac-brief.sh" g-pinned-mode gproj --mode crew-ship --review yes \
+    --captain-requested 'x' --reason 'r' 2>&1)" && fail "G6b: a pin the parser could not read must refuse, never scaffold"
+  assert_contains "$out" "cannot read the ledger $backlog for the delivery contract of g-pinned-mode" \
+    "G6b: the mode-pin read names the ledger it could not read"
+  assert_no_file "$AC_HOME/data/g-pinned-mode/brief.md" "G6b: nothing scaffolded"
+  out="$("$BIN/ac-brief.sh" g-norow gproj --mode local-only 2>&1)" \
+    && fail "G6b: a contract the escalation gate could not read must refuse, never scaffold"
+  assert_contains "$out" "cannot read the ledger $backlog for the delivery contract of g-norow" \
+    "G6b: the escalation gate's contract read names the ledger it could not read"
+  assert_no_file "$AC_HOME/data/g-norow/brief.md" "G6b: nothing scaffolded by the gate"
+  chmod 644 "$backlog"
+fi
 
 # G6c: an id that reads as a number is still matched byte for byte - awk's ==
 # compares two numeric-looking strings as numbers, so row 01 answered for 1.
@@ -244,8 +250,8 @@ out="$("$BIN/ac-spawn.sh" g-spawncheck "$AC_HOME/projects/gproj" --harness fake 
   && fail "G9: a spawn flag contradicting the brief's Mode must refuse"
 assert_contains "$out" "contradicts the brief's recorded Mode" "G9: the refusal names the record"
 
-# G11: the declared path must carry the chief's STATED REASON (captain's
-# rule: 'đưa ra lý do khi chọn các mode take time') - required WITH
+# G11: the declared path must carry the chief's STATED REASON (why a
+# time-costly mode is chosen) - required WITH
 # --captain-requested, recorded on the brief's Escalation: line; a row pin
 # needs none (no ask happened - the pin is the captain's own act), and an
 # idle --reason documents an ask that never happened.

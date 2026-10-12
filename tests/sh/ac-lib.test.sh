@@ -14,12 +14,13 @@
 
 make_home
 sd="$AC_HOME/state"
+RBIN="$(make_retired_bin)"
 
 lib() {
   # lib <script> - run a body with ac-lib.sh + its wake/qa sub-libs sourced
   # (audit-f3: ac_wake_*/ac_room_*/ac_roomchief_live/ac_qa_* now live in
   # ac-wake-lib.sh/ac-qa-lib.sh, not ac-lib.sh).
-  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-wake-lib.sh'; . '$BIN/ac-qa-lib.sh'; $1"
+  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-wake-lib.sh'; . '$RBIN/ac-qa-lib.sh'; $1"
 }
 
 # --- ac_wake_spool_path: scope -> spool dir ---------------------------------
@@ -540,7 +541,7 @@ assert_no_file "$noconf/config" "ac_config_read creates no config/ (a READ mints
 
 # The label must never be DERIVED from whichever checkout happens to own bin/.
 # Pane agents run from crewmate panes, which carry no AC_HOME by design
-# (ac-qa.sh header); before ac_home refused, its ac_root fallback named the group after a
+# (src/qa.ts header); before ac_home refused, its ac_root fallback named the group after a
 # pool worktree ("1 (pane-agent)") or the distro repo ("agent-crew
 # (pane-agent)") - a bogus group per repo, growing run after run.
 assert_eq "$(lib "ac_fleet_name")" "home" "AC_HOME names the fleet"
@@ -694,7 +695,7 @@ assert_eq "$(pcf "$pcrepo" 2>&1)" "" "none: unconfigured project is silent"
 
 # The merge gate inherits the refusal: a legacy copy fails ac_qa_required CLOSED
 # (its ac_die propagates through the direct guard), so no merge proceeds.
-qreq() { bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-qa-lib.sh'; ac_qa_required '$1'"; }
+qreq() { bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_required '$1'"; }
 printf 'qa:\n  require_for_ship: true\n' >"$pc_new"
 printf 'qa:\n  require_for_ship: true\n' >"$pc_old"
 # The named ac_die must SURFACE (not just any non-zero): a fail-open that merely
@@ -703,6 +704,47 @@ printf 'qa:\n  require_for_ship: true\n' >"$pc_old"
 assert_contains "$(qreq "$pcrepo" 2>&1 || true)" "RETIRED" "legacy copy: ac_qa_required fails CLOSED with the named error"
 rm -f "$pc_old"
 qreq "$pcrepo" || fail "canonical-only: require_for_ship reads from the canonical path"
+
+# The policy grammar: the value past the key's own colon, its comment cut,
+# quotes deleted and its ends trimmed, ENFORCES unless it is an explicit false
+# spelling; a key absent from the qa block does not.
+qreq_on() { printf -- "$1" >"$pc_new"; if qreq "$pcrepo" >/dev/null 2>&1; then printf on; else printf off; fi; }
+for v in true True 'true # c' 'true\t' 'true\t# c' yes 1 maybe '' 'x: false' 'false:x' 'fal se' 'false#x'; do
+  assert_eq "$(qreq_on "qa:\n  require_for_ship: $v\n")" on "require_for_ship: '$v' enforces"
+done
+for v in false False FALSE no No NO off Off OFF '"false"' "'off'" '  NO  ' 'false # c' 'false\t# c' 'false\t'; do
+  assert_eq "$(qreq_on "qa:\n  require_for_ship: $v\n")" off "require_for_ship: '$v' does not"
+done
+assert_eq "$(qreq_on 'qa:\r\n  require_for_ship: true\r\n')" on "a CRLF yaml enforces"
+assert_eq "$(qreq_on 'qa: # c\n  require_for_ship: true\n')" on "a commented qa: header opens the block"
+assert_eq "$(qreq_on 'qa:\n  other: 1\n')" off "a key absent from the qa block is not enforced"
+# The awk reads in the C locale: a byte that is no UTF-8 before the policy
+# line no longer aborts it into "not enforced" under the operator's locale.
+printf 'name: caf\351\nqa:\n  require_for_ship: true\n' >"$pc_new"
+LC_ALL=en_US.UTF-8 qreq "$pcrepo" 2>/dev/null || fail "a byte that is no UTF-8 before the policy line still enforces under UTF-8"
+
+# A policy that cannot be READ refuses the run (exit 1, a named ERROR) rather
+# than reading "not enforced": a regular file it cannot read, and a git that
+# cannot run, so no repo resolves to its policy.
+printf 'qa:\n  require_for_ship: false\n' >"$pc_new"
+if [ "$(id -u)" != 0 ]; then
+  chmod 000 "$pc_new"
+  rc=0; out="$(qreq "$pcrepo" 2>&1)" || rc=$?
+  chmod 644 "$pc_new"
+  assert_eq "$rc" 1 "an unreadable policy ends the run with 1"
+  assert_eq "$out" "ERROR: qa.require_for_ship: the project policy $pc_new cannot be read - refusing the merge rather than reading it as not enforced" "an unreadable policy: the named refusal alone"
+fi
+nogit="$TMP/qreq-nogit"; mkdir -p "$nogit"
+for d in /usr/bin /bin; do
+  for f in "$d"/*; do t="${f##*/}"; [ "$t" != git ] && [ ! -e "$nogit/$t" ] && ln -s "$f" "$nogit/$t"; done
+done
+rc=0; out="$(PATH="$nogit" qreq "$pcrepo" 2>&1)" || rc=$?
+assert_eq "$rc" 1 "no git: the run ends with 1"
+assert_eq "$out" "ERROR: qa.require_for_ship: git did not run (is it on PATH?), so the project policy for '$pcrepo' cannot be resolved - refusing the merge rather than reading it as not enforced" "no git: the named refusal alone"
+# ...while a dir git answers is no repo stays NOT enforced, silently.
+mkdir -p "$TMP/qreq-plain"
+rc=0; out="$(qreq "$TMP/qreq-plain" 2>&1)" || rc=$?
+assert_eq "$rc:$out" "1:" "a dir that is no repo: not enforced, silent"
 rm -f "$pc_new"
 
 # --- ac_qa_gate_ok: the two-sided, fail-closed merge gate --------------------
@@ -716,7 +758,7 @@ rm -f "$pc_new"
 # drive the SCRIPTS. This is the one test whose LOCATION is load-bearing.
 gate() {
   # gate <repo> <sha> - ac_qa_gate_ok with both libs loaded, output merged.
-  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-pipeline-lib.sh'; . '$BIN/ac-qa-lib.sh'; ac_qa_gate_ok '$1' '$2'" 2>&1
+  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$1' '$2'" 2>&1
 }
 gate_ok() { gate "$@" >/dev/null; }
 
@@ -751,14 +793,14 @@ v2_marker() {
   } >"$1"
 }
 marker_parse() {
-  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-qa-lib.sh'; ac_qa_attestation_parse '$1' '$2' '${3:-}' '${4:-}'"
+  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_attestation_parse '$1' '$2' '${3:-}' '${4:-}'"
 }
 
 # AC30 + AC31(flat): a FLAT project's bare marker is accepted exactly as
 # before, and its absence refuses exactly as before.
 flat_cfg
 rm -f "$grecdir/graterepo.md"
-assert_fails bash -c ". '$BIN/ac-lib.sh'; . '$BIN/ac-pipeline-lib.sh'; . '$BIN/ac-qa-lib.sh'; ac_qa_gate_ok '$grepo' '$gsha'"
+assert_fails bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$grepo' '$gsha'"
 : >"$gpassed/$gsha"
 assert_fails gate "$grepo" "$gsha"
 v2_marker "$gpassed/$gsha" "$gsha" "" "" flat-profile
@@ -819,7 +861,7 @@ rm -f "$grecdir/graterepo.md"
 v2_marker "$gpassed/$gsha" "$gsha" "" "" flat-profile
 out="$(gate "$grepo" "$gsha")" && fail "fully-loaded: a half-declared project must refuse"
 assert_contains "$out" "MODE MISMATCH" "fully-loaded, the refusal is the mode-mismatch one"
-out="$(bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-qa-lib.sh'; ac_qa_gate_ok '$grepo' '$gsha'" 2>&1)" \
+out="$(bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$grepo' '$gsha'" 2>&1)" \
   && fail "a caller sourcing only ac-lib.sh reached the FLAT arm and accepted a bare marker"
 assert_contains "$out" "ac-pipeline-lib.sh" \
   "the refusal names the sibling the caller failed to source"
@@ -847,7 +889,7 @@ assert_contains "$out" "orchid/orchid-service" "AC25: the first run's marker sur
 assert_contains "$out" "orchid/orchid-worker" "AC25: alongside the second's"
 
 # AC26: a head with NO marker at all still refuses, exactly as today.
-assert_fails bash -c ". '$BIN/ac-lib.sh'; . '$BIN/ac-pipeline-lib.sh'; . '$BIN/ac-qa-lib.sh'; ac_qa_gate_ok '$grepo' '0000000000000000000000000000000000000000'"
+assert_fails bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$grepo' '0000000000000000000000000000000000000000'"
 
 # The STRICT marker reader. Every candidate clears three tests or it is
 # SKIPPED and NAMED - it can never authorise a merge, and it can never block
@@ -916,7 +958,7 @@ rm -f "$gcfg" "$grecdir/graterepo.md"
 # attestation at exactly this head - not merely any one passing scope/app pair.
 # The matrix arm short-circuits BEFORE the two-sided flat/scoped read, so its
 # fixture needs only require_for_ship - the required set comes from the manifest.
-mgate() { bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-pipeline-lib.sh'; . '$BIN/ac-qa-lib.sh'; ac_qa_gate_ok '$1' '$2' '$3'" 2>&1; }
+mgate() { bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$1' '$2' '$3'" 2>&1; }
 mgate_ok() { mgate "$@" >/dev/null; }
 
 printf 'qa:\n  require_for_ship: true\n' >"$gcfg"
@@ -1205,6 +1247,61 @@ rc=0; out="$(lib "ac_meta_get '$TMP/no-such-file.meta' pid")" || rc=$?
 assert_eq "$rc" "0" "an absent FILE still exits 0"
 assert_eq "$out" "" "an absent FILE still reads empty"
 
+# --- ac_meta_set: one writer at a time per meta --------------------------------
+# Contract: ac_meta_set's own comment (bin/ac-lib.sh). The lock is
+# <dir>/.<file>.lock; its waits are PATH `sleep 1`s, counted here by a stub.
+ms="$TMP/metaset"
+mkdir -p "$ms/bin"
+printf '#!/bin/sh\necho x >>"$MS_SLEEPS"\n' >"$ms/bin/sleep"
+chmod +x "$ms/bin/sleep"
+msf="$ms/t1.meta"
+msset() {  # msset <file> <key> <value> - one ac_meta_set under the stub sleep; "<rc>:<stdout+stderr>"
+  local rc=0 out
+  : >"$ms/sleeps"
+  out="$(MS_SLEEPS="$ms/sleeps" PATH="$ms/bin:$PATH" lib "ac_meta_set '$1' '$2' '$3'" 2>&1)" || rc=$?
+  printf '%s:%s' "$rc" "$out"
+}
+printf 'kind=ship\n' >"$msf"
+mkdir "$ms/.t1.meta.lock"
+printf '%s\n' "$$" >"$ms/.t1.meta.lock/pid"
+assert_eq "$(msset "$msf" pr x)" "1:WARN: cannot lock meta file $msf - nothing written" "a live holder's meta lock is refused once its waits run out"
+assert_eq "$(wc -l <"$ms/sleeps" | tr -d ' ')" "10" "...after ten PATH sleeps"
+assert_eq "$(cat "$msf")" "kind=ship" "...the meta untouched"
+assert_eq "$(cat "$ms/.t1.meta.lock/pid")" "$$" "...and the holder's lock left alone"
+msgone="$(sh -c 'echo $$')"
+printf '%s\n' "$msgone" >"$ms/.t1.meta.lock/pid"
+assert_eq "$(msset "$msf" pr x)" "0:" "a dead holder's meta lock is reclaimed"
+assert_eq "$(cat "$msf")" "$(printf 'kind=ship\npr=x')" "...and the write lands"
+assert_eq "$(ls -A "$ms")" "$(printf 'bin\nsleeps\nt1.meta')" "...leaving no lock and no temp"
+if [ "$(id -u)" != 0 ]; then
+  mkdir "$ms/ro"
+  printf 'k=v\n' >"$ms/ro/t.meta"
+  chmod 555 "$ms/ro"
+  out="$(msset "$ms/ro/t.meta" pr x)"
+  chmod 755 "$ms/ro"
+  assert_eq "$out" "1:WARN: cannot lock meta file $ms/ro/t.meta - nothing written" "a directory the lock cannot be made in is refused"
+  assert_eq "$(wc -c <"$ms/sleeps" | tr -d ' ')" "0" "...at once, with no wait"
+  assert_eq "$(ls -A "$ms/ro"):$(cat "$ms/ro/t.meta")" "t.meta:k=v" "...the meta untouched"
+  rm -rf "$ms/ro"
+fi
+printf '#!/bin/sh\necho "mv: the stub refuses" >&2\nexit 1\n' >"$ms/bin/mv"
+chmod +x "$ms/bin/mv"
+assert_eq "$(msset "$msf" pr y)" "1:mv: the stub refuses" "a rename that fails is the caller's failure"
+rm -f "$ms/bin/mv" "$msf".tmp.*
+assert_eq "$(ls -A "$ms")" "$(printf 'bin\nsleeps\nt1.meta')" "...and the lock is released"
+# Two writers of different keys: an unlocked read-modify-rename drops whichever
+# key the other's rename overwrote. The stub's short real sleep keeps a
+# contended wait cheap.
+printf '#!/bin/sh\nexec /bin/sleep 0.1\n' >"$ms/bin/sleep"
+printf 'kind=ship\n' >"$msf"
+PATH="$ms/bin:$PATH" lib "for i in \$(seq 1 40); do ac_meta_set '$msf' a\$i 1; done" &
+msp=$!
+PATH="$ms/bin:$PATH" lib "for i in \$(seq 1 40); do ac_meta_set '$msf' b\$i 1; done"
+wait "$msp"
+assert_eq "$(grep -c '^[ab][0-9]*=1$' "$msf"):$(grep -c '^kind=ship$' "$msf")" "80:1" "two concurrent writers of different keys lose neither's"
+assert_eq "$(ls -A "$ms")" "$(printf 'bin\nsleeps\nt1.meta')" "...and leave no lock and no temp"
+rm -rf "$ms"
+
 # --- QA coverage manifest parser -----------------------------------------------
 # The parser is shared by the QA recorder and the independent verifier. Keep
 # its closed grammar and exact-tree UT reference checks locked here without
@@ -1229,7 +1326,7 @@ qrender() {
       printf "%s\n" "$AC_QA_MANIFEST_ERROR" >&2
       exit 1
     fi
-  ' _ "$BIN/ac-lib.sh" "$BIN/ac-qa-lib.sh" "$qmr" "$qsha" "$1"
+  ' _ "$BIN/ac-lib.sh" "$RBIN/ac-qa-lib.sh" "$qmr" "$qsha" "$1"
 }
 
 cat >"$qplan" <<'EOF'
@@ -1271,14 +1368,14 @@ bash -c '
   . "$1"
   . "$2"
   ac_qa_testplan_manifest_validate "$3" "$4" "$5" "$6" "$7"
-' _ "$BIN/ac-lib.sh" "$BIN/ac-qa-lib.sh" "$qmr" "$qsha" "$qplan" "$qmanifest" "$qmanifest_sha" \
+' _ "$BIN/ac-lib.sh" "$RBIN/ac-qa-lib.sh" "$qmr" "$qsha" "$qplan" "$qmanifest" "$qmanifest_sha" \
   || fail "the frozen manifest and recorded hash must revalidate"
 assert_fails bash -c '
   set -euo pipefail
   . "$1"
   . "$2"
   ac_qa_testplan_manifest_validate "$3" "$4" "$5" "$6" WRONG
-' _ "$BIN/ac-lib.sh" "$BIN/ac-qa-lib.sh" "$qmr" "$qsha" "$qplan" "$qmanifest"
+' _ "$BIN/ac-lib.sh" "$RBIN/ac-qa-lib.sh" "$qmr" "$qsha" "$qplan" "$qmanifest"
 
 cat >"$qplan" <<'EOF'
 ## Coverage
@@ -1662,6 +1759,18 @@ printf -- '- [ ] 01 - numeric-looking id; epic:fa (repo: fx)\n' >"$AC_HOME/recor
 rc=0; lib "ac_epic_base_for 1 fx" >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "1" "row 01 is no row for id 1"
 rm -rf "$AC_HOME/records/backlog.md" "$AC_HOME/data/fence" "$AC_HOME/data/fa" "$AC_HOME/data/fb"
+# A crewmate pane carries no AC_HOME, only AC_FLEET_STATE: the fence reads the
+# home that state dir sits in, so the pane's own second lease is fenced too.
+# With neither, the home's refusal and no fence.
+printf -- '- [ ] fence-s1 - story; epic:fence (repo: fx)\n' >"$AC_HOME/records/backlog.md"
+mkdir -p "$AC_HOME/data/fence" "$AC_HOME/state"
+printf 'fx epic/fence\n' >"$AC_HOME/data/fence/branches"
+assert_eq "$(env -u AC_HOME AC_FLEET_STATE="$AC_HOME/state" bash -c ". '$BIN/ac-lib.sh'; ac_epic_base_for fence-s1-verify fx" 2>&1)" "epic/fence" \
+  "a pane's AC_FLEET_STATE names the home the fence reads"
+rc=0; out="$(env -u AC_HOME -u AC_FLEET_STATE bash -c ". '$BIN/ac-lib.sh'; ac_epic_base_for fence-s1 fx" 2>&1)" || rc=$?
+assert_eq "$rc" "1" "with neither AC_HOME nor AC_FLEET_STATE there is no fence"
+assert_contains "$out" "AC_HOME is not set" "... and the home's refusal says why"
+rm -rf "$AC_HOME/records/backlog.md" "$AC_HOME/data/fence"
 
 # --- ac_domain_tally: fleet-ledger token census (crewdomain-token) -----------
 # done means REAL done, not Done-section membership: a [failed]/[abandoned]

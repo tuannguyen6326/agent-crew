@@ -257,7 +257,7 @@ EOF
   cmp -s "$TMP/want.md" "$NH/data/$1/ship-instructions.md" || fail "ship-instructions.md for $1: $(diff "$TMP/want.md" "$NH/data/$1/ship-instructions.md" | head -n 6)"
 }
 LOCAL_LINE='- Mode local-only: after delivery preparation, leave `crew/ID` clean and fully committed. Never push or open a PR.'
-DIRECT_LINE='- Mode direct-pr: after delivery preparation, push `crew/ID` and open a PR against the recorded target branch. The PR body covers intent, changes, and verification evidence.'
+DIRECT_LINE='- Mode direct-pr: after delivery preparation, push `crew/ID` and open a PR against the recorded target branch. The PR body covers intent, changes, and verification evidence, and ends with `Closes #<n>` only for the GitHub issue the brief says this task fixes; never put close, fix or resolve before any other `#<n>` - GitHub closes that issue on merge.'
 CREW_LINE='- Mode crew-ship: run the `crew-ship` skill. Its `ac-ship` engine owns the guarded 8-step delivery pipeline (intent, rebase, review, test, document, lint, push, pr). Hand over only after checks pass and include the PR URL.'
 USAGE="ERROR: usage: ac-promote.sh <id> --mode <crew-ship|direct-pr|local-only> [--captain-requested '<ref>']"
 GONE="crewmate window not reachable; promotion recorded in meta only"

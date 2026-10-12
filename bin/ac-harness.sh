@@ -12,15 +12,17 @@
 #
 # WHAT LIVES HERE: the known-harness set (+ its ERE alternation), the TUI
 # busy-regex, the seeded instruction file, the pane-agent arm map, the
-# startup-dialog key, and the recorded-launch-opts policy.
+# startup-dialog key, and the recorded-launch-opts policy. The instruction
+# file, the startup key and the launch-opts policy have TypeScript twins in
+# src/lib.ts that tests/ts/spawn-twins.test.ts holds to them.
 # WHAT STAYS AT ITS ARM, deliberately: the three launch COMMAND tables.
-# ac_build_launch (ac-backend.sh, the interactive line) and oneshot_launch
-# (ac-pane-agent.sh, the --exec form) argue their locality in their own
+# ac_build_launch (ac-backend.sh, the interactive line) and ONESHOT
+# (src/pane-agent.ts, the --exec form) argue their locality in their own
 # headers: two different shapes for two different lifecycles. synthCommand
-# (src/brain.ts, the brain's synthesize one-shot) is oneshot_launch's shape
+# (src/brain.ts, the brain's synthesize one-shot) is ONESHOT's shape
 # again, kept as the brain's own table and held
-# to oneshot_launch's exact bytes for every registry harness by
-# tests/sh/ac-brain.test.sh (agy, one-shot-only, has an oneshot_launch form and
+# to ONESHOT's exact bytes for every registry harness by
+# tests/sh/ac-brain.test.sh (agy, one-shot-only, has a ONESHOT form and
 # no brain form - the brain refuses it). None of the three
 # composes a line for an unknown name. A new harness therefore edits THIS file
 # plus those three arms, src/lib.ts's HARNESSES copy (tests/ts/lib.test.ts
@@ -44,7 +46,8 @@ ac_harness_known() {
 
 # TUI busy idioms: ONE alternation over every built-in harness's "working"
 # render, grepped by the watcher against pane tails (busy = absorb, not wake).
-# A new harness ORs its fragment in HERE. The fragments are deliberately not
+# A new harness ORs its fragment in HERE (src/lib.ts's BUSY_RE copy is held to
+# it by tests/ts/wake-drain.test.ts). The fragments are deliberately not
 # attributed per harness: the watcher only ever greps the combined regex, and
 # no per-idiom attribution was ever verified - a false one would be worse
 # than none.
@@ -96,14 +99,16 @@ ac_harness_pane_arm() {
   # Non-zero for anything else: a third harness is refused until somebody
   # verifies the same contract about it, because arming an unproven one costs
   # the caller its whole timeout and then reads like a slow reviewer
-  # (HARNESS ARMS, bin/ac-pane-agent.sh header - the arm SEQUENCING and both
-  # launch-command tables stay with that file).
+  # (HARNESS ARMS, src/pane-agent.ts header - the arm SEQUENCING and the
+  # one-shot table stay with that module).
   # pi and cursor ride the crewmate arm on the captain's own order
   # (pi and cursor opened for the codereview/qa/gate pane-agent roles) -
   # their completion contract has NO live run yet, so
   # the FIRST real round is the verification: a pane that never writes its
   # verdict file surfaces as the caller's harvest timeout, visibly, and
   # harness-facts.md owns the UNPROVEN boundary until that round lands.
+  # src/lib.ts's harnessPaneArm is held to this map
+  # (tests/ts/verify-twins.test.ts).
   case "$1" in
     claude) printf 'session\n' ;;
     codex | opencode | pi | cursor) printf 'crewmate\n' ;;
@@ -116,7 +121,7 @@ ac_harness_startup_key() {
   # harness's startup dialog before any text is typed, empty when there is no
   # dialog. codex: a bare Enter takes "1. Yes, continue"; an `n` or a `2`
   # anywhere in typed text would pick "2. No, quit" (harness-facts.md, codex
-  # STARTUP TRUST DIALOG). Both senders - ac-spawn.sh's deliver_kickoff and
+  # STARTUP TRUST DIALOG). Both senders - src/spawn.ts deliverKickoff and
   # ac-pane-agent.sh's crewmate arm - read this instead of each keeping its
   # own codex conditional; the SPAWN side additionally suppresses the key for
   # a custom launch-codex template, whose TUI is unknown (that guard is the
@@ -135,7 +140,7 @@ ac_record_launch_opts() {
   #   claude -> model + effort   codex -> model + APPLIED effort
   #   opencode -> model only (its TUI has no --variant)   others -> neither.
   # The two efforts differ for the ultracode preset alone. claude records the
-  # RAW value: its launch line carries --effort xhigh AND deliver_kickoff types
+  # RAW value: its launch line carries --effort xhigh AND deliverKickoff types
   # '/effort ultracode' into the TUI, so the session really is in that mode.
   # That TUI half is claude-only, so a codex spawn at ultracode genuinely runs
   # at the tier ac_build_launch passed it as -c model_reasoning_effort=<e> -
