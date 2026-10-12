@@ -2724,6 +2724,41 @@ assert_no_file "$state/.wake-spool" "a working pane publishes no wake"
 reset_state
 rm -rf "$AC_HOME/data/mrw"
 
+# (4) An ended turn that left a BACKGROUND agent or shell running reads not
+# busy, yet its tail keeps moving (subagent progress, notices) under the
+# unchanged marker. Only the LAST turn-summary line counts: claude prints one
+# per turn end and the earlier ones stay in scrollback. The re-wake is DEFERRED,
+# never dropped - once a later turn ends clean, the moved pane wakes once.
+mkdir -p "$AC_HOME/data/mrb"
+printf 'window=crew:mrb\nbackend=herdr\n' >"$state/mrb.meta"
+seed_pane mrb pMRB tMRB
+printf '✻ Waiting for 1 background agent to finish\n⏺ Agent "lane 1" finished · 2m 3s\n✻ Worked for 2s · done 3:20 PM\npaused: waiting on CI\n✻ Cogitated for 4s · done 3:28 PM · 1 shell still running\n' >>"$(fake_pane_buf mrb)"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrb" "the paused marker wakes once"
+rm -rf "$state"/.wake-spool*
+printf '› Message from @lane2 (ctrl+o to expand)\n' >>"$(fake_pane_buf mrb)"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
+  "a pane moving under a live background shell does not re-wake"
+printf '✻ Waiting for 2 background agents to finish\n  ⎿ code-reviewer (3 tool uses)\n' >>"$(fake_pane_buf mrb)"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
+  "... nor under live background agents"
+assert_no_file "$state/.wake-spool" "a background-running pane publishes no wake"
+# Whatever kind of work claude lists as still running defers alike - the line
+# below is lab's live p2-e2e-ci-fast tail (a Monitor), which no shell/agent
+# wording matched.
+printf '⏺ paused: waiting on CI\n✻ Baked for 2s · done 5:01 PM · 1 monitor still running\n' >>"$(fake_pane_buf mrb)"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
+  "... nor under a live monitor"
+printf '  ⎿ run 38232082566 in_progress\n' >>"$(fake_pane_buf mrb)"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
+  "... however the pane moves under it"
+assert_no_file "$state/.wake-spool" "a monitor-waiting pane publishes no wake"
+printf '⏺ Agent "code-reviewer" finished · 6m 2s\n✻ Worked for 9s · done 3:52 PM\n' >>"$(fake_pane_buf mrb)"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrb" \
+  "the deferred re-wake fires once the last turn ended with nothing in the background"
+assert_contains "$(fleet_spool)" "paused: waiting on CI (pane advanced since the last wake)" "the deferred re-wake payload"
+reset_state
+rm -rf "$AC_HOME/data/mrb"
+
 # --- ended-turn loud wake (watch-idle-loud-wake) ------------------------------
 # A pane past AC_STALE with no marker is TWO situations, and one stale: signal
 # for both is precisely what chiefs learn to discount: a pane that ENDED ITS

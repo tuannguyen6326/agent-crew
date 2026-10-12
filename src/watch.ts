@@ -445,6 +445,19 @@
 // .seen-<id> semantics are unchanged, and the AC_DECISION_RE re-stamp reconcile
 // still wins the pass it fires on (a re-wake follows on the next poll if the
 // pane keeps moving).
+// BACKGROUND DEFER (paused-rewake-on-moving-pane): a turn that ENDED with a
+// background agent, shell or monitor still running reads not busy, yet its tail keeps
+// moving (subagent progress, completion notices) under the very marker the chief
+// was already told - observed live as a `paused:` re-wake every 10-60 s, each one
+// a turn in the supervising chief's pane. So the re-wake also waits while the
+// LAST claude turn-summary line (`✻ ...`) in the tail says work is still running
+// (BACKGROUND_RE). Only the last one: claude prints one per turn end and the
+// earlier ones stay in scrollback, so a stale `Waiting for ...` line must not
+// mute a pane forever. A deferred pass stamps nothing, so the first poll after a
+// turn ends clean still wakes once if the pane moved - deferred, never dropped.
+// A harness that prints no such line is bit-for-bit the behavior above.
+// RESIDUAL: a background shell that finishes without claude opening a new turn
+// keeps the re-wake deferred until the next turn summary.
 //
 // ARTIFACT CHANNEL (watch-artifact-wake). A stage's report.md is a completion
 // in its own right, so it wakes the chief with NO pane cooperation at all: a
@@ -1823,6 +1836,11 @@ function latestFindingsOf(id: string): string | null {
 // its verdict for the worker's word.
 const WATCH_ASK_NOTE = "needs-decision: pane blocked on an interactive prompt";
 const WATCH_ENDED_NOTE = "blocked: ended its turn with no report line";
+// Claude's turn-summary wording for a turn that ended with work still running.
+// `still running` takes any kind claude lists there (shells, monitors, ...): a
+// kind missing from an enumeration re-opened the wake loop, while matching too
+// wide only defers a wake.
+const BACKGROUND_RE = "Waiting for [0-9]+ background agents? to finish|still running";
 
 // <path> created exclusively, else <path>.<n> - never written through
 // whatever sits at a predictable name.
@@ -2198,7 +2216,7 @@ async function checkPane(meta: string): Promise<string | null> {
       // Reconcile: parked on an already-seen captain-wait marker with no
       // stamp - re-stamped silently, the chief already knows.
       routed(backendCall("mark_wait", [id, u8(marker)], stdio));
-    } else if (hash !== seenHash && !busy) {
+    } else if (hash !== seenHash && !busy && !grepQ(BACKGROUND_RE, lastLine(grepOut("-E", "^✻ ", tail)))) {
       stamp(st("seen-hash"), `${hash}\n`);
       if (seenHash !== "") {
         queueWake("report", idB, `${marker} (pane advanced since the last wake)`);
