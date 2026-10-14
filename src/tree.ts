@@ -434,6 +434,8 @@
 //   integer expression expected`, a failed redirection's `Permission denied`,
 //   an arithmetic expansion's error, `mv:`'s line after a meta rewrite whose
 //   temp could not be written, `cd:`'s own line - the exit statuses are kept.
+// - NESTED REPOS: a reset's clean removes an untracked nested repository
+//   (`-ffdq`), where the original's `-fdq` kept it and the slot stayed dirty.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is named
 //   (`ERROR: AC_HOME is not a readable directory: <h>`) wherever the original
 //   printed cd's own line.
@@ -859,7 +861,9 @@ function verifiedState(wt: string): string {
 }
 
 // Detach onto <ref> (the freshest default ref when none), drop local changes
-// and untracked files (ignored files survive: caches). qa run state is swept
+// and untracked files (ignored files survive: caches). clean takes -f twice
+// because git-clean(1) keeps an untracked nested repository under one, and a
+// survivor reads dirty to every later get, so the slot leaves the pool. qa run state is swept
 // explicitly - it is ignored, so clean keeps it, and a stale ports.env or
 // serve.pid must never leak to the next lessee - and an interrupted rebase,
 // cherry-pick or bisect survives checkout and reset, so each is quit first.
@@ -871,7 +875,7 @@ function resetWorktree(repo: string, wt: string, ref = ""): boolean {
   return (
     git(wt, ["checkout", "--detach", "--force", "--quiet", ref]).status === 0 &&
     git(wt, ["reset", "--hard", "--quiet", ref]).status === 0 &&
-    git(wt, ["clean", "-fdq"]).status === 0
+    git(wt, ["clean", "-ffdq"]).status === 0
   );
 }
 

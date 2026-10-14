@@ -43,8 +43,12 @@ assert_contains "$(cat "$ws")" '"path": "worktrees/2-repo", "name": "wt2-repo - 
 # Return refuses to discard dirty work without --force, then resets.
 printf 'junk\n' >"$wt1/junk.txt"
 assert_fails "$BIN/ac-tree.sh" return "$wt1"
+# git-clean(1): a nested repository survives a single -f, and a survivor would
+# leave the slot dirty for every later get.
+git init -q "$wt1/nested"
 "$BIN/ac-tree.sh" return "$wt1" --force 2>/dev/null
 assert_no_file "$wt1/junk.txt" "forced return reset the tree"
+[ -e "$wt1/nested" ] && fail "forced return must remove an untracked nested repo"
 assert_contains "$("$BIN/ac-tree.sh" list --repo "$repo")" "available" "slot released"
 case "$(cat "$ws")" in
   *'"path": "worktrees/1-repo"'*) fail "returned slot must leave the active editor workspace" ;;
