@@ -725,6 +725,10 @@
 //   `AC_QA_MANIFEST_ERROR: unbound variable` a staged test-plan manifest that
 //   cannot be written ends `step testplan completed` and `testplan-amend` on
 //   (exit 1, the temp removed, nothing published).
+// - LAST PROBE: a health wait that times out after running a probe ends
+//   `health probe never passed within <t>s (last probe: exit <n>[: <line>])`,
+//   the line the last one wrote on stderr (at most 200 bytes), where the
+//   original said only `never passed`; a wait that ran none is unchanged.
 // - EXPRESSIONS: a qa.health_timeout that is a whole arithmetic expression
 //   (`1+1`) rather than one operand, or an identifier naming a variable the
 //   original had set (`OPTIND`), ends `health` as W7's malformed values do
@@ -1500,10 +1504,21 @@ function qaPublishRuntimeGate(rd: string, runtimeSha: string, sourceSha: string,
 
 // The health probe as the original ran it: `( cd <repo> && env -i <env>
 // perl -e 'alarm 10; exec "sh","-c",$ARGV[0]' <c> )`, or `sh -c` without perl.
+function probeArgv(c: string, perl: boolean, env: string[]): string[] {
+  const body = perl ? ["perl", "-e", 'alarm 10; exec "sh", "-c", $ARGV[0]', c] : ["sh", "-c", c];
+  return ["/usr/bin/env", "-i", ...env, ...body];
+}
 function probe(rd: string, c: string, perl: boolean, env: string[], out: Io = "ignore"): Ran {
   void rd;
-  const body = perl ? ["perl", "-e", 'alarm 10; exec "sh", "-c", $ARGV[0]', c] : ["sh", "-c", c];
-  return run(["/usr/bin/env", "-i", ...env, ...body], { cwd: repo, stdout: out, stderr: out === "ignore" ? "ignore" : "inherit" });
+  return run(probeArgv(c, perl, env), { cwd: repo, stdout: out, stderr: out === "ignore" ? "ignore" : "inherit" });
+}
+function probeFailure(c: string, perl: boolean, env: string[]): { status: number; why: string } {
+  let r: ReturnType<typeof Bun.spawnSync> | null = null;
+  try {
+    r = spawnShellSync(probeArgv(c, perl, env).map(u8), { cwd: u8(repo), stdin: "inherit", stdout: "ignore", stderr: "pipe" });
+  } catch {}
+  const lines = r ? Buffer.from(r.stderr).toString("latin1").split("\n").map((l) => l.trim()).filter((l) => l !== "") : [];
+  return { status: shellStatus(r), why: (lines.at(-1) ?? "").slice(0, 200) };
 }
 
 // Stage, parse with the merge gate's own v2 parser, then rename into the
@@ -2950,18 +2965,21 @@ function cmdHealth(): void {
   const start = epochA();
   const deadline = BigInt.asIntN(64, arith(start) + arith(timeout));
   const perl = commandV("perl");
+  let last = "";
   for (;;) {
     const now = testInt(cap(run(["date", "+%s"]).out));
     if (now === null || !(now < deadline)) break;
     if (pid !== "" && !killZero(pid)) fail(`serve process died during health wait (see ${rd}/logs/serve.log)`);
-    if (probe(rd, c, perl, env).status === 0) {
+    const p = probeFailure(c, perl, env);
+    if (p.status === 0) {
       say(`healthy after ${BigInt.asIntN(64, arith(cap(run(["date", "+%s"]).out)) - arith(start))}s\n`);
       qaPublishRuntimeReceipt(rd);
       return;
     }
+    last = ` (last probe: exit ${p.status}${p.why === "" ? "" : `: ${p.why}`})`;
     ee(run(["sleep", "2"], { stdout: "inherit" }).status);
   }
-  fail(`health probe never passed within ${timeout}s`);
+  fail(`health probe never passed within ${timeout}s${last}`);
 }
 
 function cmdSeed(): number {

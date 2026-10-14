@@ -3604,15 +3604,27 @@ xnoconf() { xworld; xcfg 'qa:\n  other: x\n'; }
 # SHELL-OWN (named): `config` with no key - the exit and stdout, not the shell's own line.
 x_noconf() { xstart; xc serve; xc health; xc seed; xc config qa.serve; XNOERR=1; xc config; XNOERR=""; xc cmd e2e --cases C-1; }
 xsame xnoconf x_noconf
-xslowhealth() { xworld; xcfg 'qa:\n  serve: "/bin/sleep 30"\n  health: "false"\n  health_timeout: 3\n'; }
+# LAST PROBE (named): a wait that times out names the last probe's exit and the
+# last line it wrote on stderr, where the original said only "never passed".
+xslowhealth() { xworld; xcfg 'qa:\n  serve: "/bin/sleep 30"\n  health: "echo first >&2; echo refused >&2; exit 7"\n  health_timeout: 3\n'; }
 x_slowhealth() { xready; xc serve; xc health; xc finish cancelled; }
-xsame xslowhealth x_slowhealth
+xpass o xslowhealth x_slowhealth o; xpass n xslowhealth x_slowhealth n
+xhas "ERROR: health probe never passed within 3s" o
+xhas "ERROR: health probe never passed within 3s (last probe: exit 7: refused)" n
+sed 's/ (last probe: exit 7: refused)$//' "$TMP/xt2.n" | cmp -s - "$TMP/xt2.o" || fail "LAST PROBE: the suffix is the only difference"
+cmp -s "$TMP/xw2.o" "$TMP/xw2.n" || fail "LAST PROBE: the worlds match"
 # W7 (at parity): health_timeout read raw into the arithmetic - abc, 1m and 08 end it on the shell's own line (the exit and stdout, not that line); 010 is 8 s, and a deadline past the signed 64-bit limit wraps to one already gone, each on the entry's own refusal.
 for xw7v in abc 1m 08 010 9223372036854775807; do
   eval "xw7_$xw7v() { xworld; xcfg 'qa:\n  health: \"false\"\n  health_timeout: $xw7v\n'; }"
   case "$xw7v" in abc|1m|08) xw7err=1 ;; *) xw7err="" ;; esac
   x_w7() { xstart; XNOERR="$xw7err"; xc health; XNOERR=""; }
-  xsame "xw7_$xw7v" x_w7
+  if [ "$xw7v" = 010 ]; then
+    xpass o "xw7_$xw7v" x_w7 o; xpass n "xw7_$xw7v" x_w7 n
+    xhas "ERROR: health probe never passed within 010s" o
+    xhas "ERROR: health probe never passed within 010s (last probe: exit 1)" n
+  else
+    xsame "xw7_$xw7v" x_w7
+  fi
 done
 # EXPRESSIONS (named): a timeout that is a whole expression, or names a variable the original had set - bash evaluated it into the deadline; the port ends at once, exit 1, no line.
 xw7expr() { xworld; xcfg "qa:\n  health: \"false\"\n  health_timeout: $xw7v\n"; }
