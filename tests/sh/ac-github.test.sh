@@ -390,14 +390,19 @@ assert_eq "$(shim_err)" "ERROR: gh issue list failed: gh: rate limited" "row 4: 
 both ghrm .fail-issue-list
 assert_eq "$(shim_tree)" "" "row 4: a failed list writes no store"
 
-# 5. W2: gh's stderr shares the capture, so a Warning line ahead of a good
-#    list makes it malformed - refused AFTER the store dir was minted (kept)
+# 5. W2 (named divergence - a list is read from gh's stdout alone): in the
+#    original gh's stderr shared the capture, so a Warning line ahead of a good
+#    list made it malformed, refused AFTER the store dir was minted; the port
+#    records the list
 both ghfile .warn 'Warning: an update is available\n'
-same poll --repo HOME/repo
-assert_eq "$(shim_err)" "ERROR: gh returned a malformed pr list (not a JSON array) - refusing to poll" "row 5: W2"
-assert_eq "$(shim_tree)" "== ./.github drwxr-xr-x
-== ./.github/github.com-acme-widgets drwxr-xr-x" "row 5: the store dir is minted, empty"
+both lists '[{"number":5,"title":"t5","url":"u5","author":{"login":"l"}}]' '[]'
+sides poll --repo HOME/repo
+assert_eq "$O_RC $N_RC" "1 0" "row 5: W2 refuses only on the original"
+assert_eq "$(oracle_err)" "ERROR: gh returned a malformed pr list (not a JSON array) - refusing to poll" "row 5: the original's W2"
+assert_eq "$(shim_out)" "ac-github.sh poll: recorded pr-5 and woke the crewchief" "row 5: the port reads past gh's warning"
 both ghrm .warn
+both lists '[]' '[]'
+both resync
 
 # 6. clause 2 then clause 3: one PR, two issues - three seen files, three
 #    wakes in one poll (.000000 to .000002), stdout lines in that order; a
