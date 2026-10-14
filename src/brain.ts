@@ -118,7 +118,7 @@
 //   direct form reads it is `no fleet home`, both in the protocol_version
 //   shape below. Every command prints ONE JSON value.
 //   sync [--rebuild] [--dry-run] [--no-embed] [--force-reconcile] [--break-lease]
-//   recall [--query q] [--entity slug] [--agent a] [--since iso|7d] [--limit n]
+//   recall [<q> | --query q] [--entity slug] [--agent a] [--since iso|7d] [--limit n]
 //          [--budget-tokens n] [--no-boosts] [--deputy id]
 //          (no --query: facts plus a browse of the store - the newest 50
 //          pages as slug/title/type/family/path/mtime/size and page_count)
@@ -129,7 +129,8 @@
 //   synthesize <question>         doctor              stats
 //   serve                         (MCP stdio, the seven verbs)
 // Errors: {"protocol_version":1,"error":<code>,"message":...,"suggestion":...}
-//   on stdout, exit 1.
+//   on stdout, exit 1. recall, remember and forget refuse a flag they do not
+//   read (invalid_params, naming it), beside the global --home, --by, --compact.
 // PROTOCOL: protocol_version refers to THIS file's shapes - ac-brain's own
 //   dialect. The seven verb NAMES are shared memory-verbs vocabulary, but the
 //   response shapes are deliberately not wire-conformant to any external
@@ -1131,7 +1132,7 @@ function packToBudget<T>(items: T[], cost: (x: T) => number, budget: number): { 
 async function cmdRecall() {
   const db = openDb();
   const t0 = performance.now();
-  const q = opt("query"), entity = opt("entity"), agent = opt("agent");
+  const q = opt("query") ?? positional(0), entity = opt("entity"), agent = opt("agent");
   const since = opt("since") ? parseSince(opt("since")!) : undefined;
   const limit = Math.min(count("limit", "8")!, 50);
   const budget = count("budget-tokens");
@@ -1739,4 +1740,19 @@ const CMDS: Record<string, () => unknown> = {
   synthesize: cmdSynthesize, serve: cmdServe,
 };
 if (!cmd || !CMDS[cmd]) die("invalid_params", `unknown command '${cmd ?? ""}'`, "commands: " + Object.keys(CMDS).join(" "));
+// A flag a verb never reads would otherwise be dropped in silence, and the
+// verb would answer as if it had not been typed.
+const VERB_FLAGS: Record<string, string[]> = {
+  recall: ["query", "entity", "agent", "since", "limit", "budget-tokens", "no-boosts", "deputy"],
+  remember: ["provenance", "agent", "entity", "kind", "ttl", "family"],
+  forget: ["reason"],
+};
+const known = VERB_FLAGS[cmd];
+if (known)
+  for (let i = 1; i < args.length; i++) {
+    if (!args[i].startsWith("--")) continue;
+    if (![...known, "home", "by", "compact"].includes(args[i].slice(2)))
+      die("invalid_params", `${cmd} does not read ${args[i]}`, `${cmd} reads ${known.map(f => "--" + f).join(" ")}`);
+    if (!isBoolFlag(args[i])) i++;
+  }
 await CMDS[cmd]();

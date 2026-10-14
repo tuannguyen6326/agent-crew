@@ -805,6 +805,21 @@ for bad_args in "recall --query fact --limit abc" "recall --query fact --limit -
 done
 assert_contains "$("$BRAIN" recall --since 2024-02-29 --home "$AC_HOME" --compact)" '"facts"' "a leap day is a real date"
 
+# A flag the verb never reads refuses by name: a typo used to vanish and run
+# the verb without it.
+for bad_case in "--entitiy|recall --query fact --entitiy data/fam-one/room" "--tll|remember x --provenance t --tll 30d" \
+  "--resaon|forget 1 --resaon r"; do
+  bad_args="${bad_case#*|}"
+  # shellcheck disable=SC2086  # each case is a word list on purpose
+  if bad="$("$BRAIN" $bad_args --home "$AC_HOME" --compact 2>&1)"; then fail "$bad_args must refuse (got: $bad)"; fi
+  assert_contains "$bad" '"invalid_params"' "$bad_args refuses as invalid_params"
+  assert_contains "$bad" "${bad_case%%|*}" "$bad_args names the flag"
+done
+# The roomchief prompt teaches `recall '<question>'`: a positional is the query.
+assert_eq "$("$BRAIN" recall "widget lock acquired" --limit 5 --home "$AC_HOME" --compact | j "['results'][0]['slug']")" \
+  "$("$BRAIN" recall --query "widget lock acquired" --limit 5 --home "$AC_HOME" --compact | j "['results'][0]['slug']")" \
+  "a recall positional reads as --query"
+
 # --- the caller's cwd configures nothing -------------------------------------
 # The prompt-recall hook runs the engine from a solo session's cwd, often a
 # project worktree: its .env, bunfig.toml preload and tsconfig paths must not
