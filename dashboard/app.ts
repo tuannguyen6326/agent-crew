@@ -568,7 +568,7 @@ function collectLearningDecisions(homePath: string): LearningDecisionView[] {
   const files = learningWalk(
     `${homePath}/data`,
     (rel) =>
-      /(?:^|\/)gates\/[a-z0-9]+(?:-[a-z0-9]+)*\/decision\.md$/.test(rel),
+      /(?:^|\/)gates\/[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[0-9]+)?\/decision\.md$/.test(rel),
   );
   const out: LearningDecisionView[] = [];
   for (const file of files) {
@@ -577,7 +577,7 @@ function collectLearningDecisions(homePath: string): LearningDecisionView[] {
     const decision = frontmatterField(file.text, "decision");
     if (
       schema !== "agentcrew.maintenance-gate/v1" ||
-      !learningSlug(subject) ||
+      !learningSlug(subject.replace(/\.[0-9]+$/, "")) ||
       !["continue", "revise", "ask-captain"].includes(decision)
     )
       continue;
@@ -614,8 +614,9 @@ function learningRunPending(
   const candidates = learningWalk(
     root,
     (rel) => /(?:^|\/)candidate-[^/]+\.md$/.test(rel),
-  );
+  ).sort((a, b) => Buffer.compare(Buffer.from(a.rel), Buffer.from(b.rel)));
   const waiting: { subject: string; state: string }[] = [];
+  const claimed = new Set<string>();
   for (const candidate of candidates) {
     const name = candidate.text
       .split("\n")
@@ -632,16 +633,19 @@ function learningRunPending(
       waiting.push({ subject: name, state: "policy-reserved" });
       continue;
     }
-    const receipt = learningFile(root, `gates/${name}/decision.md`);
+    let subject = name;
+    for (let k = 2; claimed.has(subject); k++) subject = `${name}.${k}`;
+    claimed.add(subject);
+    const receipt = learningFile(root, `gates/${subject}/decision.md`);
     if (!receipt) {
-      waiting.push({ subject: name, state: "awaiting-gate" });
+      waiting.push({ subject, state: "awaiting-gate" });
       continue;
     }
     const decision = frontmatterField(receipt.text, "decision");
     if (decision === "ask-captain")
-      waiting.push({ subject: name, state: "ask-captain" });
+      waiting.push({ subject, state: "ask-captain" });
     else if (decision !== "continue" && decision !== "revise")
-      waiting.push({ subject: name, state: "invalid-receipt" });
+      waiting.push({ subject, state: "invalid-receipt" });
   }
   return { active: waiting.length > 0, waiting };
 }
@@ -673,9 +677,10 @@ export function collectLearning(homePath: string): LearningView {
   const ledger = parseLearningLedger(ledgerFile?.text || "");
   const decisions = collectLearningDecisions(homePath);
   const latestBySubject = new Map<string, LearningDecisionView>();
-  for (const decision of decisions)
-    if (!latestBySubject.has(decision.subject))
-      latestBySubject.set(decision.subject, decision);
+  for (const decision of decisions) {
+    const skill = decision.subject.replace(/\.[0-9]+$/, "");
+    if (!latestBySubject.has(skill)) latestBySubject.set(skill, decision);
+  }
 
   const pointerByName = new Map<string, LearningPointer>();
   for (const pointer of ledger.pointers) {

@@ -9,7 +9,7 @@
 // re-count pending/handback (the no-second-bookkeeping rule).
 
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
 
@@ -214,6 +214,69 @@ test("collectLearning stays fleet-local, excludes skills-archive, and refuses es
     expect(learning.pending.waiting.map((d) => d.subject)).toEqual(["needs-captain"]);
     expect(learning.pending.waiting_gate).toEqual([]);
     expect(learning.skills.some((s) => s.name === "foreign-skill" || s.name === "escape-skill")).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collectLearning keys a later candidate on an already-claimed name as <name>.<k>, as src/learn.ts run does", () => {
+  const root = mkdtempSync(`${tmpdir()}/ac-dash-learning-k-`);
+  const home = `${root}/fleet`;
+  const run = `${home}/data/learning-run`;
+  const receipt = (subject: string, decision: string) =>
+    [
+      "---",
+      'schema: "agentcrew.maintenance-gate/v1"',
+      'mode: "learning"',
+      `subject: "${subject}"`,
+      `decision: "${decision}"`,
+      'authority: "second-chief"',
+      "---",
+      "",
+      "## Grounds",
+      "",
+      `${decision} for ${subject}.`,
+    ].join("\n");
+  try {
+    for (const s of ["x", "x.2"]) {
+      mkdirSync(`${run}/gates/${s}`, { recursive: true });
+      mkdirSync(`${home}/state/.maintenance-transactions/learning-run-${s}`, { recursive: true });
+    }
+    writeFileSync(`${run}/report.md`, "# Report\n\nstatus: ok\n");
+    writeFileSync(`${run}/retro.md`, "# Retro\n");
+    writeFileSync(`${run}/candidate-x-a.md`, "kind: patch\nname: x\n");
+    writeFileSync(`${run}/candidate-x-b.md`, "kind: patch\nname: x\n");
+    writeFileSync(`${run}/gates/x/decision.md`, receipt("x", "continue"));
+    writeFileSync(`${run}/gates/x.2/decision.md`, receipt("x.2", "ask-captain"));
+    writeFileSync(`${home}/state/.maintenance-transactions/learning-run-x/journal`, "status=complete\n");
+    writeFileSync(`${home}/state/.maintenance-transactions/learning-run-x.2/journal`, "status=claimed\n");
+
+    const learning = collectLearning(home);
+    expect(learning.pending.active_run).toBe("learning-run");
+    expect(learning.pending.waiting.map((d) => d.subject)).toEqual(["x.2"]);
+    expect(learning.pending.waiting_gate).toEqual([]);
+    const applied = Object.fromEntries(learning.decisions.map((d) => [d.subject, d.apply_state]));
+    expect(applied).toEqual({ x: "complete", "x.2": "claimed" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collectLearning: a skill card's latest_decision is its newest receipt, a <name>.<k> one included", () => {
+  const root = mkdtempSync(`${tmpdir()}/ac-dash-learning-latest-`);
+  const home = `${root}/fleet`;
+  const run = `${home}/data/learning-run`;
+  try {
+    mkdirSync(`${home}/skills/x`, { recursive: true });
+    writeFileSync(`${home}/skills/x/SKILL.md`, "---\nname: x\ndescription: X.\n---\n");
+    for (const [s, decision, at] of [["x", "continue", 1000], ["x.2", "revise", 2000]] as const) {
+      mkdirSync(`${run}/gates/${s}`, { recursive: true });
+      writeFileSync(`${run}/gates/${s}/decision.md`, `---\nschema: "agentcrew.maintenance-gate/v1"\nmode: "learning"\nsubject: "${s}"\ndecision: "${decision}"\n---\n`);
+      utimesSync(`${run}/gates/${s}/decision.md`, at, at);
+    }
+    const card = collectLearning(home).skills.find((s) => s.name === "x");
+    expect(card?.latest_decision?.subject).toBe("x.2");
+    expect(card?.latest_decision?.decision).toBe("revise");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

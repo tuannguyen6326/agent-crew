@@ -396,6 +396,14 @@
 //   archived room pick, the pointer sort and the maintenance status rows are
 //   in BYTE order, where the bash followed LC_COLLATE and `find` printed
 //   directory order.
+// - TWO CANDIDATES ON ONE NAME: inside `run` the first candidate (W13 order)
+//   claiming a subject keeps it and each later claimant gets `<subject>.<k>`
+//   (k = 2, 3, ...) - its own gates/, plan, staged copy, candidate copy and
+//   `<run>-<subject>.<k>` transaction - so every gated candidate keeps its own
+//   plan and receipt; the bash shared one subject, the later receipt
+//   overwrote the earlier and a later continue was refused as `already
+//   completed a different plan`, holding the run's cadence. `.` is outside
+//   the slug grammar, so `<name>.<k>` never equals a valid name.
 // - SHELL-OWN STDERR: bash's arithmetic, redirect, test and cd diagnostics and
 //   its job notice for a suite runner ended at the ceiling (`Terminated: 15`)
 //   are not reproduced, the status kept; a gate, Curate or spawn that cannot
@@ -2379,10 +2387,11 @@ function planAction(actions: string, op: string, target: string, staged: string,
 const PLAN_JQ = `{schema:"agentcrew.maintenance-plan/v1",mode:"learning",run_id:$run_id,
       subject:$subject,input_manifest_sha256:$manifest,actions:.}`;
 
-// learn_prepare_candidate_plan <cand> <authority> [<owning-run>]: the staged
-// files, plan and candidate copy of one subject; [run, plan, copy] on success.
-// Every refusal is a die (thrown); LAX decides what any other failure does.
-function prepareCandidatePlan(cand: string, authority: string, owning: string): [string, string, string] {
+// learn_prepare_candidate_plan <cand> <authority> [<owning-run> <run-subject>]:
+// the staged files, plan and candidate copy of one subject; [run, plan, copy]
+// on success. Every refusal is a die (thrown); LAX decides what any other
+// failure does.
+function prepareCandidatePlan(cand: string, authority: string, owning: string, runSubject = ""): [string, string, string] {
   if (!commandV("jq")) dieB("jq is required for maintenance plans");
   const kind = candidateHeader(cand, "kind");
   const name = candidateHeader(cand, "name");
@@ -2398,7 +2407,7 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
       if (!validDescription(desc)) dieB("skill candidate 'description:' must be non-empty and <=1024 chars (spec-required)");
       if (!validTrigger(trigger)) dieB(`skill candidate 'trigger:' must be non-empty, <=${TRIGGER_MAX} bytes and not start with 'when' - it is the always-loaded pointer line (got: '${trigger}', nothing written)`);
       if (exists(`${skillsD()}/${name}`)) dieB(`refusing to clobber an existing skill store at ${skillsD()}/${name}`);
-      subject = name;
+      subject = runSubject || name;
       break;
     case "patch": {
       if (!validSlug(name)) dieB(`patch candidate 'name:' must be an agentskills slug: ${slugRule} (got: '${name}')`);
@@ -2418,7 +2427,7 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
       if (!validSlug(tname)) dieB(`refusing to patch '${name}': target frontmatter 'name:' is not an agentskills slug (got: '${tname}')`);
       if (!validDescription(tdesc)) dieB(`refusing to patch '${name}': target frontmatter 'description:' is empty or >1024 chars`);
       if (!subst(candidateSection(cand, "patch")).startsWith("## ")) dieB("patch '===patch===' body must lead with a '## ' labeled subsection heading (nothing written)");
-      subject = name;
+      subject = runSubject || name;
       break;
     }
     case "crewmate":
@@ -2427,7 +2436,7 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
       if (!validDescription(desc)) dieB(`crewmate candidate 'description:' must be non-empty and <=1024 chars (got: '${desc}')`);
       if (isFile(`${home()}/CREWMATE-learned.md`) && grepWhole(`${home()}/CREWMATE-learned.md`, `## ${name}`))
         dieB(`CREWMATE-learned.md already carries '## ${name}' - curate the existing entry instead of re-landing it (nothing written)`);
-      subject = name;
+      subject = runSubject || name;
       break;
     case "rule":
       subject = `rule-${now()}`;
@@ -2580,6 +2589,7 @@ links: candidate=${candidateRel}${gateLinks}; evidence=${candidateRel}`;
 async function autoApplyCandidates(rundir: string): Promise<boolean> {
   let ok = true;
   let found = false;
+  const claimed = new Set<string>();
   const gate = process.env.AC_GATE ? b8(process.env.AC_GATE) : `${b8(STARTED_BIN)}/ac-gate.sh`;
   for (const cand of glob(rundir, "candidate-", ".md")) {
     if (!isFile(cand)) continue;
@@ -2588,6 +2598,8 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
     let subject = candidateHeader(cand, "name");
     if (kind === "rule") subject = `rule-${basename(cand).replace(/\.md$/, "").replace(/^candidate-/, "")}`;
     if (subject === "" || /[^A-Za-z0-9._-]/.test(subject)) subject = `invalid-${(sha(cand) ?? "").slice(0, 12)}`;
+    for (let k = 2, base = subject; claimed.has(subject); k++) subject = `${base}.${k}`;
+    claimed.add(subject);
     mkdirP(`${rundir}/gates/${subject}`);
     const prepErr = `${rundir}/gates/${subject}/prepare.err`;
     let prepared: [string, string, string] | null = null;
@@ -2600,7 +2612,7 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
       ERR = fd;
       LAX = true;
       try {
-        prepared = prepareCandidatePlan(cand, "maintenance-gate", rundir);
+        prepared = prepareCandidatePlan(cand, "maintenance-gate", rundir, subject);
       } catch (e) {
         exitOf(e);
       } finally {

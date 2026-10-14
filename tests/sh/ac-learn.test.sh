@@ -1758,6 +1758,36 @@ assert_contains "$(cat "$LOH/victim")" "patchme" "the oracle wrote the pointer r
 assert_eq "$(cat "$LNH/victim")" "victim" "the port never writes the pointer rewrite through a planted temp (W12, named)"
 cmp -s "$LOH/home/records/learnings.md" "$LNH/home/records/learnings.md" || fail "a planted pointer temp: both sides land the same ledger"
 assert_contains "$(cat "$LNH/home/records/learnings.md")" "[distilled -> patchme] sources=2 updated=2025-12-02" "the existing pointer is rewritten past a planted temp"
+# TWO CANDIDATES ON ONE NAME (named): the bash keyed both patch candidates on
+# patchme - one gates/ dir, plan, staged copy and <run>-patchme transaction -
+# so the second plan was refused as a different plan under a completed
+# transaction (the run's cadence withheld) and its receipt overwrote the
+# first's; the port keys the later claimant patchme.2.
+lpatch2() {
+  lrunhome
+  lput pcands/candidate-patchme-a.md $'kind: patch\nname: patchme\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n===patch===\n## First\nOne.\n'
+  lput pcands/candidate-patchme-b.md $'kind: patch\nname: patchme\n===sources===\n2025-12-02\thook\t- src two\n===patch===\n## Second\nTwo.\n'
+}
+lboth lpatch2
+LENV=("LPANE_CANDS=@H/pcands"); lpair run; LENV=()
+assert_contains "$(loerr)" "already completed a different plan" "two patches on one skill: the oracle refused the second plan"
+assert_no_file "$LOH/home/data/learning-1767225600/gates/patchme.2" "two patches on one skill: the oracle shared one gates dir"
+assert_eq "$LN_RC:$(lerr)" "0:" "two patches on one skill: the port's run settles silently (named)"
+assert_contains "$(lout)" "auto-applied: patchme.2" "the second patch applies under its own subject"
+for s in patchme patchme.2; do
+  assert_file "$LNH/home/data/learning-1767225600/gates/$s/decision.md" "the port keeps the receipt of $s"
+  assert_file "$LNH/home/data/learning-1767225600/plans/$s.json" "the port keeps the plan of $s"
+  assert_contains "$(cat "$LNH/home/state/.maintenance-transactions/learning-1767225600-$s/journal")" "status=complete" "the transaction of $s completes"
+done
+assert_contains "$(cat "$LNH/home/skills/patchme/SKILL.md")" $'## First\nOne.\n\n## Second\nTwo.' "both patches land on the skill, in byte order"
+assert_contains "$(cat "$LNH/home/state/.learn.meta")" "last_run=1767225600" "the settled run advances the retro window"
+lboth lpatch2
+LENV=("LPANE_CANDS=@H/pcands" LGATE_DECISION=revise); lpair run; LENV=()
+assert_no_file "$LOH/home/data/learning-1767225600/gates/patchme.2" "revise on both: the oracle kept one receipt"
+assert_contains "$(lout)" "revise: patchme.2" "revise on both: the port judges the second candidate as its own subject"
+for s in patchme patchme.2; do
+  assert_contains "$(cat "$LNH/home/data/learning-1767225600/gates/$s/decision.md")" 'decision: "revise"' "revise on both: the port keeps the receipt of $s"
+done
 
 # 9. autoroom: scoped, not due, the lock, the shape gate's two holds, the
 #    charter and the promote, a failing promote with and without its meta,
