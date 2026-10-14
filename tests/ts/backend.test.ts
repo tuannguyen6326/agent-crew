@@ -51,7 +51,8 @@ symlinkSync(Bun.which("jq")!, join(JQ, "jq"));
 // ctrl+u deletes the last composer row unless ctrlu-stuck. norules, onerule
 // and tight (no composer row) draw a broken frame; ticker heads every screen
 // with the read's number. read-fails-from and read-hangs-from count every pane
-// read from 1.
+// read from 1. nbsp draws the empty composer as claude 2.1.299 does: ❯, NBSP,
+// CR under --ansi, the bare ❯ in a plain read.
 const RULE = "─".repeat(12);
 const HERDR = `#!/bin/sh
 d="$STUB_DIR"
@@ -90,7 +91,10 @@ case "$1 $2" in
     [ -e "$d/norules" ] || [ -e "$d/onerule" ] || echo '${RULE}'
     if [ -s "$d/cmp-$3" ]; then LC_ALL=C sed -e '1s/^/❯ /' -e '2,$s/^/  /' "$d/cmp-$3"
     elif [ ! -e "$d/tight" ]; then
-      case "$*" in *--ansi*) printf '❯ \\033[2mTry "fix lint errors"\\033[22m\\n' ;; *) echo '❯ Try "fix lint errors"' ;; esac
+      case "$*" in
+        *--ansi*) if [ -e "$d/nbsp" ]; then printf '❯\\302\\240\\r\\n'; else printf '❯ \\033[2mTry "fix lint errors"\\033[22m\\n'; fi ;;
+        *) if [ -e "$d/nbsp" ]; then echo '❯'; else echo '❯ Try "fix lint errors"'; fi ;;
+      esac
     fi
     [ -e "$d/norules" ] || echo '${RULE}'
     echo '  ? for shortcuts' ;;
@@ -1132,6 +1136,8 @@ test("20. send_line herdr: a claude pane's composer is proven before Enter - unr
   expect(draft.cmp).toBe("old draft\n");
   const cut = SL("the composer shows a tail: cleared, 3", 3, { err: SAYS.tail("cleared"), log: proven + CTRLU() + ANSI() }, { seed: C((s) => sent(s, "keep-tail", "5")) });
   expect(cut.cmp).toBe("");
+  SL("an empty composer drawn as ❯ and an NBSP, no hint (claude 2.1.299): proven, sent", 0, { err: "", log: proven + VERIFY(1) }, { seed: C((s) => sent(s, "nbsp")) });
+  SL("a tail under the NBSP frame: cleared, 3", 3, { err: SAYS.tail("cleared"), log: proven + CTRLU() + ANSI() }, { seed: C((s) => sent(s, "nbsp"), (s) => sent(s, "keep-tail", "5")) });
   const long = "x".repeat(100);
   SL("a tail of three rows: three ctrl+u", 3, { err: SAYS.tail("cleared"), log: ANSI() + TYPE(long) + SLEPT() + ANSI() + (CTRLU() + ANSI()).repeat(3) }, { args: ["x", long], seed: C((s) => sent(s, "keep-tail", "90")) });
   const tall = "x".repeat(1000);

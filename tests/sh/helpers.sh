@@ -549,6 +549,9 @@ hold_close() {
 #                                 pane whose transcript holds a submitted
 #                                 `claude --...` launch line renders it too, so
 #                                 a spawned claude crewmate shows its composer
+#   $FAKE_HERDR/panes/<p>.nbsp-empty  draw that EMPTY composer as claude 2.1.299
+#                                 does with no hint: `❯`, one NBSP, CR under
+#                                 --ansi, the bare `❯` in a plain read
 #   $FAKE_HERDR/panes/<p>.keep-tail  "<n>" - send-text keeps only the LAST <n>
 #                                 characters, the tail a long send into claude
 #                                 leaves in its composer (measured live)
@@ -860,9 +863,10 @@ case "${1:-} ${2:-}" in
     cat "$d/panes/$3.buf"
     if [ -f "$d/panes/$3.claude-composer" ] || grep -q 'claude --' "$d/panes/$3.buf" 2>/dev/null; then
       rule='────────────────────────────────'
-      printf '%s\n❯ ' "$rule"
-      if [ -s "$d/panes/$3.in" ]; then cat "$d/panes/$3.in"
-      else case "$*" in *--ansi*) printf '\033[2mTry "how does <filepath> work?"\033[0m' ;; *) printf 'Try "how does <filepath> work?"' ;; esac
+      printf '%s\n❯' "$rule"
+      if [ -s "$d/panes/$3.in" ]; then printf ' '; cat "$d/panes/$3.in"
+      elif [ -f "$d/panes/$3.nbsp-empty" ]; then case "$*" in *--ansi*) printf '\302\240\r' ;; esac
+      else case "$*" in *--ansi*) printf ' \033[2mTry "how does <filepath> work?"\033[0m' ;; *) printf ' Try "how does <filepath> work?"' ;; esac
       fi
       printf '\n%s\n  ? for shortcuts\n' "$rule"
     elif [ -s "$d/panes/$3.in" ]; then printf '> '; cat "$d/panes/$3.in"; printf '\n'; fi

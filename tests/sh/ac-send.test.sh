@@ -450,6 +450,13 @@ err="$("$BIN/ac-send.sh" ctail 'short steer' 2>&1)" && fail "a composer holding 
 assert_contains "$(cat "$FAKE_HERDR/panes/pCTL.in")" "a captain draft in progress" "the draft is left untouched"
 case "$(cat "$FAKE_HERDR/panes/pCTL.in")" in *"short steer"*) fail "nothing may be typed after a draft" ;; esac
 : >"$FAKE_HERDR/panes/pCTL.in"
+# claude 2.1.299 draws an empty composer with no hint as `❯` and one NBSP
+# (measured live); that separator is not a draft, so the steer goes out.
+: >"$FAKE_HERDR/panes/pCTL.nbsp-empty"
+mk_turn "dddddddd-dddd-dddd-dddd-dddddddddddd" "short steer"
+err="$("$BIN/ac-send.sh" ctail 'short steer' 2>&1)" || fail "an NBSP-only composer is empty, not a draft: $err"
+assert_contains "$(cat "$FAKE_HERDR/panes/pCTL.buf")" "short steer" "the steer reached the transcript"
+rm -f "$FAKE_HERDR/panes/pCTL.nbsp-empty"
 
 # A claude pane whose composer cannot be SEEN (no rules on screen - a dialog,
 # a menu, an unreadable pane) proves nothing, so nothing is typed; --force is

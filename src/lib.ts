@@ -2926,7 +2926,7 @@ const keyNamed = (k: string): "enter" | "escape" | "ctrl+c" | null =>
 // glyph is its bytes.
 const C_SPACE = /[ \t\n\v\f\r]/g;
 const RULE_RUN = new RegExp(`(?:${lat("─")}){8,}`);
-const PROMPT_ROW = new RegExp(`^[ \\t\\n\\v\\f\\r]*${lat("❯")}`);
+const PROMPT_ROW = new RegExp(`^[ \\t\\n\\v\\f\\r]*${lat("❯")}(?:${lat("\u00a0")})?`);
 // The locale bash counts a string's length and offsets in, by its name:
 // LC_ALL, else LC_CTYPE, else LANG. A UTF-8 name the host has no locale for
 // left bash counting bytes (probed: xx_YY.UTF-8) - named.
@@ -3111,9 +3111,10 @@ function settle(stderr: "inherit" | "ignore"): void {
 
 // herdr_composer_text_pane's twin: the claude composer between the last two
 // rules of the --ansi read's last <rows> lines, the dim hint, every SGR, CR and
-// the first row's ❯ stripped; status 2 when the read failed, 1 when no two
-// ordered rules frame it. Two adjacent rules gave sed a range ending before
-// its start, which printed that start alone - the second rule.
+// the first row's ❯ and the NBSP after it stripped; status 2 when the read
+// failed, 1 when no two ordered rules frame it. Two adjacent rules gave sed a
+// range ending before its start, which printed that start alone - the second
+// rule.
 function composerText(p: string, rows: number, stderr: "inherit" | "ignore"): { status: number; text: string } {
   const read = herdrCli(["pane", "read", argvOf(p), "--source", "recent", "--lines", "200", "--ansi"], "ignore", "pipe");
   if (read.status !== 0) return { status: 2, text: "" };

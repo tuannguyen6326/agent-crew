@@ -1094,8 +1094,10 @@ herdr_composer_text_pane() {
   # herdr_composer_text_pane <pane> <lines> - the text a claude composer holds:
   # the rows between the LAST TWO horizontal rules of the styled screen, with
   # the dim (SGR 2) hint an EMPTY composer shows, the `❯` glyph and every
-  # escape removed (shape measured on claude 2.1.283). Exit 1 when the screen
-  # carries no such structure, 2 when the pane could not be read at all.
+  # escape removed (shape measured on claude 2.1.283), and the one NBSP
+  # claude 2.1.299 draws after the glyph when no hint shows - a separator, not
+  # input. Exit 1 when the screen carries no such structure, 2 when the pane
+  # could not be read at all.
   local cap r1 r2
   cap="$(herdr_cli pane read "$1" --source recent --lines 200 --ansi 2>/dev/null)" || return 2
   cap="$(printf '%s\n' "$cap" | tail -n "$2")"
@@ -1103,7 +1105,7 @@ herdr_composer_text_pane() {
   r1="$(printf '%s\n' "$cap" | LC_ALL=C grep -n '\(─\)\{8,\}' | tail -2 | head -1 | cut -d: -f1)"
   [ -n "$r1" ] && [ -n "$r2" ] && [ "$r1" -lt "$r2" ] || return 1
   printf '%s\n' "$cap" | sed -n "$((r1 + 1)),$((r2 - 1))p" \
-    | LC_ALL=C sed -e $'s/\x1b\\[2m[^\x1b]*//g' -e $'s/\x1b\\[[0-9;]*m//g' -e $'s/\r//g' -e '1s/^[[:space:]]*❯//'
+    | LC_ALL=C sed -e $'s/\x1b\\[2m[^\x1b]*//g' -e $'s/\x1b\\[[0-9;]*m//g' -e $'s/\r//g' -e $'1s/^[[:space:]]*❯\\(\xc2\xa0\\)\\{0,1\\}//'
 }
 
 herdr_composer_shows() {
