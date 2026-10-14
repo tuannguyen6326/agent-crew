@@ -144,6 +144,17 @@ assert_contains "$out" "risk_level" "meta keys echoed"
 assert_eq "$(jq -r '.risk_level' "$run_dir/findings/review.meta.json")" "low" "meta stored"
 assert_fails bash -c "printf '[1]' | '$BIN/ac-ship.sh' meta review"
 
+# A JSON passed as an argument is refused before stdin is read, like findings'
+# stray word: the oracle ignored it and blocked on a stdin a harness may never
+# close.
+sum_before="$(shasum -a 256 "$run_dir/findings/review.meta.json")"
+rc=0
+out="$(printf '{"risk_level":"high"}' | "$BIN/ac-ship.sh" meta review '{"risk_level":"low"}' 2>&1)" || rc=$?
+assert_eq "$rc" "1" "meta refuses a stray argument"
+assert_contains "$out" "usage: ac-ship.sh meta <step>" "the refusal names meta's usage"
+assert_eq "$(shasum -a 256 "$run_dir/findings/review.meta.json")" "$sum_before" \
+  "a refused stray argument leaves the recorded meta untouched"
+
 # meta has the same destructive-write shape cmd_findings had (891a4eb) - a
 # tty stdin refuses instead of hanging, and a failing write never zeroes the
 # previously recorded meta.
@@ -1171,6 +1182,38 @@ pipeline_row7="$(grep -m1 '^| 7 | push |' "$ROOT/docs/validate-pipeline.md")"
 [ -n "$pipeline_row7" ] || fail "the pipeline map lost its step-7 push row"
 case "$pipeline_row7" in *"cmd format"*) \
   fail "docs/validate-pipeline.md still lists cmd format as part of step 7" ;; esac
+
+# review-agent's ENTRY gate refuses a round without test evidence, yet the
+# skill listed review before test and told the runner it could attest after
+# review. A runner following the text burned an attempt on the refusal.
+assert_contains "$(skill_step 3)" "attest-test" \
+  "the review step names the test evidence review-agent's entry gate demands"
+case "$(skill_step 4)" in *"or before this step"*) \
+  fail "the test step must not advise attesting after review: the entry gate refuses that order" ;; esac
+
+# The document step used to commit after the review round, but a 0-fix round
+# freezes the tree and push/finish refuse any HEAD past reviewed_ref - so the
+# doc commit moves before the reviewer, like the formatter's.
+assert_contains "$(skill_step 3)" "agent-crew(document)" \
+  "the review step lands the doc sweep before the reviewed ref"
+case "$(skill_step 5)" in *"agent-crew(document)"*) \
+  fail "the document step must not commit: it runs after the 0-fix freeze" ;; esac
+assert_contains "$(skill_step 5)" "ask-user" \
+  "a doc gap found after the freeze is parked for the captain, never committed"
+
+# meta and findings read their JSON on stdin only; a JSON argv was silently
+# ignored and the call waited on stdin.
+skill_findings_model="$(awk '/^## Findings model/ { on = 1 } /^## The pipeline/ { exit } on' "$ship_skill")"
+assert_contains "$skill_findings_model" "stdin to \`ac-ship.sh meta <step>\`" \
+  "the skill says meta reads its JSON on stdin"
+assert_contains "$skill_findings_model" "stdin to \`ac-ship.sh findings <step>\`" \
+  "the skill says findings reads its JSON on stdin"
+
+# A brief that lands by merging into another PR's head needs a start that
+# reviews against that head and never pushes or opens a PR of its own.
+skill_start="$(awk '/^Start: / { on = 1 } on && /^1\. \*\*/ { exit } on' "$ship_skill")"
+assert_contains "$skill_start" "--skip push,pr" \
+  "the Start paragraph documents landing into another PR's head"
 
 # --- REVIEW CURRENCY: the reviewed ref must still be HEAD at delivery ---------
 # `step review completed` proves review was current at THAT instant. Nothing

@@ -37,9 +37,9 @@ The order is fixed and not configurable.
 |---|---|---|---|
 | 1 | intent | record `--intent` verbatim | surface obviously out-of-intent work as `ask-user` |
 | 2 | rebase | `base` recomputes the merge-base; `skip-remaining` on an empty diff | guard against bundling unpushed local-default commits; rebase onto `origin/<branch>` first, then the freshest default; resolve conflicts |
-| 3 | review | `cmd format` before the reviewed ref; `review-agent` runs the independent verifier | classify findings; fix, then a fresh round on the new ref |
+| 3 | review | `cmd format` before the reviewed ref; `review-agent` runs the independent verifier once test evidence exists | land the doc sweep before the reviewed ref; classify findings; fix, then a fresh round on the new ref |
 | 4 | test | `cmd test` (baseline, scoped, or accepted attestation) and its receipt | intent evidence always; record what actually executed in `meta test` |
-| 5 | document | - | find and fix doc gaps; any unresolved finding gates, including `info` |
+| 5 | document | - | check for doc gaps; a gap found after review is an `ask-user` finding, never a commit; any unresolved finding gates, including `info` |
 | 6 | lint | `cmd lint`, opt-in | lint-category pass when no command is configured |
 | 7 | push | `push` (lease plus patch-id guard, fail closed) | stage in-repo evidence, commit leftovers |
 | 8 | pr | - | create the PR against the run's target; body from recorded meta; signature line |
@@ -53,6 +53,7 @@ There is no CI or QA step: `finish checks-passed` (validated, PR raised, unmerge
 - **review** - the formatter runs here, before the reviewer, and its commit lands before the reviewed ref.
   A formatting commit later in the run would move HEAD past `reviewed_ref`, which `push` and `finish` refuse.
   Fix-round commits are formatted the same way, so the ref each round reviews is the ref that ships.
+  The doc sweep lands here too, before the reviewer, for the same reason.
 - **test** - `meta test.testing_summary` must say what actually executed; a cache hit, an accepted attestation, or "no tests found" are not green.
   New test files force an `ask-user` gate even when green.
 - **push** - nothing reformats here; never hand-roll a force-push around a refusal.
@@ -129,6 +130,7 @@ The shared normalizer `findingsNormalize` (`src/lib.ts`) fails closed:
 - an unknown class or empty authority becomes `none`, and a `fix` with class `none` is downgraded to `ask-user` (`authority_downgraded: true`).
 
 `meta <step>` records the PR-body envelope: review `risk_level`/`risk_rationale`, test `testing_summary`/`tested`/`artifacts`.
+It reads the JSON object on stdin only and refuses any further argument.
 Step fixes commit as `agent-crew(<step>): <summary>`.
 
 ## Hold-and-fix

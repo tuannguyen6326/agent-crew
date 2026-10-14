@@ -76,4 +76,4 @@ Every call site reports the same contract:
 - `synced` - only existing docs were updated.
 - `skipped: <reason>` - the judge found nothing to document; the reason is the receipt.
 
-Inside the crew-ship pipeline this outcome feeds the document step's findings and commit (`agent-crew(document): ...`); the step's gating rules stay with the `bin/ac-ship.sh` contract.
+Inside the crew-ship pipeline this pass runs in the review step, before the reviewer, and its commit (`agent-crew(document): ...`) lands before the reviewed ref; the document step's gating rules stay with the `bin/ac-ship.sh` contract.

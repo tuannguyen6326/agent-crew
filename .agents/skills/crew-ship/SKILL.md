@@ -25,7 +25,7 @@ you perform the judgment steps and record their outcomes.
 
 ## Findings model (all judgment steps)
 
-Report findings as a JSON array via `ac-ship.sh findings <step>`:
+Report findings as a JSON array piped on stdin to `ac-ship.sh findings <step>`:
 `[{"id","severity","action","file","line","description","authority_class","authority","question","options","tradeoffs","recommendation"}]`
 
 - `severity`: `error` | `warning` | `info`.
@@ -73,7 +73,8 @@ Report findings as a JSON array via `ac-ship.sh findings <step>`:
   print `done: fixed <n> findings` when done.
 - A fix that changes code re-opens completed `test` and `lint`: re-run
   them before push.
-- Record envelope data with `ac-ship.sh meta <step>`:
+- Record envelope data by piping a JSON object on
+  stdin to `ac-ship.sh meta <step>` (never as an argument, which it refuses):
   review -> `{"risk_level","risk_rationale"}` (low|medium|high);
   test -> `{"testing_summary","tested":[],"artifacts":[]}`.
   The PR body is built from these.
@@ -105,6 +106,12 @@ Pass `--target` whenever the PR lands on a branch OTHER than the repo
 default (prelive, release-vN, staging): the review diff, test/lint reopen
 scope, push checks and the finish gate all compute against that branch -
 omitting it there reviews the WRONG diff.
+When the brief lands the work by merging into an existing PR's head branch
+instead of opening a PR of its own, start with `--target <that head branch>
+--skip push,pr` (a skip the brief orders): the review diff and the finish
+gate compute against that head, and you finish `checks-passed` and hand back.
+The merge into that head and its push are the chief's or captain's act,
+never yours.
 Mark each step `running` before you begin it and `completed|failed|skipped`
 after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
 
@@ -134,6 +141,14 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    round for a change the pipeline itself scheduled. Format every fix-round
    repair commit the same way, so the ref each round reviews is the ref that
    ships.
+   The doc sweep lands before the reviewed ref too, for the same reason: sync
+   every doc this diff makes stale and author any new doc it warrants (the
+   `document` skill owns that method; respect `document.instructions`), then
+   commit it as `agent-crew(document): ...` before the reviewer runs.
+   `review-agent` opens a round only on test evidence: the test step
+   completed in this run (`cmd test`, then `step test completed`) or a fresh
+   `bin/ac-ship.sh attest-test`; a `--tdd` declaration does not qualify, so
+   under `--tdd` run `attest-test` first.
    Run `bin/ac-ship.sh review-agent`. It is a thin adapter to
    `bin/ac-verify.sh codereview`, which leases an isolated worktree at the
    exact current ref and launches one fresh `ac-pane-agent` round. There is no
@@ -201,7 +216,7 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    chief verify via `attest-check`) still exists and also skips the re-run:
    run `bin/ac-ship.sh
    attest-test` right after your final green run, BEFORE starting the
-   pipeline (or before this step) - it re-runs `commands.test` as
+   pipeline (at the latest before `review-agent`) - it re-runs `commands.test` as
    attestation by execution (a dirty worktree or a failing run attests
    nothing) and the pipeline will honor it: `cmd test` completes this
    step without re-running the suite when the attestation is fresh
@@ -238,13 +253,13 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    which stays behind), and note a clean layout check.
    No evidence producible -> `warning` with action `ask-user`. NEW test
    files you created force an `ask-user` gate even when green.
-5. **document** - Diff-driven doc pass: find and FIX doc gaps in the same
-   pass (respect `document.instructions`), commit
-   `agent-crew(document): ...`. ANY unresolved documentation finding gates,
-   including `info` - stricter than review's error/warning rule.
-   When the diff warrants NEW docs (not just syncing existing ones), author
-   them per the `document` skill - it owns the judge/create/sync method;
-   this step's sync behavior and hold-and-fix mechanics are unchanged.
+5. **document** - Diff-driven doc check of the reviewed tree; the sweep
+   itself landed at step 3, before the reviewed ref. Review is complete
+   here, so a doc gap found now is NEVER committed - any commit moves HEAD
+   past `reviewed_ref`, which `push` and `finish` refuse. Record it as an
+   `ask-user` finding (a follow-up task, or `finish cancelled` and a fresh
+   run) so it reaches the captain. ANY unresolved documentation finding
+   gates, including `info` - stricter than review's error/warning rule.
 6. **lint** - OPT-IN: SKIP-by-default, and runs ONLY
    when the captain/brief requested it - then `start` is passed `--lint` and
    this step is `pending`. Without `--lint` the step starts `skipped` and the
