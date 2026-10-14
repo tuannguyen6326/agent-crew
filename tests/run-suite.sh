@@ -119,6 +119,9 @@
 #                to the full set. A file outside this runner's owned set
 #                (bin/*.sh, src/*.ts, tests/sh/*.sh, tests/ts/*.test.ts) is
 #                ignored, like ac-lint ignoring a changed README.
+#                ALWAYS-RUN SET: a non-empty changed set, owned or not, also
+#                selects every guard_suites name (that list's own comment is
+#                the spec); an empty one still exits 2 below.
 #                EMPTY-SELECTION EXIT - NOT a widen: when the mapped selection
 #                comes out EMPTY (e.g. a clean, fully-committed tree - nothing
 #                uncommitted to read a changed set from), the runner exits 2
@@ -285,6 +288,18 @@ sourcers_of() {
   # whole script (verified live building this fix).
   return 0
 }
+
+# guard_suites - the tree-scanning guard suites --changed adds to EVERY
+# non-empty changed set, whatever the changed paths (docs/ and .agents/skills/
+# included). Each one's subject is a whole class of files (every test's exec
+# bit, every script's grep -q pipes, every comment's line citation, the
+# docs/scripts.md map, every MANUAL-ONLY caller, every SKILL.md, every
+# published line, every AC_* knob, every ac-notify.sh mention, every value-flag
+# arm), so no colocated mapping ever reaches it and a change could otherwise
+# land a red that only the next bare full run sees. A hand list, not a live
+# derivation: a new tree-scanning suite joins here by hand. A name with no file
+# under <tests-dir> is dropped by the same filter as any other selection.
+guard_suites="ac-tests-exec-bit.test.sh grep-q-pipes.test.sh line-citations.test.sh ac-scripts-doc.test.sh ac-archive.test.sh ac-skills-catalog.test.sh provenance-scrub.test.sh ac-config-surface.test.sh ac-notify-surface.test.sh flag-values.test.sh"
 
 split_map() {
   # split_map <changed_root> <base> - echoes the mapped tests/sh/*.test.sh
@@ -516,6 +531,11 @@ $changed_files
 CHANGED
 
   [ "$widen" -eq 0 ] || return 0 # widen: leave `tests` (the full set) as-is
+
+  if [ -n "$changed_files" ]; then
+    printf 'run-suite: --changed always adds the tree-scanning guard suites: %s\n' "$guard_suites"
+    selected="$selected $guard_suites"
+  fi
 
   filtered=()
   for t in "${tests[@]}"; do

@@ -64,7 +64,7 @@ Read [`docs/concepts.md`](docs/concepts.md) first if you are new to the model.
 
 ```bash
 bash tests/sh/<name>.test.sh       # one test file
-tests/run-suite.sh --changed       # only the tests mapped from your changed files
+tests/run-suite.sh --changed       # the tests mapped from your changed files, plus the guard suites
 tests/run-suite.sh                 # full bash suite (pass/fail count, every failing name)
 tests/run-suite.sh --jobs 4        # opt-in parallel run; sequential by default
 bash tests/sh/dashboard.test.sh    # dashboard Bun tests (skips cleanly without bun)
@@ -75,9 +75,9 @@ bin/ac-lint.sh                     # opt-in: bash -n + shellcheck over changed f
 - `tests/run-suite.sh` exits 0 when all pass, 1 when any test fails, 2 when it cannot proceed (bad arguments, no test files, or an empty `--changed` selection), and 3 when it refuses to run because SIGINT is ignored in an async invocation it cannot reset.
 - `--changed` maps `bin/<name>.sh` to `tests/sh/<name>.test.sh` over staged, unstaged and untracked changes; a changed shared library narrows to its sourcers' tests, and anything it cannot map confidently widens to the full set and says why.
 - `src/<name>.ts` maps to `tests/sh/src.test.sh` plus the tests of every `bin/*.sh` that starts it (its entry `bin/ac-<name>.sh`, and any script running a mode of it), widening when a starter has no test; a changed `tests/ts/*.test.ts` maps to `tests/sh/src.test.sh`, and a `src/` module other `src/` files import narrows to its importers' tests.
-- `--changed` ignores files outside `bin/*.sh`, `src/*.ts`, `tests/sh/*.sh` and `tests/ts/*.test.ts`, so a change to `dashboard/*.ts`, docs or skills selects nothing on its own; run the relevant test file directly.
+- `--changed` maps no file outside `bin/*.sh`, `src/*.ts`, `tests/sh/*.sh` and `tests/ts/*.test.ts`, so a change to `dashboard/*.ts`, docs or skills selects only the guard suites below; run the relevant test file directly.
 - On a clean, fully committed tree `--changed` has nothing to read and exits 2 without running anything.
-- The suite is not a per-change gate: per-change verification is the changed-file tests plus any do-not-break tests; the bare full run is a periodic task.
+- The suite is not a per-change gate: per-change verification is the changed-file tests plus any do-not-break tests, and any non-empty `--changed` run also adds the tree-scanning guard suites named by `guard_suites` in `tests/run-suite.sh`; the bare full run is a periodic task.
 - `bin/ac-lint.sh` is opt-in; `--all` lints the whole set, and `AC_LINT_ALLOW_MISSING=1` tolerates a missing shellcheck.
   It assumes shellcheck 0.11 or newer.
 - For dashboard page changes, also run `bin/ac-page-lint.sh`, which lints every served page's inline scripts.

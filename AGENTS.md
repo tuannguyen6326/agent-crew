@@ -139,7 +139,7 @@ Crew worktrees are seeded only with `AC_CREW_SKILLS` (`bin/ac-lib.sh`) plus the 
 ## 13. Editing this repo
 
 `bin/ac-lint.sh` is opt-in - run it only when the captain requests it in the order or the brief; every behavior gets a colocated `tests/sh/*.test.sh`.
-Run the suite only with `tests/run-suite.sh`; it is not a landing gate - per-change verify is changed-file tests plus do-not-break tests ONLY, and the bare suite runs only as the Learning DISTILL gate of a fleet that pins `config/learn-suite-gate=on` (default off; `src/learn.ts` header).
+Run the suite only with `tests/run-suite.sh`; it is not a landing gate - per-change verify is changed-file tests plus do-not-break tests ONLY, run through `tests/run-suite.sh --changed`, which always adds the tree-scanning guard suites its `guard_suites` list names, and the bare suite runs only as the Learning DISTILL gate of a fleet that pins `config/learn-suite-gate=on` (default off; `src/learn.ts` header).
 Each contract has exactly one authoritative file - a script header, a skill, or one doc section; everything else points to it.
 Markdown: plain-dash lists; one sentence per line for new blocks, and an existing hard-wrapped block keeps its shape - never reflow a block as a side effect, never mix the two shapes in one block.
 Never add an agent co-author line to commits in project repos (the `commit-msg` guard `bin/ac-tree.sh` installs refuses one).

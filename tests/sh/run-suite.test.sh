@@ -186,6 +186,45 @@ assert_contains "$out" "4/4 passed" "an unmapped owned file must WIDEN to the fu
 assert_contains "$out" "ac-unmapped.sh has no colocated test" "the widen reason printed must name the NO-COLOCATED-TEST mechanism, not just the filename"
 rm -f "$changedrepo/bin/ac-unmapped.sh"
 
+# --- --changed: the tree-scanning guard suites ride every non-empty changed set
+#     A guard's subject is a whole class of files, so no colocated mapping
+#     reaches it. Its own fixture repo, so the shared one's counts stay put;
+#     grep-q-pipes.test.sh is a real guard_suites name.
+guardrepo="$TMP/fixture-changed-guards"
+setup_changed_fixture "$guardrepo"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$guardrepo/tests/sh/grep-q-pipes.test.sh"
+git -C "$guardrepo" add -A
+git -C "$guardrepo" commit -q -m "a guard suite"
+
+printf '#!/usr/bin/env bash\n# touched\n' >"$guardrepo/bin/ac-foo.sh"
+res="$(run_runner --changed "$guardrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed with a mapped change plus the guards must be green"
+assert_contains "$out" "RUNNING ac-foo.test.sh" "the mapped test still runs beside the guards"
+assert_contains "$out" "RUNNING grep-q-pipes.test.sh" "a mapped change must also select the tree-scanning guard suites"
+assert_contains "$out" "2/2 passed" "the guards add to the mapped selection, never widen it"
+assert_contains "$out" "tree-scanning guard suites" "the runner must say it added the guard suites"
+case "$out" in
+  *"RUNNING ac-bar.test.sh"*) fail "the guard set must not pull in unrelated mapped tests" ;;
+esac
+git -C "$guardrepo" checkout -q -- bin/ac-foo.sh
+
+mkdir -p "$guardrepo/docs"
+printf 'prose\n' >"$guardrepo/docs/x.md"
+res="$(run_runner --changed "$guardrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "a change outside the owned set must run the guards, not exit empty"
+assert_contains "$out" "RUNNING grep-q-pipes.test.sh" "a docs-only change must select the tree-scanning guard suites"
+assert_contains "$out" "1/1 passed" "a docs-only change selects the guards alone"
+rm -rf "$guardrepo/docs"
+
+res="$(run_runner --changed "$guardrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "2" "the guards never turn an empty changed set into a green"
+case "$out" in
+  *"RUNNING "*) fail "a clean committed tree must run nothing, the guards included" ;;
+esac
+
 # --- --changed: a shared-lib change with a sourcer that has NO colocated test
 #     still WIDENS to the full set - clause 2 (unknown blast radius) must
 #     keep firing through the sourcer closure, never let narrowing turn an
@@ -227,7 +266,9 @@ assert_contains "$out" "bin/ac-shared.sh is a shared library with a sourcer that
 # must use those literal names to exercise it. bin/ac-other.sh is an
 # unrelated, ordinarily-mapped file included only to prove the map NARROWS
 # (selects just the mapped split tests) rather than widening (which would
-# also run ac-other.test.sh).
+# also run ac-other.test.sh). Its flag-values.test.sh and
+# ac-config-surface.test.sh stand-ins are guard_suites names, so every count
+# below also carries those two (once, where the arm already names one).
 splitrepo="$TMP/fixture-split-map"
 mkdir -p "$splitrepo/bin" "$splitrepo/tests/sh"
 git -C "$splitrepo" init -q
@@ -277,7 +318,7 @@ assert_contains "$out" "RUNNING ac-spawn-model-effort.test.sh" "ac-spawn.sh's sp
 assert_contains "$out" "RUNNING ac-spawn-teardown.test.sh" "ac-spawn.sh's split map must select ac-spawn-teardown.test.sh"
 assert_contains "$out" "RUNNING ac-roomchief.test.sh" "ac-spawn.sh's split map must select ac-roomchief.test.sh"
 assert_contains "$out" "RUNNING ac-room-parallel-cap.test.sh" "ac-spawn.sh's split map must select ac-room-parallel-cap.test.sh"
-assert_contains "$out" "6/6 passed" "must select exactly the six mapped tests, not widen to the full fixture set"
+assert_contains "$out" "8/8 passed" "must select exactly the six mapped tests plus the guards, not widen to the full fixture set"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-spawn.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-spawn.sh must not print the false widen reason once its split-name map exists" ;;
@@ -292,7 +333,7 @@ res="$(run_runner --changed "$splitrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-maintenance-lib.sh's test must still be green"
 assert_contains "$out" "RUNNING ac-maintenance-core.test.sh" "ac-maintenance-lib.sh maps to ac-maintenance-core.test.sh"
-assert_contains "$out" "1/1 passed" "ac-maintenance-lib.sh selects exactly ac-maintenance-core.test.sh"
+assert_contains "$out" "3/3 passed" "ac-maintenance-lib.sh selects exactly ac-maintenance-core.test.sh plus the guards"
 git -C "$splitrepo" checkout -q -- bin/ac-maintenance-lib.sh
 
 # 2) touching bin/ac-teardown.sh alone selects its colocated leg AND its
@@ -303,7 +344,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-teardown.sh's split test must still be green"
 assert_contains "$out" "RUNNING ac-teardown.test.sh" "ac-teardown.sh's split map must select its own ac-teardown.test.sh"
 assert_contains "$out" "RUNNING ac-spawn-teardown.test.sh" "ac-teardown.sh's split map must select ac-spawn-teardown.test.sh"
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "4/4 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-teardown.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-teardown.sh must not print the false widen reason once its split-name map exists" ;;
@@ -318,7 +359,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-brief.sh's split tests must still be green"
 assert_contains "$out" "RUNNING ac-brief.test.sh" "ac-brief.sh's split map must select its own ac-brief.test.sh"
 assert_contains "$out" "RUNNING ac-contract.test.sh" "ac-brief.sh's split map must select ac-contract.test.sh"
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "4/4 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-brief.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-brief.sh must not print the false widen reason once its split-name map exists" ;;
@@ -333,7 +374,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-know.sh's split tests must still be green"
 assert_contains "$out" "RUNNING ac-know.test.sh" "ac-know.sh's split map must select its own ac-know.test.sh"
 assert_contains "$out" "RUNNING flag-values.test.sh" "ac-know.sh's split map must select flag-values.test.sh"
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "3/3 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-know.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-know.sh must not print the false widen reason once its split-name map exists" ;;
@@ -348,7 +389,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-gate.sh's split tests must still be green"
 assert_contains "$out" "RUNNING ac-gate.test.sh" "ac-gate.sh's split map must select its own ac-gate.test.sh"
 assert_contains "$out" "RUNNING ac-learn-loop.test.sh" "ac-gate.sh's split map must select ac-learn-loop.test.sh"
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "4/4 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-gate.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-gate.sh must not print the false widen reason once its split-name map exists" ;;
@@ -365,7 +406,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-curate.sh's split tests must still
 for t in ac-curate ac-backlog-sections ac-learning-automation-e2e ac-learn-loop ac-config-surface; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-curate.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "5/5 passed" "must select exactly the five mapped tests, not widen"
+assert_contains "$out" "6/6 passed" "must select exactly the five mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-curate.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-curate.sh must not print the false widen reason once its split-name map exists" ;;
@@ -382,7 +423,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-gate-watch.sh's split tests must s
 for t in ac-gate-watch ac-gate ac-watch-dash; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-gate-watch.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "3/3 passed" "must select exactly the three mapped tests, not widen"
+assert_contains "$out" "5/5 passed" "must select exactly the three mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-gate-watch.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-gate-watch.sh must not print the false widen reason once its split-name map exists" ;;
@@ -400,7 +441,7 @@ for w in ship qa; do
   for t in "ac-$w-watch" ac-watch-dash "ac-$w"; do
     assert_contains "$out" "RUNNING $t.test.sh" "ac-$w-watch.sh's split map must select $t.test.sh"
   done
-  assert_contains "$out" "3/3 passed" "must select exactly the three mapped tests, not widen"
+  assert_contains "$out" "5/5 passed" "must select exactly the three mapped tests plus the guards, not widen"
   case "$out" in
     *"RUNNING ac-other.test.sh"*) fail "ac-$w-watch.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
     *"has no colocated test"*) fail "ac-$w-watch.sh must not print the false widen reason once its split-name map exists" ;;
@@ -418,7 +459,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-dashboard.sh's split tests must st
 for t in ac-dashboard-daemon ac-review ac-review-reply; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-dashboard.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "3/3 passed" "must select exactly the three mapped tests, not widen"
+assert_contains "$out" "5/5 passed" "must select exactly the three mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-dashboard.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-dashboard.sh must not print the false widen reason once its split-name map exists" ;;
@@ -434,7 +475,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-ready.sh's split tests must still 
 for t in ac-ready ac-backlog ac-backlog-sections ac-contract ac-task ac-watch ac-watch-autoarm ac-turnend-guard ac-session-start; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-ready.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "9/9 passed" "must select exactly the nine mapped tests, not widen"
+assert_contains "$out" "11/11 passed" "must select exactly the nine mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-ready.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
 esac
@@ -450,7 +491,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-learn.sh's split tests must still 
 for t in ac-learn ac-learn-loop ac-learn-autoroom ac-learn-quote ac-learning-automation-e2e ac-maintenance-core ac-curate ac-self-task ac-teardown ac-config-surface; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-learn.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "10/10 passed" "must select exactly the ten mapped tests, not widen"
+assert_contains "$out" "11/11 passed" "must select exactly the ten mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-learn.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-learn.sh must not print the false widen reason once its split-name map exists" ;;
@@ -466,7 +507,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-pane-agent.sh's split tests must s
 for t in ac-pane-agent ac-teardown ac-spawn-teardown ac-brain ac-lib; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-pane-agent.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "5/5 passed" "must select exactly the five mapped tests, not widen"
+assert_contains "$out" "7/7 passed" "must select exactly the five mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-pane-agent.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-pane-agent.sh must not print the false widen reason once its split-name map exists" ;;
@@ -482,7 +523,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-watch.sh's split tests must still 
 for t in ac-watch ac-watch-jev ac-brain-freshen ac-lock ac-remote-wire ac-roomchief ac-self-task; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-watch.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "7/7 passed" "must select exactly the seven mapped tests, not widen"
+assert_contains "$out" "9/9 passed" "must select exactly the seven mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-watch.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-watch.sh must not print the false widen reason once its split-name map exists" ;;
@@ -498,7 +539,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-watch-policy-hook.sh's split tests
 for t in ac-guard ac-harness-hooks; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-watch-policy-hook.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "4/4 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-watch-policy-hook.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-watch-policy-hook.sh must not print the false widen reason once its split-name map exists" ;;
@@ -519,7 +560,7 @@ res="$(run_runner --changed "$splitrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-spawn.sh's split tests, plus the new one, must still be green"
 assert_contains "$out" "RUNNING ac-spawn-newconcern.test.sh" "a NEW ac-spawn-*.test.sh file must join ac-spawn.sh's split map without anyone adding it by hand"
-assert_contains "$out" "7/7 passed" "must select the six original mapped tests PLUS the new one, not silently miss it"
+assert_contains "$out" "9/9 passed" "must select the six original mapped tests PLUS the new one and the guards, not silently miss it"
 git -C "$splitrepo" checkout -q -- bin/ac-spawn.sh
 
 # --- --changed: TypeScript under src/ maps like bin/*.sh does ------------
