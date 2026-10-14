@@ -847,4 +847,16 @@ both notmeta; feed ''
 same show nm --cite
 assert_eq "$(sed -n 2p "$NH/records/scenes/nm.md")" "META: created=$T0 updated=$T1 heat=2" "the tokens bind whatever line 2 starts with"
 
+# 22. a reader gone before stdout is written ends the run with SIGPIPE's 141,
+# silently - the original's printf died of the signal
+sclosed() {  # sclosed <bin> <home> <args...> - "<exit>|<stderr>" of a run whose stdout reader has left
+  (cd "$2" && AC_HOME="$2" TMPDIR="$TMP/otmp" PATH="$TMP/stub:$PATH" LC_ALL="$LOC" \
+    bash -c '"$0/ac-scene.sh" "$@" 2>"$TMPDIR/closed.err" | true; printf "%s|" "${PIPESTATUS[0]}"; cat "$TMPDIR/closed.err"' "$1" "${@:3}") </dev/null
+}
+both wipe; both seed a "META: created=$T0 updated=$T0 heat=1" "summary: a"
+for args in list "show a" --help; do
+  # shellcheck disable=SC2086
+  assert_eq "$(sclosed "$BIN" "$NH" $args):$(sclosed "$obin" "$OH" $args)" "141|:141|" "a closed reader on '$args': 141 and no trace"
+done
+
 pass
