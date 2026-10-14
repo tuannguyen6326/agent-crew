@@ -1219,12 +1219,23 @@ STUB
 # The maintenance gate: a receipt deciding LGATE_DECISION (continue) with the
 # read-evidence a judge that opened the inputs would cite; LGATE_RC exits
 # with that status after LGATE_DIAG on stderr; LGATE_SAY prints a line;
-# LGATE_BAD binds the receipt to a hash no plan has; LGATE_HOLD sleeps first.
+# LGATE_BAD binds the receipt to a hash no plan has; LGATE_HOLD sleeps first;
+# LGATE_NOTE notes that line through $LGATE_NOTE_BIN while it judges, logging
+# whether the note lock was held to gate-lock.log; LGATE_EDIT deletes that
+# line from the ledger.
 cat >"$LSTUBS/gate" <<'GATE'
 #!/usr/bin/env bash
 mode=""; run=""; subject=""; manifest=""; plan=""
 printf '%s\n' "$*" >>"$STUB_DIR/gate.log"
 [ -z "${LGATE_HOLD:-}" ] || /bin/sleep "$LGATE_HOLD"
+if [ -n "${LGATE_NOTE:-}" ]; then
+  if [ -d "$AC_HOME/state/.learn-note.lock" ]; then echo held; else echo free; fi >>"$STUB_DIR/gate-lock.log"
+  "$LGATE_NOTE_BIN/ac-learn.sh" note "$LGATE_NOTE" >>"$STUB_DIR/gate-note.log" 2>&1
+fi
+if [ -n "${LGATE_EDIT:-}" ]; then
+  grep -vxF -- "$LGATE_EDIT" "$AC_HOME/records/learnings.md" >"$STUB_DIR/edit.tmp"
+  cat "$STUB_DIR/edit.tmp" >"$AC_HOME/records/learnings.md"
+fi
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --mode) mode="$2"; shift 2 ;;
@@ -1788,6 +1799,80 @@ assert_contains "$(lout)" "revise: patchme.2" "revise on both: the port judges t
 for s in patchme patchme.2; do
   assert_contains "$(cat "$LNH/home/data/learning-1767225600/gates/$s/decision.md")" 'decision: "revise"' "revise on both: the port keeps the receipt of $s"
 done
+# W3 (named): a note landing while the gate judges a ledger plan HELD the
+# bash's transaction at its ledger rewrite with the other actions committed;
+# the port holds no lock across the gate, lifts the noted lines out for the
+# hash-bound apply and puts them back verbatim. Any other ledger change
+# refuses the plan before its first action.
+lnotehome() {
+  lrunhome
+  lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n### 2025-12-01 (solo s1)\n- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n- src two\n- an unrelated lesson\n\n## Distilled\n\n- [distilled -> old] sources=2 updated=2025-11-01 ([skill](../skills/old/SKILL.md))\n'
+  lput pcands/candidate-patchme.md $'kind: patch\nname: patchme\n===sources===\n2025-12-02\thook\t- src two\n===patch===\n## Gotcha\nWatch.\n'
+}
+lnoted='- a lesson noted while the gate judged'
+lrun3="data/learning-1767225600"
+ltxn3="state/.maintenance-transactions/learning-1767225600-patchme/journal"
+lboth lnotehome
+LENV=("LPANE_CANDS=@H/pcands" "LGATE_NOTE=$lnoted" "LGATE_NOTE_BIN=$BIN"); lpair run; LENV=()
+assert_contains "$(loerr)" "is HELD (target records/learnings.md no longer matches the state the plan was staged against)" "W3: a note during the gate HELD the oracle's transaction"
+assert_eq "$(cat "$LNH/stub/gate-lock.log")" "free" "W3: the port holds no note lock while the gate judges"
+assert_eq "$LN_RC:$(lerr)" "0:" "W3 (named): the port applies with the note kept, nothing warned"
+assert_contains "$(lout)" "auto-applied: patchme" "W3: the patch applies past the note"
+assert_contains "$(cat "$LNH/home/$ltxn3")" "status=complete" "W3: the port's transaction completes"
+assert_contains "$(cat "$LNH/home/state/.learn.meta")" "last_run=1767225600" "W3: the settled run advances the retro window"
+assert_eq "$(cat "$LNH/home/$lrun3/work/patchme.notes-replayed")" "$lnoted" "W3: the lifted lines are kept beside the run"
+mkdir -p "$TMP/lw3/records" "$TMP/lw3/state"
+cp "$LNH/home/$lrun3/staged/patchme/records/learnings.md" "$TMP/lw3/records/learnings.md"
+env -u AC_SOLO AC_HOME="$TMP/lw3" "$BIN/ac-learn.sh" note "$lnoted" >/dev/null
+cmp -s "$TMP/lw3/records/learnings.md" "$LNH/home/records/learnings.md" \
+  || fail "W3: the port's ledger is the staged rewrite with the note inserted: $(diff -a "$TMP/lw3/records/learnings.md" "$LNH/home/records/learnings.md" | head -n 8)"
+lboth lnotehome
+LENV=("LPANE_CANDS=@H/pcands" "LGATE_EDIT=- an unrelated lesson"); lpair run; LENV=()
+assert_contains "$(loerr)" "is HELD (target records/learnings.md no longer matches the state the plan was staged against)" "W3: a hand edit during the gate HELD the oracle's transaction"
+assert_contains "$(cat "$LOH/home/skills/patchme/SKILL.md")" "## Gotcha" "W3: the oracle committed the patch before it HELD"
+assert_eq "$LN_RC" "0" "W3: a refused plan still ends the run 0"
+assert_contains "$(lerr)" "not by a note alone - the plan was refused before its first action" "W3 (named): a non-note ledger change refuses the port's plan"
+assert_eq "$(cat "$LNH/home/skills/patchme/SKILL.md")" $'---\nname: patchme\ndescription: Patch me when x.\n---\n\n# body' "W3: the refused plan committed nothing"
+assert_no_file "$LNH/home/state/.maintenance-transactions/learning-1767225600-patchme" "W3: the refused plan was never claimed"
+assert_contains "$(cat "$LNH/home/state/.learn.meta")" "last_run=1764547200" "W3: the refused plan withholds the cadence"
+# SILENT LOSS AT STAGING (named): a note landing between the preparer's read
+# of the ledger and its hash for the rewrite made the bash's old_sha the
+# post-note one over a pre-note staged ledger, so the apply matched and
+# deleted the noted line without a word. The jq that writes the archive
+# action - after that read, before that hash - notes the line: in the
+# foreground when the note lock is free, else in the background, which waits.
+mkdir -p "$TMP/ljq"
+cat >"$TMP/ljq/jq" <<STUB
+#!/bin/sh
+case " \$* " in
+  *" append-archive "*)
+    if [ ! -e "\$STUB_DIR/jq-noted" ]; then
+      : >"\$STUB_DIR/jq-noted"
+      if [ -d "\$AC_HOME/state/.learn-note.lock" ]; then
+        echo held >"\$STUB_DIR/jq-lock.log"
+        ( PATH="$PATH" "$BIN/ac-learn.sh" note "\$LJQ_NOTE" >"\$STUB_DIR/jq-note.log" 2>&1; : >"\$STUB_DIR/jq-note.done" ) </dev/null >/dev/null 2>&1 &
+      else
+        echo free >"\$STUB_DIR/jq-lock.log"
+        PATH="$PATH" "$BIN/ac-learn.sh" note "\$LJQ_NOTE" </dev/null >"\$STUB_DIR/jq-note.log" 2>&1
+        : >"\$STUB_DIR/jq-note.done"
+      fi
+    fi ;;
+esac
+exec "$(command -v jq)" "\$@"
+STUB
+chmod +x "$TMP/ljq/jq"
+lboth lnotehome
+LPATH="$TMP/ljq:$LSTUBS:$PATH"
+LENV=("LPANE_CANDS=@H/pcands" "LJQ_NOTE=$lnoted"); lpair run; LENV=()
+LPATH=""
+for h in "$LOH" "$LNH"; do
+  i=0; while [ ! -e "$h/stub/jq-note.done" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.1; i=$((i + 1)); done
+done
+assert_eq "$(cat "$LOH/stub/jq-lock.log")" "free" "staging: the oracle read and hashed the ledger under no note lock"
+assert_eq "$LO_RC:$(grep -cxF -- "$lnoted" "$LOH/home/records/learnings.md")" "0:0" "staging: the oracle's apply deleted the noted line silently"
+assert_eq "$(cat "$LNH/stub/jq-lock.log")" "held" "staging (named): the port stages the ledger under the note lock"
+assert_eq "$LN_RC:$(sed -n '/^## Distilled$/q;p' "$LNH/home/records/learnings.md" | grep -cxF -- "$lnoted")" "0:1" "staging (named): the noted line lands once under Pending"
+assert_contains "$(cat "$LNH/home/$ltxn3")" "status=complete" "staging: the port's transaction completes"
 
 # 9. autoroom: scoped, not due, the lock, the shape gate's two holds, the
 #    charter and the promote, a failing promote with and without its meta,

@@ -128,7 +128,8 @@
 // insertion (every existing line is reproduced exactly once, so no pending
 // source can be lost), carries no opinion about a lesson's own shape, mints the
 // canonical frame when the ledger is absent, and refuses a line that is itself a
-// section marker.
+// section marker. It is the one writer a transaction replays (W3 ONE LOCK
+// ORDER).
 //
 // The apply is RESUMABLE, not all-or-nothing: it mutates N independent files
 // and no shell commits N renames atomically, so each action is idempotent by
@@ -337,10 +338,6 @@
 // - W1: a note word holding LF passes the whole-word marker refusal, so a
 //   `## Distilled` inside it lands as a line of its own and the next
 //   transaction drops every Pending line below it unarchived.
-// - W3: note and rotate take .learn-note.lock and reinforce its own lock,
-//   never the transaction's .maintenance.lock, so a note landing between a
-//   plan's staging and its apply HOLDS the transaction or costs the
-//   candidate at the gate.
 // - The preparer inside `run` keeps the bash's errexit-asleep context: a
 //   failing step goes on and only a refusal rejects the candidate, while
 //   `land`'s preparer ends at its first failing step.
@@ -404,6 +401,19 @@
 //   overwrote the earlier and a later continue was refused as `already
 //   completed a different plan`, holding the run's cadence. `.` is outside
 //   the slug grammar, so `<name>.<k>` never equals a valid name.
+// - W3 ONE LOCK ORDER: a ledger plan is staged (the read, the base kept, the
+//   rewrite's old_sha256) and applied under .learn-note.lock, taken before
+//   the transaction's .maintenance.lock and never after it, and nothing is
+//   held across the gate. Pending lines a note added while the gate judged
+//   are lifted out before the hash-bound apply and put back verbatim after
+//   it, accepted only when note's insertion of them over the base reproduces
+//   the live ledger byte for byte; any other ledger change refuses the plan
+//   before its first action. The lines are first written to
+//   <run>/work/<subject>.notes-replayed, so a process killed before the
+//   put-back leaves them there. The bash took neither lock around the plan:
+//   a note during the gate HELD the transaction at its ledger rewrite with
+//   the other actions committed, and a note between the staging read and the
+//   rewrite's hash was deleted by the apply without a word.
 // - SHELL-OWN STDERR: bash's arithmetic, redirect, test and cd diagnostics and
 //   its job notice for a suite runner ended at the ceiling (`Terminated: 15`)
 //   are not reproduced, the status kept; a gate, Curate or spawn that cannot
@@ -1889,14 +1899,46 @@ function cmdNote(args: string[]): void {
   if (!nonEmpty(ledger) && !put(ledger, "# Learning Ledger\n\n## Pending\n\n")) fatal(1);
   const add = mktemp() ?? fatal(1);
   if (!put(add, lines.map((l) => `${l}\n`).join(""))) fatal(1);
-  const t = tempFile(ledger) ?? fatal(1);
-  const st = run(awk([["add", add]], NOTE_AWK, [ledger]), { stdout: t.fd }).status;
-  closeSync(t.fd);
-  must(st);
-  must(run(["mv", b8(t.path), ledger]).status);
+  must(pendingInsert(ledger, add));
   rmF(add);
   unlock(lk);
   out(`appended ${args.length} line(s) under ## Pending in ${ledger}\n`);
+}
+
+// note's insertion of the lines in <add> into <ledger>, through an exclusive
+// temp and a spawned mv; the first failing status, 1 when no temp could be made.
+function pendingInsert(ledger: string, add: string): number {
+  const t = tempFile(ledger);
+  if (t === null) return 1;
+  const st = run(awk([["add", add]], NOTE_AWK, [ledger]), { stdout: t.fd }).status;
+  closeSync(t.fd);
+  if (st !== 0) return st;
+  return run(["mv", b8(t.path), ledger]).status;
+}
+
+// The lines a note inserted into <base> to make <ledger>, or null when note's
+// insertion of them over <base> does not reproduce <ledger> byte for byte.
+function notedSince(base: string, ledger: string): string | null {
+  const live = read(ledger);
+  if (live === null) return null;
+  const b = readLines(base);
+  const v = readLines(live);
+  let at = b.indexOf("## Distilled");
+  if (at < 0) at = b.length;
+  while (at > 0 && b[at - 1] === "") at--;
+  const n = v.length - b.length;
+  if (n <= 0) return null;
+  const noted = v.slice(at, at + n).map((l) => `${l}\n`).join("");
+  const baseF = mktemp();
+  const add = mktemp();
+  const replay = mktemp();
+  try {
+    if (baseF === null || add === null || replay === null || !put(baseF, base) || !put(add, noted)) return null;
+    if (runTo(replay, awk([["add", add]], NOTE_AWK, [baseF])) !== 0) return null;
+    return read(replay) === live ? noted : null;
+  } finally {
+    rmF(...[baseF, add, replay].filter((f): f is string => f !== null));
+  }
 }
 
 // --- rotate-pending: bound the Pending body so DISTILL stays citable ---------
@@ -2388,10 +2430,10 @@ const PLAN_JQ = `{schema:"agentcrew.maintenance-plan/v1",mode:"learning",run_id:
       subject:$subject,input_manifest_sha256:$manifest,actions:.}`;
 
 // learn_prepare_candidate_plan <cand> <authority> [<owning-run> <run-subject>]:
-// the staged files, plan and candidate copy of one subject; [run, plan, copy]
-// on success. Every refusal is a die (thrown); LAX decides what any other
-// failure does.
-function prepareCandidatePlan(cand: string, authority: string, owning: string, runSubject = ""): [string, string, string] {
+// the staged files, plan and candidate copy of one subject; [run, plan, copy,
+// the ledger the plan was staged from] on success. Every refusal is a die
+// (thrown); LAX decides what any other failure does.
+function prepareCandidatePlan(cand: string, authority: string, owning: string, runSubject = ""): [string, string, string, string | null] {
   if (!commandV("jq")) dieB("jq is required for maintenance plans");
   const kind = candidateHeader(cand, "kind");
   const name = candidateHeader(cand, "name");
@@ -2539,20 +2581,68 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string, r
     }
   }
 
+  let base: string | null = null;
   if (kind === "skill" || kind === "patch" || kind === "crewmate") {
     const learnings = `${recordsD()}/learnings.md`;
     const archive = `${recordsD()}/learnings-archive/${name}.md`;
     archiveStage(candidateCopy, name, archive, `${staged}/records/learnings-archive/${name}.md`, txid, gateRel, candidateRel);
-    ledgerStage(candidateCopy, name, learnings, `${staged}/records/learnings.md`, `${rundir}/work`, kind === "crewmate" ? "[lesson](../CREWMATE-learned.md)" : "");
-    pointerEvidenceCheck(learnings, `${staged}/records/learnings.md`, archive, `${staged}/records/learnings-archive/${name}.md`, name);
-    step(planAction(actions, "append-archive", `records/learnings-archive/${name}.md`, `${stagedPrefix}/records/learnings-archive/${name}.md`, rundir));
-    if (kind !== "crewmate") step(planAction(actions, kind === "skill" ? "write-skill" : "patch-skill", `skills/${name}/SKILL.md`, `${stagedPrefix}/skills/${name}/SKILL.md`, rundir));
-    step(planAction(actions, "rewrite-ledger", "records/learnings.md", `${stagedPrefix}/records/learnings.md`, rundir));
+    // The staged ledger, the base kept for applyPlan and the rewrite's
+    // old_sha256 must describe one ledger, so no note lands between them.
+    const lk = `${stateD()}/.learn-note.lock`;
+    if (!lock(lk, 30)) dieB(`learnings ledger lock ${lk} could not be acquired within 30s - the plan for ${subject} was not staged`);
+    try {
+      base = read(learnings);
+      ledgerStage(candidateCopy, name, learnings, `${staged}/records/learnings.md`, `${rundir}/work`, kind === "crewmate" ? "[lesson](../CREWMATE-learned.md)" : "");
+      pointerEvidenceCheck(learnings, `${staged}/records/learnings.md`, archive, `${staged}/records/learnings-archive/${name}.md`, name);
+      step(planAction(actions, "append-archive", `records/learnings-archive/${name}.md`, `${stagedPrefix}/records/learnings-archive/${name}.md`, rundir));
+      if (kind !== "crewmate") step(planAction(actions, kind === "skill" ? "write-skill" : "patch-skill", `skills/${name}/SKILL.md`, `${stagedPrefix}/skills/${name}/SKILL.md`, rundir));
+      step(planAction(actions, "rewrite-ledger", "records/learnings.md", `${stagedPrefix}/records/learnings.md`, rundir));
+    } finally {
+      unlock(lk);
+    }
   }
 
   step(runTo(planOut, ["jq", "-s", "--arg", "run_id", txid, "--arg", "subject", subject, "--arg", "manifest", sha(candidateCopy) ?? "", PLAN_JQ, actions]) ?? 1);
   rmF(actions);
-  return [rundir, planOut, candidateCopy];
+  return [rundir, planOut, candidateCopy, base];
+}
+
+// The shared transaction over a prepared plan, under the note lock (taken
+// before the transaction's .maintenance.lock, never after it). A ledger that
+// moved since staging only by note insertion has those lines lifted out, so
+// the hash-bound plan applies, and put back verbatim whatever the apply
+// returned; any other change refuses the plan before its first action.
+function applyPlan(plan: string, rundir: string, base: string | null): boolean {
+  const lk = `${stateD()}/.learn-note.lock`;
+  if (!lock(lk, 30)) {
+    warnB(`learnings ledger lock ${lk} could not be acquired within 30s - the plan at ${plan} was not applied`);
+    return false;
+  }
+  try {
+    const p = JSON.parse(read(plan) ?? "{}") as { subject?: string; actions?: { op?: string; old_sha256?: string }[] };
+    const old = p.actions?.find((a) => a.op === "rewrite-ledger")?.old_sha256;
+    const ledger = `${recordsD()}/learnings.md`;
+    if (old === undefined || shaOrAbsent(ledger) === old) return maintenanceApply(u8(plan), u8(rundir));
+    const noted = base === null ? null : notedSince(base, ledger);
+    if (base === null || noted === null) {
+      warnB(`records/learnings.md changed since the plan at ${plan} was staged, and not by a note alone - the plan was refused before its first action`);
+      return false;
+    }
+    // Written before the take-out: a process killed before the put-back
+    // leaves the lifted lines here.
+    const kept = `${rundir}/work/${p.subject}.notes-replayed`;
+    if (!put(kept, noted) || publish(ledger, base) !== 0) {
+      warnB(`the Pending lines noted since the plan at ${plan} was staged could not be set aside - the plan was not applied`);
+      return false;
+    }
+    try {
+      return maintenanceApply(u8(plan), u8(rundir));
+    } finally {
+      if (pendingInsert(ledger, kept) !== 0) warnB(`the Pending lines noted while the gate judged could not be put back into ${ledger} - they are kept in ${kept}`);
+    }
+  } finally {
+    unlock(lk);
+  }
 }
 
 // learn_policy_ask_receipt: the repository-policy ask-captain receipt, through
@@ -2602,7 +2692,7 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
     claimed.add(subject);
     mkdirP(`${rundir}/gates/${subject}`);
     const prepErr = `${rundir}/gates/${subject}/prepare.err`;
-    let prepared: [string, string, string] | null = null;
+    let prepared: [string, string, string, string | null] | null = null;
     let fd = -1;
     try {
       fd = openSync(B(prepErr), "w");
@@ -2630,7 +2720,7 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
       out(`  revise: ${subject} (candidate/plan validation failed; sources preserved)\n`);
       continue;
     }
-    const [, plan, manifest] = prepared;
+    const [, plan, manifest, base] = prepared;
     const receipt = `${rundir}/gates/${subject}/decision.md`;
     if (kind === "rule") {
       const reason = "A new or changed standing captain rule is captain-owned and cannot auto-apply.";
@@ -2660,7 +2750,7 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
     }
     if (decision === "continue") {
       const unverified = quoteUnverifiedCount(plan, rundir);
-      const applied = maintenanceApply(u8(plan), u8(rundir));
+      const applied = applyPlan(plan, rundir, base);
       await checkpoint();
       if (!applied) {
         warnB(`continue receipt for ${subject} became stale or its transaction could not complete; obtain a fresh gate decision`);
@@ -2706,16 +2796,16 @@ function cmdLand(args: string[]): void {
   const captured = learnGeneration();
   // The bash read the preparer through `< <(...)`: whatever ended it, the
   // read found no line and errexit ended the land with 1.
-  let prepared: [string, string, string];
+  let prepared: [string, string, string, string | null];
   try {
     prepared = prepareCandidatePlan(cand, "legacy-captain", "");
   } catch (e) {
     exitOf(e);
     return fatal(1);
   }
-  const [rundir, plan] = prepared;
+  const [rundir, plan, , base] = prepared;
   const unverified = quoteUnverifiedCount(plan, rundir);
-  if (!maintenanceApply(u8(plan), u8(rundir))) dieB(`maintenance transaction refused candidate plan at ${plan}`);
+  if (!applyPlan(plan, rundir, base)) dieB(`maintenance transaction refused candidate plan at ${plan}`);
   const r = cadenceCall(() => learnReset(captured));
   if (r === 2) warnB(`landed ${kind}, but its cadence lock was busy; its cadence was preserved instead of reset`);
   else if (r !== 0) warnB(`landed ${kind}, but a newer Learning generation exists; its cadence was preserved instead of reset`);
