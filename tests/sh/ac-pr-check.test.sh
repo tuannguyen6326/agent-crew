@@ -79,7 +79,7 @@ run_side() {  # run_side <bin> <home> <out> <err> <args...> - one side, from $TM
   (cd "$TMP" && env "${home[@]}" LC_ALL=C PATH="$path" GH_LOG="$h.gh" \
     GH_HEAD="${GH_HEAD-deadbeefcafe\n}" GH_STATE="${GH_STATE-OPEN\n}" \
     GH_RC_HEAD="${GH_RC_HEAD-0}" GH_RC_STATE="${GH_RC_STATE-0}" GH_ERR_HEAD="${GH_ERR_HEAD-}" GH_ERR_STATE="${GH_ERR_STATE-}" \
-    "$@") >"$o" 2>"$e"
+    "$@" </dev/null) >"$o" 2>"$e"   # a 000 meta makes the oracle's mv prompt on a terminal stdin
 }
 oracle() { run_side "$obin" "$OH" "$TMP/o.raw" "$TMP/o.rawerr" "$obin/ac-pr-check.sh" "$@"; }
 shim() { run_side "$BIN" "$NH" "$TMP/n.raw" "$TMP/n.rawerr" "$BIN/ac-pr-check.sh" "$@"; }
