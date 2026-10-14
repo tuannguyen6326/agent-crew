@@ -177,6 +177,17 @@
 // that has since been re-leased. Absent (old meta, or a pool that predates the
 // id) means teardown returns unconditionally, as it always did.
 //
+// THE LEASE INSTALL (the authoritative contract; the runner is leaseInstall,
+// src/lib.ts): when the project's home yaml declares commands.install, a crew
+// spawn runs it in the fresh lease (herdr or orca) right after the lease and
+// before the seed and the window - a scout, which never builds, skips it. It
+// is a synchronous child bounded by AC_LEASE_INSTALL_TIMEOUT (default 300 s),
+// so a signal held through it acts once it returns. It never refuses the
+// spawn: a non-zero exit, a timeout or a tree it left dirty is one WARN naming
+// the cause, deps=failed in the meta and one DEPENDENCIES sentence in the
+// kickoff prompt; a success is deps=ok; with no command declared nothing runs
+// and no deps= is written.
+//
 // Requires an existing brief, resolved with ac_task_dir: flat data/<id>/brief.md
 // for direct tasks, nested data/<family>/<stage>/brief.md for staged flows,
 // nested data/<family>/tasks/<slug>/brief.md for a scoped chief's fan-out
@@ -671,6 +682,9 @@
 //   doneline parser runs in this process.
 // - EXCLUSIVE TEMP: the port-slot registry's temp is created exclusively (the
 //   lib twin), where the original wrote through a planted `.tmp.$$`.
+// - LEASE INSTALL: a declared commands.install runs in the lease (THE LEASE
+//   INSTALL above), where the original installed nothing; with none declared
+//   the spawn is the original's.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is
 //   `ERROR: AC_HOME is not a readable directory: <h>`.
 // - BYTES: argv, the environment and every value read from a brief, a meta, a
@@ -739,6 +753,7 @@ import {
   harnessKnown,
   harnessStartupKey,
   iso,
+  leaseInstall,
   ledgerRead,
   metaGet,
   metaSet,
@@ -1992,6 +2007,8 @@ then spawn again`);
   S.worktree = worktree;
   codegraphWorktree(projectDirC, worktree);
   S.trap = spawnFailedCleanup;
+  const deps = scout ? "" : leaseInstall(id, projectDirC, worktree);
+  await turn();
 
   // The crewmate layer, settings, skills and port slot, where the RESOLVED
   // harness reads them; a fallback path is named in the kickoff prompt.
@@ -2016,6 +2033,7 @@ then spawn again`);
     const ebBranch = u8(eb.entry.split(" ")[0]!);
     prompt += ` INTEGRATION BRANCH: this worktree is cut from ${ebBranch} and your work lands INTO ${ebBranch}, never the default branch - branch crew/${id} from it as usual, and any PR you are told to open targets ${ebBranch}.`;
   }
+  if (deps === "failed") prompt += " DEPENDENCIES: the project's commands.install failed in this worktree - install the project's dependencies yourself before running any test or build, so a missing module is not read as a regression.";
   const fleetEnv = crewEnv({ projectDir: projectDirC });
   ee(sendLine(id, `${launchPromptEnv(harness, prompt)}${u8(claudeConfigEnv())}${CODEGRAPH_ENV}${fleetEnv}${launch}`, true));
   await deliverKickoff(id, harness, prompt);
@@ -2038,6 +2056,7 @@ then spawn again`);
   metaSetHard(S.meta, "mode", mode);
   metaSetHard(S.meta, "review", review);
   metaSetHard(S.meta, "yolo", yolo);
+  if (deps !== "") metaSetHard(S.meta, "deps", deps);
   recordSid();
   metaSetHard(S.meta, "spawned_at", iso());
   await turn();

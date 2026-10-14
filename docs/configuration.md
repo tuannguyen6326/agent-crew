@@ -171,7 +171,7 @@ The file lives at `$AC_HOME/projects/<name>.yaml`, where `<name>` is the project
 It is home-only, captain-owned and branch-immune: the project repo is never a config source, so the branch under test cannot change its own commands or merge gate.
 Resolver: `ac_project_config_file` (`bin/ac-lib.sh`); the legacy `config/projects/<name>.yaml` location is no longer read.
 Example: `docs/examples/project-config.yaml`.
-Authoritative key contracts: the header of `src/ship.ts`, which `bin/ac-ship.sh` starts (ship keys), and the header of `src/qa.ts`, which `bin/ac-qa.sh` starts (`qa.*` keys).
+Authoritative key contracts: the header of `src/ship.ts`, which `bin/ac-ship.sh` starts (ship keys), the header of `src/qa.ts`, which `bin/ac-qa.sh` starts (`qa.*` keys), and THE LEASE INSTALL in the header of `src/spawn.ts` (`commands.install`).
 
 ```yaml
 commands:
@@ -219,6 +219,12 @@ qa:
 | `test.base_attribution` | `on` re-runs a FAILED full `commands.test` on the base in a throwaway checkout and prints whether the base passes or also fails; the step still fails. Default off. Owner: BASE ATTRIBUTION in the `src/ship.ts` header. |
 | `test.evidence.store_in_repo`, `test.evidence.dir` | Where test evidence is written (`ac-ship.sh evidence-dir`). |
 | `review.max_rounds` | Verifier invocations before the review loop holds for the owning chief's decision; default 3. |
+
+### Lease keys
+
+| Key | Controls |
+| --- | --- |
+| `commands.install` | Optional dependency install run as `sh -c` in every fresh crew and self-task lease (not a scout's or a verifier's), before the agent starts, with `AC_LEASE_PRIMARY` naming the primary checkout so it can reuse the primary's caches. A non-zero exit, a timeout (`AC_LEASE_INSTALL_TIMEOUT`) or a dirty `git status` after it never refuses the lease: it is WARNed, recorded as `deps=failed` in the task meta and named in the crewmate's kickoff; success records `deps=ok`. A command that touches tracked files (e.g. `.yarn/install-state.gz`) must restore them itself. |
 
 ### QA keys
 
@@ -337,6 +343,8 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_CURATE_STALE_DAYS` | 90 | Age in days past which Curate reads a signal as stale. |
 | `AC_SESSION_QA_TIMEOUT` | 10 | Per-project watchdog for the session-start qa-infra reap sweep. |
 | `AC_ORPHAN_CPU` | 50 | Min %cpu for the session-start sweep to flag an orphaned shell-snapshot process (read-only, never kills). |
+| `AC_LEASE_INSTALL_TIMEOUT` | 300 | Seconds a lease's `commands.install` may run before its process group is ended and the install recorded `deps=failed`. |
+| `AC_LEASE_PRIMARY` | unset (install command) | The primary checkout's path, set only in the environment of a lease's `commands.install`. |
 | `AC_SYNC_TIMEOUT` | `config/sync-timeout`, else 60 | Fetch watchdog for `ac-sync.sh` and the `ac-tree.sh` pool's fetch and ls-remote. |
 | `AC_INHERITABLE_CONFIG` | `model effort backend crew-harness codereview-agent codereview-model codereview-effort qa-agent qa-model qa-effort gate-agent gate-model gate-effort epic-parallel room-parallel promote flow learn-every curate-every crew-dispatch.json` | Knobs a crewdeputy converges from its parent at session start. |
 | `AC_BRAIN_SYNC_IV` | 1800 | Seconds between brain-freshen syncs, and the age past which prompt-time recall calls the brain stale. |
