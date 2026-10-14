@@ -203,6 +203,24 @@ assert_contains "$err" "requires an orca-backend fleet" \
   "--base-branch on a herdr-backend fleet must die, not silently no-op"
 assert_no_file "$state/s7.meta" "the refused start writes no meta"
 
+# --- the lease install: commands.install runs before the slice's first edit ---
+# (contract: src/self-task.ts step 2). No key records no deps= (s1 above).
+assert_eq "$(awk -F= '$1=="deps"{print $2}' "$state/s1.meta")" "" "no commands.install records no deps="
+printf '%s\n' 'commands:' "  install: 'printf %s \"\$AC_LEASE_PRIMARY\" >.git-ignored-marker'" >"$AC_HOME/projects/proj.yaml"
+printf '.git-ignored-marker\n' >>"$repo/.git/info/exclude"
+"$BIN/ac-self-task.sh" start si1 "$repo" >/dev/null 2>"$TMP/si1.err" || fail "a start with an install must succeed"
+si1wt="$(awk -F= '$1=="worktree"{print $2}' "$state/si1.meta")"
+assert_eq "$(cat "$si1wt/.git-ignored-marker" 2>/dev/null)" "$repo" "the install runs in the leased worktree, the primary named"
+assert_eq "$(awk -F= '$1=="deps"{print $2}' "$state/si1.meta")" "ok" "a clean successful install records deps=ok"
+"$BIN/ac-teardown.sh" si1 --force >/dev/null 2>&1
+# A failed install never refuses the start: one WARN, deps=failed.
+printf 'commands:\n  install: "exit 3"\n' >"$AC_HOME/projects/proj.yaml"
+"$BIN/ac-self-task.sh" start si2 "$repo" >/dev/null 2>"$TMP/si2.err" || fail "a failed install must not refuse the start"
+assert_contains "$(cat "$TMP/si2.err")" "WARN: commands.install failed for si2 (exit 3)" "a failed install is WARNed"
+assert_eq "$(awk -F= '$1=="deps"{print $2}' "$state/si2.meta")" "failed" "a failed install records deps=failed"
+"$BIN/ac-teardown.sh" si2 --force >/dev/null 2>&1
+rm -f "$AC_HOME/projects/proj.yaml"
+
 # --- orca fleet: the self-task worktree is ORCA-MANAGED ----------------------
 # The lease follows the fleet backend like every other isolated checkout
 # (crew, verifier): an orca fleet leases through the Orca CLI, records

@@ -5929,6 +5929,45 @@ export function orcaWorktreeLease(id: string, repo: string, override = ""): { st
   return { status: 0, out: path };
 }
 
+// The lease install, shared by the crew spawn and the self task: the
+// captain-owned commands.install of <repo>'s home yaml, run as `sh -c` in the
+// fresh lease <wt> with AC_LEASE_PRIMARY=<repo> (so it can reuse the primary's
+// caches), stdin closed, its output dropped, bounded by
+// AC_LEASE_INSTALL_TIMEOUT (default 300 s) - past it the group is TERMed then
+// KILLed, as herdrCli's ceiling does. "" when no command is declared; "ok"
+// when it exits 0 and `git status --porcelain` is empty after it; else
+// "failed", WARNed with the cause. The distro never refuses the lease and
+// never restores what the command dirtied: a command that touches tracked
+// files restores them itself.
+export function leaseInstall(id: string, repo: string, wt: string): "" | "ok" | "failed" {
+  const cf = projectConfigFile(repo, true);
+  const cmd = cf === null ? "" : argvOf(yamlGet(cf, "commands.install", true).out.replace(/\n+$/, ""));
+  if (cmd === "") return "";
+  const t = process.env.AC_LEASE_INSTALL_TIMEOUT || "";
+  const secs = /^[0-9]+$/.test(t) && Number(t) > 0 ? Number(t) : 300;
+  let r: ReturnType<typeof Bun.spawnSync> | null = null;
+  try {
+    r = spawnShellSync(["/usr/bin/env", `AC_LEASE_PRIMARY=${repo}`, "sh", "-c", cmd], { cwd: wt, stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true, timeout: Math.min(secs * 1000, 2 ** 31 - 1) });
+  } catch {}
+  let cause = "";
+  if (r?.exitedDueToTimeout) {
+    for (const sig of ["SIGTERM", "SIGKILL"] as const)
+      try {
+        process.kill(-r.pid, sig);
+      } catch {}
+    cause = `timed out after ${secs}s`;
+  } else if (shellStatus(r) !== 0) cause = `exit ${shellStatus(r)}`;
+  else {
+    const st = stage(["git", "-C", wt, "status", "--porcelain"], "ignore", "pipe", "ignore");
+    const dirty = capturedText(st.out).split("\n").filter((l) => l !== "").map((l) => l.slice(3));
+    if (st.status !== 0) cause = "its worktree state could not be read";
+    else if (dirty.length > 0) cause = `it left the worktree dirty: ${dirty.join(", ")}`;
+  }
+  if (cause === "") return "ok";
+  warn(latBuf(`commands.install failed for ${lat(id)} (${cause}) - the worktree's dependencies are not installed; install them before testing`));
+  return "failed";
+}
+
 // --- learn twins ---
 
 // ac_learn_meta / ac_learn_ticks twins: the dot-files under state/ (minted),

@@ -393,6 +393,8 @@
 // ignore_patterns, document.instructions, test.evidence.{store_in_repo,dir},
 // test.attestation (accept|ignore, default accept - see TDD ATTESTATION),
 // test.base_attribution (on|off, default off - see BASE ATTRIBUTION).
+// commands.install is no ship key: the lease runs it (src/spawn.ts, THE LEASE
+// INSTALL).
 // `cmd` exit codes: the command's own code; 4 = no command configured.
 // `start` FREEZE: trusts AC_FLEET_HOME_CHECKED/AC_FLEET_PROJECT_CONFIG (threaded
 // by ac-spawn.sh, which resolved the file with a real AC_HOME) over its own

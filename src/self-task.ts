@@ -65,7 +65,10 @@
 //      leases from - its status is the start's), an orca fleet an
 //      Orca-managed worktree on crew/<id> (orcaWorktreeLease; the meta
 //      records worktree_backend=orca so teardown routes to the release arm) -
-//      and seed the crewmate layer (instructions, settings, skills, the port
+//      then run the project's commands.install in it (the spawn entry's THE
+//      LEASE INSTALL: deps=ok|failed on the meta, a failure only WARNed - with
+//      no kickoff here, that WARN is the slice's whole notice), and seed the
+//      crewmate layer (instructions, settings, skills, the port
 //      slot) into it: work on a worktree follows the crewmate rules, whoever
 //      holds the hands. `--harness <h>` routes the instruction/skills seed to
 //      the file that harness loads (default claude -> .claude/CLAUDE.md;
@@ -215,6 +218,9 @@
 // - EXCLUSIVE TEMP: the meta's and the port registry's temps are created
 //   exclusively (metaSet, seedPortsEnv), where the original wrote through a
 //   planted `.tmp.$$`.
+// - LEASE INSTALL: a declared commands.install runs in the lease (step 2),
+//   where the original installed nothing; with none declared the start is the
+//   original's.
 //
 // CALLERS: no bin/, src/, dashboard/ or hook runs this entry - it is run by
 // hand: by the chief for a small self-edit, a SOLO session per slice and a
@@ -246,6 +252,7 @@ import {
   familyOwned,
   herdrCli,
   iso,
+  leaseInstall,
   metaGet,
   metaIsSelf,
   metaSet,
@@ -489,6 +496,8 @@ then start again`);
     ee(get.status);
   }
   const wt = S.worktree;
+  const deps = leaseInstall(id, projectDirC, wt);
+  await turn();
 
   // Work on a worktree follows the crewmate layer, whoever holds the hands -
   // the chief, a solo session, or a session the captain opens INSIDE the tree
@@ -598,6 +607,7 @@ then start again`);
   metaSetHard("project_dir", b8(projectDirC));
   metaSetHard("kind", "self");
   metaSetHard("mode", b8(mode));
+  if (deps !== "") metaSetHard("deps", deps);
   // A SOLO CHIEF's slice (a scoped session, AC_SCOPE set) belongs to its
   // family: the scope rides the meta the way a crewmate spawn records it, so
   // fleet views group the slice under the family and the teardown gate knows
