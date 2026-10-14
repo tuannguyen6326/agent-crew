@@ -1,7 +1,7 @@
 // watch-policy-hook.ts - PreToolUse hook (Bash tool): deny broad watcher
 // kills before they run.
-// The entry is bin/ac-watch-policy-hook.sh, the fail-open hook shim that
-// starts this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is
+// The entry is bin/ac-watch-policy-hook.sh, the hook shim that starts this
+// file through bin/ac-bun.sh's ac_bun_exec_guard; THIS header is
 // the authoritative spec, and the bash original it replaced stays frozen at
 // tests/fixtures/ac-watch-policy-hook.sh as the oracle the differential leg of
 // tests/sh/ac-guard.test.sh holds this module to.
@@ -36,8 +36,9 @@
 // A grep that cannot start or errs is no match.
 //
 // Fails open: missing jq, an empty or unparseable payload, a payload naming a
-// tool other than Bash, or no command all exit 0 (no bun, and a module that
-// cannot load, are the shim's) - a broken hook must never wedge the harness.
+// tool other than Bash, or no command all exit 0 (a module that cannot load
+// is the shim's, and no bun the shim's denial) - a broken hook must never
+// wedge the harness.
 // A payload with no tool name at all is judged. Exit codes: 0 allow, 2 deny;
 // nothing on stdout, the refusal one line on stderr. Files: none.
 //
@@ -62,8 +63,9 @@
 //   so a pkill whose watch-naming argument sits past an LF is allowed.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim allows at once, saying nothing, where
-//   the original judged; a module that cannot load or crashes allows too.
+// - BUN: with no bun on PATH, or no module file, the shim denies at once with
+//   one stderr line naming it, where the original judged; a module that cannot
+//   load or crashes allows, with one stderr line.
 // - SHELL-OWN STDERR: tr or a grep that cannot start reads as no text or no
 //   match on both sides, and the original's `<name>: command not found` line
 //   is not reproduced.

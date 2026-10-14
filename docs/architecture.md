@@ -189,7 +189,8 @@ Other harnesses carry a subset:
 - opencode - `.opencode/plugins/ac-primary-guards.js`: watch policy, turn-end guard on `session.idle`, prompt recall.
 - pi - `.pi/extensions/ac-primary-turnend-guard.ts`: watch policy, turn-end guard on `agent_settled`, prompt recall.
 
-Every adapter fails open and the guards self-scope, so hooks copied into a crewmate worktree stay inert there.
+Every adapter fails open on its own missing dependencies and the guards self-scope, so hooks copied into a crewmate worktree stay inert there.
+The four PreToolUse guards are the exception for bun: with bun or their module missing they deny, naming it, and `bin/ac-session-start.sh` reports a hook module that cannot load as `HOOK-DEAD:` (`bin/ac-bun.sh`).
 The non-claude wirings ship with live probes pending, and `tests/sh/ac-harness-hooks.test.sh` fences them.
 
 ## Rooms and the ledger machinery

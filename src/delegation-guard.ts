@@ -1,7 +1,7 @@
 // delegation-guard.ts - PreToolUse hook: refuse harness-native delegation
 // from a CHIEF's own checkout.
-// The entry is bin/ac-delegation-guard.sh, the fail-open hook shim that starts
-// this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
+// The entry is bin/ac-delegation-guard.sh, the hook shim that starts this
+// file through bin/ac-bun.sh's ac_bun_exec_guard; THIS header is the
 // authoritative spec, and the bash original it replaced stays frozen at
 // tests/fixtures/ac-delegation-guard.sh as the oracle the differential leg of
 // tests/sh/ac-delegation-guard.test.sh holds this module to.
@@ -77,7 +77,7 @@
 // at launch - a chief cannot grant it to itself mid-turn.
 //
 // Fails open: non-matching payloads, an unparseable payload, a missing
-// DEPENDENCY (jq anywhere, git under arm 3; bun, through the shim), a linked
+// DEPENDENCY (jq anywhere, git under arm 3; bun's is the shim's deny), a linked
 // worktree, or a checkout git cannot read all exit 0 - a broken guard must
 // never wedge the harness. EXACTLY ONE of those is narrower under arm 3,
 // deliberately: a cwd git reads as no repo at all is indistinguishable from a
@@ -122,8 +122,9 @@
 //   is an mcp__ name.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim allows at once, saying nothing, where
-//   the original judged; a module that cannot load or crashes allows too.
+// - BUN: with no bun on PATH, or no module file, the shim denies at once with
+//   one stderr line naming it, where the original judged; a module that cannot
+//   load or crashes allows, with one stderr line.
 // - HOME RESOLUTION: a home or cwd whose name ends in LF is the directory it
 //   names, where the original's `$(...)` dropped the LF and compared the
 //   sibling; a relative AC_HOME is entered without CDPATH, where an exported

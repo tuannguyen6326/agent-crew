@@ -528,15 +528,16 @@ rmdir "$h/state/a.meta"
 h="$(te_world named)"
 mkdir -p "$h/state/.wake-spool"
 printf '9\treport\tnb\tdone: x\n' >"$h/state/.wake-spool/1.1.000000"
-# BUN: no bun on PATH - the shim allows at once and says nothing; the original
-# (bash, jq and its libs) held the stop.
+# BUN: no bun on PATH - the shim allows at once, saying so in one stderr line;
+# the original (bash, jq and its libs) held the stop.
 mkdir -p "$TMP/te-nobun"
 for t in bash env cat dirname jq git sed awk head tail ps date mkdir mv wc tr grep basename; do ln -sf "$(command -v "$t")" "$TMP/te-nobun/$t"; done
 o_rc=0; (printf '{}' | AC_HOME="$h" PATH="$TMP/te-nobun" LC_ALL=C "$obin/ac-turnend-guard.sh") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
 n_rc=0; (printf '{}' | AC_HOME="$h" PATH="$TMP/te-nobun" LC_ALL=C "$BIN/ac-turnend-guard.sh") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
 assert_eq "$o_rc $n_rc" "2 0" "BUN: the original holds the stop with no bun on PATH, the shim allows"
 assert_contains "$(cat "$TMP/o.err")" "queued wakes are pending" "BUN: the original's reason"
-assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
+assert_eq "$(cat "$TMP/n.out")" "" "BUN: the shim writes nothing on stdout"
+assert_eq "$(cat "$TMP/n.err")" "ac-turnend-guard.sh: bun is not on PATH - this hook did nothing" "BUN: the shim says so in one stderr line"
 # BUN: a module that cannot load is the shim's no-op, never a held stop.
 te_lf="$TMP/te-loadfail"
 mkdir -p "$te_lf/bin" "$te_lf/src"
@@ -546,6 +547,7 @@ n_rc=0; (printf '{}' | AC_HOME="$h" LC_ALL=C "$te_lf/bin/ac-turnend-guard.sh") >
 assert_eq "$n_rc" "0" "BUN: a module that cannot load never holds the stop"
 assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
 assert_contains "$(cat "$TMP/n.err")" "turn-end guard cannot load" "BUN: the load failure is bun's own diagnosis"
+assert_contains "$(cat "$TMP/n.err")" "ac-turnend-guard.sh: src/turnend-guard.ts exited 1 - this hook did nothing" "BUN: the shim says it did nothing"
 # AT PARITY: a keep knob naming a variable ended the original 0 under set -u
 # after its reason line, the line count's status; the module ends 0 there too,
 # so neither the shim's fold nor the stop is involved.

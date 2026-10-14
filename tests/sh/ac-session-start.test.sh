@@ -161,6 +161,41 @@ case "$tc_section" in
   *"all required tools present"*) fail "the all-clear line must not print alongside an INERT: warning: $tc_section" ;;
 esac
 rm -rf "$dstub/jq-old" "$dstub/jq-new"
+assert_eq "$(printf '%s\n' "$tc_section" | grep -c '^HOOK-DEAD:' || true)" "0" "a healthy tree reports no dead hook"
+
+# (4) A wired hook module that cannot load is reported in the toolchain
+# section, built (never run) the way bun would load it; a missing bun reports
+# every ported hook down. A copied distro, so the broken module is never this
+# tree's.
+mkdir -p "$TMP/distro-hd"
+cp -R "$ROOT/bin" "$ROOT/src" "$TMP/distro-hd/"
+printf 'const x = ;\n' >"$TMP/distro-hd/src/ledger-guard.ts"
+hd_out="$("$TMP/distro-hd/bin/ac-session-start.sh" 2>&1)"
+hd_section="$(printf '%s\n' "$hd_out" | awk '/^-- toolchain --$/{f=1;next} /^-- /{f=0} f')"
+assert_contains "$hd_section" "HOOK-DEAD: src/ledger-guard.ts - bin/ac-ledger-guard.sh cannot load it: error: Unexpected ;" \
+  "a hook module that cannot load is named with its shim and bun's first error"
+assert_eq "$(printf '%s\n' "$hd_section" | grep -c '^HOOK-DEAD:')" "1" "only the broken module is reported"
+case "$hd_section" in
+  *"all required tools present"*) fail "the all-clear line must not print alongside a dead hook: $hd_section" ;;
+esac
+rm "$TMP/distro-hd/src/watch-autoarm.ts"
+hd_section="$("$TMP/distro-hd/bin/ac-session-start.sh" 2>&1 | awk '/^-- toolchain --$/{f=1;next} /^-- /{f=0} f')"
+assert_contains "$hd_section" "HOOK-DEAD: src/watch-autoarm.ts - bin/ac-watch-autoarm.sh starts it, and it is missing" \
+  "a missing hook module is named with its shim"
+hd_path=""
+IFS=: read -r -a hd_dirs <<<"$PATH"
+for d in "${hd_dirs[@]}"; do
+  if [ -e "$d/bun" ]; then
+    m="$TMP/hd-nobun/$(printf '%s' "$d" | tr '/' '_')"
+    mkdir -p "$m"
+    for t in "$d"/*; do [ "${t##*/}" = bun ] || ln -sf "$t" "$m/${t##*/}"; done
+    d="$m"
+  fi
+  hd_path="$hd_path${hd_path:+:}$d"
+done
+hd_section="$(PATH="$hd_path" "$BIN/ac-session-start.sh" 2>&1 | awk '/^-- toolchain --$/{f=1;next} /^-- /{f=0} f')"
+assert_contains "$hd_section" "MISSING: bun" "no bun: the doctor names bun"
+assert_contains "$hd_section" "HOOK-DEAD: every ported hook - bun is not on PATH" "no bun: every ported hook is reported down"
 
 # ac-session-start.test.sh - the crewdeputy config-converge ride-along
 # (bin/ac-session-start.sh's "Crewdeputy ride-along" block) must resolve its PARENT config dir from the

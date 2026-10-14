@@ -183,7 +183,7 @@ Harness hooks turn the most-violated rules into mechanical checks; on claude the
 - UserPromptSubmit: `bin/ac-prompt-recall.sh` hands a human-driven session the top fleet-memory hits before the model reads the prompt.
 - SessionStart: `bin/ac-sessionstart-nudge.sh` reminds a fresh chief session to run `bin/ac-session-start.sh`, and re-orients a compacted one.
 
-Owners: each script's header, or for a ported hook the header of the `src/` module its fail-open shim starts.
+Owners: each script's header, or for a ported hook the header of the `src/` module its shim starts.
 
 ## Truth on disk
 

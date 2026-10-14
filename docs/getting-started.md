@@ -113,7 +113,7 @@ cd ~/Work/ac-homes/lab && AC_HOME="$PWD" claude
 The crewchief's first act every session is `bin/ac-session-start.sh`; on Claude Code a SessionStart hook reminds it.
 The digest acquires the home's session lock, re-runs the toolchain doctor, drains queued wakes, and prints the fleet view, the backlog head, the project registry, and the supervision block.
 When another live session already owns the home, the digest degrades to read-only and skips the drain.
-Any `MISSING:`, `BELOW-FLOOR:`, or `NO-CAPABILITY:` line means fix the toolchain before anything is spawned.
+Any `MISSING:`, `BELOW-FLOOR:`, or `NO-CAPABILITY:` line means fix the toolchain before anything is spawned, and so does a `HOOK-DEAD:` line, a ported harness hook whose module cannot load (or every one of them, without bun).
 
 ## 6. Add a project
 

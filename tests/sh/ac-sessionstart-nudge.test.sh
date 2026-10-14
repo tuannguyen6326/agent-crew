@@ -373,8 +373,8 @@ for side in "$obin" "$BIN"; do
 done
 
 # --- named divergences: each row asserts both sides ---------------------------
-# BUN: no bun on PATH - the shim exits 0 at once and says nothing, where the
-# original reminded (and signalled a homeless session).
+# BUN: no bun on PATH - the shim exits 0 at once, saying so in one stderr line,
+# where the original reminded (and signalled a homeless session).
 mkdir -p "$TMP/ns-nobun"
 for t in bash env cat dirname git sed awk head ps date mkdir tr grep basename stat; do ln -sf "$(command -v "$t")" "$TMP/ns-nobun/$t"; done
 ns_in ''
@@ -383,9 +383,10 @@ for args in "AC_HOME=$nh" "AC_FLEET_STATE="; do
   n_rc=0; (cd "$nsc" && env -u AC_HOME "$args" PATH="$TMP/ns-nobun" LC_ALL=C "$BIN/ac-sessionstart-nudge.sh" <"$TMP/ns.in") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
   assert_eq "$o_rc $n_rc" "0 0" "BUN: both exit 0 ($args)"
   [ -s "$TMP/o.out" ] || fail "BUN: the original spoke ($args)"
-  assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing ($args)"
+  assert_eq "$(cat "$TMP/n.out")" "" "BUN: the shim injects nothing ($args)"
+  assert_eq "$(cat "$TMP/n.err")" "ac-sessionstart-nudge.sh: bun is not on PATH - this hook did nothing" "BUN: the shim says so in one stderr line ($args)"
 done
-# BUN: a module that cannot load is the same silence.
+# BUN: a module that cannot load is the same no-op, said the same way.
 ns_lf="$TMP/ns-loadfail"
 mkdir -p "$ns_lf/bin" "$ns_lf/src"
 cp "$BIN/ac-bun.sh" "$BIN/ac-sessionstart-nudge.sh" "$ns_lf/bin/"
@@ -394,6 +395,7 @@ n_rc=0; (cd "$nh" && AC_HOME="$nh" LC_ALL=C "$ns_lf/bin/ac-sessionstart-nudge.sh
 assert_eq "$n_rc" "0" "BUN: a module that cannot load exits 0"
 assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load injects nothing"
 assert_contains "$(cat "$TMP/n.err")" "nudge cannot load" "BUN: the load failure is bun's own diagnosis"
+assert_contains "$(cat "$TMP/n.err")" "ac-sessionstart-nudge.sh: src/sessionstart-nudge.ts exited 1 - this hook did nothing" "BUN: the shim says it did nothing"
 # BYTES: AC_SCOPE arrives decoded, so its non-UTF-8 byte prints as U+FFFD.
 printf 'pid=%s\n' "$$" >"$nh/state/.session-lock"
 ns_in '{"source":"compact"}\n'

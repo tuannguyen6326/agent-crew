@@ -133,9 +133,9 @@ assert_eq "$(homeless_hook "$primary" Task AC_CREW_ID=dg1)" "2" \
 # broken-dependency fail-open, so arm 3 guards git exactly as the script guards
 # jq. One variable, everything else held constant.
 stubdir="$TMP/nogit"; mkdir -p "$stubdir"
-# Everything the guard's own interpreter and body need, and nothing more - git
-# is the single variable this leg removes.
-for c in bash env cat jq; do
+# Everything the guard's own interpreter, shim and body need, and nothing more
+# - git is the single variable this leg removes.
+for c in bash env cat dirname jq bun; do
   ln -sf "$(command -v "$c")" "$stubdir/$c"
 done
 command -v git >/dev/null || fail "no git on PATH: this leg cannot vary it"
@@ -307,14 +307,15 @@ for side in "$obin" "$BIN"; do
 done
 
 # --- named divergences: each row asserts both sides ---------------------------
-# BUN: no bun on PATH - the shim allows at once and says nothing, where the
+# BUN: no bun on PATH - the shim refuses at once, naming bun, where the
 # original (bash and jq alone) judged.
 dgpath "$TMP/dg-nobun" bash env cat dirname jq git
 o_rc=0; (cd "$primary" && PATH="$TMP/dg-nobun" LC_ALL=C "$obin/ac-delegation-guard.sh" <"$TMP/dg.pl") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
 n_rc=0; (cd "$primary" && PATH="$TMP/dg-nobun" LC_ALL=C "$BIN/ac-delegation-guard.sh" <"$TMP/dg.pl") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$o_rc $n_rc" "2 0" "BUN: the original refuses with no bun on PATH, the shim allows"
+assert_eq "$o_rc $n_rc" "2 2" "BUN: the original and the shim both refuse with no bun on PATH"
 assert_contains "$(cat "$TMP/o.err")" "ac-delegation-guard: Task creates work" "BUN: the original's refusal"
-assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
+assert_eq "$(cat "$TMP/n.out")" "" "BUN: the shim's refusal writes nothing on stdout"
+assert_contains "$(cat "$TMP/n.err")" "ac-delegation-guard.sh: REFUSED - bun is not on PATH" "BUN: the shim's refusal names bun"
 # BUN: a module that cannot load is the shim's no-op, never a refusal.
 dg_lf="$TMP/dg-loadfail"
 mkdir -p "$dg_lf/bin" "$dg_lf/src"
@@ -324,6 +325,7 @@ n_rc=0; (cd "$primary" && LC_ALL=C "$dg_lf/bin/ac-delegation-guard.sh" <"$TMP/dg
 assert_eq "$n_rc" "0" "BUN: a module that cannot load allows"
 assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
 assert_contains "$(cat "$TMP/n.err")" "delegation guard cannot load" "BUN: the load failure is bun's own diagnosis"
+assert_contains "$(cat "$TMP/n.err")" "ac-delegation-guard.sh: src/delegation-guard.ts exited 1 - this hook did nothing" "BUN: the shim says it did nothing"
 case "$(cat "$TMP/n.err")" in *"ac-delegation-guard:"*) fail "BUN: a module that cannot load must never print the refusal" ;; esac
 # HOME RESOLUTION: a cwd or home whose name ends in LF is the directory it
 # names, where the original's `$(...)` dropped the LF and compared the sibling.

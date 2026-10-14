@@ -119,10 +119,10 @@
 //   payload whose `"source"` sits on a later line is no compact.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim exits 0 at once and says nothing, where
-//   the original reminded, oriented or signalled; a module that cannot load is
-//   the same silence. The homeless signal is therefore lost exactly where bun
-//   is missing too.
+// - BUN: with no bun on PATH the shim exits 0 at once, saying so in one stderr
+//   line and injecting nothing, where the original reminded, oriented or
+//   signalled; a module that cannot load is the same no-op, said the same way.
+//   The homeless signal is therefore lost exactly where bun is missing too.
 // - HOME RESOLUTION: an AC_HOME whose name ends in LF is the directory it
 //   names, and a relative one is entered without CDPATH; a caller whose cwd
 //   Bun cannot enter resolves no relative AC_HOME (silent).

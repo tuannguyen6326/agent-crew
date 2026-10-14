@@ -596,6 +596,11 @@ aa_same() {  # aa_same <want rc> [env words...] - both sides answer alike, and t
   cmp -s "$TMP/aa.o.err2" "$TMP/aa.n.err2" || fail "differential stderr differs ($*): $(diff "$TMP/aa.o.err2" "$TMP/aa.n.err2" | head -n 6)"
   cmp -s "$TMP/aa.o.snap" "$TMP/aa.n.snap" || fail "differential files differ ($*): $(diff "$TMP/aa.o.snap" "$TMP/aa.n.snap" | head -n 8)"
 }
+aa_shim_said() {  # aa_shim_said <module rc> - the port's last stderr line is the shim's own, which the rest of the row then compares without
+  assert_eq "$(tail -n 1 "$TMP/aa.n.err2")" "ac-watch-autoarm.sh: src/watch-autoarm.ts exited $1 - this hook did nothing" "the shim says the module's $1 did nothing"
+  sed '$d' "$TMP/aa.n.err2" >"$TMP/aa.n.err3"
+  mv "$TMP/aa.n.err3" "$TMP/aa.n.err2"
+}
 aa_meta() {  # aa_meta <id> <body printf format> - the same meta on both sides
   aa_each "printf '$2' >SIDE/home/state/$1.meta"
 }
@@ -801,6 +806,7 @@ aa_meta famA-chief 'kind=roomchief\n'
 aa_each 'rm -f SIDE/home/state/.stop-hooks.log'
 aa_both AC_SCOPE=famA AC_BACKEND=bogus
 assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "1 0" "W3: a refused backend name ends the run 1 (the shim's 0)"
+aa_shim_said 1
 cmp -s "$TMP/aa.o.err2" "$TMP/aa.n.err2" || fail "W3: both print the handback before the nudge"
 cmp -s "$TMP/aa.o.snap" "$TMP/aa.n.snap" || fail "W3: neither traces the handback: $(diff "$TMP/aa.o.snap" "$TMP/aa.n.snap" | head -n 6)"
 case "$(cat "$TMP/aa.n.snap")" in *handed-back*) fail "W3: the handback was traced" ;; esac
@@ -835,9 +841,10 @@ aa_each 'rm SIDE/home/state/.session-lock'
 # --- named divergences: each row asserts both sides ---------------------------
 aa_fresh; aa_meta t1 'kind=ship\n'; aa_lines 'report:t1'
 # F7 STATUS: an unknown argument is refused 1 by the module, which the shim
-# answers 0; the refusal line is the same on both sides.
+# answers 0 with its own line; the refusal line is the same on both sides.
 AA_ARGS=(--bogus); aa_both; AA_ARGS=()
 assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "1 0" "F7: the module's 1 is the shim's 0"
+aa_shim_said 1
 cmp -s "$TMP/aa.o.err2" "$TMP/aa.n.err2" || fail "F7: the refusal line differs: $(diff "$TMP/aa.o.err2" "$TMP/aa.n.err2")"
 assert_eq "$(cat "$TMP/aa.n.err2")" "ERROR: unknown argument: --bogus (the hook takes none; -h prints its header)" "F7: the line itself"
 cmp -s "$TMP/aa.o.snap" "$TMP/aa.n.snap" || fail "F7: an argument arms and traces nothing on either side"
@@ -901,8 +908,8 @@ cmp -s "$TMP/aa.o.err2" "$TMP/aa.n.err2" || fail "BYTES: the handback's stderr k
 aa_detail="$(printf 'detail=gone:t' | od -An -tx1 | tr -d ' \n')"
 assert_contains "$(od -An -tx1 "$AO/home/state/.stop-hooks.log" | tr -d ' \n')" "${aa_detail}e9780a" "BYTES: the original traces the byte"
 assert_contains "$(od -An -tx1 "$AN/home/state/.stop-hooks.log" | tr -d ' \n')" "${aa_detail}e9780a" "BYTES: the port traces the byte"
-# BUN: no bun on PATH - the shim exits 0 at once, arming nothing, where the
-# original armed.
+# BUN: no bun on PATH - the shim exits 0 at once, arming nothing and saying so
+# in one stderr line, where the original armed.
 aa_nobun="$TMP/aa-nobun"
 aa_path=""
 IFS=: read -r -a aa_dirs <<<"$PATH"
@@ -919,10 +926,12 @@ aa_fresh; aa_meta t1 'kind=ship\n'; aa_lines 'report:t1'
 aa_run "$AO" o PATH="$AO/stub:$aa_path"; aa_run "$AN" n PATH="$AN/stub:$aa_path"
 assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "2 0" "BUN: the original hands back with no bun on PATH, the shim exits 0"
 assert_contains "$(cat "$TMP/aa.o.err")" "ac-watch-autoarm: report:t1" "BUN: the original armed"
-assert_eq "$(cat "$TMP/aa.n.out" "$TMP/aa.n.err")" "" "BUN: the shim says nothing"
+assert_eq "$(cat "$TMP/aa.n.out")" "" "BUN: the shim writes nothing on stdout"
+assert_eq "$(cat "$TMP/aa.n.err")" "ac-watch-autoarm.sh: bun is not on PATH - this hook did nothing" "BUN: the shim says so in one stderr line"
 assert_no_file "$AN/calls" "BUN: the shim arms nothing"
 assert_no_file "$AN/home/state/.stop-hooks.log" "BUN: the shim traces nothing"
-# BUN: a module that cannot load is the shim's no-op: 0, bun's diagnosis, no trace.
+# BUN: a module that cannot load is the shim's no-op: 0, bun's diagnosis and
+# the shim's line, no trace.
 aa_lf="$TMP/aa-loadfail"
 mkdir -p "$aa_lf/bin" "$aa_lf/src"
 cp "$BIN/ac-bun.sh" "$BIN/ac-watch-autoarm.sh" "$aa_lf/bin/"
@@ -932,6 +941,7 @@ rc=0
 assert_eq "$rc" "0" "BUN: a module that cannot load exits 0"
 assert_eq "$(cat "$TMP/aa.n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
 assert_contains "$(cat "$TMP/aa.n.err")" "autoarm cannot load" "BUN: the load failure is bun's own diagnosis"
+assert_contains "$(cat "$TMP/aa.n.err")" "ac-watch-autoarm.sh: src/watch-autoarm.ts exited 1 - this hook did nothing" "BUN: the shim says it did nothing"
 case "$(cat "$TMP/aa.n.err")" in *"ac-watch-autoarm:"*) fail "BUN: a module that cannot load must never hand back" ;; esac
 assert_no_file "$AN/home/state/.stop-hooks.log" "BUN: a module that cannot load traces nothing"
 

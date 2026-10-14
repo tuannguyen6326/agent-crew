@@ -209,11 +209,13 @@
 // DIVERGENCES from the original (the leg names each one a row can show):
 // - F7 STATUS: the shim answers only the module's 0 or 2, so the 1 of an
 //   unknown argument (its ERROR line still printed) or of W3, and an
-//   identifier's clock status other than 2 (127 for a missing date), exit 0.
-// - BUN: with no bun on PATH the shim exits 0 at once, saying nothing and
-//   arming nothing, where the original armed; a module that cannot load or
-//   crashes exits 0 too, bun's diagnosis on stderr, nothing traced - the
-//   floor the original's missing ac-lib.sh was.
+//   identifier's clock status other than 2 (127 for a missing date), exit 0,
+//   the shim's one line naming the status after the module's stderr.
+// - BUN: with no bun on PATH the shim exits 0 at once, saying so in one
+//   stderr line and arming nothing, where the original armed; a module that
+//   cannot load or crashes exits 0 too, bun's diagnosis and the shim's line
+//   on stderr, nothing traced - the floor the original's missing ac-lib.sh
+//   was.
 // - USAGE HEADER: -h prints THIS header.
 // - THE PROCESS: the ancestry walk starts at bun's pid, the shim shell's
 //   child, where the original started at its own shell; the harness the lock

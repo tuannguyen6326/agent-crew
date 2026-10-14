@@ -269,14 +269,15 @@ for missing in tr sed; do
   assert_contains "$(cat "$TMP/o.err")" "$missing: command not found" "SHELL-OWN: the original's line is bash's"
   assert_eq "$(cat "$TMP/n.err")" "" "SHELL-OWN: the port adds no line of its own (no $missing)"
 done
-# BUN: no bun on PATH - the shim allows at once and says nothing, where the
+# BUN: no bun on PATH - the shim refuses at once, naming bun, where the
 # original (bash, jq, tr and sed) judged.
 lgpath "$TMP/lg-nobun" bash env cat dirname jq tr sed
 o_rc=0; (cd "$TMP" && AC_SCOPE=fam1 PATH="$TMP/lg-nobun" LC_ALL=C "$obin/ac-ledger-guard.sh" <"$TMP/lg.pl") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
 n_rc=0; (cd "$TMP" && AC_SCOPE=fam1 PATH="$TMP/lg-nobun" LC_ALL=C "$BIN/ac-ledger-guard.sh" <"$TMP/lg.pl") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$o_rc $n_rc" "2 0" "BUN: the original refuses with no bun on PATH, the shim allows"
+assert_eq "$o_rc $n_rc" "2 2" "BUN: the original and the shim both refuse with no bun on PATH"
 assert_contains "$(cat "$TMP/o.err")" "ac-ledger-guard: Edit on records/backlog.md is refused" "BUN: the original's refusal"
-assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
+assert_eq "$(cat "$TMP/n.out")" "" "BUN: the shim's refusal writes nothing on stdout"
+assert_contains "$(cat "$TMP/n.err")" "ac-ledger-guard.sh: REFUSED - bun is not on PATH" "BUN: the shim's refusal names bun"
 # BUN: a module that cannot load is the shim's no-op, never a refusal.
 lg_lf="$TMP/lg-loadfail"
 mkdir -p "$lg_lf/bin" "$lg_lf/src"
@@ -286,6 +287,7 @@ n_rc=0; (cd "$TMP" && AC_SCOPE=fam1 LC_ALL=C "$lg_lf/bin/ac-ledger-guard.sh" <"$
 assert_eq "$n_rc" "0" "BUN: a module that cannot load allows"
 assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
 assert_contains "$(cat "$TMP/n.err")" "ledger guard cannot load" "BUN: the load failure is bun's own diagnosis"
+assert_contains "$(cat "$TMP/n.err")" "ac-ledger-guard.sh: src/ledger-guard.ts exited 1 - this hook did nothing" "BUN: the shim says it did nothing"
 case "$(cat "$TMP/n.err")" in *"ac-ledger-guard:"*) fail "BUN: a module that cannot load must never print the refusal" ;; esac
 # BYTES: AC_SCOPE arrives decoded, so its non-UTF-8 byte prints as U+FFFD.
 o_rc=0; (cd "$TMP" && AC_SCOPE="$(printf 'f\351m')" LC_ALL=C "$obin/ac-ledger-guard.sh" <"$TMP/lg.pl") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?

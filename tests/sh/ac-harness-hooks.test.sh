@@ -84,9 +84,12 @@ while IFS= read -r cmd; do
   # claude-only.
   [ -x "$root/bin/$script" ] \
     || fail "claude wires bin/$script but it is missing or not executable - that hook is permanently inert"
-  # A ported hook's entry is a fail-open shim: its verdicts live in the module
-  # it starts, and a module that is not there makes the shim a silent no-op.
-  mod="$(sed -n 's|^ac_bun_exec_hook \(src/[a-z0-9-]*\.ts\) "\$@"$|\1|p' "$root/bin/$script" | head -n 1)"
+  # A ported hook's entry is a shim: its verdicts live in the module it
+  # starts, and a module that is not there makes the shim a no-op (a deny
+  # guard's refusal of every call it sees).
+  mod="$(sed -nE 's#^ac_bun_exec_(hook|guard) (src/[a-z0-9-]*\.ts) "\$@"$#\2#p' "$root/bin/$script" | head -n 1)"
+  ! grep -q '^ac_bun_exec_' "$root/bin/$script" || [ -n "$mod" ] \
+    || fail "bin/$script starts a module this check cannot read - it would skip the module check"
   [ -z "$mod" ] || [ -f "$root/$mod" ] \
     || fail "bin/$script starts $mod, which is missing - that hook is permanently inert"
 
@@ -104,6 +107,40 @@ while IFS= read -r cmd; do
   rc=0; CLAUDE_PROJECT_DIR="$hookdir" sh -c "$cmd" </dev/null >/dev/null 2>&1 || rc=$?
   assert_eq "$rc" "0" "$script is missing and its wiring line reports $rc - a missing hook must never wedge a turn"
 done < <(jq -r '.hooks[][] | .hooks[]?.command' "$cl")
+
+# --- the deny guards without bun: denied or reported, never silently allowed --
+# The four PreToolUse guards start through ac_bun_exec_guard, and a guard shim
+# that cannot source bin/ac-bun.sh denies too.
+for g in ac-primary-guard.sh ac-ledger-guard.sh ac-delegation-guard.sh ac-watch-policy-hook.sh; do
+  grep -q '^ac_bun_exec_guard src/' "$root/bin/$g" || fail "bin/$g does not start its module through ac_bun_exec_guard"
+  lone="$TMP/lone-$g"; mkdir -p "$lone"
+  cp "$root/bin/$g" "$lone/"
+  rc=0; err="$(printf '{"tool_name":"Task"}' | "$lone/$g" 2>&1 >/dev/null)" || rc=$?
+  assert_eq "$rc" "2" "$g with no bin/ac-bun.sh beside it denies"
+  assert_contains "$err" "$g: REFUSED - bin/ac-bun.sh cannot be sourced" "$g says why it denies"
+done
+# The real primary guard through each wiring line, with no bun on the PATH the
+# harness hands it: claude runs the line under `sh -c`, codex under `bash -lc`.
+# DISPUTED: whether bun is on the hook's PATH.
+# HELD-CONSTANT: the real bin/ac-primary-guard.sh, its wiring line, the payload
+# (an Edit on a file in this checkout), AC_CREW_ID, and a HOME with no profile.
+nobun="$TMP/nobun"; mkdir -p "$nobun" "$TMP/emptyhome"
+for t in bash cat dirname; do ln -s "$(command -v "$t")" "$nobun/$t"; done
+pg_pl="{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$root/AGENTS.md\"}}"
+cl_pg="$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command' "$cl" | grep 'ac-primary-guard\.sh')"
+rc=0; err="$(cd "$root" && printf '%s' "$pg_pl" | env -i PATH="$nobun" HOME="$TMP/emptyhome" AC_CREW_ID=hh1 \
+  CLAUDE_PROJECT_DIR="$root" /bin/sh -c "$cl_pg" 2>&1 >/dev/null)" || rc=$?
+assert_eq "$rc" "2" "claude: with no bun on PATH the primary guard's wiring denies the edit"
+assert_contains "$err" "bun is not on PATH" "claude: the denial names bun"
+cx_pg="$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command' "$cx" | grep 'ac-primary-guard\.sh')"
+if env -i PATH="$nobun" HOME="$TMP/emptyhome" bash -lc 'command -v bun' >/dev/null 2>&1; then
+  printf 'NOTE: codex leg skipped - this host'"'"'s login profile puts bun back on a bun-less PATH\n'
+else
+  rc=0; err="$(cd "$root" && printf '%s' "$pg_pl" | env -i PATH="$nobun" HOME="$TMP/emptyhome" AC_CREW_ID=hh1 \
+    /bin/sh -c "$cx_pg" 2>&1 >/dev/null)" || rc=$?
+  assert_eq "$rc" "2" "codex: with no bun on the login PATH the primary guard's wiring denies the edit"
+  assert_contains "$err" "bun is not on PATH" "codex: the denial names bun"
+fi
 
 # Every script referenced by ANY of the three surfaces exists and executes.
 refs="$(cat "$cx" "$root"/.opencode/plugins/*.js "$root"/.pi/extensions/*.ts 2>/dev/null \

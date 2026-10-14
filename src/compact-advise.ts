@@ -104,8 +104,9 @@
 // - a judgment's mark write that fails ends the hook before its message.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim exits 0 at once and says nothing, where
-//   the original judged; a module that cannot load is the same silence.
+// - BUN: with no bun on PATH the shim exits 0 at once, saying so in one stderr
+//   line, where the original judged; a module that cannot load is the same
+//   no-op, said the same way.
 // - W4: the session_id is [A-Za-z0-9_-] per the text under any locale, where
 //   bash 3.2's bracket under a UTF-8 locale let `é` through.
 // - SEND WAIT: an AC_COMPACT_SEND_WAIT that is an expression (`1+1`) ends the

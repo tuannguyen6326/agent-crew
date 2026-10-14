@@ -1,7 +1,7 @@
 // primary-guard.ts - PreToolUse hook: refuse a crewmate/roomchief EDITING a
 // file that lives in the PRIMARY checkout but outside its own tree.
-// The entry is bin/ac-primary-guard.sh, the fail-open hook shim that starts
-// this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
+// The entry is bin/ac-primary-guard.sh, the hook shim that starts this file
+// through bin/ac-bun.sh's ac_bun_exec_guard; THIS header is the
 // authoritative spec, and the bash original it replaced stays frozen at
 // tests/fixtures/ac-primary-guard.sh as the oracle the differential leg of
 // tests/sh/ac-primary-guard.test.sh holds this module to.
@@ -51,8 +51,9 @@
 //
 // Fails open: neither crew scalar, a non-matching tool, missing jq, an
 // unparseable payload, an empty path, a target whose parent directory does not
-// exist, or a rev-parse that errors - all exit 0 (no bun, and a module that
-// cannot load, are the shim's). A broken guard must never wedge the harness.
+// exist, or a rev-parse that errors - all exit 0 (a module that cannot load
+// is the shim's, and no bun the shim's refusal). A broken guard must never
+// wedge the harness.
 // Exit codes: 0 allow, 2 deny; nothing on stdout, the refusal three lines on
 // stderr. Files: none.
 //
@@ -86,8 +87,9 @@
 //   both with LF (an `Edit<LF>Edit` name is no tool).
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim allows at once, saying nothing, where
-//   the original judged; a module that cannot load or crashes allows too.
+// - BUN: with no bun on PATH, or no module file, the shim denies at once with
+//   one stderr line naming it, where the original judged; a module that cannot
+//   load or crashes allows, with one stderr line.
 // - HOME RESOLUTION, for the target's directory: a relative one is entered
 //   without CDPATH, where an exported CDPATH could send the original's cd to a
 //   namesake and its echo made the target a two-line path (`sub/x` from a

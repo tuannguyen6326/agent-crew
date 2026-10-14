@@ -64,8 +64,9 @@
 // - a recall that fails, or prints no `path`, is silence.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim exits 0 at once and says nothing, where
-//   the original recalled; a module that cannot load is the same silence.
+// - BUN: with no bun on PATH the shim exits 0 at once, saying so in one stderr
+//   line and injecting nothing, where the original recalled; a module that
+//   cannot load is the same no-op, said the same way.
 // - FRESHEN: a catch-up whose attempt stamp cannot be written fires nothing,
 //   where the original's failed redirection (no errexit here) still fired the
 //   sync and said `catch-up sync fired`.

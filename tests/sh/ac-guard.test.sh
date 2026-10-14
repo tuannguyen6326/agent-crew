@@ -946,14 +946,15 @@ for missing in tr grep; do
   assert_contains "$(cat "$TMP/wpo.err")" "$missing: command not found" "SHELL-OWN: the original's line is bash's"
   assert_eq "$(cat "$TMP/wpn.err")" "" "SHELL-OWN: the port adds no line of its own (no $missing)"
 done
-# BUN: no bun on PATH - the shim allows at once and says nothing, where the
+# BUN: no bun on PATH - the shim denies at once, naming bun, where the
 # original (bash, jq, tr and grep) judged.
 wp_path "$TMP/wp-nobun" bash env cat dirname jq tr grep
 o_rc=0; (cd "$TMP" && PATH="$TMP/wp-nobun" LC_ALL=C "$wpobin/ac-watch-policy-hook.sh" <"$TMP/wp.pl") >"$TMP/wpo.out" 2>"$TMP/wpo.err" || o_rc=$?
 n_rc=0; (cd "$TMP" && PATH="$TMP/wp-nobun" LC_ALL=C "$BIN/ac-watch-policy-hook.sh" <"$TMP/wp.pl") >"$TMP/wpn.out" 2>"$TMP/wpn.err" || n_rc=$?
-assert_eq "$o_rc $n_rc" "2 0" "BUN: the original denies with no bun on PATH, the shim allows"
+assert_eq "$o_rc $n_rc" "2 2" "BUN: the original and the shim both deny with no bun on PATH"
 assert_contains "$(cat "$TMP/wpo.err")" "ac-watch-policy: denied: pkill/killall pattern targets a watcher" "BUN: the original's refusal"
-assert_eq "$(cat "$TMP/wpn.out" "$TMP/wpn.err")" "" "BUN: the shim says nothing"
+assert_eq "$(cat "$TMP/wpn.out")" "" "BUN: the shim's denial writes nothing on stdout"
+assert_contains "$(cat "$TMP/wpn.err")" "ac-watch-policy-hook.sh: REFUSED - bun is not on PATH" "BUN: the shim's denial names bun"
 # BUN: a module that cannot load is the shim's no-op, never a refusal.
 wp_lf="$TMP/wp-loadfail"
 mkdir -p "$wp_lf/bin" "$wp_lf/src"
@@ -963,6 +964,7 @@ n_rc=0; (cd "$TMP" && LC_ALL=C "$wp_lf/bin/ac-watch-policy-hook.sh" <"$TMP/wp.pl
 assert_eq "$n_rc" "0" "BUN: a module that cannot load allows"
 assert_eq "$(cat "$TMP/wpn.out")" "" "BUN: a module that cannot load prints nothing on stdout"
 assert_contains "$(cat "$TMP/wpn.err")" "watch policy cannot load" "BUN: the load failure is bun's own diagnosis"
+assert_contains "$(cat "$TMP/wpn.err")" "ac-watch-policy-hook.sh: src/watch-policy-hook.ts exited 1 - this hook did nothing" "BUN: the shim says it did nothing"
 case "$(cat "$TMP/wpn.err")" in *"ac-watch-policy:"*) fail "BUN: a module that cannot load must never print the refusal" ;; esac
 
 pass

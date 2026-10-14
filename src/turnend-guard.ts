@@ -187,8 +187,9 @@
 //   (set -u), so no block ever holds.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim allows at once, saying nothing; a
-//   module that cannot load or crashes allows too - never a held stop.
+// - BUN: with no bun on PATH the shim allows at once, saying so in one stderr
+//   line; a module that cannot load or crashes allows too, with one stderr
+//   line - never a held stop.
 // - STATUS FOLD: wherever the original died with a status of its own (set -u
 //   on an age a broken date(1) left unset), the shim answers 0.
 // - KEEP ARITHMETIC: an AC_STOPHOOK_LOG_KEEP `$(( ))` cannot read (`2x`) made

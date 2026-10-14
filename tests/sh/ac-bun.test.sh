@@ -7,7 +7,8 @@
 # failed in the bash original, unless that original ran without errexit. Its
 # hook form, ac_bun_exec_hook, starts a module the same way, a closed channel
 # left to bun, and answers only the module's 0 or 2, every other ending the
-# hook's no-op.
+# hook's no-op said in one stderr line; its guard form, ac_bun_exec_guard,
+# denies when bun or the module is missing.
 
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
@@ -100,15 +101,20 @@ assert_eq "$(fdrun ac-guard.sh '1>&- 2>&-')" "1=ok 2=ok 0=0" "a module whose ori
 
 # --- ac_bun_exec_hook: a harness hook's start, which fails open --------------
 # A hook's 2 is its refusal, so only the module's own 0 or 2 may come back; a
-# missing bun, a module that cannot load and a crash are all the hook's no-op.
-for m in probe broken; do
-  cat >"$distro/bin/ac-hook-$m.sh" <<EOF
+# missing bun, a module that cannot load and a crash are all the hook's no-op,
+# each said in one stderr line, never on stdout, which a harness reads as
+# context or JSON. ac_bun_exec_guard is the deny guards' start: a missing bun or
+# module denies instead, the rest is ac_bun_exec_hook's.
+for m in hook-probe:hook:hook-probe hook-broken:hook:hook-broken \
+  guard-probe:guard:hook-probe guard-broken:guard:hook-broken guard-gone:guard:hook-gone; do
+  IFS=: read -r shim mode mod <<<"$m"
+  cat >"$distro/bin/ac-$shim.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 . "\$(dirname "\${BASH_SOURCE[0]}")/ac-bun.sh"
-ac_bun_exec_hook src/hook-$m.ts "\$@"
+ac_bun_exec_$mode src/$mod.ts "\$@"
 EOF
-  chmod +x "$distro/bin/ac-hook-$m.sh"
+  chmod +x "$distro/bin/ac-$shim.sh"
 done
 cat >"$distro/src/hook-probe.ts" <<'EOF'
 import { readFileSync, writeSync } from "node:fs";
@@ -126,33 +132,61 @@ process.exit(Number(mode));
 EOF
 printf 'const x = ;\n' >"$distro/src/hook-broken.ts"
 
-out="$(cd "$trap_dir" && printf '{"tool_name":"Task"}' \
-  | BUN_OPTIONS="--preload=$trap_dir/p.ts" BUN_PROBE=1 JSC_dumpOptions=1 "$distro/bin/ac-hook-probe.sh" 2>/dev/null)"
-assert_eq "$out" "{\"caller\":\"$caller\",\"cwd\":\"$root\",\"env\":[],\"stdin\":\"{\\\"tool_name\\\":\\\"Task\\\"}\"}" \
-  "a hook module is started as any module is, its payload on stdin"
+for shim in hook-probe guard-probe; do
+  out="$(cd "$trap_dir" && printf '{"tool_name":"Task"}' \
+    | BUN_OPTIONS="--preload=$trap_dir/p.ts" BUN_PROBE=1 JSC_dumpOptions=1 "$distro/bin/ac-$shim.sh" 2>/dev/null)"
+  assert_eq "$out" "{\"caller\":\"$caller\",\"cwd\":\"$root\",\"env\":[],\"stdin\":\"{\\\"tool_name\\\":\\\"Task\\\"}\"}" \
+    "a $shim module is started as any module is, its payload on stdin"
 
-for m in 0 2; do
+  for m in 0 2; do
+    rc=0
+    err="$(printf '' | "$distro/bin/ac-$shim.sh" "$m" 2>&1 >/dev/null)" || rc=$?
+    assert_eq "$rc" "$m" "the module's own $m is the $shim's answer"
+    assert_eq "$err" "hook said $m" "the module's stderr reaches the harness as written ($shim $m)"
+  done
   rc=0
-  err="$(printf '' | "$distro/bin/ac-hook-probe.sh" "$m" 2>&1 >/dev/null)" || rc=$?
-  assert_eq "$rc" "$m" "the module's own $m is the hook's answer"
-  assert_eq "$err" "hook said $m" "the module's stderr reaches the harness as written ($m)"
+  printf '' | bash -c 'exec 1>&- 2>&-; exec "$0" 2' "$distro/bin/ac-$shim.sh" || rc=$?
+  assert_eq "$rc" "2" "a $shim's refusal survives closed channels, as the original's lost printf left its exit 2"
+  for m in 1 3 125 255 throw signal; do
+    rc=0
+    out="$(printf '' | "$distro/bin/ac-$shim.sh" "$m" 2>"$TMP/fault.err")" || rc=$?
+    assert_eq "$rc" "0" "a module ending $m is the $shim's no-op, never a refusal"
+    case "$m" in throw) want=1 ;; signal) want=143 ;; *) want="$m" ;; esac
+    assert_contains "$(cat "$TMP/fault.err")" "ac-$shim.sh: src/hook-probe.ts exited $want - this hook did nothing" \
+      "a module ending $m: the $shim says so in one stderr line"
+    case "$out" in *"exited"*) fail "a module ending $m: the $shim's line never reaches stdout" ;; esac
+  done
 done
-rc=0
-printf '' | bash -c 'exec 1>&- 2>&-; exec "$0" 2' "$distro/bin/ac-hook-probe.sh" || rc=$?
-assert_eq "$rc" "2" "a hook's refusal survives closed channels, as the original's lost printf left its exit 2"
-for m in 1 3 125 255 throw signal; do
+
+for shim in hook-broken guard-broken; do
   rc=0
-  printf '' | "$distro/bin/ac-hook-probe.sh" "$m" >/dev/null 2>&1 || rc=$?
-  assert_eq "$rc" "0" "a hook module ending $m is the hook's no-op, never a refusal"
+  err="$(printf '{"tool_name":"Task"}' | "$distro/bin/ac-$shim.sh" 2>&1 >/dev/null)" || rc=$?
+  assert_eq "$rc" "0" "a module that cannot load is the $shim's no-op"
+  assert_contains "$err" "Unexpected" "a module that cannot load leaves bun's own diagnosis on stderr ($shim)"
+  assert_contains "$err" "ac-$shim.sh: src/hook-broken.ts exited 1 - this hook did nothing" \
+    "a module that cannot load: the $shim says so ($shim)"
 done
-rc=0
-err="$(printf '{"tool_name":"Task"}' | "$distro/bin/ac-hook-broken.sh" 2>&1 >/dev/null)" || rc=$?
-assert_eq "$rc" "0" "a hook module that cannot load is the hook's no-op"
-[ -n "$err" ] || fail "a hook module that cannot load leaves bun's own diagnosis on stderr"
 
 rc=0
 out="$(printf '{"tool_name":"Task"}' | PATH="$TMP/nobun" "$distro/bin/ac-hook-probe.sh" 2 2>"$TMP/nobun.err")" || rc=$?
 assert_eq "$rc" "0" "no bun on PATH is the hook's no-op"
-assert_eq "$out$(cat "$TMP/nobun.err")" "" "no bun on PATH: the hook says nothing"
+assert_eq "$out" "" "no bun on PATH: the hook writes nothing on stdout"
+assert_eq "$(cat "$TMP/nobun.err")" "ac-hook-probe.sh: bun is not on PATH - this hook did nothing" \
+  "no bun on PATH: the hook says so in one stderr line"
+
+rc=0
+out="$(printf '{"tool_name":"Task"}' | PATH="$TMP/nobun" "$distro/bin/ac-guard-probe.sh" 0 2>"$TMP/nobun.err")" || rc=$?
+assert_eq "$rc" "2" "no bun on PATH: a guard denies, it cannot judge"
+assert_eq "$out" "" "no bun on PATH: the guard writes nothing on stdout"
+assert_eq "$(wc -l <"$TMP/nobun.err" | tr -d ' ')" "1" "no bun on PATH: the guard's reason is one line"
+assert_contains "$(cat "$TMP/nobun.err")" "ac-guard-probe.sh: REFUSED - bun is not on PATH" "no bun on PATH: the guard's reason names bun"
+
+rc=0
+out="$(printf '{"tool_name":"Task"}' | "$distro/bin/ac-guard-gone.sh" 2>"$TMP/gone.err")" || rc=$?
+assert_eq "$rc" "2" "a missing guard module denies, nothing can judge"
+assert_eq "$out" "" "a missing guard module writes nothing on stdout"
+assert_eq "$(wc -l <"$TMP/gone.err" | tr -d ' ')" "1" "a missing guard module: the reason is one line"
+assert_contains "$(cat "$TMP/gone.err")" "ac-guard-gone.sh: REFUSED - src/hook-gone.ts is missing" "a missing guard module: the reason names the module"
+assert_contains "$(cat "$TMP/gone.err")" "bun" "a missing guard module: the reason names bun"
 
 pass

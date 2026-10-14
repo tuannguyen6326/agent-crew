@@ -1,8 +1,8 @@
 // ledger-guard.ts - PreToolUse hook: refuse a SCOPED session (a roomchief,
 // AC_SCOPE set) writing records/backlog.md, records/projects.md or
 // records/captain.md.
-// The entry is bin/ac-ledger-guard.sh, the fail-open hook shim that starts
-// this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
+// The entry is bin/ac-ledger-guard.sh, the hook shim that starts this file
+// through bin/ac-bun.sh's ac_bun_exec_guard; THIS header is the
 // authoritative spec, and the bash original it replaced stays frozen at
 // tests/fixtures/ac-ledger-guard.sh as the oracle the differential leg of
 // tests/sh/ac-ledger-guard.test.sh holds this module to.
@@ -64,10 +64,10 @@
 // arriving at a file that became load-bearing for scoped sessions.
 //
 // Fails open: no AC_SCOPE, a non-matching tool, missing jq, an unparseable
-// payload, or a path that resolves empty all exit 0 (no bun, and a module
-// that cannot load, are the shim's) - a broken guard must never wedge the
-// harness. Exit codes: 0 allow, 2 deny; nothing on stdout, the refusal one
-// line on stderr. Files: none.
+// payload, or a path that resolves empty all exit 0 (a module that cannot
+// load is the shim's, and no bun the shim's refusal) - a broken guard must
+// never wedge the harness. Exit codes: 0 allow, 2 deny; nothing on stdout, the
+// refusal one line on stderr. Files: none.
 //
 // RESIDUAL: this hook covers the `claude` harness's Edit/Write/NotebookEdit
 // tools only. A write performed through the Bash tool (sed, echo >, a
@@ -99,8 +99,9 @@
 // - sed reads lines: a path holding an LF has each line canonicalized alone.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim allows at once, saying nothing, where
-//   the original judged; a module that cannot load or crashes allows too.
+// - BUN: with no bun on PATH, or no module file, the shim denies at once with
+//   one stderr line naming it, where the original judged; a module that cannot
+//   load or crashes allows, with one stderr line.
 // - SHELL-OWN STDERR: a filter that cannot start reads as empty on both sides
 //   (the path then judges unfenced), and the original's `<name>: command not
 //   found` line is not reproduced.

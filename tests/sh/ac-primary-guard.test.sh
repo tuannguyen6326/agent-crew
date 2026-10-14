@@ -229,12 +229,13 @@ for side in "$obin" "$BIN"; do
 done
 
 # --- named divergences: each row asserts both sides ---------------------------
-# BUN: no bun on PATH - the shim allows at once and says nothing, where the
+# BUN: no bun on PATH - the shim refuses at once, naming bun, where the
 # original (bash, jq and git) judged.
 pgpath "$TMP/pg-nobun" bash env cat dirname jq git
-assert_eq "$(both_rc "$wt" AC_CREW_ID=pg1 PATH="$TMP/pg-nobun")" "2 0" "BUN: the original refuses with no bun on PATH, the shim allows"
+assert_eq "$(both_rc "$wt" AC_CREW_ID=pg1 PATH="$TMP/pg-nobun")" "2 2" "BUN: the original and the shim both refuse with no bun on PATH"
 assert_contains "$(cat "$TMP/o.err")" "ac-primary-guard: REFUSED Edit on $repo/AGENTS.md" "BUN: the original's refusal"
-assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
+assert_eq "$(cat "$TMP/n.out")" "" "BUN: the shim's refusal writes nothing on stdout"
+assert_contains "$(cat "$TMP/n.err")" "ac-primary-guard.sh: REFUSED - bun is not on PATH" "BUN: the shim's refusal names bun"
 # BUN: a module that cannot load is the shim's no-op, never a refusal.
 pg_lf="$TMP/pg-loadfail"
 mkdir -p "$pg_lf/bin" "$pg_lf/src"
@@ -244,6 +245,7 @@ n_rc=0; (cd "$wt" && AC_CREW_ID=pg1 LC_ALL=C "$pg_lf/bin/ac-primary-guard.sh" <"
 assert_eq "$n_rc" "0" "BUN: a module that cannot load allows"
 assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
 assert_contains "$(cat "$TMP/n.err")" "primary guard cannot load" "BUN: the load failure is bun's own diagnosis"
+assert_contains "$(cat "$TMP/n.err")" "ac-primary-guard.sh: src/primary-guard.ts exited 1 - this hook did nothing" "BUN: the shim says it did nothing"
 case "$(cat "$TMP/n.err")" in *"ac-primary-guard:"*) fail "BUN: a module that cannot load must never print the refusal" ;; esac
 # HOME RESOLUTION: a relative directory under an exported CDPATH - the
 # original's cd found the primary's namesake and refused a two-line target.

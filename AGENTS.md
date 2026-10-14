@@ -45,7 +45,7 @@ The fleet-state dirs `state/`, `records/`, `data/`, `projects/`, `config/` and `
 ## 3. Session start
 
 Run `bin/ac-session-start.sh` first, every session; handle every printed wake before taking new orders.
-`MISSING:`, `BELOW-FLOOR:` or `NO-CAPABILITY:` lines mean fix the toolchain before spawning anything.
+`MISSING:`, `BELOW-FLOOR:`, `NO-CAPABILITY:` or `HOOK-DEAD:` lines mean fix the toolchain before spawning anything.
 `WATCHER-DOWN` means arm the watcher now (section 7).
 
 ## 4. Projects

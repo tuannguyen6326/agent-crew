@@ -6,9 +6,10 @@
 # header of src/turnend-guard.ts; this entry only starts it through
 # bin/ac-bun.sh's ac_bun_exec_hook, so every wiring (claude, codex, the cursor
 # adapter, the opencode and pi surfaces) keeps this path, and no bun on PATH,
-# a module that cannot load or a crash exits 0 - a fault never holds a stop.
-# Exit codes: 0 no block, 2 block. The module is found at <this bin/>/../src
-# physically, so a per-home override bin/ needs a sibling src/.
+# a module that cannot load or a crash exits 0 with one stderr line - a fault
+# never holds a stop. Exit codes: 0 no block, 2 block. The module is found at
+# <this bin/>/../src physically, so a per-home override bin/ needs a sibling
+# src/.
 set -uo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh" || exit 0

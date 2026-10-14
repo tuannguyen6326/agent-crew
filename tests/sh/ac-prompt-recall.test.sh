@@ -267,7 +267,8 @@ pr_same HOME AC_BRAIN_SYNC_IV=600
 rm -f "$ph/state/.brain-freshen-attempt"
 
 # --- named divergences: each row asserts both sides ---------------------------
-# BUN: no bun on PATH - the shim exits 0 at once and says nothing; the original
+# BUN: no bun on PATH - the shim exits 0 at once, saying so in one stderr
+# line; the original
 # (bash, jq and the stub brain) recalled. Its home is a copy: the original's
 # catch-up stamp would otherwise land in the home the rows below build on.
 mkdir -p "$TMP/pr-nobun"
@@ -277,15 +278,17 @@ o_rc=0; (cd "$ph.nb" && AC_HOME="$ph.nb" PR_LOG=/dev/null PR_OUT="$PR_OUT" PATH=
 n_rc=0; (cd "$ph.nb" && AC_HOME="$ph.nb" PR_LOG=/dev/null PR_OUT="$PR_OUT" PATH="$TMP/pr-nobun" "$pport/bin/ac-prompt-recall.sh" <"$TMP/pr.in") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
 assert_eq "$o_rc $n_rc" "0 0" "BUN: both exit 0"
 assert_contains "$(cat "$TMP/o.out")" "ac-brain recall for this prompt" "BUN: the original recalled"
-assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
-# BUN: a module that cannot load is the same silence.
+assert_eq "$(cat "$TMP/n.out")" "" "BUN: the shim injects nothing"
+assert_eq "$(cat "$TMP/n.err")" "ac-prompt-recall.sh: bun is not on PATH - this hook did nothing" "BUN: the shim says so in one stderr line"
+# BUN: a module that cannot load is the same no-op, said the same way.
 pr_lf="$TMP/pr-loadfail"
 mkdir -p "$pr_lf/bin" "$pr_lf/src"
 cp "$BIN/ac-bun.sh" "$BIN/ac-prompt-recall.sh" "$pr_lf/bin/"
 printf 'throw new Error("prompt recall cannot load");\n' >"$pr_lf/src/prompt-recall.ts"
-n_rc=0; (cd "$ph" && AC_HOME="$ph" "$pr_lf/bin/ac-prompt-recall.sh" <"$TMP/pr.in") >"$TMP/n.out" 2>/dev/null || n_rc=$?
+n_rc=0; (cd "$ph" && AC_HOME="$ph" "$pr_lf/bin/ac-prompt-recall.sh" <"$TMP/pr.in") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
 assert_eq "$n_rc" "0" "BUN: a module that cannot load exits 0"
 assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load injects nothing"
+assert_contains "$(cat "$TMP/n.err")" "ac-prompt-recall.sh: src/prompt-recall.ts exited 1 - this hook did nothing" "BUN: the shim says it did nothing"
 # FRESHEN: an attempt stamp that cannot be written - the original's failed
 # redirection still fired and said so; the port fires nothing.
 TZ=UTC touch -t 202701100800 "$ph/state/.brain-last-sync"

@@ -404,7 +404,8 @@ ca_same "$TMP" SHELLERR AC_COMPACT_SEND_WAIT=abc -- --send aa-chief
 ca_same "$TMP" AC_COMPACT_SEND_WAIT=1 -- --send aa-chief
 
 # --- named divergences: each row asserts both sides ---------------------------
-# BUN: no bun on PATH - the shim exits 0 at once, saying nothing; the original
+# BUN: no bun on PATH - the shim exits 0 at once, saying so in one stderr
+# line; the original
 # (bash and jq) reached its sibling bin/ac-jev.sh, whose shim refuses without
 # bun, so its fail-soft ask read no answer and it advised nothing.
 mkdir -p "$TMP/ca-nobun"
@@ -414,8 +415,9 @@ n_rc=0; (cd "$TMP" && AC_HOME="$ch" PATH="$TMP/ca-nobun" "$BIN/ac-compact-advise
 assert_eq "$o_rc $n_rc" "0 0" "BUN: both exit 0"
 assert_eq "$(cat "$TMP/o.out")" "" "BUN: the original advises nothing"
 assert_eq "$(cat "$TMP/o.err")" "ERROR: required tool not found: bun" "BUN: the original's ask met the jev shim's refusal"
-assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
-# BUN: a module that cannot load is the same silence.
+assert_eq "$(cat "$TMP/n.out")" "" "BUN: the shim advises nothing"
+assert_eq "$(cat "$TMP/n.err")" "ac-compact-advise.sh: bun is not on PATH - this hook did nothing" "BUN: the shim says so in one stderr line"
+# BUN: a module that cannot load is the same no-op, said the same way.
 ca_lf="$TMP/ca-loadfail"
 mkdir -p "$ca_lf/bin" "$ca_lf/src"
 cp "$BIN/ac-bun.sh" "$BIN/ac-compact-advise.sh" "$ca_lf/bin/"
@@ -423,6 +425,7 @@ printf 'throw new Error("compact adviser cannot load");\n' >"$ca_lf/src/compact-
 n_rc=0; (cd "$TMP" && AC_HOME="$ch" "$ca_lf/bin/ac-compact-advise.sh" "$cap" --role chief) >"$TMP/n.out" 2>"$TMP/n.err" </dev/null || n_rc=$?
 assert_eq "$n_rc" "0" "BUN: a module that cannot load exits 0"
 assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load advises nothing"
+assert_contains "$(cat "$TMP/n.err")" "ac-compact-advise.sh: src/compact-advise.ts exited 1 - this hook did nothing" "BUN: the shim says it did nothing"
 # W4: a session_id holding `é` - bash's bracket under UTF-8 let it through.
 ca_payload "$(printf 's\303\251')"
 o_rc=0; (cd "$ch" && AC_HOME="$ch" TMPDIR="$TMP/ca-tmp.o" PATH="$TMP/ca-date:$PATH" LC_ALL=en_US.UTF-8 "$obin/ac-compact-advise.sh" --hook <"$TMP/ca.in") >"$TMP/o.out" 2>/dev/null || o_rc=$?
