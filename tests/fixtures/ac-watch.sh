@@ -151,15 +151,46 @@
 # reported chief-facing completion (done/failed/paused/merged - an AC_CAPTAIN_RE
 # match that is NOT a captain-wait marker). Its report: wake fired when the
 # marker was fresh; the marker has merely scrolled past the bounded 25-line tail,
-# so the pane now reads as a bare ended turn. Re-firing ended: there is the bug
-# this closes - .stale-<id> is cleared by every cosmetic TUI redraw, so the loud
-# wake re-armed every quiet window forever. Such a pane is anchored SILENTLY
-# (touch .stale-<id> + a status note, no wake), the same once-only shape as the
-# push-channel anchor. The memory is DROPPED the moment the pane is seen BUSY
-# again (a re-task busies it, and once its completion marker has also scrolled
-# out the .seen-<id> is cleared), which re-arms the loud net for genuinely-new
-# prose-only work. Completion-class ONLY: a captain-wait marker parks the pane
-# BLOCKED and is handled by the ask path, never here.
+# so the pane now reads as a bare ended turn. Re-firing ended: was the bug this
+# closed for a pane WITH a completion marker - .stale-<id> is cleared by every
+# cosmetic TUI redraw, so the loud wake re-armed every quiet window forever.
+# Such a pane is anchored SILENTLY (touch .stale-<id> + a status note, no
+# wake), the same once-only shape as the push-channel anchor. The memory is
+# DROPPED the moment the pane is seen BUSY again (a re-task busies it, and
+# once its completion marker has also scrolled out the .seen-<id> is
+# cleared), which re-arms the loud net for genuinely-new prose-only work.
+# Completion-class ONLY: a captain-wait marker parks the pane BLOCKED and is
+# handled by the ask path, never here. A pane with NO marker at all - a
+# prose-only ask, the live case this arm was built for - has nothing here to
+# anchor on; ENDED BUSY LATCH below closes the same redraw for that case.
+#
+# ENDED BUSY LATCH (watch-ended-busy-latch). The marker-less sibling of the
+# anchor above: a pane that ended its turn on PROSE alone (the captain's own
+# question, or a chief's) has no .seen-<id> to anchor on, so claude's idle
+# auto-compaction ("Compacted while idle, before the prompt cache expired")
+# or its recap line ("recap:") kept clearing .stale-<id> like any other
+# redraw and the loud wake fired again every AC_STALE window forever
+# (observed live: ~10 identical ended: wakes on one roomchief pane in 23h, 4
+# on one crewmate pane - 2026-10-16). Closing it does not touch .stale-<id>'s
+# own clearing (STALE DEFERRAL and the soft stale: arm still want every
+# redraw to restart THEIR clock): a separate one-shot latch, .ended-<id>,
+# survives a redraw untouched and is cleared by any poll that reads the pane
+# BUSY (not gated to the 0->1 edge - harmless, since a cleared latch has
+# nothing left to clear on the next busy poll) - a genuine new turn, never a
+# repaint. `ended:` fires once per idle episode: the first fire touches
+# .ended-<id>; every redraw-only repoll after it is anchored the same way as
+# the marker case (touch .stale-<id> + a status note, no wake); the next
+# busy poll clears the latch so a genuinely new ask wakes loudly again.
+# FAILS TOWARD WAKING on first sight: a pane that never once read BUSY
+# before its first ended: still wakes - the latch starts CLEARED, so there
+# is nothing yet to suppress. RESIDUAL, stated rather than hidden: a SECOND
+# ask answered and re-ended within one AC_POLL interval (the common case: the
+# chief replies through ac-send and the crewmate's whole turn finishes
+# before the next poll) never renders BUSY to any poll, so it is
+# indistinguishable from a redraw and stays suppressed until some later turn
+# does read busy - the same sampling gap every poll-driven busy check in this
+# file has, not new to this arm; the durable room/chief channel is the one to
+# use meanwhile.
 #
 # JEV NOTE (the System One net, config/jev). On the two quiet-arm wakes -
 # the loud ended: and the soft stale: - and ONLY there, the watcher asks
@@ -236,6 +267,10 @@
 # marker cleared and the IDENTICAL non-news re-tripped on the next quiet window
 # - acking it never settled it. A predicate re-asked every poll has nothing to
 # re-trip: no wake is emitted, so there is no dedup for a pane change to undo.
+# (ENDED BUSY LATCH above later gave the ended: arm itself a redraw-surviving
+# dedup, but that only stops a REPEAT fire for the SAME idle episode; it says
+# nothing about a chief with a live child, which still needs a question
+# re-asked live, never a marker remembered from one.)
 # BOTH ARMS, and this REVERSES watch-idle-loud-wake's original "`ended:` stays
 # loud however busy the family is" (ended-wake-refires-on-a-prose-reporting-
 # chief). What the reversal closes is a RULE CONFLICT, not a missing case: the
@@ -2116,6 +2151,9 @@ check_fleet() {
     busy_file="$state_dir/.busy-$id"
     if [ "$busy" = 1 ]; then
       [ -e "$busy_file" ] || printf '%s\n' "$(ac_now)" >"$busy_file"
+      # A busy poll is what clears ENDED BUSY LATCH (header): a genuine new
+      # turn, never a cosmetic redraw, re-arms the ended: arm.
+      rm -f "$state_dir/.ended-$id"
     else
       rm -f "$busy_file" "$state_dir/.busy-stalled-$id"
     fi
@@ -2333,12 +2371,21 @@ check_fleet() {
           # SILENTLY instead (touch .stale-<id> like the other silent-anchor
           # branches, plus a status note): no wake. The re-task clear above drops
           # .seen-<id> the moment the pane is seen busy again, which re-arms this
-          # net for genuinely-new prose-only work.
+          # net for genuinely-new prose-only work. ENDED BUSY LATCH right below
+          # covers the same redraw for a pane with no marker to anchor on here.
           seen="$(cat "$state_dir/.seen-$id" 2>/dev/null || true)"
           if [ -n "$seen" ] && grep -qE "$AC_CAPTAIN_RE" <<<"$seen" \
               && ! grep -qE "$AC_DECISION_RE" <<<"$seen"; then
             touch "$state_dir/.stale-$id"
             ac_status_append "$id" "ended its turn after a reported completion - awaiting reap"
+            continue
+          fi
+          # ENDED BUSY LATCH (header): already fired ended: for this idle
+          # episode with no busy edge since - a redraw, not a new turn. Anchor
+          # the same way.
+          if [ -e "$state_dir/.ended-$id" ]; then
+            touch "$state_dir/.stale-$id"
+            ac_status_append "$id" "ended its turn again with no new turn since - a cosmetic redraw, not news"
             continue
           fi
           # ENDED-TURN LOUD WAKE (header): the pane is not quiet-while-working,
@@ -2349,6 +2396,7 @@ check_fleet() {
           # (header: SUPERVISING-CHIEF QUIET), because a chief that obeys its
           # charter reports in PROSE and so can never earn the quiet anchor above.
           touch "$state_dir/.stale-$id"
+          touch "$state_dir/.ended-$id"
           ac_status_append "$id" "$WATCH_ENDED_NOTE"
           backend_mark_wait "$id" "ended its turn with no report line" 2>/dev/null || true
           queue_wake ended "$id" "ended its turn ${idle}s ago with no report line - read the pane, the ask may be prose$(jev_note "$id" "$tail")$(compact_note "$id")"

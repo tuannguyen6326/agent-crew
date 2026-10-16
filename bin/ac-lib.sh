@@ -1494,7 +1494,7 @@ ac_task_stamps() {
   # with.
   local sd="$1" tid="$2" b
   for b in hash change seen seen-hash stale gone ask unobservable \
-    report-hash superseded busy busy-stalled; do
+    report-hash superseded busy busy-stalled ended; do
     printf '%s/.%s-%s\n' "$sd" "$b" "$tid"
   done
 }

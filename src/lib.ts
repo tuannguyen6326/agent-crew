@@ -3995,7 +3995,7 @@ export { trimShellSpaceBytes };
 
 // ac_task_stamps' twin: every per-id watcher stamp in <sd>, the one reap list
 // (ac-watch and ac-done write them).
-const TASK_STAMPS = ["hash", "change", "seen", "seen-hash", "stale", "gone", "ask", "unobservable", "report-hash", "superseded", "busy", "busy-stalled"];
+const TASK_STAMPS = ["hash", "change", "seen", "seen-hash", "stale", "gone", "ask", "unobservable", "report-hash", "superseded", "busy", "busy-stalled", "ended"];
 export function taskStamps(sd: string, id: string): string[] {
   return TASK_STAMPS.map((b) => `${sd}/.${b}-${id}`);
 }

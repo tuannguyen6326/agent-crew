@@ -1866,7 +1866,7 @@ reset_state() {
     "$state"/.report-hash-* "$state"/.superseded-* \
     "$state"/.last-watcher-beat* "$state"/.skip-revoked-* "$state"/.skip-stale-since-* \
     "$state"/.chief-busy-until* "$state"/.busy-* "$state"/.busy-stalled-* \
-    "$state"/.deferred-* "$state"/.watcher-arm.log \
+    "$state"/.ended-* "$state"/.deferred-* "$state"/.watcher-arm.log \
     "$state"/.watcher-config* "$state"/.session-lock "$state"/.watcher-owner
   rm -rf "$state"/.wake-spool* "$state/.watch.lock.d"
   rm -f "$AC_HOME/config/remote-poll"
@@ -2950,6 +2950,81 @@ assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "ended:dbu" \
 reset_state
 rm -f "$state"/.captain-wait-* "$state"/*.status
 rm -rf "$AC_HOME/data/dbu"
+
+# --- ended busy latch (watch-ended-busy-latch) --------------------------------
+# COMPLETION ALREADY REPORTED above anchors a redraw-triggered re-arm only for
+# a pane whose .seen-<id> still holds a completion marker. A pane waiting on
+# PROSE alone - the captain's own question, or a chief's - has no marker to
+# anchor on, so claude's own idle auto-compaction redraw ("Compacted while
+# idle, before the prompt cache expired", and/or a "recap:" line) kept
+# clearing .stale-<id> like any other redraw and the loud ended: wake fired
+# again every quiet window forever (the lab order this closes: ~10 identical
+# wakes on one roomchief pane in 23h, 4 on one crewmate pane, 2026-10-16).
+mkdir -p "$AC_HOME/data/ebl"
+printf 'window=crew:ebl\nbackend=herdr\n' >"$state/ebl.meta"
+seed_pane ebl pEBL tEBL
+printf 'summarising the change\nshould I also migrate the legacy rows?\n' >>"$(fake_pane_buf ebl)"
+bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the prose-only tail hash
+rm -rf "$state"/.wake-spool*
+now="$(date +%s)"
+printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
+printf 'idle\n' >"$FAKE_HERDR/panes/pEBL.status"
+
+# (A) First sight: the prose-only ask wakes LOUDLY (same as the elw case
+# above) and the busy latch is armed.
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "ended:ebl" "first sight: a prose-only ask wakes loudly"
+assert_file "$state/.ended-ebl" "the busy latch is armed on the first fire"
+rm -rf "$state"/.wake-spool*
+
+# The loud fire stamps the pane BLOCKED (CAPTAIN-WAIT STAMP, ac-backend.sh) -
+# masking agent_status until a real state transition reasserts it. Releasing
+# the stamp here stands in for that transition, so the next poll's idle read
+# is genuine, the same precondition the lab's redraw-only panes met for real.
+rm -f "$FAKE_HERDR/panes/pEBL.reported"
+
+# (B) claude's own idle auto-compaction redraw - the EXACT tail this closes -
+# changes the tail hash (clearing .stale-<id>, same as any cosmetic redraw)
+# but is not a new turn: the pane must NOT re-fire ended:.
+printf '⏺ Compacted while idle, before the prompt cache expired\n' >>"$(fake_pane_buf ebl)"
+bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the redrawn tail hash
+rm -rf "$state"/.wake-spool*
+printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *ended:ebl*) fail "a compaction redraw alone must not re-fire ended:" ;; esac
+assert_eq "$(fleet_spool)" "" "no wake published for a redraw-only repoll"
+assert_file "$state/.stale-ebl" "the redraw is anchored silently, same shape as a marker completion"
+
+# (B2) The recap-line variant: same redraw-only shape, same suppression.
+rm -f "$FAKE_HERDR/panes/pEBL.reported"
+printf '\xe2\x80\xbb recap: nothing new, still waiting on the captain\n' >>"$(fake_pane_buf ebl)"
+bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the recap tail hash
+rm -rf "$state"/.wake-spool*
+printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *ended:ebl*) fail "a recap redraw alone must not re-fire ended: either" ;; esac
+assert_eq "$(fleet_spool)" "" "no wake published for the recap redraw either"
+
+# (C) A GENUINE new turn (observed BUSY) clears the latch, so a fresh
+# prose-only ask after it still wakes the chief loudly - the fix must not
+# silence real asks. The buffer is CLEARED first: the BUSY_RE match must
+# scroll out of view on its own, or it would hold the pane busy forever.
+: >"$(fake_pane_buf ebl)"
+printf 'esc to interrupt\n' >>"$(fake_pane_buf ebl)"
+printf 'working\n' >"$FAKE_HERDR/panes/pEBL.status"
+bash "$BIN/ac-watch.sh" --once >/dev/null        # observes BUSY -> clears the latch
+assert_no_file "$state/.ended-ebl" "a genuine busy edge clears the latch"
+: >"$(fake_pane_buf ebl)"
+printf 'summarising the follow-up\nshould I also drop the old index?\n' >>"$(fake_pane_buf ebl)"
+printf 'idle\n' >"$FAKE_HERDR/panes/pEBL.status"
+bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the new prose-only tail hash
+rm -rf "$state"/.wake-spool*
+printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "ended:ebl" \
+  "a genuinely new turn still wakes the chief loudly after it ends"
+reset_state
+rm -f "$state"/.captain-wait-* "$state"/*.status
+rm -rf "$AC_HOME/data/ebl"
 
 # --- supervising-chief quiet (watch-chief-child-quiet) ------------------------
 # A wake IS the watcher's EXIT, so every stale: costs the chief the full
@@ -4546,6 +4621,13 @@ wa_both wa_quiet q5 'all quiet\n' idle; wa_both stamp seen q5 'done: shipped\n'
 wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a reported completion anchors silently"
 wa_both wa_quiet q6 'all quiet\n' idle
 wa_same --once; assert_eq "$(nout)" "ended:q6" "row 4: ended"
+# ENDED BUSY LATCH (watch-ended-busy-latch): the same tail, unchanged, is a
+# redraw-only repoll - both sides must anchor it silently, never re-fire.
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a redraw-only repoll after ended: is anchored silently"
+wa_both ptail pq6 'esc to interrupt\n'; wa_both pstat pq6 working
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: busy again clears the ended latch"
+wa_both ptail pq6 'all quiet\n'; wa_both pstat pq6 idle; wa_both quiet q6 999 "$(ck 'all quiet\n')"
+wa_same --once; assert_eq "$(nout)" "ended:q6" "row 4: a genuinely new turn after it re-arms ended:"
 wa_both wa_quiet q7 'all quiet\n' working
 wa_same --once; assert_eq "$(nout)" "stale:q7" "row 4: stale"
 wa_both rmst 'q?.meta' 

@@ -582,15 +582,46 @@
 // reported chief-facing completion (done/failed/paused/merged - an AC_CAPTAIN_RE
 // match that is NOT a captain-wait marker). Its report: wake fired when the
 // marker was fresh; the marker has merely scrolled past the bounded 25-line tail,
-// so the pane now reads as a bare ended turn. Re-firing ended: there is the bug
-// this closes - .stale-<id> is cleared by every cosmetic TUI redraw, so the loud
-// wake re-armed every quiet window forever. Such a pane is anchored SILENTLY
-// (touch .stale-<id> + a status note, no wake), the same once-only shape as the
-// push-channel anchor. The memory is DROPPED the moment the pane is seen BUSY
-// again (a re-task busies it, and once its completion marker has also scrolled
-// out the .seen-<id> is cleared), which re-arms the loud net for genuinely-new
-// prose-only work. Completion-class ONLY: a captain-wait marker parks the pane
-// BLOCKED and is handled by the ask path, never here.
+// so the pane now reads as a bare ended turn. Re-firing ended: was the bug this
+// closed for a pane WITH a completion marker - .stale-<id> is cleared by every
+// cosmetic TUI redraw, so the loud wake re-armed every quiet window forever.
+// Such a pane is anchored SILENTLY (touch .stale-<id> + a status note, no
+// wake), the same once-only shape as the push-channel anchor. The memory is
+// DROPPED the moment the pane is seen BUSY again (a re-task busies it, and
+// once its completion marker has also scrolled out the .seen-<id> is
+// cleared), which re-arms the loud net for genuinely-new prose-only work.
+// Completion-class ONLY: a captain-wait marker parks the pane BLOCKED and is
+// handled by the ask path, never here. A pane with NO marker at all - a
+// prose-only ask, the live case this arm was built for - has nothing here to
+// anchor on; ENDED BUSY LATCH below closes the same redraw for that case.
+//
+// ENDED BUSY LATCH (watch-ended-busy-latch). The marker-less sibling of the
+// anchor above: a pane that ended its turn on PROSE alone (the captain's own
+// question, or a chief's) has no .seen-<id> to anchor on, so claude's idle
+// auto-compaction ("Compacted while idle, before the prompt cache expired")
+// or its recap line ("recap:") kept clearing .stale-<id> like any other
+// redraw and the loud wake fired again every AC_STALE window forever
+// (observed live: ~10 identical ended: wakes on one roomchief pane in 23h, 4
+// on one crewmate pane - 2026-10-16). Closing it does not touch .stale-<id>'s
+// own clearing (STALE DEFERRAL and the soft stale: arm still want every
+// redraw to restart THEIR clock): a separate one-shot latch, .ended-<id>,
+// survives a redraw untouched and is cleared by any poll that reads the pane
+// BUSY (not gated to the 0->1 edge - harmless, since a cleared latch has
+// nothing left to clear on the next busy poll) - a genuine new turn, never a
+// repaint. `ended:` fires once per idle episode: the first fire touches
+// .ended-<id>; every redraw-only repoll after it is anchored the same way as
+// the marker case (touch .stale-<id> + a status note, no wake); the next
+// busy poll clears the latch so a genuinely new ask wakes loudly again.
+// FAILS TOWARD WAKING on first sight: a pane that never once read BUSY
+// before its first ended: still wakes - the latch starts CLEARED, so there
+// is nothing yet to suppress. RESIDUAL, stated rather than hidden: a SECOND
+// ask answered and re-ended within one AC_POLL interval (the common case: the
+// chief replies through ac-send and the crewmate's whole turn finishes
+// before the next poll) never renders BUSY to any poll, so it is
+// indistinguishable from a redraw and stays suppressed until some later turn
+// does read busy - the same sampling gap every poll-driven busy check in this
+// file has, not new to this arm; the durable room/chief channel is the one to
+// use meanwhile.
 //
 // JEV NOTE (the System One net, config/jev). On the two quiet-arm wakes -
 // the loud ended: and the soft stale: - and ONLY there, the watcher asks
@@ -667,6 +698,10 @@
 // marker cleared and the IDENTICAL non-news re-tripped on the next quiet window
 // - acking it never settled it. A predicate re-asked every poll has nothing to
 // re-trip: no wake is emitted, so there is no dedup for a pane change to undo.
+// (ENDED BUSY LATCH above later gave the ended: arm itself a redraw-surviving
+// dedup, but that only stops a REPEAT fire for the SAME idle episode; it says
+// nothing about a chief with a live child, which still needs a question
+// re-asked live, never a marker remembered from one.)
 // BOTH ARMS, and this REVERSES watch-idle-loud-wake's original "`ended:` stays
 // loud however busy the family is" (ended-wake-refires-on-a-prose-reporting-
 // chief). What the reversal closes is a RULE CONFLICT, not a missing case: the
@@ -2171,6 +2206,9 @@ async function checkPane(meta: string): Promise<string | null> {
   const busyFile = st("busy");
   if (busy) {
     if (!existsSync(busyFile)) stamp(busyFile, `${nowRaw()}\n`);
+    // A busy poll is what clears ENDED BUSY LATCH (header): a genuine new
+    // turn, never a cosmetic redraw, re-arms the ended: arm.
+    rmF(st("ended"));
   } else rmF(busyFile, st("busy-stalled"));
   const hash = String(cksumPosix(B(tail)));
   const changedFile = st("change");
@@ -2305,15 +2343,25 @@ async function checkPane(meta: string): Promise<string | null> {
       queueWake("needs-login", idB, `stopped on an expired provider login (${login}) - only the captain signing that harness in again unblocks it; do not steer it`);
       return reasonLine(`needs-login:${idB}`);
     }
-    // COMPLETION ALREADY REPORTED: anchored silently, or the loud wake
-    // re-fires every quiet window - .stale-<id> is cleared by any redraw.
+    // COMPLETION ALREADY REPORTED: anchored silently when a marker was
+    // already seen, or the loud wake re-fires every quiet window - .stale-<id>
+    // is cleared by any redraw. ENDED BUSY LATCH right below covers the same
+    // redraw for a pane with no marker to anchor on.
     const seen = readCap(st("seen"));
     if (seen !== "" && grepQ(CAPTAIN_RE, seen) && !grepQ(DECISION_RE, seen)) {
       touch(st("stale"));
       statusAppend(id, "ended its turn after a reported completion - awaiting reap");
       return null;
     }
+    // ENDED BUSY LATCH (header): already fired ended: for this idle episode
+    // with no busy edge since - a redraw, not a new turn. Anchor the same way.
+    if (existsSync(st("ended"))) {
+      touch(st("stale"));
+      statusAppend(id, "ended its turn again with no new turn since - a cosmetic redraw, not news");
+      return null;
+    }
     touch(st("stale"));
+    touch(st("ended"));
     statusAppend(id, WATCH_ENDED_NOTE);
     routed(backendCall("mark_wait", [id, "ended its turn with no report line"], stdio));
     queueWake("ended", idB, `ended its turn ${idle}s ago with no report line - read the pane, the ask may be prose${jevNote(idB, tail)}${compactNote(id, idB)}`);
