@@ -198,9 +198,12 @@
 //     dropped - a delivered steer, text or key, IS the answer a captain-wait
 //     stamped pane was parked on, and herdr re-adopts a released pane only on
 //     the state TRANSITION this steer supplies (contract: ac-backend.sh
-//     CAPTAIN-WAIT STAMP). Then stdout: `<verb> <target>`, <target>
-//     backendCall("target") as `$( )` read it - `herdr:pane-<pane>` or
-//     `orca:<handle>`.
+//     CAPTAIN-WAIT STAMP). The same non-slash steer also removes
+//     state/.ended-<id> (the ENDED BUSY LATCH, watch.ts header): a reply
+//     answered and re-ended inside one poll is that same transition, and
+//     must not stay latched quiet waiting for a busy poll that may never
+//     come. Then stdout: `<verb> <target>`, <target> backendCall("target")
+//     as `$( )` read it - `herdr:pane-<pane>` or `orca:<handle>`.
 //
 // STDIN BY POSITION (backendCall's comment): the guard and every top-level
 // herdr call read the caller's stdin; nested reads read /dev/null; orca reads
