@@ -611,17 +611,20 @@
 // repaint. `ended:` fires once per idle episode: the first fire touches
 // .ended-<id>; every redraw-only repoll after it is anchored the same way as
 // the marker case (touch .stale-<id> + a status note, no wake); the next
-// busy poll clears the latch so a genuinely new ask wakes loudly again.
-// FAILS TOWARD WAKING on first sight: a pane that never once read BUSY
-// before its first ended: still wakes - the latch starts CLEARED, so there
-// is nothing yet to suppress. RESIDUAL, stated rather than hidden: a SECOND
-// ask answered and re-ended within one AC_POLL interval (the common case: the
-// chief replies through ac-send and the crewmate's whole turn finishes
-// before the next poll) never renders BUSY to any poll, so it is
-// indistinguishable from a redraw and stays suppressed until some later turn
-// does read busy - the same sampling gap every poll-driven busy check in this
-// file has, not new to this arm; the durable room/chief channel is the one to
-// use meanwhile.
+// busy poll clears the latch so a genuinely new ask wakes loudly again -
+// and so does a delivered steer other than a slash command (src/send.ts,
+// its own clear_wait site): that transition already answers the parked
+// pane (CAPTAIN-WAIT STAMP, ac-backend.sh) whether or not any poll ever
+// samples the reply busy, closing the common case of a steered reply
+// answered and re-ended inside one AC_POLL interval. FAILS TOWARD WAKING on
+// first sight: a pane that never once read BUSY before its first ended:
+// still wakes - the latch starts CLEARED, so there is nothing yet to
+// suppress. RESIDUAL, stated rather than hidden: an UNSTEERED turn - the
+// captain typing straight into the pane, or a background-notification wake
+// - that starts and ends inside one AC_POLL interval crosses neither a busy
+// poll nor a steer's clear_wait, so it is indistinguishable from a redraw
+// and stays suppressed until some later turn is slow enough to be sampled
+// busy; the durable room/chief channel is the one to use meanwhile.
 //
 // JEV NOTE (the System One net, config/jev). On the two quiet-arm wakes -
 // the loud ended: and the soft stale: - and ONLY there, the watcher asks

@@ -253,7 +253,7 @@
 // stuck-crewmate-recovery, rooms-threads, remote-orders and deputies-domains
 // skills); refusals across bin/ and src/ name it as the remedy.
 // tests/sh/ac-guard.test.sh greps the literal `ac-guard.sh` in the shim's text.
-import { statSync, writeSync } from "node:fs";
+import { rmSync, statSync, writeSync } from "node:fs";
 import {
   arrivalWait,
   backendCall,
@@ -268,6 +268,7 @@ import {
   shellStatus,
   spawnShellSync,
   STARTED_BIN,
+  stateDir,
   statusAppend,
   taskBackend,
   taskMeta,
@@ -440,5 +441,17 @@ if (rest[0] === "--key") {
   }
   if (!recorded) process.exit(1);
 }
-if (!slash) call("clear_wait", [id], { stdin: "inherit", stdout: "inherit", stderr: "ignore" });
+if (!slash) {
+  call("clear_wait", [id], { stdin: "inherit", stdout: "inherit", stderr: "ignore" });
+  // ENDED BUSY LATCH (watch.ts header): the watcher's own clear is a poll-
+  // sampled busy read, which a reply answered and re-ended inside one
+  // AC_POLL interval never crosses. A delivered steer other than a slash
+  // command is already the fleet's recognized answer to a parked pane
+  // (CAPTAIN-WAIT STAMP, ac-backend.sh) - clearing the latch on the SAME
+  // transition closes that gap without waiting for a busy poll that may
+  // never come.
+  try {
+    rmSync(`${stateDir()}/.ended-${id}`, { force: true });
+  } catch {}
+}
 say(`${verb} ${subst(backendCall("target", [id], { stdin: "inherit", stdout: "pipe", stderr: "inherit", subshell: true }).out)}`);

@@ -3022,6 +3022,23 @@ rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "ended:ebl" \
   "a genuinely new turn still wakes the chief loudly after it ends"
+
+# (D) A steered reply answers the parked pane - the fleet's own recognized
+# state transition (CAPTAIN-WAIT STAMP contract) - and must clear the latch
+# too, even when the crewmate's whole reply-and-re-end cycle finishes
+# faster than one AC_POLL ever samples it busy (ac-send's steer IS the
+# idle->working transition; the watcher's own busy read is a SEPARATE
+# poll-sampled signal that can miss it entirely).
+assert_file "$state/.captain-wait-ebl" "the second ended: fire parked the pane again"
+"$BIN/ac-send.sh" ebl 'drop the old index' >/dev/null   # the answering steer - no busy poll in between
+: >"$(fake_pane_buf ebl)"
+printf 'summarising the result\nshould I also update the docs?\n' >>"$(fake_pane_buf ebl)"
+printf 'idle\n' >"$FAKE_HERDR/panes/pEBL.status"
+bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the new prose-only tail hash
+rm -rf "$state"/.wake-spool*
+printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "ended:ebl" \
+  "a steered reply answered within one poll still wakes loudly, not swallowed by the latch"
 reset_state
 rm -f "$state"/.captain-wait-* "$state"/*.status
 rm -rf "$AC_HOME/data/ebl"
