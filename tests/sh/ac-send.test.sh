@@ -79,6 +79,20 @@ touch "$AC_HOME/state/.captain-wait-s2b"
 "$BIN/ac-send.sh" s2b /compact >/dev/null || fail "a slash command into a stamped pane must be delivered"
 assert_file "$AC_HOME/state/.captain-wait-s2b" "a slash command leaves the captain-wait stamp standing"
 
+# --- REWAKE LATCH (watch.ts header): a delivered non-slash steer clears it --------
+# too, the same transition and the same site as the ENDED BUSY LATCH clear
+# above - a steered gate round answered and re-printed inside one AC_POLL
+# interval never crosses a busy sample, so it must not wait on one either.
+mk_crewmate s2c pA2c tA2c
+touch "$AC_HOME/state/.rewake-s2c"
+"$BIN/ac-send.sh" s2c 'keep going' >/dev/null
+assert_no_file "$AC_HOME/state/.rewake-s2c" "a delivered non-slash steer clears the re-wake latch too"
+
+mk_crewmate s2d pA2d tA2d
+touch "$AC_HOME/state/.rewake-s2d"
+"$BIN/ac-send.sh" s2d /compact >/dev/null || fail "a slash command must still be delivered"
+assert_file "$AC_HOME/state/.rewake-s2d" "a slash command leaves the re-wake latch standing, same as the captain-wait stamp"
+
 # --- dead pane: the harness exited, TEXT would EXECUTE in the bare shell ------------
 # window-alive still answers true (the terminal lives, holding a shell), and
 # agent_blocked answers false (no dialog) - only the harness-up probe tells a

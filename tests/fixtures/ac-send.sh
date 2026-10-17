@@ -267,13 +267,13 @@ fi
 # CAPTAIN-WAIT STAMP). No-op when the pane carries no stamp.
 if [ "$slash" != 1 ]; then
   backend_clear_wait "$id" 2>/dev/null || true
-  # ENDED BUSY LATCH (watch.ts header): the watcher's own clear is a poll-
-  # sampled busy read, which a reply answered and re-ended inside one
-  # AC_POLL interval never crosses. A delivered steer other than a slash
-  # command is already the fleet's recognized answer to a parked pane
-  # (CAPTAIN-WAIT STAMP, ac-backend.sh) - clearing the latch on the SAME
-  # transition closes that gap without waiting for a busy poll that may
-  # never come.
-  rm -f "$(ac_state_dir)/.ended-$id"
+  # ENDED BUSY LATCH / REWAKE LATCH (watch.ts header): the watcher's own
+  # clear is a poll-sampled busy read, which a reply answered and re-ended
+  # or re-printed inside one AC_POLL interval never crosses. A delivered
+  # steer other than a slash command is already the fleet's recognized
+  # answer to a parked pane (CAPTAIN-WAIT STAMP, ac-backend.sh) - clearing
+  # both latches on the SAME transition closes that gap without waiting for
+  # a busy poll that may never come.
+  rm -f "$(ac_state_dir)/.ended-$id" "$(ac_state_dir)/.rewake-$id"
 fi
 printf '%s %s\n' "$verb" "$(backend_target "$id")"

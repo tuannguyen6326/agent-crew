@@ -2690,11 +2690,15 @@ printf 'window=crew:mrw\nbackend=herdr\n' >"$state/mrw.meta"
 seed_pane mrw pMRW tMRW
 printf 'done: report ready\n' >>"$(fake_pane_buf mrw)"
 
-# The first announce is today's behavior, and it records the pane hash.
+# The first announce is today's behavior, and it records the pane hash and
+# arms the REWAKE LATCH immediately - the chief was just told, so a cosmetic
+# redraw right after this wake must cost nothing either (watch-marker-rewake-
+# cosmetic-redraw's header).
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:mrw" "the first marker wakes as always"
 assert_eq "$(cat "$state/.seen-hash-mrw")" "$(cat "$state/.hash-mrw")" \
   "the pane-tail hash at the moment of the wake is recorded"
+assert_file "$state/.rewake-mrw" "the re-wake latch is armed on the announce itself"
 
 # (2) STATIC parked pane on the same marker: exactly ONE wake, however many
 # polls run.
@@ -2706,10 +2710,16 @@ assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
 assert_no_file "$state/.wake-spool" "a parked pane publishes no duplicate wake"
 
 # (1) The gate loop: the crewmate does new work and re-prints the
-# BYTE-IDENTICAL marker -> a SECOND wake.
+# BYTE-IDENTICAL marker -> a SECOND wake, once a busy poll crosses it - the
+# latch armed at the announce above means an unsteered revision with NO busy
+# sample in between is now the RESIDUAL (below), not this case.
+printf 'esc to interrupt\n' >>"$(fake_pane_buf mrw)"
+bash "$BIN/ac-watch.sh" --once >/dev/null
+rm -rf "$state"/.wake-spool*
+: >"$(fake_pane_buf mrw)"
 printf 'revising the report\ndone: report ready\n' >>"$(fake_pane_buf mrw)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
-assert_contains "$out" "report:mrw" "a repeat marker after new pane work wakes again"
+assert_contains "$out" "report:mrw" "a repeat marker after new pane work wakes again, once a busy poll crosses it"
 assert_contains "$(fleet_spool)" "done: report ready" "the re-wake is published durably"
 assert_eq "$(cat "$state/.seen-mrw")" "done: report ready" \
   ".seen-<id> semantics are untouched by the re-wake"
@@ -2724,37 +2734,34 @@ assert_no_file "$state/.wake-spool" "a working pane publishes no wake"
 reset_state
 rm -rf "$AC_HOME/data/mrw"
 
-# (5) REWAKE LATCH (watch-marker-rewake): a cosmetic redraw - claude's own
-# "Compacting conversation…" spinner, or its "Compacted while idle..."
-# settling line - changes the tail hash under an unchanged marker exactly
-# like a gate loop's new work does, so the FIRST churn after a wake still
-# fires (indistinguishable from real work, same as today), but every further
-# redraw-only churn with no busy poll in between must NOT re-fire (observed
-# live: report:<id> re-fired ~every 30s while a pane sat in "Compacting
-# conversation…", 2026-10-16). A genuine busy edge clears the latch, so a
-# real revision after one still wakes (the header's RESIDUAL names the case
-# with no busy edge between: a gate loop fast enough to finish inside one
-# poll stays suppressed until a later round is sampled busy).
+# (5) REWAKE LATCH (watch-marker-rewake-cosmetic-redraw): a cosmetic redraw -
+# claude's own "Compacting conversation…" spinner, or its "Compacted while
+# idle..." settling line - changes the tail hash under an unchanged marker
+# exactly like a gate loop's new work does. The latch arms the INSTANT the
+# chief is told about a marker - the announce itself, here - so even the
+# FIRST redraw-only churn after it must NOT re-fire (observed live:
+# report:<id> re-fired ~every 30s while a pane sat in "Compacting
+# conversation…", 2026-10-16; the earlier "fires once more" fix still left
+# that one spurious wake on every delivered marker). A genuine busy edge
+# clears the latch, so a real revision after one still wakes (the header's
+# RESIDUAL names the case with no busy edge in between: a gate loop fast
+# enough to finish inside one poll stays suppressed until a later round is
+# sampled busy, or is itself steered - tested in ac-send.test.sh).
 mkdir -p "$AC_HOME/data/mrc"
 printf 'window=crew:mrc\nbackend=herdr\n' >"$state/mrc.meta"
 seed_pane mrc pMRC tMRC
 printf 'paused: waiting on review\n' >>"$(fake_pane_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrc" "the marker announces as always"
-rm -rf "$state"/.wake-spool*
-
-printf 'Compacting conversation…\n' >>"$(fake_pane_buf mrc)"
-assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrc" \
-  "the first spinner-frame churn is indistinguishable from real work and still wakes once"
-assert_file "$state/.rewake-mrc" "the re-wake latch is armed on that fire"
+assert_file "$state/.rewake-mrc" "the re-wake latch is armed on the announce itself"
 rm -rf "$state"/.wake-spool*
 
 printf 'Compacting conversation…\n' >>"$(fake_pane_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
-  "a second spinner-only redraw with no busy edge since must not re-fire"
+  "the FIRST spinner-frame churn after the announce is already anchored, not just the second"
 printf '⏺ Compacted while idle, before the prompt cache expired\n' >>"$(fake_pane_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "the settling message is the same kind of redraw, still suppressed"
-assert_no_file "$state/.wake-spool" "no cosmetic redraw after the first publishes a wake"
+assert_no_file "$state/.wake-spool" "no cosmetic redraw costs a wake once the marker is announced"
 
 : >"$(fake_pane_buf mrc)"
 printf 'esc to interrupt\npaused: waiting on review\n' >>"$(fake_pane_buf mrc)"
@@ -2767,19 +2774,23 @@ assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrc" \
 assert_file "$state/.rewake-mrc" "that re-wake re-arms the latch, with no busy poll since"
 rm -rf "$state"/.wake-spool*
 
-# A brand-new marker must retire the OLD marker's latch rather than inherit
-# it - the latch is already armed from the fire above with no busy edge
-# since, so if the clear were missing this new marker's own first churn
-# would misread as an already-latched redraw instead of waking.
+printf 'Compacting conversation…\n' >>"$(fake_pane_buf mrc)"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
+  "the first churn after THAT re-wake is anchored too, the same as after any announce"
+rm -rf "$state"/.wake-spool*
+
+# A brand-new marker always wakes on its own dedup, and arms ITS OWN latch
+# the same way the first announce did above - the old marker's latch is
+# retired with it, never left standing to misjudge the new marker's hash.
 printf 'done: moved on to a new task\n' >>"$(fake_pane_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrc" \
   "a brand-new marker wakes on its own dedup regardless of the old latch"
-assert_no_file "$state/.rewake-mrc" "the new marker retires the OLD marker's latch"
+assert_file "$state/.rewake-mrc" "and arms its own latch immediately, same as any announce"
 rm -rf "$state"/.wake-spool*
 
 printf 'Compacting conversation…\n' >>"$(fake_pane_buf mrc)"
-assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrc" \
-  "the new marker's own first churn still wakes - the retired latch was never inherited"
+assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
+  "the new marker's own first churn is anchored too - nothing is inherited OR exempt"
 reset_state
 rm -rf "$AC_HOME/data/mrc"
 
@@ -3413,13 +3424,20 @@ assert_eq "$(cat "$state/.seen-hash-pd1")" "$(cat "$state/.hash-pd1")" \
   "the first poll after a push adopts the pane it found"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "... and stays silent however many polls run"
+assert_file "$state/.rewake-pd1" "PUSH ADOPT arms the re-wake latch too (watch-marker-rewake-cosmetic-redraw)"
 
 # The re-wake channel is only ANCHORED by the adopt, never disabled: a pane
-# that does new work and re-prints the same marker still wakes.
+# that does new work and re-prints the same marker still wakes, once a busy
+# poll crosses it - the latch PUSH ADOPT armed means an unsteered revision
+# with no busy sample in between is the RESIDUAL, same as any other announce.
+: >"$(fake_pane_buf pd1)"
+printf 'esc to interrupt\n⏺ done: pushed and printed\n' >>"$(fake_pane_buf pd1)"
+bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
+: >"$(fake_pane_buf pd1)"
 printf 'revising\n⏺ done: pushed and printed\n' >>"$(fake_pane_buf pd1)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:pd1" \
-  "a pushed marker re-printed after new pane work still wakes"
+  "a pushed marker re-printed after new pane work still wakes, once a busy poll crosses it"
 reset_state
 rm -rf "$AC_HOME/data/pd1"
 
@@ -4644,26 +4662,27 @@ wa_both rm -f '$H/home/state/t2.meta'
 # reconcile, supersession, re-task forget.
 wa_both crew t3 'line\n\ndone: shipped it\n'
 wa_same --once; assert_eq "$(nout)" "report:t3" "row 4: a new marker"
+assert_file "$WA_NH/home/state/.rewake-t3" "row 4: REWAKE LATCH (watch-marker-rewake-cosmetic-redraw) armed on the announce itself"
 wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: seen"
 wa_both ptail pt3 'more work\ndone: shipped it\n'
-wa_same --once; assert_eq "$(nout)" "report:t3" "row 4: re-wake"
-assert_contains "$(nsnap)" "done: shipped it (pane advanced since the last wake)" "row 4: the re-wake payload"
-assert_file "$WA_NH/home/state/.rewake-t3" "row 4: REWAKE LATCH (watch-marker-rewake-cosmetic-redraw) armed on that fire"
-wa_both ptail pt3 'yet another redraw\ndone: shipped it\n'
-wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a cosmetic-redraw-only repoll after a re-wake is anchored silently"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: the first churn after the announce is already anchored, not just the second"
 wa_both ptail pt3 'esc to interrupt\ndone: shipped it\n'
-wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: busy again clears the re-wake latch"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: busy clears the latch"
 assert_no_file "$WA_NH/home/state/.rewake-t3" "row 4: the latch is gone after a genuine busy edge"
 wa_both ptail pt3 'more work again\ndone: shipped it\n'
-wa_same --once; assert_eq "$(nout)" "report:t3" "row 4: a genuinely new turn after it re-wakes again"
+wa_same --once; assert_eq "$(nout)" "report:t3" "row 4: a genuinely new turn after a busy edge re-wakes"
+assert_contains "$(nsnap)" "done: shipped it (pane advanced since the last wake)" "row 4: the re-wake payload"
 assert_file "$WA_NH/home/state/.rewake-t3" "row 4: that re-wake re-arms the latch, with no busy poll since"
+wa_both ptail pt3 'yet another redraw\ndone: shipped it\n'
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: the first churn after THAT re-wake is anchored too"
 wa_both ptail pt3 'done: moved to a new task\n'
 wa_same --once; assert_eq "$(nout)" "report:t3" "row 4: a brand-new marker wakes on its own dedup regardless of the old latch"
-assert_no_file "$WA_NH/home/state/.rewake-t3" "row 4: the new marker retires the OLD marker's latch"
+assert_file "$WA_NH/home/state/.rewake-t3" "row 4: and arms its own latch immediately, same as any announce"
 wa_both ptail pt3 'redraw under the new marker\ndone: moved to a new task\n'
-wa_same --once; assert_eq "$(nout)" "report:t3" "row 4: the new marker's own first churn still wakes - the retired latch was never inherited"
+wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: the new marker's own first churn is anchored too - nothing inherited or exempt"
 wa_both crew t4 '⏺ done: pushed\n'; wa_both stamp seen t4 'done: pushed\n'
 wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: push adopt anchors silently"
+assert_file "$WA_NH/home/state/.rewake-t4" "row 4: PUSH ADOPT arms the re-wake latch too - the push already told the chief"
 wa_both crew t5 'needs-decision: pick one\n'; wa_same --once
 assert_contains "$(nsnap)" "herdr pane report-agent pt5 --source ac-fleet --agent crew --state blocked --message needs-decision: pick one" "row 4: an idle decision stamps"
 wa_both crew t6 'needs-decision: pick two\nesc to interrupt\n'; wa_same --once

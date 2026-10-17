@@ -199,11 +199,13 @@
 //     stamped pane was parked on, and herdr re-adopts a released pane only on
 //     the state TRANSITION this steer supplies (contract: ac-backend.sh
 //     CAPTAIN-WAIT STAMP). The same non-slash steer also removes
-//     state/.ended-<id> (the ENDED BUSY LATCH, watch.ts header): a reply
-//     answered and re-ended inside one poll is that same transition, and
-//     must not stay latched quiet waiting for a busy poll that may never
-//     come. Then stdout: `<verb> <target>`, <target> backendCall("target")
-//     as `$( )` read it - `herdr:pane-<pane>` or `orca:<handle>`.
+//     state/.ended-<id> (the ENDED BUSY LATCH, watch.ts header) AND
+//     state/.rewake-<id> (its sibling the REWAKE LATCH, same header): a
+//     reply answered and re-ended, or a gate round answered and re-printed,
+//     inside one poll is that same transition, and must not stay latched
+//     quiet waiting for a busy poll that may never come. Then stdout:
+//     `<verb> <target>`, <target> backendCall("target") as `$( )` read it -
+//     `herdr:pane-<pane>` or `orca:<handle>`.
 //
 // STDIN BY POSITION (backendCall's comment): the guard and every top-level
 // herdr call read the caller's stdin; nested reads read /dev/null; orca reads
@@ -446,15 +448,16 @@ if (rest[0] === "--key") {
 }
 if (!slash) {
   call("clear_wait", [id], { stdin: "inherit", stdout: "inherit", stderr: "ignore" });
-  // ENDED BUSY LATCH (watch.ts header): the watcher's own clear is a poll-
-  // sampled busy read, which a reply answered and re-ended inside one
-  // AC_POLL interval never crosses. A delivered steer other than a slash
-  // command is already the fleet's recognized answer to a parked pane
-  // (CAPTAIN-WAIT STAMP, ac-backend.sh) - clearing the latch on the SAME
-  // transition closes that gap without waiting for a busy poll that may
-  // never come.
+  // ENDED BUSY LATCH / REWAKE LATCH (watch.ts header): the watcher's own
+  // clear is a poll-sampled busy read, which a reply answered and re-ended
+  // or re-printed inside one AC_POLL interval never crosses. A delivered
+  // steer other than a slash command is already the fleet's recognized
+  // answer to a parked pane (CAPTAIN-WAIT STAMP, ac-backend.sh) - clearing
+  // both latches on the SAME transition closes that gap without waiting for
+  // a busy poll that may never come.
   try {
     rmSync(`${stateDir()}/.ended-${id}`, { force: true });
+    rmSync(`${stateDir()}/.rewake-${id}`, { force: true });
   } catch {}
 }
 say(`${verb} ${subst(backendCall("target", [id], { stdin: "inherit", stdout: "pipe", stderr: "inherit", subshell: true }).out)}`);

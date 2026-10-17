@@ -456,25 +456,28 @@
 // ~every 30s, 2026-10-16; an ack never settled it). Rather than pattern-
 // matching claude's redraw prose (less general, and the fallback ENDED BUSY
 // LATCH itself rejected), this reuses that latch's exact shape: a one-shot
-// per-id stamp, state/.rewake-<id>, set the first time this branch wakes and
-// cleared only by a busy poll (the same `if (busy)` edge that clears
-// .ended-<id>) or a brand-new marker arriving - on the pane's own dedup, or
-// through ac-done.sh's PUSH channel, which drops the same stamp - so the OLD
-// marker's latch is retired with it, never inherited by the new one. While
-// the latch stands, further hash churn under the unchanged marker is
-// anchored silently - no stamp, no wake - instead of re-firing. FAILS
-// TOWARD WAKING on first sight, same as its sibling: the
-// first hash change after a marker is announced is indistinguishable from
-// real work and still wakes, because the latch starts cleared; only a SECOND
-// change with no busy edge in between is the redraw this arm exists to
-// silence. RESIDUAL, inherited from ENDED BUSY LATCH: a gate-loop round that
-// revises and re-prints the marker entirely inside one AC_POLL interval never
-// crosses a busy sample, so a run of cosmetic redraws right after it stays
-// suppressed until some later round is slow enough to be sampled busy. This
-// channel's markers (`paused:`/`done:` and the like) are not AC_DECISION_RE,
-// so send.ts's steer-clears-the-captain-wait-stamp site (the sibling's other
-// clear point) does not apply here - there is no parked stamp for a steer to
-// answer.
+// per-id stamp, state/.rewake-<id>. UNLIKE its sibling, it does not start
+// cleared: it is armed the INSTANT the chief is TOLD about a marker - the
+// new-marker wake, PUSH ADOPT, or this very branch's own fire - so a
+// cosmetic redraw right after that telling costs nothing either, not only
+// the second one. Cleared only by a busy poll (the same `if (busy)` edge
+// that clears .ended-<id>), a brand-new marker arriving - on the pane's own
+// dedup, or through ac-done.sh's PUSH channel, which drops the same stamp -
+// which retires the OLD marker's latch and arms its own, or a delivered
+// non-slash steer (send.ts, the same site that clears .ended-<id>): a
+// steered gate round answered and re-printed inside one AC_POLL interval is
+// that same transition and must not wait on a busy poll that may never
+// come. While the latch stands, every churn under the unchanged marker is
+// anchored silently - no stamp, no wake - whether it is the first one or
+// the fiftieth. RESIDUAL, stated rather than hidden: an UNSTEERED gate-loop
+// round that revises and re-prints the marker entirely inside one AC_POLL
+// interval, with no busy sample in between, is indistinguishable from a
+// redraw and stays suppressed here until some later round is slow enough to
+// be sampled busy or is itself steered - but ac-done.sh's PUSH channel wakes
+// on every completion unconditionally (src/done.ts: no latch, no dedup
+// against this stamp), so any crewmate that PUSHES its own completion still
+// wakes its chief regardless; only a round the watcher alone observes, with
+// neither a busy sample nor a steer, is silently anchored.
 //
 // BACKGROUND DEFER (paused-rewake-on-moving-pane): a turn that ENDED with a
 // background agent, shell or monitor still running reads not busy, yet its tail keeps
@@ -2274,8 +2277,8 @@ async function checkPane(meta: string): Promise<string | null> {
     const seenHash = readCap(st("seen-hash"));
     if (!markerSeen(marker, seen)) {
       stamp(st("seen"), `${marker}\n`);
-      // A NEW marker re-parks the pane: the supersession record and the
-      // re-wake latch both cover the OLD marker only.
+      // A NEW marker re-parks the pane: the supersession record and the OLD
+      // marker's re-wake latch are both retired here.
       rmF(st("superseded"), st("rewake"));
       statusAppend(id, marker);
       // Only a PARKED pane is stamped - a stamp taken while busy is released
@@ -2286,6 +2289,14 @@ async function checkPane(meta: string): Promise<string | null> {
         if (!busy) routed(backendCall("mark_wait", [id, u8(marker)], stdio));
       } else routed(backendCall("clear_wait", [id], stdio));
       stamp(st("seen-hash"), `${hash}\n`);
+      // REWAKE LATCH (header): armed the instant the chief is TOLD about
+      // this marker, not on its first redraw - a cosmetic churn right after
+      // this very wake must cost nothing either. UNLESS the pane is still
+      // showing background work right now: BACKGROUND DEFER's own eventual
+      // fire arms it then, and arming here too would suppress that deferred
+      // wake before it ever happens ("a deferred pass stamps nothing",
+      // BACKGROUND DEFER header, applies to this stamp too).
+      if (!grepQ(BACKGROUND_RE, lastLine(grepOut("-E", "^✻ ", tail)))) touch(st("rewake"));
       // LAST-MOMENT RECHECK: ac-done.sh stamps .seen-<id> BEFORE it
       // publishes, so a stamp no longer ours that still covers this marker
       // means its record exists or is one syscall away.
@@ -2300,18 +2311,23 @@ async function checkPane(meta: string): Promise<string | null> {
       routed(backendCall("mark_wait", [id, u8(marker)], stdio));
     } else if (hash !== seenHash && !busy && !grepQ(BACKGROUND_RE, lastLine(grepOut("-E", "^✻ ", tail)))) {
       stamp(st("seen-hash"), `${hash}\n`);
-      if (seenHash !== "" && !existsSync(st("rewake"))) {
+      if (seenHash === "") {
+        // PUSH ADOPT: no hash was recorded for this already-seen marker, so
+        // the agent's own push consumed it - the push already told the
+        // chief about this marker, so arm the latch here too (same as any
+        // other telling) and anchor silently, never movement.
+        touch(st("rewake"));
+      } else if (!existsSync(st("rewake"))) {
         // REWAKE LATCH (header): the cosmetic-redraw sibling of ENDED BUSY
-        // LATCH. Fires once per busy episode; the busy branch above and the
-        // new-marker branch above both clear it, so every further
-        // redraw-only churn here is anchored silently instead of re-firing.
+        // LATCH, armed the moment the chief is told about a marker - by the
+        // new-marker branch above, PUSH ADOPT above, or this very fire -
+        // and cleared only by a busy poll, a brand-new marker, or a
+        // delivered non-slash steer (send.ts). Every further churn under
+        // the SAME marker with none of those between is anchored silently.
         touch(st("rewake"));
         queueWake("report", idB, `${marker} (pane advanced since the last wake)`);
         return reasonLine(`report:${idB}`);
       }
-      // PUSH ADOPT: no hash was recorded for this already-seen marker, so
-      // the agent's own push consumed it - anchored silently, never
-      // movement.
     }
     // No early return: a deduped marker must not silence the artifact channel.
   }
