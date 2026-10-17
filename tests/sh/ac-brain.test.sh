@@ -466,10 +466,19 @@ assert_contains "$vn2" "fam-viet" "accent-less variant reaches the same page"
 # and two syncs racing the claim serialize (the old read-check-write let both
 # pass the check and interleave FTS delete+insert).
 lease_set() { sqlite3 "$AC_HOME/state/brain.sqlite" \
-  "INSERT OR REPLACE INTO meta(k,v) VALUES('sync_lease','{\"host\":\"$(hostname)\",\"pid\":$1,\"at\":\"2026-08-18T00:00:00Z\"}')"; }
+  "INSERT OR REPLACE INTO meta(k,v) VALUES('sync_lease','{\"host\":\"$(hostname)\",\"pid\":$1,\"at\":\"${2:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}\"}')"; }
 lease_set $$
 out="$("$BRAIN" sync --home "$AC_HOME" --compact)"
 assert_contains "$out" "already-running" "a live holder refuses a second sync"
+# A sync killed before its finally leaves its lease; once the OS hands that
+# pid to a later process, kill(pid, 0) succeeds for ever and every sync
+# printed already-running while the brain went stale. This shell started
+# after the lease's at, so it cannot be the process that wrote it.
+lease_set $$ "2026-08-18T00:00:00Z"
+out="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+assert_contains "$out" '"pages"' "a pid that started after the lease was written is not its holder"
+lease_set $$ "2026-08-18T00:00:00Z"
+assert_contains "$("$BRAIN" sync --home "$AC_HOME" --break-lease --compact)" '"broke":true' "...and break-lease frees it"
 sleep 0.01 & dead_pid=$!; wait "$dead_pid" 2>/dev/null
 lease_set "$dead_pid"
 out="$("$BRAIN" sync --home "$AC_HOME" --compact)"

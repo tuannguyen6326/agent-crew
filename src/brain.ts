@@ -30,8 +30,9 @@
 // - The mass-delete valve refuses a reconcile that would drop >50% of pages
 //   when the index holds >20 - a moved or half-mounted home must not empty
 //   the brain.
-// - The sync lease is broken only for a provably dead PID (ESRCH), never on
-//   staleness: a live holder mid-CHECKPOINT looks stale.
+// - The sync lease is broken only for a provably gone holder - its PID dead
+//   (ESRCH) or now a process that started after the lease was written -
+//   never on staleness: a live holder mid-CHECKPOINT looks stale.
 // - remember REQUIRES provenance; the write appends the ledger line and the
 //   DB row inside one IMMEDIATE transaction so cross-process writers
 //   serialize on SQLite's own lock. A fact's TTL binds at READ time: every
@@ -634,13 +635,30 @@ function leaseGet(db: Database): any | null {
 function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (e: any) { return e.code === "EPERM"; }
 }
+// A sync killed before its finally (SIGKILL, a killed pane) leaves its lease,
+// and once the OS hands that pid to a later process kill(pid, 0) succeeds for
+// ever. The writer started before it wrote `at`, so a pid whose process
+// started later (ps -o lstart=, strftime %c under LC_ALL=C, local time; +2s
+// for its whole-second grain) is not the holder. An unreadable start keeps
+// the lease: a false break interleaves two syncs' FTS rewrites, a false hold
+// only delays one sync.
+const MONTHS = "JanFebMarAprMayJunJulAugSepOctNovDec";
+function leaseHolderAlive(l: any): boolean {
+  if (!pidAlive(l.pid)) return false;
+  const r = spawnShellSync(["/usr/bin/env", "LC_ALL=C", "ps", "-o", "lstart=", "-p", String(l.pid)], { stdout: "pipe", stderr: "ignore" });
+  const m = r.stdout.toString().trim().match(/^\w{3} (\w{3}) +(\d+) (\d+):(\d+):(\d+) (\d{4})$/);
+  const at = Date.parse(l.at || "");
+  if (!m || MONTHS.indexOf(m[1]) % 3 !== 0 || Number.isNaN(at)) return true;
+  const started = new Date(+m[6], MONTHS.indexOf(m[1]) / 3, +m[2], +m[3], +m[4], +m[5]).getTime();
+  return started <= at + 2000;
+}
 function cmdSync() {
   const db = openDb();
   const t0 = performance.now();
   if (flag("break-lease")) {
     const l = leaseGet(db);
     if (!l) { out({ broke: false, reason: "no lease" }); return; }
-    if (l.host === hostname() && !pidAlive(l.pid)) {
+    if (l.host === hostname() && !leaseHolderAlive(l)) {
       db.run("DELETE FROM meta WHERE k='sync_lease'");
       out({ broke: true, dead_pid: l.pid });
     } else out({ broke: false, reason: "holder alive or foreign host", holder: l });
@@ -661,7 +679,7 @@ function cmdSync() {
     const l = leaseGet(db);
     const fresh = !!l && Date.now() - Date.parse(l.at || 0) < 60 * 60e3;
     const held = !!l && (l.host === hostname()
-      ? pidAlive(l.pid) && l.pid !== process.pid
+      ? leaseHolderAlive(l) && l.pid !== process.pid
       : fresh);
     if (held) {
       db.run("ROLLBACK");
@@ -1503,7 +1521,7 @@ async function cmdDoctor() {
     const metaDims = (db.query("SELECT v FROM meta WHERE k='embed_dims'").get() as any)?.v;
     if (ec && metaDims) push("embed_dims", Number(metaDims) === ec.dims, `index ${metaDims} vs config ${ec.dims}`);
     const lease = leaseGet(db);
-    if (lease) push("sync_lease", true, pidAlive(lease.pid) ? `live holder pid ${lease.pid}` : `stale (dead pid ${lease.pid}; the next sync reclaims it)`);
+    if (lease) push("sync_lease", true, leaseHolderAlive(lease) ? `live holder pid ${lease.pid}` : `stale (pid ${lease.pid} is dead or started after the lease; the next sync reclaims it)`);
     const ledgerActive = readLedger().reduce((s, l) => s + (l.op === "f" ? 1 : 0), 0);
     const dbTotal = (db.query("SELECT COUNT(*) c FROM facts").get() as any).c;
     push("facts_ledger_indexed", ledgerActive === dbTotal, `ledger ${ledgerActive} vs db ${dbTotal} (fix: sync --rebuild)`);
