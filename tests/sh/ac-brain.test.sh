@@ -633,9 +633,18 @@ embed_stub_config "$EMBED_STUB_PORT"
 began=$SECONDS
 eh="$(AC_BRAIN_EMBED_TIMEOUT=2 "$BRAIN" sync --home "$AC_HOME" --compact)"
 elapsed=$((SECONDS - began))
+# (c) recall embeds the QUERY on the prompt hook's path, whose window is 15s:
+# under the sync lane's 60s a hung provider outlived the hook, and the keyword
+# hits the degradation exists to hand back never landed.
+began=$SECONDS
+er="$("$BRAIN" recall --home "$AC_HOME" --query "bounded call probe" --compact)"
+relapsed=$((SECONDS - began))
 embed_stub_down
 [ "$elapsed" -lt 30 ] || fail "a provider that never answers must not wedge the sync (took ${elapsed}s)"
 assert_contains "$eh" "timeout" "...and the degraded token says the call timed out, not merely that it failed"
+[ "$relapsed" -lt 13 ] || fail "recall's query embed must give up inside the prompt hook's 15s window (took ${relapsed}s)"
+assert_contains "$er" '"search_degraded":"keyword_only_provider_error' "...and recall degrades to its keyword hits"
+assert_contains "$er" "bound-probe" "...which still come back"
 
 rm -f "$AC_HOME/config/brain.json" "$AC_HOME/data/fam-one/bound-probe.md"
 "$BRAIN" sync --home "$AC_HOME" --compact >/dev/null

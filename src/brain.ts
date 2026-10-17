@@ -61,7 +61,8 @@
 //   zero-LLM forever. The embedding lane (voyage|openai|stub) is an optional
 //   vectorizer - absent config or key degrades to keyword-only with a stamp,
 //   never an error. Its call is BOUNDED (AC_BRAIN_EMBED_TIMEOUT seconds,
-//   default 60) and its `embed_degraded` stamp NAMES the cause - the HTTP
+//   default 60; recall's query embed at most 10, inside the prompt hook's
+//   15s window) and its `embed_degraded` stamp NAMES the cause - the HTTP
 //   status plus a slice of the body, a timeout, or an unreachable host -
 //   because one opaque token for every remote failure is a degradation
 //   nobody ever chases. A wedged sync never reaches a prompt: the catch-up
@@ -523,11 +524,15 @@ function stubVec(text: string, dims: number): Float32Array {
 // after reaping it returned in 304ms.
 const EMBED_TIMEOUT_MS = (Number(process.env.AC_BRAIN_EMBED_TIMEOUT) > 0
   ? Number(process.env.AC_BRAIN_EMBED_TIMEOUT) : 60) * 1000;
+// recall's query embed runs inside the prompt hook's 15s window
+// (.claude/settings.json, .codex/hooks.json): at the sync lane's 60s a hung
+// provider outlives the hook, and the keyword fallback never lands either.
+const RECALL_EMBED_TIMEOUT_MS = Math.min(EMBED_TIMEOUT_MS, 10_000);
 // Why the last embedBatch gave up, for the caller's degraded token. A return
 // value would have to be threaded through the batch loop; the failure is
 // read exactly once, right where the loop stops.
 let embedError: string | undefined;
-async function embedBatch(texts: string[], cfg: EmbedCfg): Promise<Float32Array[] | null> {
+async function embedBatch(texts: string[], cfg: EmbedCfg, timeoutMs = EMBED_TIMEOUT_MS): Promise<Float32Array[] | null> {
   embedError = undefined;
   const key = embedKey(cfg);
   if (!key) return null;
@@ -538,7 +543,7 @@ async function embedBatch(texts: string[], cfg: EmbedCfg): Promise<Float32Array[
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "User-Agent": "agent-crew-brain/1.0" },
       body: JSON.stringify({ model: cfg.model, input: texts }),
-      signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!r.ok) {
       // KEEP THE STATUS AND A SLICE OF THE BODY. Discarding both left every
@@ -559,7 +564,7 @@ async function embedBatch(texts: string[], cfg: EmbedCfg): Promise<Float32Array[
   } catch (e: any) {
     const n = e?.name;
     embedError = (n === "TimeoutError" || n === "AbortError")
-      ? `provider_timeout after ${EMBED_TIMEOUT_MS / 1000}s`
+      ? `provider_timeout after ${timeoutMs / 1000}s`
       : `provider_unreachable: ${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 200)}`;
     return null;
   }
@@ -959,7 +964,7 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
   if (ec && useVector) {
     if (!embedKey(ec)) degraded = "keyword_only_no_api_key";
     else {
-      const qv = (await embedBatch([q], ec))?.[0];
+      const qv = (await embedBatch([q], ec, RECALL_EMBED_TIMEOUT_MS))?.[0];
       if (!qv) degraded = "keyword_only_provider_error";
       else {
         const rows = db.query("SELECT slug, embedding FROM chunks WHERE embedding IS NOT NULL AND slug IN (SELECT slug FROM pages WHERE deleted_at IS NULL)").all() as any[];
