@@ -16,7 +16,7 @@ Load after a stale wake, a failed steer, repeated confusion, an apparently swall
 Do NOT classify these as stuck - they are healthy states:
 
 - a healthy idle CrewDeputy (a persistent supervisor waiting for work);
-- a declared pause (the crewmate stamped `paused:` itself);
+- a declared pause (the crewmate stamped `paused:` itself) - but only while the job its line names is still running: a declaration holds the stale alarm off for a whole AC_STALE window (src/watch.ts header, STALE DEFERRAL), so a job that died early leaves the pane idle that long - check that job (its process, terminal record or CI run) before calling the pane healthy, and if it already ended, steer the crewmate to read the result and resume;
 - a captain gate (the task is waiting on a decision you owe the captain);
 - a blocked interactive prompt (a real dialog - answer it deliberately, do not "recover" it);
 - a completed-but-awaiting-landing task (the work is done and waiting to merge);
