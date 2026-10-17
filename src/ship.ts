@@ -541,6 +541,10 @@
 // - W14: a push refused over unincorporated commits prints the header, the
 //   first ten shas and the refusal, exit 1, where the original's
 //   `printf | head -10` died of SIGPIPE past the pipe buffer (141, no refusal).
+// - RUNNING RESTART: `start` refuses while `current` is this branch's own run,
+//   still `outcome=running`, with a review invocation recorded, and names
+//   `finish cancelled`, where the original repointed current over it and the
+//   new run's empty ledger reset the review cap.
 // - W19: SIGINT to the pid alone ends the process at once (130), the suite
 //   finishing on its own, where the original waited its foreground child out
 //   and completed.
@@ -921,6 +925,25 @@ function resolveTarget(t: string): string {
   return fail(`start: --target branch not found (neither origin/${t} nor ${t}): ${t}`);
 }
 
+// The cap counts review invocations per RUN, so a fresh run over this branch's
+// own unfinished one would hand back the rounds the cap withheld. Another
+// branch's run is a former tenant of a reused pool slot, never this task's.
+function spentRunOn(branch: string): { id: string; n: string } | null {
+  const id = readLink(current);
+  if (id === null) return null;
+  const meta = readText(`${vdir}/${id}/run.meta`);
+  if (meta === null) return null;
+  let outcome = "";
+  let on = "";
+  for (const l of meta.split("\n")) {
+    if (l.startsWith("outcome=")) outcome = l.slice(8);
+    else if (l.startsWith("branch=") && on === "") on = l.slice(7);
+  }
+  if (outcome !== "running" || on !== branch) return null;
+  const n = reviewInvocationsRecorded(`${vdir}/${id}`);
+  return n === "0" ? null : { id, n };
+}
+
 function cmdStart(a: string[]): void {
   let intent = "";
   let skip = "";
@@ -967,6 +990,11 @@ function cmdStart(a: string[]): void {
   const sr = git(["symbolic-ref", "--short", "HEAD"], { stderr: "ignore" });
   const branch = cap(sr.status === 0 ? sr.out : `${sr.out}DETACHED`);
   const base = freshBase(tref || b8(defaultRef(u8(repo), true))) ?? fatal(1);
+  const spent = spentRunOn(branch);
+  if (spent !== null)
+    fail(
+      `start refused: run ${spent.id} on ${branch} is still running and has spent ${spent.n} review invocation(s) - a fresh run would reset its review cap. Keep working it, or end it with ac-ship.sh finish cancelled (or failed) first.`,
+    );
 
   // Every refusal sits above this line, so a refused start creates nothing.
   const d = run(["date", "+%Y%m%d-%H%M%S"]);

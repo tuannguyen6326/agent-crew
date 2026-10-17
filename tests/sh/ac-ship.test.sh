@@ -454,6 +454,32 @@ assert_eq "$(awk -F'\t' '$1=="review"{print $2}' "$srrun/steps.tsv")" "skipped" 
   "skip-remaining still skips a pending review - unaffected by the F4 --skip refusal on start"
 cd "$repo" || fail "cd back from skiprepo"
 
+# A start over this branch's own still-running run used to repoint current
+# silently, so a run HELD at the review cap restarted with a fresh ledger and
+# three more rounds - the chief's cap decision skipped. It now refuses once
+# that run has spent a review invocation; nothing spent, finished, or another
+# branch's run (a reused pool slot) still starts.
+rsrepo="$(make_repo restartrepo)"
+cd "$rsrepo" || fail "cd restartrepo"
+"$BIN/ac-ship.sh" start --intent "first" >/dev/null
+first="$(readlink .crew/ship/current)"
+"$BIN/ac-ship.sh" start --intent "no review spent yet" >/dev/null || fail "a run with no review invocation restarts"
+second="$(readlink .crew/ship/current)"
+[ "$first" != "$second" ] || fail "the restart made a new run"
+printf '1\tdeadbeef\tcodereview\tok\n' >".crew/ship/$second/logs/review-invocations.tsv"
+rc=0
+out="$("$BIN/ac-ship.sh" start --intent "reset the cap" 2>&1)" || rc=$?
+[ "$rc" -eq 1 ] || fail "a start over a running run with a spent review must refuse (rc=$rc)"
+assert_contains "$out" "run $second" "the refusal names the running run"
+assert_contains "$out" "ac-ship.sh finish cancelled" "the refusal names the sanctioned way out"
+assert_eq "$(readlink .crew/ship/current)" "$second" "a refused start repoints nothing"
+"$BIN/ac-ship.sh" finish cancelled >/dev/null
+"$BIN/ac-ship.sh" start --intent "after cancel" >/dev/null || fail "a finished run never blocks a start"
+printf '1\tdeadbeef\tcodereview\tok\n' >".crew/ship/$(readlink .crew/ship/current)/logs/review-invocations.tsv"
+git switch -q -c crew/other-task
+"$BIN/ac-ship.sh" start --intent "another branch" >/dev/null || fail "another branch's running run never blocks a start"
+cd "$repo" || fail "cd back from restartrepo"
+
 # evidence-dir: temp by default. A home config update does not change the
 # running ship snapshot.
 ev="$("$BIN/ac-ship.sh" evidence-dir)"
@@ -3562,13 +3588,20 @@ assert_contains "$(xt n)" "ERROR: review-agent needs AC_CREW_ID from ac-spawn (g
 x8c() {
   for v in pass fix ask; do
     xc start --intent "same $v"; xc step test completed
-    xverdicts "$v"; rm -f "$XW/stub/verify.n"; xc review-agent; xc review-agent; xcommit "after-$v"
+    xverdicts "$v"; rm -f "$XW/stub/verify.n"; xc review-agent; xc review-agent; xcommit "after-$v"; xc finish cancelled
   done
 }
 xsame xrevworld x8c
 xhas 'with verdict pass - complete delivery at this ref'
 xhas 'with verdict fix - apply the blocking fix and commit it'
 xhas 'with verdict ask-user - record the captain decision'
+# RUNNING RESTART (named): a start over this branch's running run that spent a
+# review invocation repoints current on the original, and refuses on the port.
+x8c2() { xc start --intent spent; xc step test completed; xverdicts fix; xc review-agent; xc start --intent restart; }
+xpass o xrevworld x8c2 o; xpass n xrevworld x8c2 n
+assert_contains "$(xt o)" 'started run RUN2 branch=crew/fam1-implement' "the original restarts over the spent run"
+assert_contains "$(xt n)" 'ERROR: start refused: run RUN1 on crew/fam1-implement is still running and has spent 1 review invocation(s)' "the port refuses the restart"
+case "$(xt n)" in *'started run RUN2'*) fail "the refused start makes no run" ;; esac
 x8d() {
   xc start --intent freeze; xc step test completed
   xverdicts pass pass pass pass; xc review-agent
@@ -3615,7 +3648,7 @@ xwhas 'review-agent-r1.json.rejected'
 x8f() {
   xcfg 'commands:\n  test: "echo t"\nreview:\n  max_rounds: 1\n'
   xc start --intent cap; xc step test completed; xverdicts fix fix fix
-  xc review-agent; xcommit c1; xc review-agent; xc review-agent --final-round; xcommit c2; xc review-agent --final-round
+  xc review-agent; xcommit c1; xc review-agent; xc review-agent --final-round; xcommit c2; xc review-agent --final-round; xc finish cancelled
   xcfg 'commands:\n  test: "echo t"\nreview:\n  max_rounds: 00\n'; xc start --intent zeros; xc step test completed; xc review-agent
 }
 xsame xrevworld x8f
