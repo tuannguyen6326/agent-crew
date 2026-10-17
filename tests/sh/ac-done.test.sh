@@ -46,14 +46,16 @@ rm -rf "$state"/.wake-spool*
 
 # --- dedup: the push stamps the watcher's OWN marker dedup ------------------
 # .seen-<id> is what keeps the poll that later reads the same completion off
-# the pane from publishing a SECOND record; the stale .seen-hash-<id> of an
-# earlier wake must go with it, or the watcher's re-wake branch would fire on
-# the new marker's first poll.
+# the pane from publishing a SECOND record; the stale .seen-hash-<id> and
+# .rewake-<id> of an earlier wake must go with it, or the watcher's re-wake
+# branch would fire - or stay latched shut - on the new marker's first poll.
 printf 'old-hash\n' >"$state/.seen-hash-c2"
+: >"$state/.rewake-c2"
 push c2 'blocked: waiting on the captain' >/dev/null
 assert_eq "$(cat "$state/.seen-c2")" "blocked: waiting on the captain" \
   "the pushed marker is stamped as seen"
 assert_no_file "$state/.seen-hash-c2" "the previous wake's pane-hash discriminator is dropped"
+assert_no_file "$state/.rewake-c2" "the previous marker's re-wake latch is dropped too"
 
 # --- no watcher armed: quiet success, the record still waits in the spool ----
 rm -rf "$state"/.wake-spool* "$state"/.watch*.lock.d
@@ -181,7 +183,7 @@ assert_contains "$(spool_records)" "done: watcher is mid-poll" \
 
 # --- differential: src/done.ts against the frozen bash original ---------------
 # DISPUTED: the implementation (tests/fixtures/ac-done.sh under bash vs src/done.ts through bin/ac-done.sh)
-# HELD-CONSTANT: two state dirs seeded alike ($OS for the oracle, $NS for the shim), argv, cwd, no AC_HOME/AC_SCOPE unless a row sets one, LC_ALL=C, one PATH `date` stub answering `+%s%N` with $STUB_STAMP on both sides; exit status, stdout (a nudge's pid numbers spelled P and C) and stderr (the state dir spelled STATE, a home HOME) compared whole, then every `.seen-*` stamp and `.wake-*` entry left behind - names with the pid spelled PID and mktemp's suffix RANDOM - with their bytes.
+# HELD-CONSTANT: two state dirs seeded alike ($OS for the oracle, $NS for the shim), argv, cwd, no AC_HOME/AC_SCOPE unless a row sets one, LC_ALL=C, one PATH `date` stub answering `+%s%N` with $STUB_STAMP on both sides; exit status, stdout (a nudge's pid numbers spelled P and C) and stderr (the state dir spelled STATE, a home HOME) compared whole, then every `.seen-*`, `.rewake-*` stamp and `.wake-*` entry left behind - names with the pid spelled PID and mktemp's suffix RANDOM - with their bytes.
 obin="$(make_oracle_bin ac-done)"
 OS="$TMP/os"; NS="$TMP/ns"; OH="$TMP/oh"; NH="$TMP/nh"
 mkdir -p "$OS" "$NS" "$OH" "$NH" "$TMP/stub"
@@ -212,7 +214,7 @@ snap() {  # snap <state> <out> - every stamp and spool entry under <state>, name
     i=$((i + 1))
     { printf '== %s\n' "$f" | LC_ALL=C sed -E -e 's/\.[0-9]+\.([0-9]{6})$/.PID.\1/' -e 's/\.wake-tmp\.[A-Za-z0-9]{8}$/.wake-tmp.RANDOM/'
       [ ! -f "$1/$f" ] || cat "$1/$f"; } >"$blocks/$i"
-  done < <(cd "$1" && find . -mindepth 1 \( -name '.seen-*' -o -path './.wake-*' \))
+  done < <(cd "$1" && find . -mindepth 1 \( -name '.seen-*' -o -name '.rewake-*' -o -path './.wake-*' \))
   for b in "$blocks"/*; do
     [ -e "$b" ] || continue
     printf '%s\t%s\n' "$(od -An -tx1 -v "$b" | tr -d ' \n')" "$b"
@@ -354,23 +356,25 @@ assert_contains "$(cat "$TMP/o.rawerr")" "tr: Illegal byte sequence" "tr says so
 (cd "$TMP" && env -u AC_HOME -u AC_SCOPE -u LC_ALL LANG=en_US.UTF-8 PATH="$TMP/stub:$PATH" STUB_STAMP="$STUB_STAMP" AC_FLEET_STATE="$NS" "$BIN/ac-done.sh" c8 'done: café ok') >/dev/null 2>&1 || fail "the port pushes a UTF-8 marker"
 assert_eq "$(cat "$NS/.wake-spool"/*)" "$(printf '1700000000\treport\tc8\tdone: café ok')" "the port's record keeps the whole marker"
 
-# 6. the dedup stamps: a stale pane hash goes, an older stamp is overwritten
+# 6. the dedup stamps: a stale pane hash goes, an older stamp is overwritten,
+#    and a stale re-wake latch from the OLD marker goes with it
 reset_sides
 seed .seen-hash-c2 'old-hash\n'
 seed .seen-c2 'done: older words\n'
+seed .rewake-c2 ''
 same c2 'blocked: waiting on the captain'
 assert_eq "$(shim_tree)" "== ./.seen-c2
 blocked: waiting on the captain
 == ./.wake-spool
 == ./.wake-spool/1700000000123456789.PID.000000
-1700000000	report	c2	blocked: waiting on the captain" "the hash stamp is gone and the marker stamp replaced"
+1700000000	report	c2	blocked: waiting on the captain" "the hash stamp and the re-wake latch are gone, the marker stamp replaced"
 
 # 7. ids: `/` cannot be stamped (nothing written); `..` and spaces are stamped as spelled
 reset_sides
 # Named divergence: the original dies on the shell's own redirection line; the
 # port names the stamp it could not write. Same exit, same empty tree.
 ERR=own same a/b 'done: slash'
-assert_contains "$(oracle_err)" "line 83: STATE/.seen-a/b: No such file or directory" "the original's redirection noise"
+assert_contains "$(oracle_err)" "line 86: STATE/.seen-a/b: No such file or directory" "the original's redirection noise"
 assert_eq "$(shim_err)" "ERROR: cannot write the dedup stamp STATE/.seen-a/b: ENOENT" "the port's refusal"
 assert_eq "$(shim_tree)" "" "nothing is written when the stamp fails"
 same .. 'done: dots'
@@ -387,7 +391,7 @@ if [ "$(id -u)" != 0 ]; then
   chmod 555 "$OS" "$NS"
   ERR=own same c8 'done: read-only'
   chmod 755 "$OS" "$NS"
-  assert_contains "$(oracle_err)" "line 83: STATE/.seen-c8: Permission denied" "the original's redirection noise"
+  assert_contains "$(oracle_err)" "line 86: STATE/.seen-c8: Permission denied" "the original's redirection noise"
   assert_eq "$(shim_err)" "ERROR: cannot write the dedup stamp STATE/.seen-c8: EACCES" "the port's refusal"
   assert_eq "$(shim_tree)" "" "an unwritable state dir gets no stamp and no record"
 fi

@@ -123,7 +123,10 @@ try {
 } catch (e) {
   die(b(`cannot write the dedup stamp ${bytes(stamp)}: ${(e as { code?: string }).code ?? "error"}`));
 }
+// A stale .rewake-<id> from the OLD marker's redraw latch must go with it too,
+// or a pushed new marker would inherit a latch that was never armed for it.
 rmSync(`${sd}/.seen-hash-${id}`, { force: true });
+rmSync(`${sd}/.rewake-${id}`, { force: true });
 
 if (!wakePublish(sd, scope, "report", bytes(id), bytes(marker))) die(b(`wake NOT published for ${bytes(id)} - the completion is not durable; say so in the pane`));
 

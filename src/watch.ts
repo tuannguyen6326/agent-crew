@@ -445,6 +445,37 @@
 // .seen-<id> semantics are unchanged, and the AC_DECISION_RE re-stamp reconcile
 // still wins the pass it fires on (a re-wake follows on the next poll if the
 // pane keeps moving).
+//
+// REWAKE LATCH (watch-marker-rewake-cosmetic-redraw), the sibling of ENDED
+// BUSY LATCH for a pane that STILL carries a marker. The hash discriminator
+// above cannot tell a genuine turn from claude's own TUI redraws (the
+// "Compacting conversation…" spinner, its settling line, a recap) - every
+// frame changes the tail hash exactly like new work does, so it re-fired
+// `report:<id>` for the SAME already-delivered marker on every poll the
+// redraw kept animating (observed live: an already-delivered `paused:` line,
+// ~every 30s, 2026-10-16; an ack never settled it). Rather than pattern-
+// matching claude's redraw prose (less general, and the fallback ENDED BUSY
+// LATCH itself rejected), this reuses that latch's exact shape: a one-shot
+// per-id stamp, state/.rewake-<id>, set the first time this branch wakes and
+// cleared only by a busy poll (the same `if (busy)` edge that clears
+// .ended-<id>) or a brand-new marker arriving - on the pane's own dedup, or
+// through ac-done.sh's PUSH channel, which drops the same stamp - so the OLD
+// marker's latch is retired with it, never inherited by the new one. While
+// the latch stands, further hash churn under the unchanged marker is
+// anchored silently - no stamp, no wake - instead of re-firing. FAILS
+// TOWARD WAKING on first sight, same as its sibling: the
+// first hash change after a marker is announced is indistinguishable from
+// real work and still wakes, because the latch starts cleared; only a SECOND
+// change with no busy edge in between is the redraw this arm exists to
+// silence. RESIDUAL, inherited from ENDED BUSY LATCH: a gate-loop round that
+// revises and re-prints the marker entirely inside one AC_POLL interval never
+// crosses a busy sample, so a run of cosmetic redraws right after it stays
+// suppressed until some later round is slow enough to be sampled busy. This
+// channel's markers (`paused:`/`done:` and the like) are not AC_DECISION_RE,
+// so send.ts's steer-clears-the-captain-wait-stamp site (the sibling's other
+// clear point) does not apply here - there is no parked stamp for a steer to
+// answer.
+//
 // BACKGROUND DEFER (paused-rewake-on-moving-pane): a turn that ENDED with a
 // background agent, shell or monitor still running reads not busy, yet its tail keeps
 // moving (subagent progress, completion notices) under the very marker the chief
@@ -2209,9 +2240,9 @@ async function checkPane(meta: string): Promise<string | null> {
   const busyFile = st("busy");
   if (busy) {
     if (!existsSync(busyFile)) stamp(busyFile, `${nowRaw()}\n`);
-    // A busy poll is what clears ENDED BUSY LATCH (header): a genuine new
-    // turn, never a cosmetic redraw, re-arms the ended: arm.
-    rmF(st("ended"));
+    // A busy poll is what clears ENDED BUSY LATCH and REWAKE LATCH (header):
+    // a genuine new turn, never a cosmetic redraw, re-arms either arm.
+    rmF(st("ended"), st("rewake"));
   } else rmF(busyFile, st("busy-stalled"));
   const hash = String(cksumPosix(B(tail)));
   const changedFile = st("change");
@@ -2243,9 +2274,9 @@ async function checkPane(meta: string): Promise<string | null> {
     const seenHash = readCap(st("seen-hash"));
     if (!markerSeen(marker, seen)) {
       stamp(st("seen"), `${marker}\n`);
-      // A NEW marker re-parks the pane: the supersession record covers the
-      // old one only.
-      rmF(st("superseded"));
+      // A NEW marker re-parks the pane: the supersession record and the
+      // re-wake latch both cover the OLD marker only.
+      rmF(st("superseded"), st("rewake"));
       statusAppend(id, marker);
       // Only a PARKED pane is stamped - a stamp taken while busy is released
       // with no state transition ahead of it, and herdr then holds no
@@ -2269,12 +2300,18 @@ async function checkPane(meta: string): Promise<string | null> {
       routed(backendCall("mark_wait", [id, u8(marker)], stdio));
     } else if (hash !== seenHash && !busy && !grepQ(BACKGROUND_RE, lastLine(grepOut("-E", "^✻ ", tail)))) {
       stamp(st("seen-hash"), `${hash}\n`);
-      if (seenHash !== "") {
+      if (seenHash !== "" && !existsSync(st("rewake"))) {
+        // REWAKE LATCH (header): the cosmetic-redraw sibling of ENDED BUSY
+        // LATCH. Fires once per busy episode; the busy branch above and the
+        // new-marker branch above both clear it, so every further
+        // redraw-only churn here is anchored silently instead of re-firing.
+        touch(st("rewake"));
         queueWake("report", idB, `${marker} (pane advanced since the last wake)`);
         return reasonLine(`report:${idB}`);
       }
-      // PUSH ADOPT: no hash was recorded for this already-seen marker, so the
-      // agent's own push consumed it - anchored silently, never movement.
+      // PUSH ADOPT: no hash was recorded for this already-seen marker, so
+      // the agent's own push consumed it - anchored silently, never
+      // movement.
     }
     // No early return: a deduped marker must not silence the artifact channel.
   }

@@ -211,10 +211,10 @@ const put = (s: string, rel: string, body: string, mode = 0o644): void => {
 const stub = (s: string, name: string, body = ""): void => put(s, `stub/${name}`, body);
 const pane = (s: string, id: string, body: string): void => put(s, `home/state/.pane-${id}`, body);
 
-test("taskStamps: the thirteen per-id stamp paths, in ac_task_stamps' order", () => {
+test("taskStamps: the fourteen per-id stamp paths, in ac_task_stamps' order", () => {
   for (const id of ["t1", "a b", "x-verify-codereview"]) {
     const p = same(`stamps ${id}`, { bash: `ac_task_stamps "$1" "$2"`, twin: `for (const f of L.taskStamps(A[0], A[1])) writeSync(1, f + "\\n"); return 0;`, args: ["@S/home/state", id] });
-    expect(p.t.out.split("\n").length).toBe(14);
+    expect(p.t.out.split("\n").length).toBe(15);
   }
 });
 

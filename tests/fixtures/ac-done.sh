@@ -47,6 +47,9 @@
 #     marker's first poll - the very duplicate this exists to prevent - while
 #     its ABSENCE is what tells the watcher to adopt the pane silently (the
 #     PUSH ADOPT branch there).
+#   - state/.rewake-<id> is REMOVED too: it is the OLD marker's redraw latch,
+#     and leaving it would make the watcher treat THIS marker's first real
+#     advance as an already-latched redraw and anchor it silently instead.
 #
 # CHANNEL - a crewmate has no AC_HOME, deliberately (ac-spawn.sh's AC_FLEET_MODEL/AC_FLEET_EFFORT header block), so
 # it cannot resolve state/ the ordinary way. Two NARROW SCALARS on the
@@ -81,7 +84,7 @@ scope="${AC_FLEET_SCOPE:-}"
 # Dedup FIRST: the stamp must be on disk before the record can wake anyone, or
 # the poll that answers this very push could still read the pane as new news.
 printf '%s\n' "$marker" >"$state_dir/.seen-$id"
-rm -f "$state_dir/.seen-hash-$id"
+rm -f "$state_dir/.seen-hash-$id" "$state_dir/.rewake-$id"
 
 # Main shell, never a subshell (ac_wake_publish's collision identity).
 ac_wake_publish "$state_dir" "$scope" report "$id" "$marker" \

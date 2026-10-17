@@ -640,7 +640,7 @@ x6() {
   local wt; wt="$(xtree get --repo "$H/r" --id "$XV")"
   printf 'kind=verify-codereview\nbackend=herdr\ncaller=t1\nfamily=t1\nleases=%s\nlease_ids=0011223344556677\n' "$wt" >"$H/home/state/$XV.meta"
   printf 'pv tv\n' >"$H/home/state/.pane-$XV"
-  local s; for s in hash change seen seen-hash stale gone ask unobservable report-hash superseded busy busy-stalled ended; do : >"$H/home/state/.$s-$XV"; done
+  local s; for s in hash change seen seen-hash stale gone ask unobservable report-hash superseded busy busy-stalled ended rewake; do : >"$H/home/state/.$s-$XV"; done
   : >"$H/home/state/.hash-t1"
   printf '2026 started\n' >"$H/home/state/$XV.status"
   mkdir -p "$H/home/state/.verify-t1-codereview.lock.d"

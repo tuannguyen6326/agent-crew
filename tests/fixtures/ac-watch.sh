@@ -78,6 +78,35 @@
 # still wins the pass it fires on (a re-wake follows on the next poll if the
 # pane keeps moving).
 #
+# REWAKE LATCH (watch-marker-rewake-cosmetic-redraw), the sibling of ENDED
+# BUSY LATCH for a pane that STILL carries a marker. The hash discriminator
+# above cannot tell a genuine turn from claude's own TUI redraws (the
+# "Compacting conversation…" spinner, its settling line, a recap) - every
+# frame changes the tail hash exactly like new work does, so it re-fired
+# `report:<id>` for the SAME already-delivered marker on every poll the
+# redraw kept animating (observed live: an already-delivered `paused:` line,
+# ~every 30s, 2026-10-16; an ack never settled it). Rather than pattern-
+# matching claude's redraw prose (less general, and the fallback ENDED BUSY
+# LATCH itself rejected), this reuses that latch's exact shape: a one-shot
+# per-id stamp, state/.rewake-<id>, set the first time this branch wakes and
+# cleared only by a busy poll (the same busy branch that clears .ended-<id>)
+# or a brand-new marker arriving - on the pane's own dedup, or through
+# ac-done.sh's PUSH channel, which drops the same stamp - so the OLD marker's
+# latch is retired with it, never inherited by the new one.
+# While the latch stands, further hash churn under the unchanged marker is
+# anchored silently - no stamp, no wake - instead of re-firing. FAILS TOWARD
+# WAKING on first sight, same as its sibling: the first hash change after a
+# marker is announced is indistinguishable from real work and still wakes,
+# because the latch starts cleared; only a SECOND change with no busy edge in
+# between is the redraw this arm exists to silence. RESIDUAL, inherited from
+# ENDED BUSY LATCH: a gate-loop round that revises and re-prints the marker
+# entirely inside one AC_POLL interval never crosses a busy sample, so a run
+# of cosmetic redraws right after it stays suppressed until some later round
+# is slow enough to be sampled busy. This channel's markers (`paused:`/
+# `done:` and the like) are not AC_DECISION_RE, so ac-send.sh's steer-clears-
+# the-captain-wait-stamp site (the sibling's other clear point) does not apply
+# here - there is no parked stamp for a steer to answer.
+#
 # ENDED-TURN LOUD WAKE (watch-idle-loud-wake). A pane past AC_STALE with no
 # marker is TWO different situations, and one stale: signal for both is why
 # chiefs learn to discount it: a pane merely quiet while WORKING (soft news,
@@ -2154,9 +2183,9 @@ check_fleet() {
     busy_file="$state_dir/.busy-$id"
     if [ "$busy" = 1 ]; then
       [ -e "$busy_file" ] || printf '%s\n' "$(ac_now)" >"$busy_file"
-      # A busy poll is what clears ENDED BUSY LATCH (header): a genuine new
-      # turn, never a cosmetic redraw, re-arms the ended: arm.
-      rm -f "$state_dir/.ended-$id"
+      # A busy poll is what clears ENDED BUSY LATCH and REWAKE LATCH (header):
+      # a genuine new turn, never a cosmetic redraw, re-arms either arm.
+      rm -f "$state_dir/.ended-$id" "$state_dir/.rewake-$id"
     else
       rm -f "$busy_file" "$state_dir/.busy-stalled-$id"
     fi
@@ -2209,9 +2238,10 @@ check_fleet() {
       seen_hash="$(cat "$state_dir/.seen-hash-$id" 2>/dev/null || true)"
       if ! marker_seen "$marker" "$seen"; then
         printf '%s\n' "$marker" >"$state_dir/.seen-$id"
-        # A NEW marker re-parks the pane: the supersession record covers the
-        # OLD one only, never a standing immunity from being stamped again.
-        rm -f "$state_dir/.superseded-$id"
+        # A NEW marker re-parks the pane: the supersession record and the
+        # re-wake latch both cover the OLD marker only, never a standing
+        # immunity from being stamped again.
+        rm -f "$state_dir/.superseded-$id" "$state_dir/.rewake-$id"
         ac_status_append "$id" "$marker"
         # herdr UI stamp: a captain-wait marker parks the pane BLOCKED until
         # the answering ac-send or a later non-decision marker clears it -
@@ -2271,13 +2301,18 @@ check_fleet() {
         # wake), so this costs no capture and no backend call. The busy guard
         # keeps a working pane (old marker still in its tail) from flapping.
         printf '%s\n' "$hash" >"$state_dir/.seen-hash-$id"
-        if [ -n "$seen_hash" ]; then
+        if [ -n "$seen_hash" ] && [ ! -e "$state_dir/.rewake-$id" ]; then
+          # REWAKE LATCH (header): the cosmetic-redraw sibling of ENDED BUSY
+          # LATCH. Fires once per busy episode; the busy branch above and the
+          # new-marker branch above both clear it, so every further
+          # redraw-only churn here is anchored silently instead of re-firing.
+          touch "$state_dir/.rewake-$id"
           queue_wake report "$id" "$marker (pane advanced since the last wake)"
           emit_reason "report:$id"
           return 0
         fi
-        # PUSH ADOPT (see the PUSH CHANNEL in the header): NO hash was recorded
-        # for this already-seen marker, so no wake of ours consumed it - the
+        # PUSH ADOPT (see the PUSH CHANNEL in the header): when seen_hash was
+        # empty, no wake of ours consumed this already-seen marker - the
         # agent's own push did (ac-done.sh stamps .seen-<id> and cannot know the
         # pane's hash). A missing discriminator is not movement: anchor it to
         # the pane as of now, SILENTLY, and the pane advancing FURTHER re-wakes
