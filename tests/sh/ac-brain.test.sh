@@ -676,6 +676,18 @@ case "$rr" in *'"reranked":true'*) fail "a cut rerank must not stamp reranked" ;
 assert_contains "$rr" "quokka" "...and the fused order still comes back"
 rm -f "$AC_HOME/config/brain.json"; rm -rf "$AC_HOME/data/rr"
 
+# --- recall --deputy names a deputy arm it could not read -------------------
+# A registered deputy whose home holds no brain answered with the local hits
+# alone and no stamp, which reads as "the deputy knows nothing" - while an
+# unknown id already stamped deputy_not_found.
+mkdir -p "$AC_HOME/records" "$TMP/dep-nobrain"
+printf -- '- depnb [domain:x] - a deputy with no brain yet, home: %s\n' "$TMP/dep-nobrain" >"$AC_HOME/records/crewdeputies.md"
+dn="$("$BRAIN" recall --home "$AC_HOME" --query "bound probe page" --deputy depnb --compact)"
+assert_contains "$dn" "deputy_no_brain" "a registered deputy with no brain is named, not read as an empty answer"
+dn="$("$BRAIN" recall --home "$AC_HOME" --query "bound probe page" --deputy nosuch --compact)"
+assert_contains "$dn" "deputy_not_found" "an unknown deputy id is named"
+rm -f "$AC_HOME/records/crewdeputies.md"
+
 # --- a harness refusal sits AFTER the earlier rungs, never over them ----------
 # agy is refused at the harness rung only once the API rung failed: the status
 # keeps that failure (llm_error;harness_refused), and an API rung that answers

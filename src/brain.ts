@@ -79,7 +79,9 @@
 //   fabricated answer.
 // - Deputy reads are explicit only: recall --deputy <id> resolves the
 //   absolute home: path from records/crewdeputies.md and opens that brain
-//   READ-ONLY; there is no cross-brain write path.
+//   READ-ONLY; there is no cross-brain write path. An arm it cannot read is
+//   stamped in search_degraded, never answered as empty: deputy_not_found
+//   (no such id), deputy_no_brain (its home holds no state/brain.sqlite).
 // - Usage log: every verb appends one line to state/brain-usage.jsonl
 //   (home-local, never uploaded) so later demand-signal work has evidence.
 //   Each line carries `by` (who asked): --by wins, else AC_SOLO=1 names a
@@ -1184,7 +1186,7 @@ async function cmdRecall() {
           hits = hits.slice(0, limit);
           ddb.close();
           void saved;
-        }
+        } else degraded = (degraded ? degraded + ";" : "") + "deputy_no_brain";
       } else degraded = (degraded ? degraded + ";" : "") + "deputy_not_found";
     }
   }
