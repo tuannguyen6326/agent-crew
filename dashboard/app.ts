@@ -91,7 +91,7 @@ import {
   BacklogLineFields, BacklogView, FamilyDetail, FamilyPr, FamilyStage, FamilySubtask, 
   LearningLedgerView, LearningPointer, Progress, RoomRow, StageArtifact, THEME_INIT, THEME_VARS, 
   TimelineEvent, UX_BASE, artifactKind, artifactPainted, backlogFamilyIds, boardSystemPanes, buildReviewSrcdoc, 
-  cadenceLabel, chiefFitPx, clampBgDim, composeFamily, contractTokens, deriveProgress, 
+  cadenceLabel, chiefFitPx, clampBgDim, imeOwnsKey, composeFamily, contractTokens, deriveProgress, 
   familyOfTaskId, familyRepos, familyStages, fleetAttnItems, groupArtifacts, isHtmlArtifact, 
   matchBacklog, mermaidPass, nextPalette, nextTheme, normalizeBgColor, parseAgentList, agentStatusMap, parseArtifactPath,
   parseBacklog, parseBacklogLine, parseLearningLedger, parseRoomList, parseTimeline, readerCss,
@@ -5856,6 +5856,7 @@ ${reviewShouldRemount.toString()}
 ${buildReviewSrcdoc.toString()}
 ${pastedPngFile.toString()}
 ${composerEscapeCloses.toString()}
+${imeOwnsKey.toString()}
 ${unreachableNotice.toString()}
 ${noteReceipt.toString()}
 // The iframe's own reader stylesheet, baked once server-side (review-page-missing-markdown-table-css):
@@ -6509,8 +6510,8 @@ document.getElementById("ccancel").addEventListener("click", () => {
   pendingCImage = null; renderImgPreview("cimgprev", "cimgpic", null);
 });
 document.getElementById("ctext").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); document.getElementById("csend").click(); }
-  if (e.key === "Escape" && composerEscapeCloses(e.target.value, !!pendingCImage, e.isComposing)) composer.style.display = "none";
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !imeOwnsKey(e)) { e.preventDefault(); document.getElementById("csend").click(); }
+  if (e.key === "Escape" && composerEscapeCloses(e.target.value, !!pendingCImage, imeOwnsKey(e))) composer.style.display = "none";
 });
 document.getElementById("csend").addEventListener("click", async () => {
   const text = document.getElementById("ctext").value.trim();
@@ -6554,7 +6555,7 @@ if (csendend) csendend.addEventListener("click", async () => {
   refresh(true);
 });
 document.getElementById("cmsg").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  if (e.key === "Enter" && !e.shiftKey && !imeOwnsKey(e)) { e.preventDefault(); sendChat(); }
 });
 const endbtn = document.getElementById("endbtn");
 if (endbtn) endbtn.addEventListener("click", async () => {

@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, imeOwnsKey, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -3651,8 +3651,35 @@ test("review chrome routes the composer's Escape through composerEscapeCloses wi
   const line = handler.slice(0, handler.indexOf("\n});"));
   expect(line).toContain("composerEscapeCloses(");
   expect(line).toContain("pendingCImage");
-  expect(line).toContain("e.isComposing");
+  expect(line).toContain("imeOwnsKey(e)");
   expect(line).not.toMatch(/Escape"\) composer\.style\.display = "none"/);
+});
+
+// The Enter that confirms an IME candidate (Vietnamese Telex, Japanese) used
+// to send the half-composed message: the review chat and the Board's chief
+// composer sent on any plain Enter. WebKit fires compositionend BEFORE that
+// keydown, so isComposing alone reads false there; keyCode 229 still marks it
+// (MDN "Element: keydown event", keydown events with IME).
+test("imeOwnsKey: a composing keydown or the keyCode-229 confirm keydown belongs to the IME", () => {
+  expect(imeOwnsKey({ isComposing: true, keyCode: 13 })).toBe(true);
+  expect(imeOwnsKey({ isComposing: false, keyCode: 229 })).toBe(true);
+  expect(imeOwnsKey({ isComposing: false, keyCode: 13 })).toBe(false);
+  expect(imeOwnsKey({})).toBe(false);
+});
+
+test("every send-on-Enter composer leaves an IME-owned keydown alone", () => {
+  const app = readFileSync(new URL("./app.ts", import.meta.url), "utf8");
+  const handler = (src: string, at: string) => { const h = src.slice(src.indexOf(at)); return h.slice(0, h.indexOf("\n});")); };
+  for (const id of ["cmsg", "ctext"]) {
+    const h = handler(app, `getElementById("${id}").addEventListener("keydown"`);
+    expect(h).toContain("Enter");
+    expect(h).toContain("imeOwnsKey(e)");
+  }
+  expect(app).toContain("${imeOwnsKey.toString()}");
+  const page = readFileSync(new URL("./page.ts", import.meta.url), "utf8");
+  const chief = page.slice(page.indexOf("if(t && t.id==='chief-msg')"));
+  expect(chief.slice(0, chief.indexOf("\n"))).toMatch(/e\.key==='Enter' && !e\.shiftKey && !imeOwnsKey\(e\)/);
+  expect(page).toContain("${imeOwnsKey.toString()}");
 });
 
 // A dead daemon left the review page looking healthy: the session poll just

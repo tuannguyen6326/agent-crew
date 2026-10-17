@@ -4,7 +4,7 @@
 // runs the same bun-tested code.
 import {
   THEME_INIT, THEME_VARS, UX_BASE,
-  boardSystemPanes, cadenceLabel, chiefFitPx, composeFamily, contractTokens,
+  boardSystemPanes, cadenceLabel, chiefFitPx, composeFamily, imeOwnsKey, contractTokens,
   deriveProgress, familyInbox, familyOfTaskId, familyRepos, familyStages, fleetAttnItems,
   groupArtifacts, inboxUnknown, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
   parseBacklogLine, parseTimeline, readerCss, resolvePalette,
@@ -974,6 +974,7 @@ ${inboxUnknown.toString()}
 ${familyInbox.toString()}
 ${verifyProcessRows.toString()}
 ${chiefFitPx.toString()}
+${imeOwnsKey.toString()}
 // Board (dashboard-board): the card join runs the SAME bun-tested joiners the
 // server does - one source of truth, no client re-implementation.
 ${parseBacklogLine.toString()}
@@ -2896,7 +2897,7 @@ function chiefKbToggle(){
 addEventListener('keydown', function(e){
   var t=e.target;
   // Composer: Enter sends, Shift+Enter stays a newline.
-  if(t && t.id==='chief-msg'){ if(chiefKb && e.key!=='Enter'){ chiefKb=false; chiefNote(''); } if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); chiefSendMsg(); return; } }
+  if(t && t.id==='chief-msg'){ if(chiefKb && e.key!=='Enter'){ chiefKb=false; chiefNote(''); } if(e.key==='Enter' && !e.shiftKey && !imeOwnsKey(e)){ e.preventDefault(); chiefSendMsg(); return; } }
   if(!chiefKb || (boardOpenFam===null && !chatRoute())) return;
   var inIme = t && t.id==='chief-ime';
   if(!inIme && t && (t.id==='chief-msg' || t.tagName==='INPUT' || t.tagName==='TEXTAREA')) return;
