@@ -665,6 +665,47 @@ assert_contains "$out" "6/6 passed" "an imported module with an untested starter
 assert_contains "$out" "src/pth.ts is started by a bin script that has no colocated test" "the imported module's widen names the starter mechanism too"
 git -C "$tsrepo" checkout -q -- src/pth.ts
 
+# --- --changed: dashboard/*.ts selects the suites that run the dashboard -----
+#
+# The dashboard's Bun tests run through tests/sh/dashboard.test.sh, the real
+# app.ts boots under the ac-dashboard.sh split-map suites, and
+# ac-contract.test.sh runs lib.ts's backlog-contract twin. A changed Bun test
+# beside the modules selects its wrapper alone, as tests/ts/*.test.ts does.
+dashrepo="$TMP/fixture-changed-dashboard"
+mkdir -p "$dashrepo/dashboard" "$dashrepo/tests/sh"
+git -C "$dashrepo" init -q
+git -C "$dashrepo" config user.email test@test
+git -C "$dashrepo" config user.name test
+printf 'export const a = 1;\n' >"$dashrepo/dashboard/app.ts"
+printf 'import { a } from "./app.ts";\n' >"$dashrepo/dashboard/app.test.ts"
+for t in dashboard ac-contract ac-dashboard-daemon ac-review ac-review-reply ac-other; do
+  printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$dashrepo/tests/sh/$t.test.sh"
+done
+chmod +x "$dashrepo"/tests/sh/*.test.sh
+git -C "$dashrepo" add -A
+git -C "$dashrepo" commit -q -m baseline
+
+printf 'export const b = 2;\n' >>"$dashrepo/dashboard/app.ts"
+res="$(run_runner --changed "$dashrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on a dashboard/*.ts change must still be green"
+for t in dashboard ac-contract ac-dashboard-daemon ac-review ac-review-reply; do
+  assert_contains "$out" "RUNNING $t.test.sh" "a dashboard module change must select $t.test.sh"
+done
+assert_contains "$out" "5/5 passed" "a dashboard module change must select exactly the dashboard's suites"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "a dashboard module change must not select the unrelated ac-other.test.sh" ;;
+esac
+git -C "$dashrepo" checkout -q -- dashboard/app.ts
+
+printf '// touched\n' >>"$dashrepo/dashboard/app.test.ts"
+res="$(run_runner --changed "$dashrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on a dashboard/*.test.ts change must still be green"
+assert_contains "$out" "RUNNING dashboard.test.sh" "a changed dashboard Bun test must select its wrapper"
+assert_contains "$out" "1/1 passed" "a changed dashboard Bun test must select only its wrapper"
+git -C "$dashrepo" checkout -q -- dashboard/app.test.ts
+
 # --- --changed: a clean, fully-committed tree exits non-zero, runs nothing --
 #
 # DEFECT HISTORY: select_changed narrows `tests` in place; an empty

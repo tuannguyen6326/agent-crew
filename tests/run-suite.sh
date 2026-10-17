@@ -59,6 +59,11 @@
 #                split_map's own comment for why that one arm stays manual) -
 #                so a change to either narrows to its real tests instead of
 #                widening (repo-deep-review F29).
+#                A dashboard/*.ts module selects tests/sh/dashboard.test.sh
+#                (its Bun tests), ac-contract.test.sh (lib.ts's
+#                backlog-contract twin) and the ac-dashboard split-map
+#                suites (they boot the real app.ts); a dashboard/*.test.ts
+#                selects the wrapper alone.
 #                WIDEN RULE - a change the mapping cannot confidently narrow
 #                WIDENS to the full set and prints why, never silently
 #                narrowing to nothing:
@@ -117,7 +122,8 @@
 #                     never read as "nothing to run".
 #                Outside a git repo, or with no HEAD yet, --changed falls back
 #                to the full set. A file outside this runner's owned set
-#                (bin/*.sh, src/*.ts, tests/sh/*.sh, tests/ts/*.test.ts) is
+#                (bin/*.sh, src/*.ts, dashboard/*.ts, tests/sh/*.sh,
+#                tests/ts/*.test.ts) is
 #                ignored, like ac-lint ignoring a changed README.
 #                ALWAYS-RUN SET: a non-empty changed set, owned or not, also
 #                selects every guard_suites name (that list's own comment is
@@ -411,6 +417,10 @@ map_owned_file() {
   case "$f" in
     tests/sh/*.test.sh) printf '%s' "${f#tests/sh/}" ;;
     tests/ts/*.test.ts) printf '%s' "src.test.sh" ;;
+    dashboard/*.test.ts) printf '%s' "dashboard.test.sh" ;;
+    # The split-map suites boot the real app.ts, and ac-contract.test.sh runs
+    # lib.ts's backlog-contract twin.
+    dashboard/*.ts) printf '%s %s' "dashboard.test.sh ac-contract.test.sh" "$(split_map "$root" ac-dashboard)" ;;
     src/*.ts)
       # A starter is any bin script with a NON-comment line naming this
       # module: a script that merely names it in a comment (bin/ac-lib.sh,
@@ -515,7 +525,7 @@ SOURCERS
       tests/sh/*.test.sh)
         selected="$selected ${f#tests/sh/}"
         ;;
-      bin/*.sh | src/*.ts | tests/ts/*.test.ts)
+      bin/*.sh | src/*.ts | tests/ts/*.test.ts | dashboard/*.ts)
         mapped="$(map_owned_file "$changed_root" "$f")"
         if [ -n "$mapped" ]; then
           selected="$selected $mapped"
