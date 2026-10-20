@@ -2973,9 +2973,13 @@ xwait_turns() {  # a pane turn or a lane that outlived its caller ends before th
 }
 xworld() {  # what a row may change
   local f
-  (cd "$XW" && { find . -path '*/.git' -prune -o -print 2>/dev/null || true; } | grep -v -e '/log/pane\.done\.' -e '/log/sleep\.log$' | LC_ALL=C sort)
+  # lease/.crew/qa/neutralized-{manifest,stub}: a qa round's own in-lease
+  # record of what it stubbed (ac-qa's dirty-tree exemption reads it); the
+  # frozen bash original predates it and never writes it, so it is a NAMED,
+  # asserted asymmetry (below, mirroring pane.handle), not a silent one.
+  (cd "$XW" && { find . -path '*/.git' -prune -o -print 2>/dev/null || true; } | grep -v -e '/log/pane\.done\.' -e '/log/sleep\.log$' -e '/lease/\.crew/qa/neutralized-' | LC_ALL=C sort)
   (cd "$XW" && { find home lease out log tmp orca e2e-lease -path '*/.git' -prune -o \( -type f -o -type l \) -print 2>/dev/null || true; } \
-    | grep -v -e '^log/pane\.done\.' -e '^log/sleep\.log$' | LC_ALL=C sort) | while IFS= read -r f; do
+    | grep -v -e '^log/pane\.done\.' -e '^log/sleep\.log$' -e '^lease/\.crew/qa/neutralized-' | LC_ALL=C sort) | while IFS= read -r f; do
     if [ -L "$XW/$f" ]; then printf '== %s -> %s\n' "$f" "$(readlink "$XW/$f")"; continue; fi
     printf '== %s %s\n' "$f" "$(ls -l "$XW/$f" 2>/dev/null | cut -c1-10)"
     case "$f" in
@@ -3316,6 +3320,22 @@ assert_eq "$XN_RC" "0" "a round whose lane outlives it publishes"
 # --- 10. qa -----------------------------------------------------------------
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1" xok "${XQA[@]}" "${XQAP[@]}"
 assert_eq "$(sed -n 1p "$XW/out/report.md")" "verdict: passed" "the canonical report is published"
+# The in-lease neutralization manifest + stub (ac-qa's own dirty-tree
+# exemption reads them) are TS-only: the frozen bash original predates the
+# mechanism, which is exactly why xworld() above excludes both paths from
+# the generic equivalence check. Assert the asymmetry directly instead of
+# leaving it unverified, mirroring the pane.handle precedent below.
+XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1" xplus
+XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1" xrun_side "$xobin" xo "${XQA[@]}" "${XQAP[@]}" >/dev/null
+assert_no_file "$XW/lease/.crew/qa/neutralized-manifest" "the frozen bash original must never write the neutralization manifest"
+XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1" xplus
+XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1" xrun_side "$BIN" xn "${XQA[@]}" "${XQAP[@]}" >/dev/null
+assert_file "$XW/lease/.crew/qa/neutralized-manifest" "the port's own lease must carry the neutralization manifest"
+assert_file "$XW/lease/.crew/qa/neutralized-stub" "...and the stub bytes it recorded"
+assert_eq "$(cat "$XW/lease/.crew/qa/neutralized-manifest" | tr '\0' '\n')" "$XW/lease/CLAUDE.md" \
+  "the manifest names exactly the path this round neutralized"
+assert_contains "$(cat "$XW/lease/.crew/qa/neutralized-stub")" "Neutralized by ac-verify" \
+  "the recorded stub is ac-verify's own neutralization text"
 for xo in failed unverifiable; do XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_QA_OUTCOME=$xo" xok "${XQA[@]}" "${XQAP[@]}"; done
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_QA_CLAIM=failed" xfails "pane verdict failed disagrees with durable run outcome passed" "${XQA[@]}" "${XQAP[@]}"
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_QA_OUTCOME=cancelled VERIFY_QA_OMIT_CLAIM=1" xfails "durable QA run is cancelled" "${XQA[@]}" "${XQAP[@]}"

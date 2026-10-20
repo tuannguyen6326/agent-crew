@@ -284,6 +284,13 @@
 // ac-sync model). A status that cannot be READ is refused too, never taken for
 // clean: an unreadable tree is not evidence of a committed one, and this guard is
 // what stands between a qa pass and a run that exercised something else.
+// EXEMPTION: a verifier round running inside this same lease stubs CLAUDE.md /
+// AGENTS.md (ac-verify's context neutralization) and records exactly which
+// paths plus the exact stub bytes at .crew/qa/neutralized-manifest and
+// neutralized-stub; a tracked-file modification is exempt ONLY when its path
+// is in that manifest AND its current content is still byte-identical to the
+// recorded stub - a path absent from the manifest, a manifest absent entirely,
+// or a neutralized path whose content has since changed all still refuse.
 // In production the `agent` verb runs from a fresh pool worktree
 // detached at the target, so HEAD == target_sha by construction; this guard is
 // what makes that a proof, not a convention.
@@ -1613,6 +1620,46 @@ function teeRun(argv: string[], cwd: string, log: string, toStderr = false): num
   return run(["/bin/bash", "--posix", "-c", pipeline, "ac-qa.sh", cwd, log, ...argv], { stdout: "inherit" }).status;
 }
 
+// The exact paths ac-verify's context neutralization stubbed THIS round, or
+// null when no manifest exists (a plain qa run, or a round that stubbed
+// nothing) - the guard reads that absence as "exempt nothing", never "exempt
+// everything".
+function neutralizedManifestPaths(): Set<string> | null {
+  const manifest = `${repo}/.crew/qa/neutralized-manifest`;
+  const raw = readText(manifest);
+  if (raw === null) return null;
+  const paths = raw.split("\0");
+  paths.pop();
+  return new Set(paths);
+}
+
+// A path is exempt only while its bytes are still exactly what ac-verify
+// wrote - any further edit (including a non-stub edit of a neutralized path)
+// is a real change and must still refuse.
+function isNeutralizedStub(absPath: string): boolean {
+  const stub = readText(`${repo}/.crew/qa/neutralized-stub`);
+  if (stub === null) return false;
+  return readText(absPath) === stub;
+}
+
+// Drops exactly the porcelain lines this round's neutralization manifest
+// accounts for (unstaged modification of a listed path whose content is
+// still the recorded stub); every other line - including a non-stub edit of
+// a neutralized path - passes through untouched.
+function dirtyResidual(porcelain: string): string {
+  if (porcelain === "") return "";
+  const manifest = neutralizedManifestPaths();
+  if (manifest === null) return porcelain;
+  const residual: string[] = [];
+  for (const line of porcelain.split("\n")) {
+    if (line === "") continue;
+    const absPath = `${repo}/${line.slice(3)}`;
+    if (line.slice(0, 2) === " M" && manifest.has(absPath) && isNeutralizedStub(absPath)) continue;
+    residual.push(line);
+  }
+  return residual.join("\n");
+}
+
 // TARGET-CHECKOUT BINDING: the checkout the cases exercise IS the target.
 function assertTargetCheckout(tsha: string): void {
   const head = run(["git", "-C", repo, "rev-parse", "HEAD"], { stderr: "ignore" });
@@ -1623,9 +1670,10 @@ function assertTargetCheckout(tsha: string): void {
     );
   const dirty = run(["git", "-C", repo, "status", "--porcelain", "-uno"], { stderr: "ignore" });
   if (dirty.status !== 0) fail(`target-checkout: cannot read the worktree state in ${repo} (failing closed - an unreadable status is not a clean tree)`);
-  if (cap(dirty.out) !== "")
+  const residual = dirtyResidual(cap(dirty.out));
+  if (residual !== "")
     fail(
-      `target-checkout DIRTY: uncommitted changes to tracked files, so the exercised code is not commit ${tsha}:\n${cap(dirty.out)}\nCommit or discard them before a qa run (untracked and .crew/ artifacts are ignored).`,
+      `target-checkout DIRTY: uncommitted changes to tracked files, so the exercised code is not commit ${tsha}:\n${residual}\nCommit or discard them before a qa run (untracked and .crew/ artifacts are ignored).`,
     );
 }
 

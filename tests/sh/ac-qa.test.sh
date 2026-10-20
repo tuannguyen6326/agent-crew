@@ -2223,6 +2223,93 @@ assert_contains "$("$QA" status)" "target=$sha_A" \
 "$QA" finish cancelled >/dev/null
 rm -f "$bindrepo/untracked.txt"
 
+# --- target-checkout binding: ac-verify's own context-neutralization stubs
+# are exempt from the dirty-tree refusal - EXACTLY the paths this round's
+# manifest names, and ONLY while their bytes are still the recorded stub.
+neutrepo="$(make_repo neutr)"
+printf 'qa:\n  serve: "echo neutr-serve; sleep 30"\n  health: "true"\n  health_timeout: 5\n' \
+  >"$AC_HOME/projects/neutr.yaml"
+printf 'o\n' >"$neutrepo/other.txt"
+printf 'project instructions\n' >"$neutrepo/CLAUDE.md"
+printf 'agent instructions\n' >"$neutrepo/AGENTS.md"
+git -C "$neutrepo" add -A && git -C "$neutrepo" commit -qm 'instruction files'
+nsha="$(git -C "$neutrepo" rev-parse HEAD)"
+cd "$neutrepo" || fail "cd neutrepo"
+nstub="# Neutralized by ac-verify: project instruction files must not steer the independent verifier. True content: git show $nsha:<path>"
+
+# neutr_stub_all - emulate ac-verify's own CONTEXT NEUTRALIZATION for THIS
+# round, byte for byte: both instruction files overwritten with the exact
+# stub text src/verify.ts writes, and the in-lease manifest + stub recorded
+# exactly as that one producer records them; this fixture only plays back
+# its known output.
+neutr_stub_all() {
+  printf '%s\n' "$nstub" >"$neutrepo/CLAUDE.md"
+  printf '%s\n' "$nstub" >"$neutrepo/AGENTS.md"
+  mkdir -p "$neutrepo/.crew/qa"
+  printf '%s\n' "$nstub" >"$neutrepo/.crew/qa/neutralized-stub"
+  printf '%s\0%s\0' "$neutrepo/CLAUDE.md" "$neutrepo/AGENTS.md" >"$neutrepo/.crew/qa/neutralized-manifest"
+}
+
+# (F) start passes with both instruction files neutralized, and finish passed
+#     RE-PROVES the same exemption instead of refusing its own stub.
+neutr_stub_all
+"$QA" start --target "$nsha" --task neutr-ok >/dev/null \
+  || fail "start must exempt ac-verify's own neutralization stub"
+qa_case N-1 pass api --grade A >/dev/null
+mk_png "$TMP/neutr-ok.png"
+"$QA" visual "$TMP/neutr-ok.png" --case N-1 >/dev/null
+prepare_pass
+"$QA" finish passed >/dev/null \
+  || fail "finish passed must re-prove the binding with the same exemption"
+
+# (G) a REAL edit of a neutralized path (content no longer the recorded
+#     stub) is a real change and still refuses - at start, and when it lands
+#     mid-round, before finish passed mints anything.
+neutr_stub_all
+printf 'captain edit\n' >"$neutrepo/CLAUDE.md"
+assert_fails_with CLAUDE.md -- "$QA" start --target "$nsha" --task neutr-nonstub-start
+neutr_stub_all
+"$QA" start --target "$nsha" --task neutr-nonstub-finish >/dev/null
+qa_case N-2 pass api --grade A >/dev/null
+mk_png "$TMP/neutr-nonstub.png"
+"$QA" visual "$TMP/neutr-nonstub.png" --case N-2 >/dev/null
+prepare_pass
+printf 'captain edit after start\n' >"$neutrepo/CLAUDE.md"   # drifts off the recorded stub mid-round
+assert_fails_with CLAUDE.md -- "$QA" finish passed
+"$QA" finish cancelled >/dev/null
+
+# (H) an edit to an UNLISTED tracked file still refuses even while a valid
+#     manifest exempts the instruction files, and the refusal names only the
+#     real edit - never the exempted paths.
+neutr_stub_all
+printf 'o2\n' >>"$neutrepo/other.txt"
+out_h="$("$QA" start --target "$nsha" --task neutr-other-start 2>&1 1>/dev/null || true)"
+assert_contains "$out_h" "other.txt" "an edit outside the manifest still refuses"
+case "$out_h" in
+  *CLAUDE.md*|*AGENTS.md*) fail "an exempted instruction file must not appear in the residual refusal: $out_h" ;;
+esac
+git -C "$neutrepo" checkout -q -- other.txt
+neutr_stub_all
+"$QA" start --target "$nsha" --task neutr-other-finish >/dev/null
+qa_case N-3 pass api --grade A >/dev/null
+mk_png "$TMP/neutr-other.png"
+"$QA" visual "$TMP/neutr-other.png" --case N-3 >/dev/null
+prepare_pass
+printf 'o3\n' >>"$neutrepo/other.txt"
+assert_fails_with other.txt -- "$QA" finish passed
+git -C "$neutrepo" checkout -q -- other.txt
+"$QA" finish cancelled >/dev/null
+
+# (I) FAIL CLOSED: the exact stub bytes with NO manifest recorded for this
+#     round (ac-verify never ran here) still refuse - content alone never
+#     proves a path was neutralized THIS round.
+rm -rf "$neutrepo/.crew/qa"
+printf '%s\n' "$nstub" >"$neutrepo/CLAUDE.md"
+printf 'agent instructions\n' >"$neutrepo/AGENTS.md"
+assert_fails_with CLAUDE.md -- "$QA" start --target "$nsha" --task neutr-nomanifest
+git -C "$neutrepo" checkout -q -- CLAUDE.md AGENTS.md
+cd "$repo" || fail "cd back from neutrepo"
+
 # --- config-proposal: the config self-discovery renderer, HOME-targeted -------------
 # The agent composes the FULL proposed config on stdin; the verb diffs it vs
 # the resolved config into .crew/qa/ and instructs a cp into the fleet-home

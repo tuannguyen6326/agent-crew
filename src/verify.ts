@@ -44,9 +44,12 @@
 // CLAUDE.local.md / AGENTS.md in any letter case, at any depth, tracked or
 // untracked - the diff under review can edit the very files the harness loads
 // as identity before the prompt speaks; a path the walk yields outside the
-// lease is refused before any write) and restores their pre-round bytes before
-// the lease is released, on every exit path, so no stub rides a pooled slot
-// into its next lessee, and runs one ac-pane-agent turn synchronously. A valid
+// lease is refused before any write; for a qa round, the stubbed paths and
+// the exact stub bytes are also recorded at <lease>/.crew/qa/neutralized-* so
+// ac-qa's own dirty-tree check, running inside this same lease mid-round, can
+// exempt exactly its own pending stubs) and restores their pre-round bytes
+// before the lease is released, on every exit path, so no stub rides a pooled
+// slot into its next lessee, and runs one ac-pane-agent turn synchronously. A valid
 // result is durably captured before pane/meta/tree cleanup. A REJECTED verdict
 // (the pane completed and its round evidence is durable, only the output
 // failed the schema) releases those same runtime resources - the pane, the
@@ -1929,9 +1932,25 @@ fix delta touches.`;
     }
     writeOrExit(`${S.ctxBackup}/manifest`, `${neutralized}\t${f}\0`, "a");
   }
+  const stubContent = `${NEUTRALIZED_MARK} project instruction files must not steer the independent verifier. True content: git show ${sha}:<path>\n`;
   for (const f of walk) {
     if (isLink(f)) must(["rm", "-f", f]);
-    writeOrExit(f, `${NEUTRALIZED_MARK} project instruction files must not steer the independent verifier. True content: git show ${sha}:<path>\n`);
+    writeOrExit(f, stubContent);
+  }
+
+  // QA_NEUTRALIZED_EXEMPTION: ac-qa's own assertTargetCheckout runs INSIDE
+  // this same lease mid-round (start/finish), and would otherwise refuse
+  // these stubs as a dirty tracked file. .crew/qa is the pool's own
+  // lease-lifetime home (tree.ts sweeps it only at the NEXT lease, never
+  // mid-round), so recording exactly which paths were stubbed - and the
+  // exact bytes - there lets that check recognize its own pending
+  // verification without trusting any file that merely looks neutralized.
+  if (kind === "qa" && neutralized > 0) {
+    const qaDir = `${lease}/.crew/qa`;
+    if (run(["mkdir", "-p", qaDir]).status === 0) {
+      writeOrExit(`${qaDir}/neutralized-stub`, stubContent);
+      writeOrExit(`${qaDir}/neutralized-manifest`, walk.map((f) => `${f}\0`).join(""));
+    }
   }
 
   // A qa --profile with an e2e block leases a SECOND worktree at the frozen
