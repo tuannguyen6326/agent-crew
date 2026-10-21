@@ -772,6 +772,40 @@ i=0
 while kill -0 "$qa_member" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
 if kill -0 "$qa_member" 2>/dev/null; then kill "$qa_member"; fail "finish must TERM the recorded group's surviving member"; fi
 assert_no_file "$reuse_run/serve.pid" "finish retires the serve.pid"
+
+# finish's grace: a group that EXITS on SIGTERM lets finish return well
+# under the 10s grace - the poll returns as soon as the group is gone,
+# instead of always spinning out the full window.
+set -m
+bash -c 'exec sleep 30' &
+qa_fast=$!
+set +m
+kill -0 "$qa_fast" 2>/dev/null || fail "fixture broken: the fast group must start alive"
+printf '%s\n' "$qa_fast" >"$reuse_run/serve.pid"
+SECONDS=0
+"$QA" finish failed </dev/null >/dev/null
+fast_elapsed=$SECONDS
+if kill -0 "$qa_fast" 2>/dev/null; then kill -9 "$qa_fast"; fail "finish must leave a SIGTERM-honoring group dead"; fi
+[ "$fast_elapsed" -le 4 ] || fail "finish waited ${fast_elapsed}s for a group that died on SIGTERM - the grace poll must return as soon as the group is gone, not spin to the full 10s"
+assert_no_file "$reuse_run/serve.pid" "finish retires the serve.pid (fast exit)"
+
+# finish's grace: a group that IGNORES SIGTERM (trap '' TERM, a SIG_IGN
+# disposition inherited across exec into the real command) still dies - the
+# grace poll exhausts its 10s, then finish escalates to SIGKILL before
+# dropping serve.pid.
+set -m
+bash -c 'trap "" TERM; exec sleep 30' &
+qa_ignorer=$!
+set +m
+kill -0 "$qa_ignorer" 2>/dev/null || fail "fixture broken: the SIGTERM-ignoring group must start alive"
+printf '%s\n' "$qa_ignorer" >"$reuse_run/serve.pid"
+SECONDS=0
+"$QA" finish failed </dev/null >/dev/null
+slow_elapsed=$SECONDS
+if kill -0 "$qa_ignorer" 2>/dev/null; then kill -9 "$qa_ignorer"; fail "finish must SIGKILL a group that outlives the grace"; fi
+[ "$slow_elapsed" -ge 9 ] || fail "finish killed a SIGTERM-ignoring group after only ${slow_elapsed}s - the 10s grace must run before escalating"
+assert_no_file "$reuse_run/serve.pid" "finish retires the serve.pid (after escalation)"
+
 assert_fails "$QA" curation failed
 "$QA" curation completed >/dev/null
 cd "$repo" || fail "cd back from qareuse"

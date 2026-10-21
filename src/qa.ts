@@ -350,7 +350,9 @@
 // pass writes no merge marker. Non-passing outcomes remain recordable. The
 // verifier facade reconciles the run, atomically publishes canonical report.md,
 // and keeps relay-report.md as a separate transport checklist.
-// finish ALWAYS tears down the serve process group + infra and emits:
+// finish ALWAYS tears down the serve process group + infra - SIGTERM, up to
+// a 10s grace poll of the group's liveness, then SIGKILL if it is still
+// alive - and emits:
 //   QA_VERDICT= QA_TOTAL= QA_PASSED= QA_FAILED= QA_UNVERIFIABLE= QA_FLAKY=
 //   QA_VISUALS= QA_REPORT= QA_RUN_ID= SERVICE_LAUNCHED=
 //
@@ -1210,6 +1212,18 @@ const signal0 = (pid: number): boolean => {
     return false;
   }
 };
+
+// The group; the lone-pid fallback only matters when the group signal
+// itself fails (the pid now belongs to an unrelated process or group).
+function qaKillGroup(pid: string, sig: "SIGTERM" | "SIGKILL"): void {
+  try {
+    process.kill(-Number(pid), sig);
+  } catch {
+    try {
+      process.kill(Number(pid), sig);
+    } catch {}
+  }
+}
 
 type Identity = { source: string; profile: string; serve: string; health: string; desc: string };
 function qaRuntimeIdentity(rd: string): Identity {
@@ -3948,13 +3962,13 @@ function cmdFinish(a: string[]): void {
     if (spid === null) fatal(1);
     const pid = cap(spid!);
     if (qaPgidAlive(pid)) {
-      try {
-        process.kill(-Number(pid), "SIGTERM");
-      } catch {
-        try {
-          process.kill(Number(pid), "SIGTERM");
-        } catch {}
-      }
+      qaKillGroup(pid, "SIGTERM");
+      // A runtime that treats the first SIGTERM as "begin a graceful drain"
+      // rather than "exit now" gets this fixed window to act on it before
+      // escalation - fixed, never a config knob.
+      const graceUntil = Date.now() + 10_000;
+      while (qaPgidAlive(pid) && Date.now() < graceUntil) Bun.sleepSync(100);
+      if (qaPgidAlive(pid)) qaKillGroup(pid, "SIGKILL");
     }
     rm(`${rd}/serve.pid`);
   }
