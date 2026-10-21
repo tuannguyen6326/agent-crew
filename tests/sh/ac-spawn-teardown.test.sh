@@ -2302,7 +2302,7 @@ case "$err" in *"kept crew/race1"*) fail "a 0-commit branch must not stay kept o
 assert_eq "$(git -C "$repo" branch --list crew/race1)" "" \
   "the branch drops once the stale registration is cleared, with no race to time"
 
-# The OTHER shape of the same cause (roomchief review F1): whether
+# The OTHER shape of the same cause: whether
 # `orca worktree rm` removes the directory before it returns is NOT
 # established (its own --help: "Remove a worktree from Orca and git",
 # nothing about ordering) - so the clear must not key on the directory being
