@@ -2302,6 +2302,37 @@ case "$err" in *"kept crew/race1"*) fail "a 0-commit branch must not stay kept o
 assert_eq "$(git -C "$repo" branch --list crew/race1)" "" \
   "the branch drops once the stale registration is cleared, with no race to time"
 
+# The OTHER shape of the same cause (roomchief review F1): whether
+# `orca worktree rm` removes the directory before it returns is NOT
+# established (its own --help: "Remove a worktree from Orca and git",
+# nothing about ordering) - so the clear must not key on the directory being
+# gone. A no-op orca stand-in reproduces a release that reports SUCCESS
+# without removing anything: the worktree, its directory and git's
+# registration all still there, exactly as the incident's own race would
+# look mid-flight.
+mkdir -p "$TMP/orca-noop"
+cat >"$TMP/orca-noop/orca" <<EOF
+#!/bin/sh
+if [ "\$1 \$2" = "worktree rm" ] && [ -e "$TMP/orca-noop.active" ]; then
+  printf '{"ok":true,"result":{}}\n'
+  exit 0
+fi
+exec "$TMP/stubbin/orca" "\$@"
+EOF
+chmod +x "$TMP/orca-noop/orca"
+"$BIN/ac-brief.sh" race2 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" race2 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn for the async-release fixture must succeed"
+race2_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/race2.meta" | head -1)"
+: >"$TMP/orca-noop.active"
+err="$(PATH="$TMP/orca-noop:$PATH" "$BIN/ac-teardown.sh" race2 2>&1)" \
+  || fail "the async-release fixture's teardown must succeed: $err"
+rm -f "$TMP/orca-noop.active"
+case "$err" in *"kept crew/race2"*) fail "a 0-commit branch must not stay kept when orca reports success before removing the worktree: $err" ;; esac
+assert_eq "$(git -C "$repo" branch --list crew/race2)" "" \
+  "the branch drops once a SUCCESSFUL release's still-registered worktree is force-cleared"
+[ ! -d "$race2_wt" ] || fail "the worktree directory itself must be gone too, once force-cleared"
+
 # cause 2: an explicit --base-branch cut from a branch the primary's own
 # HEAD/upstream does not contain is recorded in the meta (lease_base=) so a
 # 0-commit branch cut from it can be proven contained in THAT base and

@@ -279,11 +279,15 @@
 //    run gets here) `WARN: no project_dir recorded for <id> - <branch> was not
 //    looked for; drop it by hand in the repository that holds it`; else only
 //    while refs/heads/<branch> exists in project_dir: with
-//    worktree_backend=orca and the orca worktree dir now gone, `git worktree
-//    remove <wt>` first (best effort, ignored either way) - a stale
-//    registration from a directory already gone must not survive to refuse the
-//    drop below, whether orca's release raced git's deregistration or never
-//    called it at all. Then: `git branch -d`, or -D when the epic fence names a
+//    worktree_backend=orca, worktree set, a release that was attempted and did
+//    NOT fail (skipped because the dir was already gone counts as not-failed
+//    too), and git's OWN `worktree list --porcelain` still naming the path -
+//    directory gone or not, ordering unproven either way (orca worktree rm
+//    --help says only "Remove a worktree from Orca and git") - `git worktree
+//    remove --force <wt>` first (best effort): the task's landed-work gate
+//    already ran, so nothing here is unproven to discard. A release that
+//    attempted and FAILED is left alone - its own WARN already fired, nothing
+//    second-guesses it. Then: `git branch -d`, or -D when the epic fence names a
 //    branch (heads, then origin) containing it, OR - only with NO fence
 //    recorded at all (not even an unreadable ledger) and the meta's lease_base
 //    (an explicit --base-branch) naming a DIFFERENT branch than <branch> itself
@@ -1347,22 +1351,37 @@ async function main(): Promise<void> {
       } else if (run([`${bin}/ac-tree.sh`, "return", lease, "--force"].map(u8), quiet).status !== 0) say(`could not return worktree ${lease}; check the pool with ac-tree.sh list`);
     }
 
+    let orcaReleaseFailed = false;
     if (wtBackend === "orca" && worktree !== "" && isDir(worktree)) {
       sweepPaneAgents(worktree);
       portSlotRelease(u8(worktree));
-      if (!orcaWorktreeRelease(u8(worktree))) say(`could not remove orca worktree ${worktree} (remove by hand: orca worktree rm --worktree path:${worktree} --force)`);
+      orcaReleaseFailed = !orcaWorktreeRelease(u8(worktree));
+      if (orcaReleaseFailed) say(`could not remove orca worktree ${worktree} (remove by hand: orca worktree rm --worktree path:${worktree} --force)`);
     }
 
     if (projectDir === "") say(`no project_dir recorded for ${id} - ${branch} was not looked for; drop it by hand in the repository that holds it`);
     else if (git(projectDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], { out: "ignore" }).status === 0) {
-      // Orca's own release can leave git's worktree registration stale for a
-      // directory already gone (measured: `git branch -d` then refuses "used
-      // by worktree" against the registration alone, with no live worktree
-      // behind it) - whether that is a release/deregister race or orca never
-      // calling `git worktree remove` for it. `git worktree remove <path>` on
-      // an already-missing directory clears it with no race to time, so the
-      // drop below never depends on which one happened.
-      if (wtBackend === "orca" && worktree !== "" && !isDir(worktree)) git(projectDir, ["worktree", "remove", worktree], quiet);
+      // Whether `orca worktree rm` removes the directory before it returns is
+      // NOT established (its own --help: "Remove a worktree from Orca and
+      // git", nothing about ordering) - so this never keys on the directory.
+      // It keys on git's OWN worktree list instead: skipped release (the dir
+      // was already gone - the release block above never ran) or a release
+      // that reported success leaves nothing proven unsafe here (teardown's
+      // landed-work gate already ran for the whole task), so while git still
+      // lists the path - directory gone or not - `git worktree remove
+      // --force` clears it with no race to time. Only a release that
+      // ATTEMPTED and FAILED is left alone: that WARN already fired above,
+      // and nothing here second-guesses orca's own refusal.
+      if (
+        wtBackend === "orca" &&
+        worktree !== "" &&
+        !orcaReleaseFailed &&
+        git(projectDir, ["worktree", "list", "--porcelain"], { out: "pipe" })
+          .out.toString("latin1")
+          .split("\n")
+          .includes(`worktree ${worktree}`)
+      )
+        git(projectDir, ["worktree", "remove", "--force", worktree], quiet);
       let flag = "-d";
       const e = epicBaseFor(u8(id), u8(basename(projectDir)));
       if (e.rc === 2) say(`cannot read the ledger to resolve the epic-branch fence for ${id} - ${branch} is deleted only if -d proves it merged`);
