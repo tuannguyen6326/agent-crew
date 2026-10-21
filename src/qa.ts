@@ -3892,7 +3892,7 @@ function cmdAgent(a: string[]): void {
     if (effort !== "") args.push("--effort", effort);
   }
   if (round > 1 && nonEmpty(previous)) args.push("--history", previous);
-  if (run([verify, ...args], { stdout: "ignore" }).status !== 0) fail(`independent QA round ${round} failed; inspect verifier state and ${result}`);
+  if (withHome(qaHome, () => run([verify, ...args], { stdout: "ignore" })).status !== 0) fail(`independent QA round ${round} failed; inspect verifier state and ${result}`);
   if (jq(["-e", "--arg", "ref", targetSha, RESULT_JQ, result], { stdout: "ignore" }).status !== 0) fail(`QA verifier result is invalid or does not bind the exact target: ${result}`);
   const verdictOf = (): string => cap(jq(["-r", ".verdict", result]).out);
   if (cap(jq(["-r", ".report", result]).out) !== report || !nonEmpty(report) || cap(firstLine(run(["sed", "-n", "1p", report]).out)) !== `verdict: ${verdictOf()}`)

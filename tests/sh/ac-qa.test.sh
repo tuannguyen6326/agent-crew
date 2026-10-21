@@ -1129,9 +1129,12 @@ printf 'Exercise the acceptance criteria.\n' >"$qa_brief"
 qa_evidence="$TMP/qa-agent-evidence"
 export QA_VERIFY_LOG="$TMP/qa-verify.log"
 export QA_BRIEF_CAPTURE="$TMP/qa-agent-charter.md"
+export QA_VERIFY_HOME_LOG="$TMP/qa-verify-home.log"
 cat >"$TMP/stub/ac-verify" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'AC_HOME=%s\n' "${AC_HOME:-<unset>}" >>"$QA_VERIFY_HOME_LOG"
+[ -n "${AC_HOME:-}" ] || { echo "ERROR: AC_HOME is not set" >&2; exit 1; }
 printf '%s\n' "$*" >>"$QA_VERIFY_LOG"
 [ "$1" = qa ] || exit 2
 shift
@@ -1215,6 +1218,15 @@ call="$(tail -n 1 "$QA_VERIFY_LOG")"
 assert_contains "$call" "--history $repo/.crew/qa/agent-ag-1-r1.json" "later QA carries structured history"
 assert_contains "$call" "--profile $repo/.crew/qa/agent-ag-1-r2.profile/profile.json" "each round freezes its own profile"
 case "$call" in *--resume*|*--replace-pane*) fail "QA adapter must not own pane/session lifecycle" ;; esac
+
+# Regression: `--home` alone, with no AC_HOME in the caller's env, must still
+# reach the spawned verifier - cmd_agent threads AC_HOME=<resolved home> into
+# that child itself.
+rm -f "$QA_VERIFY_HOME_LOG"
+out="$(env -u AC_HOME AC_CREW_ID=qa-flow-implement AC_FLEET_SCOPE=qa-flow AC_VERIFY_BIN="$TMP/stub/ac-verify" \
+  "$QA" agent --target HEAD --task ag-home --home "$AC_HOME" --brief "$qa_brief" --evidence "$TMP/qa-agent-home-evidence")"
+assert_contains "$out" "verdict: passed" "--home threads AC_HOME to the verifier with no AC_HOME in the caller's env"
+assert_eq "$(cat "$QA_VERIFY_HOME_LOG")" "AC_HOME=$AC_HOME" "the spawned verifier receives the --home-resolved AC_HOME"
 
 # Routed panes.qa is an explicit execution-caller decision. Omission or a bad
 # selector fails before the verifier stub is invoked; a valid selection is
