@@ -2281,6 +2281,81 @@ if [ "$(id -u)" != 0 ]; then
   rm -rf "$AC_HOME/data/oep"
 fi
 
+# teardown-keeps-empty-crew-branch-on-orca-base-branch, cause 1: the branch
+# drop reads git's own worktree registration, which can still hold a stale
+# entry for a directory that is already gone - whether orca's release raced
+# git's deregistration, or simply never called `git worktree remove` for it.
+# Measured: `git branch -d` then refuses "used by worktree" against the
+# administrative entry alone, and `git worktree remove <path>` on an
+# already-missing directory clears it with no race to time - so the fixture
+# below reproduces the STATE (a worktree git still lists whose directory is
+# gone) rather than the timing, and the fix must not care which produced it.
+"$BIN/ac-brief.sh" race1 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" race1 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn for the race fixture must succeed"
+race_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/race1.meta" | head -1)"
+rm -rf "$race_wt"
+git -C "$repo" worktree list --porcelain | grep -qF "worktree $race_wt" \
+  || fail "fixture: git must still list the removed worktree (the stale-registration shape)"
+err="$("$BIN/ac-teardown.sh" race1 2>&1)" || fail "the race fixture's teardown must succeed: $err"
+case "$err" in *"kept crew/race1"*) fail "a 0-commit branch must not stay kept over a stale worktree registration alone: $err" ;; esac
+assert_eq "$(git -C "$repo" branch --list crew/race1)" "" \
+  "the branch drops once the stale registration is cleared, with no race to time"
+
+# cause 2: an explicit --base-branch cut from a branch the primary's own
+# HEAD/upstream does not contain is recorded in the meta (lease_base=) so a
+# 0-commit branch cut from it can be proven contained in THAT base and
+# escalated to -D, instead of being judged "not fully merged" against a HEAD
+# it was never cut from.
+git -C "$repo" checkout -qb lbbase
+printf 'lbbase marker\n' >"$repo/lbbase.txt"
+git -C "$repo" add lbbase.txt
+git -C "$repo" commit -qm "lbbase marker"
+git -C "$repo" checkout -q main
+"$BIN/ac-brief.sh" lb1 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" lb1 "$repo" --harness fake --mode local-only --base-branch lbbase >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn with --base-branch must succeed on the fake orca"
+assert_eq "$(sed -n 's/^lease_base=//p' "$AC_HOME/state/lb1.meta")" "lbbase" \
+  "the lease base branch is recorded in the meta for teardown's containment proof"
+"$BIN/ac-teardown.sh" lb1 --force >/dev/null 2>&1
+assert_eq "$(git -C "$repo" branch --list crew/lb1)" "" \
+  "a 0-commit branch cut from the recorded lease base is deleted (-D), not kept as 'not fully merged'"
+
+# The guard: a branch with its OWN unlanded commit past that base is still
+# KEPT - the relaxation must never cost work (isAncestor fails naturally once
+# the branch carries a commit the base does not).
+"$BIN/ac-brief.sh" lb2 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" lb2 "$repo" --harness fake --mode local-only --base-branch lbbase >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn with --base-branch must succeed on the fake orca"
+lb2wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/lb2.meta" | head -1)"
+printf 'own work\n' >"$lb2wt/lb2.txt"
+git -C "$lb2wt" add lb2.txt
+git -C "$lb2wt" -c user.email=t@t -c user.name=t commit -qm "lb2 own work"
+err="$("$BIN/ac-teardown.sh" lb2 --force 2>&1)" || fail "the guard fixture's forced teardown must still succeed: $err"
+assert_contains "$err" "kept crew/lb2" "the branch-drop step still refuses a branch with its own commit past the base"
+assert_eq "$(git -C "$repo" branch --list crew/lb2)" "  crew/lb2" \
+  "a branch with its OWN commit past the recorded lease base is kept, not escalated to -D"
+git -C "$repo" branch -D crew/lb2 lbbase >/dev/null 2>&1
+
+# The sharper guard: --base-branch naming the task's OWN family branch. A
+# live sibling may legitimately continue crew/<family> (the delivery-review
+# skill's fresh-execution recovery), so nothing refuses this at spawn - the
+# teardown side must refuse it instead, because isAncestor(x,x) is always
+# true and would otherwise -D the WHOLE family branch, unlanded commits
+# included. Built directly (no spawn): the escalation guard is teardown's
+# own, independent of how lease_base came to equal the branch.
+git -C "$repo" checkout -qb crew/lb3 main
+printf 'lb3 unlanded work\n' >"$repo/lb3.txt"
+git -C "$repo" add lb3.txt
+git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "lb3 unlanded work"
+git -C "$repo" checkout -q main
+printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nlease_base=crew/lb3\n' "$repo" >"$AC_HOME/state/lb3.meta"
+err="$("$BIN/ac-teardown.sh" lb3 --force 2>&1)" || fail "the self-reference fixture's forced teardown must still succeed: $err"
+assert_contains "$err" "kept crew/lb3" "a --base-branch naming the task's OWN family branch must never self-merge"
+assert_eq "$(git -C "$repo" branch --list crew/lb3)" "  crew/lb3" \
+  "the WHOLE family branch survives - isAncestor(x,x) must never read as proof of containment"
+git -C "$repo" branch -D crew/lb3 >/dev/null 2>&1
+
 printf 'herdr\n' >"$AC_HOME/config/backend"
 
 # --- landed proof: PR merged OR the captain's pr-ready acceptance -------------

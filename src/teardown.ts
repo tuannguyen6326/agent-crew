@@ -87,11 +87,13 @@
 // entered physically and state/ minted. No regular file state/<id>.meta is
 // `ERROR: no crewmate meta for <id>`; an unreadable one is `WARN: cannot read
 // meta file <meta>`, exit 1. Read: kind, worktree, worktree_backend, leases
-// (empty: worktree= is the list), lease_ids, project_dir. With
+// (empty: worktree= is the list), lease_ids, project_dir, lease_base. With
 // worktree_backend=orca the orca worktree leaves leases (the whole list when
 // it is the only one, else its `<wt>:` prefix) and its id slot is popped from
 // lease_ids ONLY when both lists hold as many `:` (a legacy list is one id
-// short and keeps every id). The branch is crew/<family>. AC_BACKEND becomes
+// short and keeps every id). lease_base (spawn.ts: an explicit --base-branch)
+// is absent on every meta that never named one - older tasks and herdr leases
+// read exactly as before. The branch is crew/<family>. AC_BACKEND becomes
 // the meta's backend= (herdr without one) for every child and backend call -
 // validated only at the pane kill (W6). stdin is never read. Every ERROR is
 // on stderr, exit 1; every WARN is on stderr.
@@ -273,17 +275,29 @@
 //    port-slot release, then orcaWorktreeRelease, else `WARN: could not
 //    remove orca worktree <wt> (remove by hand: orca worktree rm --worktree
 //    path:<wt> --force)`.
-// 7. BRANCH DROP (the same kinds): with no project_dir recorded (only a
-//    forced run gets here) `WARN: no project_dir recorded for <id> - <branch>
-//    was not looked for; drop it by hand in the repository that holds it`;
-//    else only while refs/heads/<branch> exists in project_dir: `git branch
-//    -d`, or -D when the epic fence names a branch (heads, then origin)
-//    containing it; a fence ledger it cannot read is `WARN: cannot read the
-//    ledger to resolve the epic-branch fence for <id> - <branch> is deleted
-//    only if -d proves it merged`. A refusal is `WARN: kept <branch> in
-//    <project_dir>: <git's whole text> - reclaim: <git branch -D <branch> |
-//    free it from that worktree, then git branch -D <branch>>`, the second
-//    while `worktree list --porcelain` holds `branch refs/heads/<branch>`.
+// 7. BRANCH DROP (the same kinds): with no project_dir recorded (only a forced
+//    run gets here) `WARN: no project_dir recorded for <id> - <branch> was not
+//    looked for; drop it by hand in the repository that holds it`; else only
+//    while refs/heads/<branch> exists in project_dir: with
+//    worktree_backend=orca and the orca worktree dir now gone, `git worktree
+//    remove <wt>` first (best effort, ignored either way) - a stale
+//    registration from a directory already gone must not survive to refuse the
+//    drop below, whether orca's release raced git's deregistration or never
+//    called it at all. Then: `git branch -d`, or -D when the epic fence names a
+//    branch (heads, then origin) containing it, OR - only with NO fence
+//    recorded at all (not even an unreadable ledger) and the meta's lease_base
+//    (an explicit --base-branch) naming a DIFFERENT branch than <branch> itself
+//    - lease_base containing it (heads, then origin): a 0-commit branch cut
+//    from a base the primary's own HEAD never covers is proven merged there
+//    instead, never when it carries a commit the base does not, and never when
+//    the base IS the family's own branch (isAncestor(x,x) is always true, which
+//    would -D a live sibling's unlanded work). A fence ledger it cannot read is
+//    `WARN: cannot read the ledger to resolve the epic-branch fence for <id> -
+//    <branch> is deleted only if -d proves it merged` (true even with a
+//    recorded lease_base). A refusal is `WARN: kept <branch> in <project_dir>:
+//    <git's whole text> - reclaim: <git branch -D <branch> | free it from that
+//    worktree, then git branch -D <branch>>`, the second while `worktree list
+//    --porcelain` holds `branch refs/heads/<branch>`.
 // 8. QA-INFRA SWEEP, when docker is on PATH, in each sweep dir that is a
 //    directory: the task's project_dir; for a roomchief, whose own is the
 //    distro root, each distinct project_dir (byte order) recorded at
@@ -791,6 +805,7 @@ async function main(): Promise<void> {
     }
   }
   const projectDir = pget("project_dir");
+  const leaseBase = pget("lease_base");
   const branch = b8(crewBranch(u8(id)));
   process.env.AC_BACKEND = u8(cutNul(taskBackend(u8(id)))) || "herdr";
 
@@ -1340,6 +1355,14 @@ async function main(): Promise<void> {
 
     if (projectDir === "") say(`no project_dir recorded for ${id} - ${branch} was not looked for; drop it by hand in the repository that holds it`);
     else if (git(projectDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], { out: "ignore" }).status === 0) {
+      // Orca's own release can leave git's worktree registration stale for a
+      // directory already gone (measured: `git branch -d` then refuses "used
+      // by worktree" against the registration alone, with no live worktree
+      // behind it) - whether that is a release/deregister race or orca never
+      // calling `git worktree remove` for it. `git worktree remove <path>` on
+      // an already-missing directory clears it with no race to time, so the
+      // drop below never depends on which one happened.
+      if (wtBackend === "orca" && worktree !== "" && !isDir(worktree)) git(projectDir, ["worktree", "remove", worktree], quiet);
       let flag = "-d";
       const e = epicBaseFor(u8(id), u8(basename(projectDir)));
       if (e.rc === 2) say(`cannot read the ledger to resolve the epic-branch fence for ${id} - ${branch} is deleted only if -d proves it merged`);
@@ -1347,6 +1370,20 @@ async function main(): Promise<void> {
         const eb = e.entry.split(" ")[0]!;
         if (isAncestor(projectDir, `refs/heads/${branch}`, `refs/heads/${eb}`) || isAncestor(projectDir, `refs/heads/${branch}`, `refs/remotes/origin/${eb}`)) flag = "-D";
       }
+      // The recorded --base-branch lease base (spawn.ts: lease_base=): `-d`
+      // proves containment only in the PRIMARY's own HEAD/upstream, so a
+      // 0-commit branch cut from a base that is neither reads as "not fully
+      // merged" with no commit of its own to lose. isAncestor fails the
+      // moment the branch carries a commit the base does not, so a branch
+      // with its own unlanded work is never escalated by this leg. Gated on
+      // e.rc === 1 (no epic fence at all): an agreeing fence already proved
+      // it above, and an UNREADABLE ledger must keep today's fail-closed -d
+      // only, never a second path around it. leaseBase !== branch: a
+      // --base-branch naming the task's OWN family branch (continuing a live
+      // sibling, e.g. a revision) makes isAncestor(branch, branch) trivially
+      // true - without this guard that would -D the WHOLE family branch,
+      // including every commit a sibling has not landed yet.
+      if (flag === "-d" && e.rc === 1 && leaseBase !== "" && leaseBase !== branch && (isAncestor(projectDir, `refs/heads/${branch}`, `refs/heads/${leaseBase}`) || isAncestor(projectDir, `refs/heads/${branch}`, `refs/remotes/origin/${leaseBase}`))) flag = "-D";
       const del = run(["/bin/sh", "-c", 'exec "$0" "$@" 2>&1', "git", "-C", u8(projectDir), "branch", flag, u8(branch)], { out: "pipe" });
       if (del.status !== 0) {
         const held = git(projectDir, ["worktree", "list", "--porcelain"], { out: "pipe" }).out.toString("latin1").split("\n").includes(`branch refs/heads/${branch}`);

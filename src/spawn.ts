@@ -197,6 +197,9 @@
 //
 // The backend comes from --backend, else config/backend, else herdr, and is
 // recorded in the task meta so every later script drives the same backend.
+// An explicit --base-branch is recorded too (lease_base=), absent otherwise,
+// so ac-teardown.sh can prove a 0-commit crew/<family> branch merged into
+// THAT base when the primary's own HEAD/upstream never covers it.
 // When config/crew-dispatch.json exists, crew spawns REFUSE to guess the
 // harness: pick a profile with ac-dispatch-select.sh (--list / --rule) and
 // pass --harness/--model/--effort explicitly.
@@ -2041,7 +2044,10 @@ then spawn again`);
   metaSetHard(S.meta, "backend", backend);
   metaSetHard(S.meta, "window", S.window);
   metaSetHard(S.meta, "worktree", worktree);
-  if (backend === "orca") metaSetHard(S.meta, "worktree_backend", "orca");
+  if (backend === "orca") {
+    metaSetHard(S.meta, "worktree_backend", "orca");
+    if (baseBranchSet) metaSetHard(S.meta, "lease_base", baseBranch);
+  }
   metaSetHard(S.meta, "leases", worktree);
   // lease_ids: the per-ACQUISITION identity of each leases= entry, read from
   // the slot meta (empty when the pool predates lease ids).

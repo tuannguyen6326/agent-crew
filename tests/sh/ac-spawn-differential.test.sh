@@ -455,10 +455,21 @@ xsame xt1 x4l
 
 # -- leg 5: the crew path on orca -----------------------------------------------------
 xorca() { xt1; printf 'orca\n' >"$XW/home/config/backend"; printf '\342\234\263 fake\n' >"$XW/orca/.default-title"; }
+# lease_base (named): the port records an explicit --base-branch in the meta
+# (teardown-keeps-empty-crew-branch-on-orca-base-branch) so ac-teardown.sh can
+# prove a 0-commit branch merged into THAT base; the frozen original never
+# wrote it.
 x5a() { xc t1 proj --harness fake --base-branch main; }
-xsame xorca x5a
+xboth xorca x5a
 xhas 'spawned t1 harness=fake'
 xwhas 'worktree_backend=orca'
+xwhas 'lease_base=main'
+xwlacks 'lease_base=' o
+# The one line the port's meta carries that the oracle's never did; strip it
+# before the whole-world compare so this row still proves everything ELSE
+# stays byte-identical.
+sed -i.bak '/^lease_base=main$/d' "$TMP/xw2.n"
+xcmp o n
 x5b() { : >"$XW/orca/.create-no-path"; xc t1 proj --harness fake; }
 xsame xorca x5b
 x5c() { xc t1 proj --harness fake --base-branch nope; : >"$XW/orca/.unreachable"; xc t1 proj --harness fake; }
