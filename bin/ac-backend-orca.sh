@@ -6,10 +6,11 @@
 # implementation; where orca has no counterpart the divergence is stated at
 # the function, not silently absorbed:
 # - GROUPING (orca_place_pane): chief-kind panes (cwd = the home) sit under
-#   the HOME node, one FAMILY TAB per room (AC_WINDOW_FAMILY, same ladder as
-#   the herdr driver; the tab clears with its last pane); crewmate and
-#   verifier panes (cwd = a project/lease worktree) sit under THAT
-#   worktree's own node, one tab each.
+#   the HOME node - config/orca-node's full selector, auto-pinned by
+#   orca_home_node from the entry named after the fleet when absent - one
+#   FAMILY TAB per room (AC_WINDOW_FAMILY, same ladder as the herdr driver;
+#   the tab clears with its last pane); crewmate and verifier panes (cwd = a
+#   project/lease worktree) sit under THAT worktree's own node, one tab each.
 # - No agent-report API: the captain-wait stamp is the FILE alone; Orca's own
 #   agentWait detection keeps surfacing waits in its UI (see backend_mark_wait_orca).
 # - No process-info verb: the came-up probe reads Orca's OWN agent detection
@@ -26,8 +27,8 @@
 # Handles are runtime-issued UUIDs and never recycled (measured), so the kill
 # ownership proof needs no creation-label round-trip: the recorded handle can
 # only be this task's terminal.
-# orca_place_pane (with orca_resolve_group and orca_tab_handles) and
-# orca_worktree_lease have TypeScript twins in src/lib.ts that
+# orca_place_pane (with orca_resolve_group, orca_home_node and
+# orca_tab_handles) and orca_worktree_lease have TypeScript twins in src/lib.ts that
 # tests/ts/spawn-twins.test.ts holds to them.
 
 orca_json() {
@@ -79,6 +80,50 @@ orca_resolve_group() {
     p="$(dirname "$p")"
   done
   printf '%s\n' "$1"
+}
+
+# The entries sharing one path, and among them the one whose displayName ends
+# with the fleet name as a token of its own ("ac lab" for lab, "ac lab/zlp" for
+# the deputy zlp): PIN <id> <name> when exactly one, AMBIG <all> <hits>
+# <candidates> when several entries share the path and no single one is the
+# fleet's, NONE otherwise. Shared with the src/lib.ts twin verbatim.
+orca_node_jq='[.result.worktrees[]? | select(.path == $p)] as $all
+  | ($all | map(select((.displayName // "") as $d | ($d | endswith($f))
+      and (($d | length) == ($f | length) or ($d[:(($d | length) - ($f | length))] | .[-1:] | IN("/", " ")))))) as $hit
+  | if ($hit | length) == 1 then "PIN\t" + $hit[0].id + "\t" + ($hit[0].displayName // "")
+    elif ($all | length) > 1 then "AMBIG\t" + ($all | length | tostring) + "\t" + ($hit | length | tostring)
+      + "\t" + ($all | map(.id + " (" + (.displayName // "") + ")") | join("; "))
+    else "NONE" end'
+
+orca_home_node() {
+  # orca_home_node <home_p> - the selector a chief-kind pane is created at
+  # when config/orca-node is absent. Two Orca entries can share one path (a
+  # workspace-scoped entry rides an `::workspace:` id suffix - measured) and a
+  # `path:` selector always matches the main entry, so a deputy home under
+  # its parent's container landed on the parent's node until the captain
+  # pinned the id selector by hand; the pin is derived here instead, from the
+  # entry named after the fleet (orca_node_jq), and WRITTEN so it reads like a
+  # hand pin from then on. No or several candidates keep the path selector:
+  # warned when the path is shared (the very case the pin exists for), silent
+  # when one entry owns it.
+  local home_p="$1" anc fleet list kind a b c
+  anc="$(orca_resolve_group "$home_p")"
+  fleet="$(ac_fleet_name)"
+  if ! list="$(orca_json worktree list)"; then
+    ac_warn "orca-node not pinned - orca worktree list failed; the pane goes to path:$anc"
+    printf 'path:%s\n' "$anc"; return 0
+  fi
+  IFS="$(printf '\t')" read -r kind a b c <<<"$(jq -r --arg p "$anc" --arg f "$fleet" "$orca_node_jq" <<<"$list")"
+  case "$kind" in
+    PIN)
+      printf 'id:%s\n' "$a" >"$(ac_config_dir)/orca-node"
+      printf 'orca-node: pinned id:%s (%s)\n' "$a" "$b" >&2
+      printf 'id:%s\n' "$a" ;;
+    AMBIG)
+      ac_warn "orca-node not pinned - $a Orca entries share $anc, $b named '$fleet': $c - write config/orca-node by hand"
+      printf 'path:%s\n' "$anc" ;;
+    *) printf 'path:%s\n' "$anc" ;;
+  esac
 }
 
 orca_worktree_lease() {
@@ -231,13 +276,24 @@ orca_place_pane() {
   # orca_place_pane <dir> [<command>] - the FAMILY TAB placement shared by
   # crewmate windows (backend_window_new) and verification panes
   # (ac-pane-agent's orca arm): create-or-split into the family tab and
-  # print "<handle> <tab>". <command> defaults to the interactive shell; a
-  # verification pane passes its RUNCMD so the agent starts WITH the pane -
-  # nothing is ever typed into a booting surface. <id> feeds the family
-  # ladder and the creation title. Returns 1 on failure (prints nothing,
-  # warns) so callers own their own death message.
+  # print "<handle> <tab>". A verification pane passes its RUNCMD as the
+  # pane's --command so the agent starts WITH the pane; without one the pane
+  # is moved to <dir> by a `cd '<dir>'` TYPED and submitted through the send
+  # queue (orca_type_cd), never by --command: Orca types --command only once
+  # the shell prompt is up (measured 2026-10-30, 1.4.244), and the caller's
+  # launch line, typed right after placement, landed in FRONT of it on one
+  # shell line. The typed cd shares that queue, so it runs first. <id> feeds
+  # the family ladder and the creation title. Returns 1 on failure (prints
+  # nothing, warns) so callers own their own death message.
   local dir="$1" cmd="${2:-}" id="${3:-agent}" out handle tab fam famf base before lockdir i dir_p home_p node_sel
-  [ -n "$cmd" ] || cmd="cd '$dir' && exec \${SHELL:-/bin/zsh}"
+  local -a cmd_args=()
+  [ -z "$cmd" ] || cmd_args=(--command "$cmd")
+  orca_type_cd() {
+    [ -z "$cmd" ] || return 0
+    orca_json terminal send --terminal "$1" --text "cd '$dir'" >/dev/null \
+      && orca_json terminal send --terminal "$1" --enter >/dev/null \
+      || ac_warn "could not type the cd into orca terminal $1 - the pane may sit at its node's root instead of $dir"
+  }
   # Creation titles carry the fleet token (crew:<fleet>/<id>) - display-only,
   # parsed by nothing: two fleets under one container (a deputy beside its
   # parent) render identical bare titles in mixed tab lists otherwise. The
@@ -254,7 +310,7 @@ orca_place_pane() {
   [ -z "${AC_HOME:-}" ] || home_p="$(cd "$AC_HOME" 2>/dev/null && pwd -P || true)"
   if [ "$dir_p" != "$home_p" ]; then
     out="$(orca_json terminal create --worktree "path:$(orca_resolve_group "$dir_p")" --title "crew:$(ac_fleet_name)/$id" \
-        --command "$cmd")" || {
+        ${cmd_args[@]+"${cmd_args[@]}"})" || {
       ac_warn "orca terminal create failed for $dir (is the Orca runtime running - orca open / orca serve - and the repo registered: orca repo add --path <repo>?)"
       return 1
     }
@@ -263,12 +319,11 @@ orca_place_pane() {
     if [ -z "$handle" ] || [ -z "$tab" ]; then
       ac_warn "could not parse orca terminal create output"; return 1
     fi
+    orca_type_cd "$handle"
     printf '%s %s\n' "$handle" "$tab"
     return 0
   fi
-  # HOME ARM (chief-kind panes). `terminal create` has no cwd flag and a cd
-  # typed into the fresh shell races its boot (measured: eaten twice), so
-  # the command IS the cwd control. FAMILY TABS under the home node: the
+  # HOME ARM (chief-kind panes). FAMILY TABS under the home node: the
   # family's FIRST pane creates a tab and records it (state/.orca-fam-<fam>);
   # a later same-family home pane SPLITS into it, so every room is one tab
   # under the home. A dead tab (no live terminal) heals to a fresh create;
@@ -291,7 +346,7 @@ orca_place_pane() {
     done
     before="$(orca_tab_handles "$tab")"
     if ! orca_json terminal split --terminal "$base" --direction vertical \
-        --command "$cmd" >/dev/null; then
+        ${cmd_args[@]+"${cmd_args[@]}"} >/dev/null; then
       rmdir "$lockdir" 2>/dev/null || true
       ac_warn "orca terminal split failed (family tab $tab)"; return 1
     fi
@@ -300,17 +355,12 @@ orca_place_pane() {
     if [ -z "$handle" ]; then
       ac_warn "could not identify the split pane in family tab $tab"; return 1
     fi
+    orca_type_cd "$handle"
   else
-    # config/orca-node pins the HOME node by FULL SELECTOR. Two Orca worktree
-    # entries can share one path (a workspace-scoped entry rides an
-    # `::workspace:` id suffix - measured), and a `path:` selector always
-    # matches the main entry - so a deputy home living under the same
-    # container as its parent fleet needs the id selector to keep its panes
-    # on its own sidebar node.
     node_sel="$(ac_config_read orca-node '')"
-    [ -n "$node_sel" ] || node_sel="path:$(orca_resolve_group "$home_p")"
+    [ -n "$node_sel" ] || node_sel="$(orca_home_node "$home_p")"
     out="$(orca_json terminal create --worktree "$node_sel" --title "crew:$(ac_fleet_name)/$id" \
-        --command "$cmd")" || {
+        ${cmd_args[@]+"${cmd_args[@]}"})" || {
       ac_warn "orca terminal create failed for $dir (is the Orca runtime running - orca open / orca serve - and the repo registered: orca repo add --path <repo>?)"
       return 1
     }
@@ -319,6 +369,7 @@ orca_place_pane() {
     if [ -z "$handle" ] || [ -z "$tab" ]; then
       ac_warn "could not parse orca terminal create output"; return 1
     fi
+    orca_type_cd "$handle"
     printf '%s\n' "$tab" >"$famf"
   fi
   printf '%s %s\n' "$handle" "$tab"

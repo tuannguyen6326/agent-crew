@@ -436,6 +436,14 @@
 //   temp could not be written, `cd:`'s own line - the exit statuses are kept.
 // - NESTED REPOS: a reset's clean removes an untracked nested repository
 //   (`-ffdq`), where the original's `-fdq` kept it and the slot stayed dirty.
+// - BROKEN SLOT REASON: heal's WARN on a slot git cannot read carries git's
+//   own exit status and last stderr line (or the toplevel it answered for),
+//   where the original said only "gitdir unreadable" before naming the
+//   destructive remove.
+// - LEFTOVER SLOT DIR: get heals a meta-less dir at the slot it mints only
+//   while the dir is empty; one holding files (or one it cannot list) is named
+//   with the refusal above and left alone, where the original `rm -rf`ed it
+//   and minted the slot over it.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is named
 //   (`ERROR: AC_HOME is not a readable directory: <h>`) wherever the original
 //   printed cd's own line.
@@ -845,6 +853,18 @@ function slotGitOk(wt: string): boolean {
   return (physicalDir(u8(subst(r.out))) ?? "") === (physicalDir(u8(wt)) ?? "");
 }
 
+// Why git refused the slot, for the WARN that tells the operator to run a
+// destructive remove: git's exit status and the last line it wrote (<=200
+// bytes), or the toplevel it answered for when that is not the slot.
+function slotGitReason(wt: string): string {
+  const r = spawnShellSync(["git", "-C", u8(wt), "rev-parse", "--show-toplevel"], { stdout: "pipe", stderr: "pipe" });
+  if ((r.exitCode ?? 1) !== 0) {
+    const lines = r.stderr.toString("latin1").replace(/\n+$/, "").split("\n");
+    return `exit ${r.exitCode ?? "signal"}: ${(lines[lines.length - 1] ?? "").slice(0, 200)}`;
+  }
+  return `answers for ${subst(r.stdout.toString("latin1"))}, not the slot`;
+}
+
 const isDirty = (wt: string): boolean => subst(fsPath(worktreeStatus(u8(wt)).out)) !== "";
 
 // The tree state a destructive gate verifies, as one comparable blob: the
@@ -992,7 +1012,7 @@ function healSlots(repo: string): void {
       dropSlot(repo, n);
     } else if (!slotGitOk(wt)) {
       const flags = (metaRead(meta, "leased") ?? "1") === "1" ? "--force --include-leased" : "--force";
-      say(`slot ${n}: worktree broken (gitdir unreadable) - NOT healed, its files may be unlanded work git can no longer report; reclaim it deliberately with: bin/ac-tree.sh remove ${flags} ${wt}`);
+      say(`slot ${n}: worktree broken (gitdir unreadable - git: ${slotGitReason(wt)}) - NOT healed, its files may be unlanded work git can no longer report; reclaim it deliberately with: bin/ac-tree.sh remove ${flags} ${wt}`);
     }
   }
 }
@@ -1293,8 +1313,13 @@ function acquireSlot(repo: string, id: string, holder: string, owner: string, pr
     }
     n = `${next}-${basename(repo)}`;
     wt = slotPath(repo, n);
-    // An orphan dir with no meta (a partial create) wedges the number.
+    // An orphan dir with no meta (a partial create) wedges the number; one
+    // holding files may be somebody's work, so only an empty one is healed.
     if (exists(wt)) {
+      let entries: string[] | null = null;
+      try { entries = readdirSync(wt); } catch {}
+      if (entries === null || entries.length > 0)
+        fail(`slot ${n} dir ${wt} exists with no meta and is not empty - inspect it; move or delete it by hand, then get again`);
       say(`cleaning orphan worktree dir at slot ${n}`);
       git(repo, ["worktree", "remove", "--force", wt], quiet);
       run(["rm", "-rf", u8(wt)]);

@@ -24,7 +24,7 @@
 # its frozen bash original (tests/fixtures/ac-qa.sh) still sources this
 # file as the qa leg's oracle. The merge gate itself -
 # ac_qa_required, ac_qa_gate_ok, ac_qa_gate_matrix - has NO production
-# caller: the live gate is src/lib.ts's qa-gate twins (qaRequired, qaGateOk,
+# caller: the live gate is src/lib-qa-gate.ts's qa-gate twins (qaRequired, qaGateOk,
 # qaAttestationParse), run in process by src/merge-local.ts and
 # src/pr-merge.ts, and these three stay as the test oracles the twins are
 # pinned to (tests/ts/qa-gate.test.ts; the frozen entries under

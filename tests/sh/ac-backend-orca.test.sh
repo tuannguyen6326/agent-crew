@@ -41,8 +41,22 @@ assert_eq "$(cat "$AC_HOME/state/.pane-o1")" "term1 tab1" \
 assert_contains "$(cat "$FAKE_ORCA/log")" \
   "terminal create --worktree path:/tmp/wt --title crew:home/o1" \
   "a project-worktree pane groups under ITS OWN worktree node"
-assert_contains "$(cat "$FAKE_ORCA/log")" "cd '/tmp/wt'" \
-  "window_new moves the shell to the requested dir (create has no cwd flag)"
+# The cd is TYPED through the send queue, never handed to create --command:
+# Orca types --command only once the shell prompt is up (measured 2026-10-30,
+# Orca 1.4.244), so a launch line typed right after create landed in FRONT of
+# it on one shell line (`--effort xhighcd '<home>' && exec zsh`: effort
+# mangled, the home as claude's first prompt, cwd never moved). One queue
+# keeps the order: cd, Enter, then whatever the caller types.
+case "$(grep 'terminal create' "$FAKE_ORCA/log")" in
+  *"--command"*) fail "window_new must not hand the cd to create --command - Orca types it late, behind the caller's launch line" ;;
+esac
+assert_contains "$(cat "$FAKE_ORCA/log")" "--text cd '/tmp/wt'" \
+  "window_new moves the shell to the requested dir by TYPING the cd (create has no cwd flag)"
+after_cd="$(sed -n "/--text cd '\/tmp\/wt'/,\$p" "$FAKE_ORCA/log" | sed -n 2p)"
+case "$after_cd" in
+  *"terminal send"*"--enter"*) ;;
+  *) fail "the typed cd is submitted at once with its own Enter (got: $after_cd)" ;;
+esac
 assert_eq "$(cat "$FAKE_HERDR/log" 2>/dev/null || true)" "" \
   "no herdr RPC under the orca backend"
 
@@ -483,6 +497,51 @@ assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree path:/tmp/
 run_backend orca 'backend_kill_window fz-chief; backend_kill_window fz-crew'
 rm -f "$AC_HOME/config/orca-node"
 
+# Absent the pin, the home node is AUTO-PINNED: among the Orca entries that
+# share the home's resolvable ancestor path, the one whose displayName ends
+# with the fleet name as its own token (the captain names a deputy's node
+# "<parent>/<deputy>", a root fleet's "<fleet>") is written to config/orca-node
+# and used; no or several such entries keep the path: fallback, WARNED when
+# the path is shared (that is exactly the deputy-under-parent case).
+home_p="$(cd "$AC_HOME" && pwd -P)"
+wt_list() {
+  # wt_list <id displayName>... - the fake's `worktree list` envelope, every
+  # entry at the home's own path unless the id carries its own.
+  local entries="" id name p
+  while [ $# -gt 1 ]; do
+    id="$1"; name="$2"; shift 2
+    p="$home_p"; case "$id" in */elsewhere*) p="/elsewhere" ;; esac
+    entries="$entries${entries:+,}{\"id\":\"$id\",\"path\":\"$p\",\"displayName\":\"$name\"}"
+  done
+  printf '{"ok":true,"result":{"worktrees":[%s]}}\n' "$entries" >"$FAKE_ORCA/worktree-list.json"
+}
+wt_list "r::$home_p" "ac other" "r::$home_p::workspace:w2" "ac other/home" "r::/elsewhere" "ac home"
+err="$(run_backend orca 'export AC_WINDOW_FAMILY=fama; backend_window_new fa-chief "$AC_HOME"' 2>&1 >/dev/null)"
+assert_eq "$(cat "$AC_HOME/config/orca-node" 2>/dev/null)" "id:r::$home_p::workspace:w2" \
+  "the entry named after the fleet is pinned to config/orca-node"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree id:r::$home_p::workspace:w2 --title crew:home/fa-chief" \
+  "the auto-pinned selector places the pane"
+assert_contains "$err" "orca-node: pinned id:r::$home_p::workspace:w2 (ac other/home)" \
+  "the pin is announced"
+run_backend orca 'backend_kill_window fa-chief'
+rm -f "$AC_HOME/config/orca-node"
+
+wt_list "r::$home_p" "ac home" "r::$home_p::workspace:w2" "ac x/home"
+err="$(run_backend orca 'export AC_WINDOW_FAMILY=famb; backend_window_new fb-chief "$AC_HOME"' 2>&1 >/dev/null)"
+assert_no_file "$AC_HOME/config/orca-node" "two entries named after the fleet pin nothing"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree path:$home_p --title crew:home/fb-chief" \
+  "an ambiguous home falls back to the path selector"
+assert_contains "$err" "WARN: orca-node not pinned - 2 Orca entries share $home_p, 2 named 'home': r::$home_p (ac home); r::$home_p::workspace:w2 (ac x/home) - write config/orca-node by hand" \
+  "the ambiguity is warned with its candidates"
+run_backend orca 'backend_kill_window fb-chief'
+
+wt_list "r::$home_p" "ac homely"
+err="$(run_backend orca 'export AC_WINDOW_FAMILY=famc; backend_window_new fc-chief "$AC_HOME"' 2>&1 >/dev/null)"
+assert_no_file "$AC_HOME/config/orca-node" "a name the fleet name merely ends is no match"
+assert_eq "$err" "" "one entry at the path is no ambiguity - nothing warned"
+run_backend orca 'backend_kill_window fc-chief'
+rm -f "$FAKE_ORCA/worktree-list.json"
+
 # A second same-family pane AT THE HOME splits into the room tab.
 run_backend orca '
   export AC_WINDOW_FAMILY=famx
@@ -492,6 +551,11 @@ assert_eq "$(awk '{print $2}' "$AC_HOME/state/.pane-fx-aide")" "$tab_fx" \
   "a same-family home pane SPLITS into the room tab"
 assert_contains "$(cat "$FAKE_ORCA/log")" "terminal split --terminal" \
   "the second home pane arrives by split"
+case "$(grep 'terminal split' "$FAKE_ORCA/log")" in
+  *"--command"*) fail "a split pane types its cd too - split --command races the caller's launch line the same way" ;;
+esac
+assert_contains "$(cat "$FAKE_ORCA/log")" "--text cd '$AC_HOME'" \
+  "the split pane is moved to the home by a typed cd"
 
 # Closing the last home pane of a room clears its record; a dead tab heals.
 run_backend orca 'backend_kill_window fx-aide'

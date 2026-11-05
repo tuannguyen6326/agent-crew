@@ -81,6 +81,17 @@ printf 'family=.hidden\nstage=spec\nround=1\nengine=codex\nmodel=\nat=x\nobserve
 out="$("$W" --once 2>&1)" || fail "watch must not crash on a dot-prefixed dir"
 case "$out" in *hidden*) fail "a dot-prefixed dir must not appear as a family: $out" ;; esac
 
+# 5b. a story's dir one level down, marked .family (src/brief.ts's header owns
+#     the layout), is a family of its own: its gate shows under the story's name.
+mkdir -p "$AC_HOME/data/ep/story"
+: >"$AC_HOME/data/ep/story/.family"
+mk_active ep/story plan 1 codex 9 "PROMPT-STORY-PLAN" "emit-live-story"
+out="$("$W" --once 2>&1)" || fail "watch --once must exit 0 with a nested story's gate"
+case "$out" in *"3 active"*) ;; *) fail "the story's gate should count as active: $out" ;; esac
+case "$out" in *story*) ;; *) fail "the story's gate is not shown: $out" ;; esac
+case "$out" in *"ep/story"*) fail "the story is named by itself, never by its path: $out" ;; esac
+rm -rf "$AC_HOME/data/ep"
+
 # 6. --tail follows the newest active gate's EXACT prompt (once) + real output.
 #    --tail is an endless follow loop (no --once), so bound it: run it briefly in
 #    the background, then stop it and inspect what it emitted. No timeout(1) on

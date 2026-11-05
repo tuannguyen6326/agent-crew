@@ -17,7 +17,9 @@
 //   ac-learn.sh maintenance status|resume <txid>|abandon <txid>
 //   ac-learn.sh rotate-pending          # archive Pending past config/learn-pending-budget
 //   ac-learn.sh stale                   # report-only age grade of the always-loaded layer
-//   ac-learn.sh reinforce <slug> --evidence '<line>'  # refresh one learned entry's clock
+//   ac-learn.sh reinforce <slug> --evidence '<line>' [--retire <stale-slug>]
+//                                      # refresh one learned entry's clock,
+//                                      # optionally cutting+archiving another
 //
 // `tick` advances the lock-protected Learning generation/cadence and reports the
 // resulting count. A keyed landing tick is idempotent through state/.learn-ticks.
@@ -181,9 +183,14 @@
 // `## <name>` heading and `(learned <date>)` provenance itself and REFUSES: a
 // body over 12 lines, a body carrying a `## ` heading (entry spoofing), a
 // duplicate name, a staged file over the 4096-byte always-loaded budget (the
-// refusal names the retire remedy), and any rewrite dropping an existing entry
-// without retired accounting (crewmateLearnedNoLoss, src/lib.ts - defense in depth for
-// future curate rewrites). Evidence compaction is identical to a skill land -
+// refusal names the retire remedy: the candidate's own optional `retire:
+// <slug>` header, consumed only by `kind: crewmate` - the named live entry is
+// cut from the staged file and its body archived to
+// records/learnings-archive/<slug>.md in the SAME transaction, read back as
+// the retired evidence crewmateLearnedNoLoss checks against), and any rewrite
+// dropping an existing entry without retired accounting (crewmateLearnedNoLoss,
+// src/lib.ts - defense in depth for future curate rewrites). Evidence
+// compaction is identical to a skill land -
 // archive + `[distilled -> <name>]` pointer - with the pointer's first link
 // `[lesson](../CREWMATE-learned.md)` since no skill store exists. The file
 // rides recordsBackup's (src/lib.ts) reversibility floor and each planning run keeps a
@@ -293,6 +300,13 @@
 // of the layer: it rewrites the date line to `(learned <orig>, reinforced
 // <today>)` under <home>/CREWMATE-learned.md.lock, requires a single-line
 // evidence it prints rather than stores, and refuses an entry with no clock.
+// An optional `--retire <stale-slug>` rides the SAME locked rewrite: the
+// named entry is cut out whole and archived (learn_crewmate_retire_entry /
+// learn_crewmate_retire_archive below), freeing the bytes a same-day clock or
+// a tight budget would otherwise refuse - the one case `current === today`
+// does not short-circuit, since nothing else can ask for a retire alone.
+// A crewmate candidate's own optional `retire:` header pairs the SAME cut and
+// archive with a land instead (prepareCandidatePlan's crewmate case).
 //
 // PREAMBLE AND EXIT. Before any verb the fleet backend is resolved as
 // sourcing ac-backend.sh resolved it (backendName): an unsupported name in
@@ -385,6 +399,14 @@
 //   written through; the written file keeps the umask's mode, as the bash's did.
 // - W4 (fixed): reinforce refuses, nothing written, a refresh that would grow
 //   CREWMATE-learned.md past its 4096-byte budget; the bash grew it unchecked.
+// - RETIRE (residual of W4, fixed): a stale entry can now actually be removed
+//   from CREWMATE-learned.md - a crewmate candidate's `retire: <slug>` header
+//   pairs it with the land, and `reinforce <slug> --retire <stale-slug>`
+//   pairs it with a clock refresh - archiving the retired body to
+//   records/learnings-archive/<stale-slug>.md and reading that file back
+//   through crewmateLearnedNoLoss; the bash has neither the header nor the
+//   flag, so its budget wall still names a remedy ("pair ... with a retire")
+//   that bash itself cannot perform.
 // - THE POINTER TRIGGER: a skill candidate needs `trigger:` and its pointer
 //   is composed from it, and every CREWMATE-learned.md rewrite shortens an
 //   over-cap pointer already there; the bash composed the pointer from the
@@ -463,22 +485,10 @@ import {
   backendWindowNew,
   commandV,
   configReadSoft,
-  crewmateLearnedNoLoss,
-  curateDue,
-  curateTick,
   enterCaller,
   exclusiveTemp,
-  learnDue,
-  learnGeneration,
-  learnMeta,
-  learnReset,
-  learnTick,
-  learnTickKeyed,
   lockAcquire,
   lockRelease,
-  maintenanceApply,
-  maintenanceGateFailureReason,
-  maintenanceIncomplete,
   metaGet,
   metaSet,
   nowRaw,
@@ -499,6 +509,8 @@ import {
   wakePublish,
   writeAll,
 } from "./lib.ts";
+import { curateDue, maintenanceApply, maintenanceGateFailureReason } from "./lib-curate.ts";
+import { crewmateLearnedNoLoss, curateTick, learnDue, learnGeneration, learnMeta, learnReset, learnTick, learnTickKeyed, maintenanceIncomplete } from "./lib-learn.ts";
 
 // The lib's AC_MAINTENANCE_QUOTE_MIN (tests/ts/learn.test.ts holds the two
 // together).
@@ -898,8 +910,10 @@ Pass 2 reads its output.
   Propose per stale entry, in \`report.md\` under \`## Always-loaded staleness\`
   (report-only, the chief applies - exactly like scene proposals):
   \`reinforce <slug> - evidence: <the window pointer>\` when evidence exists,
-  \`retire <slug> - <why>\` when none does (the retire itself rides the
-  existing 4096-budget pairing rule at the next land, never a new path).
+  \`retire <slug> - <why>\` when none does - the chief runs \`ac-learn.sh
+  reinforce <fresh-slug> --retire <slug> --evidence '<why>'\` to free its
+  bytes directly, or names it as THIS run's own crewmate candidate's
+  \`retire:\` header when one is being proposed anyway.
 - \`sources/scenes.md\` - the fleet's L2 SCENE store index (one line per scene:
   slug, heat, updated, summary), plus its count against \`config/scene-max\`. A
   scene is a consolidated TOPIC file a reader opens on purpose - the layer
@@ -1043,6 +1057,7 @@ Crewmate-lesson candidate (always-loaded method lesson, CREWMATE-learned.md):
     kind: crewmate
     name: <slug, lowercase [a-z0-9-]>
     description: <one line - what behavior this lesson corrects>
+    retire: <slug of a STALE entry to retire - optional, omit when none>
     ===sources===
     <date><TAB><short hook><TAB><exact learnings.md bullet line, verbatim>
     ===crewmate===
@@ -1057,7 +1072,9 @@ Crewmate-lesson candidate (always-loaded method lesson, CREWMATE-learned.md):
   unrewritten; first-hand \`## Lessons\` report lines are EVIDENCE you cite,
   never text you copy through).
 - The file has a hard 4096-byte whole-file budget: when your entry would
-  exceed it, pair the candidate with a retire proposal in your report.
+  exceed it, name a STALE entry's slug as this candidate's own \`retire:\`
+  header - the land removes and archives it in the SAME transaction, never a
+  separate proposal applied by hand.
 - \`===sources===\` works exactly as for a skill; retro-only leaves it EMPTY.
 
 Rule candidate:
@@ -1766,8 +1783,9 @@ function cmdStale(emit: (s: string) => void, lax: boolean): void {
     emit(`  -- ${n} entries, ${stale} stale --\n`);
     if (stale > 0) {
       emit("  a STALE entry must re-prove itself: reinforce it on INDEPENDENT current evidence\n");
-      emit("    (ac-learn.sh reinforce <slug> --evidence '<what this window proved>') or retire it\n");
-      emit("    at the next land (the 4096-budget pairing rule) - never keep it by inertia alone.\n");
+      emit("    (ac-learn.sh reinforce <slug> --evidence '<what this window proved>'), or retire it\n");
+      emit("    directly - 'ac-learn.sh reinforce <fresh-slug> --retire <slug> --evidence ...' or a\n");
+      emit("    crewmate candidate's own 'retire:' header - never keep it by inertia alone.\n");
     }
   }
   const sdir = `${recordsD()}/scenes`;
@@ -1815,10 +1833,15 @@ function grepWhole(file: string, pattern: string): boolean {
 function cmdReinforce(args: string[]): void {
   let slug = "";
   let evidence = "";
+  let retireSlug = "";
   for (let i = 0; i < args.length; ) {
     const a = b8(args[i]!);
     if (a === "--evidence") {
       evidence = args[i + 1] !== undefined ? b8(args[i + 1]!) : "";
+      if (i + 2 > args.length) dieB(`${a} needs a value`);
+      i += 2;
+    } else if (a === "--retire") {
+      retireSlug = args[i + 1] !== undefined ? b8(args[i + 1]!) : "";
       if (i + 2 > args.length) dieB(`${a} needs a value`);
       i += 2;
     } else if (a.startsWith("-")) dieB(`unknown flag: ${a}`);
@@ -1829,15 +1852,16 @@ function cmdReinforce(args: string[]): void {
     }
   }
   if (slug === "") dieB("usage: ac-learn.sh reinforce <slug> --evidence '<what this window proved>'");
-  if (evidence === "") dieB("reinforce REQUIRES --evidence: plausibility, importance, prior knowledge, and the entry's own text are not evidence - name what THIS window actually exercised, confirmed, or re-derived. The evidence rides the receipt (and your room post), never the file: bytes there are always-loaded budget.");
+  if (evidence === "") dieB("reinforce REQUIRES --evidence: plausibility, importance, prior knowledge, and the entry's own text are not evidence - name what THIS window actually exercised, confirmed, or re-derived (or, when pairing --retire, why the RETIRED entry no longer earns its bytes). The evidence rides the receipt (and your room post), never the file: bytes there are always-loaded budget.");
   if (/[\n\r]/.test(evidence)) dieB("--evidence must be a single line");
+  if (retireSlug !== "" && retireSlug === slug) dieB(`--retire cannot name the same slug being reinforced ('${slug}')`);
   const live = `${home()}/CREWMATE-learned.md`;
   if (!isFile(live)) dieB("no CREWMATE-learned.md in this home - nothing to reinforce");
   if (!grepWhole(live, `## ${slug}`)) dieB(`no entry '## ${slug}' in CREWMATE-learned.md (ac-learn.sh stale lists them)`);
   const today = isoNow().slice(0, 10);
   const current = entryDate(live, slug);
   if (current === "") dieB(`entry '## ${slug}' carries no '(learned <date>)' line to refresh - nothing written`);
-  if (current === today) {
+  if (current === today && retireSlug === "") {
     out(`already reinforced today (${today}) - clock unchanged; evidence noted on the receipt: ${evidence}\n`);
     return;
   }
@@ -1848,10 +1872,26 @@ function cmdReinforce(args: string[]): void {
   closeSync(t.fd);
   must(st);
   const tmp = b8(t.path);
-  if (sameBytes(live, tmp)) {
+  const dateChanged = !sameBytes(live, tmp);
+  if (!dateChanged && retireSlug === "") {
     rmF(tmp);
     unlock(lk);
     dieB(`reinforce composed no change for '## ${slug}' despite a clock at ${current} - report this (nothing written)`);
+  }
+  let retiredBlock = "";
+  if (retireSlug !== "") {
+    const cut = retireCrewmateEntry(read(tmp) ?? "", retireSlug);
+    if (cut === null) {
+      rmF(tmp);
+      unlock(lk);
+      dieB(`--retire: no entry '## ${retireSlug}' in CREWMATE-learned.md (ac-learn.sh stale lists them, nothing written)`);
+    }
+    if (!put(tmp, cut.rest)) {
+      rmF(tmp);
+      unlock(lk);
+      dieB("--retire: the trimmed CREWMATE-learned.md could not be written (nothing written)");
+    }
+    retiredBlock = cut.block;
   }
   const size = statOf(tmp)?.size ?? 0;
   if (size > 4096) {
@@ -1859,9 +1899,16 @@ function cmdReinforce(args: string[]): void {
     unlock(lk);
     dieB(`reinforce would grow CREWMATE-learned.md to ${size} bytes, past its 4096-byte always-loaded budget (nothing written)`);
   }
+  if (retireSlug !== "" && !retireArchive(`${recordsD()}/learnings-archive/${retireSlug}.md`, retireSlug, retiredBlock)) {
+    rmF(tmp);
+    unlock(lk);
+    dieB(`--retire: '${retireSlug}' could not be archived to records/learnings-archive/${retireSlug}.md (nothing written)`);
+  }
   must(run(["mv", tmp, live]).status);
   unlock(lk);
-  out(`reinforced ${slug} (clock -> ${today}) on evidence: ${evidence}\n`);
+  if (dateChanged) out(`reinforced ${slug} (clock -> ${today}) on evidence: ${evidence}\n`);
+  else out(`${slug}'s clock is already at ${today} - unchanged; evidence noted on the receipt: ${evidence}\n`);
+  if (retireSlug !== "") out(`retired ${retireSlug} (archived to records/learnings-archive/${retireSlug}.md)\n`);
   out("post the evidence to the owning room/report - the file deliberately does not store it\n");
 }
 
@@ -2353,13 +2400,14 @@ function quoteUnverified(bullet: string): string[] {
   return flags;
 }
 
-// learn_quote_unverified_count <plan> <run>: the `quote-unverified:` lines the
-// plan's append-archive action adds (staged minus live).
-function quoteUnverifiedCount(plan: string, rundir: string): string {
-  const field = (f: string): string => subst(run(["jq", "-r", `.actions[] | select(.op == "append-archive") | .${f}`, plan], { stdout: "pipe" }).out);
+// learn_quote_unverified_count <plan> <run> <name>: the `quote-unverified:`
+// lines <name>'s own append-archive action adds (staged minus live) - never
+// a retire's, when the land pairs one onto a second archive target.
+function quoteUnverifiedCount(plan: string, rundir: string, name: string): string {
+  const target = `records/learnings-archive/${name}.md`;
+  const field = (f: string): string => subst(run(["jq", "-r", "--arg", "target", target, `.actions[] | select(.op == "append-archive" and .target == $target) | .${f}`, plan], { stdout: "pipe" }).out);
   const staged = field("staged");
   if (staged === "") return "0";
-  const target = field("target");
   const countIn = (p: string): string => {
     const t = read(p);
     return t === null ? "" : String(t.split("\n").filter((l) => l.startsWith("quote-unverified: ")).length);
@@ -2400,15 +2448,52 @@ function crewmateBase(): string {
   return "# Fleet-learned crewmate lessons\n<!-- written only by ac-learn.sh transactions; captains edit CREWMATE.md instead -->\n";
 }
 
-// learn_crewmate_learned_guard <staged> <run>: the 4096-byte budget, the
-// no-silent-loss check, and a .prev copy of the live file under the run.
-function crewmateGuard(staged: string, rundir: string): void {
+// learn_crewmate_retire_entry <content> <slug>: <content> with the whole
+// `## <slug>` entry (its heading through the line before the next `## ` or
+// EOF) cut out, plus that block verbatim; null when no such entry exists. A
+// crewmate body can never itself carry a `## ` line (land refuses one that
+// does), so the next `## ` line is always the following entry or the pointer
+// section - never this one's own body. <slug> must be an agentskills slug
+// (rejects the pointer section's own heading line outright, which holds
+// spaces and is not an entry).
+function retireCrewmateEntry(content: string, slug: string): { rest: string; block: string } | null {
+  if (!validSlug(slug)) return null;
+  const lines = content.split("\n");
+  const start = lines.indexOf(`## ${slug}`);
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i]!.startsWith("## ")) {
+      end = i;
+      break;
+    }
+  }
+  return { rest: [...lines.slice(0, start), ...lines.slice(end)].join("\n"), block: lines.slice(start, end).join("\n") };
+}
+
+// learn_crewmate_retire_archive <dest> <slug> <block>: <block> appended under
+// a `## retired <date>` heading to <dest> (its name's own evidence archive, or
+// a fresh file with a skill archive's default title when it had none yet) -
+// the no-loss destination crewmateLearnedNoLoss reads back.
+function retireArchive(dest: string, slug: string, block: string): boolean {
+  if (mkdirP(dirname(dest)) !== 0) return false;
+  if (!isFile(dest) && !put(dest, `# Learning Evidence: ${slug}\n`)) return false;
+  return put(dest, `\n## retired ${isoNow().slice(0, 10)}\n\n${block}\n`, true);
+}
+
+// learn_crewmate_learned_guard <staged> <run> [<retired>]: the 4096-byte
+// budget, the no-silent-loss check (against <retired>, the archive this same
+// write staged a just-retired entry's text into, when one is named), and a
+// .prev copy of the live file under the run.
+function crewmateGuard(staged: string, rundir: string, retired = ""): void {
   const live = `${home()}/CREWMATE-learned.md`;
   if ((statOf(staged)?.size ?? 0) > 4096) {
     const entries = isFile(live) ? learnedSlugs(live).map((s) => `${s} `).join("") : "";
-    dieB(`staged CREWMATE-learned.md exceeds its 4096-byte always-loaded budget - pair the new entry with a retire of one of: ${entries === "" ? "none " : entries}(nothing written)`);
+    dieB(
+      `staged CREWMATE-learned.md exceeds its 4096-byte always-loaded budget - pair the new entry with a retire of one of: ${entries === "" ? "none " : entries}(nothing written) - a crewmate candidate's own 'retire: <slug>' header, or 'ac-learn.sh reinforce <slug> --retire <stale-slug> --evidence ...' first to free bytes.`,
+    );
   }
-  if (!crewmateLearnedNoLoss(u8(live), u8(staged), "")) dieB("staged CREWMATE-learned.md drops an existing '## <slug>' entry with no retired accounting (nothing written)");
+  if (!crewmateLearnedNoLoss(u8(live), u8(staged), retired === "" ? "" : u8(retired))) dieB("staged CREWMATE-learned.md drops an existing '## <slug>' entry with no retired accounting (nothing written)");
   if (isFile(live)) {
     step(mkdirP(`${rundir}/backup`));
     step(run(["cp", live, `${rundir}/backup/CREWMATE-learned.md.prev`]).status);
@@ -2440,6 +2525,7 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string, r
   let desc = "";
   let trigger = "";
   let subject = "";
+  let retire = "";
   const slugRule = "lowercase [a-z0-9-], <=64 chars, no leading/trailing/consecutive hyphen";
   switch (kind) {
     case "skill":
@@ -2474,10 +2560,12 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string, r
     }
     case "crewmate":
       desc = candidateHeader(cand, "description");
+      retire = candidateHeader(cand, "retire");
       if (!validSlug(name)) dieB(`crewmate candidate 'name:' must be an agentskills slug: ${slugRule} (got: '${name}')`);
       if (!validDescription(desc)) dieB(`crewmate candidate 'description:' must be non-empty and <=1024 chars (got: '${desc}')`);
       if (isFile(`${home()}/CREWMATE-learned.md`) && grepWhole(`${home()}/CREWMATE-learned.md`, `## ${name}`))
         dieB(`CREWMATE-learned.md already carries '## ${name}' - curate the existing entry instead of re-landing it (nothing written)`);
+      if (retire !== "" && retire === name) dieB(`crewmate candidate 'retire:' cannot name its own '${name}' (nothing written)`);
       subject = runSubject || name;
       break;
     case "rule":
@@ -2552,9 +2640,20 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string, r
       if (body.split("\n").some((l) => l.startsWith("## "))) dieB(`crewmate '===crewmate===' body must be lesson prose only - the transaction composes the '## ${name}' heading itself (nothing written)`);
       if (body.split("\n").length > 12) dieB("crewmate '===crewmate===' body is over 12 lines - a lesson that long is a skill or a doc (nothing written)");
       step(put(stagedCml, `${crewmateBase()}\n## ${name}\n\n${body}\n\n(learned ${isoNow().slice(0, 10)})\n`) ? 0 : 1);
+      let retiredStaged = "";
+      if (retire !== "") {
+        const cut = retireCrewmateEntry(read(stagedCml) ?? "", retire);
+        if (cut === null) dieB(`crewmate candidate 'retire: ${retire}' names no existing '## ${retire}' entry in CREWMATE-learned.md (ac-learn.sh stale lists them, nothing written)`);
+        step(put(stagedCml, cut.rest) ? 0 : 1);
+        const liveArchive = `${recordsD()}/learnings-archive/${retire}.md`;
+        retiredStaged = `${staged}/records/learnings-archive/${retire}.md`;
+        if (isFile(liveArchive)) step(run(["cp", liveArchive, retiredStaged]).status);
+        if (!retireArchive(retiredStaged, retire, cut.block)) step(1);
+      }
       shortenPointers(stagedCml);
-      crewmateGuard(stagedCml, rundir);
+      crewmateGuard(stagedCml, rundir, retiredStaged);
       step(planAction(actions, "rewrite-crewmate-learned", "CREWMATE-learned.md", `${stagedPrefix}/CREWMATE-learned.md`, rundir));
+      if (retire !== "") step(planAction(actions, "append-archive", `records/learnings-archive/${retire}.md`, `${stagedPrefix}/records/learnings-archive/${retire}.md`, rundir));
       break;
     }
     case "rule": {
@@ -2749,7 +2848,7 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
       continue;
     }
     if (decision === "continue") {
-      const unverified = quoteUnverifiedCount(plan, rundir);
+      const unverified = quoteUnverifiedCount(plan, rundir, candidateHeader(cand, "name"));
       const applied = applyPlan(plan, rundir, base);
       await checkpoint();
       if (!applied) {
@@ -2804,7 +2903,7 @@ function cmdLand(args: string[]): void {
     return fatal(1);
   }
   const [rundir, plan, , base] = prepared;
-  const unverified = quoteUnverifiedCount(plan, rundir);
+  const unverified = quoteUnverifiedCount(plan, rundir, candidateHeader(cand, "name"));
   if (!applyPlan(plan, rundir, base)) dieB(`maintenance transaction refused candidate plan at ${plan}`);
   const r = cadenceCall(() => learnReset(captured));
   if (r === 2) warnB(`landed ${kind}, but its cadence lock was busy; its cadence was preserved instead of reset`);

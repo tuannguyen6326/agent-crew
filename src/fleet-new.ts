@@ -103,11 +103,13 @@
 //      absence IS that default and config/ holds exactly what was chosen.
 //   e. records/projects.md := `# Projects\n\n`; records/backlog.md :=
 //      `# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n`
-//   f. seedRuntimeLinks: bin CLAUDE.md .claude AGENTS.md linked to the distro
+//   f. seedRuntimeLinks: bin CLAUDE.md .claude AGENTS.md .agents linked to the distro
 //      root (`ln -sfn`; a REAL entry left alone) so the chief runs with cwd =
 //      home. Its bash original ac_seed_runtime_links is RETIRED with this port
 //      (this entry was its last caller) and frozen at
-//      tests/fixtures/ac-seed-runtime-links.sh for the oracles.
+//      tests/fixtures/ac-seed-runtime-links.sh for the oracles. The home's
+//      per-harness AC_HOME carriers are NOT laid here (the oracle never laid
+//      them): the first session start does (src/home-carriers.ts).
 //   g. <root>/docs/examples/CREWMATE.md copied to <home>/CREWMATE.md by `cp`
 //      when the last answer was `yes` - a per-fleet CREWMATE.md WINS over the
 //      container-wide .claude/CLAUDE.md (ac-spawn.sh owns that order), so it

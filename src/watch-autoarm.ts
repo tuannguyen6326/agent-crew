@@ -76,6 +76,26 @@
 // does not change what THIS hook reads (a firing standing aside from a
 // predecessor's watcher still gets the `already running` prefix it globs on).
 //
+// AN ORPHANED FIRING (autoarm-orphan-holds-watcher-lock, 2026-10): Claude Code
+// reparents a Stop hook outliving its session to pid 1 (research/firstmate
+// origin/main bin/fm-wake-lib.sh:1810-1814) with its watcher child still alive
+// and the lock still held - a corpse the exit-2 nudge can never reach, because
+// its owning session is gone. Two halves close the gap. The slower one is
+// this hook giving up on its own: stillProvenHolder re-checks, on every pass
+// after the first, THIS firing's own live ancestry against the ONE pid the
+// pre-loop isSessionLockHolder already proved held it - never a fresh read
+// of .session-lock, which a reparented firing's own prior re-arm can have
+// already overwritten with its own identity (ownerGate's ancestry walk falls
+// to its own stable fallback once nothing in the reparented tree matches a
+// harness) - so an orphaned firing stops re-arming a replacement for itself
+// as soon as its current watcher child exits (one AC_HEARTBEAT, not the full
+// AC_AUTOARM_BUDGET). The faster half is the REPLACEMENT session's:
+// ac-watch.sh stamps the arming session's own session-lock pid into
+// $lock/autoarm (its header owns that write and the reclaim it feeds), so a
+// later fleet arm under AC_AUTOARM can tell a live incumbent's session from
+// a dead one's and reclaim the lock immediately instead of waiting out the
+// orphan's next pass.
+//
 // THE ARM ENV is reconstructed on every pass, exactly as the chief would set it
 // by hand (rooms-threads skill): a SCOPED roomchief session arms with
 // AC_WATCH_ONLY=<its watch set> (ac-ready.sh watch-set; the scope itself when
@@ -207,6 +227,10 @@
 //   stands every unscoped firing aside as not the holder.
 //
 // DIVERGENCES from the original (the leg names each one a row can show):
+// - ORPHAN SELF-CHECK: stillProvenHolder re-runs the pre-loop ancestry walk's
+//   verdict on every owed-loop pass after the first (AN ORPHANED FIRING,
+//   above), where the original checked once and never again; the leg does
+//   not exercise a session dying mid-loop, so this is unobserved there.
 // - F7 STATUS: the shim answers only the module's 0 or 2, so the 1 of an
 //   unknown argument (its ERROR line still printed) or of W3, and an
 //   identifier's clock status other than 2 (127 for a missing date), exit 0,
@@ -265,7 +289,6 @@ import {
   metaGet,
   metaIsSelf,
   metaIsVerify,
-  metaPaths,
   physicalDir,
   shellStatus,
   spawnShellSync,
@@ -273,6 +296,7 @@ import {
   testInt,
   wakePending,
 } from "./lib.ts";
+import { metaPaths } from "./lib-wake-drain.ts";
 
 const { args, atCaller } = enterCaller(process.argv.slice(2));
 const arg = args[0] ?? "";
@@ -385,17 +409,53 @@ function ppidOf(p: string): string {
   }
 }
 
+// The UNSCOPED ancestry walk alone - scope!=="" stands aside on a different
+// predicate (family-demoted, above) that this never replaces. A dead or
+// absent holder is fail-open HERE (nothing currently claims the lock, so
+// this firing may proceed) - but that same fail-open answer must never
+// stand for "still the holder" mid-loop: a dead holder is exactly the
+// orphaned case, and re-reading .session-lock fresh on a later pass can see
+// a DIFFERENT lock this firing's own prior re-arm just reclaimed for itself
+// (ownerGate's ancestry walk falls to its own STABLE FALLBACK when nothing
+// in this reparented tree matches a harness, src/lock.ts's header), which
+// would read back as "still fine" for the very firing that is the orphan.
+let provenHolder: string | null = null;
+function isSessionLockHolder(): boolean {
+  const lock = `${sd}/.session-lock`;
+  if (!isFile(lock)) return true;
+  const holder = lockHolder(lock);
+  if (holder === "" || !answersKill0(holder)) return true;
+  for (let p = String(process.pid); p !== "" && (testInt(p) ?? 0n) > 1n; p = ppidOf(p))
+    if (p === holder) {
+      provenHolder = holder;
+      return true;
+    }
+  return false;
+}
+
+// The re-check every pass after the first actually needs: not "does
+// .session-lock currently name a live ancestor" (isSessionLockHolder's
+// question, asked once, above) but "am I STILL a descendant of the ONE pid
+// I already proved held it". Comparing against the pid this firing proved -
+// never a fresh read - is what makes reparenting itself the signal: once the
+// session dies, THIS process's own ancestry no longer passes through it,
+// full stop, regardless of what any later writer stamps into the file. No
+// proven holder (the pre-loop check never matched one) has nothing to
+// defend, so it never trips - the pre-loop check already decided this firing
+// may run.
+function stillProvenHolder(): boolean {
+  if (provenHolder === null) return true;
+  for (let p = String(process.pid); p !== "" && (testInt(p) ?? 0n) > 1n; p = ppidOf(p)) if (p === provenHolder) return true;
+  return false;
+}
+
 block(() => {
   if (scope !== "") {
     if (isFile(`${sd}/${scope}-chief.meta`)) return;
     trace(`verdict=stood-aside reason=family-demoted scope=${where}`);
     process.exit(0);
   }
-  const lock = `${sd}/.session-lock`;
-  if (!isFile(lock)) return;
-  const holder = lockHolder(lock);
-  if (holder === "" || !answersKill0(holder)) return;
-  for (let p = String(process.pid); p !== "" && (testInt(p) ?? 0n) > 1n; p = ppidOf(p)) if (p === holder) return;
+  if (isSessionLockHolder()) return;
   trace("verdict=stood-aside reason=not-lock-holder scope=fleet");
   process.exit(0);
 });
@@ -502,8 +562,19 @@ const started = clock().text;
 process.env.AC_AUTOARM = "1";
 block(() => trace(`verdict=armed reason=loop-start scope=${where} owed=yes`));
 
+// The pre-loop block already ran isSessionLockHolder once for THIS firing;
+// re-running it on the very first pass would check nothing new while still
+// re-reading .session-lock (observable on an unreadable one - sed's own
+// `Permission denied` line - for no reason). Every pass AFTER the first is
+// real re-arming time elapsed since that check.
+let firstPass = true;
 block(() => {
   while (owed()) {
+    if (!firstPass && scope === "" && !stillProvenHolder()) {
+      trace("verdict=stood-aside reason=orphaned-mid-loop scope=fleet");
+      process.exit(0);
+    }
+    firstPass = false;
     const now = clock();
     const end = BigInt.asIntN(64, BigInt.asIntN(64, arith(now.text, now.status) - arith(started, now.status)) + arith(process.env.AC_HEARTBEAT || "600", now.status));
     const limit = testInt(budget);

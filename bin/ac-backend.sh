@@ -50,7 +50,7 @@
 #                                     holds only the raw id herdr handed it, so
 #                                     the id-keyed verbs cannot reach it. Fails
 #                                     closed on an empty pane id. Its twin is
-#                                     src/lib.ts's backendCapturePane
+#                                     src/lib-verify.ts's backendCapturePane
 #                                     (tests/ts/verify-twins.test.ts).
 #   backend_send_line_pane <pane-id> <text>
 #                                     send_line in that same raw-pane

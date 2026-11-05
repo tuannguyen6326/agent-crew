@@ -18,7 +18,7 @@ import { afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { metaIsVerify, metaSet, stageDirForId, statusAppend, taskDir, taskMeta, taskStatus } from "../../src/lib.ts";
+import { classifyCi, famDir, familyDirs, metaIsVerify, metaSet, stageDirForId, statusAppend, taskDir, taskMeta, taskStatus } from "../../src/lib.ts";
 
 const root = join(import.meta.dir, "..", "..");
 const binDir = join(root, "bin");
@@ -409,6 +409,30 @@ test("stageDirForId maps every suffix as ac_stage_dir_for_id does, with no disk 
   expect(stageDirForId("t9")).toBe("");
 });
 
+// The room walkers (the turn-end guard, the captain inbox, push-pending) read
+// every family dir: each top-level data/ entry as their `data/*/room.md` globs
+// did (a file or a dir named room.md is the caller's to judge), plus a story
+// dir one level down marked `.family` - never under archive/, never a bare
+// subdir - in byte order of the path.
+test("familyDirs lists every family dir in byte order, a marked story under its epic included", () => {
+  const home = tmp("home");
+  seedHome(home, {
+    "data/b/room.md": "r",
+    "data/a/room.md": "r",
+    "data/ep/story/.family": "",
+    "data/ep/story/room.md": "r",
+    "data/ep/work/report.md": "x",
+    "data/ep2/.family": "",
+    "data/archive/2026/old/.family": "",
+    "data/.hidden/room.md": "r",
+    "data/zz/room.md/": "",
+    "data/plain.txt": "t",
+  });
+  const d = `${home}/data`;
+  expect(familyDirs(d)).toEqual([`${d}/a`, `${d}/archive`, `${d}/b`, `${d}/ep`, `${d}/ep/story`, `${d}/ep2`, `${d}/plain.txt`, `${d}/zz`]);
+  expect(familyDirs(`${home}/nothing`)).toEqual([]);
+});
+
 // One home holding every layout shape of bin/ac-brief.sh: nested stage dirs,
 // revisions, a brief-less chief under an existing family, data/<id>/implement,
 // fan-out tasks/<slug> (longest prefix first), the flat dir, and the three
@@ -432,12 +456,48 @@ test("taskDir resolves every brief layout as ac_task_dir does, and throws its di
     "data/fam/tasks/dup/brief.md": "b",
     "data/fam-dup/brief.md": "b",
     "data/lonely-chief/": "",
+    "data/ep/story/.family": "",
+    "data/ep/story/room.md": "r",
+    "data/ep/story/spec/brief.md": "b",
+    "data/ep/story/tasks/sub/brief.md": "b",
+    "data/ep/work/": "",
+    "data/ep/dup2/.family": "",
+    "data/ep2/dup2/.family": "",
+    "data/oldflat/": "",
+    "records/backlog.md": "- [ ] ep3 [EPIC] - the epic (repo: proj)\n- [ ] newstory - a story; epic:ep3 (repo: proj)\n- [ ] orphan - no epic row; epic:nope\n- [ ] selfref - itself; epic:selfref\n- [ ] oldflat - predates nesting; epic:ep3\n",
   });
   process.env.AC_HOME = home;
   const ids = [
     "fam-spec", "fam-spec-r2", "fam-r3", "fam-r4", "fam-chief", "fam2-chief", "lonely-chief", "t9", "fam-slug", "wire-e34-fix", "wire-zz", "t1", "nothing",
     "amb-spec", "amb2", "fam-dup", "fam-spec-arch", "../t1", "a b-spec", "-spec", "fam-tasks-slug",
+    "story", "story-spec", "story-chief", "story-sub", "story-r2", "work", "dup2", "dup2-spec",
+    "newstory", "newstory-spec", "newstory-chief", "orphan", "selfref", "oldflat",
   ];
+  for (const fam of ["story", "work", "flat", "dup2", "*", "../t1", "", "ep", "newstory", "orphan", "selfref", "oldflat", "ep3"]) {
+    const o = bash('ac_fam_dir "$1"', { AC_HOME: home }, fam);
+    let got: { out: string; err: string; rc: number };
+    try {
+      got = { out: `${famDir(fam)}\n`, err: "", rc: 0 };
+    } catch (e) {
+      got = { out: "", err: `ERROR: ${(e as Error).message}\n`, rc: 1 };
+    }
+    expect([fam, got]).toEqual([fam, o]);
+  }
+  expect(famDir("story")).toBe(`${home}/data/ep/story`);
+  expect(famDir("work")).toBe(`${home}/data/work`);
+  expect(famDir("newstory")).toBe(`${home}/data/ep3/newstory`);
+  expect(famDir("orphan")).toBe(`${home}/data/orphan`);
+  expect(famDir("oldflat")).toBe(`${home}/data/oldflat`);
+  expect(() => famDir("dup2")).toThrow(`ambiguous family data for dup2: dirs at both ${home}/data/ep/dup2 and ${home}/data/ep2/dup2`);
+  const bare = tmp("bare");
+  seedHome(bare, {});
+  process.env.AC_HOME = bare;
+  expect(famDir("ghost")).toBe(`${bare}/data/ghost`);
+  expect(existsSync(`${bare}/records`)).toBe(false);
+  process.env.AC_HOME = home;
+  expect(taskDir("story-spec")).toBe(`${home}/data/ep/story/spec`);
+  expect(taskDir("story-chief")).toBe(`${home}/data/ep/story/chief`);
+  expect(taskDir("story-sub")).toBe(`${home}/data/ep/story/tasks/sub`);
   for (const id of ids) {
     const o = bash('ac_task_dir "$1"', { AC_HOME: home }, id);
     let got: { out: string; err: string; rc: number };
@@ -512,4 +572,39 @@ test("statusAppend returns false when the status file cannot be appended", () =>
   expect(r.rc).toBe(0);
   expect(r.out).toBe("false");
   expect(r.err).toBe("ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one\n");
+});
+
+// classifyCi: the four verdicts over every CheckRun/StatusContext shape
+// statusCheckRollup can hold, per GitHub's CheckStatusState,
+// CheckConclusionState and StatusState enums.
+test("classifyCi reads an empty rollup as none", () => {
+  expect(classifyCi([])).toBe("none");
+  expect(classifyCi(null)).toBe("none");
+  expect(classifyCi(undefined)).toBe("none");
+  expect(classifyCi("not an array")).toBe("none");
+});
+
+test("classifyCi reads every entry settled and ok as green", () => {
+  expect(classifyCi([{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }])).toBe("green");
+  expect(classifyCi([{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }, { __typename: "CheckRun", status: "COMPLETED", conclusion: "NEUTRAL" }, { __typename: "CheckRun", status: "COMPLETED", conclusion: "SKIPPED" }, { __typename: "CheckRun", status: "COMPLETED", conclusion: "STALE" }])).toBe(
+    "green",
+  );
+  expect(classifyCi([{ __typename: "StatusContext", state: "SUCCESS" }])).toBe("green");
+  expect(classifyCi([{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS" }, { __typename: "StatusContext", state: "SUCCESS" }])).toBe("green");
+});
+
+test("classifyCi reads any unsettled entry as pending, even beside a green one", () => {
+  for (const status of ["QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED"]) expect(classifyCi([{ status, conclusion: null }])).toBe("pending");
+  for (const state of ["PENDING", "EXPECTED"]) expect(classifyCi([{ state }])).toBe("pending");
+  expect(classifyCi([{ status: "COMPLETED", conclusion: "SUCCESS" }, { status: "IN_PROGRESS", conclusion: null }])).toBe("pending");
+  // An unrecognized conclusion/shape fails closed to pending, never green.
+  expect(classifyCi([{ status: "COMPLETED", conclusion: "SOMETHING_NEW" }])).toBe("pending");
+  expect(classifyCi(["not an object"])).toBe("pending");
+});
+
+test("classifyCi reads any failing entry as failing, even beside a green or pending one", () => {
+  for (const conclusion of ["FAILURE", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "TIMED_OUT"]) expect(classifyCi([{ status: "COMPLETED", conclusion }])).toBe("failing");
+  for (const state of ["FAILURE", "ERROR"]) expect(classifyCi([{ state }])).toBe("failing");
+  expect(classifyCi([{ status: "COMPLETED", conclusion: "SUCCESS" }, { status: "COMPLETED", conclusion: "FAILURE" }])).toBe("failing");
+  expect(classifyCi([{ status: "IN_PROGRESS", conclusion: null }, { status: "COMPLETED", conclusion: "FAILURE" }])).toBe("failing");
 });

@@ -401,7 +401,20 @@ function markers(): string[] {
     } catch {
       continue;
     }
-    for (const n of names) if (n.startsWith(".gate-running.")) found.push(`${data}/${d}/${n}`);
+    for (const n of names) {
+      if (n.startsWith(".gate-running.")) found.push(`${data}/${d}/${n}`);
+      // A story of an epic runs its gates one level down, in the dir its
+      // `.family` marker names a family (src/brief.ts's header owns the layout).
+      else if (!n.startsWith(".") && d !== "archive" && isFile(`${data}/${d}/${n}/.family`)) {
+        let subs: string[];
+        try {
+          subs = readdirSync(fsPath(`${data}/${d}/${n}`), { encoding: "latin1" });
+        } catch {
+          continue;
+        }
+        for (const s of subs) if (s.startsWith(".gate-running.")) found.push(`${data}/${d}/${n}/${s}`);
+      }
+    }
   }
   return found.sort();
 }
@@ -414,8 +427,10 @@ function activeRows(): string[] {
   const lines: string[] = [];
   for (const m of markers()) {
     if (!isFile(m) || !markerLive(m)) continue;
+    // The marker's own dir names the family (a story's sits inside its epic's).
     // A name of LFs only left `$(dirname)` the data dir itself.
-    const fam = m.slice(data.length + 1, m.lastIndexOf("/")).replace(/\n+$/, "") || "data";
+    const dir = m.slice(0, m.lastIndexOf("/"));
+    const fam = dir.slice(dir.lastIndexOf("/") + 1).replace(/\n+$/, "") || "data";
     if (pinFam !== "" && pinFam !== fam) continue;
     const stage = meta(m, "stage");
     if (pinStage !== "" && pinStage !== stage) continue;

@@ -569,6 +569,13 @@ snb="$(cat "$AC_HOME/data/standing-none/brief.md")"
 assert_contains "$snb" "## Fleet standing rules" "every brief carries the standing-rules section"
 assert_contains "$snb" "(no standing preferences file on record)" \
   "a missing captain.md is reported LOUD, matching ac-gate.sh's own precedent"
+# The two fleet HARD RULEs (AGENTS.md section 1) reach every brief byte-for-byte
+# from the distro's own file - a chief hand-copying them under a heading that
+# promised "verbatim" cut one to its first sentence and the other to its title.
+[ "$(grep -c '^- HARD RULE - ' "$ROOT/AGENTS.md")" = 2 ] || fail "AGENTS.md section 1 names two fleet hard rules"
+while IFS= read -r rule; do
+  assert_contains "$snb" "$rule" "the brief carries the fleet hard rule verbatim: ${rule:0:48}"
+done < <(grep '^- HARD RULE - ' "$ROOT/AGENTS.md")
 
 # Now with a captain.md: select by the EXISTING STANDING marker token
 # (ac-domain.sh's STANDING (domain:<name>): grammar), as a rule BLOCK - a
@@ -668,6 +675,45 @@ assert_contains "$out" "already exists" \
 out="$("$BIN/ac-brief.sh" wire-slice-a myproj --mode local-only 2>&1 || true)"
 assert_contains "$out" "already exists" \
   "an unscoped re-scaffold of a tasks/-nested id refuses instead of minting a flat twin"
+# A scoped id carrying the family's own canonical stage suffix without --stage
+# (the qa verifier a roomchief briefs as a <family>-qa scout) is a stage of the
+# family, not a sibling: it scaffolds at the stage dir the resolver already reads.
+AC_SCOPE=wire "$BIN/ac-brief.sh" wire-qa myproj --scout >/dev/null
+assert_file "$AC_HOME/data/wire/qa/brief.md" \
+  "a scoped <family>-<stage> scout scaffolds at the family's stage dir"
+assert_no_file "$AC_HOME/data/wire-qa/brief.md" "and leaves no flat sibling"
+assert_eq "$(bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; ac_task_dir wire-qa")" \
+  "$AC_HOME/data/wire/qa" "and the resolver finds it from the bare id"
+out="$("$BIN/ac-brief.sh" wire-qa myproj --scout 2>&1 || true)"
+assert_contains "$out" "already exists" \
+  "an unscoped re-scaffold of a stage-nested scout refuses instead of minting a flat twin"
+AC_SCOPE=other-fam "$BIN/ac-brief.sh" wire-slice-qa myproj --scout >/dev/null
+assert_file "$AC_HOME/data/wire-slice-qa/brief.md" \
+  "a scoped stage id of ANOTHER family stays flat"
+
+# --- an epic's story is born inside the epic's dir --------------------------------
+# A row carrying epic:<e> whose epic has its own [EPIC] row is a story: its
+# family dir is data/<e>/<story>/, marked `.family`, and every nested shape
+# (stage dirs, fan-outs) hangs off that dir. The epic's own row, a token with
+# no [EPIC] row, and a story whose flat dir predates nesting are not moved.
+cat >>"$AC_HOME/records/backlog.md" <<'PINEOF'
+- [ ] nest-ep [EPIC] - the epic (repo: myproj)
+- [ ] nest-s1 [src:cap flow:direct mode:local-only rev:no qa:no] - a story; epic:nest-ep (repo: myproj)
+- [ ] nest-s2 [src:cap flow:staged mode:local-only rev:no qa:no] - a staged story; epic:nest-ep (repo: myproj)
+PINEOF
+"$BIN/ac-brief.sh" nest-s1 myproj >/dev/null
+assert_file "$AC_HOME/data/nest-ep/nest-s1/brief.md" "a story's brief is born inside its epic's dir"
+assert_file "$AC_HOME/data/nest-ep/nest-s1/.family" "and the story dir is marked a family of its own"
+assert_no_file "$AC_HOME/data/nest-s1/brief.md" "never flat beside the epic"
+assert_eq "$(bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; ac_task_dir nest-s1")" \
+  "$AC_HOME/data/nest-ep/nest-s1" "and the resolver finds it from the bare id"
+"$BIN/ac-brief.sh" nest-s2-spec myproj --stage spec >/dev/null
+assert_file "$AC_HOME/data/nest-ep/nest-s2/spec/brief.md" "a staged story's stage dir hangs off the nested story dir"
+assert_file "$AC_HOME/data/nest-ep/nest-s2/.family" "which is marked too"
+AC_SCOPE=nest-s1 "$BIN/ac-brief.sh" nest-s1-part myproj --mode local-only >/dev/null
+assert_file "$AC_HOME/data/nest-ep/nest-s1/tasks/part/brief.md" "a nested story's fan-out nests under the nested story"
+out="$("$BIN/ac-brief.sh" nest-s1 myproj 2>&1 || true)"
+assert_contains "$out" "already exists" "a second scaffold of the story refuses"
 
 # --- the epic-branch fence: an unreadable ledger is not "no epic" ------------
 # Read as no fence, an epic story's direct-pr brief names the default branch
@@ -690,6 +736,9 @@ fi
 # --- differential: src/brief.ts against the frozen bash original -----------
 # DISPUTED: the implementation (tests/fixtures/ac-brief.sh under bash vs src/brief.ts through bin/ac-brief.sh)
 # HELD-CONSTANT: two side roots seeded alike ($XOH for the oracle, $XNH for the shim) - a home at <side>/home (records/backlog.md with the pinned rows below, data/<e>/branches live and archived, config/captain and records/captain.md where a row seeds them), clones at <side>/home/projects/<name> built by the same commands with fixed author/committer dates and one git config (GIT_CONFIG_GLOBAL, no system config) so every sha matches, a TMPDIR at <side>/tmp; argv and env (the side root spelled @H, substituted in values only); cwd (<side>/cwd, an EMPTY dir, unless a row names another); stdin (/dev/null); LC_ALL=C unless a row names en_US.UTF-8; the live bin/ beside each entry (the oracle bin's copies, $BIN's own, a decoy root's copy for the rows from a cwd with no name) and a row's own PATH stubs; both entries invoked by absolute path except W1's row; exit status, stdout and stderr compared whole (the side root spelled @H, either bin root ROOT), then the world a row may touch: every path under the side root (git internals aside), every file under home/ and tmp/ with its mode and bytes, and each clone's porcelain.
+# NAMED DIVERGENCE, never an xsame row: a scoped <scope>-<stage> id with no
+# --stage nests at the stage dir on the shim side only (the fan-out block above
+# asserts it); the frozen original scaffolds it flat.
 xobin="$(make_oracle_bin ac-brief)"
 cmp -s "$xobin/ac-brief.sh" "$ROOT/tests/fixtures/ac-brief.sh" || fail "the oracle bin holds the frozen original"
 XOH="$TMP/xside-o"; XNH="$TMP/xside-n"
@@ -762,7 +811,10 @@ xrun_side() {  # xrun_side <bin> <side root> <prefix> <args...>
     "${e[@]}" "$bin/ac-brief.sh" ${a[@]+"${a[@]}"}) </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.err"
 }
 xnorm() {  # xnorm <file> <side root>
-  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-brief#ROOT#g" -e "s#$TMP/xdecoy#ROOT#g" -e "s#$ROOT#ROOT#g" "$1"
+  # HARD RULES: the shim side opens the standing-rules section with the two
+  # distro rule lines (intro, blank, two rules, blank) the original never had.
+  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-brief#ROOT#g" -e "s#$TMP/xdecoy#ROOT#g" -e "s#$ROOT#ROOT#g" \
+    -e "/^The fleet's hard rules, verbatim from the distro/{N;N;N;N;d;}" "$1"
 }
 XO_RC=0; XN_RC=0
 xpair() {  # xpair <args...> - both sides run, outputs normalised, nothing compared yet
@@ -881,6 +933,8 @@ XHOMELESS=0
 xboth xstd
 xrefuse "$(XUNSPEC a)" a proj --mode ''
 xmade home/data/sm/brief.md sm proj --scout --mode bogus
+assert_eq "$(grep -c '^- HARD RULE - ' "$XNH/home/data/sm/brief.md"):$(grep -c '^- HARD RULE - ' "$XOH/home/data/sm/brief.md" || true)" "2:0" \
+  "HARD RULES: the shim side carries the distro's two rule lines, the original none"
 xmade home/data/-x/brief.md -x proj --mode local-only
 xmade home/data/--/brief.md -- proj --mode local-only
 xmade home/data/--scout/brief.md --scout myid --mode local-only
@@ -918,7 +972,7 @@ x2cwd() { grep -v -E '^(shell-init|chdir): error retrieving current directory' "
 # From a cwd with no name bun sits in its bin's root, so the shim runs from a
 # DECOY root holding a home/ and a repo a regression would resolve.
 xdecoy="$TMP/xdecoy"
-rm -rf "$xdecoy"; mkdir -p "$xdecoy/home"; cp -R "$ROOT/bin" "$ROOT/src" "$ROOT/dashboard" "$xdecoy/"
+rm -rf "$xdecoy"; mkdir -p "$xdecoy/home"; cp -R "$ROOT/bin" "$ROOT/src" "$ROOT/dashboard" "$ROOT/AGENTS.md" "$xdecoy/"
 git init -q -b main "$xdecoy"; git -C "$xdecoy" commit -q --allow-empty -m decoy
 XNBIN="$xdecoy/bin"
 XCWD=cwd; XGONE=1; XENV=("AC_HOME=home")

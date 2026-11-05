@@ -101,8 +101,6 @@
 // - LOGICAL CWD: a relative directory is walked from the physical cwd, where
 //   the original's cd walked `..` from its logical $PWD first - from a cwd
 //   entered through a symlink, `../x` named a different directory there.
-// - A caller whose cwd Bun cannot enter (a name ending in a backslash)
-//   resolves no relative target: it allows.
 // - TEMP: the original fed jq a here-string, a temp file under $TMPDIR, else
 //   /tmp; with neither writable it allowed with bash's own line, where the
 //   port pipes jq's stdin and judges.

@@ -1,4 +1,4 @@
-// qa-gate.test.ts - the qa.require_for_ship merge gate twins (src/lib.ts,
+// qa-gate.test.ts - the qa.require_for_ship merge gate twins (src/lib-qa-gate.ts,
 // `// --- qa-gate twins ---`) held to the frozen bash functions of
 // tests/fixtures/ac-qa-lib.sh differentially: qaRequired against ac_qa_required (Q rows),
 // qaAttestationParse against ac_qa_attestation_parse (P rows), qaGateOk
@@ -19,7 +19,7 @@ import { retiredBin } from "./retired-bin.ts";
 
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const binDir = retiredBin();
-const LIB = join(ROOT, "src", "lib.ts");
+const LIB = join(ROOT, "src", "lib-qa-gate.ts");
 const FIXED = "2026-01-01T00:00:00Z";
 const ROOTUSER = process.getuid?.() === 0;
 const made: string[] = [];

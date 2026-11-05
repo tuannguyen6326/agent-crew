@@ -258,7 +258,7 @@ assert_contains "$out" "merged $url" "qa not required -> unresolved head is no f
 # --- the SCOPED merge gate, driven through the HELPER ------------------------
 # The two-sided gate end to end: the entry hands it the project and the head,
 # and it reads both the yaml's qa.scopes and the repo-knowledge record (the
-# gate itself is src/lib.ts's qaGateOk; tests/ts/qa-gate.test.ts holds it to
+# gate itself is src/lib-qa-gate.ts's qaGateOk; tests/ts/qa-gate.test.ts holds it to
 # ac_qa_gate_ok arm by arm).
 mkdir -p "$AC_HOME/records/repo-knowledge"
 grepo2="$(make_repo scopedqarepo)"

@@ -601,6 +601,26 @@ EOF
     && fail "$race_mode: a commit pushed after the qa gate must not ride the merge"
 done
 
+# ---- Case: --expect <sha> binds the land to the head the review read -------
+# Review reads crew/<id> at one head; the land reads the ref again. A commit
+# the crewmate adds between the two landed unreviewed. With --expect the land
+# refuses unless the branch is still at that head (a unique prefix is enough).
+rx="$(make_repo expecthead)"
+add_crew "$rx" cx1
+mk_meta cx1 "$rx"
+reviewed="$(git -C "$rx" rev-parse crew/cx1)"
+git -C "$rx" checkout -q crew/cx1
+printf 'late\n' >"$rx/late.txt"; git -C "$rx" add -A; git -C "$rx" commit -qm "late commit"
+git -C "$rx" checkout -q main
+late="$(git -C "$rx" rev-parse crew/cx1)"
+out="$("$BIN/ac-merge-local.sh" cx1 --expect "$(printf '%s' "$reviewed" | cut -c1-12)" 2>&1)" && fail "a branch past the reviewed head must not land: $out"
+assert_contains "$out" "ERROR: crew/cx1 is at $late, not the reviewed $(printf '%s' "$reviewed" | cut -c1-12) - review what moved it (bin/ac-review-diff.sh cx1) and land with the head you read" "the refusal names both heads and the remedy"
+if git -C "$rx" merge-base --is-ancestor "$reviewed" main; then fail "nothing landed on a refused --expect"; fi
+out="$("$BIN/ac-merge-local.sh" cx1 --expect "$late" 2>&1)" || fail "the current head lands with --expect: $out"
+assert_eq "$(git -C "$rx" rev-parse main)" "$late" "main fast-forwarded to the expected head"
+out="$("$BIN/ac-merge-local.sh" cx1 --expect 2>&1)" && fail "--expect without a sha must be a usage error"
+assert_contains "$out" "usage: ac-merge-local.sh <id> [--no-ff] [--expect <sha>]" "the usage names the flag"
+
 # --- differential: src/merge-local.ts against the frozen bash original -------
 # DISPUTED: the implementation (tests/fixtures/ac-merge-local.sh under bash vs src/merge-local.ts through bin/ac-merge-local.sh)
 # HELD-CONSTANT: two side roots seeded alike ($OH for the oracle, $NH for the shim) - a home at <side>/home whose projects/ clones (and the bare origins under <side>/remotes) carry the same fixed-date commits so every sha agrees - argv and env (the side root spelled HOME, substituted in values only), cwd (the side root, or a repo under it where a row says), stdin /dev/null, LC_ALL=C, GIT_AUTHOR_DATE/GIT_COMMITTER_DATE fixed so a commit made during the run agrees too, AC_GUARD_ROOT at a non-repo dir (the guard's checkout checks name where bin/ sits, which differs by construction) and a fresh watcher beat in each home, PATH stubs for `date` (one fixed instant) and `sleep` (logged, instant); exit status, stdout and stderr compared whole (the side root spelled HOME, the oracle's and this checkout's distro roots spelled DISTRO), then the world a row may touch: every clone's and origin's refs, HEAD, MERGE_HEAD, porcelain status and working-tree files, the names under state/, the landing ledger, every status log and timeline, and the sleep log.
@@ -705,10 +725,20 @@ both mseed
 #    that is not exactly --no-ff; W9 - a third argument is ignored (the land
 #    runs as --no-ff); git absent from PATH refuses after the guard ran
 both mrepo r1; both mcrew r1 c1; both mmeta c1 r1
-msame; assert_eq "$(m_err)" "$MUSAGE" "1: no id"; assert_eq "$N_RC" 1 "1: usage exits 1"
-msame '' --no-ff; assert_eq "$(m_err)" "$MUSAGE" "1: an empty id"
-msame c1 --noff; assert_eq "$(m_err)" "$MUSAGE" "1: a misspelt flag"
-msame c1 -n; assert_eq "$(m_err)" "$MUSAGE" "1: any other second argument"
+# EXPECT (named): the port's usage names its --expect flag; the refusals agree
+# in exit, stdout and world, and differ in that one line.
+PUSAGE='ERROR: usage: ac-merge-local.sh <id> [--no-ff] [--expect <sha>]'
+musage() {  # musage <why> <args...> - both sides refuse with their own usage line
+  local why="$1"; shift
+  mpair "$@"
+  assert_eq "$O_RC:$(cat "$TMP/o.out"):$(cat "$TMP/o.err2")" "1::$MUSAGE" "1: $why (the original)"
+  assert_eq "$N_RC:$(m_out):$(m_err)" "1::$PUSAGE" "1: $why (the port, EXPECT named)"
+  same_world "$@"
+}
+musage "no id"
+musage "an empty id" '' --no-ff
+musage "a misspelt flag" c1 --noff
+musage "any other second argument" c1 -n
 msame c1 --no-ff extra
 assert_eq "$(m_out)" "merged crew/c1 into main (--no-ff)" "1: W9 - a third argument is ignored"
 assert_eq "$(m_err)" "$(kgap c1 r1)" "1: the knowledge flag rides the land"
@@ -1209,5 +1239,18 @@ out="$(lab_land)" || fail "14: the lab land"
 assert_eq "$out" "fast-forwarded main to crew/lab" "14: no lab gate line"
 case "$(cat "$TMP/lab.err")" in *WATCHER-DOWN*) fail "14: the lab has no guard, yet one ran" ;; esac
 assert_contains "$(cat "$TMP/lab.err")" "record what it learned ($LAB/bin/ac-know.sh add" "14: the remedy names the lab's bin/"
+
+# 15. EXPECT (named): `--expect <sha>` binds the land to a reviewed head. The
+#     original read any second argument but --no-ff as usage; the port lands
+#     when the branch is at that head and refuses naming both when it is not.
+mx() { rm -rf "$H/home/projects/rx"; mrepo rx; mcrew rx x1; mmeta x1 rx; }
+both mx
+mpair x1 --expect "$(git -C "$NH/home/projects/rx" rev-parse crew/x1 | cut -c1-12)"
+assert_eq "$O_RC:$(cat "$TMP/o.err2")" "1:$MUSAGE" "15: the original's usage"
+assert_eq "$N_RC:$(m_out)" "0:fast-forwarded main to crew/x1" "15 (named): the port lands the expected head"
+both mx
+mpair x1 --expect 0123456789ab
+assert_eq "$N_RC:$(m_out)" "1:" "15 (named): a head the review did not read does not land"
+assert_eq "$(m_err)" "ERROR: crew/x1 is at $(git -C "$NH/home/projects/rx" rev-parse crew/x1), not the reviewed 0123456789ab - review what moved it (bin/ac-review-diff.sh x1) and land with the head you read" "15 (named): the refusal"
 
 pass

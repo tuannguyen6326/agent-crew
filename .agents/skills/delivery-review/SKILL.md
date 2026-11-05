@@ -1,6 +1,6 @@
 ---
 name: delivery-review
-description: The execution role and its review obligation: what an execution crewmate owns (implement + delivery), how the review obligation is derived per flow and mode (and the epic exception), how exact-ref review rounds converge, what crew-ship's engine owns, the verifier pane lifecycle, and the crew-ship validation policy (lint/test steps, pipeline config install, the checks-passed merge rule). Load before briefing an execution crewmate, deciding --review, relaying a fix/ask-user verdict, or granting a final review round.
+description: Execution role and review obligation: what an execution crewmate owns, review derived per flow and mode, exact-ref rounds, crew-ship validation policy. Load before briefing an execution crewmate or relaying a verdict.
 ---
 
 # delivery-review
@@ -64,6 +64,7 @@ description: The execution role and its review obligation: what an execution cre
 - Review is a derived intake obligation recorded as `review=yes|no`, not a flow,
   stage, mode, or config profile:
   - staged, all modes: `yes`;
+  - sdlc, all modes: `yes` (the staged obligation; `docs/sdlc-flow.md`);
   - direct + `crew-ship`: `yes`;
   - direct + `feature-pr`: `no` by default - the feature ship gate owns ONE
     review round at the feature tip (`bin/ac-feature.sh ship`); a per-member

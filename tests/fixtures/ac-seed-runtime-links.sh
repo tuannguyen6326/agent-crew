@@ -7,13 +7,14 @@ ac_seed_runtime_links() {
   # ac_seed_runtime_links <home> - symlink the EXECUTABLE core into <home> so
   # a chief session runs with cwd = home (workspace = home, repo = code):
   # bin/ tooling, the CLAUDE.md chief law, .claude/ (settings/hooks/skills),
-  # AGENTS.md. Nothing else: docs/ and tests/ are repo material read through
+  # AGENTS.md, .agents/ (codex scans .agents/skills only, never the skills
+  # .claude/ carries). Nothing else: docs/ and tests/ are repo material read through
   # "$(ac_root)/..." when needed, and machine paths already resolve that way.
   # A REAL (non-symlink) entry is left alone - a per-home override wins; a
   # stale symlink is repointed.
   local home="$1" root f
   root="$(ac_root)"
-  for f in bin CLAUDE.md .claude AGENTS.md; do
+  for f in bin CLAUDE.md .claude AGENTS.md .agents; do
     if [ -e "$home/$f" ] && [ ! -L "$home/$f" ]; then continue; fi
     ln -sfn "$root/$f" "$home/$f"
   done

@@ -1,6 +1,6 @@
 ---
 name: crew-verify
-description: Run ONE independent, exact-ref code review round over your committed work through bin/ac-verify.sh codereview - a fresh reviewer pane at the exact HEAD you name, judging the base..HEAD diff against your brief, returning a JSON verdict (pass | fix | ask-user) with stable finding ids - and drive the fix/re-review loop it opens. Use when your brief says review is required on a direct-pr or local-only task, when you re-review after a fix round, when a solo session wants an independent review of a slice before it lands, or when the user invokes /crew-verify - never inside crew-ship (its review step owns that round), and never for behavioral proof (that is crew-qa / domain-e2e).
+description: One independent exact-ref code review round via bin/ac-verify.sh codereview (verdict pass | fix | ask-user) and its fix loop. Use when a brief requires review, after a fix round, for a solo slice, or on /crew-verify.
 ---
 
 # crew-verify

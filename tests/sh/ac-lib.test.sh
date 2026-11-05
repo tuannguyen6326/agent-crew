@@ -1218,6 +1218,74 @@ assert_eq "$(lib "ac_task_dir 'wire-zz'")" "$AC_HOME/data/wire-zz" \
   "a free-slug id with no nested brief keeps resolving flat"
 rm -rf "$AC_HOME/data/wire" "$AC_HOME/data/wire-e34" "$AC_HOME/data/wire-c"
 
+# --- ac_fam_dir: a story of an epic lives at data/<epic>/<story>/ --------------
+# The read side finds a family by what EXISTS: its flat dir, else the ONE
+# data/<epic>/<story>/ one level down that carries the .family marker (a
+# crewmate's own work/ or verify/ subdir never passes for a story); the same
+# story marked under two epics dies; a family nowhere on disk keeps the flat
+# path, so creation lands there. Every resolver reads through it.
+mkdir -p "$AC_HOME/data/ep/story/spec" "$AC_HOME/data/ep/story/tasks/sub" "$AC_HOME/data/ep/work" "$AC_HOME/data/flatfam"
+: >"$AC_HOME/data/ep/story/.family"
+: >"$AC_HOME/data/ep/story/room.md"
+: >"$AC_HOME/data/ep/story/spec/brief.md"
+: >"$AC_HOME/data/ep/story/tasks/sub/brief.md"
+assert_eq "$(lib "ac_fam_dir 'story'")" "$AC_HOME/data/ep/story" \
+  "a marked story dir resolves under its epic"
+assert_eq "$(lib "ac_fam_dir 'work'")" "$AC_HOME/data/work" \
+  "an unmarked subdir of a family is never a story"
+assert_eq "$(lib "ac_fam_dir 'flatfam'")" "$AC_HOME/data/flatfam" "a flat family stays flat"
+assert_eq "$(lib "ac_fam_dir 'ghost'")" "$AC_HOME/data/ghost" "a family nowhere on disk resolves flat"
+assert_eq "$(lib "ac_fam_dir '*'")" "$AC_HOME/data/*" "an unsafe name never reaches the probe"
+mkdir -p "$AC_HOME/data/ep2/story"
+: >"$AC_HOME/data/ep2/story/.family"
+out="$(lib "ac_fam_dir 'story' 2>&1" || true)"
+assert_contains "$out" "ambiguous family data for story: dirs at both $AC_HOME/data/ep/story and $AC_HOME/data/ep2/story" \
+  "one story marked under two epics dies, the dirs named in byte order"
+rm -rf "$AC_HOME/data/ep2"
+assert_eq "$(lib "ac_task_dir 'story'")" "$AC_HOME/data/ep/story" "the story's own task dir is the nested dir"
+assert_eq "$(lib "ac_task_dir 'story-spec'")" "$AC_HOME/data/ep/story/spec" "a story's stage dir nests under the nested story"
+assert_eq "$(lib "ac_task_dir 'story-chief'")" "$AC_HOME/data/ep/story/chief" "a story's roomchief dir too"
+assert_eq "$(lib "ac_task_dir 'story-sub'")" "$AC_HOME/data/ep/story/tasks/sub" "and its fan-out sub-task"
+assert_eq "$(lib "ac_room_file 'story'")" "$AC_HOME/data/ep/story/room.md" "the story's live room resolves under its epic"
+assert_eq "$(lib "ac_room_file 'story-sub'")" "$AC_HOME/data/ep/story/room.md" "a sub-task id of a nested story resolves to the story's room"
+assert_eq "$(lib "ac_family_of_id 'story-spec'")" "story" "a stage id of a nested story resolves to the story"
+mkdir -p "$AC_HOME/data/archive/2026/oldep/oldstory"
+: >"$AC_HOME/data/archive/2026/oldep/oldstory/.family"
+printf '# Room: oldstory\n' >"$AC_HOME/data/archive/2026/oldep/oldstory/room.md"
+assert_eq "$(lib "ac_room_file 'oldstory'")" "$AC_HOME/data/archive/2026/oldep/oldstory/room.md" \
+  "a story archived with its epic resolves one level down in the archive"
+rm -rf "$AC_HOME/data/ep" "$AC_HOME/data/flatfam" "$AC_HOME/data/archive/2026/oldep"
+
+# --- ac_fam_dir: a family nowhere on disk is placed by the ledger --------------
+# A row carrying epic:<e> whose epic has its own [EPIC] row names a story: it
+# is born at data/<e>/<family>/, and ac_fam_dir_mint creates that dir with its
+# marker. An epic: token with no [EPIC] row, or naming the row itself, is no
+# story; a story whose flat dir predates nesting stays flat forever. The look
+# at the ledger mints nothing: a home with no records/ still has none after.
+rm -rf "$AC_HOME/records"
+assert_eq "$(lib "ac_fam_dir ghost")" "$AC_HOME/data/ghost" "a family with no ledger at all is flat"
+[ ! -e "$AC_HOME/records" ] || fail "resolving a family dir must not mint records/"
+mkdir -p "$AC_HOME/records" "$AC_HOME/data/oldflat"
+cat >>"$AC_HOME/records/backlog.md" <<'PINEOF'
+- [ ] ep3 [EPIC] - the epic (repo: proj)
+- [ ] newstory - a story; epic:ep3 (repo: proj)
+- [ ] orphan - no epic row; epic:nope (repo: proj)
+- [ ] selfref - itself; epic:selfref (repo: proj)
+- [ ] oldflat - a story whose flat dir predates nesting; epic:ep3 (repo: proj)
+PINEOF
+assert_eq "$(lib "ac_fam_dir newstory")" "$AC_HOME/data/ep3/newstory" \
+  "a story not yet on disk is placed under its epic by its ledger row"
+assert_eq "$(lib "ac_room_file newstory")" "$AC_HOME/data/ep3/newstory/room.md" "and so does the room a creator writes"
+assert_eq "$(lib "ac_fam_dir orphan")" "$AC_HOME/data/orphan" "an epic: token with no [EPIC] row stays flat"
+assert_eq "$(lib "ac_fam_dir selfref")" "$AC_HOME/data/selfref" "a self-referencing token stays flat"
+assert_eq "$(lib "ac_fam_dir oldflat")" "$AC_HOME/data/oldflat" "a story whose flat dir already exists stays flat"
+assert_eq "$(lib "ac_fam_dir_mint newstory")" "$AC_HOME/data/ep3/newstory" "mint prints the story's dir"
+assert_file "$AC_HOME/data/ep3/newstory/.family" "and marks it a family of its own"
+assert_eq "$(lib "ac_fam_dir_mint flatnew")" "$AC_HOME/data/flatnew" "a flat family mints flat"
+[ -d "$AC_HOME/data/flatnew" ] || fail "mint creates the flat dir"
+assert_no_file "$AC_HOME/data/flatnew/.family" "with no marker"
+rm -rf "$AC_HOME/data/ep3" "$AC_HOME/data/oldflat" "$AC_HOME/data/flatnew" "$AC_HOME/records/backlog.md"
+
 # --- ac_meta_get: "empty if absent" must hold at BOTH instants ----------------
 # Contract and reasoning: ac_meta_get's own comment block (bin/ac-lib.sh). What
 # these cases pin: a VANISH mid-read is empty+0, a present-but-unreadable file
@@ -1538,10 +1606,11 @@ assert_eq "$(lib "ac_crew_metas '$TMP/no-such-state-dir'")" "" "an absent dir pr
 # twice (.change-* orphans live, then .seen-hash-/.report-hash-/.superseded-
 # added with no reaper at all).
 stamps="$(lib "ac_task_stamps /sd tid1")"
-for b in hash change seen seen-hash stale gone ask unobservable report-hash superseded busy busy-stalled ended rewake; do
+for b in hash change seen seen-hash stale gone ask unobservable report-hash superseded busy busy-stalled ended rewake \
+  stale-count stale-capped deferred-since; do
   assert_contains "$stamps" "/sd/.$b-tid1" "stamp list carries .$b-<id>"
 done
-assert_eq "$(printf '%s\n' "$stamps" | wc -l | tr -d ' ')" "14" "exactly the fourteen stamp kinds, no strays"
+assert_eq "$(printf '%s\n' "$stamps" | wc -l | tr -d ' ')" "17" "exactly the seventeen stamp kinds, no strays"
 
 # --- crewdomain routing table: a SECOND registry, disjoint from the deputy one
 # The crewdomain feature is ADDITIVE - records/crewdeputies.md and

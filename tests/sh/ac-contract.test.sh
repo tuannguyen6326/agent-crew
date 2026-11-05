@@ -82,6 +82,8 @@ cat >"$backlog" <<'EOF'
 - [ ] plain-row - no contract at all (repo: x)
 - [ ] tokened-row [src:cap flow:direct mode:local-only rev:no qa:no] - a clean contract (repo: x)
 - [ ] bad-row [src:cap flow:staged mode:crew-ship rev:no qa:no] - contradicts the law (repo: x)
+- [ ] sdlc-row [src:cap flow:sdlc mode:crew-ship rev:yes qa:no] - the sdlc flow is a valid pin (repo: x)
+- [ ] sdlc-bad [src:cap flow:sdlc mode:local-only rev:no qa:no] - sdlc review is mandatory (repo: x)
 
 ## Done
 EOF
@@ -98,6 +100,13 @@ assert_contains "$out" "WARN   bad-row contract: mode:crew-ship with rev:no" \
 case "$out" in
   *"WARN   tokened-row"*) fail "a clean contract draws no WARN" ;;
 esac
+assert_contains "$out" "READY  sdlc-row [src:cap flow:sdlc mode:crew-ship rev:yes qa:no]" \
+  "flow:sdlc is a valid flow value - the SDLC flow rides the same contract grammar"
+case "$out" in
+  *"WARN   sdlc-row"*) fail "a clean sdlc contract draws no WARN" ;;
+esac
+assert_contains "$out" "WARN   sdlc-bad contract: flow:sdlc with rev:no" \
+  "sdlc review is mandatory, like staged"
 
 # A TAB may join contract tokens (src/backlog.ts). When the scheduler's snapshot
 # was TAB-separated, a raw TAB shifted every later column, so the row read as
@@ -128,6 +137,8 @@ cat >"$backlog" <<'EOF'
 - [ ] g-cheap - no contract at all (repo: gproj)
 - [ ] g-bare - no contract either (repo: gproj)
 - [ ] g-pinned-mode [src:cap mode:local-only] - mode pinned local (repo: gproj)
+- [ ] g-sdlc [src:cap flow:sdlc mode:crew-ship rev:yes qa:no] - the sdlc flow, pinned by the captain (repo: gproj)
+- [ ] g-sdlc2 [src:cap flow:sdlc mode:local-only rev:yes qa:no] - the sdlc flow on a cheap mode (repo: gproj)
 
 ## Done
 EOF
@@ -157,6 +168,42 @@ assert_contains "$out" "flow:staged" "G3: names the staged escalation"
   || fail "G4: a pinned row must scaffold without asking - đã define trong backlog thì không cần hỏi"
 assert_contains "$(cat "$AC_HOME/data/g-pinned/implement/brief.md")" "Mode: crew-ship" \
   "G4: the pinned mode reaches the brief"
+
+# G4b: a flow:sdlc pin is pre-consent for the SAME stage machinery - the SDLC
+# flow runs the design and execution stages, so its pin authorizes them the way
+# flow:staged does, and the design brief resolves the pin through its family row.
+"$BIN/ac-brief.sh" g-sdlc-design gproj --stage design >/dev/null \
+  || fail "G4b: a flow:sdlc pin must scaffold a design brief without asking"
+assert_contains "$(cat "$AC_HOME/data/g-sdlc/design/brief.md")" "Review: yes" \
+  "G4b: the sdlc design brief carries the mandatory review"
+"$BIN/ac-brief.sh" g-sdlc gproj --stage implement >/dev/null \
+  || fail "G4b: a flow:sdlc pin must scaffold the execution brief without asking"
+sdlcd="$(cat "$AC_HOME/data/g-sdlc/design/brief.md")"
+sdlci="$(cat "$AC_HOME/data/g-sdlc/implement/brief.md")"
+assert_contains "$sdlcd" "Flow: sdlc" "G4b: the design brief states the flow the sdlc skill routes on"
+assert_contains "$sdlci" "Flow: sdlc" "G4b: the execution brief states it too"
+assert_contains "$sdlcd" "## SDLC artifact chain" "G4b: the design brief carries the artifact-chain block"
+assert_contains "$sdlcd" "docs/sdlc-flow.md" "G4b: ... naming the flow contract"
+assert_contains "$sdlcd" "Beside each" "G4b: ... and tells the design crewmate to write artifacts beside its reports"
+assert_contains "$sdlci" "## SDLC artifact chain" "G4b: the execution brief carries the artifact-chain block"
+assert_contains "$sdlci" "one commit per artifact" "G4b: ... binding the chain-before-code commit order"
+assert_contains "$sdlci" "\`sdlc\` skill seeded in this worktree" "G4b: ... pointing at the seeded skill by name, never by a harness path"
+assert_contains "$sdlci" "sha256" "G4b: ... and binding each artifact to its accepted report's digest"
+assert_contains "$sdlcd" "## Artifacts" "G4b: the design brief asks for the artifact digest list the gate binds"
+# G4c: the sdlc review obligation rides the ROW, not the call's layout flags -
+# the unsuffixed execution brief scaffolds with no --stage, and a cheap mode
+# must still carry Review: yes and the chain block.
+"$BIN/ac-brief.sh" g-sdlc2 gproj >/dev/null \
+  || fail "G4c: a flow:sdlc pin must scaffold the default execution brief without asking"
+sdlc2="$(cat "$AC_HOME/data/g-sdlc2/brief.md")"
+assert_contains "$sdlc2" "Flow: sdlc" "G4c: the default execution brief states the flow"
+assert_contains "$sdlc2" "Review: yes" "G4c: ... and the mandatory review, with no --stage and a cheap mode"
+assert_contains "$sdlc2" "## SDLC artifact chain" "G4c: ... and the chain block"
+out="$("$BIN/ac-brief.sh" g-sdlc2-r2 gproj --review no 2>&1)" && fail "G4c: --review no on an sdlc row must refuse"
+assert_contains "$out" "sdlc flow requires review=yes" "G4c: the refusal names the sdlc obligation"
+case "$(cat "$AC_HOME/data/g-pinned/implement/brief.md")" in
+  *"Flow:"*|*"SDLC artifact chain"*) fail "G4b: a staged row scaffolds no Flow line and no SDLC block" ;;
+esac
 
 # G5: --captain-requested is the per-call authority for the same escalations.
 "$BIN/ac-brief.sh" g-bare gproj --mode crew-ship --review yes \

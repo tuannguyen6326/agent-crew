@@ -51,10 +51,14 @@ test("familyOfId and crewBranch resolve what ac_family_of_id and ac_crew_branch 
   mkdirSync(join(h, "data", "foo", "spec"), { recursive: true });
   mkdirSync(join(h, "data", "bar", "ship"), { recursive: true });
   mkdirSync(join(h, "data", "cf", "chief"), { recursive: true });
+  mkdirSync(join(h, "data", "ep", "story", "spec"), { recursive: true });
+  writeFileSync(join(h, "data", "ep", "story", ".family"), "");
+  mkdirSync(join(h, "data", "ep", "work", "spec"), { recursive: true });
   const ids = [
     "foo", "foo-r2", "foo-r12", "foo-spec", "foo-spec-r2", "foo-arch", "foo-arch-r3", "dash-review", "dash-review-r2",
     "bar-ship", "bar-ship-r1", "c1-ship", "c1-r2", "c1-spec-r2", "foo-chief", "cf-chief", "real-second-chief",
     "-spec", "spec", "a-b-c-qa", "x-r123", "x-r0", "foo-r-spec-r2", "e1-s1-x", "",
+    "story-spec", "story-spec-r2", "story-chief", "work-spec",
   ];
   for (const id of ids) {
     const fam = bashLib("ac_family_of_id", [id]);
@@ -69,6 +73,9 @@ test("familyOfId and crewBranch resolve what ac_family_of_id and ac_crew_branch 
   expect(familyOfId("c1-r2")).toBe("c1");
   expect(familyOfId("cf-chief")).toBe("cf");
   expect(crewBranch("foo-r2")).toBe("crew/foo");
+  expect(familyOfId("story-spec")).toBe("story");
+  expect(familyOfId("story-chief")).toBe("story-chief");
+  expect(familyOfId("work-spec")).toBe("work-spec");
 });
 
 test("familyOfId homeless prints the AC_HOME refusal where the bash's `[ -d $(ac_data_dir)/... ]` did, and goes on with the id", () => {

@@ -129,7 +129,7 @@
 // found: bun`, exit 1, from the shim.
 import { statSync, writeFileSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
-import { dataDir, deliveryModeBlock, die, enterCaller, metaGet, metaSet, spawnShellSync, statusAppend, taskMeta, taskStatus } from "./lib.ts";
+import { deliveryModeBlock, die, enterCaller, famDir, famDirMint, metaGet, metaSet, spawnShellSync, statusAppend, taskMeta, taskStatus } from "./lib.ts";
 
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
@@ -199,9 +199,11 @@ try {
 if (!appended) die(b(`cannot append ${bytes(taskStatus(id))}`));
 writeSync(1, b(`promoted ${bytes(id)}: kind scout -> ship, mode=${mode} (ship teardown protection now applies)\n`));
 
-const instructions = `${dataDir()}/${id}/ship-instructions.md`;
-const made = spawnShellSync(["mkdir", "-p", `${dataDir()}/${id}`], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+const famd = famDir(id);
+const instructions = `${famd}/ship-instructions.md`;
+const made = spawnShellSync(["mkdir", "-p", famd], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
 if (made.exitCode !== 0) process.exit(made.exitCode ?? 1);
+famDirMint(id);
 const contract = `# Ship contract: ${id} (promoted from scout)
 
 This task now delivers a PROJECT CHANGE on \`crew/${id}\`; a report alone no

@@ -2295,7 +2295,8 @@ fi
   || fail "an orca-backend crew spawn for the race fixture must succeed"
 race_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/race1.meta" | head -1)"
 rm -rf "$race_wt"
-git -C "$repo" worktree list --porcelain | grep -qF "worktree $race_wt" \
+worktrees="$(git -C "$repo" worktree list --porcelain)"
+grep -qF "worktree $race_wt" <<<"$worktrees" \
   || fail "fixture: git must still list the removed worktree (the stale-registration shape)"
 err="$("$BIN/ac-teardown.sh" race1 2>&1)" || fail "the race fixture's teardown must succeed: $err"
 case "$err" in *"kept crew/race1"*) fail "a 0-commit branch must not stay kept over a stale worktree registration alone: $err" ;; esac

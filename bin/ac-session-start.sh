@@ -24,7 +24,10 @@
 # digest. It counts and hints, never kills, and prints only when something is
 # wrong - so it is safe in read-only mode too (a pure ps scan, no writes).
 #
-# Ride-alongs after the lock, both non-blocking:
+# Ride-alongs after the lock, all non-blocking:
+# - the home names itself to every harness's hooks (bin/ac-home-carriers.sh;
+#   skipped in read-only mode - it writes the home's harness dirs), so a
+#   later resume whose launch line forgot AC_HOME still runs supervised;
 # - crewdeputy homes pull the parent's inheritable config knobs
 #   (ac_config_converge_from_parent; skipped in read-only mode - convergence
 #   writes config);
@@ -143,6 +146,17 @@ if [ "$lock_rc" -eq 2 ]; then
 EOF
 elif [ "$lock_rc" -ne 0 ]; then
   ac_warn "session lock acquire failed (rc=$lock_rc) - continuing unlocked"
+fi
+
+# Home-carriers ride-along: the home names itself to every harness's hooks
+# (src/home-carriers.ts header), so a later resume that forgot AC_HOME on its
+# launch line still runs supervised. Non-blocking - a failed write only warns.
+printf -- '-- home carriers --\n'
+if [ "$read_only" -eq 1 ]; then
+  printf '(read-only: carriers skipped - they write the home'"'"'s harness dirs)\n'
+else
+  car_out="$("$bin_dir/ac-home-carriers.sh" 2>&1)" || true
+  if [ -n "$car_out" ]; then printf '%s\n' "$car_out"; else printf '(no drift)\n'; fi
 fi
 
 # Crewdeputy ride-along: converge inheritable config from the parent home
@@ -487,7 +501,7 @@ if [ "$curate_n" -ge "$curate_x" ]; then
 fi
 
 # An UNSETTLED maintenance transaction refuses every OTHER Learning/Curate
-# transaction (maintenanceApply's claim, src/lib.ts), so one crash between the
+# transaction (maintenanceApply's claim, src/lib-curate.ts), so one crash between the
 # claim and the final `complete` - or one plan whose second action failed -
 # stops the whole knowledge-maintenance loop. It used to do that INVISIBLY: the
 # next learning run warned about a stale receipt and Curate died, neither

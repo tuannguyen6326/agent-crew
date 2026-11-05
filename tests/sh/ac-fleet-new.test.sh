@@ -34,7 +34,7 @@ assert_eq "$(cat "$container/alpha/config/backend")" "herdr" "backend seeded una
 
 # Runtime symlinks: the chief runs with cwd = home (workspace = home, repo =
 # code), so the seed links the distro runtime set into the new home.
-for f in bin CLAUDE.md .claude AGENTS.md; do
+for f in bin CLAUDE.md .claude AGENTS.md .agents; do
   [ -L "$container/alpha/$f" ] || fail "runtime link missing: alpha/$f"
 done
 for f in docs tests; do

@@ -1,6 +1,6 @@
 ---
 name: solo-session
-description: The two sanctioned ways a chief-side or captain-driven session writes code itself: the small self-task (ac-self-task.sh), the SOLO CHIEF (a roomchief promoted --solo), and the SOLO SESSION (AC_SOLO=1) with its prohibitions, subagent rules, landing path, knowledge-loop teardown gate, and end-of-session states. Load at the start of any AC_SOLO=1 session, before any ac-self-task.sh start, and before promoting or running a --solo roomchief.
+description: Sessions that write code themselves: the small self-task, the solo chief (--solo roomchief), the SOLO SESSION (AC_SOLO=1). Load at the start of any AC_SOLO=1 session or before ac-self-task.sh start.
 ---
 
 # solo-session

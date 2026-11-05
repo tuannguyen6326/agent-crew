@@ -1,4 +1,4 @@
-// learn.test.ts - what src/learn.ts brought into src/lib.ts, held to the bash
+// learn.test.ts - what src/learn.ts brought into src/lib-learn.ts, held to the bash
 // it twins - learnDue, skillsDir and maintenanceIncomplete to the live readers
 // session start keeps (bin/ac-maintenance-lib.sh, bin/ac-lib.sh), the writers
 // to their originals frozen at tests/fixtures/ac-maintenance-retired.sh: the
@@ -9,7 +9,7 @@
 // lib's AC_MAINTENANCE_QUOTE_MIN. The CLI contract is tests/sh/ac-learn.test.sh's,
 // whose differential leg runs the frozen original beside the shim.
 //
-// DISPUTED: the implementation of each helper (its bash - live or frozen - vs src/lib.ts)
+// DISPUTED: the implementation of each helper (its bash - live or frozen - vs src/lib-learn.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home); argv; env (PATH = a stub dir - date answering one instant, sleep logging to <side>/sleep.log and returning - then the host's bun and jq, then /bin and /usr/bin without herdr, orca, docker, codegraph or jq; LC_ALL=C; HOME and TMPDIR the test root; AC_HOME where a row sets it); cwd (the distro root); stdin (/dev/null); the process started through /bin/sh; stdout, stderr and the status (the side root spelled S, the side's pid PID) and the side root's world after the call - every path with its mode and bytes - compared whole.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -18,7 +18,7 @@ import { join } from "node:path";
 
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const BIN = join(ROOT, "bin");
-const LIB = join(ROOT, "src", "lib.ts");
+const LIB = join(ROOT, "src", "lib-learn.ts");
 const LEARN = join(ROOT, "src", "learn.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-learn-ts-")));
 afterAll(() => {

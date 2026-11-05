@@ -11,8 +11,8 @@
 // <repo-root> is any path git's -C accepts, exactly as given: absolute,
 // relative to the caller's cwd, a subdirectory of a work tree, a trailing
 // slash. A relative root stays the CALLER's: enterCaller returns to that cwd,
-// and when bun cannot enter it (a directory name bun misreads, one ending in
-// a backslash) the caller's path bin/ac-bun.sh handed over is joined in front
+// and when bun cannot enter it (bun before 1.4.4 misread a name ending in a
+// backslash) the caller's path bin/ac-bun.sh handed over is joined in front
 // of the root for git alone - the messages still echo the root as given.
 // Extra arguments are ignored; no -h; stdin is never read; AC_HOME is never
 // consulted (a homeless run is legal and identical). Every result is git's:

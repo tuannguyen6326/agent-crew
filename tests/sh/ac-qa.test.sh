@@ -3493,10 +3493,16 @@ xnorm() {  # xnorm <file> - STAMP, ROOT, N and X for what differs by pid, port, 
     -e 's#(/\.[a-z-]+(\.tsv|\.receipt|-current|-curation|-manifest|-amend|-amendments|-candidates|\.curation)?)\.[A-Za-z0-9]{6}#\1.X#g' \
     -e 's#(\.tmp)\.[0-9]+#\1.PID#g' -e 's#/tmp\.[A-Za-z0-9]{8,}#/tmp.X#g' -e 's#(profile\.tmp)\.[A-Za-z0-9]{6}#\1.X#g' "$1"
 }
-xsnap() {  # xsnap <pass> - the world as one listing
-  local n f
+xsnap() {  # xsnap <pass> - the world as one listing, same-named entries ordered by their normalised content
+  local d n k f
   (cd "$XW" && find repo/.crew home data tmp stub -print 2>/dev/null || true) >"$TMP/xnames"
-  xnorm "$TMP/xnames" | paste - "$TMP/xnames" | LC_ALL=C sort | while IFS=$'\t' read -r n f; do
+  # Names that normalise alike (a stamp plus this side's pid) would otherwise order by that pid, i.e. differently per side.
+  xnorm "$TMP/xnames" | paste - "$TMP/xnames" \
+    | awk -F'\t' '{ c[$1]++; l[NR] = $0 } END { for (i = 1; i <= NR; i++) { split(l[i], a, "\t"); print (c[a[1]] > 1 ? 1 : 0) "\t" l[i] } }' \
+    | while IFS=$'\t' read -r d n f; do
+      k=-; [ "$d" = 0 ] || [ ! -f "$XW/$f" ] || [ -L "$XW/$f" ] || k="$(xnorm "$XW/$f" | cksum)"
+      printf '%s\t%s\t%s\n' "$n" "$k" "$f"
+    done | LC_ALL=C sort | while IFS=$'\t' read -r n k f; do
     if [ -L "$XW/$f" ]; then printf '== %s -> %s\n' "$n" "$(readlink "$XW/$f")"; continue; fi
     printf '== %s %s\n' "$n" "$(stat -f %Sp "$XW/$f")"
     case "$f" in */serve.pid|*/epoch) printf 'N\n'; continue ;; esac
@@ -3523,6 +3529,12 @@ xsame() { xpass o "$1" "$2" o; xpass n "$1" "$2" n; xcmp o n; }   # xsame <setup
 xcont() {  # xcont <setup> <body> - the oracle alone, then the two sides alternating call by call, either side first
   xpass o "$1" "$2" o; xpass a "$1" "$2" o n; xpass b "$1" "$2" n o; xcmp o a; xcmp o b
 }
+# Two receipts whose names normalise alike list by content: the raw names carry each side's own pid, so they order the sides apart.
+rm -rf "$XW"; mkdir -p "$XW/repo/.crew/qa/r/boundaries/C-1"
+printf 'boundary=a\n' >"$XW/repo/.crew/qa/r/boundaries/C-1/20260101-000000-9.env"
+printf 'boundary=b\n' >"$XW/repo/.crew/qa/r/boundaries/C-1/20260101-000000-1.env"
+xsnap probe
+assert_eq "$(grep '^boundary=' "$TMP/xw.probe" | tr '\n' ' ')" 'boundary=a boundary=b ' 'qa world lists same-named receipts by content'
 xt() { cat "$TMP/xt2.${1:-n}"; }
 xhas() { assert_contains "$(xt "${2:-n}")" "$1" "qa differential at line $(xrow)"; }   # xhas <text> [<pass>]
 xwhas() { assert_contains "$(cat "$TMP/xw2.${2:-n}")" "$1" "qa differential world at line $(xrow)"; }

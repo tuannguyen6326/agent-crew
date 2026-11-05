@@ -17,6 +17,9 @@
 command -v bun >/dev/null 2>&1 || skip 'bun not available'
 
 make_home
+# Composed at runtime: the literal shape trips GitHub push protection, and the
+# gate under test reads the prompt, never this file.
+SLACK_SHAPED="xoxb-$((1234567890))-$((1234567890))-abcdefghijklmnopqrstuvwx"
 HOOK="$BIN/ac-prompt-recall.sh"
 ADAPTER="$BIN/ac-prompt-recall-cursor.sh"
 [ -x "$HOOK" ] || fail "missing or non-executable $HOOK"
@@ -65,6 +68,64 @@ for p in '{"prompt":"ok"}' '{"prompt":"/compact now please"}' '{"prompt":"!git s
 done
 out="$(printf 'not json' | (cd "$AC_HOME" && "$HOOK"))" || fail "unparseable payload must exit 0"
 [ -z "$out" ] || fail "unparseable payload must emit nothing: $out"
+
+# A harness-injected turn - a background task's notification, another agent's
+# message, a system reminder - reaches the prompt hook as if the captain had
+# typed it; every watcher wake is one. It pays no recall: nothing printed, no
+# ac-brain.sh call (the distinctive word would hit, and the usage log would grow).
+usage_lines() { wc -l <"$AC_HOME/state/brain-usage.jsonl" 2>/dev/null | tr -d ' '; }
+before="$(usage_lines)"
+for p in \
+  '{"prompt":"<task-notification>\n<task-id>abc</task-id>\n<summary>zanzibar quorum reconciliation finished</summary>\n</task-notification>"}' \
+  '{"prompt":"  <teammate-message teammate_id=\"x\">zanzibar quorum reconciliation</teammate-message>"}' \
+  '{"prompt":"<agent-message from=\"a1\">zanzibar quorum reconciliation report</agent-message>"}' \
+  '{"prompt":"Another Claude session sent a message:\n<agent-message from=\"a1\">zanzibar quorum reconciliation</agent-message>"}' \
+  '{"prompt":"[SYSTEM NOTIFICATION - NOT USER INPUT]\nzanzibar quorum reconciliation task finished"}' \
+  '{"prompt":"<system-reminder>\nzanzibar quorum reconciliation background event\n</system-reminder>"}' \
+; do
+  out="$(run_hook "$AC_HOME" "$p")"
+  [ -z "$out" ] || fail "a harness-injected prompt must emit nothing: $p -> $out"
+done
+assert_eq "$(usage_lines)" "$before" "a harness-injected prompt never reaches ac-brain.sh recall"
+# ...while a captain who merely mentions one of those words still recalls.
+out="$(run_hook "$AC_HOME" '{"prompt":"what did zanzibar quorum reconciliation settle about the task-notification wake shape"}')"
+assert_contains "$out" "data/fam-one/room.md" "a prompt mentioning a notification still recalls"
+
+# --- secret gate: a credential-shaped token skips recall even though its
+# underscores/dashes split it into runs the word-count gate alone reads as
+# ordinary multi-word prose (the bug this family fixes) --------------------
+usage_lines() { wc -l <"$AC_HOME/state/brain-usage.jsonl" 2>/dev/null | tr -d ' '; }
+before="$(usage_lines)"
+for p in \
+  '{"prompt":"sk-or-v1-abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef1234"}' \
+  '{"prompt":"oc_sk_1234567890abcdef1234567890"}' \
+  '{"prompt":"apikey_2269aaaa_e3bd1111e3bd2222e3bd3333"}' \
+  '{"prompt":"ghp_1234567890abcdefghijklmnopqrstuvwx"}' \
+  '{"prompt":"github_pat_11ABCDEFG0123456789012345_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX"}' \
+  '{"prompt":"AKIAABCDEFGHIJKLMNOP"}' \
+  '{"prompt":"'"$SLACK_SHAPED"'"}' \
+  '{"prompt":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
+  '{"prompt":"here is my key sk-or-v1-abcdefabcdefabcdefabcdefabcdef1234 please use it"}' \
+  '{"prompt":"zanzibar log line \\tAKIAABCDEFGHIJKLMNOP end of line"}' \
+  '{"prompt":"zanzibar pasted {\"token\":\"\\n'"$SLACK_SHAPED"'\"} body"}' \
+  '{"prompt":"zanzibar url ?token=%22ghp_1234567890abcdefghij_klmnopqrstuvwx%22 here"}' \
+  '{"prompt":"zanzibar quoted \\u0022sk-proj-Ab3dEf7hIj-Kl2mNo5pQr_St8uVw1xYz\\u0022 value"}' \
+; do
+  out="$(run_hook "$AC_HOME" "$p")"
+  [ -z "$out" ] || fail "a secret-shaped prompt must emit nothing: $p -> $out"
+done
+after="$(usage_lines)"
+[ "$before" = "$after" ] || fail "a secret-shaped prompt must never reach ac-brain.sh recall (usage log grew $before -> $after)"
+
+# a prompt that merely mentions "key" in prose still recalls
+out="$(run_hook "$AC_HOME" '{"prompt":"what did zanzibar quorum reconciliation settle - also what is the api key policy"}')"
+assert_contains "$out" "data/fam-one/room.md" "a prompt merely mentioning 'key' still recalls"
+
+# a fleet-hyphenated name (sk- as a mid-word substring, not a prefix) must
+# not false-positive the secret gate - this fleet names families and skills
+# exactly like task-lifecycle-skill and ask-user-relay-dropped
+out="$(run_hook "$AC_HOME" '{"prompt":"what did zanzibar quorum reconciliation settle - status of task-lifecycle-skill and ask-user-relay-dropped"}')"
+assert_contains "$out" "data/fam-one/room.md" "a hyphenated fleet name must not false-positive the secret gate"
 
 # --- 5. valve ---------------------------------------------------------------
 printf 'off\n' >"$AC_HOME/config/brain-prompt-recall"
@@ -139,6 +200,10 @@ mkdir -p "$AC_HOME/state/.wake-spool.fam-one"
 printf '1\treport\tfam-one-x\tdone: y\n' >"$AC_HOME/state/.wake-spool.fam-one/1.1.000001"
 out="$(run_hook "$AC_HOME" '{"prompt":"ok"}' AC_SOLO= AC_SCOPE=fam-one)"
 assert_contains "$out" "1 queued wake" "a roomchief is told of its own family spool"
+# a secret-shaped prompt stays silent even with a wake queued - it must leave
+# no trace at all, not even the unrelated queued-wake notice
+out="$(run_hook "$AC_HOME" '{"prompt":"sk-or-v1-abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef1234"}' AC_SOLO=)"
+[ -z "$out" ] || fail "a secret-shaped prompt must stay silent even with a wake queued: $out"
 rm -rf "$spool" "$AC_HOME/state/.wake-spool.fam-one"
 
 # --- differential: src/prompt-recall.ts against the frozen bash original -----
@@ -220,7 +285,14 @@ rm -rf "$ph/state/.wake-spool" "$ph/state/.wake-spool.fam-one"
 for p in '{"prompt":"ok"}' '{"prompt":"/compact now please"}' '{"prompt":"!git status here"}' '{"prompt":"aa bb cc dd ee ff"}' \
          '{"prompt":"zanzibarquorumreconciliation"}' '{"user_message":"what did zanzibar quorum settle"}' '{"text":"what did zanzibar quorum settle"}' \
          '{"prompt":42}' '{"prompt":"  \tzanzibar quorum reconciliation\n  "}' '{"prompt":"café été zz"}' 'not json' '' \
-         '{"prompt":"zanzibar quorum"} trailing junk'; do
+         '{"prompt":"zanzibar quorum"} trailing junk' \
+         '{"prompt":"sk-or-v1-abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef1234"}' \
+         '{"prompt":"oc_sk_1234567890abcdef1234567890"}' '{"prompt":"apikey_2269aaaa_e3bd1111e3bd2222e3bd3333"}' \
+         '{"prompt":"ghp_1234567890abcdefghijklmnopqrstuvwx"}' '{"prompt":"AKIAABCDEFGHIJKLMNOP"}' \
+         '{"prompt":"'"$SLACK_SHAPED"'"}' '{"prompt":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
+         '{"prompt":"here is my key sk-or-v1-abcdefabcdefabcdefabcdefabcdef1234 please use it"}' \
+         '{"prompt":"what did zanzibar quorum settle - also what is the api key policy"}' \
+         '{"prompt":"what is the status of task-lifecycle-skill and ask-user-relay-dropped"}'; do
   printf '%s' "$p" >"$TMP/pr.in"
   pr_same HOME
 done

@@ -16,7 +16,7 @@
 // the calibration's kappa of 0.0 for pe == 1 (pe is 1 only when every pair
 // agrees).
 //
-// DISPUTED: the implementation of each twin (the bash vs src/qa-lib.ts or src/lib.ts)
+// DISPUTED: the implementation of each twin (the bash vs src/qa-lib.ts, src/lib.ts or src/lib-qa-gate.ts)
 // HELD-CONSTANT: one side root per side and row, seeded alike by the same bash snippet over the same seed library (a profile bundle, a git repo with fixed commit dates, a test plan, a QA run dir, a store's plan, ledger and history); argv; env (PATH = the host's bun, jq and git, then /bin and /usr/bin without herdr, orca, docker, codegraph or jq - the store rows put a date stub answering one instant first; LC_ALL=C unless a row names a locale; HOME and TMPDIR the test root; SIDE the side root; AC_HOME only where a row names it); cwd (the distro root); stdin (/dev/null); stdout, stderr and the status (the side root spelled S) and the side root's world after the call - every path with its mode and bytes - compared whole. A row naming a shell-own line asserts it on the bash side and drops it there before the comparison (the twin writes none: SHELL-OWN STDERR); a row naming awk's own lines does the same with them.
 import { afterAll, expect, test } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -28,6 +28,7 @@ const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const RBIN = retiredBin();
 const QA = join(ROOT, "src", "qa-lib.ts");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBQ = join(ROOT, "src", "lib-qa-gate.ts");
 const ROOTUSER = process.getuid?.() === 0;
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-qa-lib-ts-")));
 afterAll(() => {
@@ -224,7 +225,7 @@ function side(row: Row, s: string, oracle: boolean): Side {
     : [
         process.execPath,
         "-e",
-        `import { readFileSync, writeSync } from "node:fs"; const Q = await import(${JSON.stringify(QA)}); const L = await import(${JSON.stringify(LIB)}); const lat = (s) => Buffer.from(s, "utf8").toString("latin1"); const A = ${JSON.stringify(args)}.map(lat); const S = lat(process.env.SIDE); const out = (b) => writeSync(1, typeof b === "string" ? Buffer.from(b, "latin1") : b); const said = (e) => out(e === null ? "#0" : "#1" + e); ${row.twin}`,
+        `import { readFileSync, writeSync } from "node:fs"; const Q = await import(${JSON.stringify(QA)}); const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBQ)}) }; const lat = (s) => Buffer.from(s, "utf8").toString("latin1"); const A = ${JSON.stringify(args)}.map(lat); const S = lat(process.env.SIDE); const out = (b) => writeSync(1, typeof b === "string" ? Buffer.from(b, "latin1") : b); const said = (e) => out(e === null ? "#0" : "#1" + e); ${row.twin}`,
       ];
   const r = Bun.spawnSync(cmd, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 60000 });
   const norm = (t: string): string => t.replaceAll(s, "S");

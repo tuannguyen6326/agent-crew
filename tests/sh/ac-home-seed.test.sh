@@ -104,7 +104,7 @@ assert_no_file "$AC_HOME/crewdeputies/MyDeputy" "no home created for a refused n
 # Runtime symlinks: a deputy chief also runs with cwd = its home, so the seed
 # links the distro runtime set there too; the seeded CREWMATE.md copy (a real
 # file) must never be replaced by a link.
-for f in bin CLAUDE.md .claude AGENTS.md; do
+for f in bin CLAUDE.md .claude AGENTS.md .agents; do
   [ -L "$AC_HOME/crewdeputies/mate-four/$f" ] || fail "runtime link missing: mate-four/$f"
 done
 for f in docs tests; do

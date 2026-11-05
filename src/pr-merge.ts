@@ -148,13 +148,8 @@ import {
   die,
   enterCaller,
   familyOfId,
-  knowledgeWarn,
-  landingRecord,
-  landingWarn,
   metaGet,
   metaSet,
-  qaGateOk,
-  qaRequired,
   require,
   shellPrefix,
   shellStatus,
@@ -162,6 +157,8 @@ import {
   statusAppend,
   taskMeta,
 } from "./lib.ts";
+import { knowledgeWarn, landingRecord, landingWarn } from "./lib-merge-local.ts";
+import { qaGateOk, qaRequired } from "./lib-qa-gate.ts";
 
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");

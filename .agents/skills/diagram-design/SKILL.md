@@ -1,6 +1,6 @@
 ---
 name: diagram-design
-description: Create technical and product diagrams — architecture, IT current-state, flowchart, sequence, state machine, ER / data model, timeline, swimlane, quadrant, radar / spider, loop / flywheel, nested, tree, org chart, layer stack, venn, pyramid / funnel, bar chart, line chart, Gantt, scatter plot, high-level, process, medallion, data flow, DP integration, DP security matrix — as standalone HTML files with inline SVG. Also imports existing draw.io / diagrams.net files (.drawio*), Mermaid source (.mmd, .mermaid, or Markdown fences), and Excalidraw whiteboard scenes, redrawing them at a chosen output format (HTML / SVG / PNG), canvas size (slide, social card, doc, print), and level of detail (faithful reproduction or simplified for the audience's technical level). Ships with a neutral editorial skin and a first-run gate that prompts users to customize the style guide (colors, fonts) from their own website before generating. Includes annotation-callout primitive and optional sketchy variant.
+description: Technical and product diagrams as standalone HTML with inline SVG; imports draw.io, Mermaid, Excalidraw. Use instead of Mermaid for any captain-facing artifact that needs a diagram.
 license: MIT
 metadata:
   version: "2.2"

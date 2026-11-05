@@ -95,8 +95,8 @@ WARNs on violations - display and judgment, never a scheduling condition; the
 enforcement point is `ac-brief.sh`'s escalation
 gate (section 5). `src` values: `cap` (captain order), `chief`
 (chief-minted), `mon` (monitor), `gh` (github), `crew` (routed up),
-`learn` (Learning/Curate). A heavy token (`flow:staged`, `mode:crew-ship`,
-`rev:yes`, `qa:yes`) on a row is the captain's PIN - writing one without
+`learn` (Learning/Curate). A heavy token (`flow:staged`, `flow:sdlc`,
+`mode:crew-ship`, `rev:yes`, `qa:yes`) on a row is the captain's PIN - writing one without
 the captain's word is exactly the drift this grammar exists to stop.
 
 A row `bin/ac-domain.sh assign` stamps carries the `domain:<name>` token in
@@ -127,6 +127,9 @@ token on the story line - never an id prefix. FEATURE membership is the
 `src/backlog.ts`'s `feature`); one row never carries both - two
 integration targets is a ledger defect the shared resolver orders epic-first
 and `ac-feature.sh ship` refuses outright.
+
+A story's data dir sits inside its epic's, `data/<epic>/<story>/` marked `.family`, when the epic has its own `[EPIC]` row; a flat dir that already exists stays flat.
+The header of `src/brief.ts` owns that layout.
 
 `inputs: <path>[, <path>]` is a row's ARTIFACT LINK - home-relative paths to
 what the row already stands on and its first brief must read

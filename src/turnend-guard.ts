@@ -119,7 +119,7 @@
 // instead of accepting it - posting `HANDBACK-REFUSED:` to the room, which
 // settles the obligation while the family stays open and the roomchief stays
 // alive to work the remedy. stop_hook_active already bounds repeated blocks.
-// The rooms are data/*/room.md in BYTE order, judged in ONE pass by
+// The rooms are every live family dir's room.md (familyDirs) in BYTE order, judged in ONE pass by
 // src/room.ts's rowsOf (the room grammar's one copy; a room set that cannot be
 // read whole owes nothing), so the cost of the one hook that always runs grows
 // with no per-room process; it runs at most once per turn end, its answer
@@ -218,13 +218,14 @@
 // status and stderr; tests/sh/ac-watch.test.sh drives it for the watcher's
 // beacon. Its trace is read by chiefs and incident reviews.
 
-import { closeSync, constants, accessSync, lstatSync, readdirSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants, accessSync, lstatSync, statSync, writeSync } from "node:fs";
 import {
   commandV,
   crewMetas,
   dataDir,
   enterCaller,
   exclusiveTemp,
+  familyDirs,
   familyOfId,
   hookCapture,
   hookPayload,
@@ -413,8 +414,10 @@ const ageField = (): string => (age === null || beatNote !== "" ? "n/a" : `${age
 const trace = (verdict: string, reason: string, queued: string, inflightField: string): void =>
   traceLine(`verdict=${verdict} reason=${reason} scope=${scope || "fleet"} queued=${queued} inflight=${inflightField} age=${ageField()} handback=${hbField()}`);
 
-// data/*/room.md in byte order; [] when there is no data dir or the first
-// match is no regular file (the original tested `[ -f "$1" ]` alone).
+// Every family dir's room.md in byte order - data/*/ as the original globbed
+// it, plus a story's marked dir inside its epic's (familyDirs); [] when there
+// is no data dir or the first match is no regular file (the original tested
+// `[ -f "$1" ]` alone).
 function rooms(): string[] | null {
   let data: string;
   try {
@@ -422,15 +425,11 @@ function rooms(): string[] | null {
   } catch {
     return null;
   }
-  let names: string[] = [];
-  try {
-    names = readdirSync(data);
-  } catch {}
   const out: string[] = [];
-  for (const n of names.filter((n) => !n.startsWith(".")).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) {
+  for (const dir of familyDirs(data)) {
     try {
-      lstatSync(`${data}/${n}/room.md`);
-      out.push(`${data}/${n}/room.md`);
+      lstatSync(`${dir}/room.md`);
+      out.push(`${dir}/room.md`);
     } catch {}
   }
   return out;

@@ -85,17 +85,19 @@ Owner: [`deputies-domains`](../.agents/skills/deputies-domains/SKILL.md) skill.
 Every captain order is triaged at intake, before any brief, along several coupled dimensions.
 Precedence is always the captain's own words first, then a config pin, then the chief's triage.
 
-### The two flows
+### The three flows
 
 ```
 direct:  crewchief -> execution crewmate
 staged:  crewchief -> design crewmate -> execution crewmate
          design = spec / architecture / plan reports with gates
          execution = IMPLEMENT + DELIVERY
+sdlc:    staged, plus the SDLC artifact chain committed in the main repository
 ```
 
 Direct gives the whole order to one execution crewmate.
 Staged puts one design crewmate first, which writes the admitted spec, architecture and plan reports in order and waits at every gate; implementation starts only after the pre-implement gate.
+Sdlc is staged with its record kept in the main repository: intent, spec and plan are mandatory, each accepted artifact is committed into `docs/features/<feature>/changes/<change>/` before any code, a QA test plan precedes the build and a QA report closes it ([`sdlc-flow.md`](sdlc-flow.md)).
 A direct task that sprouts requirement questions is upgraded to staged; the chief never downgrades on its own.
 An order with several independently-landable deliverables, or deliverables in more than one repo, is an epic and is decomposed into stories.
 
@@ -113,7 +115,7 @@ Owner: [`intake-triage`](../.agents/skills/intake-triage/SKILL.md) skill.
 
 ### Review, QA and promote
 
-Review is a derived obligation, not a stage: `yes` for staged work and `crew-ship`, `no` by default for the other direct modes (the captain may raise it).
+Review is a derived obligation, not a stage: `yes` for staged and sdlc work and `crew-ship`, `no` by default for the other direct modes (the captain may raise it).
 QA is optional behavioral proof after delivery, triaged at intake; it gates the merge, not the push.
 Promote decides whether the family gets its own roomchief thread (default: always).
 The chief states every choice in the backlog line and posts a `TRIAGE:` receipt to the family room.
@@ -122,7 +124,7 @@ Owners: [`intake-triage`](../.agents/skills/intake-triage/SKILL.md) and [`delive
 
 ### The escalation gate
 
-The time-expensive values - `flow:staged`, `mode:crew-ship`, `qa:yes` and a discretionary `rev:yes` - need the captain's confirmation before use, asked once as one bundled question with the reason for each.
+The time-expensive values - `flow:staged`, `flow:sdlc`, `mode:crew-ship`, `qa:yes` and a discretionary `rev:yes` - need the captain's confirmation before use, asked once as one bundled question with the reason for each.
 A contract token already pinned on the row is pre-consent and is never re-asked.
 `bin/ac-brief.sh` enforces this mechanically: a heavy value with no row pin needs `--captain-requested` plus `--reason`, recorded on the brief's `Escalation:` line.
 The cheap path (direct, `direct-pr`/`local-only`, no review, no QA) stays autonomous.
@@ -140,6 +142,8 @@ Owner: [`intake-triage`](../.agents/skills/intake-triage/SKILL.md) skill.
 ## Rooms and receipts
 
 Every family has a room, `data/<family>/room.md`, written with `bin/ac-room.sh post`.
+A story of an epic keeps its dir inside the epic's: `data/<epic>/<story>/`, marked by an empty `.family` file, and every `data/<family>/...` path in these docs reads through that rule.
+The header of `src/brief.ts` owns the layout; a story archives with its epic.
 Chat is the transport; the room is the record.
 The receipt verbs are machine-parsed and stay English verbatim:
 - `TRIAGE:` - the intake decisions and why.

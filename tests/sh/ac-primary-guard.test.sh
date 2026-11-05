@@ -262,12 +262,12 @@ assert_eq "$(both_rc "$wt" AC_CREW_ID=pg1)" "2 0" "HOME RESOLUTION: an LF-named 
 ln -s "$wt" "$TMP/pg-wtlink"
 printf '{"tool_name":"Edit","tool_input":{"file_path":"../AGENTS.md"}}' >"$TMP/pg.pl"
 assert_eq "$(both_rc "$TMP/pg-wtlink" AC_CREW_ID=pg1)" "0 2" "LOGICAL CWD: the port resolves .. physically"
-# A cwd Bun cannot enter (a name ending in a backslash): an absolute target
-# judges alike, a relative one allows in the port.
+# A cwd whose name ends in a backslash (Bun before 1.4.4 could not enter it):
+# an absolute and a relative target judge alike on both sides.
 mkdir -p "$wt/bs\\"
 pl "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.md\"}}"
 verdict 2 "$wt/bs\\" AC_CREW_ID=pg1
 printf '{"tool_name":"Edit","tool_input":{"file_path":"../../../../AGENTS.md"}}' >"$TMP/pg.pl"
-assert_eq "$(both_rc "$wt/bs\\" AC_CREW_ID=pg1)" "2 0" "a cwd Bun cannot enter resolves no relative target"
+assert_eq "$(both_rc "$wt/bs\\" AC_CREW_ID=pg1)" "2 2" "a backslash-named cwd resolves a relative target on both sides"
 
 pass

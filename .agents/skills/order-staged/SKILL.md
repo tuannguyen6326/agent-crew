@@ -1,6 +1,6 @@
 ---
 name: order-staged
-description: Captain starts a task with flow PINNED to staged (design -> execution, where execution owns implement + delivery). The arguments are the order verbatim. Use when the captain invokes /order-staged <order>.
+description: Captain starts a task with flow pinned to staged (design -> execution). Arguments are the order verbatim. Use on /order-staged <order>.
 ---
 
 # order-staged

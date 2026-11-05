@@ -161,12 +161,10 @@ function entry(h: string, args: string[], stdin = ""): { out: string; err: strin
   return { out: r.stdout.toString(), err: r.stderr.toString(), rc: r.exitCode ?? -1, ms: Date.now() - t0 };
 }
 
-test("1. a capture reads to EOF as `$(...)` did: an orphan holding stdout holds it, where a spawnSync returns at the exit", () => {
+test("1. a capture reads to EOF as `$(...)` did: an orphan holding stdout holds it (a spawnSync returned at the exit before Bun 1.4.4)", () => {
   const orphan = hook("orphan", '(sleep 1; printf "1800.1\\n") & exit 0');
   const sh = bash(`out="$("$1")"; printf '%s' "$out"`, [orphan]);
   expect(sh.out).toBe("1800.1");
-  const naive = Bun.spawnSync([orphan], { stdout: "pipe" });
-  expect(naive.stdout.toString()).toBe("");
   const h = home();
   writeFileSync(join(h, "config", "remote-reply"), readFileSync(orphan));
   chmodSync(join(h, "config", "remote-reply"), 0o755);

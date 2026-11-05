@@ -1,4 +1,4 @@
-// verify-twins.test.ts - the `// --- verify twins ---` block of src/lib.ts held
+// verify-twins.test.ts - the verify twins, src/lib-verify.ts, held
 // to the LIVE bash it twins, which bin/ac-verify.sh (and bin/ac-pane-agent.sh)
 // keeps calling: verdictJson (ac_verdict_json, V rows), transcriptFinalEpoch
 // (ac_transcript_final_epoch, E rows), chiefBusyHold and chiefBusyLeave
@@ -7,7 +7,7 @@
 // rows) and backendCapturePane (backend_capture_pane, C rows). The entry's
 // own contract is tests/sh/ac-verify.test.sh's.
 //
-// DISPUTED: the implementation of each helper (the bash vs src/lib.ts)
+// DISPUTED: the implementation of each helper (the bash vs src/lib-verify.ts)
 // HELD-CONSTANT: one side root per side and row, seeded alike by the same bash snippet (a home at <side>/home with config/backend, state/ and data/); argv; env (PATH = a stub dir - sleep logging to <side>/sleep.log and returning, a fake herdr and orca logging their argv to <side>/herdr.log and <side>/orca.log - then the host's bun and jq, then /bin and /usr/bin without herdr, orca, docker, codegraph or sleep; LC_ALL=C unless a row names a locale; HOME and TMPDIR the test root; AC_HOME the side's home; SIDE the side root); cwd (the distro root); stdin (/dev/null); stdout, stderr and the status (the side root spelled S, the side process's pid PID) and the side root's world after the call - every path with its mode and bytes - compared whole. A row naming a shell-own line asserts it on the bash side and drops it there before the comparison (the twin writes none: SHELL-OWN STDERR).
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -16,7 +16,7 @@ import { join } from "node:path";
 
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const BIN = join(ROOT, "bin");
-const LIB = join(ROOT, "src", "lib.ts");
+const LIB = join(ROOT, "src", "lib-verify.ts");
 const ROOTUSER = process.getuid?.() === 0;
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-verify-twins-")));
 afterAll(() => {
@@ -54,7 +54,7 @@ const PATH = `${TOOLS}:${BASE}`;
 type Row = {
   // the bash call after the libs are sourced, its arguments "$@", S the side root
   bash: string;
-  // the twin's body: L is src/lib.ts, A the arguments, S the side root, out(buf) writes stdout
+  // the twin's body: L is src/lib-verify.ts, A the arguments, S the side root, out(buf) writes stdout
   twin: string;
   args?: string[];
   // a bash snippet run in the side root before the call, SIDE exported

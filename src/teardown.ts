@@ -5,6 +5,7 @@
 // differential leg of tests/sh/ac-teardown.test.sh holds this module to.
 //
 // Usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']
+//                            [--ci-override '<why CI need not be green>']
 //                            [--no-lesson '<why>'] [--no-fact '<why>']
 //
 // It refuses to destroy evidence of unlanded work. Without --force it
@@ -37,7 +38,16 @@
 // status - lands the task; the merge stays the captain's own act. It requires
 // a recorded PR (ac-pr-check.sh), a clean worktree, a readable ledger, and no
 // OPEN backlog row blocked-by this task: a dependent starts from the merged
-// tree, so a depended-on task lands only by the real merge.
+// tree, so a depended-on task lands only by the real merge. It also requires
+// the recorded ci= (named divergence: not in the frozen oracle below, which
+// never reads CI) to be green or pending, or a key-less meta recorded before
+// this check existed (today's behavior, unchanged) - ciGateRefusal. A
+// none/failing ci= refuses unless --ci-override '<why>' carries the
+// captain's own explicit acknowledgement (the same shape as --pr-ready
+// itself), or, for none alone, the repo's captain-owned
+// projects/<name>.yaml declares `ci: none` (never read from the repo
+// itself) - mirroring no-mistakes' trusted no_ci; a real failure is never
+// excused that way.
 // --force means "the captain explicitly discards this work".
 // A kind=self slice (a chief self task or a SOLO session's slice) also owes
 // its KNOWLEDGE LOOP at landing, and the teardown is the machine behind that
@@ -74,11 +84,14 @@
 // were removed 2026-07-17)`, exit 1), then `ERROR: required tool not found:
 // git`. The FIRST word is always the id: none or '' is `ERROR: usage:
 // ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']
-// [--no-lesson '<why>'] [--no-fact '<why>']` (one line, exit 1; `-h` is an
-// id). Then --force; --pr-ready/--no-lesson/--no-fact take the next word,
+// [--ci-override '<why CI need not be green>'] [--no-lesson '<why>']
+// [--no-fact '<why>']` (one line, exit 1; `-h` is an id). Then --force;
+// --pr-ready/--ci-override/--no-lesson/--no-fact take the next word,
 // whatever it is (W2), and refuse an absent or empty one: `ERROR: --pr-ready
 // carries the captain's acceptance words - they are the proof, so an empty
-// value is refused`, `ERROR: --no-lesson carries why the slice learned
+// value is refused`, `ERROR: --ci-override carries the captain's
+// acknowledgement that CI did not verify this PR - it is the record, so an
+// empty value is refused`, `ERROR: --no-lesson carries why the slice learned
 // nothing new - it is the record, so an empty value is refused`, `ERROR:
 // --no-fact carries why the slice verified no repo fact - it is the record,
 // so an empty value is refused`; repeats last-wins; any other word is
@@ -153,7 +166,18 @@
 //   below; one that is gone holds nothing. Then --pr-ready's preconditions,
 //   each its own ERROR:
 //   `--pr-ready with no recorded PR for <id> - record it first
-//   (bin/ac-pr-check.sh <id> <url>)`; `--pr-ready refused: the worktree holds
+//   (bin/ac-pr-check.sh <id> <url>)`; THE CI GATE next, ciGateRefusal (named
+//   divergence: not in the frozen oracle below) - `--pr-ready refused: no CI
+//   check verified the PR - acknowledge it explicitly with --ci-override
+//   '<why>', or re-record once checks register (bin/ac-pr-check.sh <id>
+//   <url>)` for ci=none (unless the repo's projects/<name>.yaml declares
+//   `ci: none`), or `--pr-ready refused: the recorded CI run failed -
+//   acknowledge it explicitly with --ci-override '<why>', or fix it and
+//   re-record (bin/ac-pr-check.sh <id> <url>)` for ci=failing (the `ci: none`
+//   declaration never excuses this one) - either passed with --ci-override
+//   '<why>'; ci=pending and a meta recorded before this gate existed (no
+//   ci= key at all) are untouched, today's behavior. Then `--pr-ready
+//   refused: the worktree holds
 //   uncommitted work the accepted PR cannot contain - commit and push it
 //   (then re-record the PR head), or discard it deliberately, before the
 //   acceptance lands:` and the status lines (`--pr-ready refused: <the
@@ -432,6 +456,13 @@
 // - date(1)'s own stderr on the knowledge-loop record append passes, where
 //   the original dropped that append's stderr; only a date that fails says
 //   anything.
+// - THE CI GATE (new, not a reproduced wart): --pr-ready also refuses a
+//   none/failing ci= (ciGateRefusal) unless --ci-override or a trusted
+//   `ci: none` project declaration says otherwise, and a passed
+//   --ci-override is recorded on the status (`ci override acknowledged:
+//   <words>`) ahead of the `done:` line - the frozen oracle never reads ci=
+//   at all, so it accepts a zero-check or failing PR exactly like a green
+//   one.
 //
 // CALLERS: none executes it from code - the crewchief at landing (the
 // task-lifecycle skill), roomchiefs and solo chiefs for their members and
@@ -468,22 +499,22 @@ import {
   nowRaw,
   orcaWorktreeRelease,
   physicalDir,
-  portSlotRelease,
+  projectConfigFile,
   require,
   runBounded,
   shellStatus,
   softSubdir,
-  soloLandingCheck,
   spawnShellSync,
   statusAppend,
   statusTimelineMirror,
   taskBackend,
   taskDir,
-  taskStamps,
   warn,
   worktreeStatus,
   writeAll,
+  yamlGet,
 } from "./lib.ts";
+import { portSlotRelease, soloLandingCheck, taskStamps } from "./lib-teardown.ts";
 
 // Byte strings (latin1) carry what the bash held as bytes; argv and the lib's
 // paths are UTF-8 strings and cross over here.
@@ -704,6 +735,26 @@ export function transcriptTokens(texts: string[]): Map<string, number[]> {
   return new Map([...out.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
+// --pr-ready's CI GATE (named divergence: not in the frozen oracle below).
+// ci= is src/pr-check.ts's classifyCi reading of the PR's statusCheckRollup;
+// only none (nothing has verified the PR) and failing (a real run failed)
+// refuse - pending and an older meta's absent key keep today's behavior
+// (never checked here). none alone passes once the repo's own
+// projects/<name>.yaml declares `ci: none` (the captain's trusted
+// declaration that this repo runs no CI, mirroring no-mistakes'
+// internal/pipeline/steps/ci.go no_ci); failing is never excused that way -
+// a config only says a repo has no checks, never that a real failure is
+// fine. Short of that, --ci-override '<words>' is the captain's own
+// explicit acknowledgement, the same shape as --pr-ready itself.
+export function ciGateRefusal(id: string, ci: string, override: string, projectDeclaresNoCi: boolean): string | null {
+  if (ci !== "none" && ci !== "failing") return null;
+  if (ci === "none" && projectDeclaresNoCi) return null;
+  if (override !== "") return null;
+  return ci === "none"
+    ? `--pr-ready refused: no CI check verified the PR - acknowledge it explicitly with --ci-override '<why>', or re-record once checks register (bin/ac-pr-check.sh ${id} <url>)`
+    : `--pr-ready refused: the recorded CI run failed - acknowledge it explicitly with --ci-override '<why>', or fix it and re-record (bin/ac-pr-check.sh ${id} <url>)`;
+}
+
 function recordTokens(sd: string, id: string, kind: string, harness: string, sid: string): void {
   const file = `${sd.slice(0, sd.lastIndexOf("/"))}/records/task-tokens.tsv`;
   const date = run(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdin: "ignore", out: "pipe" });
@@ -754,9 +805,10 @@ async function main(): Promise<void> {
 
   const argv = entered.args.map(b8);
   const id = argv[0] ?? "";
-  if (id === "") fail("usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>'] [--no-lesson '<why>'] [--no-fact '<why>']");
+  if (id === "") fail("usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>'] [--ci-override '<why CI need not be green>'] [--no-lesson '<why>'] [--no-fact '<why>']");
   let force = false;
   let prReady = "";
+  let ciOverride = "";
   let noLesson = "";
   let noFact = "";
   for (let i = 1; i < argv.length; ) {
@@ -767,6 +819,10 @@ async function main(): Promise<void> {
     } else if (a === "--pr-ready") {
       prReady = argv[i + 1] ?? "";
       if (prReady === "") fail("--pr-ready carries the captain's acceptance words - they are the proof, so an empty value is refused");
+      i += 2;
+    } else if (a === "--ci-override") {
+      ciOverride = argv[i + 1] ?? "";
+      if (ciOverride === "") fail("--ci-override carries the captain's acknowledgement that CI did not verify this PR - it is the record, so an empty value is refused");
       i += 2;
     } else if (a === "--no-lesson") {
       noLesson = argv[i + 1] ?? "";
@@ -929,8 +985,19 @@ async function main(): Promise<void> {
     return null;
   };
 
+  // The repo's own trusted declaration (never read from the repo itself -
+  // `ci: none` only counts from the captain-owned projects/<name>.yaml).
+  const ciNoneDeclared = (): boolean => {
+    const file = projectConfigFile(projectDir, true);
+    if (file === null) return false;
+    return yamlGet(file, "ci", true).out.replace(/\n+$/, "") === "none";
+  };
+
   const prReadyPreconditions = (): void => {
     if (mget(meta, "pr") === "") fail(`--pr-ready with no recorded PR for ${id} - record it first (bin/ac-pr-check.sh ${id} <url>)`);
+    const ci = mget(meta, "ci");
+    const ciRefusal = ciGateRefusal(id, ci, ciOverride, ci === "none" && ciNoneDeclared());
+    if (ciRefusal !== null) fail(ciRefusal);
     const status = dirtyOf(worktree);
     if (status === null) fail(`--pr-ready refused: ${unreadable(worktree)}`);
     const dirty = status.replace(/\n+$/, "");
@@ -1293,6 +1360,7 @@ async function main(): Promise<void> {
     must(["mv", `${archive}/meta`, `${prior}/meta`]);
     if (isFile(`${archive}/status`)) must(["mv", `${archive}/status`, `${prior}/status`]);
   }
+  if (prReady !== "" && ciOverride !== "") append(`ci override acknowledged: ${ciOverride}`);
   if (prReady !== "") append(`done: captain accepted the ready-to-merge PR - ${prReady}`);
   append(`resolved: teardown${force ? " (forced)" : ""}`);
   must(["mv", meta, `${archive}/meta`]);

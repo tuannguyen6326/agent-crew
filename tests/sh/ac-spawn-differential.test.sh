@@ -105,22 +105,31 @@ xc() {  # xc <args...> - one spawn by this pass's side for the call, its transcr
   { printf '== %s\nrc=%s\n-- out\n' "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt.$XPASS"
 }
 xsig() {  # xsig <signal> <args...> - one spawn in the background; once the world holds stub/held, <signal> to its pid alone, then the hold released
-  local sig="$1" bin pid rc=0 i=0; shift
+  local sig="$1" bin wrap pid rc i=0; shift
   xside; bin="$XBIN"; xe
+  rm -f "$TMP/x.rc"
   # Job control gives the job its own group with SIGINT at its default - a
-  # plain `&` job of a non-interactive shell starts with SIGINT ignored.
+  # plain `&` job of a non-interactive shell starts with SIGINT ignored. The
+  # job is a wrapper and the run its FOREGROUND child, so the status is the
+  # wrapper's own `$?`: bash 3.2's `wait` on a signalled background job
+  # answers 0 now and then (measured: its `Killed: 9` notice printed, then
+  # `wait` 0 - on either side), and a foreground wait does not.
   {
     set -m
-    (cd "$XW/cwd" && exec "${XE[@]}" "$bin/ac-spawn.sh" "$@") </dev/null >"$TMP/x.out" 2>"$TMP/x.err" &
-    pid=$!
+    (set +e; cd "$XW/cwd" && "${XE[@]}" "$bin/ac-spawn.sh" "$@" </dev/null >"$TMP/x.out" 2>"$TMP/x.err"; printf '%s\n' "$?" >"$TMP/x.rc") &
+    wrap=$!
     set +m
     while [ ! -e "$XW/stub/held" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.05; i=$((i + 1)); done
     [ -e "$XW/stub/held" ] || fail "spawn differential at line $(xrow): the run never reached its hold"
+    pid="$(pgrep -P "$wrap")" || pid=""
+    case "$pid" in '' | *[!0-9]*) fail "spawn differential at line $(xrow): the run's pid was not found under its job (got '$pid')" ;; esac
     kill -"$sig" "$pid"
     /bin/sleep 0.5
     : >"$XW/stub/release"
-    wait "$pid" || rc=$?
+    wait "$wrap" || true
   } 2>/dev/null
+  rc="$(cat "$TMP/x.rc" 2>/dev/null)"
+  case "$rc" in '' | *[!0-9]*) fail "spawn differential at line $(xrow): the run left no exit status (got '$rc')" ;; esac
   /bin/sleep 0.3
   rm -f "$XW/stub/held" "$XW/stub/release" "$XW/stub/hold-sleep" "$XW/stub/hold-od"
   { printf '== %s %s\nrc=%s\n-- out\n' "$sig" "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt.$XPASS"

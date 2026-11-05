@@ -412,6 +412,7 @@ import {
   childrenIgnoreInt,
   die,
   enterCaller,
+  familyDirs,
   iso,
   launchable,
   metaGet,
@@ -1197,19 +1198,15 @@ function doneStamp(argv: string[]): void {
   say(1, `done-stamped ${family}\n`);
 }
 
-const byteOrder = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
-
 async function pushPending(): Promise<void> {
   const hook = `${homeDir("config")}/remote-reply`;
   if (!isFile(hook) || !isExec(hook)) return;
   const stamp = `${stateDir}/.remote-push-stamp`;
-  const data = homeDir("data");
-  let names: string[] = [];
-  try {
-    names = readdirSync(data);
-  } catch {}
-  for (const family of names.filter((n) => !n.startsWith(".")).sort(byteOrder)) {
-    const room = `${data}/${family}/room.md`;
+  // Every family dir, a story's inside its epic's included (familyDirs); the
+  // family is the dir's own name.
+  for (const dir of familyDirs(homeDir("data"))) {
+    const family = dir.slice(dir.lastIndexOf("/") + 1);
+    const room = `${dir}/room.md`;
     if (!isFile(room)) continue;
     if (!ridOk(family)) {
       warnB(`push-pending: skipped family with unsafe name: ${b8(family)}`);

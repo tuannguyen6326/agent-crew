@@ -250,16 +250,12 @@ import {
   backendName,
   BUSY_RE,
   CAPTAIN_RE,
-  chiefChildLive,
-  chiefGateParked,
-  claimLive,
   die,
   enterCaller,
   familyOfId,
   metaGet,
   metaIsSelf,
   metaIsVerify,
-  metaPaths,
   NO_HOME,
   nowRaw,
   physicalDir,
@@ -275,6 +271,7 @@ import {
   wakeSpoolPath,
   watcherBeatRead,
 } from "./lib.ts";
+import { chiefChildLive, chiefGateParked, claimLive, metaPaths } from "./lib-wake-drain.ts";
 
 const DELTA_JQ = `
       if .first_wake == true then "brain-delta: cursor registered for \\($who) (first wake)"

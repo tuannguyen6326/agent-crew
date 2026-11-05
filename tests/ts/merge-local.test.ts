@@ -14,13 +14,15 @@ import { afterAll, expect, test } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { landingRecord } from "../../src/lib.ts";
+import { landingRecord } from "../../src/lib-merge-local.ts";
 import { retiredBin } from "./retired-bin.ts";
 
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const binDir = join(ROOT, "bin");
 const RBIN = retiredBin();
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBM = join(ROOT, "src", "lib-merge-local.ts");
+const LIBQ = join(ROOT, "src", "lib-qa-gate.ts");
 const NOW = 1767225600;
 const made: string[] = [];
 afterAll(() => {
@@ -48,7 +50,7 @@ function bash(home: string, libs: string, script: string, args: string[]): Run {
 // The twin in a bun child started in the distro root, as bin/ac-bun.sh starts
 // a module (STARTED_BIN is <root>/bin), so its fd 2 and its exit are captured.
 function twin(home: string, body: string): Run {
-  const src = `import * as L from ${JSON.stringify(LIB)};\nconst A = JSON.parse(process.env.TWIN_ARGS ?? "[]");\ntry { ${body} } catch (e) { const s = (e as { status?: number }).status; if (s === undefined) throw e; process.exit(s); }\n`;
+  const src = `const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBM)}), ...await import(${JSON.stringify(LIBQ)}) };\nconst A = JSON.parse(process.env.TWIN_ARGS ?? "[]");\ntry { ${body} } catch (e) { const s = (e as { status?: number }).status; if (s === undefined) throw e; process.exit(s); }\n`;
   return read(Bun.spawnSync([process.execPath, "-e", src], { env: { ...envFor(home), TWIN_ARGS: JSON.stringify(twinArgs) }, cwd: ROOT, stdout: "pipe", stderr: "pipe" }));
 }
 let twinArgs: string[] = [];

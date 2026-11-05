@@ -29,7 +29,7 @@
 # assistant message text pulled from a Claude Code session transcript, the
 # pane agent's verdict both pipelines read - and ac_verdict_json, which pulls
 # the bare JSON verdict object out of that (often prose-wrapped) final message.
-# Its twin is src/lib.ts's verdictJson, spawning the awk below verbatim;
+# Its twin is src/lib-verify.ts's verdictJson, spawning the awk below verbatim;
 # tests/ts/verify-twins.test.ts holds the two to each other.
 
 ac_yaml_get() {

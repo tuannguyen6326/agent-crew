@@ -133,7 +133,7 @@ cat >"$XS/bun" <<'STUB'
 #!/bin/sh
 case "${XFAKE:-}:$2" in
   ?*:*/dashboard/app.ts)
-    { printf '%s\n' "$@"; pwd -P; python3 -c 'import signal; print(signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGQUIT))'; } >"$XW/log/daemon"
+    { printf '%s\n' "$@"; pwd -P; python3 -c 'import signal; print(int(signal.getsignal(signal.SIGINT)), int(signal.getsignal(signal.SIGQUIT)))'; } >"$XW/log/daemon"
     echo boom
     [ "$XFAKE" = die ] && exit 3
     exec /bin/sleep 60 ;;

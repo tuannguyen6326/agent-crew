@@ -1,6 +1,6 @@
 ---
 name: domain-knowledge
-description: Onboard or update a CREWDOMAIN's whole knowledge surface in one idempotent flow - resolve or create the domain, then edit one surface (a project's detail heading, adding/removing a project from scope across its symlinks and heading together, the domain CREWMATE.md, or a STANDING line in the fleet records/captain.md), always closing on `bin/ac-domain.sh validate`. The captain invokes this as `/domain-knowledge <name> [project]`; it runs in the crewchief's own unscoped session, never handed to a roomchief. Load when the captain says onboard a domain, update domain knowledge, add or remove a project from a domain's scope, edit a domain's project detail, or edit a domain's standing rules.
+description: Onboard or update a crewdomain's knowledge surface (project detail, scope, domain CREWMATE.md, a STANDING line) in one flow closing on ac-domain.sh validate. Captain-invoked as /domain-knowledge <name> [project].
 ---
 
 # domain-knowledge

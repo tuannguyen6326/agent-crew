@@ -807,7 +807,6 @@ import {
   herdrTabOpen,
   homeResolve,
   knowledgeFile,
-  knowledgeScopes,
   lockAcquire,
   lockRelease,
   metaGet,
@@ -817,7 +816,6 @@ import {
   projectConfigName,
   projectDir,
   projectsDir,
-  qaAttestationParse,
   repoRoot,
   require,
   shellStatus,
@@ -833,6 +831,7 @@ import {
   yamlHas,
   yamlKeys,
 } from "./lib.ts";
+import { knowledgeScopes, qaAttestationParse } from "./lib-qa-gate.ts";
 import {
   qaBoundaryCoherent,
   qaBoundaryReceiptValidate,

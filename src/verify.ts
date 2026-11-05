@@ -332,18 +332,14 @@ import { closeSync, lstatSync, openSync, readdirSync, readFileSync, rmSync, stat
 import {
   STARTED_BIN,
   arithValue,
-  backendCapturePane,
   backendName,
   backendRoute,
-  chiefBusyHold,
-  chiefBusyLeave,
   chiefBusyPath,
   crewBranch,
   die,
   enterCaller,
   exclusiveTemp,
   findingsNormalize,
-  harnessPaneArm,
   iso,
   lockAcquire,
   lockRelease,
@@ -352,9 +348,7 @@ import {
   orcaWorktreeLease,
   orcaWorktreeRelease,
   physicalDir,
-  qaAttestationParse,
   repoRoot,
-  roomReviewRulings,
   shellStatus,
   spawnShell,
   spawnShellSync,
@@ -363,12 +357,12 @@ import {
   taskDir,
   testInt,
   transcriptFinal,
-  transcriptFinalEpoch,
-  verdictJson,
   warn,
   windowFamily,
   writeAll,
 } from "./lib.ts";
+import { qaAttestationParse } from "./lib-qa-gate.ts";
+import { backendCapturePane, chiefBusyHold, chiefBusyLeave, harnessPaneArm, roomReviewRulings, transcriptFinalEpoch, verdictJson } from "./lib-verify.ts";
 import { within } from "./paths.ts";
 import {
   qaBoundaryReceiptValidate,

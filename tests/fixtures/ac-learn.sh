@@ -626,8 +626,10 @@ Pass 2 reads its output.
   Propose per stale entry, in `report.md` under `## Always-loaded staleness`
   (report-only, the chief applies - exactly like scene proposals):
   `reinforce <slug> - evidence: <the window pointer>` when evidence exists,
-  `retire <slug> - <why>` when none does (the retire itself rides the
-  existing 4096-budget pairing rule at the next land, never a new path).
+  `retire <slug> - <why>` when none does - the chief runs `ac-learn.sh
+  reinforce <fresh-slug> --retire <slug> --evidence '<why>'` to free its
+  bytes directly, or names it as THIS run's own crewmate candidate's
+  `retire:` header when one is being proposed anyway.
 - `sources/scenes.md` - the fleet's L2 SCENE store index (one line per scene:
   slug, heat, updated, summary), plus its count against `config/scene-max`. A
   scene is a consolidated TOPIC file a reader opens on purpose - the layer
@@ -766,6 +768,7 @@ Crewmate-lesson candidate (always-loaded method lesson, CREWMATE-learned.md):
     kind: crewmate
     name: <slug, lowercase [a-z0-9-]>
     description: <one line - what behavior this lesson corrects>
+    retire: <slug of a STALE entry to retire - optional, omit when none>
     ===sources===
     <date><TAB><short hook><TAB><exact learnings.md bullet line, verbatim>
     ===crewmate===
@@ -780,7 +783,9 @@ Crewmate-lesson candidate (always-loaded method lesson, CREWMATE-learned.md):
   unrewritten; first-hand `## Lessons` report lines are EVIDENCE you cite,
   never text you copy through).
 - The file has a hard 4096-byte whole-file budget: when your entry would
-  exceed it, pair the candidate with a retire proposal in your report.
+  exceed it, name a STALE entry's slug as this candidate's own `retire:`
+  header - the land removes and archives it in the SAME transaction, never a
+  separate proposal applied by hand.
 - `===sources===` works exactly as for a skill; retro-only leaves it EMPTY.
 
 Rule candidate:
@@ -1056,10 +1061,13 @@ cmd_land() {
 #     never in the layer itself;
 #   - decay advances only when a pass RUNS (a DISTILL, a digest render, this
 #     verb) - no cron, no daemon, matching the distro posture;
-#   - RETIRE deliberately gets NO new verb: the landing transaction's
-#     4096-budget refusal already forces "pair the new entry with a retire",
-#     and ac_crewmate_learned_no_loss already accepts declared retires - this
-#     block adds the SIGNAL for which entry, not a second removal path.
+#   - RETIRE deliberately got NO new verb here: the landing transaction's
+#     4096-budget refusal already forced "pair the new entry with a retire",
+#     and ac_crewmate_learned_no_loss already accepted declared retires - this
+#     block added the SIGNAL for which entry, not a removal path. This frozen
+#     copy has no retire path at all: the `retire:` header and
+#     `reinforce --retire` text it prints below is parity prose for the
+#     differential leg's world comparison, and only src/learn.ts acts on it.
 #
 # Scenes need no twin: `ac-scene.sh` refreshes `updated=` on every write
 # INCLUDING a cited read, so a scene's clock already advances on touch; the
@@ -1139,8 +1147,9 @@ cmd_stale() {
     printf '  -- %s entries, %s stale --\n' "$n" "$stale"
     if [ "$stale" -gt 0 ]; then
       printf '  a STALE entry must re-prove itself: reinforce it on INDEPENDENT current evidence\n'
-      printf '    (ac-learn.sh reinforce <slug> --evidence '\''<what this window proved>'\'') or retire it\n'
-      printf '    at the next land (the 4096-budget pairing rule) - never keep it by inertia alone.\n'
+      printf '    (ac-learn.sh reinforce <slug> --evidence '\''<what this window proved>'\''), or retire it\n'
+      printf '    directly - '\''ac-learn.sh reinforce <fresh-slug> --retire <slug> --evidence ...'\'' or a\n'
+      printf '    crewmate candidate'\''s own '\''retire:'\'' header - never keep it by inertia alone.\n'
     fi
   fi
   # Scenes: grading only - their clock already advances on every write,

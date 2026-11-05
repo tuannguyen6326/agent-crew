@@ -1,7 +1,12 @@
 # Fleet-home per-project crew-ship and qa config. Install as
 # $AC_HOME/projects/<project-name>.yaml. Never place this config in the
 # product repo. The src/ship.ts and src/qa.ts headers (started by bin/ac-ship.sh
-# and bin/ac-qa.sh) are the authoritative key contracts.
+# and bin/ac-qa.sh) are the authoritative key contracts; src/teardown.ts's
+# header owns `ci`.
+
+ci: none   # this repo runs no CI at all - trusts a zero-check ci=none PR
+           # through ac-teardown.sh --pr-ready without --ci-override; never
+           # excuses a real ci=failing
 
 commands:
   test: "npm test"

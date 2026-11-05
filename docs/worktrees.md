@@ -67,7 +67,7 @@ A spawn that resumes an earlier session passes `--prefer` with the old slot, bec
 - **Process hygiene.** `return` and `remove` kill processes still running in the tree; `prune` skips a slot with live processes, or when `lsof` is unavailable to check.
 - **Verified prune.** `prune` removes only unleased, clean, process-free slots whose HEAD is merged into the default branch as verified against the live remote; a failed fetch or stale tracking ref skips the slot.
 - **Deliberate remove.** `remove` refuses a leased slot without `--include-leased`, and without `--force` refuses a dirty slot, a clean slot with unmerged commits, and a broken slot git cannot read.
-- **Self-healing, never over possible work.** Vanished slot directories and orphans from partial creates are healed by `get`, `list` and `prune`; a directory with an unreadable gitdir is only named, with the `remove` command that reclaims it.
+- **Self-healing, never over possible work.** Vanished slot directories and empty orphans from partial creates are healed by `get`, `list` and `prune`; a meta-less directory holding files is only named by `get` for the operator to inspect, and a directory with an unreadable gitdir is only named, with the `remove` command that reclaims it.
 
 ### `lease`: keeping a tree alive across tasks
 

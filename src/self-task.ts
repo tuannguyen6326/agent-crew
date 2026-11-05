@@ -252,7 +252,6 @@ import {
   familyOwned,
   herdrCli,
   iso,
-  leaseInstall,
   metaGet,
   metaIsSelf,
   metaSet,
@@ -261,10 +260,6 @@ import {
   orcaWorktreeRelease,
   projectDir,
   require,
-  seedCrewSettings,
-  seedCrewSkills,
-  seedCrewmateMd,
-  seedPortsEnv,
   shellQuote,
   shellStatus,
   spawnShellSync,
@@ -274,6 +269,7 @@ import {
   warn,
   writeAll,
 } from "./lib.ts";
+import { leaseInstall, seedCrewSettings, seedCrewSkills, seedCrewmateMd, seedPortsEnv } from "./lib-spawn.ts";
 
 // Decoded strings throughout; the lib's byte (latin1) answers cross over here.
 const b8 = (s: string): string => Buffer.from(s, "utf8").toString("latin1");

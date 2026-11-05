@@ -1,4 +1,4 @@
-// teardown.test.ts - what src/teardown.ts brought into src/lib.ts, held to the
+// teardown.test.ts - what src/teardown.ts brought into src/lib.ts and src/lib-teardown.ts, held to the
 // LIVE bash helpers it twins: taskStamps (ac_task_stamps), portSlotRelease
 // (ac_port_slot_release), soloLandingCheck (ac_solo_landing_check),
 // backendKillWindow (backend_kill_window, both drivers, with herdr_ws_close's
@@ -9,7 +9,7 @@
 // tests/sh/ac-teardown.test.sh's, whose differential leg runs the frozen
 // original beside the shim.
 //
-// DISPUTED: the implementation of each helper (the bash vs src/lib.ts / src/teardown.ts)
+// DISPUTED: the implementation of each helper (the bash vs src/lib-teardown.ts, src/lib.ts / src/teardown.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the stubs' sentinels and log at <side>/stub); argv; env (PATH = the herdr/orca/sleep/date stubs, the host's jq and git, /bin and /usr/bin without herdr, orca or docker; LC_ALL=C unless a row names UTF-8; HOME, TMPDIR, STUB_DIR, AC_HOME unless homeless, a row's own names); cwd (the distro root, so `ac_root` and STARTED_BIN name one bin/); stdin (/dev/null); stdout, stderr and the status compared whole (the side root spelled S, the process's pid PID), then the home's tree and the stub log.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -28,8 +28,39 @@ test("transcriptTokens sums each model once per message, across the main transcr
   expect(transcriptTokens([""]).size).toBe(0);
 });
 
+// ciGateRefusal: --pr-ready's gate over the ci= pr-check.ts recorded (src/pr-check.ts, src/lib.ts classifyCi).
+test("ciGateRefusal passes ci=green, ci=pending and a meta with no ci= key at all (today's behavior, unchanged)", async () => {
+  const { ciGateRefusal } = await import("../../src/teardown.ts");
+  for (const ci of ["", "pending", "green"]) expect(ciGateRefusal("t1", ci, "", false)).toBeNull();
+});
+
+test("ciGateRefusal refuses ci=none and ci=failing without an acknowledgement, naming the real condition", async () => {
+  const { ciGateRefusal } = await import("../../src/teardown.ts");
+  const none = ciGateRefusal("t1", "none", "", false);
+  expect(none).toContain("--pr-ready refused:");
+  expect(none).toContain("no CI check verified the PR");
+  expect(none).toContain("bin/ac-pr-check.sh t1 <url>");
+  const failing = ciGateRefusal("t1", "failing", "", false);
+  expect(failing).toContain("--pr-ready refused:");
+  expect(failing).toContain("the recorded CI run failed");
+  expect(failing).toContain("bin/ac-pr-check.sh t1 <url>");
+});
+
+test("ciGateRefusal passes ci=none or ci=failing once the captain's --ci-override carries words", async () => {
+  const { ciGateRefusal } = await import("../../src/teardown.ts");
+  expect(ciGateRefusal("t1", "none", "captain: ship it anyway", false)).toBeNull();
+  expect(ciGateRefusal("t1", "failing", "captain: ship it anyway", false)).toBeNull();
+});
+
+test("ciGateRefusal passes ci=none alone when the project declares ci: none, but never excuses ci=failing that way", async () => {
+  const { ciGateRefusal } = await import("../../src/teardown.ts");
+  expect(ciGateRefusal("t1", "none", "", true)).toBeNull();
+  expect(ciGateRefusal("t1", "failing", "", true)).toContain("the recorded CI run failed");
+});
+
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBT = join(ROOT, "src", "lib-teardown.ts");
 const TEARDOWN = join(ROOT, "src", "teardown.ts");
 const FIXTURE = join(ROOT, "tests", "fixtures", "ac-teardown.sh");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-teardown-ts-")));
@@ -113,7 +144,7 @@ type Row = {
   // the bash call, run after sourcing ac-lib.sh and ac-backend.sh, its
   // arguments "$@"
   bash: string;
-  // the twin's body: L is src/lib.ts, A the arguments
+  // the twin's body: L is src/lib.ts merged with src/lib-teardown.ts, A the arguments
   twin: string;
   args?: string[];
   seed?: (s: string) => void;
@@ -173,7 +204,7 @@ function side(row: Row, s: string, oracle: boolean): Side {
     : [
         process.execPath,
         "-e",
-        `import { writeSync } from "node:fs"; const L = await import(${JSON.stringify(LIB)}); const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc);`,
+        `import { writeSync } from "node:fs"; const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBT)}) }; const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc);`,
       ];
   const run = row.fsize === undefined ? cmd : ["/bin/sh", "-c", `ulimit -f ${row.fsize}; trap "" XFSZ; exec "$@"`, "sh", ...cmd];
   const r = Bun.spawnSync(run, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -211,10 +242,10 @@ const put = (s: string, rel: string, body: string, mode = 0o644): void => {
 const stub = (s: string, name: string, body = ""): void => put(s, `stub/${name}`, body);
 const pane = (s: string, id: string, body: string): void => put(s, `home/state/.pane-${id}`, body);
 
-test("taskStamps: the fourteen per-id stamp paths, in ac_task_stamps' order", () => {
+test("taskStamps: the seventeen per-id stamp paths, in ac_task_stamps' order", () => {
   for (const id of ["t1", "a b", "x-verify-codereview"]) {
     const p = same(`stamps ${id}`, { bash: `ac_task_stamps "$1" "$2"`, twin: `for (const f of L.taskStamps(A[0], A[1])) writeSync(1, f + "\\n"); return 0;`, args: ["@S/home/state", id] });
-    expect(p.t.out.split("\n").length).toBe(15);
+    expect(p.t.out.split("\n").length).toBe(18);
   }
 });
 

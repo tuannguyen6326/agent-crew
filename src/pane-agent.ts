@@ -757,16 +757,10 @@ import { dirname, isAbsolute } from "node:path";
 import {
   STARTED_BIN,
   arithValue,
-  backendAgentIdlePane,
-  backendAgentStatusPane,
-  backendCapturePane,
   backendDialogAnswerPane,
   backendHarnessUpPane,
   backendRoute,
-  backendSendLinePane,
   backendStartupDialogsPane,
-  buildLaunch,
-  claudeConfigEnv,
   claudeTranscriptRoot,
   commandV,
   configReadSoft,
@@ -774,14 +768,12 @@ import {
   enterCaller,
   exclusiveTemp,
   fileMtime,
-  harnessPaneArm,
   herdrResolveWorkspace,
   herdrTabOpen,
   lockAcquire,
   lockRelease,
   orcaJson,
   orcaPlacePane,
-  paneProfile,
   physicalDir,
   shellQuote,
   shellStatus,
@@ -789,10 +781,11 @@ import {
   spawnShellSync,
   tabFields,
   testInt,
-  transcriptFinalEpoch,
   writeAll,
   wsFamilyLabel,
 } from "./lib.ts";
+import { backendAgentIdlePane, buildLaunch, claudeConfigEnv, paneProfile } from "./lib-spawn.ts";
+import { backendAgentStatusPane, backendCapturePane, backendSendLinePane, harnessPaneArm, transcriptFinalEpoch } from "./lib-verify.ts";
 
 export type Py = null | boolean | bigint | number | string | Py[] | Map<string, Py>;
 

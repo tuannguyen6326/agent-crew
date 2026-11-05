@@ -1,6 +1,6 @@
 ---
 name: crew-ship
-description: Validate your committed changes through the crew-ship pipeline - intent, rebase, AI code review, tests, docs, lint, push, and PR - before they reach the push target. Use when the user asks to validate, gate, or ship changes, to push safely, or invokes /crew-ship.
+description: Validate committed changes through the crew-ship pipeline (intent, rebase, review, tests, docs, lint, push, PR). Use when asked to validate, gate or ship changes, or on /crew-ship.
 ---
 
 # crew-ship
@@ -126,8 +126,11 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    already an ancestor (prior runs may have pushed fix commits), then onto
    the freshest default branch; skip targets that are absent or already
    ancestors; when the branch can fast-forward, hard-reset instead of
-   rebasing. Conflicts are `fix` findings: resolve, `git rebase
-   --continue`, commit `agent-crew(rebase): ...`.
+   rebasing. Run every rebase and merge of this step as
+   `git -c rerere.enabled=false rebase ...`: an ambient rerere replays a
+   saved resolution into the tree in silence, so a conflict that needed a
+   fresh look never surfaces as a finding. Conflicts are `fix` findings:
+   resolve, `git rebase --continue`, commit `agent-crew(rebase): ...`.
    If `git diff $(bin/ac-ship.sh base)...HEAD` is empty afterwards,
    nothing ships: run `bin/ac-ship.sh skip-remaining` and finish.
 3. **review** - NEVER a self-review: the reviewer must be a FRESH mind
@@ -187,7 +190,13 @@ after (`bin/ac-ship.sh step <name> <status>`). Steps in fixed order:
    The reviewer runs BEFORE push/pr, so it does not raise this run's own
    not-yet-created delivery (no PR, unpushed, no CI) as a finding - later
    steps create those; a pre-existing/external PR stays reviewable.
-   Default `auto_fix.review` is 0. After ANY fix round, commit the repair and
+   Default `auto_fix.review` is 0. A repair - here or in the test step - stays
+   inside the recorded intent: one that would contradict it, touch a file
+   the intent puts off limits, or widen a policy the diff did not set out to
+   change is parked `ask-user` with the finding it answers, never committed;
+   a captain decision there supersedes the intent for that repair. (The
+   fresh round would catch the contradiction anyway, at the price of a
+   burned round.) After ANY fix round, commit the repair and
    launch a fresh verifier bound to the new exact ref. Round 1 reviews the full
    base-to-ref diff; round N+1 verifies round N's open findings and reviews
    only `roundN.reviewed_ref..HEAD`, with the full diff retained as context.

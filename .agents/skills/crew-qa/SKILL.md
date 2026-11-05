@@ -1,6 +1,6 @@
 ---
 name: crew-qa
-description: Verify a delivered change end-to-end by driving the QA pipeline through ac-verify qa - freeze an AC-to-UT/IT/E2E coverage manifest, reuse ship UT evidence without rerunning tests, boot task-scoped infra and the live service, execute API/DB/workflow/web cases plus the final full flow, capture evidence, and return a machine-readable verdict. Standalone from code review. Use when the user asks to QA or verify a change, or invokes /crew-qa. Never fixes anything.
+description: Prove a delivered change end-to-end through ac-verify qa with a machine-readable verdict; never fixes. Use when asked to QA or verify a change, or on /crew-qa.
 ---
 
 # crew-qa

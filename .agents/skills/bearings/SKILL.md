@@ -1,6 +1,6 @@
 ---
 name: bearings
-description: Produce a captain-facing status report of the whole fleet - crew in flight, backlog, blockers, PRs - and save it to data/. Use when the user asks where things stand, for a status report, or invokes /bearings.
+description: Captain-facing status report of the whole fleet, saved to data/. Use when the captain asks where things stand or on /bearings.
 ---
 
 # bearings

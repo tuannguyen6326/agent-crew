@@ -16,7 +16,7 @@ const binDir = join(import.meta.dir, "..", "..", "bin");
 // ac_seed_runtime_links left bin/ac-lib.sh with the fleet-new port (its last
 // bash caller); the pin holds the twin to the frozen copy.
 const retired = join(import.meta.dir, "..", "fixtures", "ac-seed-runtime-links.sh");
-const LINKS = ["bin", "CLAUDE.md", ".claude", "AGENTS.md"];
+const LINKS = ["bin", "CLAUDE.md", ".claude", "AGENTS.md", ".agents"];
 
 function bashLib(fn: string, args: string[], env?: Record<string, string>) {
   return Bun.spawnSync(
@@ -75,6 +75,7 @@ test("seedRuntimeLinks lays the same links ac_seed_runtime_links lays", () => {
       // the wrong checkout.
       if (state !== "real") expect(want.bin).toBe(`link ${join(binDir)}`);
       else expect(want.bin).toBe("dir");
+      expect(want[".agents"]).toBe(`link ${join(binDir, "..", ".agents")}`);
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

@@ -36,8 +36,8 @@ The order is fixed and not configurable.
 | # | Step | Deterministic part | Judgment part |
 |---|---|---|---|
 | 1 | intent | record `--intent` verbatim | surface obviously out-of-intent work as `ask-user` |
-| 2 | rebase | `base` recomputes the merge-base; `skip-remaining` on an empty diff | guard against bundling unpushed local-default commits; rebase onto `origin/<branch>` first, then the freshest default; resolve conflicts |
-| 3 | review | `cmd format` before the reviewed ref; `review-agent` runs the independent verifier once test evidence exists | land the doc sweep before the reviewed ref; classify findings; fix, then a fresh round on the new ref |
+| 2 | rebase | `base` recomputes the merge-base; `skip-remaining` on an empty diff | guard against bundling unpushed local-default commits; rebase onto `origin/<branch>` first, then the freshest default, with `rerere.enabled=false` so no saved resolution replays unseen; resolve conflicts |
+| 3 | review | `cmd format` before the reviewed ref; `review-agent` runs the independent verifier once test evidence exists | land the doc sweep before the reviewed ref; classify findings; fix inside the recorded intent (a repair that would contradict it, touch an off-limits file or widen a policy is parked `ask-user`), then a fresh round on the new ref |
 | 4 | test | `cmd test` (baseline, scoped, or accepted attestation) and its receipt | intent evidence always; record what actually executed in `meta test` |
 | 5 | document | - | check for doc gaps; a gap found after review is an `ask-user` finding, never a commit; any unresolved finding gates, including `info` |
 | 6 | lint | `cmd lint`, opt-in | lint-category pass when no command is configured |

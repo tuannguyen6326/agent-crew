@@ -1,6 +1,6 @@
 ---
 name: domain-e2e
-description: Prove behaviour by extending and running a DOMAIN'S MAINTAINED END-TO-END SUITE - the one repository that drives a whole product line across every repo it spans, boots its own stack from their sources, and is kept alive between campaigns. Use when a brief leases you into a domain's e2e repository (the domain declares it - ac-domain.sh qa-repo), when the order says extend the e2e suite / run the suite / prove this journey, or when a change's proof needs hops no single repo's tests can see. Not crew-qa: this route mints no attestation and never boots one deliverable in isolation.
+description: Prove behaviour by extending and running a domain's maintained end-to-end suite. Use when leased into a domain's e2e repo, or when the order says extend/run the e2e suite or prove this journey.
 ---
 
 # domain-e2e

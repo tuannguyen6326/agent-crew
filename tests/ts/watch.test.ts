@@ -6,15 +6,21 @@
 // PATH `date` and a `bun` stub that logs the sync each side fires, and
 // claudeTranscriptPath against ac_claude_transcript_path. The CLI
 // contract is tests/sh/ac-watch.test.sh's, whose differential leg runs the
-// frozen original beside the shim.
+// frozen original beside the shim. pausedWaitExpired and rowForId are new
+// (watch-stale-wakes-unbounded, STALE DEFERRAL) - no bash original exists to
+// twin, so they are plain unit tests of the pure predicates declaredWait
+// calls; the stateful cap/resurface/hold integration is tests/sh/ac-watch.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { autoarmIncumbentOrphaned, pausedWaitExpired, rowForId } from "../../src/lib.ts";
+import { acDoneline } from "../../src/backlog.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBSEND = join(ROOT, "src", "lib-send.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-watch-ts-")));
 afterAll(() => rmSync(W, { recursive: true, force: true }));
 
@@ -33,7 +39,7 @@ function bash(script: string, env: Record<string, string>, args: string[] = []):
 
 function twin(body: string, env: Record<string, string>): Run {
   const r = Bun.spawnSync(
-    [process.execPath, "-e", `const L = await import(${JSON.stringify(LIB)}); const say = (s) => process.stdout.write(String(s)); ${body}`],
+    [process.execPath, "-e", `const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBSEND)}) }; const say = (s) => process.stdout.write(String(s)); ${body}`],
     { cwd: ROOT, env: { PATH: process.env.PATH!, LC_ALL: "C", ...env }, stdout: "pipe", stderr: "pipe" },
   );
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
@@ -203,3 +209,56 @@ test("claudeTranscriptPath finds the one transcript ac_claude_transcript_path fi
     expect([r.name, got.out]).toEqual([r.name, want.out]);
   }
 }, 60000);
+
+test("pausedWaitExpired is true once the line's own until epoch is no later than now - the caller, not this predicate, confirms the verb", () => {
+  const saved = process.env.EPOCHSECONDS;
+  process.env.EPOCHSECONDS = "1700000000";
+  try {
+    expect(pausedWaitExpired("paused: a ci run - resumes when it finishes")).toBe(false);
+    expect(pausedWaitExpired("paused: a ci run until 1699999999 - resumes then")).toBe(true);
+    expect(pausedWaitExpired("paused: a ci run until 1700000000 - resumes then")).toBe(true);
+    expect(pausedWaitExpired("paused: a ci run until 1700000001 - resumes then")).toBe(false);
+    expect(pausedWaitExpired("⏺ paused: a ci run until 1699999999 - resumes then")).toBe(true);
+    expect(pausedWaitExpired("paused: a ci run until 2026-11-01 - a date, not an epoch")).toBe(false);
+    expect(pausedWaitExpired("paused: back until 10:30 - a clock time, not an epoch")).toBe(false);
+    expect(pausedWaitExpired("paused: run until 3 tests pass - a count, not an epoch")).toBe(false);
+    expect(pausedWaitExpired("paused: a ci run until abc - no real epoch")).toBe(false);
+  } finally {
+    if (saved === undefined) delete process.env.EPOCHSECONDS;
+    else process.env.EPOCHSECONDS = saved;
+  }
+});
+
+test("rowForId reads the exact row for an id, else its family's, else null", () => {
+  const ledger = {
+    rc: 0 as const,
+    text: "# Backlog\n\n## In flight\n\n- [ ] t1 - one task\n- [ ] fam [EPIC] - a family row\n\n## Queued\n\n## Done\n",
+  };
+  expect(rowForId("t1", ledger)).toBe("- [ ] t1 - one task");
+  expect(rowForId("fam-design", ledger)).toBe("- [ ] fam [EPIC] - a family row");
+  expect(rowForId("ghost", ledger)).toBe(null);
+  expect(rowForId("t1", { rc: 1 })).toBe(null);
+  expect(rowForId("t1", { rc: 2 })).toBe(null);
+});
+
+test("rowForId's hold field (acDoneline) is how declaredWait's backlog-hold reads a captain hold", () => {
+  const ledger = { rc: 0 as const, text: "- [ ] held1 [@held] - parked by the captain\n- [ ] free1 - not held\n" };
+  expect(acDoneline(rowForId("held1", ledger)!).hold).toBe("1");
+  expect(acDoneline(rowForId("free1", ledger)!).hold).toBe("");
+});
+
+// autoarmIncumbentOrphaned: a marked incumbent's recorded holder is the
+// SESSION-LOCK pid at the hook arm that marked it. "gone" is released
+// (either signal alone is enough - a mismatch survives a coincidentally-live
+// recorded pid, a dead recorded pid survives a coincidental match); a holder
+// still live AND still the current one is not.
+test("autoarmIncumbentOrphaned: empty marker never orphaned; a live matching holder never is; a dead or mismatched one always is", () => {
+  const live = String(process.pid);
+  // Synchronous spawn waited to completion: dead by the time stdout is read.
+  const dead = Bun.spawnSync(["/bin/sh", "-c", "echo $$"]).stdout.toString().trim();
+  expect(autoarmIncumbentOrphaned("", live)).toBe(false);
+  expect(autoarmIncumbentOrphaned(live, live)).toBe(false);
+  expect(autoarmIncumbentOrphaned(dead, dead)).toBe(true);
+  expect(autoarmIncumbentOrphaned(dead, live)).toBe(true);
+  expect(autoarmIncumbentOrphaned(live, dead)).toBe(true);
+});

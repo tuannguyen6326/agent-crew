@@ -2291,6 +2291,7 @@ wpid=$!
 in_poll_wait "$wpid" "$state/.last-watcher-beat" >/dev/null \
   || fail "the hook-armed watcher never reached its poll wait"
 assert_file "$state/.watch.lock.d/autoarm" "a hook arm records its boundedness in its own lock dir"
+assert_eq "$(cat "$state/.watch.lock.d/autoarm")" "$$" "... as the arming session's OWN session-lock pid (AC_LOCK_PID), never the watcher's own - a later arm's orphan check reads this back"
 kill -TERM "$wpid"; wait "$wpid" 2>/dev/null || true
 assert_no_file "$state/.watch.lock.d" "... and the marker dies with the lock"
 
@@ -2301,6 +2302,51 @@ in_poll_wait "$wpid" "$state/.last-watcher-beat" >/dev/null \
   || fail "the hand-armed watcher never reached its poll wait"
 assert_no_file "$state/.watch.lock.d/autoarm" "a hand arm records nothing: its coverage is not budget-bounded"
 kill -TERM "$wpid"; wait "$wpid" 2>/dev/null || true
+reset_state
+
+# A SCOPED hook arm's marker is EMPTY: its lock has no home-wide session-lock
+# to record, and nothing reads a scoped marker's content (isFile only, above).
+AC_AUTOARM=1 AC_SCOPE=fam1 AC_POLL=30 AC_HEARTBEAT=300 bash "$BIN/ac-watch.sh" \
+  >/dev/null 2>/dev/null &
+wpid=$!
+in_poll_wait "$wpid" "$state/.last-watcher-beat.fam1" >/dev/null \
+  || fail "the scoped hook-armed watcher never reached its poll wait"
+assert_eq "$(cat "$state/.watch-only-fam1.lock.d/autoarm")" "" "a scoped hook arm's marker carries no fleet session-lock pid"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null || true
+reset_state
+
+# THE READER half: a SAME-CONFIG marked incumbent whose recorded holder is
+# gone is reclaimed by a hook arm instead of answered `already running`; one
+# whose holder is still the current session-lock pid is not touched at all.
+# AC_HEARTBEAT=0 makes the heartbeat overdue at once, so a real arm closes
+# fast with `heartbeat` - the new-arm half of what autoarmIncumbentOrphaned
+# (src/lib.ts) and tryReclaimOrphanAutoarm (src/watch.ts) are for.
+reset_state
+hold_open wr-standin; wrpid=$HOLD_PID
+mkdir -p "$state/.watch.lock.d"
+printf '%s\n' "$wrpid" >"$state/.watch.lock.d/pid"
+: >"$state/.watcher-config"
+awdead="$(sh -c 'echo $$')"
+printf '%s\n' "$awdead" >"$state/.watch.lock.d/autoarm"
+out="$(AC_AUTOARM=1 AC_LOCK_PID=$$ AC_HEARTBEAT=0 bash "$BIN/ac-watch.sh" 2>/dev/null)"
+assert_eq "$out" "heartbeat" "a dead recorded holder is reclaimed - the arm completes, never 'already running'"
+kill -0 "$wrpid" 2>/dev/null && fail "the reclaimed incumbent must be TERM'd, not left running"
+assert_file "$state/.watcher-arm.log" "the reclaim leaves the normal arm trail"
+assert_contains "$(cat "$state/.watcher-arm.log")" "release ALLOWED pid=$wrpid reason=orphan-reclaim" "... naming the reclaim, not a silent takeover"
+reset_state
+
+hold_open wr-live; wrpid=$HOLD_PID
+mkdir -p "$state/.watch.lock.d"
+printf '%s\n' "$wrpid" >"$state/.watch.lock.d/pid"
+: >"$state/.watcher-config"
+out="$(AC_AUTOARM=1 AC_LOCK_PID=$$ AC_HEARTBEAT=0 bash "$BIN/ac-watch.sh" 2>/dev/null)"
+assert_eq "$out" "already running - pending: your inbox is empty - nothing waiting" "a LIVE incumbent with no recorded holder yet (no autoarm marker) is untouched"
+kill -0 "$wrpid" 2>/dev/null || fail "an incumbent with no orphan marker must never be TERM'd"
+printf '%s\n' "$$" >"$state/.watch.lock.d/autoarm"
+out="$(AC_AUTOARM=1 AC_LOCK_PID=$$ AC_HEARTBEAT=0 bash "$BIN/ac-watch.sh" 2>/dev/null)"
+assert_eq "$out" "already running - pending: your inbox is empty - nothing waiting" "a recorded holder that IS the current session-lock pid is not orphaned"
+kill -0 "$wrpid" 2>/dev/null || fail "a live, non-orphaned incumbent must never be TERM'd"
+hold_close wr-live "$wrpid"
 reset_state
 
 # --- (3) AC_WATCH_SKIP home guard: a skip naming a family absent from THIS home
@@ -4023,14 +4069,16 @@ reset_state
 rm -f "$state"/*.status
 
 
-# --- STALE DEFERRAL (watch-stale-defer-on-declared-wait) ---------------------
+# --- STALE DEFERRAL (watch-stale-wakes-unbounded) ----------------------------
 # The stale arm measured idle time alone: a worker that had SAID why it is quiet
-# (its own `paused:`/captain-wait line in state/<id>.status) or one parked at an
-# undecided `ask-user` review finding was re-reported stale every AC_STALE window,
-# because the only dedup (.stale-<id>) is cleared by any cosmetic redraw. The
-# declaration outranks the idle clock ONCE: the timer restarts and the arm log
-# records the deferral; the SAME declaration a full window later is stale again
-# (the declaration itself went stale), and a NEW one defers again.
+# (its own `paused:`/captain-wait line in state/<id>.status), a backlog row the
+# captain held, or one parked at an undecided `ask-user` review finding was
+# re-reported stale every AC_STALE window, because the only dedup (.stale-<id>)
+# is cleared by any cosmetic redraw. The declaration outranks the idle clock -
+# the timer restarts on every sighting, not just its first - and re-surfaces
+# only on the AC_PAUSE_RESURFACE cadence, never the very next AC_STALE window; a
+# NEW declaration defers again on its own dedup. Full rules: the src/watch.ts
+# header.
 defer_lines() {
   # grep -c prints its 0 AND exits 1, so the fallback covers only a missing log.
   local n; n="$(grep -c "deferred-stale:$1" "$state/.watcher-arm.log" 2>/dev/null)" || true
@@ -4065,12 +4113,28 @@ case "$dsw_stamp" in ''|*[!0-9]*) fail "deferral must write a numeric idle stamp
   || fail "deferral must restart the idle timer the stale arm measures from, got $dsw_stamp"
 assert_no_file "$state/.stale-dsw" "deferral is not the stale dedup marker"
 
-# (2) The SAME declaration a full window later is stale again, once, with no
-# second deferral line.
+# (2) The SAME declaration keeps deferring across repeated windows - never
+# falling through on a second or third sighting, and logging no second
+# deferral line - until the AC_PAUSE_RESURFACE cadence lets it through once;
+# that resurfacing itself restarts the cadence for what follows.
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-dsw"
 out="$(bash "$BIN/ac-watch.sh" --once)"
-assert_contains "$out" "stale:dsw" "an unchanged declaration past a second full window is reported stale"
-assert_eq "$(defer_lines dsw)" "1" "the same declaration never defers twice"
+case "$out" in *stale:dsw*) fail "an unchanged declaration must keep deferring, never fall through on its second sighting" ;; esac
+assert_eq "$(defer_lines dsw)" "1" "a repeat sighting of the same declaration logs no second deferral"
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-dsw"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:dsw*) fail "the same declaration stays deferred across more than one repeat window" ;; esac
+printf '%s\n' "$(( $(date +%s) - 14401 ))" >"$state/.deferred-since-dsw"
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-dsw"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:dsw" "the AC_PAUSE_RESURFACE cadence resurfaces an unchanged declaration"
+assert_eq "$(defer_lines dsw)" "1" "resurfacing is not itself a logged deferral"
+rm -rf "$state"/.wake-spool*
+rm -f "$state/.stale-dsw"
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-dsw"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:dsw*) fail "resurfacing must restart the cadence, not resurface every subsequent window" ;; esac
+assert_eq "$(defer_lines dsw)" "1" "restarting the cadence logs no deferral of its own"
 rm -rf "$state"/.wake-spool*
 
 # (3) A FRESH declaration after that defers again (a redraw cleared the dedup
@@ -4149,7 +4213,157 @@ printf '%s blocked: ended its turn with no report line\n' "$(date -u +%FT%TZ)" >
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "stale:dv" "the watcher's own ended note is not a declaration"
 rm -rf "$state"/.wake-spool*
-rm -rf "$AC_HOME/data/dsw" "$AC_HOME/data/gp" "$AC_HOME/data/gf" "$AC_HOME/data/gs" "$AC_HOME/data/dn" "$AC_HOME/data/dp" "$AC_HOME/data/dv"
+
+# BACKLOG HOLD: a captain [@held] row for the task (or its family) defers
+# exactly like the worker's own declared wait - no records/backlog.md at all
+# (every stale_pane fixture above) stays no-hold, read as rc 1, not a defect.
+stale_pane bh pBH tBH
+printf -- '- [ ] bh [@held] - parked by the captain\n' >"$AC_HOME/records/backlog.md"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:bh*) fail "a backlog [@held] row for the task must defer" ;; esac
+assert_contains "$(cat "$state/.watcher-arm.log")" "deferred-stale:bh backlog-hold" "the deferral names the hold"
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-bh"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:bh*) fail "the same hold a window later keeps deferring too" ;; esac
+assert_eq "$(defer_lines bh)" "1" "a repeat sighting of the same hold logs no second deferral"
+rm -f "$AC_HOME/records/backlog.md"
+
+# PAUSED ... UNTIL: a paused: declaration's own `until <epoch>` outliving its
+# window falls through instead of deferring forever; one not yet elapsed
+# defers exactly as any other declared wait.
+stale_pane pu1 pPU1 tPU1
+printf '%s paused: a ci run until %s - resumes when it finishes\n' "$(date -u +%FT%TZ)" "$(( $(date +%s) - 1 ))" >"$state/pu1.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:pu1" "an elapsed paused: until does not defer"
+assert_eq "$(defer_lines pu1)" "0" "no deferral is logged for an already-expired until"
+rm -rf "$state"/.wake-spool*
+
+stale_pane pu2 pPU2 tPU2
+printf '%s paused: a ci run until %s - resumes when it finishes\n' "$(date -u +%FT%TZ)" "$(( $(date +%s) + 999999 ))" >"$state/pu2.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:pu2*) fail "an unexpired paused: until must still defer" ;; esac
+assert_contains "$(cat "$state/.watcher-arm.log")" "deferred-stale:pu2 declared-wait paused" "the deferral names it"
+
+# AC_STALE_MAX_WAKES: a redrawing idle pane caps at N stale: wakes, the last
+# carrying PERMANENTLY-STALE, then stays silent despite further redraws until
+# AC_STALE_CAP_HORIZON passes or the marker is removed; a busy poll resets
+# the count, starting a fresh N-wake cycle.
+stale_pane cap pCAP tCAP
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:cap" "wake 1 of 2"
+assert_no_file "$state/.stale-capped-cap" "not capped yet"
+rm -rf "$state"/.wake-spool*
+printf 'redraw 1\n' >"$(fake_pane_buf cap)"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:cap*) fail "the redraw itself is anchored" ;; esac
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-cap"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:cap" "wake 2 of 2 - capped"
+assert_file "$state/.stale-capped-cap" "the cap marker"
+assert_contains "$(fleet_spool)" "PERMANENTLY-STALE" "the cap's clause"
+rm -rf "$state"/.wake-spool*
+printf 'redraw 2\n' >"$(fake_pane_buf cap)"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:cap*) fail "the redraw after capping is anchored too" ;; esac
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-cap"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:cap*) fail "capped - no third wake despite the window elapsing again" ;; esac
+printf 'esc to interrupt\n' >"$(fake_pane_buf cap)"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:cap*) fail "a busy poll is quiet, not stale" ;; esac
+assert_no_file "$state/.stale-count-cap" "a busy poll resets the count"
+rm -f "$state/.stale-capped-cap"
+printf 'redraw 3\n' >"$(fake_pane_buf cap)"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:cap*) fail "the redraw back to idle is anchored" ;; esac
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-cap"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:cap" "wake 1 of 2 again - the busy poll reset the count"
+assert_no_file "$state/.stale-capped-cap" "not capped on the first wake of the new cycle"
+rm -rf "$state"/.wake-spool*
+
+# The cap bounds only the soft stale: emit below it - a capped pane still
+# wakes a HARD signal (ended:/limited:/needs-login:) the moment it applies.
+stale_pane capI1 pCAPI1 tCAPI1
+out="$(AC_STALE_MAX_WAKES=1 bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:capI1" "wake 1 of 1 - capped"
+assert_file "$state/.stale-capped-capI1" "the cap marker"
+rm -rf "$state"/.wake-spool*
+printf 'idle now\n' >"$(fake_pane_buf capI1)"
+printf 'idle\n' >"$FAKE_HERDR/panes/pCAPI1.status"
+out="$(AC_STALE_MAX_WAKES=1 bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:capI1*|*ended:capI1*) fail "the redraw itself is anchored" ;; esac
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-capI1"
+out="$(AC_STALE_MAX_WAKES=1 bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "ended:capI1" "a capped pane still wakes ended: - the cap never bounds a hard signal"
+rm -rf "$state"/.wake-spool*
+rm -f "$state/capI1.meta" "$state/.pane-capI1"
+
+# Removing only the cap marker by hand (never the count) must still mean a
+# fresh N-wake budget - not an instant re-cap on the very next wake.
+stale_pane capI2 pCAPI2 tCAPI2
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:capI2" "wake 1 of 2"
+rm -rf "$state"/.wake-spool*
+printf 'redraw 1\n' >"$(fake_pane_buf capI2)"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:capI2*) fail "the redraw is anchored" ;; esac
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-capI2"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:capI2" "wake 2 of 2 - capped"
+assert_file "$state/.stale-capped-capI2" "the cap marker"
+rm -rf "$state"/.wake-spool*
+rm -f "$state/.stale-capped-capI2"
+printf 'redraw 2\n' >"$(fake_pane_buf capI2)"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:capI2*) fail "the redraw after removing the marker is anchored" ;; esac
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-capI2"
+out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:capI2" "wake 1 of 2 again, after removing only the marker"
+case "$(fleet_spool)" in *PERMANENTLY-STALE*) fail "removing only the marker must not re-cap on the very next wake" ;; esac
+rm -rf "$state"/.wake-spool*
+rm -f "$state/capI2.meta" "$state/.pane-capI2"
+
+# The DATED arm of a backlog hold releases ITSELF (docs/backlog.md): READY
+# on and after hold_until, exactly as bin/ac-ready.sh and ac-task.sh start
+# already read it - an expired dated hold is no hold here either.
+stale_pane bh2 pBH2 tBH2
+printf -- '- [ ] bh2 [@held until 2000-01-01] - an old, already-released hold\n' >"$AC_HOME/records/backlog.md"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "stale:bh2" "an expired dated hold is no hold"
+rm -rf "$state"/.wake-spool*
+rm -f "$state/bh2.meta" "$state/.pane-bh2"
+stale_pane bh3 pBH3 tBH3
+printf -- '- [ ] bh3 [@held until 2999-01-01] - not due to release for a long time\n' >"$AC_HOME/records/backlog.md"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:bh3*) fail "an unexpired dated hold must still defer" ;; esac
+rm -f "$AC_HOME/records/backlog.md" "$state/bh3.meta" "$state/.pane-bh3"
+
+# A busy turn between two sightings of the SAME declaration text ends its
+# grip - the declaration was evidence about the silence BEFORE that turn,
+# never about the one after it.
+stale_pane dw2 pDW2 tDW2
+printf '%s needs-decision: waiting on review\n' "$(date -u +%FT%TZ)" >"$state/dw2.status"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:dw2*) fail "a declared wait defers" ;; esac
+assert_eq "$(defer_lines dw2)" "1" "logged once"
+printf 'esc to interrupt\n' >"$(fake_pane_buf dw2)"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+assert_eq "$out" "check:quiet" "the busy edge itself"
+printf 'quiet again\n' >"$(fake_pane_buf dw2)"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:dw2*) fail "the redraw back to idle is anchored" ;; esac
+printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-dw2"
+out="$(bash "$BIN/ac-watch.sh" --once)"
+case "$out" in *stale:dw2*) fail "the same declaration still defers, now as a FRESH sighting after the busy edge" ;; esac
+assert_eq "$(defer_lines dw2)" "2" "a busy turn between two sightings of the same text is a new deferral, not a repeat"
+rm -rf "$state"/.wake-spool*
+rm -f "$state/dw2.meta" "$state/.pane-dw2" "$state/dw2.status"
+
+rm -rf "$AC_HOME/data/dsw" "$AC_HOME/data/gp" "$AC_HOME/data/gf" "$AC_HOME/data/gs" "$AC_HOME/data/dn" "$AC_HOME/data/dp" "$AC_HOME/data/dv" \
+  "$AC_HOME/data/bh" "$AC_HOME/data/pu1" "$AC_HOME/data/pu2" "$AC_HOME/data/cap" \
+  "$AC_HOME/data/capI1" "$AC_HOME/data/capI2" "$AC_HOME/data/bh2" "$AC_HOME/data/bh3" "$AC_HOME/data/dw2"
+rm -f "$state"/{bh,pu1,pu2,cap}.meta "$state"/.pane-{bh,pu1,pu2,cap} "$state"/{pu1,pu2}.status
 
 reset_state
 rm -f "$state"/*.status
@@ -4275,6 +4489,7 @@ WA_UNSET=(-u AC_HOME -u AC_SCOPE -u AC_SOLO -u AC_BACKEND -u AC_FLEET_STATE -u A
   -u AC_WATCH_SKIP -u AC_AUTOARM -u AC_POLL -u AC_HEARTBEAT -u AC_STALE -u AC_BUSY_MAX -u AC_GUARD_GRACE
   -u AC_ARMLOG_KEEP -u AC_REMOTE_POLL -u AC_REMOTE_POLL_TIMEOUT -u AC_CAPTAIN_RE -u AC_DECISION_RE -u AC_BUSY_RE
   -u AC_COMPACT_ADVISE -u AC_BRAIN_SYNC_IV -u AC_LOCK_STALE_GRACE -u AC_HERDR_SESSION -u AC_HERDR_RPC_TIMEOUT
+  -u AC_STALE_MAX_WAKES -u AC_STALE_CAP_HORIZON -u AC_PAUSE_RESURFACE
   -u EPOCHSECONDS -u LANG -u LC_CTYPE)
 wa_env() {  # wa_env <side root> - the environment a side runs under, in WA_E
   local h="$1" x v
@@ -4345,6 +4560,7 @@ wa_snap() {  # wa_snap <side root> - the home's tree, every state and data file'
     printf '== %s\n' "$f"
     case "$f" in
       *.lock.d/pid) printf 'PID\n' ;;
+      *.lock.d/start) printf 'START\n' ;;
       *) cat "$h/home/$f" 2>/dev/null || printf '(unreadable)\n' ;;
     esac
   done
@@ -4379,6 +4595,20 @@ wa_compare() {  # wa_compare <what> - both sides' answers and worlds, normalized
 wa_same() { wa_pair "$@"; wa_compare "'$*' (${WA_ENV[*]+${WA_ENV[*]}}, LC_ALL=$WA_LC) at line ${BASH_LINENO[0]}"; }
 wa_same_utf8() { WA_LC=en_US.UTF-8; wa_same "$@"; WA_LC=C; }
 wa_sides() { wa_pair "$@"; }  # both run, nothing compared: a named divergence's row asserts by hand
+wa_ns_sync() {  # a wake published on one side and not the other (a deliberate
+  # behavior divergence under wa_sides) advances that side's stub +%s%N
+  # counter one step further than the other's - harmless to the row it
+  # happened on (nothing compares it), but every wake-spool FILENAME for the
+  # rest of the run embeds that counter, so the next wa_same would see a
+  # bogus filename mismatch with no behavior difference behind it. Force
+  # both counters level before resuming wa_same.
+  local o n hi
+  o="$(cat "$WA_OH/stub/ns" 2>/dev/null || printf 0)"
+  n="$(cat "$WA_NH/stub/ns" 2>/dev/null || printf 0)"
+  hi=$(( o > n ? o : n ))
+  printf '%s\n' "$hi" >"$WA_OH/stub/ns"
+  printf '%s\n' "$hi" >"$WA_NH/stub/ns"
+}
 nout() { cat "$TMP/n.out"; }
 oout() { cat "$TMP/o.out"; }
 nerr() { cat "$TMP/n.err2"; }
@@ -4745,19 +4975,32 @@ for wa_bad in '' 0009; do
   wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: an unreadable idle stamp ('$wa_bad') restarts"
 done
 wa_both rm -f '$H/home/state/us1.meta'
-# Stale deferral: a declared wait, the same a window later, gate-parked findings.
+# Stale deferral (watch-stale-wakes-unbounded): a declared wait, the same a
+# window later still deferring (not falling through), the AC_PAUSE_RESURFACE
+# cadence resurfacing it, the cadence restarting after that - then
+# gate-parked findings.
 wa_both wa_quiet dw1 'all quiet\n' working; wa_both st dw1 '2023-11-14T22:00:00Z needs-decision: waiting on the captain\n'
-wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: a declared wait defers"
-assert_contains "$(nsnap)" "deferred-stale:dw1 declared-wait needs-decision" "row 4: logged"
+wa_sides --once; assert_eq "$(nout)" "check:quiet" "row 4: a declared wait defers"
+assert_contains "$(cat "$WA_NH/home/state/.watcher-arm.log")" "deferred-stale:dw1 declared-wait needs-decision" "row 4: logged"
 wa_both stamp change dw1 "$((WA_T - 999))\n"
-wa_same --once; assert_eq "$(nout)" "stale:dw1" "row 4: the same declaration a window later"
-wa_both rm -f '$H/home/state/dw1.meta'
+wa_sides --once; assert_eq "$(nout)" "check:quiet" "row 4: the same declaration a window later keeps deferring, never immediately stale"
+wa_both stamp deferred-since dw1 "$((WA_T - 14401))\n"; wa_both stamp change dw1 "$((WA_T - 999))\n"
+wa_sides --once; assert_eq "$(nout)" "stale:dw1" "row 4: the AC_PAUSE_RESURFACE cadence resurfaces it"
+wa_both ptail pdw1 'all quiet, redrawn\n'
+wa_sides --once; assert_eq "$(nout)" "check:quiet" "row 4: the redraw itself is anchored, same as any other"
+wa_both stamp change dw1 "$((WA_T - 999))\n"
+wa_sides --once; assert_eq "$(nout)" "check:quiet" "row 4: resurfacing restarted the cadence - it defers again right after, not stale again"
+wa_both rmst '.*-dw1' 'dw1.*'
+wa_both rm -rf '$H/home/state/.wake-spool'
 wa_both wa_quiet g1 'all quiet\n' working 'worktree=$H/wt\n'
 wa_both mkdir -p '$H/wt/.crew/ship/current/findings'
 wa_both sh -c 'printf "%s\n" "$1" >"$2"' _ '{"findings":[{"action":"ask-user","id":"F1"}]}' '$H/wt/.crew/ship/current/findings/review.json'
-wa_same --once; assert_eq "$(nout)" "check:quiet" "row 4: gate-parked findings defer"
-assert_contains "$(nsnap)" "deferred-stale:g1 gate-parked" "row 4: logged as gate-parked"
+wa_sides --once; assert_eq "$(nout)" "check:quiet" "row 4: gate-parked findings defer"
+assert_contains "$(cat "$WA_NH/home/state/.watcher-arm.log")" "deferred-stale:g1 gate-parked" "row 4: logged as gate-parked"
 wa_both rm -rf '$H/home/state/g1.meta' '$H/wt'
+wa_both rmst '.*-g1' 'g1.*'
+wa_both rm -rf '$H/home/state/.wake-spool'
+wa_ns_sync
 # A supervising chief stays quiet: a live child, a gate parked on the captain.
 wa_both chief famc; wa_both quiet famc-chief 999 "$(ck 'chief prose\n')"; wa_both ptail pfamc-chief 'chief prose\n'; wa_both pstat pfamc-chief idle
 wa_both crew famc-t1 'working\nesc to interrupt\n' 'fleet_scope=famc\n'

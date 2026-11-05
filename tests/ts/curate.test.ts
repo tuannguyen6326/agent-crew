@@ -1,4 +1,4 @@
-// curate.test.ts - what src/curate.ts brought into src/lib.ts, held to the
+// curate.test.ts - what src/curate.ts brought into src/lib.ts and src/lib-curate.ts, held to the
 // bash it twins - the readers in bin/ac-maintenance-lib.sh, everything else
 // as frozen at tests/fixtures/ac-maintenance-retired.sh: the maintenance
 // transaction (maintenanceApply, the twin of ac_maintenance_apply, which the
@@ -12,7 +12,7 @@
 // contract is tests/sh/ac-curate.test.sh's, whose differential leg runs the
 // frozen original beside the shim.
 //
-// DISPUTED: the implementation of each helper (the bash vs src/lib.ts and src/curate.ts)
+// DISPUTED: the implementation of each helper (the bash vs src/lib-curate.ts, src/lib.ts and src/curate.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with records, skills, state and a maintenance run holding its plan and staged files); argv; env (PATH = a stub dir - date answering one instant, sleep logging to <side>/sleep.log and returning - then the host's bun and jq, then /bin and /usr/bin without herdr, orca, docker, codegraph or jq; LC_ALL=C; HOME and TMPDIR the test root; AC_HOME where a row sets it); cwd (the distro root); stdin (/dev/null); the process started through /bin/sh so a row can plant a link at a name its pid decides; stdout, stderr and the status (the side root spelled S, the side's pid PID) and the side root's world after the call - every path with its mode and bytes, a backup as its sorted tar listing - compared whole.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -23,6 +23,7 @@ import { createHash } from "node:crypto";
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBC = join(ROOT, "src", "lib-curate.ts");
 const CURATE = join(ROOT, "src", "curate.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-curate-ts-")));
 afterAll(() => {
@@ -49,7 +50,7 @@ const PATH = `${TOOLS}:${BASE}`;
 type Row = {
   // the bash call, run after sourcing ac-lib.sh, ac-maintenance-lib.sh, ac-bun.sh and the frozen ac-maintenance-retired.sh, its arguments "$@"
   bash: string;
-  // the twin's body: L is src/lib.ts, C src/curate.ts, A the arguments
+  // the twin's body: L is src/lib.ts merged with src/lib-curate.ts, C src/curate.ts, A the arguments
   twin: string;
   args?: string[];
   seed?: (s: string) => void;
@@ -99,7 +100,7 @@ function side(row: Row, s: string, oracle: boolean): Side {
     : [
         process.execPath,
         "-e",
-        `import { writeSync } from "node:fs"; const L = await import(${JSON.stringify(LIB)}); const C = await import(${JSON.stringify(CURATE)}); const A = ${JSON.stringify(args)}; let rc; try { rc = await (async () => { ${row.twin} })(); } catch (e) { rc = "throw:" + (e.code ?? e.message); } writeSync(1, "|rc=" + rc);`,
+        `import { writeSync } from "node:fs"; const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBC)}) }; const C = await import(${JSON.stringify(CURATE)}); const A = ${JSON.stringify(args)}; let rc; try { rc = await (async () => { ${row.twin} })(); } catch (e) { rc = "throw:" + (e.code ?? e.message); } writeSync(1, "|rc=" + rc);`,
       ];
   const plant = row.plant ? join(s, row.plant) : "";
   const r = Bun.spawnSync(["/bin/sh", "-c", '[ -z "$0" ] || ln -s "$1" "$0.$$.0"; shift; exec "$@"', plant, row.plantTo ?? join(s, "victim"), ...cmd], { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });

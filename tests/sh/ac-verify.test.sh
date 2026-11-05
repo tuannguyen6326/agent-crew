@@ -2991,14 +2991,17 @@ xworld() {  # what a row may change
   done
   [ ! -f "$XW/victim" ] || { printf '== victim\n'; cat "$XW/victim"; }
 }
-xnorm() {  # xnorm <file> <pid>... - each pid only between non-hex bytes (a hash keeps its digits), and a lane's real mtime
+xnorm() {  # xnorm <file> <pid>... - each pid only between non-hex bytes (a hash keeps its digits) and never as a date's year, and a lane's real mtime
   local f="$1" p a=(); shift
-  for p in "$@"; do a+=(-e "s/(^|[^0-9a-f])$p([^0-9a-f]|\$)/\\1PID\\2/g" -e "s/(^|[^0-9a-f])$p([^0-9a-f]|\$)/\\1PID\\2/g"); done
+  for p in "$@"; do a+=(-e "s/(^|[^0-9a-f])$p([^0-9a-f-]|-[^0-9]|\$)/\\1PID\\2/g" -e "s/(^|[^0-9a-f])$p([^0-9a-f-]|-[^0-9]|\$)/\\1PID\\2/g"); done
   LC_ALL=C sed -E -e "s#$TMP/oracle-ac-verify#ROOT#g" -e "s#$ROOT#ROOT#g" \
     -e 's#(ctx-backup|\.profile-runtime\.tmp|\.run-meta-curation|review\.json|qa\.json|report\.md)\.[A-Za-z0-9]{6}#\1.XXXXXX#g' \
     -e 's/(before the last scout lane finished at) [0-9]+/\1 MTIME/' \
     -e '/ac-[a-z-]*\.sh: line [0-9]*: /d' ${a[@]+"${a[@]}"} "$f"
 }
+# A pid that happens to read as the frozen year leaves the date whole: one side ran as that pid and the other did not.
+printf '[2026-01-01T00:00:00Z] x 2026 y\n' >"$TMP/xnorm.probe"
+assert_eq "$(xnorm "$TMP/xnorm.probe" 2026)" '[2026-01-01T00:00:00Z] x PID y' 'xnorm under a pid that reads as the frozen year'
 xsnap() {  # xsnap <prefix> [<more pids>...] - that side's outputs and world, normalised
   local p="$1" pid; shift
   pid="$(cat "$TMP/$p.pid" 2>/dev/null || printf 'nopid')"

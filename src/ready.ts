@@ -294,7 +294,6 @@ import {
   defaultBranch,
   die,
   enterCaller,
-  landingOverlaps,
   physicalDir,
   recordsDir,
   roomFile,
@@ -303,6 +302,7 @@ import {
   tabFields,
   taskMeta,
 } from "./lib.ts";
+import { landingOverlaps } from "./lib-merge-local.ts";
 
 type Row = {
   sec: string;

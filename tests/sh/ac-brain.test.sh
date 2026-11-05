@@ -278,6 +278,32 @@ assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT COUNT(*) FROM pages W
   "the purged page row is gone for good"
 rm -rf "$AC_HOME/data/soft"
 
+# --- sync holds a strange file: unreadable or non-regular, the rest imports ---
+# One EACCES file or a FIFO named *.md used to throw out of (or block) every
+# sync with the lease held while doctor stayed green. It is held - counted and
+# named, never read - the other pages still land, and a later sync that can
+# read it imports it.
+mkdir -p "$AC_HOME/data/held"
+printf '# Good\nA readable neighbour page about the heliotrope ledger reconciliation body.\n' >"$AC_HOME/data/held/good.md"
+printf '# Locked\nA page nobody may read about the sealed vault chamber inventory body.\n' >"$AC_HOME/data/held/locked.md"
+chmod 000 "$AC_HOME/data/held/locked.md"
+mkfifo "$AC_HOME/data/held/pipe.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >"$AC_HOME/held.out" 2>"$AC_HOME/held.err" & hp=$!
+kill_after 20 "$hp"
+wait "$hp" && hrc=0 || hrc=$?
+[ "$hrc" = 0 ] || fail "a sync over an unreadable file and a FIFO must return 0 within 20s (rc=$hrc): $(cat "$AC_HOME/held.err")"
+hs="$(cat "$AC_HOME/held.out")"
+assert_eq "$(printf '%s' "$hs" | j "['unreadable']")" "2" "both strange files are held and counted"
+assert_contains "$hs" "data/held/locked.md" "a held path is named"
+assert_contains "$("$BRAIN" recall --home "$AC_HOME" --query "heliotrope ledger reconciliation" --limit 3 --compact)" \
+  "data/held/good" "the readable neighbour still imports"
+chmod 644 "$AC_HOME/data/held/locked.md"
+hs2="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+assert_eq "$(printf '%s' "$hs2" | j "['unreadable']")" "1" "a file readable again leaves the hold; the FIFO stays held"
+assert_contains "$("$BRAIN" recall --home "$AC_HOME" --query "sealed vault chamber inventory" --limit 3 --compact)" \
+  "data/held/locked" "a held file imports once it reads"
+rm -rf "$AC_HOME/data/held" "$AC_HOME/held.out" "$AC_HOME/held.err"
+
 # --- vector evidence floor: a weak cosine never wears the vector label --------
 # A fresh one-page home makes the case deterministic: the query shares no
 # token with the page, so the keyword arm is empty and the single vector
@@ -564,6 +590,9 @@ AC_SCOPE=fam-one "$BRAIN" recall --query "widget" --home "$AC_HOME" --compact >/
 assert_contains "$(tail -1 "$AC_HOME/state/brain-usage.jsonl")" '"by":"fam-one-chief"' "AC_SCOPE attributes to the scoped chief"
 "$BRAIN" recall --query "widget" --by dashboard --home "$AC_HOME" --compact >/dev/null
 assert_contains "$(tail -1 "$AC_HOME/state/brain-usage.jsonl")" '"by":"dashboard"' "--by overrides the derived attribution"
+case "$(tail -1 "$AC_HOME/state/brain-usage.jsonl")" in
+  *'"q"'*) fail "a recall usage record must carry no raw query text" ;;
+esac
 
 # --- self-retrieval probe: a page that cannot find itself turns the check warn
 # (never fail - quirky corpora must not unhealth a home). This page's opening
@@ -624,9 +653,15 @@ embed_stub_config "$EMBED_STUB_PORT"
 printf '# Bound probe\nA page that needs embedding for the bounded-call probe.\n' \
   >"$AC_HOME/data/fam-one/bound-probe.md"
 eb="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+# An override of `Infinity` passes a `> 0` guard; the runtime refuses a
+# non-finite timeout before the request leaves, and the sync then blamed the
+# provider (`provider_unreachable`) for a value typed on this side.
+ei="$(AC_BRAIN_EMBED_TIMEOUT=Infinity "$BRAIN" sync --home "$AC_HOME" --compact)"
 embed_stub_down
 assert_contains "$eb" "402" \
   "a refused embedding names the HTTP status, not a single opaque provider_error"
+assert_contains "$ei" "402" \
+  "a non-finite timeout override falls back to the default and the call still goes out"
 
 # (b) a provider that ACCEPTS AND NEVER ANSWERS: the sync must still return.
 # The bound is the whole point - a wedged sync holds its lease and its DB open
@@ -656,6 +691,42 @@ assert_contains "$er" '"search_degraded":"keyword_only_provider_error' "...and r
 assert_contains "$er" "bound-probe" "...which still come back"
 
 rm -f "$AC_HOME/config/brain.json" "$AC_HOME/data/fam-one/bound-probe.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
+
+# --- the lease covers the embedding backfill ----------------------------------
+# The pages pass returned while up to 4096 chunks were still being embedded and
+# written behind it, and the lease was released on that return - so a second
+# sync claimed it and interleaved its FTS rewrites with the first one's UPDATE
+# chunks transactions, the very interleaving the lease exists to prevent. A
+# stub that sits on its first answer holds the first sync in its backfill while
+# the second asks for the lease.
+cat >"$TMP/embed-slow.ts" <<'TS'
+let first = true;
+const s = Bun.serve({ port: 0, fetch: async (req) => {
+  const n = ((await req.json()).input as string[]).length;
+  if (first) { first = false; await new Promise(r => setTimeout(r, 3000)); }
+  return Response.json({ data: Array.from({ length: n }, () => ({ embedding: [1, 0, 0, 0, 0, 0, 0, 0] })) });
+} });
+console.log(s.port);
+await new Promise(() => {});
+TS
+embed_stub_up "$TMP/embed-slow.ts" "$TMP/embed-slow.port" \
+  || { embed_stub_down; fail "the slow stub never came up"; }
+embed_stub_config "$EMBED_STUB_PORT"
+printf '# Lease probe\nA page whose embedding keeps the first sync busy.\n' \
+  >"$AC_HOME/data/fam-one/lease-probe.md"
+"$BRAIN" sync --home "$AC_HOME" --compact >"$TMP/sync-a.out" 2>&1 &
+SYNC_A=$!
+kill_after 40 "$SYNC_A"
+sleep 1.5
+sb="$("$BRAIN" sync --home "$AC_HOME" --compact)"
+wait "$SYNC_A" || fail "the first sync must finish its backfill: $(cat "$TMP/sync-a.out")"
+embed_stub_down
+assert_contains "$sb" "already-running" "a sync still writing vectors holds the lease against a second sync"
+[ "$(j "['embedded']" <"$TMP/sync-a.out")" -ge 1 ] \
+  || fail "...and the first sync still reports the vectors it wrote: $(cat "$TMP/sync-a.out")"
+
+rm -f "$AC_HOME/config/brain.json" "$AC_HOME/data/fam-one/lease-probe.md"
 "$BRAIN" sync --home "$AC_HOME" --compact >/dev/null
 
 # --- the rerank call is bounded too, and tighter: it sits on the RECALL path,
@@ -845,6 +916,19 @@ for bad_case in "--entitiy|recall --query fact --entitiy data/fam-one/room" "--t
   assert_contains "$bad" '"invalid_params"' "$bad_args refuses as invalid_params"
   assert_contains "$bad" "${bad_case%%|*}" "$bad_args names the flag"
 done
+# `--flag=value` is one word no reader matches: `sync --dry-run=true` used to
+# run a REAL sync and `delta --since=7d` read as no --since. Every verb now
+# refuses the spelling by name, before it does anything.
+ls_before="$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT v FROM meta WHERE k='last_sync'")"
+for bad_case in "--dry-run=true|sync --dry-run=true" "--limit=5|recall --query fact --limit=5" "--since=7d|delta --since=7d" "--query=fact|synthesize --query=fact"; do
+  bad_args="${bad_case#*|}"
+  # shellcheck disable=SC2086  # each case is a word list on purpose
+  if bad="$("$BRAIN" $bad_args --home "$AC_HOME" --compact 2>&1)"; then fail "$bad_args must refuse (got: $bad)"; fi
+  assert_contains "$bad" '"invalid_params"' "$bad_args refuses as invalid_params"
+  assert_contains "$bad" "${bad_case%%|*}" "$bad_args names the word"
+  assert_contains "$bad" "two words" "$bad_args says how to spell it"
+done
+assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT v FROM meta WHERE k='last_sync'")" "$ls_before" "a refused sync --dry-run=true synced nothing"
 # The roomchief prompt teaches `recall '<question>'`: a positional is the query.
 assert_eq "$("$BRAIN" recall "widget lock acquired" --limit 5 --home "$AC_HOME" --compact | j "['results'][0]['slug']")" \
   "$("$BRAIN" recall --query "widget lock acquired" --limit 5 --home "$AC_HOME" --compact | j "['results'][0]['slug']")" \
@@ -869,12 +953,12 @@ case "$mcp2" in *PRELOAD-RAN*) fail "serve's re-exec ran a caller cwd's bun conf
 assert_contains "$mcp2" "crewdomains/dom-a/CREWMATE" "serve's re-exec answers from a hostile cwd"
 rel="$(cd "$(dirname "$AC_HOME")" && "$BRAIN" stats --home "$(basename "$AC_HOME")" --compact 2>&1)"
 assert_contains "$rel" '"pages"' "a relative --home resolves against the caller's cwd"
-# Bun cannot name a cwd that ends in a backslash; bash can, so only the engine
-# sees the cwd as nameless there.
-bnameless="$TMP/brain-cwd\\"
-mkdir -p "$bnameless/relhome"
-nameless="$(cd "$bnameless" && "$BRAIN" stats --home relhome --compact 2>/dev/null || true)"
-assert_contains "$nameless" "current directory cannot be resolved" "a relative --home from a cwd bun cannot name is refused"
+# A cwd removed under the caller has no name: bash's pwd fails, the shim hands
+# the engine "", and a relative home has nothing to resolve against.
+bnameless="$TMP/brain-cwd-gone"
+mkdir -p "$bnameless"
+nameless="$(cd "$bnameless" && rmdir "$bnameless" && "$BRAIN" stats --home relhome --compact 2>/dev/null || true)"
+assert_contains "$nameless" "current directory cannot be resolved" "a relative --home from a cwd with no name is refused"
 noverb="$("$BRAIN" --home "$AC_HOME" 2>&1 || true)"
 assert_contains "$noverb" '"error"' "no verb still answers one JSON error"
 
@@ -966,7 +1050,8 @@ bxsame links-to t --compact --home "$BXW/l"
 bxsame links-to t --compact --home "$BXW/lf"$'\n'
 bxused "lf"$'\n' "row 1: an LF-ended home is that directory"
 bxsame links-to t --home=x --compact
-bxused h "row 1: --home=x is a word of the verb's, the home AC_HOME's"
+assert_contains "$(bxout)" '"invalid_params"' "row 1: --home=x is a word of the verb's (the entry hands it on), which refuses the = spelling"
+assert_contains "$(bxout)" '--home=x' "row 1: ...naming the word"
 bxsame links-to 'a  b*?[x] $HOME' --compact
 assert_contains "$(bxout)" '"target":"a  b*?[x] $HOME"' "row 1: the verb's words arrive untouched"
 bxsame links-to "$(printf '\303\251\nz\351')" --compact
@@ -996,13 +1081,13 @@ BXHOME="$BXW/l" bxsame links-to t --compact
 BXHOME="$BXW/s p" bxsame links-to t --compact
 bxused "s p" "row 3: AC_HOME with a space"
 
-# 4. a relative home is the caller's: from a named cwd, and from one bun cannot
-#    name (the module's own refusal once the home is there, the entry's when not).
+# 4. a relative home is the caller's: from a named cwd, and from one whose name
+#    ends in a backslash (Bun before 1.4.4 misreported it; both sides name it).
 bxsame links-to t --home rel --compact
 bxused cwd/rel "row 4: a relative --home under the caller's cwd"
 BXHOME=rel bxsame links-to t --compact
 bxrefuse "$BXNOHOME" links-to t --home nope --compact
-BXCWD="$BXW/n\\" bxrefuse "$BXNONAME" links-to t --home rel --compact
+BXCWD="$BXW/n\\" bxsame links-to t --home rel --compact
 BXCWD="$BXW/n\\" bxrefuse "$BXNOHOME" links-to t --home nope --compact
 BXCWD="$BXW/n\\" bxsame links-to t --home "$BXW/h" --compact
 

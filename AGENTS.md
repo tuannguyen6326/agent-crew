@@ -15,7 +15,7 @@ The step-by-step law lives in the skills named in section 12 and in each `bin/` 
 - All persistent truth lives on disk (`state/`, `data/`, `records/`) and in the backend session; a restart is a non-event and conversation memory is only a cache.
 - Never end a turn blind: while crew is in flight, an armed watcher or queued-wake drain must cover you (section 7; the Stop hooks enforce it).
 - Report outcomes faithfully; escalate `needs-decision`/`blocked` lines to the captain verbatim.
-- HARD RULE - do NOT over-engineer (Karpathy, fleet-wide): change only what the task requires, update only what it makes stale, test only what it puts at risk; the smallest diff that fully solves the task wins, and a bigger one is a defect. No speculative abstractions, unasked features, config knobs, or ride-along refactors; a larger change that looks warranted is a `needs-decision:` for the captain. Carry this rule verbatim into every brief.
+- HARD RULE - do NOT over-engineer (Karpathy, fleet-wide): change only what the task requires, update only what it makes stale, test only what it puts at risk; the smallest diff that fully solves the task wins, and a bigger one is a defect. No speculative abstractions, unasked features, config knobs, or ride-along refactors; a larger change that looks warranted is a `needs-decision:` for the captain. `bin/ac-brief.sh` carries this rule and the next one verbatim into every brief.
 - HARD RULE - comment discipline (fleet-wide): a comment states what the code CANNOT say - the WHY of a non-obvious choice, a real invariant, a workaround's reason. Never what the next line does, never decoration, never a note to the reviewer. An edit that invalidates a comment updates or deletes it in the same diff; match the file's comment density.
 
 Four judgment rules bind every chief and crewmate; the `judgment-rules` skill holds their full text:
@@ -61,11 +61,13 @@ direct:  crewchief -> execution crewmate
 staged:  crewchief -> design crewmate -> execution crewmate
          design = spec / architecture / plan reports with gates
          execution = IMPLEMENT + DELIVERY
+sdlc:    staged, plus the SDLC artifact chain committed in the main repository
+         (intent / spec / plan / test plan / QA report ride the PR with the code)
 ```
 
-- INTAKE (`intake-triage` skill): pick flow, mode, review, qa and promote for EVERY order before any brief (captain's words > `config/flow` > your triage). Heavy values (`flow:staged`, `mode:crew-ship`, `qa:yes`, discretionary `rev:yes`) need the captain's confirmation or a row pin. Run the REQUIREMENTS CHECK (0 guesses: proceed; 1-4: one bundled clarify; >=5: `/brainstorm`), `bin/ac-ready.sh overlap` and `bin/ac-know.sh recall`, then post `TRIAGE:` to the room.
+- INTAKE (`intake-triage` skill): pick flow, mode, review, qa and promote for EVERY order before any brief (captain's words > `config/flow` > your triage). Heavy values (`flow:staged`, `flow:sdlc`, `mode:crew-ship`, `qa:yes`, discretionary `rev:yes`) need the captain's confirmation or a row pin. Run the REQUIREMENTS CHECK (0 guesses: proceed; 1-4: one bundled clarify; >=5: `/brainstorm`), `bin/ac-ready.sh overlap` and `bin/ac-know.sh recall`, then post `TRIAGE:` to the room.
 - DESIGN (`staged-gates` skill): the design crewmate produces its reports in order and waits at every gate; you read each one, receipt `STAGE-ADMISSION:` and `GATE-ROUTING:`, and never release the next stage on an unread report.
-- EXECUTION (`delivery-review` skill): one crewmate owns implement and delivery. Review is a derived obligation: `yes` for staged and `crew-ship`, `no` by default otherwise. Rounds run exact-ref through `ac-verify codereview`; `fix` loops back to execution, and `ask-user` is relayed to the captain.
+- EXECUTION (`delivery-review` skill): one crewmate owns implement and delivery. Review is a derived obligation: `yes` for staged, sdlc and `crew-ship`, `no` by default otherwise. Rounds run exact-ref through `ac-verify codereview`; `fix` loops back to execution, and `ask-user` is relayed to the captain.
 - QA is optional behavioral proof after delivery, triaged at intake; the execution crewmate calls the verifier (`crew-qa` skill).
 - EPICS (`epic-intake` skill): several independently-landable deliverables, or N > 1 repos, decompose into stories.
 - MECHANICS (`task-lifecycle` skill): backlog row -> `bin/ac-brief.sh` -> `bin/ac-spawn.sh` -> supervise -> `bin/ac-review-diff.sh` -> land -> `bin/ac-teardown.sh` -> learnings at landing (`bin/ac-learn.sh note`, `bin/ac-know.sh add`, keyed `bin/ac-learn.sh tick <family>`). A promoted family's steps belong to its roomchief.
@@ -128,12 +130,12 @@ A drained `kind=whiteboard` `REDRAW:` wake is routed to the `diagram-design` ski
 | act harness-specifically (spawn, interrupt, resume) | `harness-operations` |
 | handle a `remote-order <rid>` wake | `remote-orders` |
 
-Crew and captain-invocable skills (each `SKILL.md` owns its contract): `crew-ship`, `crew-verify`, `crew-qa`, `domain-e2e`, `document`, `rich-review`, `bearings`, `ac-brain`, `domain-knowledge`, `order-direct` / `order-staged` / `order-design` (captain flow pins), and:
+Crew and captain-invocable skills (each `SKILL.md` owns its contract): `crew-ship`, `crew-verify`, `crew-qa`, `domain-e2e`, `document`, `sdlc`, `rich-review`, `bearings`, `ac-brain`, `domain-knowledge`, `order-direct` / `order-staged` / `order-design` (captain flow pins), and:
 - `brainstorm` - captain-invocable ideation with a dedicated brainstorm roomchief; the chief alone mints what it drafts.
 - `diagram-design` - reach for it instead of Mermaid whenever a captain-facing artifact (stage report, gate-review page, rich-review HTML) needs a diagram.
 - `debrief` - the manual reset-time catch-all; /debrief stays the catch-all while landing remains the primary learning mechanism.
 
-Catalog schema: every package under `.agents/skills/` is an Agent Skills spec package ([spec](https://agentskills.io/specification)) - dir name equals frontmatter `name`, a trigger-rich `description` of at most 1024 chars, only standard frontmatter keys (never `user-invocable`), string-only `metadata:`, `references/` for docs, `assets/` for runtime artifacts, and `SKILL.md` under 500 lines; `tests/sh/ac-skills-catalog.test.sh` enforces it.
+Catalog schema: every package under `.agents/skills/` is an Agent Skills spec package ([spec](https://agentskills.io/specification)) - dir name equals frontmatter `name`, a trigger-only `description` of at most 1024 chars (the catalog's descriptions together stay under 6000 chars: Claude Code lists descriptions within 1% of the context window and drops the least-invoked skills' first - the chief skills this table triggers), only standard frontmatter keys (never `user-invocable`), string-only `metadata:`, `references/` for docs, `assets/` for runtime artifacts, and `SKILL.md` under 500 lines; `tests/sh/ac-skills-catalog.test.sh` enforces it.
 Crew worktrees are seeded only with `AC_CREW_SKILLS` (`bin/ac-lib.sh`) plus the fleet's learned skills; every other skill here is chief-only.
 
 ## 13. Editing this repo

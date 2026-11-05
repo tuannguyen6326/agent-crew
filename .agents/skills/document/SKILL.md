@@ -1,6 +1,6 @@
 ---
 name: document
-description: Judge whether a delivered change warrants documentation, author the missing docs in the project's own conventions (BMAD shapes into /docs when the project has none), and sync every existing doc the change makes stale. Use when delivering a change that may need docs - direct-flow delivery, the PR step of direct-pr mode, or crew-ship's document step - or when the user invokes /document.
+description: Judge whether a delivered change warrants docs, author the missing ones in the project's conventions, and sync every doc the change makes stale. Use at delivery, crew-ship's document step, or on /document.
 ---
 
 # document

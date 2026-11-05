@@ -71,6 +71,28 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "an all-green fixture dir must exit 0"
 assert_contains "$out" "2/2 passed" "count must match the fixture file count"
 
+# --- a test that outlives AC_TEST_TIMEOUT is killed and reported -------------
+# The sleep is a child of the test, so the bound must reach the whole process
+# group: a TERM to the subshell alone leaves the sleep and the wait behind it.
+hangdir="$TMP/fixture-hang"
+mkdir -p "$hangdir"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nsleep 1234\npass\n' "$ROOT" >"$hangdir/slow.test.sh"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$hangdir/quick.test.sh"
+t0="$(date +%s)"
+set +e
+out="$(AC_TEST_TIMEOUT=2 bash "$RUNNER" "$hangdir" 2>&1)"
+rc=$?
+set -e
+elapsed=$(( $(date +%s) - t0 ))
+assert_eq "$rc" "1" "a timed-out test is a failure"
+assert_contains "$out" "FAIL slow.test.sh (timed out after 2s)" "the timeout names the test and the bound"
+assert_contains "$out" "1/2 passed" "the quick test still passes beside the timed-out one"
+[ "$elapsed" -lt 20 ] || fail "the runner must return once the bound fires, not after the sleep (took ${elapsed}s)"
+if pgrep -f 'sleep 1234' >/dev/null 2>&1; then
+  pkill -f 'sleep 1234' || true
+  fail "the timed-out test's sleep must die with its process group"
+fi
+
 # --- same verdict from a different cwd ---------------------------------------
 
 set +e
@@ -291,8 +313,9 @@ printf '#!/usr/bin/env bash\n# fixture ac-watch\n' >"$splitrepo/bin/ac-watch.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-watch-policy-hook\n' >"$splitrepo/bin/ac-watch-policy-hook.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-other, unrelated - proves the map NARROWS instead of widening\n' >"$splitrepo/bin/ac-other.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-maintenance-lib, pinned inside ac-maintenance-core.test.sh\n' >"$splitrepo/bin/ac-maintenance-lib.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-wake-lib, pinned inside the four suites that dot-source it\n' >"$splitrepo/bin/ac-wake-lib.sh"
 printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/sh/ac-other.test.sh"
-for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-teardown ac-qa ac-maintenance-core ac-brief ac-contract ac-know flag-values ac-gate ac-learn-loop ac-curate ac-backlog-sections ac-learning-automation-e2e ac-config-surface ac-gate-watch ac-watch-dash ac-ship-watch ac-qa-watch ac-ship ac-roomchief ac-room-parallel-cap ac-learn ac-learn-autoroom ac-learn-quote ac-pane-agent ac-brain ac-lib ac-watch ac-watch-jev ac-brain-freshen ac-lock ac-remote-wire ac-self-task ac-guard ac-harness-hooks; do
+for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-teardown ac-qa ac-maintenance-core ac-brief ac-contract ac-know flag-values ac-gate ac-learn-loop ac-curate ac-backlog-sections ac-learning-automation-e2e ac-config-surface ac-gate-watch ac-watch-dash ac-ship-watch ac-qa-watch ac-ship ac-roomchief ac-room-parallel-cap ac-learn ac-learn-autoroom ac-learn-quote ac-pane-agent ac-brain ac-lib ac-watch ac-watch-jev ac-brain-freshen ac-lock ac-remote-wire ac-self-task ac-guard ac-harness-hooks ac-room ac-wake-drain; do
   printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/sh/$t.test.sh"
 done
 for t in ac-dashboard-daemon ac-review ac-review-reply; do
@@ -335,6 +358,23 @@ assert_eq "$rc" "0" "--changed narrowed to ac-maintenance-lib.sh's test must sti
 assert_contains "$out" "RUNNING ac-maintenance-core.test.sh" "ac-maintenance-lib.sh maps to ac-maintenance-core.test.sh"
 assert_contains "$out" "3/3 passed" "ac-maintenance-lib.sh selects exactly ac-maintenance-core.test.sh plus the guards"
 git -C "$splitrepo" checkout -q -- bin/ac-maintenance-lib.sh
+
+# ac-wake-lib.sh has no entry and, since the port, no bin sourcer; its pins
+# live in the four suites that dot-source it inside their own bash -c strings.
+# It also starts src/room.ts, so an unmapped ac-wake-lib.sh widened every
+# src/room.ts - and so every src/lib.ts - change to the full suite.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-wake-lib.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-wake-lib.sh's tests must still be green"
+for t in ac-lib ac-gate ac-room ac-wake-drain; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-wake-lib.sh maps to $t.test.sh"
+done
+assert_contains "$out" "6/6 passed" "ac-wake-lib.sh selects exactly its four consumer tests plus the guards"
+case "$out" in
+  *"has no colocated test"*) fail "ac-wake-lib.sh must not widen once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-wake-lib.sh
 
 # 2) touching bin/ac-teardown.sh alone selects its colocated leg AND its
 #    split-name black-box test - the colocated name must not shadow the split.
@@ -586,6 +626,21 @@ printf '#!/usr/bin/env bash\n# fixture bash lib; its TypeScript twin is src/util
 printf 'import { u } from "./util.ts";\n' >"$tsrepo/src/qux.ts"
 printf 'export const u = 1;\n' >"$tsrepo/src/util.ts"
 printf 'import { u } from "../../src/util.ts";\n' >"$tsrepo/tests/ts/util.test.ts"
+printf 'import { q } from "../../src/qux.ts";\n' >"$tsrepo/tests/ts/qux.test.ts"
+# An import chain three deep: a change at its base reaches leaf.test.ts only
+# through top.ts, whose own changes never mention the base.
+printf 'export const b = 1;\n' >"$tsrepo/src/base.ts"
+printf 'import { b } from "./base.ts";\nexport const m = b;\n' >"$tsrepo/src/mid.ts"
+printf 'import { m } from "./mid.ts";\nexport const t = m;\n' >"$tsrepo/src/top.ts"
+printf 'import { t } from "./top.ts";\nexport const l = t;\n' >"$tsrepo/src/leaf.ts"
+printf 'import { l } from "../../src/leaf.ts";\n' >"$tsrepo/tests/ts/leaf.test.ts"
+# A Bun test reaches its subject through a bin script as often as through an
+# import (the differential legs spawn the shim), so naming ac-check.sh on a
+# non-comment line makes src/pth.ts - the module ac-check.sh starts - its
+# subject. A test naming nothing outside comments has no subject the runner
+# can read, so it rides EVERY src/ change.
+printf 'Bun.spawnSync(["bash", "bin/ac-check.sh"]);\n' >"$tsrepo/tests/ts/check.test.ts"
+printf '// no subject: this src/qux.ts is a comment, not a subject\nexport {};\n' >"$tsrepo/tests/ts/misc.test.ts"
 # src/pth.ts has no entry of its own: two scripts run modes of it.
 printf 'export const p = 1;\n' >"$tsrepo/src/pth.ts"
 # The long tail after the starting line is the bash ac-qa.sh's shape: a pipe that
@@ -597,9 +652,18 @@ printf 'export const p = 1;\n' >"$tsrepo/src/pth.ts"
 } >"$tsrepo/bin/ac-check.sh"
 # shellcheck disable=SC2016 # fixture CONTENT, as above
 printf '#!/usr/bin/env bash\nport="$(ac_bun_exec src/pth.ts free-port)"\n' >"$tsrepo/bin/ac-audit.sh"
-for t in ac-qux src ac-other ac-util ac-check ac-audit; do
+for t in ac-qux ac-other ac-util ac-check ac-audit; do
   printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$tsrepo/tests/sh/$t.test.sh"
 done
+# The wrapper stub records the Bun selection --changed hands it (AC_SRC_TESTS,
+# sorted basenames; empty = every Bun test) instead of running bun.
+cat >"$tsrepo/tests/sh/src.test.sh" <<EOF
+#!/usr/bin/env bash
+. "$ROOT/tests/sh/helpers.sh"
+printf '%s\n' "\${AC_SRC_TESTS-}" >"$TMP/src-env.txt"
+pass
+EOF
+bun_selection() { cat "$TMP/src-env.txt" 2>/dev/null || true; }
 chmod +x "$tsrepo"/bin/*.sh "$tsrepo"/tests/sh/*.test.sh
 git -C "$tsrepo" add -A
 git -C "$tsrepo" commit -q -m baseline
@@ -611,15 +675,63 @@ assert_eq "$rc" "0" "--changed on a src/*.ts change must still be green"
 assert_contains "$out" "RUNNING ac-qux.test.sh" "src/qux.ts must select its entry's black-box test"
 assert_contains "$out" "RUNNING src.test.sh" "src/qux.ts must select the Bun unit-test wrapper"
 assert_contains "$out" "2/2 passed" "src/qux.ts must select exactly its two tests, not widen"
+assert_eq "$(bun_selection)" "misc.test.ts qux.test.ts" "src/qux.ts must narrow the wrapper to the Bun test naming it plus the subject-less test"
 git -C "$tsrepo" checkout -q -- src/qux.ts
 
-printf 'export const v = 2;\n' >>"$tsrepo/src/util.ts"
+printf 'export const u = 2;\n' >"$tsrepo/src/util.ts"
 res="$(run_runner --changed "$tsrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed on an imported src module must still be green"
 assert_contains "$out" "RUNNING ac-qux.test.sh" "an imported src module must select its importer's entry test"
 assert_contains "$out" "2/2 passed" "an imported src module must narrow to its importers' tests plus the wrapper"
+assert_eq "$(bun_selection)" "misc.test.ts qux.test.ts util.test.ts" "an imported src module must narrow the wrapper to its own Bun tests, its importers' and the subject-less one"
+assert_contains "$out" "narrows src/util.ts by symbol - changed exports: u; importers: src/qux.ts" "the symbol reading names the changed export and the importer it reaches"
 git -C "$tsrepo" checkout -q -- src/util.ts
+
+# SYMBOL NARROWING: an importer counts only when the change reaches an export
+# it imports. A new export nobody imports, or a comment, reaches no importer -
+# the module's own tests alone run; a private helper carries the export that
+# calls it; a line outside every declaration reads the module whole.
+printf 'export const u = 1;\nexport const v = 2;\n' >"$tsrepo/src/util.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on an export no importer uses must still be green"
+assert_contains "$out" "1/1 passed" "an export no importer uses must select the module's own wrapper alone, not the importer's test"
+assert_eq "$(bun_selection)" "misc.test.ts util.test.ts" "an export no importer uses must leave the importer's Bun test out of the wrapper's selection"
+assert_contains "$out" "narrows src/util.ts by symbol - changed exports: v; importers:" "the symbol reading names the new export and no importer"
+printf '// a comment on u\nexport const u = 1;\n' >"$tsrepo/src/util.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_contains "$out" "1/1 passed" "a comment-only change must reach no importer"
+assert_eq "$(bun_selection)" "misc.test.ts util.test.ts" "a comment-only change must leave the importer's Bun test out"
+printf 'function h(): number {\n  return `\nfunction notADeclaration() {\n`.length;\n}\nexport const u = h();\n' >"$tsrepo/src/util.ts"
+git -C "$tsrepo" add -A
+git -C "$tsrepo" commit -q -m "u through a private helper holding a col-0 template line"
+printf 'function h(): number {\n  return `\nfunction notADeclaration() {\n`.length + 1;\n}\nexport const u = h();\n' >"$tsrepo/src/util.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_contains "$out" "2/2 passed" "a private helper's change must carry the export calling it to that export's importer"
+assert_contains "$out" "changed exports: u; importers: src/qux.ts" "the helper's change must be attributed through the export, not to the template's col-0 line"
+assert_eq "$(bun_selection)" "misc.test.ts qux.test.ts util.test.ts" "the helper's change must reach the importer's Bun test"
+printf 'void 0;\n' >>"$tsrepo/src/util.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_contains "$out" "2/2 passed" "a changed line outside every declaration must read the module whole - every importer counts"
+assert_contains "$out" "reads src/util.ts whole - line 7 of the tree file is outside every top-level declaration" "the whole-module fallback names the line it could not attribute"
+git -C "$tsrepo" checkout -q -- src/util.ts
+
+# A changed module that imports another changed module, directly or through
+# unchanged ones, is read whole: the other change reaches it through its
+# imports, which its own changed declarations never mention.
+printf 'export const b = 2;\n' >"$tsrepo/src/base.ts"
+printf 'export const z = 0;\n' >>"$tsrepo/src/top.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on two changed modules on one import chain must still be green"
+assert_contains "$out" "reads src/top.ts whole - it imports src/base.ts, which also changed" "a changed module importing a changed module through an unchanged one must be read whole, naming that module"
+assert_contains "$out" "narrows src/base.ts by symbol - changed exports: b; importers: src/mid.ts" "the chain's base still narrows by symbol"
+assert_eq "$(bun_selection)" "leaf.test.ts misc.test.ts" "the base change must reach the leaf's Bun test through the whole-read top module"
+git -C "$tsrepo" checkout -q -- src/base.ts src/top.ts
 
 printf '// touched\n' >>"$tsrepo/tests/ts/util.test.ts"
 res="$(run_runner --changed "$tsrepo/tests/sh")"
@@ -627,6 +739,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed on a tests/ts/*.test.ts change must still be green"
 assert_contains "$out" "RUNNING src.test.sh" "a changed Bun unit test must select its wrapper"
 assert_contains "$out" "1/1 passed" "a changed Bun unit test must select only the wrapper"
+assert_eq "$(bun_selection)" "util.test.ts" "a changed Bun unit test must narrow the wrapper to itself alone"
 git -C "$tsrepo" checkout -q -- tests/ts/util.test.ts
 
 printf 'export const q = 2;\n' >>"$tsrepo/src/pth.ts"
@@ -636,6 +749,7 @@ assert_eq "$rc" "0" "--changed on a module other scripts start must still be gre
 assert_contains "$out" "RUNNING ac-check.test.sh" "src/pth.ts must select the test of a script that runs a mode of it"
 assert_contains "$out" "RUNNING ac-audit.test.sh" "src/pth.ts must select EVERY starting script's test"
 assert_contains "$out" "3/3 passed" "src/pth.ts must select exactly the wrapper and its starters' tests, not widen"
+assert_eq "$(bun_selection)" "check.test.ts misc.test.ts" "a module with no importing Bun test must still narrow to the test naming its starter plus the subject-less one"
 git -C "$tsrepo" checkout -q -- src/pth.ts
 
 # A starting script with no colocated test is unknown blast radius: widen,
@@ -651,6 +765,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed widened by an untested starter must still be green"
 assert_contains "$out" "6/6 passed" "a module started by a script with no colocated test must WIDEN to the full set"
 assert_contains "$out" "src/pth.ts is started by a bin script that has no colocated test" "the widen reason must name the starter mechanism, not claim the module itself lacks a test"
+assert_eq "$(bun_selection)" "" "a widened run must hand the wrapper NO selection - every Bun test runs"
 git -C "$tsrepo" checkout -q -- src/pth.ts
 
 # ...and still widens once another module imports it, making it a shared
@@ -664,6 +779,19 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_contains "$out" "6/6 passed" "an imported module with an untested starter must WIDEN, not narrow to its importers"
 assert_contains "$out" "src/pth.ts is started by a bin script that has no colocated test" "the imported module's widen names the starter mechanism too"
 git -C "$tsrepo" checkout -q -- src/pth.ts
+
+# The real wrapper runs the Bun tests AC_SRC_TESTS names and says how many of
+# the whole it ran; a name it cannot find is a runner defect, refused loudly
+# rather than read as "run everything" or as nothing.
+out="$(AC_SRC_TESTS="home-seed.test.ts" bash "$ROOT/tests/sh/src.test.sh" 2>&1)" && rc=0 || rc=$?
+assert_eq "$rc" "0" "the wrapper narrowed to one real Bun test must be green"
+case "$out" in
+  *"src.test.sh: 1 of "*" Bun tests"*) ;;
+  *) fail "the wrapper must say it ran 1 of N Bun tests, got: $(printf '%s' "$out" | tail -n 3)" ;;
+esac
+out="$(AC_SRC_TESTS="no-such.test.ts" bash "$ROOT/tests/sh/src.test.sh" 2>&1)" && rc=0 || rc=$?
+assert_eq "$rc" "2" "an unknown Bun test name must be refused, not widened or dropped"
+assert_contains "$out" "no-such.test.ts" "the refusal names the unknown test"
 
 # --- --changed: dashboard/*.ts selects the suites that run the dashboard -----
 #
@@ -907,5 +1035,30 @@ if kill -0 "$ttyjob" 2>/dev/null; then
 fi
 wait "$ttyjob" 2>/dev/null || true
 assert_contains "$(cat "$TMP/tty.typescript")" "1/1 passed" "the suite that read stdin ran to its verdict"
+
+# --- --changed attributes each red to the change or to HEAD ------------------
+# A red the change did not cause (red at HEAD too) and one it did (green at
+# HEAD) must be told apart, or every pre-existing red reads as the change's.
+attrdir="$TMP/fixture-attr"
+setup_changed_fixture "$attrdir"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nfail "red at HEAD"\n' "$ROOT" >"$attrdir/tests/sh/ac-foo.test.sh"
+git -C "$attrdir" commit -qam "ac-foo red at HEAD"
+printf '# touched\n' >>"$attrdir/tests/sh/ac-foo.test.sh"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nfail "red by the change"\n' "$ROOT" >"$attrdir/tests/sh/ac-bar.test.sh"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nfail "new and red"\n' "$ROOT" >"$attrdir/tests/sh/ac-new.test.sh"
+chmod +x "$attrdir/tests/sh/ac-new.test.sh"
+res="$(run_runner --changed "$attrdir/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "1" "three red suites are still a red run"
+assert_contains "$out" "0/3 passed" "the three changed suites ran and all failed"
+assert_contains "$out" "run-suite: ac-foo.test.sh is red at HEAD too (pre-existing)" "a suite red before the change is attributed to HEAD"
+assert_contains "$out" "run-suite: ac-bar.test.sh is green at HEAD - the change introduced this red" "a suite the change turned red is attributed to the change"
+assert_contains "$out" "run-suite: ac-new.test.sh has no HEAD version - the change introduced this red" "a new suite is the change's"
+[ "$(git -C "$attrdir" worktree list --porcelain | grep -c '^worktree ')" = 1 ] || fail "the HEAD worktree the attribution used must be removed afterwards"
+res="$(run_runner "$attrdir/tests/sh")"
+out="${res#*|}"
+if grep -E '^run-suite: ac-.*HEAD' <<<"$out" >/dev/null; then
+  fail "attribution runs only under --changed, where HEAD is the base"
+fi
 
 pass

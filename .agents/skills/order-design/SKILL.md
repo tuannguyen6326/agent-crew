@@ -1,6 +1,6 @@
 ---
 name: order-design
-description: Captain starts a DESIGN-FIRST task - PO requirements from the captain, then the staged flow's design stages (spec/architecture/plan) run and gate NOW, execution does NOT - the accepted reports park the backlog row as design-complete and implement starts only on a later captain order. The arguments are the order verbatim. Use when the captain invokes /order-design <order>.
+description: Captain starts a design-first task: design stages run and gate now, execution waits for a later order. Arguments are the order verbatim. Use on /order-design <order>.
 ---
 
 # order-design

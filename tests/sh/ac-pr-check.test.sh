@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ac-pr-check.test.sh - records pr= and pr_head= on the task meta from a
+# ac-pr-check.test.sh - records pr=, pr_head= and ci= on the task meta from a
 # stubbed `gh pr view`, and refuses a malformed usage / non-PR URL.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
@@ -19,6 +19,7 @@ if [ "$1 $2" = "pr view" ]; then
   case "$5" in
     headRefOid) printf '%s\n' "$GHVIEW_HEAD" ;;
     state) printf '%s\n' "$GHVIEW_STATE" ;;
+    statusCheckRollup) printf '%s\n' "${GHVIEW_ROLLUP:-[]}" ;;
   esac
   exit 0
 fi
@@ -46,7 +47,7 @@ assert_fails check nosuchtask "$url"
 
 # --- differential: src/pr-check.ts against the frozen bash original ----------
 # DISPUTED: the implementation (tests/fixtures/ac-pr-check.sh under bash vs src/pr-check.ts through bin/ac-pr-check.sh)
-# HELD-CONSTANT: two fleet homes seeded alike ($OH for the oracle, $NH for the shim), argv, cwd, LC_ALL=C, one PATH `gh` stub (answers and exit status from env, argv logged) and one PATH `date` stub freezing ac_iso, on both sides; exit status, stdout and stderr (the home spelled HOME) compared whole, then every entry under the home - path, mode, bytes - and the gh argv log.
+# HELD-CONSTANT: two fleet homes seeded alike ($OH for the oracle, $NH for the shim), argv, cwd, LC_ALL=C, one PATH `gh` stub (answers and exit status from env, argv logged) and one PATH `date` stub freezing ac_iso, on both sides; exit status, stdout and stderr (the home spelled HOME) compared whole, then every entry under the home - path, mode, bytes - and the gh argv log. NOT held constant: ci= - the shim alone reads it (NAMED, UNIVERSAL DIVERGENCE: fold_ci folds $CI_WANT onto the frozen oracle's own successful output before every compare, below, so every other byte still has to agree.
 obin="$(make_oracle_bin ac-pr-check)"
 OH="$TMP/oh"; NH="$TMP/nh"; STUBS="$TMP/dstubs"
 mkdir -p "$STUBS" "$TMP/dateonly" "$TMP/bunonly"
@@ -57,6 +58,12 @@ cat >"$STUBS/gh" <<'GH'
 case "$5" in
   headRefOid) printf '%b' "$GH_HEAD"; [ -z "$GH_ERR_HEAD" ] || printf '%s\n' "$GH_ERR_HEAD" >&2; exit "$GH_RC_HEAD" ;;
   state) printf '%b' "$GH_STATE"; [ -z "$GH_ERR_STATE" ] || printf '%s\n' "$GH_ERR_STATE" >&2; exit "$GH_RC_STATE" ;;
+  statusCheckRollup)
+    # A literal `}` from the default JSON inside `${GH_ROLLUP:-...}` would
+    # close the expansion early (sh does not nest braces there) - defaulted
+    # as a plain assignment instead.
+    r="$GH_ROLLUP"; [ -n "$r" ] || r='[{"status":"COMPLETED","conclusion":"SUCCESS"}]\n'
+    printf '%b' "$r"; [ -z "${GH_ERR_ROLLUP-}" ] || printf '%s\n' "$GH_ERR_ROLLUP" >&2; exit "${GH_RC_ROLLUP:-0}" ;;
 esac
 exit 1
 GH
@@ -76,9 +83,14 @@ run_side() {  # run_side <bin> <home> <out> <err> <args...> - one side, from $TM
   # env's -u must precede its assignments, so the home goes first either way.
   local -a home
   if [ "${HOMELESS-}" = 1 ]; then home=(-u AC_HOME); else home=(AC_HOME="${AC_HOME_ROW:-$h}"); fi
+  # Same reason as the gh stub's own fallback: a plain assignment, not a
+  # braces-in-default parameter expansion.
+  local rollup="${GH_ROLLUP-}"
+  [ -n "$rollup" ] || rollup='[{"status":"COMPLETED","conclusion":"SUCCESS"}]\n'
   (cd "$TMP" && env "${home[@]}" LC_ALL=C PATH="$path" GH_LOG="$h.gh" \
     GH_HEAD="${GH_HEAD-deadbeefcafe\n}" GH_STATE="${GH_STATE-OPEN\n}" \
     GH_RC_HEAD="${GH_RC_HEAD-0}" GH_RC_STATE="${GH_RC_STATE-0}" GH_ERR_HEAD="${GH_ERR_HEAD-}" GH_ERR_STATE="${GH_ERR_STATE-}" \
+    GH_ROLLUP="$rollup" GH_RC_ROLLUP="${GH_RC_ROLLUP-0}" GH_ERR_ROLLUP="${GH_ERR_ROLLUP-}" \
     "$@" </dev/null) >"$o" 2>"$e"   # a 000 meta makes the oracle's mv prompt on a terminal stdin
 }
 oracle() { run_side "$obin" "$OH" "$TMP/o.raw" "$TMP/o.rawerr" "$obin/ac-pr-check.sh" "$@"; }
@@ -95,22 +107,50 @@ snap() {  # snap <home> <out> - every entry under <home>, byte order: a dir, a l
     else printf '== %s %s\n' "$f" "$(stat -f %Lp "$f")"; cat "$f" 2>/dev/null; printf '\n--\n'; fi
   done) >"$2"
 }
+CI_WANT=green
+fold_ci() {  # fold_ci <file> - rewrite the FROZEN ORACLE's own dump as if it
+  # also read CI (named, universal divergence: the oracle never queries
+  # statusCheckRollup): fold $CI_WANT onto a meta block's trailing `pr_head=`
+  # value (which pr_check.ts's gh stub can leave multi-line, so the insert
+  # targets the BLOCK's own end, not the `pr_head=` line itself), the stdout
+  # "recorded" receipt (anchored on the whole file, for the same reason), and
+  # a "PR ready" status/timeline line (always single-line: state never is) -
+  # a no-op on any dump holding none of those (every refusal row).
+  local f="$1" suffix
+  [ -s "$f" ] || return 0
+  if [ "$CI_WANT" = none ]; then suffix='no CI checks reported: unverified'; else suffix="ci=$CI_WANT"; fi
+  CI_FOLD_V="$CI_WANT" CI_FOLD_SUFFIX="$suffix" perl -0777 -pi -e '
+    my $v = $ENV{CI_FOLD_V}; my $suffix = $ENV{CI_FOLD_SUFFIX};
+    s/\A(recorded [\s\S]*?)(\n?)\z/$1 ci=$v$2/;
+    s/(pr_head=[\s\S]*?)\n\n--\n/$1\nci=$v\n\n--\n/g;
+    s/^([0-9TZ:-]+ PR ready: .*) \(([^)]*)\)$/$1 ($2, $suffix)/mg;
+  ' "$f"
+}
 LAST_RC=0
-same() {  # same <args...> - oracle on $OH and shim on $NH answer and leave byte-identical homes
+same() {  # same <args...> - oracle on $OH and shim on $NH answer and leave byte-identical homes, ci= folded onto the oracle's side first (fold_ci)
   local o_rc=0 n_rc=0
   rm -f "$OH.gh" "$NH.gh"
   oracle "$@" || o_rc=$?
   shim "$@" || n_rc=$?
   norm "$TMP/o.raw" "$OH" >"$TMP/o.out"; norm "$TMP/o.rawerr" "$OH" >"$TMP/o.err"
   norm "$TMP/n.raw" "$NH" >"$TMP/n.out"; norm "$TMP/n.rawerr" "$NH" >"$TMP/n.err"
+  fold_ci "$TMP/o.out"
   assert_eq "$n_rc" "$o_rc" "differential exit for '$*'"
   LAST_RC=$n_rc
   cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs for '$*': $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
   [ "${ERR-}" = own ] || cmp -s "$TMP/o.err" "$TMP/n.err" || fail "differential stderr differs for '$*': $(diff "$TMP/o.err" "$TMP/n.err" | head -n 4)"
   snap "$OH" "$TMP/o.tree"; snap "$NH" "$TMP/n.tree"
+  fold_ci "$TMP/o.tree"
   [ "${TREE-}" = own ] || cmp -s "$TMP/o.tree" "$TMP/n.tree" || fail "differential home tree differs for '$*': $(diff "$TMP/o.tree" "$TMP/n.tree" | head -n 8)"
   if [ -e "$OH.gh" ] || [ -e "$NH.gh" ]; then
-    cmp -s "$OH.gh" "$NH.gh" || fail "differential gh argv differs for '$*': $(diff "$OH.gh" "$NH.gh" | head -n 4)"
+    local nhgh="$NH.gh" last=""
+    [ -s "$NH.gh" ] && last="$(tail -n1 "$NH.gh")"
+    # the shim's one extra gh call (statusCheckRollup, always last, named,
+    # universal divergence) is dropped before the argv log compare.
+    case "$last" in
+      *'[statusCheckRollup][--jq][.statusCheckRollup]') nhgh="$TMP/n.gh.folded"; sed '$d' "$NH.gh" >"$nhgh" ;;
+    esac
+    cmp -s "$OH.gh" "$nhgh" || fail "differential gh argv differs for '$*': $(diff "$OH.gh" "$nhgh" | head -n 4)"
   fi
 }
 shim_out() { cat "$TMP/n.out"; }
@@ -129,17 +169,18 @@ meta_is() {  # meta_is <printf-format> - the shim's t1.meta holds exactly these 
   printf -- "$1" | cmp -s - "$NH/state/t1.meta" || fail "shim meta bytes: $(od -c "$NH/state/t1.meta" | head -n 4)"
 }
 
-# 1. a plain record: the receipt, the two lines appended, the status line, the flat timeline
+# 1. a plain record: the receipt, the three lines appended, the status line, the flat timeline
 reset_homes; seed state/t1.meta 'backend=tmux\nkind=ship\n'
 same t1 "$U"
 assert_eq "$LAST_RC" 0 "a plain record exits 0"
-assert_eq "$(shim_out)" "recorded pr=$U pr_head=deadbeefcafe state=OPEN" "the receipt"
+assert_eq "$(shim_out)" "recorded pr=$U pr_head=deadbeefcafe state=OPEN ci=green" "the receipt"
 assert_eq "$(shim_err)" "" "a plain record says nothing on stderr"
-meta_is "backend=tmux\nkind=ship\npr=$U\npr_head=deadbeefcafe\n"
-assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (OPEN)" "the status line under the frozen clock"
-assert_eq "$(cat "$NH/data/t1/timeline.log")" "$ISO PR ready: $U (OPEN)" "the timeline mirror"
+meta_is "backend=tmux\nkind=ship\npr=$U\npr_head=deadbeefcafe\nci=green\n"
+assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (OPEN, ci=green)" "the status line under the frozen clock"
+assert_eq "$(cat "$NH/data/t1/timeline.log")" "$ISO PR ready: $U (OPEN, ci=green)" "the timeline mirror"
 assert_eq "$(cat "$NH.gh")" "[pr][view][$U][--json][headRefOid][--jq][.headRefOid]
-[pr][view][$U][--json][state][--jq][.state]" "gh's two argv, in order"
+[pr][view][$U][--json][state][--jq][.state]
+[pr][view][$U][--json][statusCheckRollup][--jq][.statusCheckRollup]" "gh's three argv, in order"
 assert_eq "$(ls "$NH/state")" "t1.meta
 t1.status" "no temp sibling is left behind"
 assert_eq "$(stat -f %Lp "$NH/state/t1.meta")" "644" "the meta's mode"
@@ -148,14 +189,14 @@ assert_eq "$(stat -f %Lp "$NH/state/t1.meta")" "644" "the meta's mode"
 reset_homes; seed state/t1.meta 'pr=old\nbackend=tmux\npr_head=oldhead\nprx=keep\nzz=1'
 seed state/t1.status '2025-12-31T00:00:00Z working: spawned\n'
 GH_HEAD='newhead\n' same t1 "$U"
-meta_is "backend=tmux\nprx=keep\nzz=1\npr=$U\npr_head=newhead\n"
+meta_is "backend=tmux\nprx=keep\nzz=1\npr=$U\npr_head=newhead\nci=green\n"
 assert_eq "$(cat "$NH/state/t1.status")" "2025-12-31T00:00:00Z working: spawned
-$ISO PR ready: $U (OPEN)" "the status log appends"
+$ISO PR ready: $U (OPEN, ci=green)" "the status log appends"
 
 # 3. CRLF lines keep their CR
 reset_homes; seed state/t1.meta 'pr=a\r\nk=v\r\n'
 same t1 "$U"
-meta_is "k=v\r\npr=$U\npr_head=deadbeefcafe\n"
+meta_is "k=v\r\npr=$U\npr_head=deadbeefcafe\nci=green\n"
 
 # 4. gh fails on the head call: its status and stderr pass through, nothing written
 reset_homes; seed state/t1.meta 'backend=tmux\n'
@@ -176,16 +217,16 @@ assert_no_file "$NH/state/t1.status" "nothing written"
 
 # 6. empty answers record an empty pr_head= and an empty state (W2)
 GH_HEAD= GH_STATE= same t1 "$U"
-assert_eq "$(shim_out)" "recorded pr=$U pr_head= state=" "the receipt with empty fields"
-meta_is "backend=tmux\npr=$U\npr_head=\n"
-assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U ()" "the status line with an empty state"
+assert_eq "$(shim_out)" "recorded pr=$U pr_head= state= ci=green" "the receipt with empty fields"
+meta_is "backend=tmux\npr=$U\npr_head=\nci=green\n"
+assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (, ci=green)" "the status line with an empty state"
 
 # 7. a multi-line answer is recorded verbatim, trailing newlines stripped (W2)
 reset_homes; seed state/t1.meta 'backend=tmux\n'
 GH_HEAD='aaa\nbbb\n\n' same t1 "$U"
 assert_eq "$(shim_out)" "recorded pr=$U pr_head=aaa
-bbb state=OPEN" "a two-line receipt"
-meta_is "backend=tmux\npr=$U\npr_head=aaa\nbbb\n"
+bbb state=OPEN ci=green" "a two-line receipt"
+meta_is "backend=tmux\npr=$U\npr_head=aaa\nbbb\nci=green\n"
 
 # 8. URL shapes: `*` spans slashes, the digit is required, case and scheme are exact
 for u in https://github.com/a/b/c/pull/7 https://github.com//b/pull/7 https://github.com/a/b/pull/7x https://github.com/a/b/pull/7/files "https://github.com/a/b/pull/7 "; do
@@ -240,7 +281,7 @@ ERROR: no crewmate meta for t1" "the port's refusal, then the entry's own line"
 reset_homes; seed state/vf.meta 'kind=verify-codereview\n'
 same vf "$U"
 assert_eq "$LAST_RC" 0 "a verify meta records"
-assert_eq "$(cat "$NH/state/vf.status")" "$ISO PR ready: $U (OPEN)" "the status line"
+assert_eq "$(cat "$NH/state/vf.status")" "$ISO PR ready: $U (OPEN, ci=green)" "the status line"
 assert_eq "$(find "$NH/data" -name timeline.log)" "" "no timeline for a verify pane"
 
 # 12. staged ids over every nested shape of the bin/ac-brief.sh layout, then
@@ -251,7 +292,7 @@ while read -r id brief tl; do
   [ "$id" != fam-chief ] || seed_dir data/fam
   same "$id" "$U"
   assert_eq "$LAST_RC" 0 "staged id '$id' records"
-  assert_eq "$(cat "$NH/$tl")" "$ISO PR ready: $U (OPEN)" "timeline at $tl for '$id'"
+  assert_eq "$(cat "$NH/$tl")" "$ISO PR ready: $U (OPEN, ci=green)" "timeline at $tl for '$id'"
   seed "data/$id/brief.md" 'flat\n'
   same "$id" "$U"
   assert_eq "$LAST_RC" 0 "ambiguous '$id' still records"
@@ -276,8 +317,9 @@ same ../t1 "$U"
 assert_eq "$LAST_RC" 0 "a traversing id records"
 assert_eq "$(cat "$NH/t1.meta")" "backend=tmux
 pr=$U
-pr_head=deadbeefcafe" "recorded at <home>/t1.meta"
-assert_eq "$(cat "$NH/t1/timeline.log")" "$ISO PR ready: $U (OPEN)" "and its timeline under <home>/t1"
+pr_head=deadbeefcafe
+ci=green" "recorded at <home>/t1.meta"
+assert_eq "$(cat "$NH/t1/timeline.log")" "$ISO PR ready: $U (OPEN, ci=green)" "and its timeline under <home>/t1"
 
 # 14. the meta path is a directory
 reset_homes; seed_dir state/t1.meta
@@ -317,18 +359,18 @@ assert_eq "$LAST_RC" 0 "W3: both exit 0"
 assert_eq "$(cat "$OH/state/t1.meta")" "Binary file $OH/state/t1.meta matches
 pr=$U
 pr_head=deadbeefcafe" "W3: the original destroyed the meta"
-meta_is "note=a\0b\nbackend=tmux\npr=$U\npr_head=deadbeefcafe\n"
-assert_eq "$(cat "$NH/state/t1.status")" "$(cat "$OH/state/t1.status")" "W3: the status lines agree"
+meta_is "note=a\0b\nbackend=tmux\npr=$U\npr_head=deadbeefcafe\nci=green\n"
+assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (OPEN, ci=green)" "W3: the status line (the oracle's own, folded onto $CI_WANT, agrees)"
 
 # 17. a byte that is not UTF-8 in a kept line passes through on both sides
 reset_homes; seed state/t1.meta 'note=d\351\nbackend=tmux\n'
 same t1 "$U"
-meta_is "note=d\351\nbackend=tmux\npr=$U\npr_head=deadbeefcafe\n"
+meta_is "note=d\351\nbackend=tmux\npr=$U\npr_head=deadbeefcafe\nci=green\n"
 
 # 18. state/ and data/ absent at the start are minted by the look and the mirror
 reset_homes bare; seed state/t1.meta 'backend=tmux\n'
 same t1 "$U"
-assert_eq "$(cat "$NH/data/t1/timeline.log")" "$ISO PR ready: $U (OPEN)" "data/ minted for the mirror"
+assert_eq "$(cat "$NH/data/t1/timeline.log")" "$ISO PR ready: $U (OPEN, ci=green)" "data/ minted for the mirror"
 reset_homes bare
 same nosuch "$U"
 assert_contains "$(shim_tree)" "== ./state/" "state/ minted by the meta look"
@@ -342,7 +384,7 @@ same t1 "$U"
 assert_eq "$LAST_RC" 0 "a symlinked meta records"
 [ ! -L "$NH/state/t1.meta" ] || fail "the symlink was not replaced by a regular file"
 assert_eq "$(cat "$NH/state/real.meta")" "backend=tmux" "the link target is untouched"
-meta_is "backend=tmux\npr=$U\npr_head=deadbeefcafe\n"
+meta_is "backend=tmux\npr=$U\npr_head=deadbeefcafe\nci=green\n"
 reset_homes
 ln -s gone.meta "$OH/state/t1.meta"; ln -s gone.meta "$NH/state/t1.meta"
 same t1 "$U"
@@ -359,7 +401,7 @@ shim t1 "$bad" || n_rc=$?
 assert_eq "$n_rc" "$o_rc" "a non-UTF-8 url: exit equal"
 assert_eq "$n_rc" 0 "a non-UTF-8 url records on both sides"
 printf 'backend=tmux\npr=https://github.com/a/b/pull/7\351\npr_head=deadbeefcafe\n' | cmp -s - "$OH/state/t1.meta" || fail "the original records the byte"
-printf 'backend=tmux\npr=https://github.com/a/b/pull/7\357\277\275\npr_head=deadbeefcafe\n' | cmp -s - "$NH/state/t1.meta" || fail "the port records U+FFFD"
+printf 'backend=tmux\npr=https://github.com/a/b/pull/7\357\277\275\npr_head=deadbeefcafe\nci=green\n' | cmp -s - "$NH/state/t1.meta" || fail "the port records U+FFFD"
 assert_contains "$(cat "$NH.gh")" "$(printf 'pull/7\357\277\275]')" "the port passed U+FFFD to gh"
 
 # 21. date(1) failing when the status is stamped: the meta is already rewritten
@@ -373,8 +415,9 @@ o_rc=0; n_rc=0
 assert_eq "$n_rc $o_rc" "3 3" "date failing: both end with date's status"
 assert_eq "$(cat "$TMP/o.raw" "$TMP/n.raw" "$TMP/o.rawerr" "$TMP/n.rawerr")" "" "date failing: nothing printed on either side"
 snap "$OH" "$TMP/o.tree"; snap "$NH" "$TMP/n.tree"
+fold_ci "$TMP/o.tree"
 cmp -s "$TMP/o.tree" "$TMP/n.tree" || fail "date failing: the homes differ: $(diff "$TMP/o.tree" "$TMP/n.tree" | head -n 6)"
-meta_is "backend=tmux\nkind=ship\npr=$U\npr_head=deadbeefcafe\n"
+meta_is "backend=tmux\nkind=ship\npr=$U\npr_head=deadbeefcafe\nci=green\n"
 assert_no_file "$NH/state/t1.status" "date failing: no status line"
 assert_no_file "$NH/data/t1/timeline.log" "date failing: no timeline"
 # a date ended by a signal is 128+signal on both sides (the shell's reading)
@@ -392,9 +435,9 @@ o_rc=0; n_rc=0
 (cd "$TMP" && env AC_HOME="$OH" LC_ALL=C PATH="$TMP/nuldate:$STUBS:$PATH" GH_LOG="$OH.gh" GH_HEAD='deadbeefcafe\n' GH_STATE='OPEN\n' GH_RC_HEAD=0 GH_RC_STATE=0 GH_ERR_HEAD= GH_ERR_STATE= "$obin/ac-pr-check.sh" t1 "$U") >"$TMP/o.raw" 2>"$TMP/o.rawerr" || o_rc=$?
 (cd "$TMP" && env AC_HOME="$NH" LC_ALL=C PATH="$TMP/nuldate:$STUBS:$PATH" GH_LOG="$NH.gh" GH_HEAD='deadbeefcafe\n' GH_STATE='OPEN\n' GH_RC_HEAD=0 GH_RC_STATE=0 GH_ERR_HEAD= GH_ERR_STATE= "$BIN/ac-pr-check.sh" t1 "$U") >"$TMP/n.raw" 2>"$TMP/n.rawerr" || n_rc=$?
 assert_eq "$n_rc $o_rc" "0 0" "NUL stamp: both record"
-cmp -s "$OH/state/t1.status" "$NH/state/t1.status" || fail "NUL stamp: the status bytes differ: $(od -c "$NH/state/t1.status" | head -n 2)"
-cmp -s "$OH/data/t1/timeline.log" "$NH/data/t1/timeline.log" || fail "NUL stamp: the timeline bytes differ"
-assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (OPEN)" "NUL stamp: the NUL is gone from the line"
+assert_eq "$(cat "$OH/state/t1.status")" "$ISO PR ready: $U (OPEN)" "NUL stamp: the NUL is gone from the line (original)"
+assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (OPEN, ci=green)" "NUL stamp: the NUL is gone from the line (port)"
+assert_eq "$(cat "$NH/data/t1/timeline.log")" "$(cat "$NH/state/t1.status")" "NUL stamp: the timeline mirrors the status"
 
 # 22. the status file cannot be appended (mode 000): the bash's errexit on the
 #     `>>` ended the run with exit 1 and bash's own redirection line, before any
@@ -411,7 +454,7 @@ if [ "$(id -u)" != 0 ]; then
   assert_eq "$(cat "$TMP/o.raw" "$TMP/n.raw")" "" "unwritable status: no receipt on either side"
   assert_contains "$(cat "$TMP/o.rawerr")" "Permission denied" "unwritable status: bash's redirection line on the original"
   assert_eq "$(cat "$TMP/n.rawerr")" "ERROR: cannot append $NH/state/t1.status" "unwritable status: the port's refusal"
-  meta_is "backend=tmux\nkind=ship\npr=$U\npr_head=deadbeefcafe\n"
+  meta_is "backend=tmux\nkind=ship\npr=$U\npr_head=deadbeefcafe\nci=green\n"
   printf 'backend=tmux\nkind=ship\npr=%s\npr_head=deadbeefcafe\n' "$U" | cmp -s - "$OH/state/t1.meta" || fail "unwritable status: the original rewrote the meta before the status"
   assert_eq "$(cat "$OH/state/t1.status" "$NH/state/t1.status")" "" "unwritable status: no status line on either side"
   assert_no_file "$NH/data/t1/timeline.log" "unwritable status: no mirror after the failed primary (port)"
@@ -429,7 +472,8 @@ oracle "t1
 shim "t1
 " "$U" || n_rc=$?
 assert_eq "$n_rc $o_rc" "0 0" "LF id: both record"
-assert_eq "$(norm "$TMP/n.raw" "$NH")" "$(norm "$TMP/o.raw" "$OH")" "LF id: the same receipt"
+norm "$TMP/o.raw" "$OH" >"$TMP/lf.o.out"; fold_ci "$TMP/lf.o.out"
+assert_eq "$(norm "$TMP/n.raw" "$NH")" "$(cat "$TMP/lf.o.out")" "LF id: the same receipt"
 for h in "$OH" "$NH"; do
   [ -f "$h/data/t1/timeline.log" ] || fail "LF id: the timeline must sit under the LF-less dir ($h)"
   [ -f "$h/state/t1
@@ -437,7 +481,33 @@ for h in "$OH" "$NH"; do
   [ -f "$h/state/t1
 .meta" ] || fail "LF id: the meta keeps the LF in its name ($h)"
 done
-assert_eq "$(cat "$NH/data/t1/timeline.log")" "$(cat "$OH/data/t1/timeline.log")" "LF id: the same timeline line"
-assert_eq "$(cat "$NH/data/t1/timeline.log")" "$ISO PR ready: $U (OPEN)" "LF id: the timeline line"
+assert_eq "$(cat "$OH/data/t1/timeline.log")" "$ISO PR ready: $U (OPEN)" "LF id: the timeline line (original)"
+assert_eq "$(cat "$NH/data/t1/timeline.log")" "$ISO PR ready: $U (OPEN, ci=green)" "LF id: the timeline line (port)"
+
+# 24. the four ci= classifications (named divergence throughout: $CI_WANT
+#     tells fold_ci what the frozen oracle would have to agree with).
+reset_homes; seed state/t1.meta 'backend=tmux\n'
+GH_ROLLUP='[]\n' CI_WANT=none same t1 "$U"
+assert_eq "$LAST_RC" 0 "ci=none still records"
+assert_eq "$(shim_out)" "recorded pr=$U pr_head=deadbeefcafe state=OPEN ci=none" "ci=none: the receipt"
+meta_is "backend=tmux\npr=$U\npr_head=deadbeefcafe\nci=none\n"
+assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (OPEN, no CI checks reported: unverified)" "ci=none: the exact none wording"
+
+reset_homes; seed state/t1.meta 'backend=tmux\n'
+GH_ROLLUP='[{"status":"IN_PROGRESS","conclusion":null}]\n' CI_WANT=pending same t1 "$U"
+assert_eq "$(shim_out)" "recorded pr=$U pr_head=deadbeefcafe state=OPEN ci=pending" "ci=pending: the receipt"
+meta_is "backend=tmux\npr=$U\npr_head=deadbeefcafe\nci=pending\n"
+assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (OPEN, ci=pending)" "ci=pending: the status line"
+
+reset_homes; seed state/t1.meta 'backend=tmux\n'
+GH_ROLLUP='[{"status":"COMPLETED","conclusion":"FAILURE"}]\n' CI_WANT=failing same t1 "$U"
+assert_eq "$(shim_out)" "recorded pr=$U pr_head=deadbeefcafe state=OPEN ci=failing" "ci=failing: the receipt"
+meta_is "backend=tmux\npr=$U\npr_head=deadbeefcafe\nci=failing\n"
+assert_eq "$(cat "$NH/state/t1.status")" "$ISO PR ready: $U (OPEN, ci=failing)" "ci=failing: the status line"
+
+reset_homes; seed state/t1.meta 'backend=tmux\n'
+GH_ROLLUP='[{"status":"COMPLETED","conclusion":"SUCCESS"},{"state":"SUCCESS"}]\n' CI_WANT=green same t1 "$U"
+assert_eq "$(shim_out)" "recorded pr=$U pr_head=deadbeefcafe state=OPEN ci=green" "ci=green: a CheckRun and a StatusContext, both ok"
+meta_is "backend=tmux\npr=$U\npr_head=deadbeefcafe\nci=green\n"
 
 pass

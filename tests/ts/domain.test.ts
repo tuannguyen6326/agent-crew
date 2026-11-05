@@ -1,4 +1,4 @@
-// domain.test.ts - what src/domain.ts brought into src/lib.ts, held to the
+// domain.test.ts - what src/domain.ts brought into src/lib-domain.ts, held to the
 // bash it twins: domainParse's program against ac_domain_parse in the live
 // bin/ac-lib.sh (lifted text and output, under C and UTF-8), domainRegistry,
 // domainNameOk, backlogIdOk, domainViewEntry, domainQaRepo and domainTally
@@ -15,6 +15,7 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBD = join(ROOT, "src", "lib-domain.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-domain-ts-")));
 afterAll(() => rmSync(W, { recursive: true, force: true }));
 
@@ -32,7 +33,7 @@ function bash(script: string, env: Record<string, string>, args: string[] = []):
 
 function twin(body: string, env: Record<string, string>): Run {
   const r = Bun.spawnSync(
-    [process.execPath, "-e", `const L = await import(${JSON.stringify(LIB)}); const say = (s) => process.stdout.write(Buffer.from(String(s), "latin1")); ${body}`],
+    [process.execPath, "-e", `const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBD)}) }; const say = (s) => process.stdout.write(Buffer.from(String(s), "latin1")); ${body}`],
     { cwd: ROOT, env: { PATH: process.env.PATH!, LC_ALL: "C", ...env }, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30000 },
   );
   return { code: r.exitCode, out: r.stdout.toString("latin1"), err: r.stderr.toString("latin1") };

@@ -14,7 +14,7 @@
 . "$BIN/ac-lib.sh"
 . "$BIN/ac-maintenance-lib.sh"
 
-# twin <expr> [<arg>...] - <expr> over src/lib.ts (L) and
+# twin <expr> [<arg>...] - <expr> over src/lib.ts merged with src/lib-learn.ts and src/lib-curate.ts (L) and
 # src/maintenance-receipt.ts (M), its arguments A, in one bun process: the code
 # the fleet runs where a bash helper retired once src/learn.ts took its last
 # caller (the bash one is frozen at tests/fixtures/ac-maintenance-retired.sh,
@@ -22,7 +22,7 @@
 # is a number answer, else 1 for false or null and 0 for anything else.
 twin() {
   local expr="$1"; shift
-  (cd "$ROOT" && bun --no-env-file -e "const L = await import('./src/lib.ts'); const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
+  (cd "$ROOT" && bun --no-env-file -e "const L = { ...await import('./src/lib.ts'), ...await import('./src/lib-learn.ts'), ...await import('./src/lib-curate.ts') }; const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
 }
 
 make_home
@@ -449,7 +449,7 @@ assert_contains "$out" "to $records/backlog-archive.md" "the backlog pass names 
 case "$out" in */shadow/*) fail "the backlog pass names the shadow copy: $out" ;; esac
 grep -qF -- '- [x] oldone ' "$records/backlog-archive.md" || fail "...where the moved Done line really landed"
 
-# curateReset (src/lib.ts) returns the same false for a newer cadence
+# curateReset (src/lib-curate.ts) returns the same false for a newer cadence
 # generation and for a busy cadence lock, so the run's own warning has to
 # stand for both. Held by a
 # live pid, the lock costs the reset's real 10s timeout.

@@ -999,6 +999,35 @@ test("domainProjectLinks: no projects/ dir -> []", () => {
 // ac-room.sh list exits non-zero when a room cannot be read: that is no
 // answer, so it must reach the page as UNKNOWN - an empty list reads as an
 // inbox with nothing waiting on the captain.
+test("readRoomEntries, collectArtifacts and reviewWakeFamily resolve a STORY nested in its epic's dir (data/<epic>/<story>/.family) as a family of its own", async () => {
+  const root = mkdtempSync(`${tmpdir()}/ac-dash-nested-`);
+  const home = `${root}/fleet`;
+  try {
+    mkdirSync(`${home}/data/ep/story/spec`, { recursive: true });
+    writeFileSync(`${home}/data/ep/story/.family`, "");
+    writeFileSync(`${home}/data/ep/story/room.md`, "# Room: story\n\n- [2026-08-03T00:00:00Z] chief> ORDER: do the story.\n");
+    writeFileSync(`${home}/data/ep/story/spec/report.md`, "# Spec\n");
+    mkdirSync(`${home}/data/ep/work`, { recursive: true });
+    writeFileSync(`${home}/data/ep/work/report.md`, "# Work\n");
+
+    const entries = await readRoomEntries(home, "story");
+    expect(entries.some((l) => l.includes("do the story"))).toBe(true);
+
+    const artifacts = collectArtifacts(home);
+    const story = artifacts.find((a) => a.path.endsWith("data/ep/story/spec/report.md"));
+    expect(story?.family).toBe("story");
+    expect(story?.stage).toBe("spec/report.md");
+    // A bare subdir with no marker is the epic's own, as it always was.
+    const work = artifacts.find((a) => a.path.endsWith("data/ep/work/report.md"));
+    expect(work?.family).toBe("ep");
+
+    expect(reviewWakeFamily(home, `${home}/data/ep/story/spec/report.md`)).toBe("story");
+    expect(reviewWakeFamily(home, `${home}/data/ep/work/report.md`)).toBe("ep");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("roomList: an unreadable room set is null (unknown), never an empty inbox", async () => {
   if (process.getuid?.() === 0) return;
   const home = mkdtempSync(`${tmpdir()}/ac-dash-rooms-`);

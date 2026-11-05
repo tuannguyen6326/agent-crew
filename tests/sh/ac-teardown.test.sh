@@ -186,7 +186,16 @@ xwithout() {  # xwithout <tool> - the leg's PATH with every dir holding <tool> m
   printf '%s:%s\n' "$XSTUBS" "$out"
 }
 XNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
-XUSAGE="ERROR: usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>'] [--no-lesson '<why>'] [--no-fact '<why>']"
+# named, universal divergence: the shim's usage line names --ci-override,
+# which the frozen oracle below has never heard of.
+XUSAGE_OLD="ERROR: usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>'] [--no-lesson '<why>'] [--no-fact '<why>']"
+XUSAGE="ERROR: usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>'] [--ci-override '<why CI need not be green>'] [--no-lesson '<why>'] [--no-fact '<why>']"
+xusage_refuse() {  # xusage_refuse <args...> - both refuse at once, each against its OWN usage line (named divergence, see XUSAGE above)
+  xpair "$@"
+  assert_eq "$XO_RC:$(xoerr)" "1:$XUSAGE_OLD" "usage refusal at line $(xrow): the original"
+  assert_eq "$XN_RC:$(xout):$(xerr)" "1::$XUSAGE" "usage refusal at line $(xrow), named divergence: the shim's line names --ci-override"
+  xsame_world "$@"
+}
 xstub() {  # xstub <name> <body> - a stub at <side>/stubs, ahead of the leg's own when XPRE names it
   mkdir -p "$H/stubs"; printf '%s\n' "$2" >"$H/stubs/$1"; chmod +x "$H/stubs/$1"
 }
@@ -200,8 +209,8 @@ XROOTED=0; [ "$(id -u)" != 0 ] || XROOTED=1
 #    cd cannot enter (HOME RESOLUTION, named), an unreadable meta, an invalid
 #    ambient backend (checked before the usage, as sourcing did), git absent.
 xboth xseed
-xrefuse "$XUSAGE"
-xrefuse "$XUSAGE" ""
+xusage_refuse
+xusage_refuse ""
 xrefuse "ERROR: no crewmate meta for -h" -h
 xrefuse "ERROR: unknown argument: t1" --force t1
 xrefuse "ERROR: unknown argument: --bogus" x --bogus
@@ -214,6 +223,17 @@ xrefuse "ERROR: --no-fact carries why the slice verified no repo fact - it is th
 xrefuse "ERROR: unknown argument: y" x --no-fact why y
 xrefuse "ERROR: no crewmate meta for x" x --force --force --pr-ready a --pr-ready b --no-lesson l --no-fact f
 xrefuse "ERROR: unknown argument: b" x --pr-ready a b --force
+# --ci-override: unknown to the frozen oracle at all (named divergence) -
+# an empty value, then a value with a trailing unknown word left over,
+# checked one-sided.
+xpair x --ci-override
+assert_eq "$XO_RC:$(xoerr)" "1:ERROR: unknown argument: --ci-override" "--ci-override: the original has never heard of it"
+assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: --ci-override carries the captain's acknowledgement that CI did not verify this PR - it is the record, so an empty value is refused" "--ci-override: the port's refusal, named divergence"
+xsame_world x --ci-override
+xpair x --ci-override why b
+assert_eq "$XO_RC:$(xoerr)" "1:ERROR: unknown argument: --ci-override" "--ci-override with a value: still unheard of on the original"
+assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: unknown argument: b" "--ci-override: the port consumes 'why' as the value, then refuses the leftover word 'b'"
+xsame_world x --ci-override why b
 xboth mkdir -p @H/home/state/d.meta
 xrefuse "ERROR: no crewmate meta for d" d
 XHOMELESS=1
@@ -221,7 +241,7 @@ xrefuse "$XNOHOME" x
 XENV=("AC_FLEET_STATE=@H/home/state")
 xrefuse "$XNOHOME" x
 XENV=()
-xrefuse "$XUSAGE"
+xusage_refuse
 XHOMELESS=0
 XENV=("AC_HOME=@H/nope")
 xpair x
@@ -241,7 +261,7 @@ xboth xput home/config/backend 'tmux
 xrefuse "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
 xrefuse "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" u
 XENV=("AC_BACKEND=orca")
-xrefuse "$XUSAGE"
+xusage_refuse
 XENV=()
 xboth rm -f @H/home/config/backend
 XPATH="$(xwithout git)"
@@ -544,6 +564,42 @@ xboth x4ok
 xsame t --pr-ready --force
 assert_eq "$(xout):$(sed 's/^[^ ]* //' "$XNH/home/state/archive/t/status")" "teardown t complete:done: captain accepted the ready-to-merge PR - --force
 resolved: teardown" "4 (W2): the value flag swallows --force - landed UNFORCED on the words '--force'"
+
+# 4b. THE CI GATE (named, new: the frozen oracle below never reads ci= at
+#     all, so every row here is one-sided) - none/failing refuse, pending
+#     and a key-less meta (x4ok's own) stay untouched, --ci-override or a
+#     trusted `ci: none` project declaration lands none, failing is never
+#     excused that way.
+x4ci() { x4ok; printf 'ci=%s\n' "$1" >>"$H/home/state/t.meta"; }
+xboth x4ci none
+xpair t --pr-ready ok
+assert_eq "$XO_RC" 0 "4b: the original lands a ci=none PR exactly like a green one"
+assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: --pr-ready refused: no CI check verified the PR - acknowledge it explicitly with --ci-override '<why>', or re-record once checks register (bin/ac-pr-check.sh t <url>)" "4b, named: the port refuses a zero-check PR"
+xboth x4ci failing
+xpair t --pr-ready ok
+assert_eq "$XO_RC" 0 "4b: the original lands a ci=failing PR exactly like a green one"
+assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: --pr-ready refused: the recorded CI run failed - acknowledge it explicitly with --ci-override '<why>', or fix it and re-record (bin/ac-pr-check.sh t <url>)" "4b, named: the port refuses a PR whose CI failed"
+xboth x4ci pending
+xsame t --pr-ready ok
+assert_eq "$XN_RC" 0 "4b: ci=pending keeps today's behavior, both land"
+xboth x4ci none
+xpair t --pr-ready ok --ci-override 'captain: known gap, ship it'
+assert_eq "$XO_RC:$(xoerr)" "1:ERROR: unknown argument: --ci-override" "4b: the original has never heard of --ci-override"
+assert_eq "$XN_RC" 0 "4b: --ci-override lands a ci=none PR"
+assert_contains "$(cat "$XNH/home/state/archive/t/status")" "ci override acknowledged: captain: known gap, ship it" "4b: the override is on the record, ahead of the acceptance"
+xboth x4ci failing
+xpair t --pr-ready ok --ci-override 'captain: known gap, ship it'
+assert_eq "$XN_RC" 0 "4b: --ci-override lands a ci=failing PR too"
+xboth x4ci none
+xboth mkdir -p @H/home/projects
+xboth xput home/projects/r.yaml $'ci: none\n'
+xpair t --pr-ready ok
+assert_eq "$XO_RC" 0 "4b: the original lands it regardless"
+assert_eq "$XN_RC" 0 "4b: a trusted ci: none project declaration lands a zero-check PR without --ci-override"
+xboth x4ci failing
+xpair t --pr-ready ok
+assert_eq "$XN_RC:$(xerr)" "1:ERROR: --pr-ready refused: the recorded CI run failed - acknowledge it explicitly with --ci-override '<why>', or fix it and re-record (bin/ac-pr-check.sh t <url>)" "4b: ci: none never excuses a real failure"
+xboth rm -f @H/home/projects/r.yaml
 
 # 5. the knowledge loop (kind=self): nothing written (the hint bytes, the
 #    refusal, the line on the record); the waivers and the Done row; a

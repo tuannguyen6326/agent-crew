@@ -260,10 +260,8 @@
 // tests/sh/ac-guard.test.sh greps the literal `ac-guard.sh` in the shim's text.
 import { rmSync, statSync, writeSync } from "node:fs";
 import {
-  arrivalWait,
   backendCall,
   backendName,
-  bareMarkerVerbs,
   deputyParse,
   deputyRegistry,
   die,
@@ -278,6 +276,7 @@ import {
   taskBackend,
   taskMeta,
 } from "./lib.ts";
+import { arrivalWait, bareMarkerVerbs } from "./lib-send.ts";
 
 const IO = { stdin: "inherit", stdout: "inherit", stderr: "inherit" } as const;
 const cutNul = (s: string): string => s.replace(/\0[\s\S]*$/, "");

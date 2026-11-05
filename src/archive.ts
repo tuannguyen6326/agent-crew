@@ -78,7 +78,7 @@
 // Reads stay correct across the move: ac_room_file (bin/ac-lib.sh) resolves a
 // family's room live-first then archived, which is what keeps
 // `ac-room.sh show <family>` and the Learning retro snapshot working on an
-// archived family. The live-only data/*/room.md globs (the captain inbox, the
+// archived family. The live-only room walks (familyDirs in src/lib.ts: the captain inbox, the
 // turn-end guard, the remote push) deliberately do NOT follow:
 // every archived family is CLOSED, so it contributes no pending item and no
 // hand-back to any of them.

@@ -1,6 +1,6 @@
 ---
 name: order-direct
-description: Captain starts a task with flow PINNED to direct (crewchief -> one crewmate). The arguments are the order verbatim. Use when the captain invokes /order-direct <order>.
+description: Captain starts a task with flow pinned to direct (one crewmate). Arguments are the order verbatim. Use on /order-direct <order>.
 ---
 
 # order-direct

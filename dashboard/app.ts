@@ -1088,12 +1088,18 @@ export function collectArtifacts(homePath: string): Artifact[] {
   // family's dir verbatim under one extra <year> segment) - strip that
   // segment before parseArtifactPath ever sees the path, so archive/<year>/
   // is never mistaken for the family itself.
+  // A story of an epic lives one level down inside the epic's dir, its own dir
+  // marked `.family` (the header of src/brief.ts owns the layout): drop the
+  // epic segment too, so the story parses as the family it is - live, and
+  // archived with its epic.
+  const storyRel = (root: string, segs: string[]): string[] =>
+    segs.length > 2 && existsSync(`${root}/${segs[0]}/${segs[1]}/.family`) ? segs.slice(1) : segs;
   const relForParse = (full: string): string => {
     if (full.startsWith(`${archiveDir}/`)) {
       const afterYear = full.slice(archiveDir.length + 1).split("/");
-      if (afterYear.length > 2) return afterYear.slice(1).join("/");
+      if (afterYear.length > 2) return storyRel(`${archiveDir}/${afterYear[0]}`, afterYear.slice(1)).join("/");
     }
-    return full.slice(dataDir.length + 1);
+    return storyRel(dataDir, full.slice(dataDir.length + 1).split("/")).join("/");
   };
   const push = (
     full: string,
@@ -2300,24 +2306,38 @@ async function configList(homePath: string): Promise<Response> {
 }
 
 /** Mirrors ac_room_file (bin/ac-lib.sh): a HISTORY read's family dir - the
- *  live data/<family>/ when it exists, else the data/archive/<year>/<family>/
- *  copy bin/ac-archive.sh moved it to. Neither existing returns the live path,
- *  same fallback ac_room_file uses. `family` is charset-validated by every
+ *  live data/<family>/ when it exists, else a story's data/<epic>/<family>/
+ *  (its dir marked `.family`; the header of src/brief.ts owns the layout),
+ *  else the data/archive/<year>/ copy bin/ac-archive.sh moved it to, flat or
+ *  inside its epic the same way. None existing returns the live path, same
+ *  fallback ac_room_file uses. `family` is charset-validated by every
  *  caller's route guard before it reaches here. */
 function familyDataDir(homePath: string, family: string): string {
   const live = `${homePath}/data/${family}`;
   if (existsSync(live)) return live;
-  let years: string[] = [];
-  try {
-    years = readdirSync(`${homePath}/data/archive`, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
-  } catch {
-    return live;
-  }
-  for (const year of years) {
+  const subdirs = (root: string): string[] => {
+    try {
+      return readdirSync(root, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+        .map((e) => e.name);
+    } catch {
+      return [];
+    }
+  };
+  const story = (root: string): string | null => {
+    for (const epic of subdirs(root)) {
+      if (epic === "archive") continue;
+      if (existsSync(`${root}/${epic}/${family}/.family`)) return `${root}/${epic}/${family}`;
+    }
+    return null;
+  };
+  const liveStory = story(`${homePath}/data`);
+  if (liveStory) return liveStory;
+  for (const year of subdirs(`${homePath}/data/archive`)) {
     const archived = `${homePath}/data/archive/${year}/${family}`;
     if (existsSync(archived)) return archived;
+    const archivedStory = story(`${homePath}/data/archive/${year}`);
+    if (archivedStory) return archivedStory;
   }
   return live;
 }
@@ -5150,13 +5170,17 @@ export function reviewWakeText(file: string, payload: string): string {
  * the crewchief-forward hop the rooms-threads skill would otherwise require).
  * Pooled .lavish worktree pages and anything outside data/ have no family.
  * Archived families (data/archive/<fam>) return null: a closed family has no
- * roomchief, so its feedback belongs to the fleet chief. */
+ * roomchief, so its feedback belongs to the fleet chief. A story's artifact
+ * sits one level down inside its epic's dir (the story's dir marked
+ * `.family`; the header of src/brief.ts owns the layout) and is the story's. */
 export function reviewWakeFamily(homePath: string, file: string): string | null {
   const prefix = `${homePath}/data/`;
   if (!file.startsWith(prefix)) return null;
-  const seg = file.slice(prefix.length).split("/")[0] ?? "";
+  const segs = file.slice(prefix.length).split("/");
+  const seg = segs[0] ?? "";
   if (!seg || seg === "archive") return null;
-  return /^[a-zA-Z0-9_-]+$/.test(seg) ? seg : null;
+  const fam = segs.length > 2 && existsSync(`${prefix}${seg}/${segs[1]}/.family`) ? segs[1]! : seg;
+  return /^[a-zA-Z0-9_-]+$/.test(fam) ? fam : null;
 }
 
 /** The task a pooled worktree page belongs to, and that task's family: the

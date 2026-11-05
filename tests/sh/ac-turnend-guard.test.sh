@@ -586,4 +586,18 @@ assert_eq "$o_rc $n_rc" "2 2" "ORDER: both hold the stop"
 assert_contains "$(cat "$TMP/o.err")" "waiting: famb famC." "ORDER: the original collates under UTF-8"
 assert_contains "$(cat "$TMP/n.err")" "waiting: famC famb." "ORDER: the port reads byte order"
 
+# NESTED STORY ROOM: a story of an epic has its room at data/<epic>/<story>/,
+# the dir marked .family (src/brief.ts's header owns the layout). The original
+# globbed data/*/room.md and never saw it, so the story's HANDBACK slipped past
+# the guard; the port walks the marked level and holds the stop, naming the
+# story by itself.
+hn="$(te_world nested)"
+mkdir -p "$hn/data/ep/story"
+: >"$hn/data/ep/story/.family"
+printf '# Room: story\n\n- [2027-01-15T07:00:00Z] story-chief> HANDBACK: landed\n' >"$hn/data/ep/story/room.md"
+o_rc=0; (printf '{}' | env -u AC_SOLO -u AC_SCOPE AC_HOME="$hn" PATH="$TMP/te-date:$PATH" LC_ALL=C "$obin/ac-turnend-guard.sh") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
+n_rc=0; (printf '{}' | env -u AC_SOLO -u AC_SCOPE AC_HOME="$hn" PATH="$TMP/te-date:$PATH" LC_ALL=C "$BIN/ac-turnend-guard.sh") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$o_rc $n_rc" "0 2" "NESTED STORY ROOM: the original missed the story's HANDBACK, the port holds the stop"
+assert_contains "$(cat "$TMP/n.err")" "waiting: story." "NESTED STORY ROOM: named by the story, never its epic"
+
 pass

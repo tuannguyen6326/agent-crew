@@ -7,7 +7,16 @@
 // oracle the differential leg of tests/sh/ac-merge-local.test.sh holds this
 // module to.
 //
-//   ac-merge-local.sh <id> [--no-ff]
+//   ac-merge-local.sh <id> [--no-ff] [--expect <sha>]
+//
+// --expect <sha> binds the land to the head a review read: the land re-reads
+// refs/heads/crew/<family> at merge time, so a commit the crewmate added after
+// `ac-review-diff.sh` would land unreviewed. With the flag the branch must
+// resolve to a commit whose sha starts with <sha> (a unique prefix is
+// enough), else `ERROR: crew/<f> is at <head>, not the reviewed <sha> -
+// review what moved it (bin/ac-review-diff.sh <id>) and land with the head
+// you read`, exit 1, nothing touched. The qa gate and crew-ship already bind
+// their own head; this is the plain review's binding.
 //
 // Default path (no flag): FAST-FORWARD ONLY. It requires the primary checkout
 // to be on the default branch, clean, and the default to be an ancestor of
@@ -51,8 +60,10 @@
 //    it may stamp state/.guard-stamp. STARTED_BIN is the bin/ of the root bun
 //    was started in (src/lib.ts), so a lab bin/ runs its own guard.
 // 2. `required tool not found: git` (Bun.which over the live PATH).
-// 3. `usage: ac-merge-local.sh <id> [--no-ff]` when <id> is empty or a second
-//    argument is not exactly `--no-ff`; a third is ignored (W9).
+// 3. `usage: ac-merge-local.sh <id> [--no-ff] [--expect <sha>]` when <id> is
+//    empty, a second argument is neither flag, or `--expect` has no sha; the
+//    flags are read in any order after <id>, any other later word is ignored
+//    (W9).
 // 4. The meta, state/<id>.meta: homeless prints the AC_HOME refusal and then
 //    `no crewmate meta for <id>` (the bash's `$(ac_task_meta)` swallow, kept);
 //    no regular file there is that line alone; a meta that is there and
@@ -204,6 +215,8 @@
 //   file `command -v` accepted (every port shares it).
 // - argv and the meta's bytes: an argument arrives decoded, and a project_dir,
 //   branch or target that is not UTF-8 is spawned decoded (as U+FFFD).
+// - EXPECT: `--expect <sha>` is a flag here (and the usage names it), where
+//   the original read any second word but --no-ff as usage.
 //
 // CALLERS: no bin/, src/, dashboard/ or hook runs this entry. Chiefs run it by
 // hand (.agents/skills/task-lifecycle, solo-session; src/self-task.ts's
@@ -221,12 +234,8 @@ import {
   enterCaller,
   epicBaseFor,
   familyOfId,
-  knowledgeWarn,
-  landingRecord,
-  landingWarn,
   metaGet,
   pushControlPlane,
-  qaGateOk,
   require,
   shellStatus,
   spawnShellSync,
@@ -235,6 +244,8 @@ import {
   taskMeta,
   warn,
 } from "./lib.ts";
+import { knowledgeWarn, landingRecord, landingWarn } from "./lib-merge-local.ts";
+import { qaGateOk } from "./lib-qa-gate.ts";
 
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
@@ -294,8 +305,18 @@ if (guardRuns) run([guard], "inherit", "inherit");
 require("git");
 
 const id = args[0] ?? "";
-const noff = args[1] ?? "";
-if (!id || (noff !== "" && noff !== "--no-ff")) die("usage: ac-merge-local.sh <id> [--no-ff]");
+const usage = (): never => die("usage: ac-merge-local.sh <id> [--no-ff] [--expect <sha>]");
+let noff = "";
+let expect = "";
+for (let i = 1; i < args.length; i++) {
+  const a = args[i]!;
+  if (a === "--no-ff") noff = a;
+  else if (a === "--expect") {
+    expect = args[++i] ?? "";
+    if (expect === "") usage();
+  } else if (i === 1) usage();
+}
+if (!id) usage();
 const idB = bytes(id);
 const meta = taskMeta(id);
 if (!isFile(meta)) die(`no crewmate meta for ${id}`);
@@ -366,6 +387,11 @@ if (status !== "") {
 }
 
 if (!resolves(`refs/heads/${branchN}`)) die(b(`branch ${branchB} not found in ${projectDir} (did the crewmate commit? worktree: ${worktree})`));
+if (expect !== "") {
+  const at = gitValue(["rev-parse", `refs/heads/${branchN}`]);
+  if (!at.startsWith(expect))
+    die(b(`${branchB} is at ${at}, not the reviewed ${expect} - review what moved it (bin/ac-review-diff.sh ${id}) and land with the head you read`));
+}
 
 let landSha = "";
 if (epic) {

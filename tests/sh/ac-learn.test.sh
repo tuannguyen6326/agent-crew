@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ac-learn.test.sh - the learning-loop DISTILL trigger (Slice 2): the durable
-# per-debrief counter (learnTick, src/lib.ts), the pure digest reader (ac_learn_due), the
+# per-debrief counter (learnTick, src/lib-learn.ts), the pure digest reader (ac_learn_due), the
 # agent-callable `ac-learn.sh tick` CLI, and the `-- learning --` digest block.
 # The counter lives at state/.learn.meta - DOT-PREFIXED so it stays OUTSIDE the
 # state/*.meta task-meta namespace the fleet enumerates as crewmates (a bare
@@ -23,7 +23,7 @@
 # is a number answer, else 1 for false or null and 0 for anything else.
 twin() {
   local expr="$1"; shift
-  (cd "$ROOT" && bun --no-env-file -e "const L = await import('./src/lib.ts'); const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
+  (cd "$ROOT" && bun --no-env-file -e "const L = { ...await import('./src/lib.ts'), ...await import('./src/lib-learn.ts') }; const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
 }
 
 make_home
@@ -274,6 +274,16 @@ rm -f "$AC_HOME/state/.learn.meta"
 # herdr keeps the backend probes hermetic. The learning block is the assertion.
 make_fake_herdr
 
+# ac-wake-drain.sh runs `ac-learn.sh autoroom` as an unconditional ride-along
+# on every real drain (src/wake-drain.ts), and this fresh fixture home holds
+# no live-session lock, so ac-session-start.sh never degrades to read-only
+# here. Pre-claiming the autoroom lock makes `cmdAutoroom`'s own `lock(lk, 0)`
+# fail instantly for every call below, before it ever reaches a real
+# `ac-spawn.sh --roomchief learning` - a pane spawn make_fake_herdr never
+# serves, so it would wait out the pane-readiness budget.
+autoroom_lock="$AC_HOME/state/.learn-autoroom.lock"
+mkdir -p "$autoroom_lock" && printf '%s\n' "$$" >"$autoroom_lock/pid"
+
 # Below threshold: debriefs=3 < learn-every=8 -> NOTHING for learning (no
 # header, matching the scheduler/clones silent-when-empty style).
 printf 'debriefs=3\n' >"$AC_HOME/state/.learn.meta"
@@ -309,6 +319,10 @@ assert_contains "$out" "INCOMPLETE TXN: learning-99-subject" "the digest NAMES t
 assert_contains "$out" "1 action(s) committed" "and how much of its plan already landed"
 assert_contains "$out" "ac-learn.sh maintenance status" "and where to settle it"
 rm -rf "$AC_HOME/state/.maintenance-transactions"
+
+assert_no_file "$AC_HOME/state/learning-chief.status" \
+  "the held autoroom lock must keep the digest calls off a real roomchief spawn the fake herdr cannot serve"
+ac_lock_release "$autoroom_lock"
 
 # --- cmd_run: the learning scout is a durable, supervised verify-learning agent
 # Option-A residue: task-flow-v2 routed codereview/qa through ac-verify (durable
@@ -952,6 +966,128 @@ assert_no_file "$ALW.lock" "W4: ... and releases its lock"
 alw_fill 4096
 "$BIN/ac-learn.sh" reinforce old-one --evidence x >/dev/null || fail "W4: a reinforce landing at exactly 4096 bytes fits"
 assert_eq "$(wc -c <"$ALW" | tr -d ' ')" "4096" "W4: ... at exactly the budget"
+
+# --- retire: the 4096-budget wall's named remedy is performable -------------
+# RT1 proves it from reinforce's own caller (--retire, including when the
+# reinforced slug's own clock is already today); RT2 proves it from a
+# crewmate land's (the candidate's own `retire:` header) - each cutting and
+# archiving the named stale entry in the same locked rewrite or transaction
+# the new entry lands through.
+
+# RT1: reinforce --retire validates its target, then cuts and archives the
+# WHOLE named entry (heading, body, date line) in the SAME locked rewrite -
+# never a silent drop.
+alw_reset
+printf '## drop-me\n\na superseded lesson.\n\n(learned 2025-01-01)\n' >>"$ALW"
+alw_before_rt="$(cat "$ALW")"
+refuses_learn "no entry '## ghost'" "$BIN/ac-learn.sh" reinforce stale-one --retire ghost --evidence x
+assert_eq "$(cat "$ALW")" "$alw_before_rt" "RT1: an unknown --retire target leaves the file untouched"
+refuses_learn "--retire cannot name the same slug being reinforced ('stale-one')" \
+  "$BIN/ac-learn.sh" reinforce stale-one --retire stale-one --evidence x
+out="$("$BIN/ac-learn.sh" reinforce stale-one --retire drop-me --evidence 'the window re-derived stale-one; drop-me is superseded')"
+assert_contains "$out" "reinforced stale-one" "RT1: the reinforce half still receipts"
+assert_contains "$out" "retired drop-me (archived to records/learnings-archive/drop-me.md)" \
+  "RT1: ... and the retire half receipts too"
+case "$(cat "$ALW")" in
+  *"## drop-me"*) fail "RT1: the retired entry must leave the always-loaded file: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## drop-me" "$ARCHDIR/drop-me.md" || fail "RT1: the retired body must survive in its own archive, never silently lost"
+assert_contains "$(cat "$ARCHDIR/drop-me.md")" "a superseded lesson." "RT1: ... with its own text intact"
+assert_contains "$(printf '%s\n' "$("$BIN/ac-learn.sh" stale)" | grep 'stale-one')" "FRESH" "RT1: the reinforce half still flips the grade"
+
+# RT1b: the wall itself - a reinforce that refuses ALONE past budget (W4
+# above) fits once paired with a retire that frees enough bytes in the SAME
+# call, and the no-loss destination is 'pad's own archive.
+alw_fill 4097
+"$BIN/ac-learn.sh" reinforce old-one --retire pad --evidence 'frees room for the refresh' >/dev/null \
+  || fail "RT1b: reinforce --retire must fit once retiring 'pad' frees enough bytes"
+case "$(cat "$ALW")" in
+  *"## pad"*) fail "RT1b: the retired 'pad' entry must be gone: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## pad" "$ARCHDIR/pad.md" || fail "RT1b: pad's filler body must survive in its own archive"
+grep -qxF "(learned 2026-01-01, reinforced $(date -u +%F))" "$ALW" || fail "RT1b: old-one is still reinforced"
+
+# RT1c: --retire must still act when the reinforce half is a same-day no-op -
+# the EARLY "already reinforced today" return is for a BARE reinforce only,
+# never a silent way to skip a requested retire.
+printf '# Fleet-learned crewmate lessons\n<!-- written only by ac-learn.sh transactions -->\n\n' >"$ALW"
+printf '## today-one\n\nb\n\n(learned 2026-01-01, reinforced %s)\n\n' "$(date -u +%F)" >>"$ALW"
+printf '## drop-me\n\na superseded lesson.\n\n(learned 2025-01-01)\n' >>"$ALW"
+out="$("$BIN/ac-learn.sh" reinforce today-one --retire drop-me --evidence 'drop-me is superseded')"
+assert_contains "$out" "already at $(date -u +%F) - unchanged" "RT1c: the reinforce half still reports its real (no) effect"
+assert_contains "$out" "retired drop-me (archived to records/learnings-archive/drop-me.md)" "RT1c: ... but the retire half still ran"
+case "$(cat "$ALW")" in
+  *"## drop-me"*) fail "RT1c: drop-me must be gone even though today-one's clock did not move: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## drop-me" "$ARCHDIR/drop-me.md" || fail "RT1c: drop-me's body must still be archived"
+
+# RT1d: --retire only ever names a real entry - never the skill-pointer
+# section (which holds spaces and is not an entry, learnedSlugs' own filter).
+alw_reset
+alw_before_rt1d="$(cat "$ALW")"
+refuses_learn "no entry '## when to reach for a learned skill'" \
+  "$BIN/ac-learn.sh" reinforce stale-one --retire 'when to reach for a learned skill' --evidence x
+assert_eq "$(cat "$ALW")" "$alw_before_rt1d" "RT1d: the pointer section survives an attempted retire, nothing written"
+
+# RT2: a crewmate land's own `retire:` header closes the SAME wall from the
+# OTHER caller - the candidate pairs its new entry with a named stale one,
+# and the land cuts, archives and lands both in one transaction.
+alw_reset
+printf '## old-method\n\na superseded method.\n\n(learned 2025-01-01)\n' >>"$ALW"
+mkdir -p "$AC_HOME/cand"
+printf 'kind: crewmate\nname: new-method\ndescription: A replacement method.\nretire: ghost\napproved: yes\n===crewmate===\nDo the new thing instead.\n' \
+  >"$AC_HOME/cand/rt2-badretire.md"
+refuses_learn "crewmate candidate 'retire: ghost' names no existing '## ghost' entry" \
+  "$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2-badretire.md"
+printf 'kind: crewmate\nname: self-loop\ndescription: x\nretire: self-loop\napproved: yes\n===crewmate===\nx\n' \
+  >"$AC_HOME/cand/rt2-selfretire.md"
+refuses_learn "crewmate candidate 'retire:' cannot name its own 'self-loop'" \
+  "$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2-selfretire.md"
+printf 'kind: crewmate\nname: new-method\ndescription: A replacement method.\nretire: old-method\napproved: yes\n===crewmate===\nDo the new thing instead.\n' \
+  >"$AC_HOME/cand/rt2-ok.md"
+out="$("$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2-ok.md")" || fail "RT2: a crewmate land pairing a retire must land: $out"
+assert_contains "$out" "landed crewmate through maintenance transaction" "RT2: the land still receipts normally"
+grep -qxF -- "## new-method" "$ALW" || fail "RT2: the new entry must land"
+case "$(cat "$ALW")" in
+  *"## old-method"*) fail "RT2: the retired entry must leave the always-loaded file: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## old-method" "$ARCHDIR/old-method.md" || fail "RT2: the retired body must survive in its own archive"
+assert_contains "$(cat "$ARCHDIR/old-method.md")" "a superseded method." "RT2: ... with its own text intact"
+
+# RT2c: a candidate's `retire:` header is held to the same real-entry-only
+# rule as --retire - the skill-pointer section can never be named.
+printf 'kind: crewmate\nname: another-method\ndescription: y\nretire: when to reach for a learned skill\napproved: yes\n===crewmate===\ny\n' \
+  >"$AC_HOME/cand/rt2c-pointerretire.md"
+refuses_learn "crewmate candidate 'retire: when to reach for a learned skill' names no existing '## when to reach for a learned skill' entry" \
+  "$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2c-pointerretire.md"
+grep -qxF -- "## when to reach for a learned skill" "$ALW" || fail "RT2c: the pointer section must survive the refused land"
+
+# RT2b: the wall itself, from the land side - a NEW entry that refuses over
+# budget alone fits once its candidate pairs a `retire:` big enough to free
+# the room, and the refusal it hit first names a path that now exists.
+rt2b_fill() {  # rt2b_fill <filler bytes> - one '## pad' entry of that size
+  printf '# Fleet-learned crewmate lessons\n<!-- written only by ac-learn.sh transactions -->\n\n## pad\n\n' >"$ALW"
+  head -c "$1" /dev/zero | tr '\0' 'x' >>"$ALW"
+  printf '\n\n(learned 2025-01-01)\n' >>"$ALW"
+}
+rt2b_fill 4000
+printf 'kind: crewmate\nname: new-method\ndescription: A replacement method.\napproved: yes\n===crewmate===\nShort lesson.\n' \
+  >"$AC_HOME/cand/rt2b-noretire.md"
+refuses_learn "pair the new entry with a retire of one of: pad (nothing written) - a crewmate candidate's own 'retire: <slug>' header" \
+  "$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2b-noretire.md"
+case "$(cat "$ALW")" in
+  *"## new-method"*) fail "RT2b: an over-budget land must write nothing: $(cat "$ALW")" ;;
+esac
+rt2b_fill 4000
+printf 'kind: crewmate\nname: new-method\ndescription: A replacement method.\nretire: pad\napproved: yes\n===crewmate===\nShort lesson.\n' \
+  >"$AC_HOME/cand/rt2b-retire.md"
+"$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2b-retire.md" >/dev/null \
+  || fail "RT2b: pairing the SAME land with 'retire: pad' must fit and land"
+grep -qxF -- "## new-method" "$ALW" || fail "RT2b: the new entry must land once pad is retired"
+case "$(cat "$ALW")" in
+  *"## pad"*) fail "RT2b: pad must be gone once retired: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## pad" "$ARCHDIR/pad.md" || fail "RT2b: pad's filler body must survive in its own archive"
 
 # S6: the DISTILL run stages the layer + its grading for the scout (wiring, the
 # R5 idiom - one awk process, no early-closing pipe).

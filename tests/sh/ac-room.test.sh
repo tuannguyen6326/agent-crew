@@ -1157,6 +1157,20 @@ if [ "$(id -u)" != 0 ]; then
   assert_contains "$dash" "inbox is UNKNOWN" "...and so does the dashboard"
 fi
 
+# --- a story's room is born inside its epic's dir -----------------------------
+# post is usually the first writer of a family dir (TRIAGE lands before any
+# brief), so it places the dir by the ledger and marks it (ac_fam_dir_mint).
+mkdir -p "$AC_HOME/records"
+printf -- '- [ ] rm-ep [EPIC] - the epic (repo: p)\n- [ ] rm-s1 - a story; epic:rm-ep (repo: p)\n' >>"$AC_HOME/records/backlog.md"
+"$BIN/ac-room.sh" post rm-s1 crewchief "TRIAGE: flow=direct" >/dev/null
+assert_file "$AC_HOME/data/rm-ep/rm-s1/room.md" "a story's room is born inside its epic's dir"
+assert_file "$AC_HOME/data/rm-ep/rm-s1/.family" "and the story dir is marked"
+assert_no_file "$AC_HOME/data/rm-s1/room.md" "never flat beside the epic"
+assert_contains "$("$BIN/ac-room.sh" show rm-s1)" "TRIAGE: flow=direct" "show reads the nested room"
+assert_contains "$("$BIN/ac-room.sh" list)" "$(printf 'rm-s1\t')" "list walks into the epic's dir for the story's room"
+"$BIN/ac-room.sh" close rm-s1 landed >/dev/null
+assert_contains "$(cat "$AC_HOME/data/rm-ep/rm-s1/room.md")" "CLOSED:" "close writes the nested room"
+
 # --- differential: src/room.ts against the frozen bash original ------------
 # DISPUTED: the implementation (tests/fixtures/ac-room.sh, calling the frozen tests/fixtures/ac-notify.sh, under bash vs src/room.ts with src/notify.ts in-process through bin/ac-room.sh)
 # HELD-CONSTANT: two side roots seeded alike ($ROH for the oracle, $RNH for the shim) - a home at <side>/home and the fake herdr's state at <side>/herdr; argv and env (the side root spelled HOME, substituted in values only); cwd (the side root); stdin (/dev/null, or row 19's line); LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - make_fake_herdr's herdr (behind row 19's stdin-logging wrapper there), orca and osascript that log their argv and answer per sentinel file, a date answering one fixed instant per format (or failing per sentinel); the sibling bin/ac-remote.sh (the live one on both sides) with a config/remote-reply hook logging what reaches the thread; exit status, stdout and stderr compared whole (the side root spelled HOME, either bin root spelled ROOT, pids spelled PID), then the world a row may touch: every path under the home, every room (live and archived), every spool record, the captain-wait stamps and every stub log.

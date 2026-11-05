@@ -1,6 +1,6 @@
 ---
 name: rich-review
-description: Open an HTML or markdown artifact in the dashboard's native review loop for human annotation and iterate on the feedback. Use when the user wants to review, annotate, or give visual feedback on an HTML or md artifact you produced, or invokes /rich-review. Runs on bin/ac-review.sh against the fleet dashboard.
+description: Open an HTML or markdown artifact in the dashboard's review loop for human annotation and iterate on the feedback. Use when the captain wants to annotate an artifact, or on /rich-review.
 ---
 
 # rich-review

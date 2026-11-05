@@ -1,6 +1,6 @@
 ---
 name: staged-gates
-description: Staged-flow design gates: the design crewmate's spec/architecture/plan sub-stages, STAGE-ADMISSION receipts, gate-route matrix, second-chief R1/R2 via ac-gate.sh, the three-tier pre-implement gate, +yolo limits, and reopening an earlier stage. Load whenever a staged family is in flight - before admitting stages, reading a design report, routing or approving a gate, or releasing implement.
+description: Staged-flow design gates: spec/architecture/plan sub-stages, STAGE-ADMISSION receipts, gate-route matrix, second-chief rounds, pre-implement gate. Load before admitting a stage, reading a design report, routing or approving a gate.
 ---
 
 # staged-gates
@@ -10,6 +10,7 @@ description: Staged-flow design gates: the design crewmate's spec/architecture/p
 ## Staged flow and stage gates
 
 Staged flow has at most two production crewmates: design then execution.
+The `sdlc` flow runs these same stages and gates; it differs in what is committed into the main repository (`docs/sdlc-flow.md` owns the contract).
 Spec/architecture/plan are
 ELABORATION, not verification - spawn `<task>-design` (scout-kind,
 brief via `--stage design`) and it produces each needed report IN

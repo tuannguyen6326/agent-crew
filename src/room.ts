@@ -348,6 +348,9 @@ import {
   die,
   enterCaller,
   envHome,
+  famDir,
+  famDirMint,
+  familyDirs,
   familyOfId,
   metaGet,
   metaIsVerify,
@@ -574,11 +577,20 @@ function post(args: string[], stdout: Out): void {
     die(
       `post: ${family} has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (rooms-threads skill: 'Two chiefs on one family is a role violation, not extra help')`,
     );
-  const f = `${dataDir()}/${family}/room.md`;
+  let famd = "";
+  try {
+    famd = famDir(family);
+  } catch (e) {
+    die((e as Error).message);
+  }
+  const f = `${famd}/room.md`;
   if (!isDir(dirname(f))) {
     const s = run(["mkdir", "-p", dirname(f)], stdout, "inherit").status;
     if (s !== 0) process.exit(s);
   }
+  try {
+    famDirMint(family);
+  } catch {}
   try {
     if (!isFile(f)) writeFileSync(f, utf8(`# Room: ${family}\n\n`));
   } catch {
@@ -716,15 +728,8 @@ function readRow(line: string): [string, string, string, string] {
 
 function cmdList(): void {
   const h = home();
-  const data = `${h}/data`;
-  let names: string[] = [];
-  try {
-    names = readdirSync(data);
-  } catch {}
-  const rooms = names
-    .filter((n) => !n.startsWith("."))
-    .sort((a, b) => Buffer.compare(utf8(a), utf8(b)))
-    .map((n) => `${data}/${n}/room.md`)
+  const rooms = familyDirs(`${h}/data`)
+    .map((dir) => `${dir}/room.md`)
     .filter((p) => {
       try {
         lstatSync(p);
@@ -763,7 +768,7 @@ function cmdClose(args: string[]): void {
   const family = args[0] ?? "";
   const outcome = args.length > 1 ? args.slice(1).join(" ") : "landed";
   if (!family) die("usage: ac-room.sh close <family> <outcome...>");
-  const f = `${softSubdir("data", true)}/${family}/room.md`;
+  const f = `${famDir(family, softSubdir("data", true))}/room.md`;
   if (!isFile(f)) die(`no room for ${family}`);
   const sd = stateDir();
   let metas: string[] = [];
@@ -958,7 +963,7 @@ function cmdGateVerify(args: string[]): void {
   if (!short) die("gate-verify stage must be spec|architecture|plan|design");
   if (!plainNonEmpty(report)) die("gate-verify --report must name a non-empty plain file");
   const phys = physical(report);
-  const expected = `${dataDir()}/${family}/${short}/report.md`;
+  const expected = `${famDir(family)}/${short}/report.md`;
   if (phys !== expected) die(`gate-verify --report must be ${expected}`);
   post([family, `${family}-chief`, `GATE-VERIFY: stage=${stage} round=${round} report_sha256=${sha(phys)} verdict=pass grounds=${grounds}`], "inherit");
 }
@@ -976,7 +981,7 @@ function cmdGateRoute(args: string[]): void {
   if (!short) die("gate-route stage must be spec|architecture|plan|design");
   if (!plainNonEmpty(report)) die("gate-route --report must name a non-empty plain file");
   const phys = physical(report);
-  const expected = `${dataDir()}/${family}/${short}/report.md`;
+  const expected = `${famDir(family)}/${short}/report.md`;
   if (phys !== expected) die(`gate-route --report must be ${expected}`);
   const route = authority === "captain" ? "captain" : uncertainty === "yes" || consequence === "high" ? "second-chief" : "chief";
   post(
@@ -1014,9 +1019,9 @@ function cmdDisposition(args: string[]): void {
   if (!["chief-owned", "captain-owned", "mixed", "none"].includes(authority)) die("disposition authority must be chief-owned|captain-owned|mixed|none");
   if (!plainNonEmpty(r1)) die("disposition --r1 must name a non-empty plain file");
   const r1phys = physical(r1);
-  const expectedR1 = `${dataDir()}/${family}/${short}/second-chief-r1.md`;
+  const expectedR1 = `${famDir(family)}/${short}/second-chief-r1.md`;
   if (r1phys !== expectedR1) die(`disposition --r1 must be ${expectedR1}`);
-  const expectedReport = `${dataDir()}/${family}/${short}/report.md`;
+  const expectedReport = `${famDir(family)}/${short}/report.md`;
   if (!plainNonEmpty(expectedReport)) die(`disposition requires a non-empty current report at ${expectedReport}`);
   const report = physical(expectedReport);
   const expected = pipeline([["awk", REVIEW_BODY], ["awk", R1_IDS], ["paste", "-sd,", "-"]], r1phys);

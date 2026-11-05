@@ -219,6 +219,16 @@ assert_contains "$out" "-- config converge (from parent) --" "the ride-along hea
 assert_contains "$out" "converged: model" "it pulls a drifted inheritable knob from the REAL parent path"
 assert_eq "$(cat "$dep/config/model")" "opus" "the value actually lands in the deputy's own config"
 
+# The home-carriers ride-along (bin/ac-home-carriers.sh) runs on every WRITING
+# session start, so a home opened once names itself to every later resume's
+# hooks; its block prints what it carried, and nothing on a converged home.
+assert_contains "$out" "-- home carriers --" "the carriers block prints"
+assert_contains "$out" "carried: .claude/settings.local.json" "the first session start carries the home's name"
+assert_eq "$(jq -r .env.AC_HOME "$dep/.claude/settings.local.json")" "$(cd "$dep" && pwd -P)" "claude reads AC_HOME=<home> from the home's own settings.local.json"
+[ -d "$dep/.codex" ] && [ -f "$dep/.pi/extensions/ac-home.ts" ] || fail "every harness got its carrier"
+out2="$(AC_HOME="$dep" "$BIN/ac-session-start.sh" 2>/dev/null | awk '/^-- home carriers --$/{f=1;next} /^-- /{f=0} f')"
+assert_eq "$out2" "(no drift)" "a converged home: no drift"
+
 # --- the crewdomain routing block, and the detection that rides on it --------
 # It prints UNCONDITIONALLY beside the crewdeputy block, and it carries one
 # duty that block does not (crewdomain-token): `ac-domain.sh list` runs the

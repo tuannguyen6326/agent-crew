@@ -32,7 +32,7 @@
 # state/*.meta task-meta namespace the fleet enumerates as crewmates; a bare
 # learn.meta reads as a phantom crewmate (WATCHER-DOWN, a spurious gone: wake
 # from the watcher, fleet-view pollution). Two writers, both in
-# src/lib.ts: learnTick advances the counter, and learnReset zeroes it at the
+# src/lib-learn.ts: learnTick advances the counter, and learnReset zeroes it at the
 # END of a successful DISTILL run (src/learn.ts cmdRun, and still at a manual
 # land) - never at tick.
 # The level this counter reaches is what fires the ACT: ac-learn.sh autoroom
@@ -68,14 +68,14 @@ ac_learn_due() {
 # The cadence gate for the CURATE pass - the exact analogue of the DISTILL
 # trigger above, one rung up. The knowledge-producing event it counts is a
 # LEARNING-RUN (the DISTILL run is the fleet's "tick", report §2.4), not a
-# debrief, so curateTick (src/lib.ts) is wired into src/learn.ts cmdRun (once
+# debrief, so curateTick (src/lib-learn.ts) is wired into src/learn.ts cmdRun (once
 # per run), not into the debrief path. Durable on disk, so a restart reads the true count.
 #
 # The counter lives at state/.curate.meta - DOT-PREFIXED (the Slice 2 namespace
 # lesson) so it stays OUTSIDE the state/*.meta task-meta namespace; a bare
 # curate.meta reads as a phantom crewmate (WATCHER-DOWN, a spurious gone: wake,
 # fleet-view pollution). ac_curate_due stays PURE - the session-start
-# digest reads it read-only; only curateTick/curateReset (src/lib.ts) write.
+# digest reads it read-only; only curateTick/curateReset (src/lib-learn.ts) write.
 
 ac_curate_meta() { printf '%s/.curate.meta\n' "$(ac_state_dir)"; }
 
@@ -96,7 +96,7 @@ ac_curate_due() {
 
 # --- the shared Learning / Curate maintenance transaction ---------------------
 # Learning and Curate mutate fleet-local knowledge automatically only through
-# one closed, hash-bound plan, applied by maintenanceApply (src/lib.ts): one
+# one closed, hash-bound plan, applied by maintenanceApply (src/lib-curate.ts): one
 # fleet-wide writer lock, a pre-mutation backup, an action journal, atomic file
 # replacement, and resume by hash. What stays here is the reader that names an
 # unsettled transaction, which session start prints.

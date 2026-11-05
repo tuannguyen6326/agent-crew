@@ -723,19 +723,12 @@ import { acDoneline, records } from "./backlog.ts";
 import {
   STARTED_BIN,
   arithValue,
-  arrivalWait,
   backendAgentIdle,
   backendCall,
-  backendDialogAnswer,
   backendKillWindow,
   backendName,
-  backendStartupDialogs,
-  backendSubmitVerified,
   backendWindowNew,
-  buildLaunch,
-  claudeConfigEnv,
   commandV,
-  compactPctEnv,
   configDir,
   configReadSoft,
   crewBranch,
@@ -743,12 +736,10 @@ import {
   deputyParse,
   deputyRegistry,
   die,
-  domainBinding,
-  domainParse,
-  domainViewEntry,
   enterCaller,
   envHome,
   epicBaseFor,
+  famDir,
   familyOfId,
   familyOwned,
   fileMtime,
@@ -756,24 +747,16 @@ import {
   harnessKnown,
   harnessStartupKey,
   iso,
-  leaseInstall,
   ledgerRead,
   metaGet,
   metaSet,
   nowRaw,
   orcaWorktreeLease,
   orcaWorktreeRelease,
-  paneProfile,
   pidAlive,
   projectConfigFile,
   projectDir,
-  recordLaunchOpts,
   recordsDir,
-  resolveProfile,
-  seedCrewSettings,
-  seedCrewSkills,
-  seedCrewmateMd,
-  seedPortsEnv,
   shellQuote,
   shellStatus,
   spawnShell,
@@ -791,6 +774,9 @@ import {
   warn,
   writeAll,
 } from "./lib.ts";
+import { arrivalWait } from "./lib-send.ts";
+import { backendDialogAnswer, backendStartupDialogs, backendSubmitVerified, buildLaunch, claudeConfigEnv, compactPctEnv, domainBinding, leaseInstall, paneProfile, recordLaunchOpts, resolveProfile, seedCrewSettings, seedCrewSkills, seedCrewmateMd, seedPortsEnv } from "./lib-spawn.ts";
+import { domainParse, domainViewEntry } from "./lib-domain.ts";
 
 // Decoded strings throughout; the lib's byte (latin1) answers cross over here.
 const b8 = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
@@ -1716,7 +1702,7 @@ async function main(argv: string[]): Promise<void> {
     } else die(`room-parallel cap reached: ${nChiefs}/${capV} roomchiefs in flight (${flying.join(", ") || "none"}); demote a landed one (bin/ac-teardown.sh <family>-chief) before promoting ${fam}, or add one past the cap with the captain's sanction (--over-cap '<reason>')`);
 
     // THE ORDER GATE (above): an entry in the room, never the file alone.
-    if (run(["grep", "-q", "^- \\[", `${dataDir()}/${fam}/room.md`], { stdout: "ignore", stderr: "ignore" }).status !== 0)
+    if (run(["grep", "-q", "^- \\[", `${famDir(fam)}/room.md`], { stdout: "ignore", stderr: "ignore" }).status !== 0)
       die(`room ${fam} holds no entry: --roomchief takes no brief - the room IS the brief - so this promote would hand the new chief nothing to read. Post the order into the room FIRST, then promote: bin/ac-room.sh post ${fam} crewchief 'ORDER: <the captain order, verbatim>' && bin/ac-spawn.sh --roomchief ${fam}`);
 
     // THE DERIVED CREWDOMAIN BINDING (above): the family row's own domain:
@@ -1857,7 +1843,7 @@ HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from t
     // family thread; its sed and cut stay the bytes' judges (W9).
     if (configReadSoft("remote-mirror", "off") === "chief" && !existsSync(`${sd}/remote-threads/${fam}.thread`)) {
       let snip = "";
-      const room = `${dataDir()}/${fam}/room.md`;
+      const room = `${famDir(fam)}/room.md`;
       if (isFile(room)) {
         const r = run(["sed", "-n", "s/^- \\[[^]]*\\] [^>]*> \\(ORDER.*\\)$/\\1/p", room]);
         ee(r.status);

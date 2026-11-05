@@ -1001,6 +1001,7 @@ make_fake_orca() {
   # an already-registered path, measured on the real CLI).
   # .create-no-path (worktree create answers ok with an id but NO path - the
   # partial-create shape whose leak the lease must release by id).
+  # worktree-list.json (the envelope `worktree list` serves; absent = no entries).
   # Every call appends one line to $FAKE_ORCA/log.
   export FAKE_ORCA="$TMP/fake-orca"
   mkdir -p "$FAKE_ORCA/terminals" "$TMP/stubbin"
@@ -1096,6 +1097,10 @@ case "${1:-}" in
         wrepo="${wrepo%/.git}"
         git -C "$wrepo" worktree remove --force "$wpath" 2>/dev/null || rm -rf "$wpath"
         printf '{"ok":true,"result":{}}\n'; exit 0 ;;
+      list)
+        if [ -f "$d/worktree-list.json" ]; then cat "$d/worktree-list.json"
+        else printf '{"ok":true,"result":{"worktrees":[]}}\n'; fi
+        exit 0 ;;
       *)
         printf '{"ok":true,"result":{"worktree":{}}}\n'; exit 0 ;;
     esac ;;

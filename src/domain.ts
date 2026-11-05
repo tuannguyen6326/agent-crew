@@ -498,14 +498,7 @@ import { appendFileSync, chmodSync, closeSync, existsSync, lstatSync, openSync, 
 import { acDoneline, records } from "./backlog.ts";
 import {
   awkAssign,
-  backlogIdOk,
   die,
-  domainNameOk,
-  domainParse,
-  domainQaRepo,
-  domainRegistry,
-  domainTally,
-  domainViewEntry,
   enterCaller,
   envHome,
   iso,
@@ -522,6 +515,7 @@ import {
   wakePublish,
   warn,
 } from "./lib.ts";
+import { backlogIdOk, domainNameOk, domainParse, domainQaRepo, domainRegistry, domainTally, domainViewEntry } from "./lib-domain.ts";
 
 const REGISTRY_LABEL = "records/crewdomains.md";
 const US = "\x1f";

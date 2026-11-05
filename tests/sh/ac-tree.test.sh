@@ -73,6 +73,15 @@ assert_fails "$BIN/ac-tree.sh" return "$wt2"
 assert_contains "$(cat "$wt2/file.txt")" "hidden edit" "the hidden edit survives the refused return"
 git -C "$wt2" update-index --no-assume-unchanged file.txt
 git -C "$wt2" checkout -- file.txt
+# An untracked file a repo's own `status.showUntrackedFiles=no` hides is dirt
+# too (git-status, "--untracked-files"): the reset's clean would discard it.
+git -C "$wt2" config status.showUntrackedFiles no
+printf 'unadded work\n' >"$wt2/hidden-untracked.txt"
+[ -z "$(git -C "$wt2" status --porcelain)" ] || fail "fixture: status must be blind to the hidden untracked file"
+assert_fails "$BIN/ac-tree.sh" return "$wt2"
+assert_file "$wt2/hidden-untracked.txt" "the hidden untracked file survives the refused return"
+rm "$wt2/hidden-untracked.txt"
+git -C "$wt2" config --unset status.showUntrackedFiles
 # ...and so are the hidden edits that change no bytes: a deletion and an
 # executable-bit flip behind the same bit.
 git -C "$wt2" update-index --assume-unchanged file.txt
@@ -416,6 +425,9 @@ assert_file "$wtH/wip.txt" "a broken slot's unlanded work must survive heal"
 assert_file "$repoH/.crew/slots/1-broken.meta" "a broken slot's meta must survive heal"
 assert_contains "$out" "slot 1-broken: worktree broken" "the skip is announced"
 assert_contains "$out" "remove --force --include-leased $wtH" "the warn names the exact reclaim command"
+# The operator is told to run a destructive remove: the WARN carries git's own
+# reason (exit status and last stderr line), not only "unreadable".
+assert_contains "$out" "git: exit 128: fatal: not a git repository" "the warn names why git refused the slot"
 
 # ... and that named reclaim must actually RUN on such a slot - a skip whose
 # exit is refused strands the slot forever. It stays fail-closed: git can check
@@ -813,6 +825,21 @@ assert_fails "$BIN/ac-tree.sh" return 1-parked --repo "$repoE" --force --if-leas
 assert_eq "$(sed -n 's/^leased=//p' "$metaE")" "0" "return released the lease"
 assert_eq "$(sed -n 's/^lease_id=//p' "$metaE")" "" "the identity dies with the lease"
 
+# A meta-less dir at the slot get would mint (a partial create, or a slot
+# whose meta was lost) is healed only while it is EMPTY. One holding files may
+# be somebody's work - get names it and stops; the operator inspects it.
+repoL="$(make_repo leftover)"
+mkdir -p "$repoL/.crew/worktrees/1-leftover"
+printf 'keep\n' >"$repoL/.crew/worktrees/1-leftover/work.txt"
+outL="$("$BIN/ac-tree.sh" get --repo "$repoL" --id l1 2>&1)" && fail "get must refuse over a non-empty meta-less slot dir: $outL"
+assert_contains "$outL" "slot 1-leftover dir $repoL/.crew/worktrees/1-leftover exists with no meta and is not empty - inspect it" "the refusal names the dir and what to do"
+assert_eq "$(cat "$repoL/.crew/worktrees/1-leftover/work.txt")" "keep" "the leftover work is untouched"
+assert_no_file "$repoL/.crew/slots/1-leftover.meta" "no slot meta is minted over the refused dir"
+rm "$repoL/.crew/worktrees/1-leftover/work.txt"
+l1="$("$BIN/ac-tree.sh" get --repo "$repoL" --id l1 2>/dev/null)" || fail "get must heal an EMPTY meta-less slot dir"
+assert_eq "$l1" "$repoL/.crew/worktrees/1-leftover" "the healed slot's number is reused"
+[ -e "$l1/.git" ] || fail "the healed slot is a worktree"
+
 # --- differential: src/tree.ts against the frozen bash original ------------
 # DISPUTED: the implementation (tests/fixtures/ac-tree.sh under bash vs src/tree.ts through bin/ac-tree.sh)
 # HELD-CONSTANT: two side roots seeded alike ($XOH for the oracle, $XNH for the shim) - a home at <side>/home (records/ state/ data/), repos at <side>/r* built by the same commands with fixed author/committer dates and one git config (GIT_CONFIG_GLOBAL, no system config) so every sha matches, an optional bare origin beside them; argv and env (the side root spelled @H, substituted in values only); cwd (<side>/cwd, an EMPTY dir, unless a row names a repo); stdin (/dev/null); umask 022 unless a row names 077; LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - date answering one instant per format, od answering one fixed 8 bytes (so one lease_id), sleep logging each call (and returning at once while <side>/sleep.fast exists) - plus a row's own stubs; the live bin/ beside each entry (the oracle bin's copies, $BIN's own); exit status, stdout and stderr compared whole (the side root spelled @H, either bin root ROOT, the entry's pid PID), then the world a row may touch: every path under the side root (git objects aside), each repo's worktree list, every slot meta, the workspace, the exclude, .gitignore, .crew/config and the lock's pid file with their modes, every hook and sidecar's mode and cksum, each slot's HEAD, branch and porcelain, and every crew meta.
@@ -866,7 +893,10 @@ xrun_side() {  # xrun_side <bin> <side root> <prefix> <args...>
     "${e[@]}" /bin/sh -c 'printf %s "$$" >"$0"; exec "$@"' "$TMP/$p.pid" "$bin/ac-tree.sh" ${a[@]+"${a[@]}"}) </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.err"
 }
 xnorm() {  # xnorm <file> <side root> <pid> - the pid only between non-hex bytes, never inside a sha nor on a cksum line (a size can equal it)
-  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-tree#ROOT#g" -e "s#$ROOT#ROOT#g" \
+  # BROKEN SLOT REASON (named): the port's heal WARN carries git's reason in the
+  # parenthesis; dropped here so every row with a broken slot in its world
+  # stays comparable, and row 10 reads the raw line for it.
+  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-tree#ROOT#g" -e "s#$ROOT#ROOT#g" -e 's/[(]gitdir unreadable - git: .*[)] - NOT healed/(gitdir unreadable) - NOT healed/' \
     -e "/^   cksum /!s/(^|[^0-9a-f])$3([^0-9a-f]|\$)/\\1PID\\2/g" -e "/^   cksum /!s/(^|[^0-9a-f])$3([^0-9a-f]|\$)/\\1PID\\2/g" "$1"
 }
 printf '%s\n' '   cksum 3236630796 1808' "lock held by pid 1808 at $XOH/tmp/1808.lock" 'sha 0a1808ff' >"$TMP/xnorm.in"
@@ -1252,7 +1282,7 @@ for xcap in ' 3' '+3' '3 ' '010'; do
 done
 XENV=()
 xboth rm -rf @H/r/.crew/config
-xboth mkdir -p @H/r/.crew/worktrees/4-r/junk
+xboth mkdir -p @H/r/.crew/worktrees/4-r
 xsame get --repo @H/r --id o6
 assert_eq "$(xout):$(xerr)" "@H/r/.crew/worktrees/4-r:WARN: cleaning orphan worktree dir at slot 4-r
 WARN: creating worktree slot 4-r" "5: an orphan dir is cleaned and its number reused"
@@ -1526,6 +1556,8 @@ assert_eq "$(xout)" "1-r	leased	l1	@H/r/.crew/worktrees/1-r	2026-01-01T00:00:00Z
 5-r	leased	park	@H/r/.crew/worktrees/5-r	2026-01-01T00:00:00Z	
 6-r	leased	'-'	@H/r/.crew/worktrees/6-r	2026-01-01T00:00:00Z	" "10: every state on the wire"
 assert_eq "$(xerr)" "WARN: slot 3-r: worktree broken (gitdir unreadable) - NOT healed, its files may be unlanded work git can no longer report; reclaim it deliberately with: bin/ac-tree.sh remove --force @H/r/.crew/worktrees/3-r" "10: heal names the broken slot"
+assert_contains "$(cat "$TMP/xn.err")" "slot 3-r: worktree broken (gitdir unreadable - git: exit 128: fatal: not a git repository" "10 (BROKEN SLOT REASON, named): the port's raw WARN carries git's reason"
+case "$(cat "$TMP/xo.err")" in *" - git: "*) fail "10: the original's WARN never carried a reason" ;; esac
 xboth rm -f @H/r/.crew/worktrees/1-r/.git; xboth xput r/file.txt 'primary edit'
 xsame list --repo @H/r
 assert_contains "$(xout)" "1-r	leased dirty	l1" "10 (W10): a leased slot with no .git file lists leased, with the PRIMARY's dirt"
@@ -2088,5 +2120,18 @@ assert_eq "$XO_RC:$(cat "$TMP/xo.out")" "0:would prune slot 1-r: @H/r/.crew/work
 assert_eq "$XN_RC:$(xout)" "0:skip slot 1-r: origin unreachable (cannot verify)" "16 (named): the port's failing ls-remote cannot verify"
 XENV=()
 xboth rm -rf @H/r @H/r.git @H/ext.sh @H/ext.sh.count @H/ext.sh.fail
+
+# 17. LEFTOVER SLOT DIR (named): a non-empty meta-less dir at the slot get
+#     would mint is possible work; the original cleaned it and minted the slot
+#     over it, the port names it and stops. Last, since the worlds part here.
+xboth xrepo r; xboth mkdir -p @H/r/.crew/worktrees/1-r; xboth xput r/.crew/worktrees/1-r/work.txt $'keep\n'
+xpair get --repo @H/r --id l1
+assert_eq "$XO_RC:$(cat "$TMP/xo.out")" "0:@H/r/.crew/worktrees/1-r" "17: the original minted the slot over the non-empty dir"
+assert_contains "$(xoerr)" "WARN: cleaning orphan worktree dir at slot 1-r" "17: ...after cleaning it"
+assert_eq "$XN_RC:$(xout)" "1:" "17 (named): the port stops with no path"
+assert_contains "$(xerr)" "ERROR: slot 1-r dir @H/r/.crew/worktrees/1-r exists with no meta and is not empty - inspect it; move or delete it by hand, then get again" "17 (named): the port names the dir"
+assert_eq "$(cat "$XNH/r/.crew/worktrees/1-r/work.txt")" "keep" "17 (named): the port left the work alone"
+[ ! -e "$XOH/r/.crew/worktrees/1-r/work.txt" ] || fail "17: the original's clean removed the work (the divergence this row names)"
+xboth rm -rf @H/r
 
 pass

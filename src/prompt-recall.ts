@@ -29,18 +29,30 @@
 //
 // PENDING WAKES ride the same hook for a chief-shaped session only: one line
 // counting the regular files in its own spool (the family spool under
-// AC_SCOPE), printed ahead of every recall gate below. A solo session owns no
-// wakes. The count only peeks - the drain consumes records.
+// AC_SCOPE), printed ahead of every recall gate below but behind the secret
+// gate - a pasted credential must leave no trace, not even the wake notice.
+// A solo session owns no wakes. The count only peeks - the drain consumes
+// records.
 //
-// NOISE GATES, because a per-prompt reader pays context on every turn: no
-// brain (state/brain.sqlite's existence is the opt-in),
-// config/brain-prompt-recall=off (the valve), slash and bang prompts, prompts
-// under 12 characters (counted as bash counts under the caller's locale) or
-// with fewer than two content words (runs of [:alnum:] of length 3 or more,
-// spawned tr and awk), and zero hits all print nothing. The prompt has its
-// LF/CR/TAB turned to spaces and its [:space:] trimmed (spawned tr and sed).
-// AC_PROMPT_RECALL_LIMIT caps the hits (default 3; anything but digits reads
-// 3); snippets are cut at 140 characters.
+// NOISE GATES, because a per-prompt reader pays context on every turn: a
+// credential-shaped token (sk-, oc_sk_, apikey_, ghp_/github_pat_, AKIA,
+// xox[abp]-, each anchored to a non-alnum boundary so a fleet name like
+// task-lifecycle-skill does not match its own sk- substring, or a bare
+// 32+ char hex/base64 run - checked first, ahead of the pending-wake line
+// above and every gate below, since underscores and dashes split a key
+// into several short runs that the word-count gate alone reads as ordinary
+// prose), no brain (state/brain.sqlite's existence is the opt-in),
+// config/brain-prompt-recall=off (the valve), slash and bang
+// prompts, harness-injected prompts (opening with a task-notification,
+// teammate-message, agent-message or system-reminder tag, a SYSTEM
+// NOTIFICATION banner or the "Another Claude session sent a message" line -
+// every watcher wake arrives this way, and none was typed), prompts under 12 characters (counted as bash counts under the
+// caller's locale) or with fewer than two content words (runs of [:alnum:]
+// of length 3 or more, spawned tr and awk), and zero hits all print
+// nothing. The prompt has its LF/CR/TAB turned to spaces and its [:space:]
+// trimmed (spawned tr and sed). AC_PROMPT_RECALL_LIMIT caps the hits
+// (default 3; anything but digits reads 3); snippets are cut at 140
+// characters.
 //
 // FRESHNESS: the block names the marker's age (state/.brain-last-sync), calls
 // it STALE past AC_BRAIN_SYNC_IV (1800), and fires the shared catch-up sync
@@ -90,6 +102,20 @@ import { brainFreshen, brainMarkerAge, commandV, configReadSoft, enterCaller, ho
 const { atCaller } = enterCaller(process.argv.slice(2));
 const caller = process.argv[2] ?? "";
 const HITS_JQ = "\n  (.results // [])[] | select(.path != null)\n  | \"- \" + .path + \" [\" + (.trust // \"?\") + \"; \" + (.evidence // \"?\") + \"] \"\n    + ((.snippet // \"\") | gsub(\"\\n\"; \" \") | .[0:140])";
+// Credential-shaped tokens must leave no trace at all - not the embedding
+// provider, the usage log, or even the unrelated queued-wake notice - so
+// this is tested ahead of every other gate and notice below. A pasted key's
+// underscores and dashes split it into several alnum runs, which the
+// word-count gate alone reads as ordinary multi-word prose. The prefixed
+// shapes are anchored to a non-alnum boundary (or string start): unanchored,
+// `sk-` alone matches inside this fleet's own hyphenated names
+// (task-lifecycle-skill, ask-user-relay-dropped), silencing an ordinary
+// prompt. A pasted JSON string or URL-encoded value puts an escape right
+// before the key (`\n`, `"`, `%22`), whose last character is a word
+// character, so the escape itself is a boundary too - without it the key at
+// the start of an escaped string reached the provider. The bare hex/base64
+// run carries no prefix to anchor.
+const SECRET_RE = /(?:^|[^A-Za-z0-9]|\\[ntrbf"\\/]|\\u[0-9A-Fa-f]{4}|%[0-9A-Fa-f]{2})(?:sk-[A-Za-z0-9_-]{10,}|oc_sk_[A-Za-z0-9_-]{10,}|apikey_[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{12,}|xox[abp]-[A-Za-z0-9-]{10,})|[A-Za-z0-9+/]{32,}/;
 
 const lat = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 const nat = (b: string): string => Buffer.from(b, "latin1").toString("utf8");
@@ -121,6 +147,13 @@ else {
   by = process.env.AC_SCOPE ? `${lat(process.env.AC_SCOPE)}-chief` : "crewchief";
 }
 
+// Extracted and secret-checked before the wake notice below: a credential
+// must leave no trace at all, not even the unrelated queued-wake line.
+const asked = cap(run(["jq", "-r", "(.prompt // .user_message // .text // empty) | tostring"], Buffer.from(`${payload}\n`, "latin1")).out);
+const flat = run(["tr", "\n\r\t", "   "], Buffer.from(asked, "latin1"), "inherit").out;
+const prompt = cap(run(["sed", "s/^[[:space:]]*//; s/[[:space:]]*$//"], Buffer.from(flat, "latin1"), "inherit").out);
+if (SECRET_RE.test(prompt)) process.exit(0);
+
 if (by !== "solo") {
   const spool = wakeSpoolPath(softSubdir("state", false), process.env.AC_SCOPE ?? "");
   let names: string[] = [];
@@ -143,10 +176,13 @@ try {
 }
 if (configReadSoft("brain-prompt-recall", "on") !== "on") process.exit(0);
 
-const asked = cap(run(["jq", "-r", "(.prompt // .user_message // .text // empty) | tostring"], Buffer.from(`${payload}\n`, "latin1")).out);
-const flat = run(["tr", "\n\r\t", "   "], Buffer.from(asked, "latin1"), "inherit").out;
-const prompt = cap(run(["sed", "s/^[[:space:]]*//; s/[[:space:]]*$//"], Buffer.from(flat, "latin1"), "inherit").out);
 if (prompt === "" || prompt.startsWith("/") || prompt.startsWith("!")) process.exit(0);
+// A harness-injected turn - a background task's notification, another agent's
+// message, a system reminder - reaches this hook as a prompt the captain never
+// typed, and every watcher wake is one: each would pay an embed and inject
+// hits about the notice itself. These openings are machine shapes no human
+// starts a prompt with.
+if (/^\s*(<task-notification|<teammate-message|<agent-message|<system-reminder|\[SYSTEM NOTIFICATION|Another Claude session sent a message)/.test(prompt)) process.exit(0);
 if (shellLength(prompt) < 12) process.exit(0);
 const pieces = run(["tr", "-c", "[:alnum:]", "\n"], Buffer.from(prompt, "latin1"), "inherit").out;
 const long = run(["awk", "length($0) >= 3"], Buffer.from(pieces, "latin1"), "inherit").out;

@@ -24,13 +24,22 @@
 #
 # PENDING WAKES ride the same hook for a chief-shaped session only: one line
 # counting the records in its own spool (the family spool under AC_SCOPE),
-# printed ahead of every recall gate below. A solo session owns no wakes.
+# printed ahead of every recall gate below but behind the secret gate - a
+# pasted credential must leave no trace, not even the wake notice. A solo
+# session owns no wakes.
 #
-# NOISE GATES, because a per-prompt reader pays context on every turn: no
-# brain (DB existence is the opt-in), config/brain-prompt-recall=off (the
-# valve), slash and bang prompts, prompts under 12 chars or with fewer than
-# two content words, and zero hits all print nothing. AC_PROMPT_RECALL_LIMIT
-# caps the hits (default 3); snippets are cut at 140 chars.
+# NOISE GATES, because a per-prompt reader pays context on every turn: a
+# credential-shaped token (sk-, oc_sk_, apikey_, ghp_/github_pat_, AKIA,
+# xox[abp]-, each anchored to a non-alnum boundary so a fleet name like
+# task-lifecycle-skill does not match its own sk- substring, or a bare 32+
+# char hex/base64 run - checked first, ahead of the pending-wake line above
+# and every gate below, since underscores and dashes split a key into
+# several short runs that the word-count gate alone reads as prose), no
+# brain (DB existence is the opt-in),
+# config/brain-prompt-recall=off (the valve), slash and bang prompts,
+# prompts under 12 chars or with fewer than two content words, and zero
+# hits all print nothing. AC_PROMPT_RECALL_LIMIT caps the hits (default 3);
+# snippets are cut at 140 chars.
 #
 # FRESHNESS: the block names the marker's age, calls it STALE past
 # AC_BRAIN_SYNC_IV, and fires the shared catch-up sync (ac_brain_freshen,
@@ -60,6 +69,16 @@ else
   by="${AC_SCOPE:+${AC_SCOPE}-chief}"; by="${by:-crewchief}"
 fi
 
+# Extracted and secret-checked before the wake notice below: a credential
+# must leave no trace at all, not even the unrelated queued-wake line. The
+# prefixed shapes are anchored to a non-alnum boundary (or string start):
+# unanchored, sk- alone matches inside this fleet's own hyphenated names
+# (task-lifecycle-skill, ask-user-relay-dropped).
+prompt="$(jq -r '(.prompt // .user_message // .text // empty) | tostring' <<<"$payload" 2>/dev/null || true)"
+prompt="$(printf '%s' "$prompt" | tr '\n\r\t' '   ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+secret_re='(^|[^A-Za-z0-9])(sk-[A-Za-z0-9_-]{10,}|oc_sk_[A-Za-z0-9_-]{10,}|apikey_[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{12,}|xox[abp]-[A-Za-z0-9-]{10,})|[A-Za-z0-9+/]{32,}'
+printf '%s' "$prompt" | grep -Eq "$secret_re" && exit 0
+
 # A chief's queued wakes, PEEKED before any recall gate: the turn-end guard
 # refuses a turn end while they wait, so without this a chief learns of them
 # only after acting on the prompt. Never the drain - it consumes the records.
@@ -73,8 +92,6 @@ fi
 [ -f "$home/state/brain.sqlite" ] || exit 0
 [ "$(ac_config_read brain-prompt-recall on)" = on ] || exit 0
 
-prompt="$(jq -r '(.prompt // .user_message // .text // empty) | tostring' <<<"$payload" 2>/dev/null || true)"
-prompt="$(printf '%s' "$prompt" | tr '\n\r\t' '   ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 [ -n "$prompt" ] || exit 0
 case "$prompt" in /*|!*) exit 0 ;; esac
 [ "${#prompt}" -ge 12 ] || exit 0

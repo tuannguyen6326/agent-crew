@@ -218,16 +218,11 @@ import {
   arithValue,
   awkAssign,
   awkNumber,
-  curateDue,
-  curateGeneration,
-  curateReset,
   die,
   enterCaller,
   exclusiveTemp,
   fileMtime,
   iso,
-  maintenanceApply,
-  maintenanceGateFailureReason,
   metaGet,
   nowRaw,
   physicalDir,
@@ -240,6 +235,7 @@ import {
   warn,
   writeAll,
 } from "./lib.ts";
+import { curateDue, curateGeneration, curateReset, maintenanceApply, maintenanceGateFailureReason } from "./lib-curate.ts";
 
 // The lib's AC_MAINTENANCE_QUOTE_MIN (tests/ts/curate.test.ts holds the two
 // together).

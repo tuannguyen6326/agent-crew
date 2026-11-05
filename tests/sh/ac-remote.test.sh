@@ -1436,6 +1436,16 @@ both room fam9 '- [t] c> GATE: new\n'
 same push-pending
 assert_eq "$SAME_RC|$(shim_err)" "1|WARN: cannot read meta file HOME/home/state/.remote-push-stamp" "row 21: an unreadable stamp ends the run at the first family with pending lines (W33)"
 each 'chmod 644 "$H/home/state/.remote-push-stamp"; chmod 644 "$H/home/data/unread/room.md"'
+# NESTED STORY ROOM, named: a story's room at data/<epic>/<story>/, the dir
+# marked .family (src/brief.ts's header owns the layout) - the original's
+# data/*/room.md glob never saw it; the port walks the marked level and names
+# the story by itself. Last in the row: the next row reseeds both sides.
+both put home/data/ep/story/.family ''
+both room ep/story '- [t] c> GATE: nested\n'
+sides push-pending
+assert_eq "$O_RC $N_RC" "0 0" "row 21: NESTED STORY ROOM - both sides end 0"
+assert_contains "$(shim_out)" "pushed story (1 pending)" "row 21: NESTED STORY ROOM - the port pushes the story's room, named by the story"
+case "$(cat "$TMP/o.out")" in *story*) fail "row 21: NESTED STORY ROOM - the original never saw the nested room" ;; *) : ;; esac
 
 # 3. poll gates: no hook, a hook that is not executable, a DIRECTORY (`-f`
 #    fails) and a symlink to an executable hook (followed)

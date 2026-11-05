@@ -125,6 +125,31 @@ seed_settings "$wt"
 assert_eq "$(cat "$wt/.claude/settings.json")" '{"enabledPlugins":{"container":true}}' \
   "a distro-symlinked home .claude falls through to container settings"
 rm -f "$wt/.claude/settings.json" "$AC_HOME/.claude"
+# The same chief runtime dir once the home names itself (bin/ac-home-carriers.sh):
+# a REAL .claude/ whose settings.json is the distro link and whose
+# settings.local.json carries THIS home's AC_HOME. Neither file is a fleet
+# crew layer - least of all the carrier, which would make every crewmate
+# chief-shaped.
+mkdir -p "$AC_HOME/.claude"
+ln -s "$(dirname "$BIN")/.claude/settings.json" "$AC_HOME/.claude/settings.json"
+printf '{"env":{"AC_HOME":"%s"}}\n' "$AC_HOME" >"$AC_HOME/.claude/settings.local.json"
+printf '{"enabledPlugins":{"container-local":true}}\n' >"$(dirname "$AC_HOME")/.claude/settings.local.json"
+seed_settings "$wt"
+assert_eq "$(cat "$wt/.claude/settings.json")" '{"enabledPlugins":{"container":true}}' \
+  "a home .claude that names itself falls through to container settings"
+assert_eq "$(cat "$wt/.claude/settings.local.json")" '{"enabledPlugins":{"container-local":true}}' \
+  "... and its AC_HOME carrier never reaches a crewmate"
+# A REAL per-fleet settings.json override beside the carrier: the override is
+# the fleet layer, the carrier still is not.
+rm -f "$wt/.claude/settings.json" "$wt/.claude/settings.local.json" "$AC_HOME/.claude/settings.json"
+printf '{"enabledPlugins":{"fleet":true}}\n' >"$AC_HOME/.claude/settings.json"
+seed_settings "$wt"
+assert_eq "$(cat "$wt/.claude/settings.json")" '{"enabledPlugins":{"fleet":true}}' \
+  "a real fleet settings.json override still wins"
+assert_eq "$(cat "$wt/.claude/settings.local.json")" '{"enabledPlugins":{"container-local":true}}' \
+  "... while the carrier beside it never seeds"
+rm -f "$wt/.claude/settings.json" "$wt/.claude/settings.local.json" "$(dirname "$AC_HOME")/.claude/settings.local.json"
+rm -rf "$AC_HOME/.claude"
 mkdir -p "$AC_HOME/.claude"
 rm -f "$AC_HOME/.claude/settings.json" "$(dirname "$AC_HOME")/.claude/settings.json"
 
@@ -188,10 +213,52 @@ for extra in rich-review bearings debrief; do
   fi
 done
 seeded="$(cd "$wt/.claude/skills" && printf '%s\n' * | sort | tr '\n' ' ')"
-assert_eq "$seeded" "crew-qa crew-ship crew-verify document domain-e2e " "exactly crew-ship + the direct review round + the two verification routes + document seeded"
+assert_eq "$seeded" "crew-qa crew-ship crew-verify document domain-e2e sdlc " "exactly crew-ship + the direct review round + the two verification routes + document + sdlc seeded"
 # ^ Empty learned stores are a no-op (byte-identical to today): the seeded set
 #   is exactly the three built-ins while $AC_HOME/skills and the container carry
 #   no origin: learned skills. The learned-skill tests below all run AFTER this.
+
+# A repo-shipped override reaches a codex worktree: codex scans .agents/skills
+# only, so the seed links the project's .claude/skills/<name> there instead of
+# the container/distro source; under claude that dir IS the dst and stays as
+# it is. The earlier seed linked sdlc from the distro - drop that link first,
+# or the override would be written THROUGH it into the distro's own file.
+rm -f "$wt/.claude/skills/sdlc"
+mkdir -p "$wt/.claude/skills/sdlc"
+printf 'REPO SDLC\n' >"$wt/.claude/skills/sdlc/SKILL.md"
+seed_skills "$wt" codex
+[ -L "$wt/.agents/skills/sdlc" ] || fail "codex: sdlc linked under .agents/skills"
+assert_eq "$(cat "$wt/.agents/skills/sdlc/SKILL.md")" "REPO SDLC" "codex: the repo-shipped override is the seed source"
+assert_eq "$(cat "$wt/.agents/skills/crew-ship/SKILL.md")" "CONTAINER SKILL" "codex: a name the repo does not ship keeps the container/distro source"
+seed_skills "$wt"
+[ -L "$wt/.claude/skills/sdlc" ] && fail "claude: a repo-shipped dir is never replaced by a link"
+assert_eq "$(cat "$wt/.claude/skills/sdlc/SKILL.md")" "REPO SDLC" "claude: the repo-shipped dir is the dst and stays untouched"
+rm -rf "$wt/.agents" "$wt/.claude/skills/sdlc"
+seed_skills "$wt"
+# The pool reuses slots: a codex slot seeded BEFORE the project shipped the
+# skill holds the default link, and the next seed must follow the override.
+seed_skills "$wt" codex
+assert_eq "$(cat "$wt/.agents/skills/sdlc/SKILL.md")" "$(cat "$ROOT/.agents/skills/sdlc/SKILL.md")" "codex: a slot without an override links the distro skill"
+rm -f "$wt/.claude/skills/sdlc"
+mkdir -p "$wt/.claude/skills/sdlc"
+printf 'REPO SDLC LATER\n' >"$wt/.claude/skills/sdlc/SKILL.md"
+seed_skills "$wt" codex
+assert_eq "$(cat "$wt/.agents/skills/sdlc/SKILL.md")" "REPO SDLC LATER" "codex: a reused slot is relinked to the override that appeared later"
+rm -rf "$wt/.agents" "$wt/.claude/skills/sdlc"
+seed_skills "$wt"
+# A link the PROJECT ships (git tracks it) is its own: the seed never relinks
+# it, although its target is not the seed's source.
+mkdir -p "$wt/project-skills/sdlc"
+printf 'PROJECT LINKED\n' >"$wt/project-skills/sdlc/SKILL.md"
+rm -f "$wt/.claude/skills/sdlc"
+ln -s ../../project-skills/sdlc "$wt/.claude/skills/sdlc"
+git -C "$wt" add -f project-skills .claude/skills/sdlc
+git -C "$wt" -c user.name=t -c user.email=t@example.invalid commit -qm "project skill link"
+seed_skills "$wt"
+assert_eq "$(readlink "$wt/.claude/skills/sdlc")" "../../project-skills/sdlc" "claude: a tracked project link keeps its target"
+assert_eq "$(cat "$wt/.claude/skills/sdlc/SKILL.md")" "PROJECT LINKED" "claude: ... and its content"
+git -C "$wt" reset -q --hard HEAD~1
+seed_skills "$wt"
 
 # --- ac_skills_dir: the per-fleet learned-skill store resolver -----------------
 # Mirrors ac_state_dir / ac_data_dir: returns $AC_HOME/skills and creates it.

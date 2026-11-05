@@ -1,4 +1,4 @@
-// wake-drain.test.ts - what src/wake-drain.ts brought into src/lib.ts, held to
+// wake-drain.test.ts - what src/wake-drain.ts brought into src/lib.ts and src/lib-wake-drain.ts, held to
 // the bash it twins: BUSY_RE and CAPTAIN_RE against the values bin/ac-harness.sh
 // and bin/ac-lib.sh set, metaPaths against the `"$sd"/*.meta` glob, metaIsSelf
 // against ac_meta_is_self, chiefGateParked against ac_chief_gate_parked,
@@ -16,6 +16,7 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBW = join(ROOT, "src", "lib-wake-drain.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-wake-drain-ts-")));
 afterAll(() => rmSync(W, { recursive: true, force: true }));
 const ROOTED = process.getuid?.() === 0;
@@ -35,7 +36,7 @@ function bash(script: string, env: Record<string, string>, args: string[] = [], 
 // The twins in a bun child started in ROOT.
 function twin(body: string, env: Record<string, string>, stdin: "ignore" | Buffer = "ignore"): Run {
   const r = Bun.spawnSync(
-    [process.execPath, "-e", `const L = await import(${JSON.stringify(LIB)}); const say = (s) => process.stdout.write(String(s)); ${body}`],
+    [process.execPath, "-e", `const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBW)}) }; const say = (s) => process.stdout.write(String(s)); ${body}`],
     { cwd: ROOT, env: { PATH: process.env.PATH!, LC_ALL: "C", ...env }, stdin, stdout: "pipe", stderr: "pipe" },
   );
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
