@@ -150,8 +150,11 @@
 // - The epic pass walks the tentative rows in onetrue awk's hash order,
 //   dropping as it goes, so a story whose epic row is itself dropped stays
 //   when awk reached the epic first and goes when it reached the story first.
-// - W13: AC_CURATE_STALE_DAYS (and every stale input) is read by bash
-//   arithmetic - `010` is 8 days, `08` ends the run 1, 15 digits wrap.
+// - W13: AC_CURATE_STALE_DAYS is read by strictDecimal, falling back to the
+//   documented 90 on anything else (never `010`-as-octal, never a crash on
+//   `08`, never a wrap past the safe-integer bound). Every OTHER stale input
+//   (a SKILL.md's mtime, its landed/last_seeded, an archive's mtime) is
+//   still read by bash arithmetic, unaffected by this.
 // - W16: the projects audit reads a plain dir inside any git work tree as a
 //   repo, a link to a file as an unresolved link, and `..` as the home's
 //   parent.
@@ -212,6 +215,7 @@ import {
   sha256File,
   shellStatus,
   spawnShellSync,
+  strictDecimal,
   tabFields,
   testInt,
   warn,
@@ -991,9 +995,8 @@ function overlapFlags(tsv: string): string {
 
 function curateSkillsAudit(): void {
   const now = b8(nowRaw());
-  let staleDays = b8(process.env.AC_CURATE_STALE_DAYS || "90");
-  if (!/^[0-9]+$/.test(staleDays)) staleDays = "90";
-  const window = String(BigInt.asIntN(64, arith(staleDays) * 86400n));
+  const staleDaysN = strictDecimal(b8(process.env.AC_CURATE_STALE_DAYS || "90")) ?? 90;
+  const window = String(BigInt(staleDaysN) * 86400n);
   out("== skills-audit: territory overlap + stale candidates (propose-only, never mutates) ==\n");
   const h = liveHome();
   const dirs = subst(learnedSkillDirs(h));
@@ -1023,7 +1026,7 @@ function curateSkillsAudit(): void {
     const [d, store] = tabFields(r, 2) as [string, string];
     if (d === "") continue;
     if (!skillIsStale(h, d, now, window)) continue;
-    out(`  STALE: ${subst(basename(d))} [${store}] - last landing/patch, seed, and evidence activity exceed ${staleDays}d; no pending candidate or active worktree dependency\n`);
+    out(`  STALE: ${subst(basename(d))} [${store}] - last landing/patch, seed, and evidence activity exceed ${staleDaysN}d; no pending candidate or active worktree dependency\n`);
     flagSt++;
   }
   if (flagSt === 0) out("  ok: no stale candidates under the activity, evidence, pending-candidate, and active-worktree predicates\n");

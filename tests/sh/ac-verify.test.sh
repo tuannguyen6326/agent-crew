@@ -3100,6 +3100,11 @@ XCWD=. xok codereview --repo repo --ref HEAD --base HEAD~1 --family fam --caller
 # --- 4. lock and reap_existing ----------------------------------------------
 XPLUS='mkdir -p "$XLOCK" && printf "%s\n" "$$" >"$XLOCK/pid"' XE="AC_VERIFY_LOCK_TIMEOUT=1" \
   xrefuse "verifier $XCID is already starting or running - lock holder pid $$; settle it with 'ps -p $$' before touching $XLOCK. $XCID.meta is published LATER than this lock is taken, so its absence is NOT evidence the holder died." "${XCR[@]}"
+# A malformed AC_VERIFY_LOCK_TIMEOUT (an identifier) used to never time out
+# at all (W9) - it now falls back to the documented default (10) and still
+# refuses once that grace is spent, against the SAME held lock as above.
+XPLUS='mkdir -p "$XLOCK" && printf "%s\n" "$$" >"$XLOCK/pid"' XE="AC_VERIFY_LOCK_TIMEOUT=abc" \
+  xrefuse "verifier $XCID is already starting or running - lock holder pid $$; settle it with 'ps -p $$' before touching $XLOCK. $XCID.meta is published LATER than this lock is taken, so its absence is NOT evidence the holder died." "${XCR[@]}"
 true & xdead=$!; wait "$xdead"
 XPLUS='mkdir -p "$XLOCK" && printf "%s\n" "$xdead" >"$XLOCK/pid"' xok "${XCR[@]}"
 XPLUS='mkdir -p "$XLOCK"' XE="AC_VERIFY_LOCK_TIMEOUT=1" \

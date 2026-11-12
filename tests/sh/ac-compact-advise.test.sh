@@ -220,6 +220,23 @@ assert_contains "$(jq -r .systemMessage <<<"$out")" "early-chief" "a lowered min
 for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'early-chief:' "$sendlog" 2>/dev/null && break; sleep 0.5; done
 rm -f "$AC_HOME/config/compact-auto-min"
 
+# 10c2. A leading-zero config/compact-auto-min or AC_COMPACT_WINDOW that
+#       `$(( ))` would misread (`08`) falls back to its documented default
+#       (50, 200000) instead of losing the whole message - it never silences
+#       a session outright.
+mk_chief octal-chief s-14 pC5 tC5
+printf 'idle\n' >"$FAKE_HERDR/panes/pC5.status"
+oct="$TMP/oct.jsonl"; transcript "$oct" 150000
+p14="$(jq -nc --arg p "$oct" '{session_id: "s-14", transcript_path: $p, stop_hook_active: false}')"
+printf 'on\n' >"$AC_HOME/config/compact-auto"
+printf '08\n' >"$AC_HOME/config/compact-auto-min"
+out="$(hook "$AC_HOME" "$p14" AC_SOLO=)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "octal-chief" "a leading-zero compact-auto-min falls back to 50, not silence"
+rm -f "$AC_HOME/config/compact-auto-min" "$AC_HOME/state/.compact-advise/s-14"
+out="$(hook "$AC_HOME" "$p14" AC_SOLO= AC_COMPACT_WINDOW=08)"
+assert_contains "$(jq -r .systemMessage <<<"$out")" "octal-chief" "a leading-zero AC_COMPACT_WINDOW falls back to 200000, not silence"
+rm -f "$AC_HOME/state/.compact-advise/s-14"
+
 # 10d. --auto <id>, the watcher's form for a crewmate (src/watch.ts COMPACT
 #      NOTE): at or above the minimum under compact-auto=on the line reads
 #      compact=auto and /compact is typed with NO idle wait - the watcher's

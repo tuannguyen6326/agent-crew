@@ -281,10 +281,10 @@
 //   assistant message ends the run with jq's status (2 or 5), silently.
 // - W4: every failure of ac-dispatch-select.sh (a bad --rule, broken JSON,
 //   no bun) prints the one `panes.gate is present but unresolvable` line.
-// - W5: an AC_GATE_TIMEOUT that is no arithmetic operand (`10m`, `1.5`) skips
-//   the busy declaration and the run goes on, handing the pane agent the text;
-//   one naming an unset variable (`abc`) ends the run 0 before the turn,
-//   printing nothing.
+// - W5 (fixed): AC_GATE_TIMEOUT is strictDecimal now (never bash's hex for a
+//   `0x..` form, and a refusal falls back to the documented default, 600,
+//   instead of skipping the busy declaration silently or ending the run 0
+//   before the turn on an unset-variable form like `abc`).
 // - W6: a project name that names a directory in the caller's cwd binds that
 //   directory before projects/<name>.
 // - W7: a CRLF brief keeps the CR in its `Project:` value.
@@ -319,9 +319,9 @@
 //   signalled at the marker's stamp keeps the prompt it then writes; and one
 //   signalled inside a publish write lets that write land. The run then
 //   EXITS 128+n: a parent reading the wait status sees an exit, not a signal.
-// - TIMEOUT ARITHMETIC: an AC_GATE_TIMEOUT that is a whole expression (`5*2`)
-//   skips the declaration, and one naming a variable the gate itself sets
-//   (`round`) ends the run 0.
+// - TIMEOUT ARITHMETIC (fixed): strictDecimal refuses a whole expression
+//   (`5*2`) or a bare name (`round`) the same way as any other malformed
+//   form - the documented default, never a skip or an exit 0.
 // - A BACKEND FLIPPED MID-RUN: config/backend is read when the board opens;
 //   turned invalid by then it ends the run 1, and turned orca by the exit the
 //   run's own board is still closed.
@@ -381,6 +381,7 @@ import {
   shellStatus,
   spawnShellSync,
   stateDir,
+  strictDecimal,
   tabFields,
   testInt,
   transcriptFinal,
@@ -1374,10 +1375,10 @@ async function main(): Promise<void> {
   // degrades to the fleet revoking the skip after its grace, the safe
   // direction - and a later bound already on disk is never shortened.
   if (S.busyDecl !== "") {
-    const timeout = b8(process.env.AC_GATE_TIMEOUT || "600");
+    const gateTimeoutN = strictDecimal(b8(process.env.AC_GATE_TIMEOUT || "600")) ?? 600;
     let until: bigint | null = null;
     try {
-      until = BigInt.asIntN(64, arithValue(nowRaw()) + arithValue(timeout) + 60n);
+      until = BigInt.asIntN(64, arithValue(nowRaw()) + BigInt(gateTimeoutN) + 60n);
     } catch (e) {
       if ((e as { code?: string }).code === "EUNBOUND") process.exit(0);
     }
@@ -1404,7 +1405,7 @@ async function main(): Promise<void> {
   // the pane agent reads AC_WINDOW_FAMILY on resolve.
   process.env.AC_WINDOW_FAMILY = windowFamily(u8(family));
   const helper = b8(process.env.AC_PANE_AGENT || `${STARTED_BIN}/ac-pane-agent.sh`);
-  const timeout = b8(process.env.AC_GATE_TIMEOUT || "600");
+  const timeout = String(strictDecimal(b8(process.env.AC_GATE_TIMEOUT || "600")) ?? 600);
   const judge = run(
     [helper, "run", "--exec", "--harness", engine, "--kind", "gate", "--cwd", b8(envHome()), "--prompt-file", promptf, "--label", `${family}-${stage}`, "--observe", S.obsdesc, "--timeout", timeout,
       ...(model !== "" ? ["--model", model] : []), ...(effort !== "" ? ["--effort", effort] : [])],

@@ -1,8 +1,10 @@
 // epic-branch.test.ts - the lib.ts twins src/epic-branch.ts introduced, held to
 // their bash originals differentially: epicBranchesFile against
 // ac_epic_branches_file (live first, the charset guard, the archive glob),
-// epicBranchEntry against ac_epic_branch_entry (the retired marker, awk's
-// field rejoin and its numeric ==), defaultBranch / freshestRef against their
+// epicBranchEntry against ac_epic_branch_entry for the retired marker and
+// field rejoin (its repo field is now exact STRING equality, never the bash
+// original's numeric ==, asserted explicitly rather than differentially),
+// defaultBranch / freshestRef against their
 // arms over real repos, and pushControlPlane against ac_git_push_control_plane
 // through a refusing pre-push hook. The CLI contract itself (every verb,
 // stdout, stderr, exit) is tests/sh/ac-epic-branch.test.sh's.
@@ -91,7 +93,7 @@ test("epicBranchesFile resolves where ac_epic_branches_file resolves: live first
   expect(epicBranchesFile("hidden")).toBeNull();
 });
 
-test("epicBranchEntry reads what ac_epic_branch_entry reads: first match, fields rejoined by single spaces, awk's numeric ==, the retired marker on the first line only", () => {
+test("epicBranchEntry reads what ac_epic_branch_entry reads: first match, fields rejoined by single spaces, the retired marker on the first line only", () => {
   const h = freshHome();
   record(h, "plain", "proj epic/eppy push=yes\nlocalonly epic/eppy\nproj epic/second\n");
   record(h, "blanks", "proj   epic/x\t push=yes  \n\tproj2\tepic/t\tpush=yes\n\nproj3 epic/cr\r\nbare\nbare2   \n");
@@ -99,10 +101,9 @@ test("epicBranchEntry reads what ac_epic_branch_entry reads: first match, fields
   record(h, "nonl", "proj epic/nt");
   record(h, "retired", "# retired 2026-01-01T00:00:00Z\nproj epic/r\n");
   record(h, "later", "# note\n# retired 2026-01-01T00:00:00Z\nproj epic/z\n");
-  record(h, "numeric", "07 epic/a\n7 epic/b\n1e2 epic/c\n+7 epic/d\n.5 epic/g\ninf epic/i\n+inf epic/j\nnan epic/k\n7e epic/n\n0x7 epic/f\n");
   record(h, "archive/2026/arch", "proj epic/arch\n");
   const repos = ["proj", "localonly", "proj2", "proj3", "bare", "bare2", "#", "nosuch", "", "7", "07", "100", "1e2", " 7", "7 ", "7.0", "+7", "0.5", ".5", "0x7", "7.5e-1", "nan", "-nan", "inf", "+inf", "-inf", "Infinity", "7e", "1e", "1_0"];
-  for (const epic of ["plain", "blanks", "comment", "nonl", "retired", "later", "numeric", "arch", "missing"]) {
+  for (const epic of ["plain", "blanks", "comment", "nonl", "retired", "later", "arch", "missing"]) {
     for (const repo of repos) {
       const want = bashLib("ac_epic_branch_entry", [epic, repo]);
       const got = epicBranchEntry(epic, repo);
@@ -115,14 +116,36 @@ test("epicBranchEntry reads what ac_epic_branch_entry reads: first match, fields
   expect(epicBranchEntry("blanks", "bare")).toEqual({ rc: 1 });
   expect(epicBranchEntry("retired", "proj")).toEqual({ rc: 2 });
   expect(epicBranchEntry("later", "proj")).toEqual({ rc: 0, entry: "epic/z" });
-  expect(epicBranchEntry("numeric", "7")).toEqual({ rc: 0, entry: "epic/a" });
-  expect(epicBranchEntry("numeric", "1e2")).toEqual({ rc: 0, entry: "epic/c" });
-  expect(epicBranchEntry("numeric", "0x7")).toEqual({ rc: 0, entry: "epic/a" });
-  expect(epicBranchEntry("numeric", "nan")).toEqual({ rc: 0, entry: "epic/a" });
-  expect(epicBranchEntry("numeric", "7.5e-1")).toEqual({ rc: 0, entry: "epic/k" });
-  expect(epicBranchEntry("numeric", "+inf")).toEqual({ rc: 0, entry: "epic/j" });
   expect(epicBranchEntry("missing", "proj")).toEqual({ rc: 1 });
 }, 30_000); // ~5 s of bash probes under load - past bun's 5 s default
+
+// Asserted explicitly, not against the bash original: its repo field reads
+// exact STRING equality now, so a numeric lookalike (`07`, `0x7`, `+7`, a
+// leading-dot or trailing-e form, `nan`, `inf`) answers only for its own
+// literal spelling, never for another row awk's numeric == would have
+// equated it with.
+test("epicBranchEntry's repo field is exact string equality, never awk's numeric ==", () => {
+  const h = freshHome();
+  record(h, "numeric", "07 epic/a\n7 epic/b\n1e2 epic/c\n+7 epic/d\n.5 epic/g\ninf epic/i\n+inf epic/j\nnan epic/k\n7e epic/n\n0x7 epic/f\n");
+  const want: Record<string, { rc: 0 | 1; entry: string }> = {
+    "07": { rc: 0, entry: "epic/a" },
+    "7": { rc: 0, entry: "epic/b" },
+    "1e2": { rc: 0, entry: "epic/c" },
+    "+7": { rc: 0, entry: "epic/d" },
+    ".5": { rc: 0, entry: "epic/g" },
+    inf: { rc: 0, entry: "epic/i" },
+    "+inf": { rc: 0, entry: "epic/j" },
+    nan: { rc: 0, entry: "epic/k" },
+    "7e": { rc: 0, entry: "epic/n" },
+    "0x7": { rc: 0, entry: "epic/f" },
+  };
+  const repos = ["proj", "", "7", "07", "100", "1e2", " 7", "7 ", "7.0", "+7", "0.5", ".5", "0x7", "7.5e-1", "nan", "-nan", "inf", "+inf", "-inf", "Infinity", "7e", "1e", "1_0"];
+  for (const repo of repos) {
+    const w = want[repo] ?? { rc: 1 as const, entry: "" };
+    const got = epicBranchEntry("numeric", repo);
+    expect({ repo, rc: got.rc, entry: got.rc === 0 ? got.entry : "" }).toEqual({ repo, rc: w.rc, entry: w.entry });
+  }
+});
 
 test("defaultBranch and freshestRef answer every arm ac_default_branch and ac_freshest_ref answer", () => {
   const h = freshHome();

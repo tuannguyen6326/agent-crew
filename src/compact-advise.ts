@@ -66,9 +66,9 @@
 // AUTO. config/compact-auto=on (default off) turns the advice into the act for
 // a session that owns a task meta (the first `state/*.meta` in byte order
 // holding the exact line `session_id=<id>`, i.e. a roomchief) once usage
-// reaches config/compact-auto-min percent (default 50; `tokens*100 >=
-// min*window` in `$(( ))`, so a leading zero reads octal there); below it the
-// advice stays a hint. Upstream has no such minimum (product-contract.md:
+// reaches config/compact-auto-min percent (default 50; strictDecimal, so a
+// leading zero reads decimal and a refusal falls back to the default rather
+// than disabling the bound); below it the advice stays a hint. Upstream has no such minimum (product-contract.md:
 // "Auto is not a higher bar"), but a roomchief burning 150k tokens per quarter
 // hour cleared the 0.86 floor at 18% of a 1M window three times in 45 minutes
 // - a compaction every 15-27 minutes. The hook detaches `nohup
@@ -101,8 +101,7 @@
 // stands, so a waiting sender would never reach the pane. bin/ac-send.sh's
 // own fail-closed refusals (src/send.ts) still stand, and land in send.log as
 // `send failed`. Anything short of the act - the knob not `on`, usage under
-// the minimum, a minimum `$(( ))` cannot read, a send.log that cannot be
-// opened - prints the `compact=advise` hint. A compaction drops usage under
+// the minimum - prints the `compact=advise` hint. A compaction drops usage under
 // the minimum, so the next quiet wake's advice is a hint again, never a loop.
 // A chief steering that pane in the seconds the sender is typing can
 // interleave with /compact - the class of risk the captain took above.
@@ -113,9 +112,6 @@
 // AT PARITY with the bash original (each until its own fix lands):
 // - W1: `--send` for a meta whose backend= is no supported backend ends 1
 //   with the backend refusal (the hook shim folds that status to 0);
-// - W2: a leading-zero config/compact-window or compact-auto-min reads
-//   decimal to awk and octal to `$(( ))` - `08` there ends the hook silent,
-//   with no systemMessage;
 // - W3: under a comma-decimal LC_NUMERIC awk's `0,7500` is no JSON number and
 //   nothing is advised;
 // - a judgment's mark write that fails ends the hook before its message.
@@ -137,7 +133,7 @@
 // line; the hook itself for `--send`, the CLI's AUTO for `--send <id> --now`.
 
 import { closeSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
-import { arithValue, backendAgentIdle, commandV, configReadSoft, enterCaller, hookPayload, physicalDir, shellStatus, softSubdir, spawnShell, spawnShellSync, STARTED_BIN, taskBackend, testInt } from "./lib.ts";
+import { arithValue, backendAgentIdle, commandV, configReadSoft, enterCaller, hookPayload, physicalDir, shellStatus, softSubdir, spawnShell, spawnShellSync, STARTED_BIN, strictDecimal, taskBackend, testInt } from "./lib.ts";
 
 const { args, atCaller } = enterCaller(process.argv.slice(2));
 const caller = process.argv[2] ?? "";
@@ -206,7 +202,8 @@ function contextTokens(tx: string): string {
 
 function windowSize(): string {
   const w = process.env.AC_COMPACT_WINDOW ? lat(process.env.AC_COMPACT_WINDOW) : config("compact-window", "200000");
-  return w === "" || /[^0-9]/.test(w) || w === "0" ? "200000" : w;
+  const n = strictDecimal(w);
+  return n === null || n === 0 ? "200000" : String(n);
 }
 
 function stateText(tx: string): string {
@@ -235,24 +232,19 @@ function judge(tx: string, role: string, tokens: string): string {
 }
 
 // config/compact-auto=on at or above config/compact-auto-min percent of the
-// window; null where `$(( ))` could not read a knob (the original's
-// substitution failed and its ERR trap ended the hook).
-function autoDue(tokens: string): boolean | null {
+// window; a compact-auto-min strictDecimal refuses falls back to its
+// documented default (50) rather than disabling the bound.
+function autoDue(tokens: string): boolean {
   if (config("compact-auto", "off") !== "on") return false;
-  let min = config("compact-auto-min", "50");
-  if (min === "" || /[^0-9]/.test(min)) min = "50";
-  try {
-    return BigInt.asIntN(64, arithValue(tokens) * 100n) >= BigInt.asIntN(64, arithValue(min) * arithValue(windowSize()));
-  } catch {
-    return null;
-  }
+  const min = strictDecimal(config("compact-auto-min", "50")) ?? 50;
+  const t = strictDecimal(tokens);
+  if (t === null) return false;
+  return t * 100 >= min * Number(windowSize());
 }
 
-// The task whose meta records this session once AUTO is due; "" otherwise;
-// null as autoDue's.
-function autoTarget(sid: string, tokens: string): string | null {
-  const due = autoDue(tokens);
-  if (due !== true) return due === null ? null : "";
+// The task whose meta records this session once AUTO is due; "" otherwise.
+function autoTarget(sid: string, tokens: string): string {
+  if (!autoDue(tokens)) return "";
   const sd = softSubdir("state", false);
   let names: string[] = [];
   try {
@@ -341,8 +333,8 @@ function hook(): void {
     last = cap(readFileSync(mark).toString("latin1"));
   } catch {}
   if (last === "" || /[^0-9]/.test(last)) last = "-1";
-  const s = testInt(step);
-  const l = testInt(last);
+  const s = strictDecimal(step);
+  const l = last === "-1" ? -1 : strictDecimal(last);
   if (s !== null && l !== null && s < l) {
     try {
       writeFileSync(mark, `${step}\n`, { encoding: "latin1" });
@@ -362,7 +354,6 @@ function hook(): void {
   }
   let act = "Run /compact to save context";
   const id = autoTarget(sid, tokens);
-  if (id === null) process.exit(0);
   if (id !== "") {
     detachSend(dir, nat(id), false);
     act = `/compact is typed into ${id} if its pane goes idle within ~10s, otherwise run /compact yourself (outcome: state/.compact-advise/send.log)`;

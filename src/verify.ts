@@ -232,7 +232,8 @@
 //   link planted there mid-round has its target overwritten.
 // - W7: AC_FINDINGS_ROUND / AC_FINDINGS_DELTA / AC_FINDINGS_PRIOR_OPEN in the
 //   caller's environment reach the normalizer and can floor a round.
-// - W9: an AC_VERIFY_LOCK_TIMEOUT that is no integer never times out.
+// - W9 (fixed): AC_VERIFY_LOCK_TIMEOUT is strictDecimal now, falling back to
+//   the documented default (10) on a refusal instead of never timing out.
 // - W10: every path in the generated scout scripts is embedded raw, so a
 //   spaced home breaks the launch and the collector.
 // - W11: a homeless family-of-id error from the window-family ladder is
@@ -321,6 +322,7 @@ import {
   spawnShell,
   spawnShellSync,
   stateDir,
+  strictDecimal,
   tabFields,
   taskDir,
   testInt,
@@ -1744,11 +1746,12 @@ async function main(argv: string[]): Promise<void> {
   S.paneHandle = `${stateDirP}/.pane-${id}`;
   S.lock = `${stateDirP}/.verify-${caller}-${kind}.lock.d`;
   // ac_lock_acquire's loop, its foreground `sleep 1` awaited so a signal is
-  // acted on inside the wait; a timeout `[` cannot read never times out (W9).
-  const lt = testInt(b8(process.env.AC_VERIFY_LOCK_TIMEOUT || "10"));
+  // acted on inside the wait; a refusal falls back to the documented
+  // default (10) rather than never timing out (W9 fixed).
+  const lt = BigInt(strictDecimal(b8(process.env.AC_VERIFY_LOCK_TIMEOUT || "10")) ?? 10);
   let waited = 0n;
   let got = lockAcquire(u8(S.lock), 0);
-  while (!got && (lt === null || waited < lt)) {
+  while (!got && waited < lt) {
     await fgSleep("1", 130);
     waited++;
     got = lockAcquire(u8(S.lock), 0);

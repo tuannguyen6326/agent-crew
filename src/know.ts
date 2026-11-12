@@ -267,11 +267,13 @@
 // on stderr `cite: warning - <q> also matches a SUPERSEDED entry; heat is
 // bumped on the live match only:` and the lines, and goes on. No ` | by: ` in
 // the target is `cite: matched entry carries no '| by:' field - not a grammar
-// line this verb can bump: <line>`; a heat that is not all digits is `cite:
-// malformed heat field on the matched entry (got: '| heat: <h>'): <line>`.
-// The new line is `<before the last heat> | heat: <h+1> | by: <family>` - the
-// sum is bash's `$((h + 1))` (W13: 010 is octal, 08 ends the run 1 with the
-// lock held, int64 wraps) - or `<before the last by> | heat: 1 | by:
+// line this verb can bump: <line>`; a heat strictDecimal refuses (not all
+// digits, or past the safe-integer bound) is `cite: malformed heat field on
+// the matched entry (got: '| heat: <h>'): <line>`, the lock released first
+// (W13 fixed: `010` used to be bash's octal, `08` threw with the lock left
+// held, and a huge value wrapped int64 - now `010` is ten and anything that
+// would wrap is refused instead). The new line is `<before the last heat> |
+// heat: <h+1> | by: <family>` - or `<before the last by> | heat: 1 | by:
 // <family>`; it replaces the FIRST equal live line where it stands. Stdout
 // the new line, then `cited in <rec>`.
 // RECALL: the words and the flags in any order; `--` ends the flags (the rest
@@ -410,10 +412,10 @@
 //   temp is never written through and scope-install keeps the record's mode.
 //   Nothing goes to TMPDIR at all, so a run that ends early leaves no temp
 //   there.
-// - No stderr but the texts above: heat 08 (W13), an --apps with no
-//   first-line field and an unreadable scene end on their status alone, and
-//   an unreadable record (W9) verifies nothing; a relative AC_HOME under an
-//   exported CDPATH stays the home.
+// - No stderr but the texts above: an --apps with no first-line field and
+//   an unreadable scene end on their status alone, and an unreadable record
+//   (W9) verifies nothing; a relative AC_HOME under an exported CDPATH
+//   stays the home.
 // - LOCK GRACE: a pid-less lock's age is read from the clock.
 // - BUN: without bun the shim refuses `ERROR: required tool not found: bun`.
 // - A caller whose cwd has no name resolves no relative --repo or AC_HOME.
@@ -431,7 +433,6 @@
 import { closeSync, fchmodSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import {
   STARTED_BIN,
-  arithValue,
   die,
   enterCaller,
   exclusiveTemp,
@@ -447,6 +448,7 @@ import {
   shellSpaceClass,
   shellStatus,
   spawnShellSync,
+  strictDecimal,
   tabFields,
   testInt,
   writeAll,
@@ -941,18 +943,12 @@ function cmdCite(args: string[]): void {
   const hi = prefix.lastIndexOf(" | heat: ");
   if (hi >= 0) {
     const h = prefix.slice(hi + 9);
-    if (h === "" || /[^0-9]/.test(h)) {
+    const n = strictDecimal(h);
+    if (n === null) {
       unlock(a.l);
       fail(`cite: malformed heat field on the matched entry (got: '| heat: ${h}'): ${t}`);
     }
-    let n: bigint;
-    try {
-      n = arithValue(h);
-    } catch {
-      // bash's arithmetic error ended the run here, the lock still held.
-      process.exit(1);
-    }
-    line = `${prefix.slice(0, hi)} | heat: ${BigInt.asIntN(64, n + 1n)} | by: ${byval}`;
+    line = `${prefix.slice(0, hi)} | heat: ${n + 1} | by: ${byval}`;
   } else line = `${prefix} | heat: 1 | by: ${byval}`;
   a.s.live[a.s.live.indexOf(t)] = line;
   writeRecord(rec, name, a.s);

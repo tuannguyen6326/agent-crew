@@ -1093,6 +1093,33 @@ assert_contains "$(cat "$armlog")" " < $selfpid(" "... and names the parent that
 assert_contains "$(cat "$armlog")" "signal:TERM" "the kill itself is logged beside the arm - the trail is the evidence"
 assert_contains "$(cat "$TMP/sig.err")" "arm pid=$wpid" "attribution is echoed to stderr for the pane"
 
+# (7b) A malformed AC_ARMLOG_KEEP (an identifier) used to throw out of the
+# arm-log write and end the whole run at exit 0 right there - a watcher that
+# looks armed (its lock held, its attribution line written) but never
+# reaches its poll wait, so nothing is actually supervised. It now falls
+# back to the documented default (200) and polls normally.
+rm -f "$state"/.last-watcher-beat* "$state/.watcher-arm.log"
+AC_LOCK_PID=$$ AC_POLL=30 AC_HEARTBEAT=300 AC_ARMLOG_KEEP=abc bash "$BIN/ac-watch.sh" \
+  >"$TMP/armkeep.out" 2>/dev/null &
+wpid=$!
+in_poll_wait "$wpid" "$state/.last-watcher-beat" >/dev/null \
+  || fail "a malformed AC_ARMLOG_KEEP must not stop the watcher short of its poll wait"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null || true
+rm -f "$state"/.last-watcher-beat* "$state/.watcher-arm.log"
+
+# (7c) A malformed AC_POLL (an identifier real `sleep` refuses) spun the
+# loop at full speed instead of waiting for it - it now falls back to the
+# documented default (15) instead of a failing literal `sleep abc`.
+AC_LOCK_PID=$$ AC_POLL=abc AC_HEARTBEAT=300 bash "$BIN/ac-watch.sh" \
+  >"$TMP/pollknob.out" 2>/dev/null &
+wpid=$!
+sp="$(in_poll_wait "$wpid" "$state/.last-watcher-beat")" \
+  || fail "a malformed AC_POLL must still reach a real poll wait (the fallback default), not spin"
+assert_contains "$(ps -p "$sp" -o args= 2>/dev/null)" "sleep 15" \
+  "a malformed AC_POLL falls back to its documented default (15), never a failing literal sleep"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null || true
+rm -f "$state"/.last-watcher-beat* "$state/.watcher-arm.log"
+
 # INT runs the same handler, printing its own name. Job control is REQUIRED to
 # test it: a shell backgrounding a job WITHOUT job control must set SIGINT to
 # SIG_IGN in that child (POSIX), and a signal ignored on entry can never be

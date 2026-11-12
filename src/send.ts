@@ -135,10 +135,11 @@
 //     order. The prefix cannot false-wake a watcher - AC_CAPTAIN_RE needs a
 //     marker VERB right after its tolerated prefix class. Its home comes from
 //     the routing table: deputyParse (src/lib.ts, ac_deputy_parse's awk) fed
-//     to `awk -F'\t' -v i=<id> '$1 != "INVALID" && $2 == i { print $3; exit
-//     }'` - awk's == is numeric where both sides look numeric, so id 07 reads
-//     registry entry 7 (W4) - and either awk failing (the parse aborts on a
-//     byte that is not UTF-8 under a UTF-8 locale) ends the run with the
+//     to `awk -F'\t' -v i=<id> '$1 != "INVALID" && $2 "" == i "" { print $3;
+//     exit }'` - the concatenation forces a plain STRING ==, never awk's
+//     numeric one (id 07 reads its own registry entry, never 7's, W4 fixed)
+//     - and either awk failing (the parse aborts on a byte that is not
+//     UTF-8 under a UTF-8 locale) ends the run with the
 //     rightmost failing status, awk's own line on stderr. Refused BEFORE
 //     delivery, since an unmarked or misaddressed order is worse than a failed
 //     one: no home found is `ERROR: <id> is a crewdeputy with no parseable
@@ -387,7 +388,7 @@ if (rest[0] === "--key") {
   if (kind === "crewdeputy") {
     const parse = deputyParse();
     const parsed = parse === null ? { status: 0, out: Buffer.alloc(0) } : run(parse, "inherit");
-    const found = run(["awk", "-F\\t", "-v", `i=${id}`, '$1 != "INVALID" && $2 == i { print $3; exit }'], parsed.out);
+    const found = run(["awk", "-F\\t", "-v", `i=${id}`, '$1 != "INVALID" && $2 "" == i "" { print $3; exit }'], parsed.out);
     if (found.status !== 0 || parsed.status !== 0) process.exit(found.status || parsed.status);
     const depHome = subst(found.out);
     if (depHome === "")

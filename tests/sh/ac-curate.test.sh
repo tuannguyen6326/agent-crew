@@ -1387,6 +1387,20 @@ xok skills-audit
 XENV=()
 assert_eq "$(xstale)" "st-bare st-done st-evidence st-fresh st-old st-seeded st-unquoted " "7: AC_CURATE_STALE_DAYS=0 - only a pending candidate, an active worktree and no landed hold"
 
+# 7b. AC_CURATE_STALE_DAYS is read by strictDecimal: a leading-zero value
+#     stays decimal (never bash's octal) and a malformed one never crashes
+#     the whole audit (W13). st-eight sits exactly 9 days before "now".
+xskill st-eight 'solitary numeric knob' 1766448000
+touch -t "$(date -r 1766448000 +%Y%m%d%H%M.%S)" "$H/home/skills/st-eight/SKILL.md"
+XENV=(AC_CURATE_STALE_DAYS=08)
+xok skills-audit
+XENV=()
+assert_contains "$(xstale)" "st-eight" "7b: AC_CURATE_STALE_DAYS=08 reads decimal 8 (9 days old is stale), never an arithmetic crash"
+XENV=(AC_CURATE_STALE_DAYS=010)
+xok skills-audit
+XENV=()
+case "$(xstale)" in *st-eight*) fail "7b: AC_CURATE_STALE_DAYS=010 read as octal 8 wrongly marks a 9-day-old skill stale" ;; esac
+
 # 8. skills-consolidate: no cluster with --apply; umbrella-less groups (one
 #    with an empty prefix); byte order under en_US.UTF-8.
 xstd

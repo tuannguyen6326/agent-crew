@@ -650,12 +650,13 @@
 // - W3: the NDJSON events are built by raw interpolation, so a `"`, `\` or a
 //   control byte in a path, label, pane id or config value yields a line jq
 //   cannot parse (fail()'s refusals are jq-encoded).
-// - W4: the octal reading of a leading-0 --timeout (`010` is 8 s; `08` ends the
-//   run exit 1, nothing printed, after the pane or rung is placed and left
-//   running), and `0` or a negative one is an immediate timeout.
-// - W5: a non-integer AC_PANE_STALL_MAX turns the stall bound off, a
-//   non-integer AC_PANE_SETTLE_TRIES the settle re-reads (the test builtin's
-//   own line is not printed - SHELL-OWN below).
+// - W4 (fixed): --timeout is strictDecimal on its digits (sign reapplied
+//   after) - `010` is ten, `08` eight, decimal either way, refused before
+//   any pane or rung is placed only if it is not a whole number at all;
+//   `0` or a negative one is still an immediate timeout.
+// - W5 (fixed): AC_PANE_STALL_MAX and AC_PANE_SETTLE_TRIES are strictDecimal,
+//   falling back to their documented default (2700, 6) on a refusal rather
+//   than disabling the stall bound or the settle re-reads.
 // - W6: the info/exclude append glues onto an unterminated last line.
 // - W8: raw calls name `--session <s>` with the literal `default` when nothing
 //   is set, while the bounded herdr calls name no session then.
@@ -749,6 +750,7 @@ import {
   shellStatus,
   spawnShell,
   spawnShellSync,
+  strictDecimal,
   tabFields,
   testInt,
   writeAll,
@@ -1558,6 +1560,12 @@ async function run(args: string[]): Promise<never> {
   if (OBSERVE && !execArm) fail("--observe is only valid with --exec (the one-shot arm)");
   if (KIND === "" || /[^a-z0-9-]/.test(KIND)) fail(`kind must be [a-z0-9-]: ${KIND}`);
   if (!/^[+-]?[0-9]+$/.test(TIMEOUT)) fail(`timeout must be a whole number of seconds: ${TIMEOUT}`);
+  // strictDecimal on the digits alone: a leading zero is decimal (never
+  // bash's octal), refused BEFORE any pane or rung is placed - the sign
+  // (0 or negative is an immediate timeout, W4) is reapplied after.
+  const timeoutAbs = strictDecimal(TIMEOUT.replace(/^[+-]/, ""));
+  if (timeoutAbs === null) fail(`timeout must be a whole number of seconds: ${TIMEOUT}`);
+  const TIMEOUT_SECS = BigInt(TIMEOUT[0] === "-" ? -timeoutAbs : timeoutAbs);
 
   const ku = KIND.toUpperCase().replaceAll("-", "_");
   const env = (name: string): string => process.env[name] ?? "";
@@ -1847,9 +1855,9 @@ async function run(args: string[]): Promise<never> {
   const waitStart = dateS();
   let deadline: string | null = null;
   try {
-    deadline = String(BigInt.asIntN(64, arithValue(waitStart) + arithValue(TIMEOUT)));
+    deadline = String(BigInt.asIntN(64, arithValue(waitStart) + TIMEOUT_SECS));
   } catch {}
-  // A deadline the shell's arithmetic refused (`08`) left it unset, and the
+  // A deadline the clock's own arithmetic refused left it unset, and the
   // first read of it ended the run under set -u.
   const dl = (): string => deadline ?? process.exit(1);
 
@@ -2004,9 +2012,9 @@ async function run(args: string[]): Promise<never> {
   // flushed line can still be the tool_use before the text for a beat: re-read
   // a few times before believing the turn stopped without a final message.
   const finalSettles = (): boolean => {
+    const tries = BigInt(strictDecimal(process.env.AC_PANE_SETTLE_TRIES || "6") ?? 6);
     for (let i = 0n; ; i++) {
-      const tries = testInt(process.env.AC_PANE_SETTLE_TRIES || "6");
-      if (tries === null || i >= tries) break;
+      if (i >= tries) break;
       if (finalHasText()) return true;
       pause(process.env.AC_PANE_SETTLE_SLEEP || "0.5");
       announce();
@@ -2122,7 +2130,7 @@ async function run(args: string[]): Promise<never> {
         }
       }
     }
-    const stallMax = process.env.AC_PANE_STALL_MAX || "2700";
+    const stallMax = String(strictDecimal(process.env.AC_PANE_STALL_MAX || "2700") ?? 2700);
     if (TRANSCRIPT && test(stallMax, "-gt", "0")) {
       let mt = fileMtime(TRANSCRIPT) ?? "0";
       if (!test(mt, "-ge", waitStart)) mt = waitStart;

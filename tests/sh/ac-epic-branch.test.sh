@@ -462,6 +462,12 @@ run create eppy ghost
 assert_eq "$(shim_err)" "ERROR: no project clone at projects/ghost" "no clone"
 run verify eppy ghost
 assert_eq "$(shim_err)" "ERROR: no project clone at projects/ghost" "verify needs the clone too"
+# 4b. the record's repo field is matched by STRING equality, never awk's
+#     numeric == - repo "7" must read its OWN row, never an earlier "07" row.
+rec numrepo '07 epic/zero7\n7 epic/seven\n'
+mkrepo "$H/projects/7" main
+run verify numrepo 7
+assert_eq "$(shim_err)" "ERROR: verify: epic/seven does not exist in 7 - create it (ac-epic-branch.sh create numrepo 7) before any story spawns against it" "repo '7' reads its OWN row, never the '07' row"
 # 5. verify: quiet green, red once the branch is gone, on origin and locally
 run verify eppy proj
 assert_eq "$(shim_out)$(shim_err)" "" "verify prints nothing on success"

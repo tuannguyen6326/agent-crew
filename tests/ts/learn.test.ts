@@ -179,8 +179,11 @@ test("learnTick: under the cadence lock, the migrate, generation kept and debrie
   expect(tick((s) => STATE(s, ".learn.meta", "last_run=1\ngeneration=3\ndebriefs=4\nother=x\n"))).toEqual(counted("last_run=1\nother=x\ngeneration=3\ndebriefs=5\n"));
   expect(tick((s) => STATE(s, ".learn.meta", "generation=1\nstows=6\nlast_run=2\n"))).toEqual(counted("last_run=2\ngeneration=1\ndebriefs=7\n"));
   expect(tick((s) => STATE(s, ".learn.meta", "stows=6\ndebriefs=2\n"))).toEqual(counted("generation=0\ndebriefs=3\n"));
-  expect(tick((s) => STATE(s, ".learn.meta", "debriefs=010\n"))).toEqual(counted("generation=0\ndebriefs=9\n"));
-  expect(tick((s) => STATE(s, ".learn.meta", "debriefs=08\n"))).toEqual({ out: "|rc=throw:EARITH", err: "", [META]: "debriefs=08\ngeneration=0\n", [LOCK]: "<dir>", "sleep.log": null });
+  // strictDecimal: 010 is decimal ten (never bash's octal eight), and 08
+  // (no valid base-8 digit, previously an uncaught throw that left the
+  // cadence lock held) is decimal eight - both count cleanly, lock released.
+  expect(tick((s) => STATE(s, ".learn.meta", "debriefs=010\n"))).toEqual(counted("generation=0\ndebriefs=11\n"));
+  expect(tick((s) => STATE(s, ".learn.meta", "debriefs=08\n"))).toEqual(counted("generation=0\ndebriefs=9\n"));
   expect(tick((s) => STATE(s, ".learn-cadence.lock/pid", `${process.pid}\n`))).toEqual({
     out: "|rc=1",
     err: "WARN: learning tick: cadence lock S/home/state/.learn-cadence.lock could not be acquired within 10s - the debrief counter was NOT advanced. Missing a tick only delays the next distill (the LEVEL trigger still fires); it never loses a landing outright, but a caller that assumes success will believe the counter moved when it did not.\n",

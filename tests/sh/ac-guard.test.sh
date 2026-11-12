@@ -80,6 +80,14 @@ assert_eq "$out" "" "beacon within grace is fine"
 out="$(AC_GUARD_QUIET=0 AC_GUARD_GRACE=0 guard)"
 assert_contains "$out" "WATCHER-DOWN" "an explicit tighter grace still fires"
 
+# -- a malformed AC_GUARD_QUIET falls back to its documented default (60), ------
+# -- never disabling suppression outright ---------------------------------------
+rm -f "$AC_HOME/state/.guard-stamp" "$AC_HOME/state/.last-watcher-beat"
+out="$(guard)"
+assert_contains "$out" "WATCHER-DOWN" "seed the stamp under the default quiet window"
+out="$(AC_GUARD_QUIET=abc guard)"
+assert_eq "$out" "" "a malformed AC_GUARD_QUIET still suppresses the immediate repeat"
+
 # -- tangle: distro checkout on a non-default branch -----------------------------
 git -C "$root_repo" checkout -qb feature-x
 out="$(AC_GUARD_QUIET=0 guard)"
@@ -448,16 +456,17 @@ kind=self\nkind=ship\n|$WD
 kind=ship\nkind=self\n|
 EOF
 
-# 5. the grace in `[ -gt ]`'s grammar, a beacon 400 s old: blanks, a sign and
-#    a leading zero are decimal numbers, and an empty string is the default 300.
+# 5. the grace by strictDecimal, a beacon 400 s old: blanks and a sign are
+#    refused and fall back to the default 300 (never disabling the bound), a
+#    leading zero stays a decimal number, and an empty string is the default.
 fresh; crew; beat "$((T - 400))"
 while IFS='|' read -r gr want <&3; do
   GD_ENV=("AC_GUARD_QUIET=0" "AC_GUARD_GRACE=$gr")
   says "$want"
 done 3<<EOF
- 600 |
+ 600 |$WD
  399 |$WD
-+600|
++600|$WD
 +399|$WD
 010|$WD
 -5|$WD
@@ -467,8 +476,9 @@ done 3<<EOF
 EOF
 GD_ENV=()
 
-# 6. the quiet window in `[ -lt ]`'s grammar, the same sig stamped 9 s ago:
-#    empty is the default 60, and 010 is ten.
+# 6. the quiet window by strictDecimal, the same sig stamped 9 s ago: empty,
+#    a blank-padded or signed value all fall back to the default 60 (which
+#    still suppresses at 9 s in), and 010 is ten.
 while IFS='|' read -r q want <&3; do
   fresh; crew; stampf "sig= watcher-down\nat=$((T - 9))\n"
   GD_ENV=("AC_GUARD_QUIET=$q")

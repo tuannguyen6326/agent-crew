@@ -324,13 +324,9 @@ export type EpicBranchEntry = { rc: 0; entry: string } | { rc: 1 | 2 };
 // ac_epic_branch_entry's twin: `<branch> [key=value ...]` for <repo>, rc 1 for
 // no record or no entry (a record this process cannot read included), rc 2
 // when the FIRST line starts with `# retired`. The record is bytes (latin1 in,
-// the entry latin1 out; <repo> is compared as its bytes). The reader is awk's
-// `$1==r { $1=""; sub(/^ /, ""); print; exit }`, reproduced quirks and all -
-// fields split on runs of space/TAB with the ends trimmed and rejoined by
-// single spaces, and `==` numeric when both sides read as numbers (`07` is
-// `7`, `1e2` is `100`, nan equals everything) - because the bash reader stays
-// live under ac_epic_base_for (ac-backend-orca, ac-spawn) and the
-// two must never disagree about one record.
+// the entry latin1 out; <repo> is compared as its bytes, exact STRING
+// equality - a repo literally named `07` is never `7`'s row) - fields split
+// on runs of space/TAB with the ends trimmed and rejoined by single spaces.
 export function epicBranchEntry(epic: string, repo: string): EpicBranchEntry {
   const f = epicBranchesFile(epic);
   if (f === null) return { rc: 1 };
@@ -342,13 +338,9 @@ export function epicBranchEntry(epic: string, repo: string): EpicBranchEntry {
   }
   if (text.split("\n")[0]!.startsWith("# retired")) return { rc: 2 };
   const r = Buffer.from(repo, "utf8").toString("latin1");
-  const rn = awkNumber(r);
   for (const line of text.split("\n")) {
     const fields = line.replace(/^[ \t]+|[ \t]+$/g, "").split(/[ \t]+/);
-    const first = fields[0]!;
-    const fn = rn === null ? null : awkNumber(first);
-    const hit = fn !== null && rn !== null ? !(fn < rn) && !(fn > rn) : first === r;
-    if (!hit) continue;
+    if (fields[0]! !== r) continue;
     const entry = fields.slice(1).join(" ");
     return entry === "" ? { rc: 1 } : { rc: 0, entry };
   }
@@ -2022,6 +2014,15 @@ export function roomPendingLines(file: string): string | null {
 // interpreter can start.
 export { awkNumber, launchable };
 
+// A numeric knob, counter, id or stamp, read as ASCII decimal only - no
+// octal, no hex, no float, no sign, no wrap: leading zeros are decimal
+// (`010` is ten), and null refuses rather than silently disabling a bound.
+export function strictDecimal(s: string, max: number = Number.MAX_SAFE_INTEGER): number | null {
+  if (!/^[0-9]+$/.test(s)) return null;
+  const n = Number(s);
+  return n <= max ? n : null;
+}
+
 // --- guard twins ---
 
 // An operand of bash 3.2's `[ a -gt b ]` (legal_number, strtoimax in base 10):
@@ -2093,14 +2094,15 @@ export function arithValue(text: string): bigint {
   return BigInt.asIntN(64, neg ? -v : v);
 }
 
-// ac_watcher_down's twin (bin/ac-wake-lib.sh), behind the guard's
-// WATCHER-DOWN: supervision is owed when
+// ac_watcher_down's twin (bin/ac-wake-lib.sh, frozen - no live caller past
+// it), behind the guard's WATCHER-DOWN: supervision is owed when
 // crewMetas(sd, "verify", "self") lists a path - a roomchief, a crewdeputy, a
 // kind-less meta and `kind=self\r` count - and the watcher is down when
-// `$(( <nowRaw> - <beat> ))`, beat the scope's beacon (watcherBeatRead), is
-// `[ -gt ]` AC_GUARD_GRACE (unset or empty: 300; testInt's grammar, no number
-// never down). The clock text's EARITH discarded the caller's whole command:
-// not down. EUNBOUND is thrown, the caller's script having ended there.
+// `$(( <nowRaw> - <beat> ))`, beat the scope's beacon (watcherBeatRead),
+// exceeds AC_GUARD_GRACE (strictDecimal; a refusal falls back to the
+// documented default 300 rather than disabling the bound). The clock text's
+// EARITH discarded the caller's whole command: not down. EUNBOUND is thrown,
+// the caller's script having ended there.
 export async function watcherDown(sd: string, scope: string): Promise<boolean> {
   let inflight = 0;
   for await (const _ of crewMetas(sd, "verify", "self")) inflight++;
@@ -2113,8 +2115,8 @@ export async function watcherDown(sd: string, scope: string): Promise<boolean> {
     if ((e as { code?: string }).code === "EARITH") return false;
     throw e;
   }
-  const grace = testInt(process.env.AC_GUARD_GRACE || "300");
-  return grace !== null && age > grace;
+  const grace = BigInt(strictDecimal(process.env.AC_GUARD_GRACE || "300") ?? 300);
+  return age > grace;
 }
 
 // ac_wake_pending's twin: the scope's own spool (wakeSpoolPath - a malformed
@@ -4730,14 +4732,12 @@ export function hookJq(filter: string, payload: string): string {
 // the state dir minted as ac_state_dir minted it - never a byte on stdout or
 // stderr but date's own, and a date that cannot start stamps the line empty as
 // `$(ac_iso)` did; no AC_HOME, or one cd cannot enter, writes nothing.
-// <detail> is bytes (latin1). Past AC_STOPHOOK_LOG_KEEP*2 lines (unset or
-// empty: 200) the log keeps its last AC_STOPHOOK_LOG_KEEP through tail(1),
-// spawned into an exclusive temp (exclusiveTemp) that mv(1) puts in place; a
-// tail that fails leaves its temp, as the original's did. The knob enters
-// `$(( keep * 2 ))` only after the line is written, and arithValue's
-// EUNBOUND (set -u ended the caller with the line count's status, 0) or
-// EARITH (the caller's top-level command discarded) is thrown for the caller
-// to act on.
+// <detail> is bytes (latin1). Past AC_STOPHOOK_LOG_KEEP*2 lines (unset,
+// empty or a refusal: 200) the log keeps its last AC_STOPHOOK_LOG_KEEP
+// through tail(1), spawned into an exclusive temp (exclusiveTemp) that
+// mv(1) puts in place; a tail that fails leaves its temp, as the original's
+// did. The knob is strictDecimal, falling back to 200 on a refusal rather
+// than discarding the trace call and losing the caller's wake.
 export function hookTrace(hook: string, detail: string): void {
   const h = process.env.AC_HOME;
   const home = h ? physicalDir(h) : null;
@@ -4747,7 +4747,7 @@ export function hookTrace(hook: string, detail: string): void {
     mkdirSync(sd, { recursive: true });
   } catch {}
   const f = `${sd}/.stop-hooks.log`;
-  const keep = process.env.AC_STOPHOOK_LOG_KEEP || "200";
+  const keep = strictDecimal(process.env.AC_STOPHOOK_LOG_KEEP || "200") ?? 200;
   let ts = "";
   try {
     ts = iso();
@@ -4759,7 +4759,7 @@ export function hookTrace(hook: string, detail: string): void {
   try {
     for (const c of readFileSync(f)) if (c === 10) lines++;
   } catch {}
-  if (lines <= BigInt.asIntN(64, arithValue(keep) * 2n)) return;
+  if (lines <= BigInt(keep) * 2n) return;
   let tmp: { path: string; fd: number };
   try {
     tmp = exclusiveTemp(`${f}.tmp`);
@@ -4768,7 +4768,7 @@ export function hookTrace(hook: string, detail: string): void {
   }
   let r: ReturnType<typeof spawnShellSync> | null = null;
   try {
-    r = spawnShellSync(["tail", "-n", keep, f], { stdin: "ignore", stdout: tmp.fd, stderr: "ignore" });
+    r = spawnShellSync(["tail", "-n", String(keep), f], { stdin: "ignore", stdout: tmp.fd, stderr: "ignore" });
   } catch {}
   closeSync(tmp.fd);
   if (shellStatus(r) !== 0) return;

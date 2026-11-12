@@ -467,6 +467,7 @@ import {
   spawnShellSync,
   stageDirForId,
   statusAppend,
+  strictDecimal,
   taskMeta,
   taskStatus,
   testInt,
@@ -3195,7 +3196,8 @@ function suiteGate(n: string, every: string): { ok: boolean; out: string } {
   if (inflight !== null) {
     const since = metaG(b8(taskMeta(u8(inflight))), "spawned_epoch");
     let elapsed = "an unknown time";
-    if (/^[0-9]+$/.test(since)) elapsed = `${BigInt.asIntN(64, arithValue(now()) - arithValue(since))}s`;
+    const sinceN = strictDecimal(since);
+    if (sinceN !== null) elapsed = `${BigInt.asIntN(64, arithValue(now()) - BigInt(sinceN))}s`;
     return {
       ok: false,
       out: `learning DUE (${n}/${every}) HELD: the full-suite run ${inflight} is still in flight (running ${elapsed} against ${head.slice(0, 7)}, the tree this cycle pinned - a concurrent commit cannot invalidate it)\n`,

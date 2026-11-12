@@ -1041,6 +1041,13 @@ hook remote-ack 'hlog ack $#; printf "own hook stderr\n" >&2; sleep 30'
 R_ENV=("AC_REMOTE_ACK_BUDGET=0")
 rrun ack r1 working
 assert_eq "$(shim_err)" "WARN: ack: remote-ack budget (0s) spent this round - skipping remaining acks" "row 10: budget 0"
+# A leading-zero budget reads decimal, never the shell's `$(( ))` octal
+# fatal (08 has no valid base-8 digit) - it must never end the whole run
+# before the acked line prints.
+hook remote-ack 'hlog ack $#; exit 0'
+R_ENV=("AC_REMOTE_ACK_BUDGET=08")
+rrun ack r1 working
+assert_eq "$RC|$(shim_out)" "0|acked r1 (working)" "row 10: a leading-zero budget (08) is decimal eight, never a fatal exit"
 # A hook reaped at once races its own first line, so this row's hook says
 # nothing.
 hook remote-ack 'sleep 30'

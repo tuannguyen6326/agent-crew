@@ -1369,6 +1369,7 @@ xat xrecord "- fact the --changed selector widens to the full suite when empty |
 - fact the pool lease now checks a leasefile, not that the slot meta is durable | src: file:file.txt:1 | at: $XS 2026-01-01 | by: h2
 - fact heat that is no number | src: file:file.txt:1 | at: $XS 2026-01-01 | heat: x | by: h6
 - fact two heat fields | heat: 3 here | src: file:file.txt:1 | at: $XS 2026-01-01 | heat: 5 | by: h7
+- fact heat with a leading zero | src: file:file.txt:1 | at: $XS 2026-01-01 | heat: 08 | by: h8
 - fact an entry with no by field | src: file:file.txt:1 | at: $XS 2026-01-01
 - scope gw = gateway | src: file:file.txt:1 | at: $XS 2026-01-01 | by: s1
 " "- fact the retired claim lives only here now | src: file:file.txt:1 | at: $XS 2026-01-01 | by: old
@@ -1409,6 +1410,9 @@ assert_eq "$(xerr)" "cite: warning - slot meta is durable also matches a SUPERSE
 xok "${XC[@]}" --quote 'pool lease survives'
 assert_contains "$(xout)" "| heat: 8 | by: h1" "5: an existing heat increments in place"
 xrefuse "ERROR: cite: malformed heat field on the matched entry (got: '| heat: x'): - fact heat that is no number | src: file:file.txt:1 | at: $XS 2026-01-01 | heat: x | by: h6" "${XC[@]}" --quote 'no number'
+xok "${XC[@]}" --quote 'leading zero'
+assert_contains "$(xout)" "| heat: 9 | by: h8" "5: a leading-zero heat (08) reads decimal, never bash's octal fatal with the lock left held"
+assert_no_file "$XH/$XREC.lock" "5: ...and the lock is released"
 xok "${XC[@]}" --quote 'two heat fields'
 assert_contains "$(xout)" "| heat: 3 here | src: file:file.txt:1 | at: $XS 2026-01-01 | heat: 6 | by: h7" "5: the LAST heat field before the LAST by is the counter"
 xrefuse "ERROR: cite: matched entry carries no '| by:' field - not a grammar line this verb can bump: - fact an entry with no by field | src: file:file.txt:1 | at: $XS 2026-01-01" "${XC[@]}" --quote 'no by field'

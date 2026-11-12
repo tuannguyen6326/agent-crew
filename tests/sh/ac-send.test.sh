@@ -723,6 +723,19 @@ printf 'harness=claude\nsession_id=SIDP\n' >>"$H/home/state/pay.meta"; : >"$H/he
 sturn SIDP "[chief-order home=$H/home deputy=pay] confirm me"
 srun pay 'confirm me'; assert_eq "$SN_RC:$(sout)" "0:sent to herdr:pane-pP1" "5: a claude deputy's arrival compares the marked text"
 
+# 5b. the registry lookup is exact STRING equality, never awk's numeric ==:
+#     deputy id 7 must read its OWN entry's home, not an earlier 07 entry's -
+#     07's registered home here was never created, so a numeric match would refuse.
+sdep 7 pD7
+sput home/records/crewdeputies.md "# Crewdeputies
+
+- 07 - home: $H/home/crewdeputies/07 (added 2026-07-19T00:00:00Z)
+- 7 - home: $H/home/crewdeputies/7 (added 2026-07-19T00:00:00Z)
+"
+srun 7 'route to seven'
+assert_eq "$SN_RC:$(cat "$H/herdr/panes/pD7.buf")" "0:[chief-order home=$H/home deputy=7] route to seven" \
+  "5b: deputy id 7 reads its own registry entry, never 07's unbuilt home"
+
 # 6. a slash command (the DELIVERED line's first word) leaves a captain-wait
 #    stamp standing and skips the arrival check (on a claude pane a REFUTED
 #    line is the check running); /Compact, a path, a CR right after the word,
