@@ -1052,15 +1052,13 @@
 // - W6: the HUP group ends with the exit cleanup and no reason line, the poll
 //   `sleep` and a remote poll in flight orphaned; QUIT/PROF/KILL leave the
 //   lock (reclaimable), a FRESH beacon and the watch-config.
-// - W7: the knobs are unvalidated. AC_POLL that `sleep` refuses spins the loop
-//   (sleep's complaint per pass) to heartbeat; an AC_HEARTBEAT, AC_STALE,
+// - W7: some of the knobs are unvalidated. An AC_HEARTBEAT, AC_STALE,
 //   AC_BUSY_MAX or AC_GUARD_GRACE that is no integer reads every comparison
-//   false - never a heartbeat, never stale, never stalled, every skip revoked;
-//   AC_ARMLOG_KEEP enters `$(( keep * 2 ))` at each arm-log line, where an
-//   identifier ends the run (armed: exit 0, the cleanup, no reason line; else
-//   1) and a malformed number discards the command it stood in - the arm goes
-//   on, a --release or a skip refusal falls through to arming, and inside the
-//   loop the run ends 1.
+//   false - never a heartbeat, never stale, never stalled, every skip
+//   revoked. AC_POLL and AC_ARMLOG_KEEP are strictDecimal (fixed): a
+//   refusal falls back to the documented default (15, 200) instead of
+//   spinning the poll loop at full speed against a failing literal `sleep`,
+//   or ending the run at exit 0 right after arming with no reason line.
 // - W10: `.deferred-<id>` is written but absent from the one reap list
 //   (taskStamps, ac_task_stamps), so a reused id inherits a deferral.
 //
@@ -1173,6 +1171,7 @@ import {
   spawnShellSync,
   stateDir,
   statusAppend,
+  strictDecimal,
   taskBackend,
   taskDir,
   taskStatus,
@@ -1369,7 +1368,7 @@ const sdB = b8(sd);
 
 function watchLog(text: string): void {
   const f = `${sd}/.watcher-arm.log`;
-  const keep = knob("AC_ARMLOG_KEEP", "200");
+  const keep = strictDecimal(b8(knob("AC_ARMLOG_KEEP", "200"))) ?? 200;
   const line = `${iso()} ${text}`;
   try {
     appendFileSync(f, B(`${line}\n`));
@@ -1379,7 +1378,7 @@ function watchLog(text: string): void {
   try {
     for (const c of readFileSync(f)) if (c === 10) lines++;
   } catch {}
-  if (lines <= BigInt.asIntN(64, arith(b8(keep)) * 2n)) return;
+  if (lines <= BigInt(keep) * 2n) return;
   let tmp: { path: string; fd: number };
   try {
     tmp = exclusiveTemp(`${f}.tmp`);
@@ -1388,7 +1387,7 @@ function watchLog(text: string): void {
   }
   let r: ReturnType<typeof spawnShellSync> | null = null;
   try {
-    r = spawnShellSync(["tail", "-n", keep, f], { stdin: "ignore", stdout: tmp.fd, stderr: "ignore" });
+    r = spawnShellSync(["tail", "-n", String(keep), f], { stdin: "ignore", stdout: tmp.fd, stderr: "ignore" });
   } catch {}
   closeSync(tmp.fd);
   if (shellStatus(r) !== 0) return;
@@ -2902,6 +2901,6 @@ await topLevel(async () => {
       }
     }
     if (test(String(minus(arith(nowRaw()), started)), "-ge", knob("AC_HEARTBEAT", "600"))) await finish("heartbeat\n");
-    await pollWait(knob("AC_POLL", "15"));
+    await pollWait(String(strictDecimal(knob("AC_POLL", "15")) ?? 15));
   }
 }, true);
