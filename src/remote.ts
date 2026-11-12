@@ -265,15 +265,14 @@
 // or the printed lines (a skipped ack costs a transport receipt, never an
 // order).
 // BOUNDED: AC_REMOTE_ACK_TIMEOUT (20) bounds one call, AC_REMOTE_ACK_BUDGET (30)
-// the whole process's time inside the hook - each '' or holding a non-digit
-// reads as its default. Budget spent (`[ spent -ge budget ]`, decimal) is, once
-// per process, `WARN: <label>: remote-ack budget (<budget>s) spent this round -
-// skipping remaining acks`, the call skipped. Else the timeout is clamped to
-// `$((budget - spent))` - shell arithmetic: a leading 0 reads octal, so `010`
-// is 10 in the test and 8 in the clamp, and `08` ends the run, exit 1, before
-// the line the ack precedes - after an ingested order's commit, after link's
-// meta writes (W18); past 2^63 the test is no number (false) and the
-// arithmetic wraps. The hook starts in its OWN process
+// the whole process's time inside the hook - the budget is strictDecimal,
+// falling back to its default on a refusal rather than ending the run (W18
+// fixed: `08` is decimal eight, never the shell's octal fatal, and nothing
+// past the safe-integer bound ever wraps the clamp negative). Budget spent
+// (ackSpent >= budget) is, once per process, `WARN: <label>: remote-ack
+// budget (<budget>s) spent this round - skipping remaining acks`, the call
+// skipped. Else the timeout is clamped to `budget - spent`. The hook starts
+// in its OWN process
 // group (MECHANICS 4) with AC_REMOTE_RID, AC_REMOTE_THREAD,
 // AC_REMOTE_ACK_STATE, stdin and stdout /dev/null, stderr ours; it is polled
 // every spawned `sleep 0.2`, and once whole wall-clock seconds since its start
@@ -429,6 +428,7 @@ import {
   shellStatus,
   spawnShell,
   spawnShellSync,
+  strictDecimal,
   vnTs,
   wakePublish,
   warn,
@@ -751,10 +751,8 @@ export function arithConst(s: string): bigint | null {
 async function runAck(label: string, rid: string, state: string, thread: string): Promise<void> {
   const ack = `${homeDir("config")}/remote-ack`;
   if (!isExec(ack)) return;
-  let budget = process.env.AC_REMOTE_ACK_BUDGET || "30";
-  if (!/^[0-9]+$/.test(budget)) budget = "30";
-  const b = testInt(budget);
-  if (b !== null && ackSpent >= b) {
+  const budget = strictDecimal(process.env.AC_REMOTE_ACK_BUDGET || "30") ?? 30;
+  if (ackSpent >= BigInt(budget)) {
     if (!ackWarned) {
       warn(`${label}: remote-ack budget (${budget}s) spent this round - skipping remaining acks`);
       ackWarned = true;
@@ -763,9 +761,7 @@ async function runAck(label: string, rid: string, state: string, thread: string)
   }
   let timeout = process.env.AC_REMOTE_ACK_TIMEOUT || "20";
   if (!/^[0-9]+$/.test(timeout)) timeout = "20";
-  const bc = arithConst(budget);
-  if (bc === null) process.exit(1);
-  const remaining = BigInt.asIntN(64, bc - ackSpent);
+  const remaining = BigInt.asIntN(64, BigInt(budget) - ackSpent);
   const t = testInt(timeout);
   if (t === null || t > remaining) timeout = String(remaining);
   let child: ReturnType<typeof Bun.spawn> | null = null;
