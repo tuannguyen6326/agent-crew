@@ -324,13 +324,9 @@ export type EpicBranchEntry = { rc: 0; entry: string } | { rc: 1 | 2 };
 // ac_epic_branch_entry's twin: `<branch> [key=value ...]` for <repo>, rc 1 for
 // no record or no entry (a record this process cannot read included), rc 2
 // when the FIRST line starts with `# retired`. The record is bytes (latin1 in,
-// the entry latin1 out; <repo> is compared as its bytes). The reader is awk's
-// `$1==r { $1=""; sub(/^ /, ""); print; exit }`, reproduced quirks and all -
-// fields split on runs of space/TAB with the ends trimmed and rejoined by
-// single spaces, and `==` numeric when both sides read as numbers (`07` is
-// `7`, `1e2` is `100`, nan equals everything) - because the bash reader stays
-// live under ac_epic_base_for (ac-backend-orca, ac-spawn) and the
-// two must never disagree about one record.
+// the entry latin1 out; <repo> is compared as its bytes, exact STRING
+// equality - a repo literally named `07` is never `7`'s row) - fields split
+// on runs of space/TAB with the ends trimmed and rejoined by single spaces.
 export function epicBranchEntry(epic: string, repo: string): EpicBranchEntry {
   const f = epicBranchesFile(epic);
   if (f === null) return { rc: 1 };
@@ -342,13 +338,9 @@ export function epicBranchEntry(epic: string, repo: string): EpicBranchEntry {
   }
   if (text.split("\n")[0]!.startsWith("# retired")) return { rc: 2 };
   const r = Buffer.from(repo, "utf8").toString("latin1");
-  const rn = awkNumber(r);
   for (const line of text.split("\n")) {
     const fields = line.replace(/^[ \t]+|[ \t]+$/g, "").split(/[ \t]+/);
-    const first = fields[0]!;
-    const fn = rn === null ? null : awkNumber(first);
-    const hit = fn !== null && rn !== null ? !(fn < rn) && !(fn > rn) : first === r;
-    if (!hit) continue;
+    if (fields[0]! !== r) continue;
     const entry = fields.slice(1).join(" ");
     return entry === "" ? { rc: 1 } : { rc: 0, entry };
   }
