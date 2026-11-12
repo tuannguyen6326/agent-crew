@@ -1146,6 +1146,17 @@ wd; assert_eq "$WRC:$(wout)" "0:no queued wakes" "row 2: a file at state/ drains
 [ -n "$(werr)" ] || fail "row 2: the failed mkdir says so"
 wd ack x; assert_eq "$WRC" 1 "row 2: an ack under a file at state/ is touch's failure"
 
+# W18: a malformed AC_SCOPE refuses rather than draining the fleet's spool in
+# its place - and leaves every spool it could have touched untouched.
+fresh
+rec '' 1.1.000001 '1\treport\tf1\tdone: fleet\n'
+rec fam2 1.1.000001 '1\treport\tfam2-t1\tdone: family\n'
+WD_ENV=(AC_SCOPE=bad.scope); wd; WD_ENV=()
+assert_eq "$WRC" 1 "W18: a malformed AC_SCOPE refuses, exit 1"
+assert_contains "$(werr)" "ERROR:" "W18: the refusal is a clear error"
+assert_file "$H/home/state/.wake-spool/1.1.000001" "W18: the fleet spool is left untouched"
+assert_file "$H/home/state/.wake-spool.fam2/1.1.000001" "W18: the family spool is left untouched"
+
 # 3. the rendering: spaces around the fields dropped, inner runs kept,
 #    per-file records, a two-line record, backslashes and bytes, the remote
 #    label with and without its prefix, a blank record, a spaced kind.
@@ -1268,6 +1279,21 @@ kill "$WD_TS" 2>/dev/null; wait "$WD_TS" 2>/dev/null || true
 assert_eq "$(head -n 1 "$TMP/n.out")" "no queued wakes" "row 6: a live TS drainer's claim is kept"
 assert_file "$H/home/state/.wake-spool-draining.$WD_TS/1.1.000001" "row 6: the record stays in the live claim"
 
+# W12: a file at a family spool's path, recovered through the dead-claim
+# sweep, is reported on stderr alone - it never ends the run before the
+# other spools drain.
+fresh
+sh -c 'exit 0' & WD_DEAD=$!; wait "$WD_DEAD" 2>/dev/null || true
+m badfam-t1 'fleet_scope=badfam\n'
+claim "$WD_DEAD" 1.1.000001 '1\treport\tbadfam-t1\tdone: blocked\n'
+: >"$H/home/state/.wake-spool.badfam"
+rec '' 1.1.000002 '1\treport\tf1\tdone: still drains\n'
+wd
+assert_eq "$WRC" 0 "W12: the run does not abort"
+[ -n "$(werr)" ] || fail "W12: the blocked mkdir says so on stderr"
+assert_contains "$(wout)" "report f1 done: still drains" "W12: the fleet spool still drains despite the blocked family"
+assert_file "$H/home/state/.wake-spool-draining.$WD_DEAD/1.1.000001" "W12: the blocked record is kept for the next sweep, never dropped"
+
 # 7. a dot entry and an empty family spool drain nothing; neither does a file
 #    at the fleet spool's path.
 fresh
@@ -1276,6 +1302,25 @@ wd; assert_eq "$(head -n 1 "$TMP/n.out")" "no queued wakes" "row 7: a dot entry 
 assert_file "$H/home/state/.wake-spool/.hidden" "row 7: a dot entry is never claimed"
 rm -rf "$H/home/state/.wake-spool"; : >"$H/home/state/.wake-spool"
 wd; assert_eq "$WRC:$(head -n 1 "$TMP/n.out")" "0:no queued wakes" "row 7: a file at the fleet spool's path"
+
+# W10: a subdirectory inside a spool is left in place, never claimed and
+# destroyed unread.
+fresh
+rec '' 1.1.000001 '1\treport\tf1\tdone: real record\n'
+mkdir -p "$H/home/state/.wake-spool/subdir"
+wd
+assert_contains "$(wout)" "report f1 done: real record" "W10: the real record still drains"
+[ -d "$H/home/state/.wake-spool/subdir" ] || fail "W10: the subdirectory is left in place, not destroyed"
+
+# W11: a dangling symlink sorting first does not strand the real records in
+# the claim until the next drain.
+fresh
+rec '' 1.1.000001 '1\treport\tf1\tdone: real record\n'
+ln -s "$H/home/state/.wake-spool/missing" "$H/home/state/.wake-spool/0.dangling"
+wd
+assert_contains "$(wout)" "report f1 done: real record" "W11: the real record emits this run despite a dangling link sorting first"
+assert_eq "$(find "$H/home/state" -maxdepth 1 -name '.wake-spool-draining.*' | wc -l | tr -d ' ')" "0" \
+  "W11: the claim is cleared, not stranded"
 
 # 8. completions: the report line, an ambiguous task dir and a verifier stay
 #    silent, a self task is reported.

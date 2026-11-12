@@ -67,35 +67,40 @@
 //    its OWN id maps to - the fleet's for a `*-chief` id, else the one its
 //    meta's fleet_scope= names (read silently, cut at a NUL), else
 //    familyOfId's (an illegal family name is the fleet's) - through `mkdir -p
-//    <spool>` (a failure ENDS THE RUN with mkdir's line and status: a file
-//    sitting at a family spool's path wedges every drain here, before
-//    anything drains - W12) and `mv <f> <spool>/<name>` (its stderr dropped,
-//    its failure ignored); then `rmdir <claim>` (likewise). A flat id with no
-//    meta lands in .wake-spool.<id>, for the orphan pass below (W9). The
-//    sweep fails toward DUPLICATION: a drainer that died after emitting but
-//    before removing its claim has its records emitted again.
+//    <spool>` (a failure prints mkdir's own line and SKIPS that one record,
+//    left behind in <claim> for the next sweep to retry - a file sitting at a
+//    family spool's path no longer wedges the rest of this sweep or the
+//    drain behind it - W12 fixed) and `mv <f> <spool>/<name>` (its stderr
+//    dropped, its failure ignored); then `rmdir <claim>` (likewise, and left
+//    non-empty when a record was skipped above). A flat id with no meta lands
+//    in .wake-spool.<id>, for the orphan pass below (W9). The sweep fails
+//    toward DUPLICATION: a drainer that died after emitting but before
+//    removing its claim has its records emitted again.
 // 2. THE OWN SPOOL, wakeSpoolPath(<state>, <scope>): the family spool for a
-//    legal scope, else THE FLEET'S - a malformed scope (`bad.scope`) drains
-//    the crewchief's wakes while skipping steps 3, 7 and 9 and every
-//    completion but its own family's (W18, kept).
+//    legal scope; a malformed scope (`bad.scope`) REFUSES here instead -
+//    `ERROR: AC_SCOPE is not a legal family name`, exit 1, nothing drained -
+//    rather than falling back to THE FLEET'S the way wakeSpoolPath's other
+//    callers do (W18 fixed).
 // 3. THE ORPHANS, unscoped only: each wakeFamilySpools(<state>) directory, in
 //    byte order, whose roomchief is NOT live (roomchiefLive, src/lib.ts - its
 //    stdin, stdout and stderr dropped) is drained in place.
 // 4. DRAINING a spool: its non-dot entries, one snapshot in byte order; none
 //    that `[ -e ]` finds -> nothing (the spool untouched; a dot entry or a
-//    dangling link alone is litter). Else `mkdir <claim>` (failing: its line,
+//    dangling link alone is litter). A subdirectory among them is excluded
+//    from the move and left in the spool, untouched - never claimed and
+//    destroyed unread (W10 fixed). Else `mkdir <claim>` (failing: its line,
 //    and the spool is skipped), ONE `mv <entries...> <claim>/` (stderr
 //    dropped; a source another drainer took first just fails - the per-record
 //    rename IS the claim, so each record emits once in the normal path), the
-//    claim's entries listed again: none, or a FIRST one `[ -e ]` cannot find,
-//    is "a racer took them all" - `rmdir <claim>` (its own `Directory not
-//    empty` when a dangling link sorted first: the real records then sit in
-//    the claim until the next drain's sweep - W11) and nothing emitted. Else
+//    claim's entries that `[ -e ]` finds, however many: none is "a racer took
+//    them all" - `rmdir <claim>` and nothing emitted; the rest, even past a
+//    dangling link sorted first, are this run's real records, rendered below
+//    - the dangling entry itself is skipped and dies with the claim, never
+//    stranding the records behind it (W11 fixed). Else
 //    ONE `awk -F'\t' '{ printf "%s %s %s\n", $2, $3, $4 }' <claimed...>`
 //    (per file, so a record missing its LF never merges with the next; a
 //    payload is cut at a TAB - W6 - and at a NUL; a two-line record is two
-//    wakes; a subdirectory claimed reads as nothing and is destroyed below -
-//    W10) through THE RENDERING, then `rm -rf <claim>`: the records are gone,
+//    wakes) through THE RENDERING, then `rm -rf <claim>`: the records are gone,
 //    and the spool counts as drained only when rm succeeded.
 // 5. THE RENDERING, per awk line (`IFS=' ' read -r kind id rest`: spaces
 //    around the fields dropped, inner runs of the payload kept, an empty id
@@ -171,10 +176,10 @@
 //    dropped), succeeding -> its output, plus a LF, the stdin of a spawned `jq
 //    -r --arg who <a> <DELTA_JQ>` (stderr dropped; jq's own semantics - a
 //    string `.pages` counts its LENGTH - W23).
-// EXIT: 0; 1 for every refusal above; the first failing touch's status
-// (ack); mkdir's status (step 1, W12); the sed/tail status (step 7, W13); 1
-// at set -u's abort (below); 141 when stdout's reader has gone (THE CLOSED
-// READER, below).
+// EXIT: 0; 1 for every refusal above, plus a malformed AC_SCOPE (step 2,
+// W18); the first failing touch's status (ack); the sed/tail status (step 7,
+// W13); 1 at set -u's abort (below); 141 when stdout's reader has gone (THE
+// CLOSED READER, below).
 //
 // THE CLOCK: <clock> is nowRaw's text (a non-empty EPOCHSECONDS less trailing
 // LFs - bash 3.2 has no such builtin, so the variable was the clock - else
@@ -252,6 +257,7 @@ import {
   taskDir,
   testInt,
   wakeFamilySpools,
+  wakeScopeOk,
   wakeSpoolPath,
   watcherBeatRead,
 } from "./lib.ts";
@@ -431,11 +437,15 @@ function render(awkOut: Buffer): void {
 function drainSpool(spool: string): boolean {
   const recs = entries(spool);
   if (!recs.some((r) => existsSync(r))) return false;
+  const movable = recs.filter((r) => !isDir(r)); // a subdirectory is never claimed - W10
+  if (movable.length === 0) return false;
   const claim = `${sd}/.wake-spool-draining.${process.pid}`;
   if (run(["mkdir", claim], "inherit", "inherit").status !== 0) return false;
-  run(["mv", ...recs, `${claim}/`], "inherit", "ignore");
-  const claimed = entries(claim);
-  if (claimed.length === 0 || !existsSync(claimed[0]!)) {
+  run(["mv", ...movable, `${claim}/`], "inherit", "ignore");
+  // every claimed entry that [-e] finds, not just the first - a dangling link
+  // sorted first must never strand the real records behind it - W11.
+  const claimed = entries(claim).filter((r) => existsSync(r));
+  if (claimed.length === 0) {
     run(["rmdir", claim], "inherit", "inherit");
     return false;
   }
@@ -463,7 +473,7 @@ function sweepDeadClaims(): void {
       if (!rid.endsWith("-chief")) fam = metaQuiet(`${sd}/${rid}.meta`, "fleet_scope") || familyOfId(rid);
       const dest = wakeSpoolPath(sd, fam);
       const mk = run(["mkdir", "-p", dest], "inherit", "inherit").status;
-      if (mk !== 0) process.exit(mk);
+      if (mk !== 0) continue; // mkdir's own line is already on stderr; the record stays in its dead claim for the next sweep
       run(["mv", f, `${dest}/${f.slice(d.length + 1).replace(/\n+$/, "")}`], "inherit", "ignore");
     }
     run(["rmdir", d], "inherit", "ignore");
@@ -471,6 +481,7 @@ function sweepDeadClaims(): void {
 }
 
 sweepDeadClaims();
+if (scope !== "" && !wakeScopeOk(scope)) die(`AC_SCOPE is not a legal family name: '${scope}' (ac_wake_scope_ok: [A-Za-z0-9_-]+) - refusing rather than draining the fleet's spool in its place`);
 let emitted = drainSpool(wakeSpoolPath(sd, scope));
 if (scope === "") {
   for (const f of wakeFamilySpools(sd)) {
