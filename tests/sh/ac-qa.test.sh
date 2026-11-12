@@ -3926,16 +3926,29 @@ xrun xslowhealth x_slowhealth
 xexits "0 0 0 0 1 0"
 xhas $'== health\nrc=1\n-- out\n-- err\nERROR: health probe never passed within 3s (last probe: exit 7: refused)\n== finish'
 xwlacks 'runtime/receipt.env'
-# EXPRESSIONS: a timeout that is a whole expression, or names a variable,
-# ends health at once, exit 1, with no probe run.
+# EXPRESSIONS: strictDecimal refuses a timeout that is a whole expression or
+# names a variable the same as any other malformed qa.health_timeout,
+# falling back to the documented default (60) - the probe now runs and the
+# wait plays out normally instead of ending at once with no probe run.
 xw7expr() { xworld; xcfg "qa:\n  health: \"touch $XW/stub/probed; false\"\n  health_timeout: $xw7v\n"; }
 x_w7expr() { xstart; xc health; }
 for xw7v in 1+1 OPTIND; do
   xrun xw7expr x_w7expr
   xexits "0 1"
-  xlacks 'never passed'
-  xwlacks '== stub/probed'
+  xhas 'ERROR: health probe never passed within 60s (last probe: exit 1)'
+  xwhas '== stub/probed'
 done
+# 08 and 010: strictDecimal reads both decimal - 8 and ten - never bash's
+# octal (010 used to silently read as 8s) and never 08's immediate crash
+# (08 has no valid base-8 digit).
+xw7v=08; xrun xw7expr x_w7expr; xexits "0 1"
+xhas 'ERROR: health probe never passed within 8s (last probe: exit 1)'
+xw7v=010; xrun xw7expr x_w7expr; xexits "0 1"
+xhas 'ERROR: health probe never passed within 10s (last probe: exit 1)'
+# Past the safe-integer bound: a refusal, never bash's 64-bit wrap to a
+# deadline already gone.
+xw7v=9223372036854775807; xrun xw7expr x_w7expr; xexits "0 1"
+xhas 'ERROR: health probe never passed within 60s (last probe: exit 1)'
 xdeadserve() { xworld; xcfg 'qa:\n  serve: "exit 0"\n  health: "false"\n'; }
 x_deadserve() { xready; xc serve; xc health; xc finish failed; }
 xrun xdeadserve x_deadserve

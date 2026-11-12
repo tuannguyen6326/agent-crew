@@ -667,10 +667,10 @@
 // - W6: a TERM inside serve after the fork and before serve.pid leaves a
 //   group finish cannot find; after serve.pid and before launch.env it jams
 //   the round (`serve already running`, health publishes no receipt).
-// - W7: `health` reads qa.health_timeout raw into its arithmetic: `abc`,
-//   `1m`, `08` and `3x` end it (exit 1, no probe run), `010` is 8 s, and a
-//   deadline past the signed 64-bit limit wraps to one already gone (no probe
-//   run, `health probe never passed`).
+// - W7 (fixed): `health` reads qa.health_timeout through strictDecimal:
+//   `010` is ten, never bash's octal eight, and a refusal (`abc`, `1m`,
+//   `3x`, past the safe-integer bound) falls back to the documented default
+//   (60) rather than ending the run before any probe.
 // - W8: store-install renames the store to `.prev` before the stage into
 //   place, with no rollback between the two.
 // - W9: run.meta has four writer shapes (ac_meta_set's lock, curation's,
@@ -718,9 +718,10 @@
 //   `health probe never passed within <t>s (last probe: exit <n>[: <line>])`,
 //   the line the last one wrote on stderr (at most 200 bytes); a wait that ran
 //   none ends `health probe never passed within <t>s`.
-// - EXPRESSIONS: a qa.health_timeout that is a whole arithmetic expression
-//   (`1+1`) rather than one operand, or an identifier (`OPTIND`), ends `health`
-//   as W7's malformed values do (exit 1, no probe run).
+// - EXPRESSIONS: strictDecimal refuses a whole arithmetic expression (`1+1`)
+//   or an identifier (`OPTIND`) the same way as any other malformed
+//   qa.health_timeout - the documented default, never an exit before any
+//   probe.
 // - W18: SIGINT to the pid alone ends the process at once (130).
 // - SIGNALS: store-install alone registers a handler - on its exit, and on
 //   TERM, HUP and INT (128+n), it removes its manifest temp and releases
@@ -793,6 +794,7 @@ import {
   shellStatus,
   softHome,
   spawnShellSync,
+  strictDecimal,
   taskDir,
   testInt,
   warn,
@@ -2992,11 +2994,11 @@ function cmdHealth(): void {
     tell("(no qa.health configured)\n");
     fatal(4);
   }
-  const timeout = configValue("qa.health_timeout") || "60";
+  const timeout = BigInt(strictDecimal(configValue("qa.health_timeout") || "60") ?? 60);
   const pid = cap(readText(`${rd}/serve.pid`) ?? "");
   const env = minimalEnv(rd);
   const start = epochA();
-  const deadline = BigInt.asIntN(64, arith(start) + arith(timeout));
+  const deadline = BigInt.asIntN(64, arith(start) + timeout);
   const perl = commandV("perl");
   let last = "";
   for (;;) {
