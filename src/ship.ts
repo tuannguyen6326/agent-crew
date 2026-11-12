@@ -471,8 +471,6 @@
 //   review-residual finds no findings, until a new commit.
 // - W3: a RETIRED legacy <home>/config/projects/<name>.yaml prints its refusal
 //   and start freezes an EMPTY config (attest-test, config and cmd read none).
-// - W4: the finish gate passes a 0-byte or `{}` findings file and an empty
-//   steps.tsv.
 // - W5: the F9 drop guard compares fix ids with `.id // "?"`, so two id-less
 //   fix findings re-posted as one pass.
 // - W6: any pane labelled ac-ship-watch anywhere in the herdr session
@@ -1979,6 +1977,7 @@ function cmdStatus(): void {
 }
 
 function finishGate(rd: string, outcome: string): void {
+  if (!nonEmpty(`${rd}/steps.tsv`)) fail(`finish ${outcome} refused (fail-closed): steps.tsv is empty - no pipeline step was ever recorded for this run`);
   const o = run(["awk", "-F\\t", '$2 != "completed" && $2 != "skipped" { printf "%s(%s) ", $1, $2 }', `${rd}/steps.tsv`]);
   ee(o.status);
   const outstanding = cap(o.out);
@@ -1988,9 +1987,20 @@ function finishGate(rd: string, outcome: string): void {
   for (const f of findingsGlob(rd)) {
     if (f.endsWith(".meta.json")) continue;
     const step = basename(f).slice(0, -".json".length);
-    const r = run(["jq", "-r", '[.[] | select(.action == "fix" or (.action == "ask-user" and ((.decision // "") | tostring) == ""))]\n                   | map((.id // "?") + "[" + (.action // "?") + "]") | join(", ")', f], {
-      stderr: "ignore",
-    });
+    // Slurped (-s): the file must hold EXACTLY one JSON value, and that value
+    // must be an array - one check that rejects a 0-byte or whitespace-only
+    // file (0 values) and a bare `{}` (1 value, but not an array - `.[]`
+    // would otherwise iterate an object's VALUES as if they were findings)
+    // alike, before the filter ever sees them.
+    const r = run(
+      [
+        "jq",
+        "-rs",
+        'if length != 1 or (.[0] | type) != "array" then error("not exactly one JSON array") else .[0] end\n                   | [.[] | select(.action == "fix" or (.action == "ask-user" and ((.decision // "") | tostring) == ""))]\n                   | map((.id // "?") + "[" + (.action // "?") + "]") | join(", ")',
+        f,
+      ],
+      { stderr: "ignore" },
+    );
     const bad = r.status === 0 ? cap(r.out) : `UNREADABLE (${step} findings file is corrupt or not valid JSON)`;
     if (bad !== "") resid = `${resid}${resid ? "; " : ""}${step}: ${bad}`;
   }

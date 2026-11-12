@@ -1375,6 +1375,56 @@ rc=0; out="$("$BIN/ac-ship.sh" finish checks-passed 2>&1)" || rc=$?
 assert_contains "$out" "test:" "the refusal names the step whose findings file is unreadable"
 assert_contains "$out" "UNREADABLE" "the refusal states the file is unreadable, not merely empty"
 
+# --- W4: a 0-BYTE findings file must fail CLOSED - jq on an empty input
+# stream never runs the filter at all (status 0, no output), so the gate's
+# existing "unreadable = status != 0" check cannot see it; it must be caught
+# before jq runs.
+"$BIN/ac-ship.sh" start --intent "gate zero-byte findings" >/dev/null
+gate_validate
+zerobyte_run="$grepo/.crew/ship/$(readlink "$grepo/.crew/ship/current")"
+: >"$zerobyte_run/findings/test.json"
+rc=0; out="$("$BIN/ac-ship.sh" finish checks-passed 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "a 0-byte findings file must block finish, not be read as zero unresolved findings"
+assert_contains "$out" "test:" "the refusal names the step whose findings file is empty"
+assert_contains "$out" "UNREADABLE" "the refusal states the file is unreadable"
+
+# --- W4: a WHITESPACE-ONLY findings file must fail CLOSED too - it holds no
+# JSON value at all, same as a 0-byte file, so a byte-count-only emptiness
+# check (nonEmpty) is not enough; jq on whitespace-only input also never runs
+# the filter (status 0, no output).
+"$BIN/ac-ship.sh" start --intent "gate whitespace findings" >/dev/null
+gate_validate
+wsfindings_run="$grepo/.crew/ship/$(readlink "$grepo/.crew/ship/current")"
+printf ' \n' >"$wsfindings_run/findings/test.json"
+rc=0; out="$("$BIN/ac-ship.sh" finish checks-passed 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "a whitespace-only findings file must block finish, not be read as zero unresolved findings"
+assert_contains "$out" "test:" "the refusal names the step whose findings file holds no JSON value"
+assert_contains "$out" "UNREADABLE" "the refusal states the file is unreadable"
+
+# --- W4: a `{}` findings file must fail CLOSED - `.[]` iterates an object's
+# VALUES too, so a top-level object reads as an empty findings array instead
+# of the malformed non-array it is.
+"$BIN/ac-ship.sh" start --intent "gate object findings" >/dev/null
+gate_validate
+objfindings_run="$grepo/.crew/ship/$(readlink "$grepo/.crew/ship/current")"
+printf '{}' >"$objfindings_run/findings/test.json"
+rc=0; out="$("$BIN/ac-ship.sh" finish checks-passed 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "a {} findings file must block finish, not be read as an empty findings array"
+assert_contains "$out" "test:" "the refusal names the step whose findings file is not an array"
+assert_contains "$out" "UNREADABLE" "the refusal states the file is unreadable"
+
+# --- W4: an EMPTY steps.tsv must fail CLOSED - the "any row not
+# completed/skipped" awk scan finds nothing to name when there are zero
+# rows, so a run that never recorded a single pipeline step must not pass
+# as though every step were done.
+"$BIN/ac-ship.sh" start --intent "gate empty steps tsv" >/dev/null
+gate_validate
+emptysteps_run="$grepo/.crew/ship/$(readlink "$grepo/.crew/ship/current")"
+: >"$emptysteps_run/steps.tsv"
+rc=0; out="$("$BIN/ac-ship.sh" finish checks-passed 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "an empty steps.tsv must block finish, not be read as zero outstanding steps"
+assert_contains "$out" "steps.tsv" "the refusal names the empty steps ledger"
+
 # --- F33: `finish` must not claim a PR was raised when the pr step was
 # SKIPPED (--skip pr here; skip-remaining marks pr the same way and is
 # covered by the same steps.tsv-derived wording).
